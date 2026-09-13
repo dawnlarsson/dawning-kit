@@ -766,6 +766,23 @@ b32 main()
         }
         command_option = invocation.command;
 
+        /* A bash-named process can also enter restricted mode through the
+           optional $0 operand of -c.  Decide that before importing option
+           transport from the environment, just as -r and an rbash process
+           name are decided before it.  A non-rbash $0 still lifts the
+           non-sticky restriction inherited only from the process name. */
+        if (shell_bash_compat && command_option &&
+            process_arguments > invocation.next + 1 &&
+            !shell_restricted_sticky)
+        {
+                string_address named = shell_tool_name(
+                    arguments[invocation.next + 1]);
+
+                if (named && *named == '-')
+                        named++;
+                shell_restricted = named && word_is(named, "rbash");
+        }
+
         /* Startup -p preserves entry IDs. Its absence resets both credentials
            before the environment can become shell state; either form keeps
            attacker-controlled startup files suppressed for this invocation. */
@@ -855,20 +872,6 @@ b32 main()
                 shell_script_name = process_arguments > first + 1
                                                           ? arguments[first + 1]
                                                           : arguments[0];
-                /* Bash keys live restriction on $0 for -c: a name whose
-                   last element is rbash restricts even a bash-named
-                   process, and any other name lifts an rbash argv0 unless
-                   -r made the restriction sticky. The shopt bit is how
-                   the process was started and is left alone. */
-                if (shell_bash_compat && process_arguments > first + 1 &&
-                    !shell_restricted_sticky)
-                {
-                        string_address named = shell_tool_name(shell_script_name);
-
-                        if (named && *named == '-')
-                                named++;
-                        shell_restricted = named && word_is(named, "rbash");
-                }
                 shell_option_flags = (string_address) "c";
                 script_file = true;
         }

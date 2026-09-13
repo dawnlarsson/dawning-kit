@@ -128,7 +128,7 @@ static fn monitor_header(system_snapshot address_to sample,
         tm broken;
 
         text_put_string("\033[1m ");
-        writer_field(text_put, host, string_length(host), 14, ' ', true);
+        writer_field_bulk(text_put, host, string_length(host), 14, ' ', true);
         text_put_string("\033[0m ");
 
         if (columns >= 72)
@@ -221,7 +221,7 @@ static fn monitor_cpus(system_snapshot address_to old,
                 }
 
                 text_put_character(' ');
-                writer_field(text_put, name, name_length, 6, ' ', true);
+                writer_field_bulk(text_put, name, name_length, 6, ' ', true);
                 text_put_string(" ");
                 monitor_bar((tenths + 5) / 10, bar_width);
                 text_put_character(' ');
@@ -322,17 +322,17 @@ static fn monitor_networks(system_snapshot address_to old,
                     positive_into_human_nearest_string(up_text, up, false);
                 monitor_row_left = columns > 1 ? columns - 1 : 1;
                 monitor_row_write(" ", 1);
-                string_to_field(monitor_row_write, network->name, 10, ' ',
+                string_to_field_bulk(monitor_row_write, network->name, 10, ' ',
                                 true);
                 monitor_row_write(" down ", 6);
                 down_text[down_length++] = '/';
                 down_text[down_length++] = 's';
-                writer_field(monitor_row_write, down_text, down_length, 12,
+                writer_field_bulk(monitor_row_write, down_text, down_length, 12,
                              ' ', true);
                 monitor_row_write(" up ", 4);
                 up_text[up_length++] = '/';
                 up_text[up_length++] = 's';
-                writer_field(monitor_row_write, up_text, up_length, 12, ' ',
+                writer_field_bulk(monitor_row_write, up_text, up_length, 12, ' ',
                              true);
                 monitor_row_end(true);
                 shown++;
@@ -423,7 +423,7 @@ static bool monitor_processes(system_snapshot address_to old,
                 monitor_fixed(monitor_row_write, (address_to top)[i].tenths, 1,
                               6);
                 monitor_row_write(" ", 1);
-                writer_field(monitor_row_write, memory_text, memory_length, 9,
+                writer_field_bulk(monitor_row_write, memory_text, memory_length, 9,
                              ' ', false);
                 monitor_row_write("  ", 2);
                 terminal_safe_field(

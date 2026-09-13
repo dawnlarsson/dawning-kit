@@ -51,11 +51,11 @@ if [ "$(uname)" = "Linux" ]; then
         tool=$here/build
         source=$here/src/build/build.c
 
-        # Rebuilt when the source is newer, so an edit to the tool is picked
-        # up by the next build rather than at the next person's surprise. -nt
-        # is not POSIX but every sh this targets -- dash, bash, ash, zsh -- has
-        # it, and this file only runs on those.
-        if [ ! -x "$tool" ] || [ "$source" -nt "$tool" ]; then
+        # The freestanding tool includes the shared runtime and utilities.
+        # All of its project dependencies live under src; a conservative tree
+        # check avoids another generated manifest and makefile parser here.
+        if [ ! -x "$tool" ] ||
+                [ -n "$(find "$here/src" "$here/build.sh" -newer "$tool" -print -quit)" ]; then
                 ${CC:-cc} -O2 -static -nostdlib -nostartfiles \
                         -fno-stack-protector -fno-builtin -w \
                         -o "$tool" "$source" ||

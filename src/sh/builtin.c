@@ -426,7 +426,6 @@ static bool shell_pipe_status_wanted(const_string name, positive length)
         pathname. The remaining operands keep their exact addresses and order.
 */
 #define ERROR_EXEC_FORMAT 8
-#define FLOODLIGHT_F_SETFD 2
 #define FLOODLIGHT_DESCRIPTOR_PATH_ROOM 64
 #define FLOODLIGHT_DESCRIPTOR_PREFIX "/proc/self/fd/"
 
@@ -435,44 +434,187 @@ static fn floodlight_descriptor_path(p8 address_to into, bipolar handle)
         positive used = sizeof(FLOODLIGHT_DESCRIPTOR_PREFIX) - 1;
 
         memory_copy_apart(into, FLOODLIGHT_DESCRIPTOR_PREFIX, used);
-        positive_into_string(into + used, (positive)handle);
+        used += positive_into_string(into + used, (positive)handle);
+        into[used] = end;
 }
 
 /* execveat with an empty path makes the opened file, rather than a pathname
-   which may be switched after policy was checked, the executable.  Keep the
-   close-on-exec bit for ordinary ELF images.  Linux needs it cleared for a
-   #! interpreter to reopen the script descriptor, so retry that one ENOENT
-   after making the descriptor inheritable. */
+   which may be switched after policy was checked, the executable.  Its
+   close-on-exec bit stays set: allowing the kernel to follow a #! line here
+   would replace this authorized image with an interpreter policy never saw.
+   A script's ENOENT is recognized below and its interpreter is sent through
+   the same pinned decision before either image can run. */
 static bipolar floodlight_execute_pinned(
     bipolar handle, string_address address_to arguments,
     string_address address_to environment)
 {
-        bipolar answered = system_call_5(
+        return system_call_5(
             syscall(execveat), (positive)handle, (positive)"",
             (positive)arguments, (positive)environment, AT_EMPTY_PATH);
+}
 
-        if (answered == -ERROR_NO_ENTRY &&
-            system_call_3(syscall(fcntl), (positive)handle,
-                          FLOODLIGHT_F_SETFD, 0) >= 0)
-                answered = system_call_5(
-                    syscall(execveat), (positive)handle, (positive)"",
-                    (positive)arguments, (positive)environment,
-                    AT_EMPTY_PATH);
+/* Linux reads at most this much while recognizing a #! line.  Keeping the
+   same bound also means an unterminated interpreter name cannot make this
+   parser accept bytes the kernel would not have considered. */
+#define FLOODLIGHT_SHEBANG_ROOM 256
+#define FLOODLIGHT_INTERPRETER_DEPTH 4
 
+typedef struct
+{
+        bipolar handle;
+        p8 interpreter[FLOODLIGHT_SHEBANG_ROOM + 1];
+        p8 argument[FLOODLIGHT_SHEBANG_ROOM + 1];
+} floodlight_shebang;
+
+static bipolar floodlight_pinned_reader(bipolar handle)
+{
+        p8 descriptor_path[FLOODLIGHT_DESCRIPTOR_PATH_ROOM];
+
+        floodlight_descriptor_path(descriptor_path, handle);
+        return system_open_at(AT_FDCWD, descriptor_path,
+                              FILE_READ | O_CLOEXEC);
+}
+
+/* Open the exact script inode already held for policy, then parse the one
+   optional argument Linux gives a #! interpreter.  The readable descriptor
+   is rewound and retained: the interpreter receives its /proc name rather
+   than a pathname an attacker can switch after this decision. */
+static bool floodlight_shebang_prepare(
+    bipolar handle, floodlight_shebang address_to script)
+{
+        p8 line[FLOODLIGHT_SHEBANG_ROOM];
+        bipolar got;
+        positive at;
+        positive first;
+        positive line_end;
+        bool terminated = false;
+
+        script->handle = floodlight_pinned_reader(handle);
+        script->interpreter[0] = end;
+        script->argument[0] = end;
+
+        if (script->handle < 0)
+                return false;
+
+        got = system_read_retry((positive)script->handle, line, sizeof(line));
+        if (got < 2 || line[0] != '#' || line[1] != '!')
+                goto refuse;
+
+        line_end = (positive)got;
+        for (at = 2; at < (positive)got; at++)
+                if (line[at] == '\n' || line[at] == end)
+                {
+                        line_end = at;
+                        terminated = true;
+                        break;
+                }
+
+        /* A full buffer with no terminator may have cut an interpreter name
+           in half. Refuse the ambiguous case instead of authorizing a path
+           different from the kernel's. */
+        if (!terminated && (positive)got == sizeof(line))
+                goto refuse;
+
+        while (line_end > 2 &&
+               (line[line_end - 1] == ' ' || line[line_end - 1] == '\t'))
+                line_end--;
+
+        at = 2;
+        while (at < line_end && (line[at] == ' ' || line[at] == '\t'))
+                at++;
+
+        first = at;
+        while (at < line_end && line[at] != ' ' && line[at] != '\t')
+                at++;
+
+        if (at == first)
+                goto refuse;
+
+        memory_copy_apart(script->interpreter, line + first, at - first);
+        script->interpreter[at - first] = end;
+
+        while (at < line_end && (line[at] == ' ' || line[at] == '\t'))
+                at++;
+
+        if (at < line_end)
+        {
+                memory_copy_apart(script->argument, line + at, line_end - at);
+                script->argument[line_end - at] = end;
+        }
+
+        if (system_seek(script->handle, 0, FILE_SEEK_SET) < 0)
+                goto refuse;
+
+        return true;
+
+refuse:
+        system_close(script->handle);
+        script->handle = -1;
+        return false;
+}
+
+static bipolar shell_exec_file_depth(
+    string_address path, string_address address_to arguments, positive count,
+    string_address address_to environment, positive depth);
+
+/* Both named #! interpreters and the traditional no-shebang shell fallback
+   enter here.  That keeps interpreter policy, descriptor inheritance and
+   argv construction in one decision point. */
+static bipolar floodlight_exec_interpreter(
+    string_address interpreter, string_address optional,
+    string_address script, string_address address_to arguments,
+    positive count, string_address address_to environment, positive depth)
+{
+        string_address address_to next;
+        positive extra = optional && string_get(optional) ? 1 : 0;
+        positive entries;
+        positive bytes;
+        positive at = 0;
+        bipolar answered;
+
+        if (!arguments || !count || count > positive_max - 2 - extra)
+                return -ERROR_ARGUMENT_LIST;
+
+        entries = count + 2 + extra;
+        if (entries > positive_max / sizeof(next[0]))
+                return -ERROR_ARGUMENT_LIST;
+
+        bytes = entries * sizeof(next[0]);
+        next = (string_address address_to)memory(bytes);
+        if (!next || system_failed(next))
+                return -ERROR_NO_MEMORY;
+
+        next[at++] = interpreter;
+        if (extra)
+                next[at++] = optional;
+        next[at++] = script;
+
+        if (count > 1)
+        {
+                memory_copy_apart(next + at, arguments + 1,
+                                  (count - 1) * sizeof(arguments[0]));
+                at += count - 1;
+        }
+        next[at] = null;
+
+        answered = shell_exec_file_depth(interpreter, next, at, environment,
+                                         depth + 1);
+        memory_free(next, bytes);
         return answered;
 }
 
-bipolar shell_exec_file(string_address path,
-                         string_address address_to arguments,
-                         positive count,
-                         string_address address_to environment)
+static bipolar shell_exec_file_depth(
+    string_address path, string_address address_to arguments, positive count,
+    string_address address_to environment, positive depth)
 {
         bipolar answered;
-        string_address address_to fallback;
         floodlight_executable pinned = {.handle = -1};
         p8 descriptor_path[FLOODLIGHT_DESCRIPTOR_PATH_ROOM];
-        positive entries;
-        positive bytes;
+        string_address script_path = path;
+        bipolar script_handle = -1;
+
+        if (depth > FLOODLIGHT_INTERPRETER_DEPTH)
+                return -ERROR_LOOP;
 
         if (!floodlight_external_final(path, arguments, count, &pinned))
                 return -ERROR_ACCESS;
@@ -482,63 +624,77 @@ bipolar shell_exec_file(string_address path,
                                                    environment)
                        : system_execute(path, arguments, environment);
 
+        /* execveat deliberately kept the policy pin close-on-exec. Linux
+           reports ENOENT for a #! file in that case, so recognize the exact
+           pinned file and execute its interpreter through this function. */
+        if (answered == -ERROR_NO_ENTRY && pinned.handle >= 0)
+        {
+                floodlight_shebang shebang;
+
+                if (floodlight_shebang_prepare(pinned.handle, &shebang))
+                {
+                        floodlight_descriptor_path(descriptor_path,
+                                                   shebang.handle);
+                        answered = system_descriptor_install(shebang.handle,
+                                                             shebang.handle);
+
+                        if (answered >= 0)
+                                answered = floodlight_exec_interpreter(
+                                    shebang.interpreter, shebang.argument,
+                                    descriptor_path, arguments, count,
+                                    environment, depth);
+
+                        system_close(shebang.handle);
+                        goto finished;
+                }
+        }
+
         if (answered != -ERROR_EXEC_FORMAT)
                 goto finished;
 
-        if (count > positive_max - 2)
-                goto finished;
-
-        entries = count + 2;
-
-        if (entries > positive_max / sizeof(fallback[0]))
-                goto finished;
-
-        bytes = entries * sizeof(fallback[0]);
-        fallback = (string_address address_to)memory(bytes);
-
-        if (!fallback || system_failed(fallback))
-                goto finished;
-
-        fallback[0] = (string_address)"/proc/self/exe";
-
         if (pinned.handle >= 0)
         {
-                /* The interpreter opens this name after exec, so the script
-                   descriptor has to survive that exec as well. */
-                if (system_call_3(syscall(fcntl), (positive)pinned.handle,
-                                  FLOODLIGHT_F_SETFD, 0) < 0)
-                {
-                        memory_free(fallback, bytes);
+                script_handle = floodlight_pinned_reader(pinned.handle);
+                if (script_handle < 0)
                         goto finished;
-                }
 
-                floodlight_descriptor_path(descriptor_path, pinned.handle);
-                fallback[1] = descriptor_path;
-        }
-        else
-                fallback[1] = path;
+                /* The interpreter opens this name after exec, so the readable
+                   script descriptor has to survive that exec as well. */
+                answered = system_descriptor_install(script_handle,
+                                                     script_handle);
+                if (answered < 0)
+                        goto finished;
 
-        if (count > 1)
-                memory_copy_apart(fallback + 2, arguments + 1,
-                                  (count - 1) * sizeof(arguments[0]));
-
-        fallback[count + 1] = null;
-
-        answered = system_execute(fallback[0], fallback, environment);
-
-        if (answered < 0)
-        {
-                fallback[0] = (string_address)"/bin/sh";
-                answered = system_execute(fallback[0], fallback, environment);
+                floodlight_descriptor_path(descriptor_path, script_handle);
+                script_path = descriptor_path;
         }
 
-        memory_free(fallback, bytes);
+        answered = floodlight_exec_interpreter(
+            (string_address)"/proc/self/exe", null, script_path, arguments,
+            count, environment, depth);
+
+        /* /bin/sh is only the no-procfs alternative. A policy refusal or any
+           other interpreter failure must not silently select another image. */
+        if (answered == -ERROR_NO_ENTRY)
+                answered = floodlight_exec_interpreter(
+                    (string_address)"/bin/sh", null, script_path, arguments,
+                    count, environment, depth);
 
 finished:
+        if (script_handle >= 0)
+                system_close(script_handle);
         if (pinned.handle >= 0)
                 system_close(pinned.handle);
 
         return answered;
+}
+
+bipolar shell_exec_file(string_address path,
+                         string_address address_to arguments,
+                         positive count,
+                         string_address address_to environment)
+{
+        return shell_exec_file_depth(path, arguments, count, environment, 0);
 }
 
 #define SHELL_DIRECTORY_MAX 4096
@@ -1662,6 +1818,9 @@ static bool env_write_hashed_span(const_string name, positive name_len,
 static bool env_write_destination(const_string name, positive name_len,
     positive hash, positive idx, const_string value, bool assignment,
     env_variable address_to destination);
+static bool env_write_destination_mode(const_string name, positive name_len,
+    positive hash, positive idx, const_string value, bool assignment,
+    env_variable address_to destination, bool protect);
 #define env_write_found_span(name, length, hash, index, value, assignment) \
         env_write_destination(name, length, hash, index, value, assignment, null)
 static bool shell_array_set_destination(const_string name, positive length,
@@ -1676,7 +1835,14 @@ bool env_set(const_string name, const_string value);
 bool env_assign(const_string name, const_string value);
 fn env_unset(string_address name);
 static PURE bool env_optlist_name(const_string name, positive length);
+static PURE bool env_restricted_name(const_string name, positive length);
 static PURE bool env_bash_readonly_name(const_string name, positive length);
+static PURE bool env_assignment_readonly_destination(
+    const_string name, positive length, positive hash,
+    env_variable address_to destination);
+static PURE bool env_assignment_readonly_found_destination(
+    const_string name, positive length, positive hash, positive found,
+    env_variable address_to destination);
 static COLD bool env_optlist_take(string_address entry);
 static COLD string_address shell_optlist_value(bool shopts,
                                                positive address_to value_length);
@@ -1792,9 +1958,9 @@ fn shell_env_init(string_address address_to process_environment)
                    its implementation-name as an ordinary variable. */
                 if (env_function_assignment(process_environment[at]))
                         continue;
-                /* SHELLOPTS and BASHOPTS are not variables. An inherited
-                   value turns those options on; the live listing is built
-                   when something reads the name. */
+                /* SHELLOPTS and BASHOPTS are transport rather than variables.
+                   Their names are always consumed; an eligible startup turns
+                   the listed options on, and reads build the live listing. */
                 if (env_optlist_take(process_environment[at]))
                         continue;
                 // Duplicate names are legal; keep the old last-one-wins
@@ -1973,6 +2139,26 @@ static COLD PURE env_reference env_reference_destination(const_string name,
         answer.index = shell_var_count;
         answer.destination = null;
         return answer;
+}
+
+/* Readonly policy belongs to the resolved target.  In particular, restricted
+   shell names are virtual readonly variables rather than attributed cells, so
+   checking only the nameref that led to one would make the restriction
+   writable through an alias. */
+static PURE bool env_reference_readonly(env_reference resolved)
+{
+        env_variable address_to variable;
+
+        if (!resolved.valid)
+                return false;
+        if (env_restricted_name(resolved.name, resolved.length) ||
+            env_bash_readonly_name(resolved.name, resolved.length))
+                return true;
+
+        variable = resolved.destination ? resolved.destination
+            : resolved.index < shell_var_count ? shell_vars + resolved.index : null;
+        return variable &&
+               (variable->attributes & SHELL_ARRAY_READONLY) != 0;
 }
 
 #define env_reference_hashed(name, length, hash) \
@@ -2263,6 +2449,8 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
 
                 if (!resolved.valid)
                         return 2;
+                if (env_reference_readonly(resolved))
+                        return 2;
 
                 if (resolved.element)
                         return shell_reference_assign_destination(resolved, value, false, destination) ? 1 : 2;
@@ -2292,12 +2480,15 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
         return 0;
 }
 
-static bool env_write_destination(const_string name, positive name_len,
+static bool env_write_destination_mode(const_string name, positive name_len,
     positive hash, positive idx, const_string value, bool assignment,
-    env_variable address_to destination)
+    env_variable address_to destination, bool protect)
 {
         bool allexport = assignment && (shell_options & SHELL_FLAG('a'));
         if (!name || !value)
+                return false;
+        if (protect && env_assignment_readonly_found_destination(
+                           name, name_len, hash, idx, destination))
                 return false;
         if (!destination && env_optlist_name(name, name_len))
                 return false;
@@ -2367,6 +2558,17 @@ static bool env_write_destination(const_string name, positive name_len,
                 shell_envp_dirty = true;
         env_locale_touch(name, name_len);
         return true;
+}
+
+/* Every command-facing scalar writer enters through the protected wrapper.
+   Startup's publication of Bash's own readonly identity cells uses the mode
+   entry once, before setting their readonly attributes. */
+static bool env_write_destination(const_string name, positive name_len,
+    positive hash, positive idx, const_string value, bool assignment,
+    env_variable address_to destination)
+{
+        return env_write_destination_mode(name, name_len, hash, idx, value,
+                                          assignment, destination, true);
 }
 
 static bool env_write_hashed_span(const_string name, positive name_len,
@@ -2538,20 +2740,22 @@ COLD string_address shell_reference_element_value(
 }
 
 /*
-        rbash holds four names readonly.
+        rbash holds five names readonly.
 
         PATH decides what a bare name reaches, SHELL and ENV and BASH_ENV
-        decide what runs on the way in; letting any of them be written is
-        letting the restriction be written. Bash marks them readonly rather
-        than refusing the assignment by name, so everything that already asks
-        this question -- an assignment, export, unset, a declaration command
-        -- refuses them without a check of its own.
+        decide what runs on the way in, and HISTFILE decides where command
+        history is written; letting any of them be changed weakens the
+        restriction. Bash marks them readonly rather than refusing the
+        assignment by name, so everything that already asks this question --
+        an assignment, export, unset, a declaration command -- refuses them
+        without a check of its own.
 */
 static PURE bool env_restricted_name(const_string name, positive length)
 {
         static const string_address held[] = {
             (string_address) "PATH", (string_address) "SHELL",
-            (string_address) "ENV", (string_address) "BASH_ENV"};
+            (string_address) "ENV", (string_address) "BASH_ENV",
+            (string_address) "HISTFILE"};
         positive at;
 
         if (!shell_restricted || !name)
@@ -2565,22 +2769,39 @@ static PURE bool env_restricted_name(const_string name, positive length)
         return false;
 }
 
-static PURE bool env_assignment_readonly_destination(const_string name,
-    positive length, positive hash, env_variable address_to destination)
+static PURE bool env_assignment_readonly_found_destination(
+    const_string name, positive length, positive hash, positive found,
+    env_variable address_to destination)
 {
+        env_variable address_to variable;
+
         if (env_restricted_name(name, length))
                 return true;
         if (env_bash_readonly_name(name, length))
                 return true;
-        if (!name || (!readonly_count && (!destination ||
-            !(destination->attributes & SHELL_ARRAY_READONLY))))
+        if (!name)
                 return false;
-        if (destination && (!(destination->attributes & SHELL_ARRAY_NAMEREF) ||
-            !env_variable_has_value(destination)))
-                return (destination->attributes & SHELL_ARRAY_READONLY) != 0;
-        env_reference resolved = env_reference_destination(name, length, hash, destination);
-        return resolved.valid && resolved.index < shell_var_count &&
-               (shell_vars[resolved.index].attributes & SHELL_ARRAY_READONLY) != 0;
+
+        variable = destination ? destination
+                               : found < shell_var_count ? shell_vars + found : null;
+        if (!variable)
+                return false;
+        if (!(variable->attributes & SHELL_ARRAY_NAMEREF) ||
+            !env_variable_has_value(variable))
+                return (variable->attributes & SHELL_ARRAY_READONLY) != 0;
+
+        return env_reference_readonly(
+            env_reference_destination(name, length, hash, destination));
+}
+
+static PURE bool env_assignment_readonly_destination(const_string name,
+    positive length, positive hash, env_variable address_to destination)
+{
+        positive found = destination ? shell_var_count
+            : env_find_hashed_span(name, length, hash);
+
+        return env_assignment_readonly_found_destination(
+            name, length, hash, found, destination);
 }
 
 PURE bool env_assignment_readonly_hashed_span(const_string name,
@@ -2944,10 +3165,10 @@ static COLD string_address env_append_value(string_address old, const_string val
         return made;
 }
 
-static bool shell_scalar_assign_destination(const_string name, positive length,
-                                      positive hash, const_string value,
-                                      bool append, bool bind_reference,
-                                      env_variable address_to destination)
+static bool shell_scalar_assign_destination_mode(
+    const_string name, positive length, positive hash, const_string value,
+    bool append, bool bind_reference, env_variable address_to destination,
+    bool protect)
 {
         shell_mark held;
         p8 address_to joined;
@@ -3005,8 +3226,10 @@ write_value:
         answer = bind_reference
                      ? shell_declare_binding(name, length, hash, value,
                                               (attributes & SHELL_ARRAY_INTEGER) != 0, destination)
-                     : env_write_destination(name, length, hash,
-                         env_find_hashed_span(name, length, hash), value, true, destination);
+                     : env_write_destination_mode(
+                           name, length, hash,
+                           env_find_hashed_span(name, length, hash), value,
+                           true, destination, protect);
         if (!destination && !bind_reference)
                 answer = env_write_noted(name, length, answer);
         if (append)
@@ -3014,12 +3237,22 @@ write_value:
         return answer;
 }
 
+static bool shell_scalar_assign_destination(
+    const_string name, positive length, positive hash, const_string value,
+    bool append, bool bind_reference, env_variable address_to destination)
+{
+        return shell_scalar_assign_destination_mode(
+            name, length, hash, value, append, bind_reference, destination,
+            true);
+}
+
 #define shell_scalar_assign(name, length, hash, value, append, binding) \
         shell_scalar_assign_destination(name, length, hash, value, append, binding, null)
 
-static bool shell_array_set_destination(const_string name, positive length, const_string key,
-                     positive key_length, const_string value, bool append,
-                     env_variable address_to destination)
+static bool shell_array_set_destination_mode(
+    const_string name, positive length, const_string key,
+    positive key_length, const_string value, bool append,
+    env_variable address_to destination, bool protect)
 {
         env_reference resolved = env_reference_destination(name, length, env_name_hash(name, length), destination);
         positive hash;
@@ -3029,6 +3262,8 @@ static bool shell_array_set_destination(const_string name, positive length, cons
 
         if (!resolved.valid)
                 return true;
+        if (protect && env_reference_readonly(resolved))
+                return false;
         if (resolved.element)
                 return false;
 
@@ -3052,8 +3287,9 @@ static bool shell_array_set_destination(const_string name, positive length, cons
                     SHELL_ARRAY_INDEXED | SHELL_ARRAY_ASSIGNED;
                 variable->declared = true;
                 if (!located.key)
-                        return shell_scalar_assign_destination(name, length, hash, value,
-                                                   append, false, destination);
+                        return shell_scalar_assign_destination_mode(
+                            name, length, hash, value, append, false,
+                            destination, protect);
         }
 
         if (append)
@@ -3098,6 +3334,15 @@ static bool shell_array_set_destination(const_string name, positive length, cons
             value, string_length(env_reading(value)));
 }
 
+static bool shell_array_set_destination(
+    const_string name, positive length, const_string key,
+    positive key_length, const_string value, bool append,
+    env_variable address_to destination)
+{
+        return shell_array_set_destination_mode(
+            name, length, key, key_length, value, append, destination, true);
+}
+
 COLD bool shell_array_set(const_string name, positive length, const_string key,
                      positive key_length, const_string value, bool append)
 {
@@ -3112,13 +3357,16 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
         the table itself survive so that a declared kind is not lost with the
         contents.
 */
-COLD bool shell_array_clear(const_string name, positive length)
+static COLD bool shell_array_clear_mode(const_string name, positive length,
+                                        bool protect)
 {
         env_reference resolved = env_reference_span(name, length);
         env_variable address_to variable;
         array_table address_to table;
 
         if (!resolved.valid || resolved.element)
+                return false;
+        if (protect && env_reference_readonly(resolved))
                 return false;
 
         if (resolved.index >= shell_var_count)
@@ -3149,6 +3397,11 @@ COLD bool shell_array_clear(const_string name, positive length)
         return true;
 }
 
+COLD bool shell_array_clear(const_string name, positive length)
+{
+        return shell_array_clear_mode(name, length, true);
+}
+
 /*
         A whole array made at once, from words or from numbers.
 
@@ -3157,18 +3410,27 @@ COLD bool shell_array_clear(const_string name, positive length)
         merging into it -- which is what an array the shell owns has to do,
         since a script may have left anything in it.
 */
-static COLD bool shell_array_replace(const_string name, positive length,
-                                     address_any items, positive count,
-                                     bool numbers)
+static COLD bool shell_array_replace_mode(
+    const_string name, positive length, address_any items, positive count,
+    bool numbers, bool protect)
 {
         p8 written[32];
         p8 number[32];
+        env_reference resolved = env_reference_span(name, length);
 
+        /* Type conversion and clearing are mutations too. Refuse the final
+           direct or nameref target before either can touch the old scalar. */
+        if (!resolved.valid || resolved.element ||
+            (protect && env_reference_readonly(resolved)))
+                return false;
+
+        name = resolved.name;
+        length = resolved.length;
         if (!shell_variable_attribute_set(name, length,
                                           SHELL_ARRAY_INDEXED |
                                               SHELL_ARRAY_ASSIGNED,
                                           SHELL_ARRAY_ASSOCIATIVE) ||
-            !shell_array_clear(name, length))
+            !shell_array_clear_mode(name, length, protect))
                 return false;
 
         for (positive at = 0; at < count; at++)
@@ -3183,13 +3445,22 @@ static COLD bool shell_array_replace(const_string name, positive length,
                 else
                         value = ((string_address address_to)items)[at];
 
-                if (!shell_array_set(name, length, written,
-                                     bipolar_into_string(written, (bipolar)at),
-                                     value, false))
+                if (!shell_array_set_destination_mode(
+                        name, length, written,
+                        bipolar_into_string(written, (bipolar)at), value,
+                        false, null, protect))
                         return false;
         }
 
         return true;
+}
+
+static COLD bool shell_array_replace(const_string name, positive length,
+                                     address_any items, positive count,
+                                     bool numbers)
+{
+        return shell_array_replace_mode(name, length, items, count, numbers,
+                                        true);
 }
 
 COLD bool shell_array_words(const_string name, positive length,
@@ -3241,15 +3512,22 @@ static COLD bool shell_array_forget_mode(const_string name, positive length,
                                          bool allow_readonly)
 {
         env_reference resolved = env_reference_span(name, length);
-        if (!resolved.valid || resolved.element ||
-            resolved.index >= shell_var_count)
+        if (!resolved.valid || resolved.element)
+                return true;
+
+        /* The narrow nameref-element exception may cross a stored readonly
+           bit, as Bash does, but it never crosses restricted-shell policy.
+           Ordinary callers also honor virtual readonly names here, before
+           scalar slot zero or the element table can be changed. */
+        if (env_restricted_name(resolved.name, resolved.length) ||
+            (!allow_readonly && env_reference_readonly(resolved)))
+                return false;
+        if (resolved.index >= shell_var_count)
                 return true;
 
         name = resolved.name;
         length = resolved.length;
         env_variable address_to variable = shell_vars + resolved.index;
-        if (!allow_readonly && (variable->attributes & SHELL_ARRAY_READONLY))
-                return false;
 
         array_location located = array_locate(variable, key, key_length);
         if (!located.keyed && !located.key)
@@ -3498,7 +3776,8 @@ static COLD fn shell_dynamic_versinfo()
                                          "15",      "1",
                                          "release", MOONWATER_MACHTYPE};
 
-        shell_array_words("BASH_VERSINFO", 13, parts, array_count(parts));
+        shell_array_replace_mode("BASH_VERSINFO", 13, parts,
+                                 array_count(parts), false, false);
         shell_variable_attribute_set("BASH_VERSINFO", 13, SHELL_ARRAY_READONLY, 0);
 }
 
@@ -3665,10 +3944,8 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                 {
                         p32 value = 0;
 
-                        if (system_call_3(syscall(getrandom),
-                                          (positive)address_of value,
-                                          sizeof(value), 0) !=
-                            (bipolar)sizeof(value))
+                        if (system_random_fill(address_of value,
+                                               sizeof(value), 0) < 0)
                                 value = (p32)(shell_random_next() << 16) ^
                                         (p32)shell_random_next();
 
@@ -3821,9 +4098,12 @@ static COLD fn shell_publish_readonly_id(const_string name, positive length,
                                          positive value)
 {
         p8 written[32];
+        positive hash = env_name_hash(name, length);
+        positive found = env_find_hashed_span(name, length, hash);
 
         written[positive_into_string(written, value)] = end;
-        if (!env_set((string_address)name, written))
+        if (!env_write_destination_mode(name, length, hash, found, written,
+                                        false, null, false))
                 return;
         shell_variable_attribute_set(name, length,
                                      SHELL_ARRAY_READONLY | SHELL_ARRAY_INTEGER,
@@ -4473,7 +4753,6 @@ COLD fn shell_cd(writer write, string_address input)
 static p8 shell_dirstack_pool[SHELL_DIRSTACK_BYTES];
 static positive shell_dirstack_at[SHELL_DIRSTACK_MAX];
 static positive shell_dirstack_count;
-static positive shell_dirstack_used;
 static string_address shell_dirstack_list[SHELL_DIRSTACK_MAX + 1];
 
 COLD string_address address_to shell_dirstack_entries(positive address_to count)
@@ -4511,7 +4790,6 @@ static COLD bool shell_dirstack_write(string_address address_to kept,
         }
 
         memory_copy(shell_dirstack_pool, scratch, used);
-        shell_dirstack_used = used;
         shell_dirstack_count = count;
 
         return true;
@@ -4673,7 +4951,6 @@ COLD fn shell_dirs(writer write, string_address input)
                         if (letter == 'c')
                         {
                                 shell_dirstack_count = 0;
-                                shell_dirstack_used = 0;
                                 return shell_answer(0);
                         }
 
@@ -5791,9 +6068,9 @@ static bool env_value_restore(string_address name, positive length,
         }
         p8 current = variable->attributes;
         variable->attributes = 0;
-        bool written = env_write_found_span(name, length, hash,
-                                            (positive)(variable - shell_vars),
-                                            value ? value : (string_address)"", false);
+        bool written = env_write_destination_mode(
+            name, length, hash, (positive)(variable - shell_vars),
+            value ? value : (string_address)"", false, null, false);
         variable->attributes = current;
         if (!written)
         {
@@ -6333,7 +6610,7 @@ static COLD fn shell_option_row(writer write, string_address name, bool on,
         }
         else
         {
-                string_to_field(write, name, width, ' ', true);
+                string_to_field_bulk(write, name, width, ' ', true);
                 write(address_of separator, 1);
                 write(on ? "on\n" : "off\n", on ? 3 : 4);
         }
@@ -6602,12 +6879,16 @@ static COLD bool env_optlist_take(string_address entry)
                 return false;
         if (!string_compare_max(entry, "SHELLOPTS=", 10))
         {
-                shell_optlist_apply(entry + 10, false);
+                /* Restricted and privileged Bash consume these transport
+                   names without letting the parent turn parser policy on. */
+                if (!shell_restricted && !shell_startup_privileged)
+                        shell_optlist_apply(entry + 10, false);
                 return true;
         }
         if (!string_compare_max(entry, "BASHOPTS=", 9))
         {
-                shell_optlist_apply(entry + 9, true);
+                if (!shell_restricted && !shell_startup_privileged)
+                        shell_optlist_apply(entry + 9, true);
                 return true;
         }
         return false;
@@ -8380,7 +8661,16 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                 readonly = global_meta ? (global_meta->attributes & SHELL_ARRAY_READONLY) != 0
                                        : env_readonly(word);
 
-                if (readonly && (scoped || (state->clear & DECLARE_READONLY)))
+                /* A readonly initializer is refused as one transaction.  In
+                   particular, `declare -n PATH=value` must not leave the
+                   nameref attribute behind after refusing the value: a
+                   restricted shell could otherwise turn an inherited PATH
+                   spelling into the name of an attacker-controlled variable.
+                   Attribute-only declarations retain Bash's behavior. */
+                if (readonly &&
+                    (scoped || mark || (state->clear & DECLARE_READONLY) ||
+                     ((state->attributes_set | state->attributes_clear) &
+                      SHELL_ARRAY_NAMEREF)))
                 {
                         string_format(log_error,
                                       "%s: %s: readonly variable\n",
@@ -10387,7 +10677,7 @@ fn printf_number(writer write, positive magnitude, p8 sign, positive base, bool 
                         precision = 1;
                 else
                 {
-                        writer_field(write, address_of sign, sign ? 1 : 0,
+                        writer_field_bulk(write, address_of sign, sign ? 1 : 0,
                                      width, ' ', left);
                         return;
                 }
@@ -10662,7 +10952,7 @@ fn printf_one(writer write, string_address format)
                         if (precision >= 0 && (positive)precision < length)
                                 length = (positive)precision;
 
-                        writer_field(write, value, length, width, ' ', left);
+                        writer_field_bulk(write, value, length, width, ' ', left);
 
                         continue;
                 }
@@ -10674,7 +10964,7 @@ fn printf_one(writer write, string_address format)
                         // Empty and missing operands still write a NUL byte.
                         // printf_next supplies a real one-byte zero object for
                         // the latter, so the same field writer handles both.
-                        writer_field(write, value, 1, width, ' ', left);
+                        writer_field_bulk(write, value, 1, width, ' ', left);
 
                         continue;
                 }
@@ -11904,6 +12194,11 @@ COLD fn shell_mapfile(writer write, string_address input)
                 return shell_answer(1);
         }
 
+        if (env_assignment_readonly_destination(
+                name, name_length, env_name_hash(name, name_length), null))
+                return shell_answer(string_report(
+                    log_error, 1, "mapfile: %s: readonly variable\n", name));
+
         p8 attributes = shell_array_attributes(name, name_length);
         if (attributes & (SHELL_ARRAY_READONLY | SHELL_ARRAY_ASSOCIATIVE))
                 return shell_answer(string_report(log_error, 1, "mapfile: %s: %s\n", name,
@@ -12414,7 +12709,7 @@ fn umask_written(writer write, positive mask)
         // field digits (including padding), then newline.
         write("0", 1);
 
-        writer_fill(write, padding, '0');
+        writer_fill_bulk(write, padding, '0');
 
         for (positive i = 0; i < length; i++)
                 write(digits + i, 1);
@@ -14807,6 +15102,9 @@ static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
 
         if (!spawn_allowed)
         {
+                /* Spawn means starting another program. A fork or clone still
+                   runs this image under the inherited filter; the two exec
+                   transitions are where it could become something else. */
                 refused[count++] = (p32)syscall(execve);
                 refused[count++] = (p32)syscall(execveat);
         }
@@ -14815,6 +15113,16 @@ static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
         {
                 refused[count++] = (p32)syscall(socket);
                 refused[count++] = (p32)syscall(connect);
+
+                /* io_uring performs SOCKET and CONNECT as queue operations,
+                   beyond a syscall-number filter's view. Refuse creation,
+                   registration and submission so a fresh or inherited ring
+                   cannot carry those operations. pidfd_getfd is the other
+                   direct way to acquire a socket without calling socket. */
+                refused[count++] = (p32)syscall(io_uring_setup);
+                refused[count++] = (p32)syscall(io_uring_enter);
+                refused[count++] = (p32)syscall(io_uring_register);
+                refused[count++] = (p32)syscall(pidfd_getfd);
         }
 
         return floodlight_confine(refused, count);
@@ -15189,11 +15497,24 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
                 environment = shell_environment();
                 if (environment &&
                     shell_find_in_path_alloc(shell_argv[0], address_of found,
-                                             address_of found_room) == 1 &&
-                    floodlight_launch_decide(found, shell_argv, shell_argc,
-                                             true, false, false, null) ==
-                        FLOODLIGHT_LAUNCH_ALLOW)
-                        system_execute(found, shell_argv, environment);
+                                             address_of found_room) == 1)
+                {
+                        bipolar external_failed;
+
+                        /* PATH selected an external image, even though its
+                           basename is also an applet.  Give that image the
+                           external policy identity and pinned script/exec
+                           path rather than borrowing the resident applet's
+                           policy row. */
+                        external_failed = shell_exec_file(
+                            found, shell_argv, shell_argc, environment);
+
+                        /* A policy refusal is a refusal of this command, not
+                           an exec error that may select a different
+                           implementation of it. */
+                        if (external_failed == -ERROR_ACCESS)
+                                exit(126);
+                }
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 exit(shell_tool_call_in(which, true));
@@ -17633,7 +17954,7 @@ static COLD fn shell_limit_label(writer write, shell_limit address_to limit,
                 write(limit->bash_line, string_length(limit->bash_line));
         else
         {
-                string_to_field(write, limit->name, 20, ' ', true);
+                string_to_field_bulk(write, limit->name, 20, ' ', true);
                 write(" ", 1);
         }
 }
@@ -18027,6 +18348,13 @@ fn shell_enable(writer write, string_address input)
 
                 return shell_answer(0);
         }
+
+        /* Removing a builtin is permitted in restricted mode; restoring one
+           would let a script replace the fixed command surface after entry.
+           No-name invocations above remain pure listings. */
+        if (shell_restricted && !off)
+                return shell_answer(
+                    string_report(log_error, 1, "enable: restricted\n"));
 
         while (index < shell_argc)
         {

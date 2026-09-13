@@ -1372,9 +1372,9 @@ static fn job_death_long(bipolar child, positive number, bool dumped,
         name[length] = end;
         digits[width] = end;
         shell_diagnostic_where();
-        string_to_field(log_error, digits, width < 5 ? 5 : width, ' ', false);
+        string_to_field_bulk(log_error, digits, width < 5 ? 5 : width, ' ', false);
         log_error(str(" "));
-        string_to_field(log_error, name, JOB_SIGNAL_DESC_WIDTH, ' ', true);
+        string_to_field_bulk(log_error, name, JOB_SIGNAL_DESC_WIDTH, ' ', true);
 
         if (dumped)
                 log_error(str("(core dumped) "));
@@ -1654,7 +1654,7 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
                 write(status, string_length(status));
                 column += string_length(status);
 
-                string_to_field(write, (string_address) "",
+                string_to_field_bulk(write, (string_address) "",
                                 column < JOB_DASH_COLUMN
                                     ? JOB_DASH_COLUMN - column : 1,
                                 ' ', true);
@@ -1670,7 +1670,7 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
                 string_format(write, "  ");
 
         job_status_text(entry, detailed, status);
-        string_to_field(write, status, JOB_STATUS_WIDTH, ' ', true);
+        string_to_field_bulk(write, status, JOB_STATUS_WIDTH, ' ', true);
 
         /*
                 A pipeline's detail is one line per process, as bash prints
@@ -1713,7 +1713,7 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
                                 {
                                         string_format(write, "\n     %b ",
                                                       shell_wait_table[at].pid);
-                                        string_to_field(write, (string_address) "",
+                                        string_to_field_bulk(write, (string_address) "",
                                                         JOB_STATUS_WIDTH - 2, ' ', true);
                                         string_format(write, "| ");
                                 }
@@ -4486,7 +4486,7 @@ static fn history_listed(writer write, positive at)
         p8 shown[24];
 
         positive_into_string(shown, history_first + at);
-        writer_field(write, shown, string_length(shown), 5, ' ', false);
+        writer_field_bulk(write, shown, string_length(shown), 5, ' ', false);
         string_format(write, "  %s\n", history_text[at]);
 }
 
@@ -4566,6 +4566,15 @@ fn shell_history(writer write, string_address input)
 
                         if (!where)
                                 return shell_answer(string_report(log_error, 1, "history: no history file\n"));
+
+                        /* Restricted Bash permits its inherited HISTFILE but
+                           does not let a command select another directory by
+                           spelling an explicit filename with '/'. */
+                        if (shell_restricted && named &&
+                            string_first_of(named, '/'))
+                                return shell_answer(string_report(
+                                    log_error, 1,
+                                    "history: %s: restricted\n", named));
 
                         if (letter == 'a')
                                 return shell_answer(
@@ -4770,21 +4779,8 @@ static bool history_edit_directory(p8 address_to path)
 
         for (positive attempt = 0; attempt < 64; attempt++)
         {
-                positive filled = 0;
-
-                while (filled < sizeof(random))
-                {
-                        bipolar got = system_call_3(
-                            syscall(getrandom), (positive)(random + filled),
-                            sizeof(random) - filled, 0);
-
-                        if (got == -4) /* EINTR */
-                                continue;
-                        if (got <= 0)
-                                return false;
-
-                        filled += (positive)got;
-                }
+                if (system_random_fill(random, sizeof(random), 0) < 0)
+                        return false;
 
                 memory_into_hex(path + sizeof(HISTORY_EDIT_PREFIX) - 1,
                                 random, sizeof(random));
@@ -5633,16 +5629,10 @@ static bool exec_here_string_expand_isolated(string_address word,
         return exec_helper_collect(child, ends[0], start, out, out_length);
 }
 
-/*
-        A here-document body, reaching the command through a pipe.
-
-        A body that fits in the pipe is written and forgotten about. A longer
-        one cannot be: nothing is draining the pipe yet, so the write would
-        block against a reader that has not started. A child is left holding
-        the writing end instead, which is the shape every shell settles on.
-*/
-#define PIPE_HOLDS 60000
-
+/* A here-document body reaches the command through a writer child. Pipe
+   capacity is a per-pipe kernel decision and can fall below its usual value
+   under memory pressure, so the shell must never fill it before the reader
+   exists. An empty body needs no writer. */
 static bipolar exec_here_pipe(string_address body, positive length)
 {
         b32 ends[2];
@@ -5651,27 +5641,10 @@ static bipolar exec_here_pipe(string_address body, positive length)
         if (system_pipe(ends, 0) < 0)
                 return -1;
 
-        if (length <= PIPE_HOLDS)
+        if (!length)
         {
-                bipolar wrote = length ? system_write_once(ends[1], body, length)
-                                       : 0;
-
-                if (wrote == (bipolar)length)
-                {
-                        system_close(ends[1]);
-
-                        return ends[0];
-                }
-
-                // A signal can cut the write short, and a write nobody
-                // looked at left the command reading half a body. What is
-                // left goes the way a long body does, from a child that can
-                // wait for the reader.
-                if (wrote > 0)
-                {
-                        body += wrote;
-                        length -= (positive)wrote;
-                }
+                system_close(ends[1]);
+                return ends[0];
         }
 
         log_flush();
@@ -5682,9 +5655,7 @@ static bipolar exec_here_pipe(string_address body, positive length)
                 system_close(ends[0]);
                 trap_default_all();
 
-                system_write_all(ends[1], body, length);
-
-                exit(0);
+                exit(system_write_all(ends[1], body, length) == length ? 0 : 1);
         }
 
         system_close(ends[1]);
@@ -6154,7 +6125,10 @@ static bool exec_redirect_apply(b32 index)
 
                         if (!exec_redirect_var_store(want->var, want->var_length,
                                                      (b32)moved))
+                        {
+                                system_close(moved);
                                 return false;
+                        }
 
                         log_flush();
                         continue;
@@ -7232,7 +7206,7 @@ fn exec_function_import_environment(string_address address_to environment)
 {
         b32 status = shell_status;
 
-        if (!shell_bash_compat || shell_startup_privileged)
+        if (!shell_bash_compat || shell_startup_privileged || shell_restricted)
                 return;
 
         for (positive at = 0; environment && environment[at]; at++)
@@ -9091,7 +9065,6 @@ static b32 exec_dispatch(b32 command_word)
                 }
 
                 shell_command_name_address = name;
-                shell_command_name_length = named.y;
         }
         else
                 named = string_hash_33_length(name);
@@ -11611,7 +11584,6 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
         string_address executable;
         positive2 named;
         b32 at;
-        bool tool = false;
 
         if (node->kind != NODE_SIMPLE || node->redirect_count ||
             !node->word_count || node->word_count > EXEC_STAGE_WORDS_MAX)
@@ -11655,8 +11627,6 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
                     exec_control_builtin(name, false))
                         return -1;
 
-                tool = shell_tool_find_hashed(name, named) != SHELL_TOOLS;
-
                 if (shell_find_in_path_alloc(name, address_of found,
                                              address_of found_room) != 1)
                         return -1;
@@ -11664,11 +11634,12 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
                 executable = found;
         }
 
-        /* The literal fast path must make the same name/flag decision as the
-           ordinary dispatcher. A restricted tool falls back to the child that
-           can run the resident applet under its filter. */
+        /* PATH selected an external image even when its basename is also a
+           resident applet.  Give that image external policy identity.  An
+           active register sends it through the child path, whose final check
+           pins the executable; a stock kernel may still use direct spawn. */
         if (floodlight_launch_decide(executable, words,
-                                     (positive)node->word_count, tool,
+                                     (positive)node->word_count, false,
                                      false, false, null) !=
             FLOODLIGHT_LAUNCH_ALLOW)
                 return -1;
@@ -11854,10 +11825,9 @@ static b32 exec_coproc(b32 index)
 
                 system_close(into[1]);
                 system_close(from[0]);
-                system_duplicate(into[0], standard_input_descriptor, 0);
-                system_close(into[0]);
-                system_duplicate(from[1], standard_output_descriptor, 0);
-                system_close(from[1]);
+                if (shell_child_fd_move(into[0], standard_input_descriptor) < 0 ||
+                    shell_child_fd_move(from[1], standard_output_descriptor) < 0)
+                        exec_child_leave(126);
 
                 b32 status = exec_node(node->left);
 
@@ -12023,9 +11993,9 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                            its first failing simple command. Tail exec is
                            suppressed because the shell has pipeline
                            bookkeeping left to do when the stage returns. */
-                        if (upstream >= 0 && upstream != 0)
+                        if (upstream >= 0)
                         {
-                                if (system_duplicate(upstream, 0, 0) < 0)
+                                if (shell_child_fd_move(upstream, 0) < 0)
                                 {
                                         system_close(upstream);
                                         upstream = -1;
@@ -12035,7 +12005,6 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                                         break;
                                 }
 
-                                system_close(upstream);
                         }
 
                         upstream = -1;
@@ -12086,17 +12055,24 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         shell_tail_command =
                             parse_nodes[child].kind == NODE_SIMPLE;
 
+                        /* The unused read end can itself be fd 0 when the
+                           caller closed stdin.  Close it before putting the
+                           previous stage there; closing it afterwards would
+                           close the newly installed input.  It cannot alias
+                           upstream, which was open before this pipe existed. */
+                        if (!last)
+                                system_close(ends[0]);
+
                         if (upstream >= 0)
                         {
-                                system_duplicate(upstream, 0, 0);
-                                system_close(upstream);
+                                if (shell_child_fd_move(upstream, 0) < 0)
+                                        exec_child_leave(126);
                         }
 
                         if (!last)
                         {
-                                system_close(ends[0]);
-                                system_duplicate(ends[1], 1, 0);
-                                system_close(ends[1]);
+                                if (shell_child_fd_move(ends[1], 1) < 0)
+                                        exec_child_leave(126);
                         }
 
                         status = exec_node(child);

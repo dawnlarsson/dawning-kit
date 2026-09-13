@@ -18,7 +18,7 @@
         the macOS entry and the remaining kernel/remote shell operations.
 
         Where a utility exists in this tree it is called rather than spawned.
-        cp, ln, rm, mkdir, mknod, chmod, find and nproc here are the same
+        cp, ln, rm, mkdir, mknod, chmod and find here are the same
         functions the image ships, invoked in this address space through the
         registry in src/sh/builtin.c. That is deliberate: if our cp is wrong,
         the build breaks, which is the only way a userspace gets exercised by
@@ -269,21 +269,17 @@ static bool build_setting_set(string_address name, string_address value)
 #define BUILD_WORD_ROOM 8192
 
 static p8 build_text_arena[BUILD_TEXT_ROOM];
-static positive build_text_used;
+static memory_arena build_text_storage = {build_text_arena, BUILD_TEXT_ROOM, 0};
 
 static b32 build_die(string_address text);
 
 static p8 address_to build_text_take(positive want)
 {
-        p8 address_to answer;
-
-        if (build_text_used + want > BUILD_TEXT_ROOM)
+        p8 address_to answer = memory_arena_take(address_of build_text_storage,
+                                                want, 1);
+        if (!answer)
                 build_die("build: ran out of room for text");
-
-        answer = build_text_arena + build_text_used;
-        build_text_used += want;
         answer[0] = end;
-
         return answer;
 }
 
@@ -1172,46 +1168,11 @@ static fn build_pair_sort(positive count)
 {
         for (positive at = 0; at < count; at++)
                 build_pair_order[at] = at;
-
-        for (positive width = 1; width < count; width *= 2)
-        {
-                positive at = 0;
-
-                while (at < count)
-                {
-                        positive left = at;
-                        positive middle = at + width;
-                        positive right = at + width * 2;
-                        positive one = left;
-                        positive two = middle;
-                        positive into = left;
-
-                        if (middle > count)
-                                middle = count;
-                        if (right > count)
-                                right = count;
-
-                        two = middle;
-
-                        while (one < middle && two < right)
-                                build_pair_scratch[into++] =
-                                        build_pair_compare(build_pair_order[two],
-                                                           build_pair_order[one]) < 0
-                                                ? build_pair_order[two++]
-                                                : build_pair_order[one++];
-
-                        while (one < middle)
-                                build_pair_scratch[into++] = build_pair_order[one++];
-
-                        while (two < right)
-                                build_pair_scratch[into++] = build_pair_order[two++];
-
-                        at = right;
-                }
-
-                for (positive copy = 0; copy < count; copy++)
-                        build_pair_order[copy] = build_pair_scratch[copy];
-        }
+        positive address_to sorted = array_merge_sort(
+            build_pair_order, build_pair_scratch, count, build_pair_compare);
+        if (sorted != build_pair_order)
+                memory_copy_apart(build_pair_order, sorted,
+                                   count * sizeof(build_pair_order[0]));
 }
 
 //      CONFIG_NAME=value, and only that. The name is CONFIG_ followed by a
@@ -1517,26 +1478,22 @@ static build_request build_requests[BUILD_REQUEST_ROOM];
 static build_request build_effective[BUILD_REQUEST_ROOM];
 
 //      Names outlive the buffer the profile was read into and there are
-//      thousands of them, so they get an arena of their own rather than the
-//      text ring, which recycles after BUILD_TEXT_LIVE and would hand the
-//      report a name belonging to a later option.
+//      thousands of them, so their pool resets with the profile request list.
 #define BUILD_NAME_ROOM (1 << 20)
 
 static p8 build_name_arena[BUILD_NAME_ROOM];
-static positive build_name_used;
+static memory_arena build_name_storage = {build_name_arena, BUILD_NAME_ROOM, 0};
 
 static string_address build_name_keep(string_address text, positive length)
 {
-        p8 address_to into;
-
-        if (build_name_used + length + 1 > BUILD_NAME_ROOM)
+        if (length == positive_max)
                 return null;
-
-        into = build_name_arena + build_name_used;
+        p8 address_to into = memory_arena_take(address_of build_name_storage,
+                                              length + 1, 1);
+        if (!into)
+                return null;
         memory_copy(into, text, length);
         into[length] = end;
-        build_name_used += length + 1;
-
         return (string_address)into;
 }
 static string_address build_built[BUILD_PAIR_ROOM];
@@ -1576,7 +1533,7 @@ static b32 build_verify_config(string_address config,
         positive lingering = 0;
         build_lines walk;
 
-        build_name_used = 0;
+        build_name_storage.used = 0;
 
         if (!build_is_file(config))
         {
@@ -2458,36 +2415,18 @@ static string_address build_binutil(string_address compiler,
         pages; see the linker script for why.
 */
 static bool build_hex_field(string_address text, positive length,
-                            positive address_to answer)
+                             positive address_to answer)
 {
-        positive value = 0;
-        positive at = 0;
-
-        if (length > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
-                at = 2;
-
-        if (at >= length)
+        if (!length)
                 return false;
-
-        for (; at < length; at++)
-        {
-                p8 byte = text[at];
-                positive digit;
-
-                if (byte >= '0' && byte <= '9')
-                        digit = byte - '0';
-                else if (byte >= 'a' && byte <= 'f')
-                        digit = byte - 'a' + 10;
-                else if (byte >= 'A' && byte <= 'F')
-                        digit = byte - 'A' + 10;
-                else
-                        return false;
-
-                value = value * 16 + digit;
-        }
-
+        positive prefix = length > 2 && text[0] == '0' &&
+                          (text[1] == 'x' || text[1] == 'X') ? 2 : 0;
+        positive used;
+        positive value = string_digits_hexadecimal_max(
+            text + prefix, length - prefix, address_of used);
+        if (!used || used != length - prefix)
+                return false;
         address_to answer = value;
-
         return true;
 }
 
@@ -3525,111 +3464,10 @@ static b32 build_floor(string_address arch)
 }
 
 /*
-        Asking one of ours for an answer rather than for an effect.
-
-        A tool writes to its standard output, which is fine when the point is
-        that somebody reads it and no use at all when the build needs the
-        number. The fork is what makes that safe: the tool runs in a child
-        with its output on a pipe, so this address space never has two tools
-        in it and the static arenas they keep stay theirs alone.
-
-        Only for short answers. A tool that writes more than a pipe will hold
-        before the parent reads would deadlock, and every caller here wants a
-        word.
-*/
-static bipolar build_tool_capture(string_address address_to words,
-                                  p8 address_to into, positive capacity)
-{
-        b32 pair[2];
-        b32 child;
-        positive used = 0;
-
-        if (!capacity)
-                return -1;
-
-        into[0] = end;
-
-        if (pipe(pair) < 0)
-                return -1;
-
-        log_flush();
-        child = fork();
-
-        if (child == 0)
-        {
-                close(pair[0]);
-                dup2(pair[1], 1);
-                close(pair[1]);
-                exit(build_tool_words(words));
-        }
-
-        close(pair[1]);
-
-        if (child < 0)
-        {
-                close(pair[0]);
-                return -1;
-        }
-
-        while (used + 1 < capacity)
-        {
-                bipolar got = read(pair[0], into + used, capacity - used - 1);
-
-                if (got <= 0)
-                        break;
-
-                used += (positive)got;
-        }
-
-        into[used] = end;
-        close(pair[0]);
-        build_wait(child);
-
-        //      A tool's answer is a line; the caller wants the word on it.
-        while (used && (into[used - 1] == '\n' || into[used - 1] == '\r'))
-                into[--used] = end;
-
-        return (bipolar)used;
-}
-
-static string_address build_tool_answer(string_address name, ...)
-{
-        string_address words[BUILD_ARGUMENT_ROOM];
-        p8 address_to into = build_text_take(4096);
-        positive count = 0;
-        string_address piece = name;
-        var_args rest;
-
-        var_list(rest, name);
-
-        while (piece && count + 1 < BUILD_ARGUMENT_ROOM)
-        {
-                words[count++] = piece;
-                piece = var_list_get(rest, string_address);
-        }
-
-        var_list_end(rest);
-        words[count] = null;
-
-        if (build_tool_capture((string_address address_to)words, into, 4096) < 0)
-                return "";
-
-        return (string_address)into;
-}
-
-static positive build_processors()
-{
-        string_address answer = build_tool_answer("nproc", null);
-        positive count = string_to_positive(answer);
-
-        return count ? count : 1;
-}
-
-/*
         A key whose value is a command.
 
         pre and post carry shell source, not an argument vector -- a profile
-        writes `#> post sh kernel/profile/post/rpi.sh` -- so this is the one
+        writes `#> post sh path/to/setup.sh` -- so this is the one
         place a shell is still the right thing to run. Nothing is passed to
         it but the text.
 */
@@ -4393,10 +4231,14 @@ static b32 build_local(string_address address_to profiles, positive count)
                 log_flush();
         }
 
-        //      Ours, asked in a forked child, because the answer is a word
-        //      this needs rather than a line somebody reads.
         {
-                string_address system = build_tool_answer("uname", null);
+                file_machine machine;
+                if (!file_machine_read(address_of machine))
+                {
+                        log_error("uname: cannot read system name\n", 0);
+                        machine.system[0] = end;
+                }
+                string_address system = machine.system;
 
                 if (!word_is(system, "Linux"))
                         return build_die(build_join(
@@ -4727,7 +4569,7 @@ static b32 build_local(string_address address_to profiles, positive count)
                 positive at = 0;
                 bool good = true;
 
-                cores = build_number(build_processors());
+                cores = build_number(nproc_count(false, 0));
                 kernel_image = build_key_one("kernel_image", address_of good);
                 kernel_export = build_key_one("kernel_export", address_of good);
 

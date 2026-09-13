@@ -56,13 +56,7 @@ static p32 gzip_isize;
 static p64 gzip_bits;
 static p8 gzip_bitn;
 static p8 gzip_in_buf[GZIP_IN];
-static positive gzip_in_at;
-static positive gzip_in_have;
-static bool gzip_in_eof;
-static bipolar gzip_in_fd;
-static p8 address_to gzip_in_mem;
-static positive gzip_in_mem_len;
-static positive gzip_in_mem_at;
+static byte_input gzip_input = {.buf = gzip_in_buf, .room = GZIP_IN};
 
 /* A linear history prefix lets the assembly decoder copy whole matches.
    Framing and pull reads slide this prefix only once per output slab. */
@@ -80,9 +74,7 @@ static bool gzip_stored_open;
 static positive gzip_stored_left;
 static bool gzip_finished;
 static bipolar gzip_out_fd;
-static p8 address_to gzip_out_mem;
-static positive gzip_out_cap;
-static positive gzip_out_used;
+static byte_store gzip_output;
 static bool gzip_out_failed;
 static string_address gzip_why;
 static b32 gzip_status;
@@ -113,71 +105,28 @@ static bool gzip_fail(string_address why)
         return false;
 }
 
-static bool gzip_in_need(positive want)
+static bool gzip_in_need(void)
 {
-        bipolar got;
-
-        if (gzip_in_have - gzip_in_at >= want)
-                return true;
-        if (gzip_in_eof)
-                return gzip_in_have > gzip_in_at;
-
-        if (gzip_in_at)
-        {
-                if (gzip_in_at < gzip_in_have)
-                        memory_copy_apart(gzip_in_buf, gzip_in_buf + gzip_in_at,
-                                          gzip_in_have - gzip_in_at);
-                gzip_in_have -= gzip_in_at;
-                gzip_in_at = 0;
-        }
-
-        if (gzip_in_mem)
-        {
-                positive left = gzip_in_mem_len - gzip_in_mem_at;
-                positive take = left > (GZIP_IN - gzip_in_have)
-                                    ? (GZIP_IN - gzip_in_have)
-                                    : left;
-
-                if (take)
-                {
-                        memory_copy(gzip_in_buf + gzip_in_have,
-                                    gzip_in_mem + gzip_in_mem_at, take);
-                        gzip_in_have += take;
-                        gzip_in_mem_at += take;
-                }
-                if (gzip_in_mem_at >= gzip_in_mem_len)
-                        gzip_in_eof = true;
-                return gzip_in_have > gzip_in_at;
-        }
-
-        got = system_read_retry((positive)gzip_in_fd,
-                                gzip_in_buf + gzip_in_have,
-                                GZIP_IN - gzip_in_have);
-        if (got < 0)
-                return gzip_fail("gzip read failed");
-        if (!got)
-                gzip_in_eof = true;
-        else
-                gzip_in_have += (positive)got;
-        return gzip_in_have > gzip_in_at;
+        bipolar got = byte_input_need(address_of gzip_input, 1);
+        return got < 0 ? gzip_fail("gzip read failed") : got != 0;
 }
 
 static bipolar gzip_in_byte(void)
 {
-        if (gzip_in_at >= gzip_in_have && !gzip_in_need(1))
+        if (gzip_input.at >= gzip_input.have && !gzip_in_need())
                 return -1;
-        if (gzip_in_at >= gzip_in_have)
+        if (gzip_input.at >= gzip_input.have)
                 return -1;
-        return gzip_in_buf[gzip_in_at++];
+        return gzip_in_buf[gzip_input.at++];
 }
 
 static bool gzip_align(void)
 {
         positive rewind = gzip_bitn >> 3;
 
-        if (rewind > gzip_in_at)
+        if (rewind > gzip_input.at)
                 return gzip_fail("gzip bit rewind");
-        gzip_in_at -= rewind;
+        gzip_input.at -= rewind;
         gzip_bits = 0;
         gzip_bitn = 0;
         return true;
@@ -211,35 +160,18 @@ static bool gzip_out_flush(void)
                 return false;
         if (!gzip_out_fill)
                 return true;
-        if (gzip_out_mem)
+        if (gzip_output.bytes)
         {
-                if (gzip_out_used > gzip_out_cap ||
-                    gzip_out_fill > gzip_out_cap - gzip_out_used)
+                if (!byte_store_append_exact(address_of gzip_output,
+                                              gzip_out_buf, gzip_out_fill))
                 {
                         gzip_out_failed = true;
                         return gzip_fail("gzip output is too small");
                 }
-                memory_copy(gzip_out_mem + gzip_out_used, gzip_out_buf,
-                            gzip_out_fill);
-                gzip_out_used += gzip_out_fill;
-                if (gzip_decoding)
-                        memory_copy(gzip_out_storage,
-                                    gzip_out_buf + gzip_out_fill - GZIP_WINDOW,
-                                    GZIP_WINDOW);
-                gzip_out_fill = 0;
-                return true;
         }
-        if (gzip_out_fd < 0)
-        {
-                if (gzip_decoding)
-                        memory_copy(gzip_out_storage,
-                                    gzip_out_buf + gzip_out_fill - GZIP_WINDOW,
-                                    GZIP_WINDOW);
-                gzip_out_fill = 0;
-                return true;
-        }
-        if (system_write_all((positive)gzip_out_fd, gzip_out_buf,
-                             gzip_out_fill) != gzip_out_fill)
+        else if (gzip_out_fd >= 0 &&
+                 system_write_all((positive)gzip_out_fd, gzip_out_buf,
+                                  gzip_out_fill) != gzip_out_fill)
         {
                 gzip_out_failed = true;
                 return gzip_fail("gzip write failed");
@@ -420,9 +352,9 @@ static bipolar gzip_decode(p16 address_to count, p16 address_to symbol)
         {
                 /* Stay inside this input slab. The canonical tail does the
                    refills, so alignment can always return lookahead bytes. */
-                while (gzip_bitn < root && gzip_in_at < gzip_in_have)
+                while (gzip_bitn < root && gzip_input.at < gzip_input.have)
                 {
-                        gzip_bits |= (p64)gzip_in_buf[gzip_in_at++] << gzip_bitn;
+                        gzip_bits |= (p64)gzip_in_buf[gzip_input.at++] << gzip_bitn;
                         gzip_bitn += 8;
                 }
                 p16 cell = table[gzip_bits & (((positive)1 << root) - 1)];
@@ -592,7 +524,7 @@ typedef struct
 static fn gzip_fast_span(void)
 {
         gzip_decode_job job = {gzip_bits, gzip_bitn,
-                gzip_in_buf + gzip_in_at, gzip_in_buf + gzip_in_have,
+                gzip_in_buf + gzip_input.at, gzip_in_buf + gzip_input.have,
                 gzip_out_buf + gzip_out_fill, gzip_out_buf + GZIP_OUT,
                 gzip_wpos, gzip_lit_quick, gzip_dist_quick,
                 gzip_length_info, gzip_distance_info};
@@ -600,7 +532,7 @@ static fn gzip_fast_span(void)
         deflate_decode_span(address_of job);
         gzip_bits = job.bits;
         gzip_bitn = (p8)job.count;
-        gzip_in_at = (positive)(job.next - gzip_in_buf);
+        gzip_input.at = (positive)(job.next - gzip_in_buf);
         positive n = (positive)(job.out - start);
         if (n)
                 gzip_record(start, n), gzip_out_fill += n;
@@ -622,7 +554,7 @@ static bool gzip_codes(void)
                         return true;
                 }
 
-                if (gzip_in_have - gzip_in_at >= 8 &&
+                if (gzip_input.have - gzip_input.at >= 8 &&
                     GZIP_OUT - gzip_out_fill >= GZIP_MAX_MATCH)
                         gzip_fast_span();
 
@@ -687,19 +619,19 @@ static bool gzip_stored(void)
                         gzip_paused = true;
                         return true;
                 }
-                if (gzip_in_at == gzip_in_have && !gzip_in_need(1))
+                if (gzip_input.at == gzip_input.have && !gzip_in_need())
                         return gzip_fail("gzip truncated stored block");
-                positive take = gzip_in_have - gzip_in_at;
+                positive take = gzip_input.have - gzip_input.at;
                 if (take > gzip_stored_left)
                         take = gzip_stored_left;
                 if (take > GZIP_OUT - gzip_out_fill)
                         take = GZIP_OUT - gzip_out_fill;
                 if (!take)
                         return gzip_fail("gzip truncated stored block");
-                p8 address_to bytes = gzip_in_buf + gzip_in_at;
+                p8 address_to bytes = gzip_in_buf + gzip_input.at;
                 memory_copy_apart(gzip_out_buf + gzip_out_fill, bytes, take);
                 gzip_record(bytes, take);
-                gzip_in_at += take;
+                gzip_input.at += take;
                 gzip_out_fill += take;
                 gzip_stored_left -= take;
                 if (!gzip_pull && gzip_out_fill >= GZIP_OUT && !gzip_out_flush())
@@ -880,9 +812,9 @@ static bool gzip_stream_decode(void)
 
         gzip_why = null;
         gzip_out_failed = false;
-        gzip_in_at = 0;
-        gzip_in_have = 0;
-        gzip_in_eof = false;
+        gzip_input.at = 0;
+        gzip_input.have = 0;
+        gzip_input.eof = false;
         gzip_out_fill = 0;
         gzip_bits = 0;
         gzip_bitn = 0;
@@ -895,9 +827,9 @@ static bool gzip_stream_decode(void)
 
         for (;;)
         {
-                if (!gzip_in_need(1))
+                if (!gzip_in_need())
                         break;
-                if (gzip_in_at >= gzip_in_have)
+                if (gzip_input.at >= gzip_input.have)
                         break;
                 if (!gzip_member())
                         return false;
@@ -914,18 +846,18 @@ static bipolar gzip_inflate_mem(p8 address_to src, positive src_len,
 {
         bool ok;
 
-        gzip_in_fd = -1;
-        gzip_in_mem = src;
-        gzip_in_mem_len = src_len;
-        gzip_in_mem_at = 0;
+        gzip_input.fd = -1;
+        gzip_input.mem = src;
+        gzip_input.mem_len = src_len;
+        gzip_input.mem_at = 0;
         gzip_out_fd = -1;
-        gzip_out_mem = dst;
-        gzip_out_cap = dst_cap;
-        gzip_out_used = 0;
+        gzip_output.bytes = dst;
+        gzip_output.room = dst_cap;
+        gzip_output.used = 0;
         ok = gzip_stream_decode();
-        gzip_in_mem = null;
-        gzip_out_mem = null;
-        return ok ? (bipolar)gzip_out_used : -1;
+        gzip_input.mem = null;
+        gzip_output.bytes = null;
+        return ok ? (bipolar)gzip_output.used : -1;
 }
 
 static p16 gzip_revbits(p16 code, p8 len)
@@ -1208,9 +1140,9 @@ static bool gzip_enc_pull(void)
                         gzip_src_eof = true;
                 return gzip_src_at < gzip_src_fill || gzip_src_eof;
         }
-        if (gzip_in_fd < 0)
+        if (gzip_input.fd < 0)
                 return true;
-        got = system_read_retry((positive)gzip_in_fd,
+        got = system_read_retry((positive)gzip_input.fd,
                                 gzip_src_hold + gzip_src_fill, room);
         if (got < 0)
                 return gzip_fail("gzip read failed");
@@ -1853,29 +1785,29 @@ static bipolar gzip_deflate_mem(p8 address_to src, positive src_len,
 {
         bool ok;
 
-        gzip_in_fd = -1;
+        gzip_input.fd = -1;
         gzip_enc_mem = src;
         gzip_enc_mem_len = src_len;
         gzip_enc_mem_at = 0;
         gzip_out_fd = -1;
-        gzip_out_mem = dst;
-        gzip_out_cap = dst_cap;
-        gzip_out_used = 0;
+        gzip_output.bytes = dst;
+        gzip_output.room = dst_cap;
+        gzip_output.used = 0;
         ok = gzip_stream_encode(level);
         gzip_enc_mem = null;
-        gzip_out_mem = null;
-        return ok ? (bipolar)gzip_out_used : -1;
+        gzip_output.bytes = null;
+        return ok ? (bipolar)gzip_output.used : -1;
 }
 
 static fn gzip_in_from_fd(bipolar in)
 {
-        gzip_in_fd = in;
-        gzip_in_mem = null;
-        gzip_in_mem_len = 0;
-        gzip_in_mem_at = 0;
-        gzip_in_at = 0;
-        gzip_in_have = 0;
-        gzip_in_eof = false;
+        gzip_input.fd = in;
+        gzip_input.mem = null;
+        gzip_input.mem_len = 0;
+        gzip_input.mem_at = 0;
+        gzip_input.at = 0;
+        gzip_input.have = 0;
+        gzip_input.eof = false;
 }
 
 static bool gzip_decode_begin(bipolar in)
@@ -1885,7 +1817,7 @@ static bool gzip_decode_begin(bipolar in)
         gzip_out_failed = false;
         gzip_in_from_fd(in);
         gzip_out_fd = -1;
-        gzip_out_mem = null;
+        gzip_output.bytes = null;
         gzip_out_fill = 0;
         gzip_bits = 0;
         gzip_bitn = 0;
@@ -1905,8 +1837,8 @@ static bool gzip_decode_begin_prefix(bipolar in, p8 address_to prefix,
         if (n > GZIP_IN)
                 return gzip_fail("gzip prefix");
         memory_copy(gzip_in_buf, prefix, n);
-        gzip_in_have = n;
-        gzip_in_at = 0;
+        gzip_input.have = n;
+        gzip_input.at = 0;
         return true;
 }
 
@@ -1939,12 +1871,12 @@ static bipolar gzip_decode_read(p8 address_to dst, positive n)
                 if (gzip_finished)
                         break;
 
-                if (!gzip_in_need(1) && !gzip_head_done)
+                if (!gzip_in_need() && !gzip_head_done)
                 {
                         gzip_finished = true;
                         break;
                 }
-                if (gzip_in_at >= gzip_in_have && gzip_in_eof && !gzip_head_done)
+                if (gzip_input.at >= gzip_input.have && gzip_input.eof && !gzip_head_done)
                 {
                         gzip_finished = true;
                         break;
@@ -1972,8 +1904,8 @@ static bool gzip_decode_end(void)
 static bool gzip_encode_begin(bipolar out, p8 level)
 {
         gzip_out_fd = out;
-        gzip_out_mem = null;
-        gzip_in_fd = -1;
+        gzip_output.bytes = null;
+        gzip_input.fd = -1;
         gzip_enc_mem = null;
         gzip_feed = null;
         return gzip_encode_setup(level);
@@ -2009,10 +1941,10 @@ static b32 gzip_stream(bipolar in, bipolar out, bool decode, p8 level)
 {
         bool ok;
 
-        gzip_in_fd = in;
-        gzip_in_mem = null;
+        gzip_input.fd = in;
+        gzip_input.mem = null;
         gzip_out_fd = out;
-        gzip_out_mem = null;
+        gzip_output.bytes = null;
         gzip_enc_mem = null;
         gzip_feed = null;
         gzip_status = 0;

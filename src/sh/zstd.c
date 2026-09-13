@@ -103,28 +103,15 @@ typedef struct
         p8 held;
 } zstd_xxh;
 
-typedef struct
-{
-        bipolar fd;
-        p8 address_to mem;
-        positive mem_len;
-        positive mem_at;
-        p8 buf[ZSTD_IN];
-        positive at;
-        positive have;
-        bool eof;
-} zstd_in;
-
 static string_address zstd_why;
-static zstd_in zstd_src;
+static p8 zstd_in_buf[ZSTD_IN];
+static byte_input zstd_src = {.buf = zstd_in_buf, .room = ZSTD_IN};
 static p8 address_to zstd_window;
 static positive zstd_window_cap;
 static positive zstd_window_size;
 static positive zstd_pos;
 static positive zstd_keep;
-static p8 address_to zstd_out_mem;
-static positive zstd_out_cap;
-static positive zstd_out_used;
+static byte_store zstd_output;
 static bipolar zstd_out_fd;
 static p8 zstd_out_buf[ZSTD_OUT];
 static positive zstd_out_fill;
@@ -136,7 +123,6 @@ static bool zstd_finished;
 static p8 address_to zstd_rest;
 static positive zstd_rest_n;
 static bool zstd_frame_open;
-static bool zstd_block_last;
 static bool zstd_need_trailer;
 static bool zstd_checksum_on;
 static p64 zstd_frame_begin;
@@ -355,56 +341,14 @@ static bool zstd_fail(string_address why)
 
 static bool zstd_in_need(positive n)
 {
-        if (zstd_src.have >= n)
-                return true;
-
         if (n > ZSTD_IN)
                 return zstd_fail("zstd block larger than the input window");
-
-        if (zstd_src.at)
-        {
-                if (zstd_src.have)
-                        memory_copy(zstd_src.buf, zstd_src.buf + zstd_src.at,
-                                    zstd_src.have);
-                zstd_src.at = 0;
-        }
-
-        while (zstd_src.have < n && !zstd_src.eof)
-        {
-                positive room = ZSTD_IN - zstd_src.have;
-                bipolar got;
-
-                if (zstd_src.fd < 0)
-                {
-                        positive left = zstd_src.mem_len - zstd_src.mem_at;
-
-                        if (!left)
-                        {
-                                zstd_src.eof = true;
-                                break;
-                        }
-                        if (left > room)
-                                left = room;
-                        memory_copy(zstd_src.buf + zstd_src.have,
-                                    zstd_src.mem + zstd_src.mem_at, left);
-                        zstd_src.mem_at += left;
-                        zstd_src.have += left;
-                        continue;
-                }
-
-                got = system_read_retry((positive)zstd_src.fd,
-                                        zstd_src.buf + zstd_src.have, room);
-                if (got < 0)
-                        return zstd_fail("zstd: read failed");
-                if (!got)
-                {
-                        zstd_src.eof = true;
-                        break;
-                }
-                zstd_src.have += (positive)got;
-        }
-
-        return zstd_src.have >= n ? true : zstd_fail("zstd truncated input");
+        if (zstd_src.fd < 0 && !zstd_src.mem)
+                zstd_src.eof = true;
+        bipolar got = byte_input_need(address_of zstd_src, n);
+        if (got < 0)
+                return zstd_fail("zstd: read failed");
+        return (positive)got >= n ? true : zstd_fail("zstd truncated input");
 }
 
 static p8 address_to zstd_in_at(void)
@@ -415,7 +359,6 @@ static p8 address_to zstd_in_at(void)
 static fn zstd_in_skip(positive n)
 {
         zstd_src.at += n;
-        zstd_src.have -= n;
 }
 
 static bool zstd_in_take(p8 address_to into, positive n)
@@ -435,9 +378,9 @@ static bool zstd_in_skip_bytes(positive n)
         {
                 positive chunk;
 
-                if (!zstd_src.have && !zstd_in_need(1) && n)
+                if (zstd_src.at == zstd_src.have && !zstd_in_need(1) && n)
                         return false;
-                chunk = zstd_src.have;
+                chunk = zstd_src.have - zstd_src.at;
                 if (chunk > n)
                         chunk = n;
                 zstd_in_skip(chunk);
@@ -997,15 +940,15 @@ static bool zstd_emit(p8 address_to p, positive n)
         if (!n)
                 return true;
 
-        if (zstd_out_mem)
+        if (zstd_output.bytes)
         {
-                if (zstd_out_used + n > zstd_out_cap)
+                if (zstd_output.used > zstd_output.room ||
+                    n > zstd_output.room - zstd_output.used)
                         return zstd_fail("zstd output larger than the destination");
                 if (zstd_hashing)
                         zstd_xxh_add(address_of zstd_hash, p, n);
                 zstd_decoded += n;
-                memory_copy(zstd_out_mem + zstd_out_used, p, n);
-                zstd_out_used += n;
+                byte_store_append_exact(address_of zstd_output, p, n);
                 return true;
         }
 
@@ -1579,7 +1522,6 @@ zstd_frame_blocks:
                         zstd_in_skip(size);
                         if (zstd_paused)
                         {
-                                zstd_block_last = last;
                                 zstd_need_trailer = last;
                                 return true;
                         }
@@ -1596,7 +1538,6 @@ zstd_frame_blocks:
                                 return false;
                         if (zstd_paused)
                         {
-                                zstd_block_last = last;
                                 zstd_need_trailer = last;
                                 return true;
                         }
@@ -1632,7 +1573,6 @@ zstd_frame_blocks:
                                         return false;
                                 if (zstd_paused)
                                 {
-                                        zstd_block_last = last;
                                         zstd_need_trailer = last;
                                         return true;
                                 }
@@ -1687,7 +1627,7 @@ static bool zstd_stream(void)
         if (!zstd_live)
         {
                 zstd_decoded = 0;
-                zstd_out_used = 0;
+                zstd_output.used = 0;
                 if (!zstd_pull)
                         zstd_out_fill = zstd_out_taken = 0;
                 zstd_hold_emit = false;
@@ -1712,12 +1652,12 @@ static bool zstd_stream(void)
                         continue;
                 }
 
-                if (!zstd_src.have)
+                if (zstd_src.at == zstd_src.have)
                 {
                         zstd_why = null;
                         if (!zstd_in_need(1))
                         {
-                                if (zstd_src.eof && !zstd_src.have)
+                                if (zstd_src.eof && zstd_src.at == zstd_src.have)
                                 {
                                         zstd_why = null;
                                         break;
@@ -1727,7 +1667,7 @@ static bool zstd_stream(void)
                 }
                 if (!zstd_in_need(4))
                 {
-                        if (zstd_src.eof && !zstd_src.have)
+                        if (zstd_src.eof && zstd_src.at == zstd_src.have)
                         {
                                 zstd_why = null;
                                 break;
@@ -1760,7 +1700,7 @@ static bool zstd_stream(void)
 
 static fn zstd_src_mem(p8 address_to src, positive len)
 {
-        memory_fill(address_of zstd_src, 0, sizeof(zstd_src));
+        zstd_src = (byte_input){.buf = zstd_in_buf, .room = ZSTD_IN};
         zstd_src.fd = -1;
         zstd_src.mem = src;
         zstd_src.mem_len = len;
@@ -1768,7 +1708,7 @@ static fn zstd_src_mem(p8 address_to src, positive len)
 
 static fn zstd_src_fd(bipolar fd)
 {
-        memory_fill(address_of zstd_src, 0, sizeof(zstd_src));
+        zstd_src = (byte_input){.buf = zstd_in_buf, .room = ZSTD_IN};
         zstd_src.fd = fd;
 }
 
@@ -1778,8 +1718,8 @@ static bipolar zstd_inflate(p8 address_to src, positive src_len,
         bool ok;
 
         zstd_src_mem(src, src_len);
-        zstd_out_mem = dst;
-        zstd_out_cap = dst_cap;
+        zstd_output.bytes = dst;
+        zstd_output.room = dst_cap;
         zstd_out_fd = -1;
         zstd_pull = false;
         zstd_live = false;
@@ -1790,14 +1730,14 @@ static bipolar zstd_inflate(p8 address_to src, positive src_len,
         if (ok)
                 ok = zstd_flush();
         zstd_window_close();
-        zstd_out_mem = null;
-        return ok ? (bipolar)zstd_out_used : -1;
+        zstd_output.bytes = null;
+        return ok ? (bipolar)zstd_output.used : -1;
 }
 
 static bool zstd_decode_begin(bipolar in)
 {
         zstd_src_fd(in);
-        zstd_out_mem = null;
+        zstd_output.bytes = null;
         zstd_out_fd = -1;
         zstd_out_fill = zstd_out_taken = 0;
         zstd_pull = true;
@@ -1855,7 +1795,7 @@ static bipolar zstd_decode_read(p8 address_to dst, positive n)
                 if (!zstd_stream())
                         return -1;
                 if (!zstd_out_fill && !zstd_paused && !zstd_rest_n &&
-                    zstd_src.eof && !zstd_src.have)
+                    zstd_src.eof && zstd_src.at == zstd_src.have)
                 {
                         zstd_finished = true;
                         break;
@@ -1882,7 +1822,6 @@ static positive zstd_enc_position;
 static positive zstd_enc_abs;
 static p32 zstd_enc_rep[3];
 static positive zstd_enc_fill;
-static bool zstd_enc_open;
 static p8 zstd_cli_level;
 
 typedef struct
@@ -2447,19 +2386,11 @@ static positive zstd_pack_literals(p8 address_to src, positive n,
 
 static bool zstd_enc_out(p8 address_to p, positive n)
 {
-        if (!n)
-                return true;
-        if (zstd_out_mem)
-        {
-                if (zstd_out_used + n > zstd_out_cap)
-                        return zstd_fail("zstd output is too small");
-                memory_copy(zstd_out_mem + zstd_out_used, p, n);
-                zstd_out_used += n;
-                return true;
-        }
-        if (system_write_all((positive)zstd_out_fd, p, n) != n)
-                return zstd_fail("zstd write failed");
-        return true;
+        if (zstd_output.bytes)
+                return byte_store_append_exact(address_of zstd_output, p, n) ||
+                       zstd_fail("zstd output is too small");
+        return system_write_all((positive)zstd_out_fd, p, n) == n ||
+               zstd_fail("zstd write failed");
 }
 
 static bool zstd_emit_raw_block(p8 address_to src, positive n, bool last)
@@ -2823,13 +2754,11 @@ static bool zstd_emit_block(p8 address_to src, positive n, bool last)
         return ok;
 }
 
-static bool zstd_encode_begin(bipolar out, p8 level)
+static bool zstd_encode_header(p8 level)
 {
         p8 head[6];
 
         (void)level;
-        zstd_out_fd = out;
-        zstd_out_mem = null;
         zstd_enc_fill = 0;
         zstd_enc_abs = 0;
         zstd_enc_position = 0;
@@ -2837,7 +2766,6 @@ static bool zstd_encode_begin(bipolar out, p8 level)
         zstd_enc_rep[1] = 4;
         zstd_enc_rep[2] = 8;
         memory_fill(zstd_enc_head, 0, sizeof(zstd_enc_head));
-        zstd_enc_open = true;
         zstd_why = null;
         zstd_xxh_start(address_of zstd_enc_hash, 0);
         head[0] = 0x28;
@@ -2846,12 +2774,15 @@ static bool zstd_encode_begin(bipolar out, p8 level)
         head[3] = 0xfd;
         head[4] = 0x04;
         head[5] = 0x58; /* 2 MiB window */
-        if (out >= 0)
-        {
-                if (system_write_all((positive)out, head, 6) != 6)
-                        return zstd_fail("zstd write failed");
-        }
-        return true;
+        return (!zstd_output.bytes && zstd_out_fd < 0) ||
+               zstd_enc_out(head, sizeof head);
+}
+
+static bool zstd_encode_begin(bipolar out, p8 level)
+{
+        zstd_out_fd = out;
+        zstd_output.bytes = null;
+        return zstd_encode_header(level);
 }
 
 static bool zstd_encode_write(p8 address_to src, positive n)
@@ -2890,54 +2821,25 @@ static bool zstd_encode_end(void)
         tail[1] = (p8)(sum >> 8);
         tail[2] = (p8)(sum >> 16);
         tail[3] = (p8)(sum >> 24);
-        if (zstd_out_mem)
-        {
-                if (zstd_out_used + 4 > zstd_out_cap)
-                        return zstd_fail("zstd output is too small");
-                memory_copy(zstd_out_mem + zstd_out_used, tail, 4);
-                zstd_out_used += 4;
-                return true;
-        }
-        if (zstd_out_fd >= 0 &&
-            system_write_all((positive)zstd_out_fd, tail, 4) != 4)
-                return zstd_fail("zstd write failed");
-        zstd_enc_open = false;
-        return true;
+        return (!zstd_output.bytes && zstd_out_fd < 0) ||
+               zstd_enc_out(tail, sizeof tail);
 }
 
 static bipolar zstd_deflate_mem(p8 address_to src, positive src_len,
                                 p8 address_to dst, positive dst_cap, p8 level)
 {
-        (void)level;
-        zstd_out_mem = dst;
-        zstd_out_cap = dst_cap;
-        zstd_out_used = 0;
+        zstd_output.bytes = dst;
+        zstd_output.room = dst_cap;
+        zstd_output.used = 0;
         zstd_out_fd = -1;
-        zstd_enc_fill = 0;
-        zstd_enc_abs = 0;
-        zstd_enc_position = 0;
-        zstd_enc_rep[0] = 1;
-        zstd_enc_rep[1] = 4;
-        zstd_enc_rep[2] = 8;
-        memory_fill(zstd_enc_head, 0, sizeof(zstd_enc_head));
-        zstd_enc_open = true;
-        zstd_why = null;
-        zstd_xxh_start(address_of zstd_enc_hash, 0);
-        if (6 > dst_cap)
+        if (!zstd_encode_header(level))
                 return -1;
-        dst[0] = 0x28;
-        dst[1] = 0xb5;
-        dst[2] = 0x2f;
-        dst[3] = 0xfd;
-        dst[4] = 0x04;
-        dst[5] = 0x58; /* 2 MiB window */
-        zstd_out_used = 6;
         if (!zstd_encode_write(src, src_len))
                 return -1;
         if (!zstd_encode_end())
                 return -1;
-        zstd_out_mem = null;
-        return (bipolar)zstd_out_used;
+        zstd_output.bytes = null;
+        return (bipolar)zstd_output.used;
 }
 
 #ifndef ZSTD_CORE_ONLY
@@ -2993,7 +2895,7 @@ static b32 zstd_one(bipolar in, bipolar out)
         bool ok;
 
         zstd_src_fd(in);
-        zstd_out_mem = null;
+        zstd_output.bytes = null;
         zstd_out_fd = out;
         zstd_pull = false;
         zstd_live = false;

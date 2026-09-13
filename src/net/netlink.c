@@ -40,6 +40,7 @@
 
 #define NETLINK_ALIGN 4
 #define NETLINK_HEADER 16
+#define NETLINK_DATAGRAM_MAX (16u * 1024u * 1024u)
 
 #define NLM_REQUEST 0x0001
 #define NLM_MULTI 0x0002
@@ -56,10 +57,13 @@
 #define NLMSG_IS_DONE 3
 
 #define RTM_NEWLINK 16
+#define RTM_DELLINK 17
 #define RTM_GETLINK 18
 #define RTM_NEWADDR 20
+#define RTM_DELADDR 21
 #define RTM_GETADDR 22
 #define RTM_NEWROUTE 24
+#define RTM_DELROUTE 25
 #define RTM_GETROUTE 26
 
 #define IFLA_ADDRESS 1
@@ -342,32 +346,105 @@ static bipolar netlink_open_groups(p32 groups)
         larger than the buffer arrives silently shortened, and a dump that
         loses its tail looks exactly like a dump that ended.
 */
-static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer)
+static bool netlink_source_is_kernel(
+    const socket_address_netlink address_to source, p32 length)
 {
-        /* With MSG_TRUNC a zero-length datagram read still returns its true
-           length. Keeping that probe empty matters after the first reply:
-           otherwise every later datagram was copied into the buffer once
-           while peeking and a second time while consuming it. */
-        bipolar size = socket_receive(handle, (address_any)&size, 0,
-                                      MSG_PEEK | MSG_TRUNC, 0, 0);
-        bipolar got;
+        return length >= sizeof(*source) && source->family == AF_NETLINK &&
+               source->port == 0;
+}
 
-        if (size < 0)
-                return size;
+static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer,
+                               p32 address_to local_port)
+{
+        bipolar size;
+        bipolar got;
+        socket_address_netlink self_address;
+        socket_address_netlink source;
+        p32 local_length = sizeof self_address;
+        p32 source_length;
+        bool require_kernel;
+
+        memory_fill(address_of self_address, 0, sizeof self_address);
+        got = socket_name(handle, address_of self_address,
+                          address_of local_length);
+        if (got < 0 || local_length < sizeof(self_address.family))
+                return got < 0 ? got : -1;
+        require_kernel = self_address.family == AF_NETLINK;
+        if (local_port)
+                address_to local_port = require_kernel ? self_address.port : 0;
+
+        for (;;)
+        {
+                source_length = sizeof source;
+                memory_fill(address_of source, 0, sizeof source);
+
+                /* With MSG_TRUNC a zero-length datagram read still returns
+                   its true length.  Capture its sender at the same time:
+                   NETLINK_ROUTE replies and notifications are authoritative
+                   only when they came from kernel port zero. */
+                size = socket_receive(handle, null, 0,
+                                      MSG_PEEK | MSG_TRUNC,
+                                      address_of source,
+                                      address_of source_length);
+
+                if (size < 0)
+                        return size;
+
+                if (!require_kernel ||
+                    netlink_source_is_kernel(address_of source,
+                                              source_length))
+                        break;
+
+                /* Drop a userspace datagram without allocating according to
+                   its claimed size, then continue to the kernel reply. */
+                socket_receive(handle, null, 0, 0, 0, 0);
+        }
+
+        if (!size || (positive)size > NETLINK_DATAGRAM_MAX)
+                return -1;
 
         if (!net_room(buffer, (positive)size + 64))
                 return -1;
 
-        got = socket_receive(handle, buffer->bytes, buffer->room, 0, 0, 0);
+        source_length = sizeof source;
+        memory_fill(address_of source, 0, sizeof source);
+        got = socket_receive(handle, buffer->bytes, buffer->room, 0,
+                             address_of source, address_of source_length);
 
-        if (got >= 0)
-                buffer->used = (positive)got;
+        if (got < 0)
+                return got;
 
+        if (got != size ||
+            (require_kernel &&
+             !netlink_source_is_kernel(address_of source, source_length)))
+        {
+                buffer->used = 0;
+                return -1;
+        }
+
+        buffer->used = (positive)got;
         return got;
 }
 
 typedef bool (address_to netlink_visitor)(netlink_header address_to header,
                                           address_any context);
+
+/* Multipart dumps finish with NLMSG_DONE.  Modern kernels may put a signed
+   status in its first four payload bytes (and optional extack data after it),
+   so DONE is not synonymous with success. */
+static bipolar netlink_done_status(netlink_header address_to header)
+{
+        b32 status;
+
+        if (header->length == NETLINK_HEADER)
+                return 0;
+        if (header->length < NETLINK_HEADER + sizeof status)
+                return -1;
+
+        status = memory_load_unaligned(
+            b32, (p8 address_to)header + NETLINK_HEADER);
+        return status <= 0 ? status : -1;
+}
 
 static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                             p32 sequence, netlink_buffer address_to reply,
@@ -431,7 +508,9 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
 
         for (;;)
         {
-                bipolar got = netlink_receive(handle, reply);
+                p32 local_port = 0;
+                bipolar got = netlink_receive(handle, reply,
+                                               address_of local_port);
 
                 if (got < 0)
                         return got;
@@ -446,7 +525,12 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                             at + header->length > reply->used)
                                 return -1;
 
-                        if (header->sequence != sequence)
+                        /* Kernel unicast replies carry the destination
+                           socket's port id in nlmsg_pid.  Match it as well as
+                           the sequence so an unrelated kernel notification
+                           cannot complete this transaction. */
+                        if (header->port != local_port ||
+                            header->sequence != sequence)
                         {
                                 at += netlink_align(header->length);
                                 continue;
@@ -456,7 +540,7 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                                 return -1;
 
                         if (header->type == NLMSG_IS_DONE)
-                                return 0;
+                                return netlink_done_status(header);
 
                         if (header->type == NLMSG_IS_ERROR)
                                 return header->length < NETLINK_HEADER + sizeof(b32)
@@ -554,10 +638,21 @@ static inline INLINE string_address netlink_link_name(
     netlink_header address_to header, netlink_link address_to address_to link)
 {
         positive length = 0;
-        string_address name = (string_address)netlink_find(
+        string_address name;
+
+        address_to link = null;
+
+        /* Visitors are also used directly by tests and by callers parsing
+           multicast frames.  Do not hand either one a body pointer until the
+           fixed family-specific body is present in full. */
+        if (header->length < NETLINK_HEADER + sizeof(netlink_link))
+                return null;
+
+        address_to link = (netlink_link address_to)((p8 address_to)header +
+                                                     NETLINK_HEADER);
+        name = (string_address)netlink_find(
             header, sizeof(netlink_link), IFLA_IFNAME, address_of length);
-        address_to link = (netlink_link address_to)((p8 address_to)header + NETLINK_HEADER);
-        return name && memory_first_of(name, 0, length) ? name : null;
+        return name && length && memory_first_of(name, 0, length) ? name : null;
 }
 
 static bool netlink_link_seen(netlink_header address_to header, address_any context)
@@ -673,16 +768,16 @@ static bipolar netlink_link_up(b32 handle, p32 index)
         the same as running it once. A boot that is retried should not fail
         because the first attempt succeeded.
 */
-static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
+static bipolar netlink_address_change(b32 handle, p16 type, p16 flags,
+                                      p32 index, p32 host, p8 prefix)
 {
         netlink_buffer request = {0};
         netlink_address address_to body;
         p32 sequence = netlink_sequence_next++;
         p32 wire = network_order_32(host);
 
-        if (!netlink_begin(address_of request, RTM_NEWADDR,
-                           NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
-                           sequence, sizeof(netlink_address)))
+        if (!netlink_begin(address_of request, type, flags, sequence,
+                           sizeof(netlink_address)))
                 return -1;
 
         body = (netlink_address address_to)netlink_body(address_of request);
@@ -698,6 +793,22 @@ static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
                                 null, null);
 }
 
+static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
+{
+        return netlink_address_change(
+            handle, RTM_NEWADDR,
+            NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
+            index, host, prefix);
+}
+
+static bipolar netlink_address_delete(b32 handle, p32 index, p32 host,
+                                      p8 prefix)
+{
+        return netlink_address_change(handle, RTM_DELADDR,
+                                      NLM_REQUEST | NLM_ACK,
+                                      index, host, prefix);
+}
+
 /*
         A route, with a destination of no bits at all being the default one.
 
@@ -706,8 +817,9 @@ static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
         when it does not, which reads as a network problem and is really an
         ordering one.
 */
-static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gateway,
-                                 p32 index)
+static bipolar netlink_route_change(b32 handle, p16 type, p16 flags,
+                                    p32 destination, p8 bits, p32 gateway,
+                                    p32 index)
 {
         netlink_buffer request = {0};
         netlink_route address_to body;
@@ -715,13 +827,8 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gatew
         p32 wire_gateway = network_order_32(gateway);
         p32 wire_destination = network_order_32(destination);
 
-        //      REPLACE alongside CREATE, for the same reason the address
-        //      add has it: adding the route a second time is what happens
-        //      when a link comes back, and it should be the same as having
-        //      added it once rather than EEXIST.
-        if (!netlink_begin(address_of request, RTM_NEWROUTE,
-                           NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
-                           sequence, sizeof(netlink_route)))
+        if (!netlink_begin(address_of request, type, flags, sequence,
+                           sizeof(netlink_route)))
                 return -1;
 
         body = (netlink_route address_to)netlink_body(address_of request);
@@ -746,6 +853,27 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gatew
 
         return netlink_transact(handle, address_of request, sequence,
                                 null, null);
+}
+
+static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits,
+                                 p32 gateway, p32 index)
+{
+        //      REPLACE alongside CREATE, for the same reason the address
+        //      add has it: adding the route a second time is what happens
+        //      when a link comes back, and it should be the same as having
+        //      added it once rather than EEXIST.
+        return netlink_route_change(
+            handle, RTM_NEWROUTE,
+            NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
+            destination, bits, gateway, index);
+}
+
+static bipolar netlink_route_delete(b32 handle, p32 destination, p8 bits,
+                                    p32 gateway, p32 index)
+{
+        return netlink_route_change(handle, RTM_DELROUTE,
+                                    NLM_REQUEST | NLM_ACK,
+                                    destination, bits, gateway, index);
 }
 
 /*

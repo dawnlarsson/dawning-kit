@@ -3860,9 +3860,9 @@ static fn expand_run(string_address command, bool quoted)
         if (child == 0)
         {
                 system_close(channel[0]);
-                system_duplicate(channel[1],
-                              standard_output_descriptor, 0);
-                system_close(channel[1]);
+                if (shell_child_fd_move(channel[1],
+                                        standard_output_descriptor) < 0)
+                        system_call_1(syscall(exit_group), 126);
 
                 expand_substitution_body(command, true);
         }
@@ -4414,11 +4414,10 @@ static string_address expand_process(string_address step, p8 mark)
         if (child == 0)
         {
                 system_close(ours);
-                system_duplicate(theirs,
-                                 reading ? standard_output_descriptor
-                                         : standard_input_descriptor,
-                                 0);
-                system_close(theirs);
+                if (shell_child_fd_move(
+                        theirs, reading ? standard_output_descriptor
+                                        : standard_input_descriptor) < 0)
+                        system_call_1(syscall(exit_group), 126);
                 expand_substitution_body(text, false);
         }
 

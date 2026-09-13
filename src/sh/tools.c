@@ -53,9 +53,7 @@ static p32 tools_hostid_value()
         }
 
         file_machine facts;
-        memory_fill(address_of facts, 0, sizeof(facts));
-
-        if (system_call_1(syscall(uname), (positive)address_of facts) < 0 ||
+        if (!file_machine_read(address_of facts) ||
             !facts.node[0])
                 return 0;
 
@@ -119,10 +117,8 @@ static b32 tools_hostid()
 static fn tools_hostname(p8 address_to into, positive room,
                           string_address fallback)
 {
-        file_machine machine = {0};
-        bool known = system_call_1(syscall(uname),
-                                    (positive)address_of machine) >= 0 &&
-                     machine.node[0];
+        file_machine machine;
+        bool known = file_machine_read(address_of machine) && machine.node[0];
         string_copy_max_end(into, known ? machine.node : fallback, room - 1);
 }
 
@@ -337,7 +333,7 @@ static bool logger_size(string_address text, positive address_to size)
                 }
         }
 
-        if (string_get(text) || !value || value > TEXT_ARENA_BYTES -
+        if (string_get(text) || !value || value > UTILITY_ARENA_BYTES -
                                                  LOGGER_HEADER_ROOM - 2)
                 return false;
 
@@ -931,7 +927,7 @@ static bool logger_journald(logger_control address_to control,
                             string_address path, bool named)
 {
 #if defined(LINUX) && !defined(KERNEL_MODE)
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         /*      The reference names this open itself rather than leaving it
                 to the reader's own complaint -- but only when --journald
@@ -958,7 +954,7 @@ static bool logger_journald(logger_control address_to control,
                                 return false;
 
                         bool failed;
-                        entry = text_arena_read_all(text_input.handle, 65536,
+                        entry = utility_arena_read_all(text_input.handle, 65536,
                                                     address_of length,
                                                     address_of failed);
                         text_close();
@@ -1341,8 +1337,8 @@ static b32 tools_logger()
 #if !defined(LINUX) || defined(KERNEL_MODE)
         return text_done(string_diagnostic(&text_diagnostic, 1, null, "logging sockets require Linux"));
 #else
-        text_arena_used = 0;
-        control.workspace = (p8 address_to)text_arena_take(
+        utility_arena.used = 0;
+        control.workspace = (p8 address_to)utility_arena_take(
             LOGGER_HEADER_ROOM + control.maximum + 2);
         if (!control.workspace)
                 return text_done(1);
@@ -1560,7 +1556,7 @@ static positive login_field(p8 address_to into, positive room,
 static fn login_put_width(string_address value, positive length,
                           positive width, bool right)
 {
-        writer_field(text_put, value, length, width, ' ', !right);
+        writer_field_bulk(text_put, value, length, width, ' ', !right);
 }
 
 static positive login_time(p8 address_to into, b32 seconds)
@@ -2876,7 +2872,7 @@ static bipolar login_last_reader_open(string_address path,
         reader->records = (positive)(facts.size / LOGIN_UTMP_SIZE);
         reader->first = 0;
         reader->count = 0;
-        reader->block = text_arena_take(FILE_TRANSFER_SIZE);
+        reader->block = utility_arena_take(FILE_TRANSFER_SIZE);
         if (!reader->block)
         {
                 system_close((positive)reader->handle);
@@ -2919,10 +2915,10 @@ static bool login_last_end_grow()
 {
         positive larger = login_last.end_room ? login_last.end_room * 2 : 256;
         if (larger < login_last.end_room ||
-            larger > (TEXT_ARENA_BYTES - text_arena_used) /
+            larger > (UTILITY_ARENA_BYTES - utility_arena.used) /
                          sizeof(login_last_end))
                 return false;
-        login_last_end address_to table = text_arena_take(
+        login_last_end address_to table = utility_arena_take(
             larger * sizeof(login_last_end));
         if (!table)
                 return false;
@@ -3173,7 +3169,7 @@ static fn login_last_line(string_address user, string_address line,
                                                  ? 53 : 55;
                 positive used = start_length + suffix;
                 if (used < duration_at)
-                        writer_fill(text_put, duration_at - used, ' ');
+                        writer_fill_bulk(text_put, duration_at - used, ' ');
                 text_put(duration, duration_length);
         }
         else if (end_kind == LOGIN_LAST_END_STILL)
@@ -3192,7 +3188,7 @@ static fn login_last_line(string_address user, string_address line,
                                 : end_kind == LOGIN_LAST_END_STILL ? 7
                                 : end_kind == LOGIN_LAST_END_LOGGED ? 9
                                                                      : 11;
-                writer_fill(text_put, word < 13 ? 13 - word : 1, ' ');
+                writer_fill_bulk(text_put, word < 13 ? 13 - word : 1, ' ');
                 text_put_string(host);
         }
         text_put_character('\n');
@@ -3336,7 +3332,7 @@ static b32 tools_last()
         string_address path = file_option_value(address_of taking, 'f');
         if (!path)
                 path = (string_address)"/var/log/wtmp";
-        text_arena_used = 0;
+        utility_arena.used = 0;
         login_last_reader reader = {0};
         bipolar loaded = login_last_reader_open(path, address_of reader);
         if (loaded < 0)
@@ -3843,7 +3839,6 @@ struct login_name
 };
 
 static login_name address_to login_users_head;
-static positive login_users_count;
 
 static bool login_users_visit(login_record address_to record)
 {
@@ -3851,7 +3846,7 @@ static bool login_users_visit(login_record address_to record)
                 return true;
 
         login_name address_to node =
-            (login_name address_to)text_arena_take(sizeof(login_name));
+            (login_name address_to)utility_arena_take(sizeof(login_name));
         if (!node)
                 return false;
 
@@ -3864,7 +3859,6 @@ static bool login_users_visit(login_record address_to record)
 
         node->next = *at;
         *at = node;
-        login_users_count++;
         return true;
 }
 
@@ -3879,9 +3873,8 @@ static b32 tools_users()
         };
 
         text_begin("users");
-        text_arena_used = 0;
+        utility_arena.used = 0;
         login_users_head = null;
-        login_users_count = 0;
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
@@ -4263,7 +4256,7 @@ static b32 tools_tsort()
         };
 
         text_begin("tsort");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -4295,7 +4288,7 @@ static b32 tools_tsort()
 
         positive length;
         bool read_failed;
-        p8 address_to bytes = text_arena_read_all(
+        p8 address_to bytes = utility_arena_read_all(
             (positive)input, TEXT_READ_MAX, address_of length,
             address_of read_failed);
 
@@ -4364,7 +4357,7 @@ static b32 tools_tsort()
             node_bytes + edge_bytes > positive_max - bucket_bytes)
                 return text_done(string_diagnostic(&text_diagnostic, 1, path, "input too large"));
 
-        p8 address_to graph = (p8 address_to)text_arena_take(
+        p8 address_to graph = (p8 address_to)utility_arena_take(
             node_bytes + edge_bytes + bucket_bytes);
 
         if (!graph)
@@ -4415,7 +4408,7 @@ static b32 tools_tsort()
         if (tsort_node_count > positive_max / (2 * sizeof(b32)))
                 return text_done(string_diagnostic(&text_diagnostic, 1, path, "input too large"));
 
-        b32 address_to order = (b32 address_to)text_arena_take(
+        b32 address_to order = (b32 address_to)utility_arena_take(
             tsort_node_count * 2 * sizeof(b32));
         b32 address_to spare = order
                                    ? order + tsort_node_count
@@ -5099,18 +5092,18 @@ static fn numfmt_body_out(p8 address_to number, positive number_length,
         positive padding = width > body ? width - body : 0;
 
         if (!left)
-                writer_fill(text_put, padding, ' ');
+                writer_fill_bulk(text_put, padding, ' ');
 
         if (zero_padding && number_length && number[0] == '-')
         {
                 text_put(number, 1);
-                writer_fill(text_put, zero_padding, '0');
+                writer_fill_bulk(text_put, zero_padding, '0');
                 text_put(number + 1, number_length - 1);
         }
         else
         {
                 if (zero_padding)
-                        writer_fill(text_put, zero_padding, '0');
+                        writer_fill_bulk(text_put, zero_padding, '0');
                 text_put(number, number_length);
         }
 
@@ -5121,7 +5114,7 @@ static fn numfmt_body_out(p8 address_to number, positive number_length,
         if (suffix_length)
                 text_put_string(numfmt.suffix);
         if (left)
-                writer_fill(text_put, padding, ' ');
+                writer_fill_bulk(text_put, padding, ' ');
 
         if (numfmt.have_format)
         {
@@ -6708,7 +6701,7 @@ static bool tools_uuidgen_hex_name(string_address text,
         if (count & 1)
                 return false;
 
-        p8 address_to decoded = text_arena_take(count / 2 + 1);
+        p8 address_to decoded = utility_arena_take(count / 2 + 1);
         if (!decoded)
                 return false;
 
@@ -6738,7 +6731,7 @@ static b32 tools_uuidgen()
         };
 
         text_begin("uuidgen");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
@@ -7011,7 +7004,7 @@ static bool tools_uuid_columns(string_address text, p8 address_to columns,
         return name_list_select(
             text, tools_uuid_column_names, sizeof(tools_uuid_column_names[0]),
             array_count(tools_uuid_column_names), columns, count, 32,
-            NAME_LIST_REJECT_TRAILING);
+            NAME_LIST_REJECT_TRAILING, null);
 }
 
 static string_address tools_uuid_cell(tools_uuid_record address_to record,
@@ -7181,7 +7174,7 @@ static b32 tools_uuidparse()
                 for (positive at = 0; at < column_count; at++)
                 {
                         if (at)
-                                writer_fill(text_put, 1, ' ');
+                                writer_fill_bulk(text_put, 1, ' ');
                         string_address value = heading
                             ? tools_uuid_column_names[columns[at]]
                             : tools_uuid_cell(address_of record, columns[at]);
@@ -7191,7 +7184,7 @@ static b32 tools_uuidparse()
                         else
                                 text_put((p8 address_to)value, length);
                         if (!raw && at + 1 < column_count)
-                                writer_fill(text_put, widths[at] - length, ' ');
+                                writer_fill_bulk(text_put, widths[at] - length, ' ');
                 }
                 text_put_character('\n');
         }
@@ -7814,10 +7807,10 @@ static p8 address_to dd_buffer(positive bytes)
 {
         /* Too large to align is too large to hold: let the arena refuse it
            and keep its complaint, rather than wrapping the page on. */
-        if (bytes > TEXT_ARENA_BYTES)
-                return (p8 address_to)text_arena_take(bytes);
+        if (bytes > UTILITY_ARENA_BYTES)
+                return (p8 address_to)utility_arena_take(bytes);
 
-        p8 address_to raw = (p8 address_to)text_arena_take(bytes + DD_PAGE);
+        p8 address_to raw = (p8 address_to)utility_arena_take(bytes + DD_PAGE);
 
         if (!raw)
                 return null;
@@ -8031,7 +8024,7 @@ static b32 tools_dd(void)
         dd_written = 0;
         dd_status_level = DD_STATUS_ALL;
         dd_info_asked = 0;
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         {
                 p64 wall[2] = {0, 0};
@@ -10338,7 +10331,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                 {
                         if (allow_missing && handle == -ERROR_NO_ENTRY)
                         {
-                                side->base = (p8 address_to)text_arena_take(16);
+                                side->base = (p8 address_to)utility_arena_take(16);
 
                                 if (!side->base)
                                         return false;
@@ -10356,7 +10349,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
 
         positive have = 0;
         bool read_failed;
-        p8 address_to start = text_arena_read_all(
+        p8 address_to start = utility_arena_read_all(
             (positive)handle, TEXT_READ_MAX, address_of have,
             address_of read_failed);
 
@@ -10392,7 +10385,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
 
         // One byte for the newline the file may not have, and one so the
         // scan below can look one past the end without care.
-        p8 address_to tail = (p8 address_to)text_arena_take(16);
+        p8 address_to tail = (p8 address_to)utility_arena_take(16);
 
         if (!tail)
                 return false;
@@ -10422,7 +10415,7 @@ static bool diff_index(diff_side address_to side)
         positive lines = memory_count(start, have, '\n');
 
         side->lines = lines;
-        side->at = (positive address_to)text_arena_take((lines + 2) * sizeof(positive));
+        side->at = (positive address_to)utility_arena_take((lines + 2) * sizeof(positive));
 
         if (!side->at)
                 return false;
@@ -10631,7 +10624,7 @@ static positive diff_bucket_count;
 
 static bool diff_classify(diff_side address_to side, b32 which)
 {
-        side->class = (b32 address_to)text_arena_take((side->count + 1) * sizeof(b32));
+        side->class = (b32 address_to)utility_arena_take((side->count + 1) * sizeof(b32));
 
         if (!side->class)
                 return false;
@@ -10700,7 +10693,7 @@ static bool diff_discard()
 
         for (b32 f = 0; f < 2; f++)
         {
-                counts[f] = (positive address_to)text_arena_take(total * sizeof(positive));
+                counts[f] = (positive address_to)utility_arena_take(total * sizeof(positive));
 
                 if (!counts[f])
                         return false;
@@ -10716,7 +10709,7 @@ static bool diff_discard()
                 diff_side address_to side = diff_files + f;
                 positive bound = side->count;
 
-                marks[f] = (p8 address_to)text_arena_take(bound + 1);
+                marks[f] = (p8 address_to)utility_arena_take(bound + 1);
 
                 if (!marks[f])
                         return false;
@@ -10829,8 +10822,8 @@ static bool diff_discard()
                 diff_side address_to side = diff_files + f;
                 positive bound = side->count;
 
-                side->kept = (b32 address_to)text_arena_take((bound + 1) * sizeof(b32));
-                side->real = (positive address_to)text_arena_take((bound + 1) * sizeof(positive));
+                side->kept = (b32 address_to)utility_arena_take((bound + 1) * sizeof(b32));
+                side->real = (positive address_to)utility_arena_take((bound + 1) * sizeof(positive));
 
                 if (!side->kept || !side->real)
                         return false;
@@ -11076,7 +11069,7 @@ static bool diff_build()
 {
         positive room = diff_files[0].count + diff_files[1].count + 2;
 
-        diff_script = (diff_change address_to)text_arena_take(room * sizeof(diff_change));
+        diff_script = (diff_change address_to)utility_arena_take(room * sizeof(diff_change));
 
         if (!diff_script)
                 return false;
@@ -11631,7 +11624,7 @@ static b32 diff_pair(string_address left, string_address right)
         for (b32 f = 0; f < 2; f++)
         {
                 diff_side address_to side = diff_files + f;
-                p8 address_to room = (p8 address_to)text_arena_take(side->count + 4);
+                p8 address_to room = (p8 address_to)utility_arena_take(side->count + 4);
 
                 if (!room)
                         return 2;
@@ -11647,8 +11640,8 @@ static b32 diff_pair(string_address left, string_address right)
         while (diff_bucket_count < total * 2)
                 diff_bucket_count <<= 1;
 
-        diff_classes = (diff_class address_to)text_arena_take(total * sizeof(diff_class));
-        diff_buckets = (b32 address_to)text_arena_take(diff_bucket_count * sizeof(b32));
+        diff_classes = (diff_class address_to)utility_arena_take(total * sizeof(diff_class));
+        diff_buckets = (b32 address_to)utility_arena_take(diff_bucket_count * sizeof(b32));
 
         if (!diff_classes || !diff_buckets)
                 return 2;
@@ -11666,8 +11659,8 @@ static b32 diff_pair(string_address left, string_address right)
 
         positive diagonals = a->keeps + b->keeps + 3;
 
-        diff_forward = (b32 address_to)text_arena_take((diagonals + 4) * sizeof(b32));
-        diff_backward = (b32 address_to)text_arena_take((diagonals + 4) * sizeof(b32));
+        diff_forward = (b32 address_to)utility_arena_take((diagonals + 4) * sizeof(b32));
+        diff_backward = (b32 address_to)utility_arena_take((diagonals + 4) * sizeof(b32));
 
         if (!diff_forward || !diff_backward)
                 return 2;
@@ -11740,7 +11733,7 @@ typedef struct
 static bool diff_name_add(diff_names address_to names, string_address value)
 {
         if (!array_arena_reserve(names->at, names->room, names->count,
-                                 names->count + 1, 32, text_arena_grow))
+                                 names->count + 1, 32, utility_arena_grow))
                 return false;
 
         names->at[names->count++] = value;
@@ -11753,7 +11746,7 @@ static bool diff_names_sort(diff_names address_to names)
                 return true;
 
         string_address address_to spare =
-            (string_address address_to)text_arena_take(
+            (string_address address_to)utility_arena_take(
                 names->count * sizeof(string_address));
 
         if (!spare)
@@ -11775,7 +11768,7 @@ static string_address diff_path(string_address directory, string_address name)
                 return null;
 
         positive room = head + tail + slash + 1;
-        p8 address_to joined = (p8 address_to)text_arena_take(room);
+        p8 address_to joined = (p8 address_to)utility_arena_take(room);
 
         if (!joined)
                 return null;
@@ -11809,7 +11802,7 @@ static bool diff_gather(string_address path, diff_names address_to names,
                         continue;
 
                 positive length = string_length(entry->d_name);
-                p8 address_to at = (p8 address_to)text_arena_take(length + 1);
+                p8 address_to at = (p8 address_to)utility_arena_take(length + 1);
 
                 if (!at)
                 {
@@ -11890,7 +11883,7 @@ static b32 diff_directories(string_address left, string_address right, positive 
                    to this child. Rewind them after the child returns so a
                    wide tree costs its maximum file, not the sum of every
                    file visited before it. */
-                positive child_mark = text_arena_used;
+                positive child_mark = utility_arena.used;
                 b32 order = i >= names[0].count
                                 ? 1
                                 : j >= names[1].count
@@ -11919,7 +11912,7 @@ static b32 diff_directories(string_address left, string_address right, positive 
                         if (worst < one)
                                 worst = one;
 
-                        text_arena_used = child_mark;
+                        utility_arena.used = child_mark;
 
                         if (order < 0)
                                 i++;
@@ -11958,7 +11951,7 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                 worst = one;
                 }
 
-                text_arena_used = child_mark;
+                utility_arena.used = child_mark;
 
                 i++;
                 j++;
@@ -12022,14 +12015,14 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
         }
 
         bool titled = diff_titled;
-        positive pair_mark = text_arena_used;
+        positive pair_mark = utility_arena.used;
 
         diff_titled = depth > 0;
 
         b32 one = diff_pair(left, right);
 
         diff_titled = titled;
-        text_arena_used = pair_mark;
+        utility_arena.used = pair_mark;
 
         return one;
 }
@@ -12145,7 +12138,7 @@ static b32 tools_diff(void)
         diff_style_seen = false;
         diff_switches_used = 0;
         diff_titled = false;
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking))
                 return text_done(2);
@@ -12158,7 +12151,7 @@ static b32 tools_diff(void)
         for (positive i = 1; i < taking.first; i++)
                 switches_room += string_length(program_argument((b32)i)) + 1;
 
-        diff_switches = (p8 address_to)text_arena_take(switches_room);
+        diff_switches = (p8 address_to)utility_arena_take(switches_room);
 
         if (!diff_switches)
                 return text_done(2);
@@ -12382,7 +12375,7 @@ static string_address ps_name_of(positive uid)
         else
                 length = positive_into(name, uid);
 
-        p8 address_to made = (p8 address_to)text_arena_take(length + 1);
+        p8 address_to made = (p8 address_to)utility_arena_take(length + 1);
 
         if (!made)
                 return null;
@@ -12401,7 +12394,7 @@ static string_address ps_arguments(struct snapshot_process address_to process)
         bipolar handle = text_open_handle(path, FILE_READ, 0);
         p8 address_to command = handle < 0
             ? null
-            : text_arena_read_all((positive)handle, 256, address_of got, null);
+            : utility_arena_read_all((positive)handle, 256, address_of got, null);
 
         if (handle >= 0)
                 system_close(handle);
@@ -12420,7 +12413,7 @@ static string_address ps_arguments(struct snapshot_process address_to process)
 
         positive length = string_length(process->command);
         p8 address_to fallback =
-            (p8 address_to)text_arena_take(length + 3);
+            (p8 address_to)utility_arena_take(length + 3);
 
         if (!fallback)
                 return null;
@@ -12471,7 +12464,7 @@ static HOT bool ps_room_add(positive extra)
         positive wanted = ps_room_used + extra + 1;
 
         if (wanted > ps_room_size &&
-            !text_arena_grow(address_of ps_room, address_of ps_room_size,
+            !utility_arena_grow(address_of ps_room, address_of ps_room_size,
                              ps_room_used, wanted, 1, 64))
                 goto failed;
 
@@ -12795,7 +12788,7 @@ static fn ps_column_out(struct snapshot_process address_to process,
         if (!last && ps_room_used > width)
                 ps_room_used = width;
 
-        writer_field(text_put, ps_room, ps_room_used,
+        writer_field_bulk(text_put, ps_room, ps_room_used,
                      !ps_columns[field].right && last ? ps_room_used : width,
                      ' ', !ps_columns[field].right);
 
@@ -12835,7 +12828,7 @@ static bool ps_field_add(ps_selected address_to address_to fields,
                          positive value, string_address header,
                          bool custom_header)
 {
-        if (!text_arena_grow(fields, room, address_to count,
+        if (!utility_arena_grow(fields, room, address_to count,
                              address_to count + 1, sizeof(ps_selected), 16))
                 return false;
 
@@ -12850,7 +12843,7 @@ static bool ps_value_add(positive address_to address_to values,
                          positive address_to count, positive address_to room,
                          positive value)
 {
-        if (!text_arena_grow(values, room, address_to count,
+        if (!utility_arena_grow(values, room, address_to count,
                              address_to count + 1, sizeof(positive), 16))
                 return false;
 
@@ -12958,12 +12951,12 @@ static bool ps_string_add(string_address address_to address_to values,
                     !string_compare_max((address_to values)[i], from, length))
                         return true;
 
-        if (!text_arena_grow(values, room, address_to count,
+        if (!utility_arena_grow(values, room, address_to count,
                              address_to count + 1,
                              sizeof(string_address), 16))
                 return false;
 
-        p8 address_to made = (p8 address_to)text_arena_take(length + 1);
+        p8 address_to made = (p8 address_to)utility_arena_take(length + 1);
 
         if (!made)
                 return false;
@@ -13093,7 +13086,7 @@ static bool ps_format_list(string_address list,
                 }
 
                 p8 address_to name =
-                    (p8 address_to)text_arena_take(name_length + 1);
+                    (p8 address_to)utility_arena_take(name_length + 1);
 
                 if (!name)
                         return false;
@@ -13112,7 +13105,7 @@ static bool ps_format_list(string_address list,
 
                         item.at += header_length;
                         p8 address_to made =
-                            (p8 address_to)text_arena_take(header_length + 1);
+                            (p8 address_to)utility_arena_take(header_length + 1);
 
                         if (!made)
                                 return false;
@@ -13197,7 +13190,7 @@ static b32 tools_ps(void)
         positive heading_options = 0;
 
         text_begin("ps");
-        text_arena_used = 0;
+        utility_arena.used = 0;
         ps_room = null;
         ps_room_used = 0;
         ps_room_size = 0;
@@ -13451,7 +13444,7 @@ static b32 tools_ps(void)
                         positive width = ps_column_width(fields + f,
                                                          address_of header);
 
-                        string_to_field(text_put,
+                        string_to_field_bulk(text_put,
                                         header ? header : (string_address)"",
                                         !ps_columns[field].right && last ? 0 : width,
                                         ' ', !ps_columns[field].right);
@@ -13995,16 +13988,16 @@ static fn tools_dmesg_emit(tools_dmesg_state address_to state,
         if (state->decode)
         {
                 if (record->continuation)
-                        writer_fill(text_put, 15, ' ');
+                        writer_fill_bulk(text_put, 15, ' ');
                 else
                 {
                         string_address name = tools_dmesg_facilities[facility];
                         text_put_string(name);
-                        writer_fill(text_put, 6 - string_length(name), ' ');
+                        writer_fill_bulk(text_put, 6 - string_length(name), ' ');
                         text_put_character(':');
                         name = tools_dmesg_levels[level];
                         text_put_string(name);
-                        writer_fill(text_put, 6 - string_length(name), ' ');
+                        writer_fill_bulk(text_put, 6 - string_length(name), ' ');
                         text_put_string(": ");
                 }
         }
@@ -14021,7 +14014,7 @@ static fn tools_dmesg_emit(tools_dmesg_state address_to state,
         if (!state->no_time)
         {
                 if (record->continuation)
-                        writer_fill(text_put, 15, ' ');
+                        writer_fill_bulk(text_put, 15, ' ');
                 else
                 {
                         if (state->relative)
@@ -14117,7 +14110,7 @@ static b32 tools_dmesg_read_file(tools_dmesg_state address_to state,
 
         positive length = 0;
         bool failed = false;
-        p8 address_to bytes = text_arena_read_all(
+        p8 address_to bytes = utility_arena_read_all(
             (positive)handle, 16384, address_of length, address_of failed);
         system_close(handle);
         if (!bytes)
@@ -14209,7 +14202,7 @@ static b32 tools_dmesg_main()
         };
 
         text_begin("dmesg");
-        text_arena_used = 0;
+        utility_arena.used = 0;
         if (!file_take(address_of taking))
                 return text_done(1);
         if (taking.first != (positive)program_argument_count())
@@ -14343,7 +14336,7 @@ static b32 tools_dmesg_main()
         value = file_option_value(address_of taking, 's');
         if (value && (!text_unsigned_option(value, false,
                                              address_of capacity) ||
-                      capacity >= TEXT_ARENA_BYTES))
+                      capacity >= UTILITY_ARENA_BYTES))
                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid buffer size"));
 
         string_address file = file_option_value(address_of taking, 'F');
@@ -14380,7 +14373,7 @@ static b32 tools_dmesg_main()
                                              DMESG_SIZE_BUFFER, 0, 0);
                 capacity = size > 0 ? (positive)size : 16384;
         }
-        p8 address_to buffer = (p8 address_to)text_arena_take(capacity + 1);
+        p8 address_to buffer = (p8 address_to)utility_arena_take(capacity + 1);
         if (!buffer)
                 return text_done(1);
         b32 action = (flags & FILE_FLAG('c')) ? DMESG_READ_CLEAR
@@ -14588,10 +14581,10 @@ static bool tools_fincore_one(string_address path,
                 p64 done = 0;
                 p8 address_to vector = file_transfer;
                 positive vector_room = sizeof(file_transfer);
-                if (text_arena && text_arena_used < TEXT_ARENA_BYTES)
+                if (utility_arena.bytes && utility_arena.used < UTILITY_ARENA_BYTES)
                 {
-                        vector = text_arena + text_arena_used;
-                        vector_room = TEXT_ARENA_BYTES - text_arena_used;
+                        vector = utility_arena.bytes + utility_arena.used;
+                        vector_room = UTILITY_ARENA_BYTES - utility_arena.used;
                 }
                 while (done < pages)
                 {
@@ -14693,11 +14686,11 @@ static b32 tools_fincore_main()
                 return string_report(log_error, 1, "%s: %s\n", "fincore", "unknown output column");
 
         text_begin("fincore");
-        text_arena_used = 0;
+        utility_arena.used = 0;
         if (file_operand_count > positive_max / sizeof(tools_fincore_row))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many files"));
         tools_fincore_row address_to rows =
-            (tools_fincore_row address_to)text_arena_take(
+            (tools_fincore_row address_to)utility_arena_take(
                 file_operand_count * sizeof(*rows));
         if (!rows)
                 return text_done(1);

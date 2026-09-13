@@ -71,6 +71,7 @@
 #define DNS_NO_SUCH_NAME (-4)
 #define DNS_NO_ADDRESS (-5)
 #define DNS_REFUSED (-6)
+#define DNS_NO_RANDOM (-7)
 
 /*
         The name, as labels.
@@ -174,6 +175,185 @@ static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive
         }
 }
 
+/* Expand one wire name into an uncompressed, lower-case label spelling.
+   Comparing that spelling keeps owner checks independent of compression and
+   of DNS's ASCII case-insensitivity.  The moving ceiling is the same loop
+   guard used by dns_skip_name: every compression pointer must move strictly
+   backwards and no target may wander back through the pointer that led to it. */
+static PURE bipolar dns_copy_name(p8 address_to message, positive size,
+                                  positive at, p8 address_to into,
+                                  positive room)
+{
+        positive ceiling = size;
+        positive used = 0;
+
+        for (;;)
+        {
+                p8 length;
+
+                if (at >= ceiling)
+                        return DNS_MALFORMED;
+
+                length = message[at];
+
+                if ((length & 0xc0) == 0xc0)
+                {
+                        positive target;
+
+                        if (at + 1 >= ceiling)
+                                return DNS_MALFORMED;
+
+                        target = network_load_16(message + at) & 0x3fff;
+
+                        if (target >= at)
+                                return DNS_MALFORMED;
+
+                        ceiling = at;
+                        at = target;
+                        continue;
+                }
+
+                if (length & 0xc0 || length > 63 ||
+                    length > ceiling - at - 1 ||
+                    used > room || room - used < (positive)length + 1)
+                        return DNS_MALFORMED;
+
+                into[used++] = length;
+                at++;
+
+                for (positive byte = 0; byte < length; byte++)
+                {
+                        p8 value = message[at + byte];
+
+                        if (value >= 'A' && value <= 'Z')
+                                value = (p8)(value + ('a' - 'A'));
+                        into[used++] = value;
+                }
+
+                at += length;
+
+                if (!length)
+                        return (bipolar)used;
+        }
+}
+
+/* Find an address only along the name that was asked for and the CNAME chain
+   rooted at it.  An answer packet may legally put the terminal A before its
+   CNAME, so each bounded pass considers one link rather than trusting record
+   order.  Unrelated A records are glue or attacker-controlled distractions,
+   never an answer to the question. */
+static bipolar dns_answer_address(p8 address_to message, positive size,
+                                  positive records_at, p16 answers,
+                                  positive question_at,
+                                  p32 address_to found)
+{
+        p8 wanted[256];
+        p8 alias[256];
+        bipolar wanted_length = dns_copy_name(message, size, question_at,
+                                              wanted, sizeof wanted);
+
+        if (wanted_length < 0)
+                return DNS_MALFORMED;
+
+        /* A cycle needs no more links than there are answer records to show
+           itself.  The extra pass is the one that can find the terminal A. */
+        for (positive hop = 0; hop <= (positive)answers; hop++)
+        {
+                positive at = records_at;
+                bool has_alias = false;
+                bool has_address = false;
+                bipolar alias_length = 0;
+                p32 address = 0;
+
+                for (positive record = 0; record < answers; record++)
+                {
+                        p8 owner[256];
+                        bipolar owner_length = dns_copy_name(
+                            message, size, at, owner, sizeof owner);
+                        bipolar next = dns_skip_name(message, size, at);
+                        p16 kind;
+                        p16 class;
+                        p16 data_length;
+                        bool is_wanted;
+
+                        if (owner_length < 0 || next < 0)
+                                return DNS_MALFORMED;
+
+                        at = (positive)next;
+
+                        if (at > size || size - at < 10)
+                                return DNS_MALFORMED;
+
+                        kind = network_load_16(message + at);
+                        class = network_load_16(message + at + 2);
+                        data_length = network_load_16(message + at + 8);
+                        at += 10;
+
+                        if (data_length > size - at)
+                                return DNS_MALFORMED;
+
+                        is_wanted = owner_length == wanted_length &&
+                                    !memory_compare(owner, wanted,
+                                                    (positive)wanted_length);
+
+                        if (class == DNS_CLASS_IN && is_wanted &&
+                            kind == DNS_TYPE_A)
+                        {
+                                if (data_length != 4)
+                                        return DNS_MALFORMED;
+                                if (!has_address)
+                                        address = network_load_32(message + at);
+                                has_address = true;
+                        }
+                        else if (class == DNS_CLASS_IN && is_wanted &&
+                                 kind == DNS_TYPE_CNAME)
+                        {
+                                bipolar target_end;
+
+                                if (has_alias)
+                                        return DNS_MALFORMED;
+
+                                target_end = dns_skip_name(message, size, at);
+                                alias_length = dns_copy_name(
+                                    message, size, at, alias, sizeof alias);
+
+                                if (target_end < 0 || alias_length < 0 ||
+                                    (positive)target_end != at + data_length)
+                                        return DNS_MALFORMED;
+                                has_alias = true;
+                        }
+
+                        at += data_length;
+                }
+
+                /* CNAME and other data at one owner are mutually exclusive.
+                   Treating a packet containing both as an address choice
+                   would make its meaning depend on record order. */
+                if (has_alias && has_address)
+                        return DNS_MALFORMED;
+
+                if (has_address)
+                {
+                        if (found)
+                                *found = address;
+                        return DNS_OK;
+                }
+
+                if (!has_alias)
+                        return DNS_NO_ADDRESS;
+
+                if (alias_length == wanted_length &&
+                    !memory_compare(alias, wanted,
+                                    (positive)wanted_length))
+                        return DNS_MALFORMED;
+
+                memory_copy(wanted, alias, (positive)alias_length);
+                wanted_length = alias_length;
+        }
+
+        return DNS_MALFORMED;
+}
+
 /*
         The nameserver, out of resolv.conf.
 
@@ -254,7 +434,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 {
         p8 request[DNS_MAX_MESSAGE];
         p8 reply[DNS_MAX_MESSAGE];
-        p16 id = (p16)network_transaction(sizeof(p16));
+        p16 id;
         bipolar handle;
         bipolar written;
         bipolar got;
@@ -262,6 +442,9 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         positive at;
         positive answers;
         positive question_length;
+
+        if (!network_transaction_secure(address_of id, sizeof id))
+                return DNS_NO_RANDOM;
 
         written = dns_write_name(request + DNS_HEADER,
                                  sizeof(request) - DNS_HEADER - 4, name);
@@ -352,45 +535,8 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         answers = network_load_16(reply + 6);
         at = DNS_HEADER + question_length;
 
-        while (answers--)
-        {
-                bipolar next = dns_skip_name(reply, (positive)got, at);
-                p16 kind;
-                p16 class;
-                p16 size;
-
-                if (next < 0)
-                        return DNS_MALFORMED;
-
-                at = (positive)next;
-
-                if (at + 10 > (positive)got)
-                        return DNS_MALFORMED;
-
-                kind = network_load_16(reply + at);
-                class = network_load_16(reply + at + 2);
-                size = network_load_16(reply + at + 8);
-                at += 10;
-
-                if (at + size > (positive)got)
-                        return DNS_MALFORMED;
-
-                //      A CNAME chain is walked by simply reading past it: the
-                //      answer section carries the A record the alias leads to
-                //      in the same reply, which is what recursion is for.
-                if (kind == DNS_TYPE_A && class == DNS_CLASS_IN && size == 4)
-                {
-                        if (found)
-                                address_to found = network_load_32(reply + at);
-
-                        return DNS_OK;
-                }
-
-                at += size;
-        }
-
-        //      NOERROR, and nothing in it. The name is real and has no address.
-        return DNS_NO_ADDRESS;
+        return dns_answer_address(reply, (positive)got, at, (p16)answers,
+                                  DNS_HEADER, found);
 }
 
 /*

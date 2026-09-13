@@ -20,7 +20,6 @@ typedef struct
 #define PTY_TIOCSPTLCK 0x40045431u
 #define PTY_TIOCGPTN 0x80045430u
 #define PTY_TIOCSCTTY 0x540eu
-#define PTY_F_SETFD 2
 
 static bipolar process_pty_open(b32 address_to master_out,
                                 b32 address_to slave_out,
@@ -94,10 +93,7 @@ static bipolar process_pty_child_setup(b32 master, b32 slave,
 
                 for (b32 target = 0; target < 3; target++)
                 {
-                        answer = slave == target
-                            ? system_call_3(syscall(fcntl), (positive)slave,
-                                            PTY_F_SETFD, 0)
-                            : system_duplicate(slave, target, 0);
+                        answer = system_descriptor_install(slave, target);
                         if (answer < 0)
                                 break;
                 }

@@ -1545,14 +1545,14 @@ static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
 
         if (into >= 0)
         {
-                system_duplicate(into, 0, 0);
-                system_close(into);
+                if (shell_child_fd_move(into, 0) < 0)
+                        exit(126);
         }
 
         if (out_of >= 0)
         {
-                system_duplicate(out_of, 1, 0);
-                system_close(out_of);
+                if (shell_child_fd_move(out_of, 1) < 0)
+                        exit(126);
         }
 
         for (b32 i = 0; i < awk_writer_count; i++)

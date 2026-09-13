@@ -203,128 +203,6 @@ static b32 text_done(b32 code)
 }
 
 /*
-        One arena, taken from the kernel the first time anything asks.
-
-        sort holds every line at once and tail holds the last n of them, so
-        those two need memory that is not a fixed array. Everything else here
-        never touches it.
-*/
-#define TEXT_ARENA_BYTES (192u << 20)
-
-static p8 address_to text_arena;
-static positive text_arena_used;
-
-static address_any text_arena_take(positive bytes)
-{
-        /* Keep both the alignment addition and the remaining-room test from
-           wrapping. Most callers are bounded before they arrive here, but
-           this is the allocator boundary: a missed product check must fail
-           here rather than turn a large request into a small pointer inside
-           the arena and let the caller write past it. */
-        if (bytes > TEXT_ARENA_BYTES || bytes > positive_max - 15)
-        {
-                string_diagnostic(&text_diagnostic, 0, null, "input too large");
-                return null;
-        }
-
-        bytes = (bytes + 15) & ~(positive)15;
-
-        if (!text_arena)
-        {
-                positive got = (positive)memory(TEXT_ARENA_BYTES);
-
-                // mmap answers a failure as a small negative, not as null.
-                if (!got || system_failed(got))
-                {
-                        string_diagnostic(&text_diagnostic, 0, null, "out of memory");
-                        return null;
-                }
-
-                text_arena = (p8 address_to)got;
-                text_arena_used = 0;
-        }
-
-        if (text_arena_used > TEXT_ARENA_BYTES ||
-            bytes > TEXT_ARENA_BYTES - text_arena_used)
-        {
-                string_diagnostic(&text_diagnostic, 0, null, "input too large");
-                return null;
-        }
-
-        address_any at = text_arena + text_arena_used;
-        text_arena_used += bytes;
-        return at;
-}
-
-/* Read an unbounded descriptor into the newest arena object. Rewinding before
-   each doubling keeps its address stable and makes growth a capacity change,
-   not an allocate-and-copy loop. The final rewind gives unused capacity back
-   before the caller retains anything else. */
-static p8 address_to text_arena_read_all(positive handle, positive first,
-                                         positive address_to length,
-                                         bool address_to read_failed)
-{
-        positive mark = text_arena_used;
-        positive room = first;
-        positive used = 0;
-        p8 address_to bytes = (p8 address_to)text_arena_take(room);
-
-        address_to length = 0;
-        if (read_failed)
-                address_to read_failed = false;
-        if (!bytes)
-                return null;
-
-        while (true)
-        {
-                if (used == room)
-                {
-                        positive larger = room < positive_max
-                            ? memory_growth(room, room + 1, first)
-                            : 0;
-                        positive available = TEXT_ARENA_BYTES - mark;
-
-                        if (larger > available)
-                                larger = room < available ? available : 0;
-
-                        if (!larger)
-                                goto failed;
-
-                        text_arena_used = mark;
-                        bytes = (p8 address_to)text_arena_take(larger);
-
-                        if (!bytes)
-                                goto failed;
-
-                        room = larger;
-                }
-
-                bipolar got = system_read_retry(handle, bytes + used,
-                                                room - used);
-
-                if (got < 0)
-                {
-                        if (read_failed)
-                                address_to read_failed = true;
-                        goto failed;
-                }
-                if (!got)
-                        break;
-
-                used += (positive)got;
-        }
-
-        bytes[used] = end;
-        text_arena_used = mark + ((used + 1 + 15) & ~(positive)15);
-        address_to length = used;
-        return bytes;
-
-failed:
-        text_arena_used = mark;
-        return null;
-}
-
-/*
         Reading.
 
         file_read takes an offset, and an offset on a pipe is not a position
@@ -399,22 +277,21 @@ static p8 text_delimiter = '\n';
         The reader is emptied before the open is attempted, so a failure
         cannot leave the bytes of the last file sitting behind it.
 */
-static bool text_reader_open(text_reader address_to reader, string_address path)
+static fn text_reader_reset(text_reader address_to reader,
+                            string_address shown)
 {
         reader->filled = 0;
         reader->position = 0;
         reader->finished = false;
         reader->failed = false;
         reader->opened = false;
-        reader->name = path;
+        reader->name = shown;
+}
 
-        if (!path || (path[0] == '-' && path[1] == '\0'))
-        {
-                reader->handle = 0;
-                return true;
-        }
-
-        bipolar handle = text_open_handle(path, FILE_READ, 0);
+static bool text_reader_attach(text_reader address_to reader,
+                               bipolar handle, string_address shown)
+{
+        text_reader_reset(reader, shown);
 
         if (handle < 0)
         {
@@ -422,7 +299,8 @@ static bool text_reader_open(text_reader address_to reader, string_address path)
                    name the system gives it; assuming the absent one made a
                    denied file and a symlink loop read alike. */
                 if (!text_quiet_open)
-                        string_diagnostic(&text_diagnostic, 0, path, file_reason(handle));
+                        string_diagnostic(&text_diagnostic, 0, shown,
+                                          file_reason(handle));
                 reader->failed = true;
                 return false;
         }
@@ -430,6 +308,28 @@ static bool text_reader_open(text_reader address_to reader, string_address path)
         reader->handle = (positive)handle;
         reader->opened = true;
         return true;
+}
+
+static bool text_reader_open_at(text_reader address_to reader,
+                                bipolar directory, string_address path,
+                                string_address shown)
+{
+        return text_reader_attach(
+            reader,
+            system_open_at(directory, path, FILE_READ | O_CLOEXEC),
+            shown);
+}
+
+static bool text_reader_open(text_reader address_to reader, string_address path)
+{
+        if (!path || (path[0] == '-' && path[1] == '\0'))
+        {
+                text_reader_reset(reader, path);
+                reader->handle = 0;
+                return true;
+        }
+
+        return text_reader_open_at(reader, AT_FDCWD, path, path);
 }
 
 static inline INLINE fn text_close_handle(bool address_to opened,
@@ -2182,7 +2082,7 @@ static b32 text_paste()
 
         text_begin("paste");
         text_delimiter = '\n';
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
@@ -2199,7 +2099,7 @@ static b32 text_paste()
         if (delimiter_room > positive_max / sizeof(p16))
                 return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid delimiter list"));
 
-        p16 address_to delimiters = (p16 address_to)text_arena_take(
+        p16 address_to delimiters = (p16 address_to)utility_arena_take(
             delimiter_room * sizeof(p16));
 
         if (!delimiters ||
@@ -2214,7 +2114,7 @@ static b32 text_paste()
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many operands"));
 
         text_record_cursor address_to cursors =
-            (text_record_cursor address_to)text_arena_take(
+            (text_record_cursor address_to)utility_arena_take(
                 inputs * sizeof(text_record_cursor));
 
         if (!cursors)
@@ -2864,7 +2764,7 @@ static positive join_store(p8 address_to address_to buffer,
         {
                 positive larger = memory_growth(address_to room, wanted,
                                                  JOIN_GROUP_FIRST);
-                positive available = TEXT_ARENA_BYTES - mark;
+                positive available = UTILITY_ARENA_BYTES - mark;
 
                 if (larger > available)
                         larger = wanted <= available ? available : 0;
@@ -2875,9 +2775,9 @@ static positive join_store(p8 address_to address_to buffer,
                    at the same address and retains its bytes.  Capacity
                    changes logarithmically; records themselves only advance
                    `used` inside that one object. */
-                text_arena_used = mark;
+                utility_arena.used = mark;
                 p8 address_to grown =
-                    (p8 address_to)text_arena_take(larger);
+                    (p8 address_to)utility_arena_take(larger);
 
                 if (!grown)
                         return TEXT_UNSET;
@@ -2908,7 +2808,7 @@ static b32 text_join()
 
         text_begin("join");
         text_delimiter = '\n';
-        text_arena_used = 0;
+        utility_arena.used = 0;
         join_key[0] = join_key[1] = 0;
         join_key_said[0] = join_key_said[1] = false;
         join_unpaired = 0;
@@ -2951,7 +2851,7 @@ static b32 text_join()
                 return text_done(1);
         }
 
-        positive group_mark = text_arena_used;
+        positive group_mark = utility_arena.used;
         p8 address_to group = null;
         positive group_room = 0;
 
@@ -3117,7 +3017,7 @@ static b32 text_join()
                 positive group_key_length = 0;
                 bool checked = join_order_mode == RELATION_ORDER_FORCE;
 
-                text_arena_used = group_mark;
+                utility_arena.used = group_mark;
                 group = null;
                 group_room = 0;
 
@@ -4369,7 +4269,7 @@ static bool text_lines_ready()
         if (text_lines)
                 return true;
 
-        text_lines = (text_slice address_to)text_arena_take(TEXT_LINES_MAX * sizeof(text_slice));
+        text_lines = (text_slice address_to)utility_arena_take(TEXT_LINES_MAX * sizeof(text_slice));
         return text_lines != null;
 }
 
@@ -4383,7 +4283,7 @@ static bool text_lines_gather()
                 if (text_lines_count >= TEXT_LINES_MAX)
                         return string_diagnostic(&text_diagnostic, 0, null, "too many lines");
 
-                p8 address_to room = (p8 address_to)text_arena_take(text_line_length + 1);
+                p8 address_to room = (p8 address_to)utility_arena_take(text_line_length + 1);
 
                 if (!room)
                         return false;
@@ -4411,16 +4311,16 @@ static fn text_put_slice(text_slice address_to line)
         counts head and tail can only answer once a pipe has ended.
 
         One arena object retaken at its full length after every fill, the way
-        text_arena_read_all grows, rather than one take per fill: a take is
+        utility_arena_read_all grows, rather than one take per fill: a take is
         rounded up to sixteen bytes and a pipe hands over runs of any length,
         so the pieces would not sit end to end and the gap between two of
         them would be printed as part of the answer. Null is the arena
         refusing, which it has already said aloud.
 */
-static p8 address_to text_arena_hold_rest(positive address_to have)
+static p8 address_to utility_arena_hold_rest(positive address_to have)
 {
-        p8 address_to held = (p8 address_to)text_arena_take(0);
-        positive mark = text_arena_used;
+        p8 address_to held = (p8 address_to)utility_arena_take(0);
+        positive mark = utility_arena.used;
 
         address_to have = 0;
         if (!held)
@@ -4430,8 +4330,8 @@ static p8 address_to text_arena_hold_rest(positive address_to have)
         {
                 positive left = text_input.filled - text_input.position;
 
-                text_arena_used = mark;
-                if (!text_arena_take(address_to have + left))
+                utility_arena.used = mark;
+                if (!utility_arena_take(address_to have + left))
                         return null;
 
                 memory_copy(held + address_to have,
@@ -4498,7 +4398,7 @@ static bool text_files_from(string_address path)
         if (!text_open(from_stdin ? null : path))
                 return false;
 
-        p8 address_to held = text_arena_hold_rest(address_of have);
+        p8 address_to held = utility_arena_hold_rest(address_of have);
         bool failed = text_input.failed;
 
         text_close();
@@ -4508,14 +4408,14 @@ static bool text_files_from(string_address path)
 
         if (failed)
         {
-                text_file_list = (string_address address_to)text_arena_take(
+                text_file_list = (string_address address_to)utility_arena_take(
                     sizeof(string_address));
                 text_files_count = 0;
                 text_status = 1;
                 return text_file_list != null;
         }
 
-        p8 address_to names = (p8 address_to)text_arena_take(have + 1);
+        p8 address_to names = (p8 address_to)utility_arena_take(have + 1);
 
         if (!names)
                 return false;
@@ -4530,7 +4430,7 @@ static bool text_files_from(string_address path)
                         count++;
 
         string_address address_to list = (string_address address_to)
-            text_arena_take((count + 1) * sizeof(string_address));
+            utility_arena_take((count + 1) * sizeof(string_address));
 
         if (!list)
                 return false;
@@ -4685,7 +4585,7 @@ static fn text_head_short(positive count, bool by_bytes)
         positive size = 0;
 
         text_lines_count = 0;
-        text_arena_used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
+        utility_arena.used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
 
         if (text_regular_size(text_input.handle, address_of size))
         {
@@ -4702,7 +4602,7 @@ static fn text_head_short(positive count, bool by_bytes)
         if (by_bytes)
         {
                 positive have;
-                p8 address_to held = text_arena_hold_rest(address_of have);
+                p8 address_to held = utility_arena_hold_rest(address_of have);
 
                 if (!held)
                         return;
@@ -4943,7 +4843,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                 }
 
                 text_lines_count = 0;
-                text_arena_used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
+                utility_arena.used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
 
                 positive size = 0;
                 bool seekable = !marked &&
@@ -4967,7 +4867,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         // Bytes rather than lines, so the whole input is held
                         // and the tail of it handed back.
                         positive have;
-                        p8 address_to held = text_arena_hold_rest(address_of have);
+                        p8 address_to held = utility_arena_hold_rest(address_of have);
 
                         if (!held)
                                 return text_done(1);
@@ -5256,7 +5156,7 @@ static fn nl_put_number(bipolar number, positive width, p8 justify, bool zeros)
                 if (number < 0)
                         text_put_character('-');
                 text_put(digits, length);
-                writer_fill(text_put, pad, ' ');
+                writer_fill_bulk(text_put, pad, ' ');
                 return;
         }
 
@@ -5264,12 +5164,12 @@ static fn nl_put_number(bipolar number, positive width, p8 justify, bool zeros)
         {
                 if (number < 0)
                         text_put_character('-');
-                writer_fill(text_put, pad, '0');
+                writer_fill_bulk(text_put, pad, '0');
                 text_put(digits, length);
                 return;
         }
 
-        writer_fill(text_put, pad, ' ');
+        writer_fill_bulk(text_put, pad, ' ');
 
         if (number < 0)
                 text_put_character('-');
@@ -5539,7 +5439,7 @@ static b32 text_nl()
                         {
                                 // The columns stay, so an unnumbered line
                                 // lines up under a numbered one.
-                                writer_fill(text_put, width + separator_length, ' ');
+                                writer_fill_bulk(text_put, width + separator_length, ' ');
                         }
 
                         text_put_line();
@@ -5605,23 +5505,11 @@ static fn text_tab_reset()
 static bool text_tab_number(string_address at, positive address_to used,
                             positive address_to made)
 {
-        positive value = 0;
-        positive digits = 0;
-
-        while (byte_is_digit(at[digits]))
-        {
-                positive digit = at[digits++] - '0';
-
-                if (value > (positive_max - digit) / 10)
-                        return false;
-
-                value = value * 10 + digit;
-        }
-
-        if (!digits)
+        string_address start = at;
+        positive value;
+        if (!string_digits_checked(address_of at, 10, address_of value))
                 return false;
-
-        address_to used = digits;
+        address_to used = (positive)(at - start);
         address_to made = value;
         return true;
 }
@@ -6767,7 +6655,7 @@ static b32 text_fmt()
         };
 
         text_begin("fmt");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
@@ -6842,7 +6730,7 @@ static b32 text_fmt()
                 fmt_word_bytes['\r'] = 0;
         }
 
-        fmt_words = (fmt_word address_to)text_arena_take(
+        fmt_words = (fmt_word address_to)utility_arena_take(
             (FMT_WORD_MAX + 1) * sizeof(fmt_word));
 
         if (!fmt_words)
@@ -7624,7 +7512,7 @@ static fn pr_merge_files()
 {
         positive inputs = text_files_count;
         text_record_cursor address_to cursors =
-            (text_record_cursor address_to)text_arena_take(
+            (text_record_cursor address_to)utility_arena_take(
                 inputs * sizeof(text_record_cursor));
 
         if (!cursors)
@@ -7714,7 +7602,7 @@ static b32 text_pr()
         };
 
         text_begin("pr");
-        text_arena_used = 0;
+        utility_arena.used = 0;
         pr_page_option_failed = false;
         pr_first_page = 1;
         pr_last_page = positive_max;
@@ -7880,7 +7768,7 @@ static b32 text_pr()
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "page has too many records"));
 
         pr_record_room = pr_body_lines * pr_columns;
-        pr_records = (pr_record address_to)text_arena_take(
+        pr_records = (pr_record address_to)utility_arena_take(
             pr_record_room * sizeof(pr_record));
 
         if (!pr_records)
@@ -7905,7 +7793,7 @@ static b32 text_pr()
 /*
         Permuted index.
 
-        Source bytes live in text_arena and arrive through text_reader.  The
+        Source bytes live in utility_arena.bytes and arrive through text_reader.  The
         occurrence table contains only offsets into those bytes, and its
         order is produced by the same stable merge sorter and byte comparator
         as sort.  ptx therefore adds a context planner, not another reader,
@@ -7996,7 +7884,7 @@ static bool text_blob_read(string_address path, text_blob address_to blob)
         if (!text_open(path))
                 return false;
 
-        blob->bytes = text_arena_hold_rest(address_of blob->length);
+        blob->bytes = utility_arena_hold_rest(address_of blob->length);
         bool okay = blob->bytes && !text_input.failed;
         text_close();
         return okay;
@@ -8785,7 +8673,7 @@ static b32 text_ptx()
         };
 
         text_begin("ptx");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
@@ -8904,7 +8792,7 @@ static b32 text_ptx()
                             byte_is_alpha((p8)character);
 
         ptx_file_count = text_input_count();
-        ptx_files = (ptx_file address_to)text_arena_take(
+        ptx_files = (ptx_file address_to)utility_arena_take(
             ptx_file_count * sizeof(ptx_file));
 
         if (!ptx_files)
@@ -8937,7 +8825,7 @@ static b32 text_ptx()
         if (ptx_failed)
                 return text_done(1);
 
-        ptx_contexts = (ptx_context address_to)text_arena_take(
+        ptx_contexts = (ptx_context address_to)utility_arena_take(
             ptx_context_count * sizeof(ptx_context));
 
         if (ptx_context_count && !ptx_contexts)
@@ -8951,11 +8839,11 @@ static b32 text_ptx()
                 return text_done(string_diagnostic(&text_diagnostic, 1, ptx_word_pattern, "unsupported word expression"));
 
         ptx_occurrence_count = ptx_scan_occurrences(false);
-        ptx_occurrences = (ptx_occurrence address_to)text_arena_take(
+        ptx_occurrences = (ptx_occurrence address_to)utility_arena_take(
             ptx_occurrence_count * sizeof(ptx_occurrence));
-        ptx_order = (positive address_to)text_arena_take(
+        ptx_order = (positive address_to)utility_arena_take(
             ptx_occurrence_count * sizeof(positive));
-        positive address_to spare = (positive address_to)text_arena_take(
+        positive address_to spare = (positive address_to)utility_arena_take(
             ptx_occurrence_count * sizeof(positive));
 
         if (ptx_occurrence_count &&
@@ -9026,7 +8914,7 @@ static b32 text_ptx()
 /*
         Lists and tables.
 
-        The byte spans below all point into text_arena (or the option vector),
+        The byte spans below all point into utility_arena.bytes (or the option vector),
         and the input blobs are filled by text_blob_read.  Planning is two
         cheap linear passes: the first counts rows and cells, the second lays
         down their descriptors.  No line copies, per-cell allocations, or
@@ -9783,9 +9671,9 @@ static fn column_table_output(bool noheadings, positive width,
         if (!column_row_count)
                 return;
 
-        positive address_to widths = (positive address_to)text_arena_take(
+        positive address_to widths = (positive address_to)utility_arena_take(
             column_count * sizeof(positive));
-        positive address_to second = (positive address_to)text_arena_take(
+        positive address_to second = (positive address_to)utility_arena_take(
             column_count * sizeof(positive));
 
         if (column_count && (!widths || !second))
@@ -9920,7 +9808,7 @@ static b32 text_column()
         };
 
         text_begin("column");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
@@ -10002,7 +9890,7 @@ static b32 text_column()
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "option --table-columns or --table-column required for --json"));
 
         column_file_count = text_input_count();
-        column_files = (text_blob address_to)text_arena_take(
+        column_files = (text_blob address_to)utility_arena_take(
             column_file_count * sizeof(text_blob));
 
         if (!column_files)
@@ -10040,11 +9928,11 @@ static b32 text_column()
         if (column_name_count > column_count)
                 column_count = column_name_count;
 
-        column_rows = (column_row address_to)text_arena_take(
+        column_rows = (column_row address_to)utility_arena_take(
             column_row_count * sizeof(column_row));
-        column_cells = (column_cell address_to)text_arena_take(
+        column_cells = (column_cell address_to)utility_arena_take(
             column_cell_count * sizeof(column_cell));
-        column_names = (column_cell address_to)text_arena_take(
+        column_names = (column_cell address_to)utility_arena_take(
             column_count * sizeof(column_cell));
 
         if ((column_row_count && !column_rows) ||
@@ -10072,8 +9960,8 @@ static b32 text_column()
         if (!column_row_count)
                 return text_done(text_status);
 
-        p8 address_to properties = (p8 address_to)text_arena_take(column_count);
-        positive address_to order = (positive address_to)text_arena_take(
+        p8 address_to properties = (p8 address_to)utility_arena_take(column_count);
+        positive address_to order = (positive address_to)utility_arena_take(
             column_count * sizeof(positive));
 
         if (column_count && (!properties || !order))
@@ -10159,7 +10047,7 @@ enum
 
 typedef struct
 {
-        /* text_arena caps one input below 192 MiB, so byte-C line and column
+        /* utility_arena.bytes caps one input below 192 MiB, so byte-C line and column
            positions (including two half-lines per newline) fit signed and
            unsigned 32-bit fields.  Keeping events at 12 rather than 24 bytes
            is the difference between cache-resident nroff and allocator-like
@@ -11081,7 +10969,7 @@ static fn terminal_col_output(terminal_state address_to state)
 
         if (!state->ordered && state->events > 1)
         {
-                terminal_order = (positive address_to)text_arena_take(
+                terminal_order = (positive address_to)utility_arena_take(
                     state->events * sizeof(positive));
 
                 if (!terminal_order)
@@ -11108,7 +10996,7 @@ static fn terminal_col_output(terminal_state address_to state)
                 }
 
                 positive address_to spare =
-                    (positive address_to)text_arena_take(
+                    (positive address_to)utility_arena_take(
                         (lines_ordered ? longest : state->events) * sizeof(positive));
 
                 if (!spare)
@@ -11225,7 +11113,7 @@ static b32 text_col()
         };
 
         text_begin("col");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -11263,7 +11151,7 @@ static b32 text_col()
 
         terminal_scan(address_of input, address_of state, false);
         positive event_count = state.events;
-        terminal_events = (terminal_event address_to)text_arena_take(
+        terminal_events = (terminal_event address_to)utility_arena_take(
             event_count * sizeof(terminal_event));
         if (event_count && !terminal_events)
                 return text_done(1);
@@ -11322,7 +11210,7 @@ static b32 text_colcrt()
 
         for (b32 file = 0; file < inputs; file++)
         {
-                text_arena_used = 0;
+                utility_arena.used = 0;
                 text_blob input = {null, 0};
 
                 if (!text_blob_read(text_file_name(file), address_of input))
@@ -11349,7 +11237,7 @@ static b32 text_colcrt()
 static b32 text_colrm()
 {
         text_begin("colrm");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         positive count = (positive)program_argument_count();
         positive first = 0;
@@ -11458,7 +11346,7 @@ static b32 text_ul()
 
         for (b32 file = 0; file < inputs && !state.ul_failed; file++)
         {
-                text_arena_used = 0;
+                utility_arena.used = 0;
                 text_blob input = {null, 0};
 
                 if (text_file_name(file) && string_equals(text_file_name(file), "-"))
@@ -11659,7 +11547,7 @@ static b32 text_look()
         };
 
         text_begin("look");
-        text_arena_used = 0;
+        utility_arena.used = 0;
         text_delimiter = '\n';
 
         if (!file_take(address_of taking))
@@ -11690,7 +11578,7 @@ static b32 text_look()
                           (taking.flags & FILE_FLAG('d')) != 0;
         look_fold_case = !supplied ||
                          (taking.flags & FILE_FLAG('f')) != 0;
-        look_key = (p8 address_to)text_arena_take(key_length + 1);
+        look_key = (p8 address_to)utility_arena_take(key_length + 1);
 
         if (!look_key)
                 return text_done(1);
@@ -13814,12 +13702,12 @@ static bool grep_hold_make(positive lines)
                 lines = GREP_HOLD_LINES;
 
         grep_hold_slots = lines;
-        grep_hold_pool = (p8 address_to)text_arena_take(GREP_HOLD_BYTES);
-        grep_hold_at = (positive address_to)text_arena_take(lines * sizeof(positive));
-        grep_hold_size = (positive address_to)text_arena_take(lines * sizeof(positive));
-        grep_hold_number = (positive address_to)text_arena_take(lines * sizeof(positive));
+        grep_hold_pool = (p8 address_to)utility_arena_take(GREP_HOLD_BYTES);
+        grep_hold_at = (positive address_to)utility_arena_take(lines * sizeof(positive));
+        grep_hold_size = (positive address_to)utility_arena_take(lines * sizeof(positive));
+        grep_hold_number = (positive address_to)utility_arena_take(lines * sizeof(positive));
         grep_hold_color = grep_coloring
-                              ? (p8 address_to)text_arena_take(GREP_HOLD_BYTES)
+                              ? (p8 address_to)utility_arena_take(GREP_HOLD_BYTES)
                               : null;
 
         return grep_hold_pool && grep_hold_at && grep_hold_size &&
@@ -14249,7 +14137,7 @@ static bool grep_glob_add(grep_glob address_to address_to list,
                 while (length && value[length - 1] == '/')
                         length--;
 
-        grep_glob address_to made = (grep_glob address_to)text_arena_take(
+        grep_glob address_to made = (grep_glob address_to)utility_arena_take(
             sizeof(grep_glob) + length + 1);
 
         if (!made)
@@ -14327,7 +14215,7 @@ static string_address grep_path_join(string_address directory, string_address na
         if (have == 1 && directory[0] == '/')
                 have = 0;
 
-        p8 address_to room = (p8 address_to)text_arena_take(have + extra + 2);
+        p8 address_to room = (p8 address_to)utility_arena_take(have + extra + 2);
 
         if (!room)
                 return null;
@@ -14793,7 +14681,7 @@ static b32 text_grep()
         grep_color_reverse = false;
         grep_colors = null;
         grep_hold_color = null;
-        text_arena_used = 0;
+        utility_arena.used = 0;
         grep_option_status = 2;
 
         if (!file_take(address_of taking))
@@ -14988,7 +14876,7 @@ static b32 text_grep()
 
         if (grep_paths_room)
         {
-                grep_paths = (string_address address_to)text_arena_take(
+                grep_paths = (string_address address_to)utility_arena_take(
                     grep_paths_room * sizeof(string_address));
 
                 if (!grep_paths)
@@ -17142,66 +17030,82 @@ static bool sed_option_seen(p8 letter, string_address value)
         return true;
 }
 
-/* The temporary is owned until replacement succeeds.  A failed backup must
-   leave the input alone; a failed replacement must leave its data recoverable.
-   linkat restores a moved input only if its pathname is still absent, keeping
-   the backup even when another writer or the filesystem prevents recovery. */
-/* An edited file keeps the mode it had: the temporary is created private
-   so nothing can read a half-written file, and takes the input's mode just
-   before it replaces it. */
-static fn sed_keep_mode(string_address name, string_address temporary)
+/* Publish an in-place result only against the directory entry that was seen
+   before its input was read.  The staged descriptor stays open throughout,
+   so the shared publisher can bind the destination to that exact inode even
+   when another process can rename entries in the parent directory. */
+static bool sed_commit(bipolar directory, string_address leaf,
+                       string_address name, string_address temporary,
+                       bipolar staged, bipolar original,
+                       file_facts address_to replaced)
 {
-        file_facts facts;
-
-        if (file_look_at(name, address_of facts))
-                system_change_mode_at(AT_FDCWD, temporary,
-                                      facts.mode & 07777);
-}
-
-static bool sed_commit(string_address name, string_address temporary)
-{
-        p8 kept[TEXT_PATH_MAX];
         bool backup = sed_in_place[0] != '\0';
-
-        sed_keep_mode(name, temporary);
 
         if (backup)
         {
                 positive length = string_length(name);
                 positive extra = string_length(sed_in_place);
+                positive leaf_length = string_length(leaf);
+                p8 kept[TEXT_PATH_MAX];
+                p8 kept_leaf[TEXT_PATH_MAX];
 
-                if (length >= TEXT_PATH_MAX || extra >= TEXT_PATH_MAX - length)
+                if (length >= TEXT_PATH_MAX || extra >= TEXT_PATH_MAX - length ||
+                    leaf_length >= TEXT_PATH_MAX ||
+                    extra >= TEXT_PATH_MAX - leaf_length)
                 {
                         string_diagnostic(&text_diagnostic, 0, name, "backup path too long");
-                        goto failed;
+                        return false;
                 }
 
                 memory_copy(kept, name, length);
                 memory_copy_apart_end(kept + length, sed_in_place, extra);
+                memory_copy(kept_leaf, leaf, leaf_length);
+                memory_copy_apart_end(kept_leaf + leaf_length,
+                                      sed_in_place, extra);
 
-                bipolar moved = system_rename_at(
-                    AT_FDCWD, name, AT_FDCWD, kept, 0);
+                /* Make the backup from the opened directory entry rather
+                   than from its reusable pathname.  The alias directory is
+                   private and contains a hard link to that exact object. */
+                p8 alias_name[TEXT_PATH_MAX];
+                bipolar alias = system_path_alias_opened_at(
+                    directory, leaf, original, alias_name,
+                    sizeof(alias_name));
+                bipolar moved = alias < 0 ? alias : system_rename_at(
+                    alias, SYSTEM_PATH_ALIAS_LEAF,
+                    directory, kept_leaf, 0);
 
+                if (moved >= 0)
+                        moved = system_path_same_opened_at(
+                            original, directory, kept_leaf);
+
+                if (alias >= 0)
+                {
+                        if (moved < 0 &&
+                            system_path_same_opened_at(
+                                original, alias,
+                                SYSTEM_PATH_ALIAS_LEAF) >= 0)
+                                (void)system_path_remove_opened_at(
+                                    alias, SYSTEM_PATH_ALIAS_LEAF,
+                                    original, 0);
+
+                        (void)system_path_remove_opened_at(
+                            directory, alias_name, alias, AT_REMOVEDIR);
+                        system_close(alias);
+                }
                 if (moved < 0)
                 {
                         string_diagnostic(&text_diagnostic, 0, kept, file_reason(moved));
-                        goto failed;
+                        return false;
                 }
         }
 
-        bipolar moved = system_rename_at(
-            AT_FDCWD, temporary, AT_FDCWD, name, 0);
+        bipolar moved = file_temporary_publish_decided_at(
+            directory, temporary, leaf, staged, false, replaced);
 
         if (moved >= 0)
                 return true;
 
         string_diagnostic(&text_diagnostic, 0, name, file_reason(moved));
-
-        if (backup && system_link_at(AT_FDCWD, kept, AT_FDCWD, name, 0) < 0)
-                string_diagnostic(&text_diagnostic, 0, kept, "backup retained; cannot restore input");
-
-failed:
-        system_remove_at(AT_FDCWD, temporary, 0);
         return false;
 }
 
@@ -17305,9 +17209,7 @@ static b32 text_sed()
                 return text_done(string_diagnostic(&text_diagnostic, 4, null, "no input files"));
 
         b32 inputs = text_input_count();
-        positive temporary_nonce = sed_in_place
-            ? (positive)system_call_1(syscall(getpid), 0) * 31
-            : 0;
+        positive temporary_nonce = sed_in_place ? system_nonce() : 0;
 
         for (b32 i = 0; i < inputs && leaving < 0; i++)
         {
@@ -17316,8 +17218,13 @@ static b32 text_sed()
                 // link changes which file is edited, not what it is called.
                 string_address called = name;
                 p8 resolved[TEXT_PATH_MAX];
+                p8 leaf[TEXT_PATH_MAX];
                 p8 temporary[TEXT_PATH_MAX];
                 bipolar written = -1;
+                bipolar directory = -1;
+                bipolar original = -1;
+                file_facts replaced;
+                file_facts input_facts;
 
                 // A file named "-" is that file when sed is editing in
                 // place: there is no standard input to rewrite.
@@ -17349,22 +17256,101 @@ static b32 text_sed()
                         name = (string_address)resolved;
                 }
 
-                if (!text_open(name))
-                {
-                        text_status = 2;
-                        continue;
-                }
-
                 if (sed_in_place)
                 {
-                        written = file_temporary_open(
-                            name, temporary, TEXT_PATH_MAX,
+                        directory = file_parent_open(name, leaf);
+                        bipolar looked = directory < 0 ? directory
+                            : file_look_code(
+                                  directory, leaf, AT_SYMLINK_NOFOLLOW,
+                                  address_of replaced);
+
+                        if (looked < 0)
+                        {
+                                string_diagnostic(&text_diagnostic, 0, name,
+                                                  file_reason(looked));
+                                if (directory >= 0)
+                                        system_close(directory);
+                                text_status = 2;
+                                continue;
+                        }
+
+                        original = file_open_same(
+                            directory, leaf, address_of replaced,
+                            O_PATH | O_NOFOLLOW);
+                        if (original < 0)
+                        {
+                                string_diagnostic(&text_diagnostic, 0, name,
+                                                  file_reason(original));
+                                system_close(directory);
+                                text_status = 2;
+                                continue;
+                        }
+
+                        bipolar input;
+                        if ((replaced.mode & MODE_FORMAT) == MODE_LINK)
+                        {
+                                p8 target[TEXT_PATH_MAX];
+                                bipolar length = system_read_link_at(
+                                    original, (string_address)"", target,
+                                    sizeof(target));
+
+                                if (length < 0 ||
+                                    (positive)length >= sizeof(target))
+                                {
+                                        string_diagnostic(
+                                            &text_diagnostic, 0, name,
+                                            length < 0 ? file_reason(length)
+                                                : (string_address)
+                                                      "symbolic link target too long");
+                                        system_close(original);
+                                        system_close(directory);
+                                        text_status = 2;
+                                        continue;
+                                }
+
+                                target[length] = end;
+                                input = system_open_at(
+                                    directory, target,
+                                    FILE_READ | O_CLOEXEC);
+                        }
+                        else
+                                input = file_open_same(
+                                    directory, leaf, address_of replaced,
+                                    FILE_READ | O_NOFOLLOW);
+
+                        if (!text_reader_attach(
+                                address_of text_input, input, name))
+                        {
+                                system_close(original);
+                                system_close(directory);
+                                text_status = 2;
+                                continue;
+                        }
+
+                        looked = file_look_code(
+                            (bipolar)text_input.handle, (string_address)"",
+                            AT_EMPTY_PATH, address_of input_facts);
+                        if (looked < 0)
+                        {
+                                string_diagnostic(&text_diagnostic, 0, name,
+                                                  file_reason(looked));
+                                text_close();
+                                system_close(original);
+                                system_close(directory);
+                                text_status = 2;
+                                continue;
+                        }
+
+                        written = file_temporary_open_at(
+                            directory, leaf, temporary, TEXT_PATH_MAX,
                             (string_address)"sed", 3,
                             temporary_nonce + (positive)i * 64, 64, 0600);
 
                         if (written < 0)
                         {
                                 text_close();
+                                system_close(original);
+                                system_close(directory);
                                 if (!temporary[0])
                                         return text_done(string_diagnostic(&text_diagnostic, 4, name, "cannot make a temporary file beside"));
                                 return text_done(string_diagnostic(&text_diagnostic, 4, temporary, "cannot create"));
@@ -17372,6 +17358,11 @@ static b32 text_sed()
 
                         text_out_to((positive)written);
                         sed_output_unterminated = false;
+                }
+                else if (!text_open(name))
+                {
+                        text_status = 2;
+                        continue;
                 }
 
                 // -s, and -i with it, makes every file its own input: the line
@@ -17619,28 +17610,37 @@ cycle_done:
 
                 if (written >= 0)
                 {
-                        bipolar closed;
-
                         text_flush();
                         text_out_to(1);
-                        closed = system_close(written);
+                        bool incomplete = text_out_failed || text_input.failed ||
+                                          sed_space_full || sed_failed ||
+                                          sed_io_failed;
+                        bipolar chmodded = incomplete ? -1 : system_call_2(
+                            syscall(fchmod), (positive)written,
+                            input_facts.mode & 07777);
+                        bipolar synced = incomplete || chmodded < 0 ? -1
+                            : system_call_1(syscall(fsync),
+                                            (positive)written);
+                        bool ready = !incomplete && chmodded >= 0 && synced >= 0;
+                        bool committed = ready && sed_commit(
+                            directory, leaf, name, temporary, written, original,
+                            address_of replaced);
+                        bipolar finished = file_stage_close_at(
+                            directory, temporary, written,
+                            committed ? 0 : -1, 0);
+                        system_close(original);
+                        system_close(directory);
 
-                        /* Never replace the input with a partial temporary. */
-                        if (text_out_failed || closed < 0 || text_input.failed ||
-                            sed_space_full || sed_failed || sed_io_failed)
+                        /* Never replace the input with a partial temporary.
+                           fchmod and fsync are part of that same transaction;
+                           the open stage also gives cleanup its exact inode. */
+                        if (!committed || finished < 0)
                         {
-                                system_remove_at(AT_FDCWD,
-                                              temporary, 0);
-                                if (text_out_failed || closed < 0)
-                                        string_diagnostic(&text_diagnostic, 0, name, "write error");
+                                if (!ready || finished < 0)
+                                        string_diagnostic(&text_diagnostic, 0,
+                                                          name, "write error");
                                 if (!sed_failed)
                                         text_status = 4;
-                                break;
-                        }
-
-                        if (!sed_commit(name, temporary))
-                        {
-                                text_status = 4;
                                 break;
                         }
                 }
@@ -19060,7 +19060,7 @@ static b32 text_sort()
                 text_delimiter = '\0';
 
         b32 inputs = text_input_count();
-        positive address_to run_stop = (positive address_to)text_arena_take(
+        positive address_to run_stop = (positive address_to)utility_arena_take(
             ((positive)inputs + 1) * sizeof(positive));
 
         if (!run_stop)
@@ -19111,9 +19111,9 @@ static b32 text_sort()
                 return text_done(text_status ? 2 : 0);
         }
 
-        sort_order = (positive address_to)text_arena_take(
+        sort_order = (positive address_to)utility_arena_take(
             (text_lines_count + 1) * sizeof(positive));
-        sort_spare = (positive address_to)text_arena_take(
+        sort_spare = (positive address_to)utility_arena_take(
             (text_lines_count + 1) * sizeof(positive));
 
         if (!sort_order || !sort_spare)
@@ -19123,7 +19123,7 @@ static b32 text_sort()
                 sort_order[i] = i;
 
         positive address_to head = merging
-            ? (positive address_to)text_arena_take(
+            ? (positive address_to)utility_arena_take(
                   ((positive)inputs + 1) * sizeof(positive))
             : null;
 
@@ -19137,16 +19137,16 @@ static b32 text_sort()
         positive span_bytes = (text_lines_count + 1) * sizeof(sort_span);
 
         if (first->order.kind == 'n' &&
-            number_bytes <= TEXT_ARENA_BYTES - text_arena_used)
+            number_bytes <= UTILITY_ARENA_BYTES - utility_arena.used)
         {
-                sort_numbers = (sort_number address_to)text_arena_take(number_bytes);
+                sort_numbers = (sort_number address_to)utility_arena_take(number_bytes);
 
                 if (!sort_numbers)
                         return text_done(2);
         }
-        else if (!first->whole && span_bytes <= TEXT_ARENA_BYTES - text_arena_used)
+        else if (!first->whole && span_bytes <= UTILITY_ARENA_BYTES - utility_arena.used)
         {
-                sort_spans = (sort_span address_to)text_arena_take(span_bytes);
+                sort_spans = (sort_span address_to)utility_arena_take(span_bytes);
 
                 if (!sort_spans)
                         return text_done(2);
@@ -19651,7 +19651,7 @@ static b32 text_cmp()
 
                         // The listing's own column, which is four
                         // wide because M-^? is.
-                        writer_fill(text_put, wide < 4 ? 4 - wide : 0, ' ');
+                        writer_fill_bulk(text_put, wide < 4 ? 4 - wide : 0, ' ');
 
                         text_put_character(' ');
                 }

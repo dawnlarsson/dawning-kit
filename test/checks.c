@@ -23814,7 +23814,7 @@ static fn name_list_checks(void)
               name_list_select((string_address)"ALPHA,beta,", definitions,
                                sizeof(definitions[0]),
                                array_count(definitions), selected,
-                               address_of count, array_count(selected), 0) &&
+                               address_of count, array_count(selected), 0, null) &&
               count == 2 && selected[0] == 0 && selected[1] == 1);
 
         count = 0;
@@ -23822,7 +23822,7 @@ static fn name_list_checks(void)
               name_list_select((string_address)"alpha,alpha", definitions,
                                sizeof(definitions[0]),
                                array_count(definitions), selected,
-                               address_of count, array_count(selected), 0) &&
+                               address_of count, array_count(selected), 0, null) &&
               count == 2 && selected[0] == 0 && selected[1] == 0);
 
         selected[0] = 0;
@@ -23832,7 +23832,7 @@ static fn name_list_checks(void)
                                sizeof(definitions[0]),
                                array_count(definitions), selected,
                                address_of count, array_count(selected),
-                               NAME_LIST_UNIQUE) &&
+                               NAME_LIST_UNIQUE, null) &&
               count == 2 && selected[0] == 0 && selected[1] == 2);
 
         count = 0;
@@ -23841,7 +23841,7 @@ static fn name_list_checks(void)
                                 sizeof(definitions[0]),
                                 array_count(definitions), selected,
                                 address_of count, array_count(selected),
-                                NAME_LIST_CASE_SENSITIVE));
+                                NAME_LIST_CASE_SENSITIVE, null));
 
         count = 0;
         check("name list strict trailing comma",
@@ -23849,14 +23849,14 @@ static fn name_list_checks(void)
                                 sizeof(definitions[0]),
                                 array_count(definitions), selected,
                                 address_of count, array_count(selected),
-                                NAME_LIST_REJECT_TRAILING));
+                                NAME_LIST_REJECT_TRAILING, null));
 
         count = 0;
         check("name list capacity bound",
               !name_list_select((string_address)"alpha,Beta", definitions,
                                 sizeof(definitions[0]),
                                 array_count(definitions), selected,
-                                address_of count, 1, 0));
+                                address_of count, 1, 0, null));
 
         selected[0] = 0;
         count = 1;
@@ -23864,12 +23864,12 @@ static fn name_list_checks(void)
               name_list_select((string_address)"alpha", definitions,
                                sizeof(definitions[0]),
                                array_count(definitions), selected,
-                               address_of count, 1, NAME_LIST_UNIQUE) &&
+                               address_of count, 1, NAME_LIST_UNIQUE, null) &&
               count == 1 &&
               !name_list_select((string_address)"Beta", definitions,
                                 sizeof(definitions[0]),
                                 array_count(definitions), selected,
-                                address_of count, 1, NAME_LIST_UNIQUE));
+                                address_of count, 1, NAME_LIST_UNIQUE, null));
 
         named wide[256];
         for (positive i = 0; i < array_count(wide); i++)
@@ -23879,13 +23879,49 @@ static fn name_list_checks(void)
         check("name list byte index boundary",
               name_list_select((string_address)"last", wide, sizeof(wide[0]),
                                array_count(wide), selected,
-                               address_of count, array_count(selected), 0) &&
+                               address_of count, array_count(selected), 0, null) &&
               count == 1 && selected[0] == 255);
         count = 0;
         check("name list excessive definitions",
               !name_list_select((string_address)"last", wide,
                                 sizeof(wide[0]), 257, selected,
-                                address_of count, array_count(selected), 0));
+                                address_of count, array_count(selected), 0, null));
+
+        name_list_error error;
+        string_address rejected = "alpha,unknown,Beta";
+        count = 0;
+        check("name list reports the rejected bounded span after a prefix",
+              !name_list_select(rejected, definitions, sizeof(definitions[0]),
+                                array_count(definitions), selected,
+                                address_of count, array_count(selected), 0,
+                                address_of error) && count == 1 &&
+              error.at == rejected + 6 && error.length == 7);
+        count = 0;
+        rejected = "alpha,";
+        check("name list reports an empty strict trailing item",
+              !name_list_select(rejected, definitions, sizeof(definitions[0]),
+                                array_count(definitions), selected,
+                                address_of count, array_count(selected),
+                                NAME_LIST_REJECT_TRAILING, address_of error) &&
+              count == 1 && error.at == rejected + 6 && !error.length);
+        p8 short_name[] = {0xa5, 0xa5, 0xa5, 0xa5};
+        count = 0;
+        check("column diagnostic truncates only within its owned buffer",
+              name_list_columns("alpha,unknown", definitions,
+                  sizeof(definitions[0]), array_count(definitions), selected,
+                  address_of count, short_name, 3) == NAME_LIST_UNKNOWN &&
+              count == 1 && !memory_compare(short_name, "un\0\xa5", 4));
+        count = 1;
+        check("column empty append refuses a seeded prefix",
+              name_list_columns("", definitions, sizeof(definitions[0]),
+                  array_count(definitions), selected, address_of count,
+                  null, 0) == NAME_LIST_EMPTY && count == 1);
+        count = 0;
+        check("column capacity reports the overflowing valid name",
+              name_list_columns("alpha,alpha,Beta,gamma", definitions,
+                  sizeof(definitions[0]), array_count(definitions), selected,
+                  address_of count, unknown, sizeof(unknown)) == NAME_LIST_UNKNOWN &&
+              count == 3 && string_equals(unknown, "gamma"));
 
         p8 lock_fields[] = "  1\tPOSIX\vowner";
         p8 address_to field_at = lock_fields;
@@ -24222,7 +24258,8 @@ static fn table_projection_checks(void)
         PROJECTIONS("lsfd", fd, ul_lsfd_columns, ul_lsfd_field, fd_expected);
         PROJECTIONS("lslocks", lock, ul_lslocks_columns, ul_lslocks_field, lock_expected);
         PROJECTIONS("wipefs", signature, ul_wipefs_columns, ul_wipefs_field, signature_expected);
-        PROJECTIONS("lsblk", device, ul_lsblk_columns, ul_lsblk_field, device_expected);
+        ul_lsblk_row device_view = {&device, 0, false};
+        PROJECTIONS("lsblk", device_view, ul_lsblk_columns, ul_lsblk_field, device_expected);
         PROJECTIONS("ipc", ipc, ul_ipc_columns, ul_ipc_field, ipc_expected);
 #undef PROJECTIONS
 
@@ -24231,10 +24268,10 @@ static fn table_projection_checks(void)
         long_name[255] = end;
         memory_fill(guarded, 0xa5, sizeof(guarded));
         device.kname = long_name;
-        device.depth = 32;
+        device_view.depth = 32;
         ul_lsblk_tree = true;
         ul_lsblk_json = ul_lsblk_paths = false;
-        string_address tree = ul_lsblk_field(&device, UL_LSBLK_NAME, guarded + 1);
+        string_address tree = ul_lsblk_field(&device_view, UL_LSBLK_NAME, guarded + 1);
         check("long lsblk tree name stays complete",
               string_length(tree) == 319 && !memory_compare(tree + 64, long_name, 256));
         check("long lsblk tree name preserves callback scratch bounds",
@@ -24267,6 +24304,7 @@ static fn table_typed_projection_checks(void)
                       string_equals(ul_lsfd_field(&fd, UL_LSFD_XMODE, scratch), xmodes[access]));
         }
         ul_lsblk_device device = {0};
+        ul_lsblk_row device_view = {&device, 0, false};
         static const table_projection absent[] = {
             {UL_LSBLK_TYPE, ""}, {UL_LSBLK_MOUNTPOINT, ""}, {UL_LSBLK_MOUNTPOINTS, ""},
             {UL_LSBLK_FSTYPE, ""}, {UL_LSBLK_FSVER, ""}, {UL_LSBLK_LABEL, ""},
@@ -24277,7 +24315,7 @@ static fn table_typed_projection_checks(void)
             {UL_LSBLK_HCTL, ""}, {UL_LSBLK_RQSIZE, ""}, {UL_LSBLK_RA, "0"},
             {UL_LSBLK_FSAVAIL, ""}, {UL_LSBLK_FSUSE, ""},
         };
-        table_projection_check("lsblk missing", &device, ul_lsblk_columns,
+        table_projection_check("lsblk missing", &device_view, ul_lsblk_columns,
             UL_LSBLK_COLUMNS, ul_lsblk_field, absent, array_count(absent));
         device.fs_measured = true;
         device.request_size = positive_max;
@@ -24285,7 +24323,7 @@ static fn table_typed_projection_checks(void)
             {UL_LSBLK_FSAVAIL, "0"}, {UL_LSBLK_FSUSE, "0%"},
             {UL_LSBLK_RQSIZE, "18446744073709551615"},
         };
-        table_projection_check("lsblk measured zero", &device, ul_lsblk_columns,
+        table_projection_check("lsblk measured zero", &device_view, ul_lsblk_columns,
             UL_LSBLK_COLUMNS, ul_lsblk_field, measured, array_count(measured));
         ul_ipc_row ipc = {.id = p64_max, .count = p64_max, .pid_one = p64_max};
         p8 selected[] = {UL_IPC_ID, UL_IPC_MSGS, UL_IPC_LSPID, UL_IPC_STATUS};
@@ -24554,9 +24592,101 @@ static fn table_fixed_callers(void)
         text_out_used = 0;
 }
 
+/* Independent former traversal: scan the sorted records for each parent.
+   The implementation builds adjacency once and writes pointer views. */
+static ul_lsblk_row table_tree_expected[65];
+static positive table_tree_count;
+static fn table_tree_scan(ul_lsblk_device address_to device,
+                           positive depth, bool last, bool dependencies)
+{
+        if (table_tree_count == ul_lsblk.capacity)
+                return;
+        table_tree_expected[table_tree_count++] = (ul_lsblk_row){device, depth, last};
+        if (!dependencies || depth >= 32)
+                return;
+        positive children = 0, seen = 0;
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                children += ul_lsblk.order[i]->parent == device;
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                if (ul_lsblk.order[i]->parent == device)
+                        table_tree_scan(ul_lsblk.order[i], depth + 1,
+                                        ++seen == children, true);
+}
+
+static fn table_tree_checks(void)
+{
+        ul_lsblk_snapshot saved = ul_lsblk;
+        ul_lsblk_device devices[65];
+        ul_lsblk_device address_to order[65];
+        ul_lsblk_row rows[65];
+        positive random = 0x5a82c673;
+        for (positive count = 1; count <= 65; count++)
+        for (positive round = 0; round < 32; round++)
+        {
+                memory_zero(devices, sizeof(devices));
+                for (positive i = 0; i < count; i++)
+                {
+                        random ^= random << 13;
+                        random ^= random >> 7;
+                        random ^= random << 17;
+                        devices[i].parent = i && (random & 3)
+                            ? devices + random % i : null;
+                        order[i] = devices + i;
+                }
+                for (positive i = count; i > 1; i--)
+                {
+                        positive at = random % i;
+                        ul_lsblk_device address_to swap = order[at];
+                        order[at] = order[i - 1]; order[i - 1] = swap;
+                        random = random * 6364136223846793005ull + 1;
+                }
+                ul_lsblk = (ul_lsblk_snapshot){.devices = devices, .order = order,
+                    .rows = rows, .capacity = round & 1 ? count : count / 2,
+                    .count = count};
+                table_tree_count = 0;
+                ul_lsblk_link_children();
+                for (positive i = 0; i < count; i++)
+                        if (!order[i]->parent)
+                        {
+                                bool dependencies = (round & 2) != 0;
+                                table_tree_scan(order[i], 0, false, dependencies);
+                                ul_lsblk_append(order[i], 0, false, dependencies);
+                        }
+                bool same = ul_lsblk.row_count == table_tree_count;
+                for (positive i = 0; i < table_tree_count; i++)
+                        same &= rows[i].device == table_tree_expected[i].device &&
+                                rows[i].depth == table_tree_expected[i].depth &&
+                                rows[i].last == table_tree_expected[i].last;
+                check("linked tree preserves sibling order, depth, truncation and dependency policy", same);
+        }
+        ul_lsblk = (ul_lsblk_snapshot){.devices = devices, .order = order,
+            .rows = rows, .capacity = 65, .count = 65};
+        for (positive i = 0; i < 65; i++)
+        {
+                order[i] = devices + i;
+                devices[i].parent = i ? devices + i - 1 : null;
+        }
+        ul_lsblk_link_children();
+        ul_lsblk_append(devices, 0, false, true);
+        check("linked tree retains the depth ceiling", ul_lsblk.row_count == 33 && rows[32].depth == 32);
+        devices[0].parent = devices;
+        ul_lsblk.row_count = table_tree_count = 0;
+        ul_lsblk_link_children();
+        table_tree_scan(devices, 0, false, true);
+        ul_lsblk_append(devices, 0, false, true);
+        bool same = ul_lsblk.row_count == table_tree_count;
+        for (positive i = 0; i < table_tree_count; i++)
+                same &= rows[i].device == table_tree_expected[i].device &&
+                        rows[i].depth == table_tree_expected[i].depth &&
+                        rows[i].last == table_tree_expected[i].last;
+        check("linked tree keeps cycles bounded by the existing depth and row limits", same);
+        ul_lsblk = saved;
+}
+
 b32 main(void)
 {
         table_fixed_callers();
+        table_tree_checks();
         name_list_checks();
         table_checks();
         table_projection_checks();
@@ -38343,6 +38473,27 @@ static fn error_frames(void)
 
         bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
                                         SOCK_DGRAM, 0, (positive)pair);
+
+        {
+                struct { netlink_header header; b32 status; } done = {
+                    .header = {.length = NETLINK_HEADER,
+                               .type = NLMSG_IS_DONE},
+                    .status = 0};
+
+                check("a bare netlink DONE completes a dump",
+                      netlink_done_status(address_of done.header) == 0);
+                done.header.length = NETLINK_HEADER + 1;
+                check("a truncated netlink DONE status is refused",
+                      netlink_done_status(address_of done.header) == -1);
+                done.header.length = sizeof done;
+                done.status = -13;
+                check("a negative netlink DONE status is propagated",
+                      netlink_done_status(address_of done.header) == -13);
+                done.status = 1;
+                check("a positive netlink DONE status is malformed",
+                      netlink_done_status(address_of done.header) == -1);
+        }
+
         check("netlink framing test socket pair opens", opened == 0);
         if (opened)
                 return;
@@ -38505,8 +38656,9 @@ static fn talking(void)
                 //      something.
                 p32 absent = 0xc0000201;  // 192.0.2.1
 
-                check("an address is added",
-                      netlink_address_add((b32)handle, 1, mine, 24) == 0);
+                bipolar address_added =
+                    netlink_address_add((b32)handle, 1, mine, 24);
+                check("an address is added", address_added == 0);
 
                 //      Adding it twice is the same as adding it once, which
                 //      is what REPLACE is for: a retried boot must not fail.
@@ -38532,8 +38684,9 @@ static fn talking(void)
                 socket_close((b32)probe);
 
                 //      A route through a gateway the address above covers.
-                check("a route is added",
-                      netlink_route_add((b32)handle, 0, 0, 0x0a090801, 1) == 0);
+                bipolar route_added = netlink_route_add(
+                    (b32)handle, 0, 0, 0x0a090801, 1);
+                check("a route is added", route_added == 0);
 
                 //      And one through a gateway no configured address can
                 //      reach, which the kernel refuses -- "Nexthop has invalid
@@ -38542,6 +38695,23 @@ static fn talking(void)
                 //      perfectly reachable and would be accepted.
                 check("an unreachable gateway is refused",
                       netlink_route_add((b32)handle, 0, 0, 0xc0000201, 1) != 0);
+
+                check("the configured route can be removed",
+                      route_added == 0 &&
+                          netlink_route_delete((b32)handle, 0, 0,
+                                               0x0a090801, 1) == 0);
+                check("the configured address can be removed",
+                      address_added == 0 &&
+                          netlink_address_delete((b32)handle, 1, mine, 24) == 0);
+
+                probe = socket_new(AF_INET, SOCK_DGRAM, 0);
+                memory_fill(address_of where, 0, sizeof where);
+                where.family = AF_INET;
+                where.host = network_order_32(mine);
+                check("a removed address is no longer bindable",
+                      socket_bind((b32)probe, address_of where,
+                                  sizeof where) < 0);
+                socket_close((b32)probe);
         }
 
         socket_close((b32)handle);
@@ -38617,6 +38787,26 @@ static fn resolving(void)
         check("a transaction id is not always the same",
               (p16)network_transaction(sizeof(p16)) != (p16)network_transaction(sizeof(p16)) ||
                   (p16)network_transaction(sizeof(p16)) != (p16)network_transaction(sizeof(p16)));
+        check("transaction fallback stirs adjacent counters before truncation",
+              (p16)system_nonce_stir(1) !=
+                      (p16)system_nonce_stir(2) &&
+                  (p16)system_nonce_stir(2) !=
+                      (p16)system_nonce_stir(3));
+        check("transaction generation rejects impossible widths",
+              !network_transaction(0) &&
+                  !network_transaction(sizeof(positive) + 1));
+        {
+                p16 secure = 0;
+
+                check("a DNS transaction id comes from ready kernel randomness",
+                      network_transaction_secure(address_of secure,
+                                                 sizeof secure));
+                check("secure transaction generation rejects invalid outputs",
+                      !network_transaction_secure(null, sizeof secure) &&
+                          !network_transaction_secure(address_of secure, 0) &&
+                          !network_transaction_secure(
+                              address_of secure, sizeof(positive) + 1));
+        }
 }
 
 static fn resolving_edges(void)
@@ -38687,6 +38877,65 @@ static fn resolving_edges(void)
                 packet[pointer + 1] = pointer == 1 ? 0 : pointer - 2;
                 check("DNS backward pointer chains retain the original wire end",
                       dns_skip_name(packet, pointer + 2, pointer) == (bipolar)pointer + 2);
+        }
+
+        {
+                p8 reply[512] = {0};
+                bipolar question = dns_write_name(
+                    reply, sizeof reply, (string_address) "asked.example");
+                positive at = (positive)question;
+                p32 found = 0;
+
+                /* An unrelated A is not the answer merely because it is the
+                   first four-byte A in the answer section. */
+                bipolar owner = dns_write_name(
+                    reply + at, sizeof reply - at,
+                    (string_address) "unrelated.example");
+                at += (positive)owner;
+                network_store_16(reply + at, DNS_TYPE_A);
+                network_store_16(reply + at + 2, DNS_CLASS_IN);
+                network_store_32(reply + at + 4, 0);
+                network_store_16(reply + at + 8, 4);
+                network_store_32(reply + at + 10, 0xcb007109);
+                at += 14;
+
+                check("DNS ignores an unrelated A answer",
+                      dns_answer_address(reply, at, (positive)question, 1,
+                                         0, address_of found) ==
+                              DNS_NO_ADDRESS &&
+                          !found);
+
+                /* Record order is immaterial: the terminal A may precede
+                   the CNAME that makes its owner reachable from the query. */
+                memory_fill(reply + question, 0,
+                            sizeof reply - (positive)question);
+                at = (positive)question;
+                owner = dns_write_name(
+                    reply + at, sizeof reply - at,
+                    (string_address) "Alias.Example");
+                at += (positive)owner;
+                network_store_16(reply + at, DNS_TYPE_A);
+                network_store_16(reply + at + 2, DNS_CLASS_IN);
+                network_store_32(reply + at + 4, 0);
+                network_store_16(reply + at + 8, 4);
+                network_store_32(reply + at + 10, 0xc0000201);
+                at += 14;
+                reply[at++] = 0xc0;
+                reply[at++] = 0;
+                network_store_16(reply + at, DNS_TYPE_CNAME);
+                network_store_16(reply + at + 2, DNS_CLASS_IN);
+                network_store_32(reply + at + 4, 0);
+                owner = dns_write_name(
+                    reply + at + 10, sizeof reply - at - 10,
+                    (string_address) "alias.example");
+                network_store_16(reply + at + 8, (p16)owner);
+                at += 10 + (positive)owner;
+                found = 0;
+
+                check("DNS follows a case-insensitive CNAME chain by owner",
+                      dns_answer_address(reply, at, (positive)question, 2,
+                                         0, address_of found) == DNS_OK &&
+                          found == 0xc0000201);
         }
 }
 
@@ -38816,6 +39065,97 @@ static fn fetching(void)
         }
 
         {
+                p8 oversized[HTTP_HEAD_MAX + 4];
+                http_response response;
+                positive header = 0;
+
+                memory_fill(oversized, 'x', sizeof oversized);
+                memory_copy(oversized, "HTTP/1.1 200 OK\r\n",
+                            sizeof("HTTP/1.1 200 OK\r\n") - 1);
+                memory_copy(oversized + HTTP_HEAD_MAX, "\r\n\r\n", 4);
+                check("a response header ending beyond the shared cap is refused",
+                      http_response_framing(oversized, sizeof oversized,
+                                            address_of header,
+                                            address_of response) ==
+                          HTTP_MALFORMED);
+        }
+
+        {
+                p8 duplicate[] = "HTTP/1.1 302 Found\r\n"
+                                 "Location: /first\r\n"
+                                 "location: /second\r\n\r\n";
+                http_response response;
+                positive header = 0;
+
+                check("a redirect with duplicate Location fields is refused",
+                      http_response_framing(duplicate,
+                                            sizeof duplicate - 1,
+                                            address_of header,
+                                            address_of response) ==
+                          HTTP_MALFORMED);
+        }
+
+        {
+                static const p8 first[] =
+                    "HTTP/1.1 103 Early Hints\r\nLink: </x>\r\n\r\n";
+                static const p8 complete[] =
+                    "HTTP/1.1 103 Early Hints\r\nLink: </x>\r\n\r\n"
+                    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+                static const p8 framed_interim[] =
+                    "HTTP/1.1 100 Continue\r\nContent-Length: 0\r\n\r\n"
+                    "HTTP/1.1 200 OK\r\n\r\n";
+                static const p8 switching[] =
+                    "HTTP/1.1 101 Switching Protocols\r\n\r\n";
+                http_response response;
+                positive header = 0;
+
+                check("an informational header alone waits for a final response",
+                      http_response_framing(
+                          (p8 address_to)complete, sizeof first - 1,
+                          address_of header, address_of response) ==
+                          HTTP_NO_REPLY);
+                check("informational responses are skipped before final framing",
+                      http_response_framing(
+                          (p8 address_to)complete, sizeof complete - 1,
+                          address_of header, address_of response) == HTTP_OK &&
+                          response.code == 200 &&
+                          response.body_kind == HTTP_BODY_LENGTH &&
+                          response.body_length == 5 &&
+                          header == sizeof complete - 1 - 5 &&
+                          !memory_compare(complete + header, "hello", 5));
+                check("an informational response cannot declare a body",
+                      http_response_framing(
+                          (p8 address_to)framed_interim,
+                          sizeof framed_interim - 1, address_of header,
+                          address_of response) == HTTP_MALFORMED);
+                check("an HTTP protocol switch is outside the fetch client",
+                      http_response_framing(
+                          (p8 address_to)switching, sizeof switching - 1,
+                          address_of header, address_of response) ==
+                          HTTP_MALFORMED);
+        }
+
+        {
+                static const p8 expected[] =
+                    "GET /x HTTP/1.1\r\n"
+                    "Host: example.com:8080\r\n"
+                    "User-Agent: Test\r\n"
+                    "Accept: */*\r\n"
+                    "Connection: close\r\n\r\n";
+                p8 request[sizeof expected];
+                positive used = 0;
+
+                check("both HTTP clients share the bounded GET request builder",
+                      http_get_request(request, sizeof request,
+                                       (string_address)"example.com", 8080,
+                                       (string_address)"/x", false, '1',
+                                       (string_address)"Test",
+                                       address_of used) == HTTP_OK &&
+                          used == sizeof expected - 1 &&
+                          !memory_compare(request, expected, used));
+        }
+
+        {
                 //      Two chunks and the terminator, unwrapped in place.
                 p8 body[] = "4\r\nabcd\r\n3\r\nefg\r\n0\r\n\r\n";
                 bipolar length = http_unchunk(body, sizeof(body) - 1);
@@ -38872,6 +39212,25 @@ static fn fetching(void)
         }
 
         {
+                p8 valid[] = "0\r\nX-Checksum: yes\r\n\r\n";
+                p8 missing[] = "0\r\n";
+                p8 malformed[] = "0\r\nnot-a-field\r\n\r\n";
+                p8 trailing[] = "0\r\n\r\nextra";
+
+                check("chunked trailers end at a validated blank line",
+                      http_unchunk(valid, sizeof(valid) - 1) == 0);
+                check("a missing chunked trailer terminator is refused",
+                      http_unchunk(missing, sizeof(missing) - 1) ==
+                          HTTP_MALFORMED);
+                check("a malformed chunked trailer field is refused",
+                      http_unchunk(malformed, sizeof(malformed) - 1) ==
+                          HTTP_MALFORMED);
+                check("buffered chunk framing consumes the complete body",
+                      http_unchunk(trailing, sizeof(trailing) - 1) ==
+                          HTTP_MALFORMED);
+        }
+
+        {
                 p8 body[] = "ffffffffffffffff\r\nx";
 
                 check("the largest native chunk cannot wrap the bound",
@@ -38890,7 +39249,7 @@ static fn fetching(void)
                 memory_fill(body + 4, 'x', length);
                 body[3 + length] = byte;
                 memory_copy(body + 4 + length, "\r\na\r\n0\r\n\r\n", 10);
-                bool valid = (byte >= 32 && byte != 127) || byte == '\t';
+                bool valid = http_token_byte((p8)byte);
                 bipolar got = http_unchunk(body, 14 + length);
                 check("HTTP extension byte classes and bounded SIMD tails",
                       valid ? got == 1 && body[0] == 'a' : got == HTTP_MALFORMED);
@@ -38905,7 +39264,8 @@ static fn fetching(void)
 */
 static fn streaming_chunk_boundaries(void)
 {
-        static string_address framed[] = {"1\nA\n0\n", "1\r\nA\r\n0\r\n"};
+        static string_address framed[] = {"1\nA\n0\n\n",
+                                          "1\r\nA\r\n0\r\n\r\n"};
         p8 address_to pages = memory(3 * 4096);
 
         check("chunk stash guard allocation",
@@ -38969,10 +39329,156 @@ static fn streaming_chunk_boundaries(void)
                         socket_close(input[0]);
                         socket_close(input[1]);
                         socket_close(output[0]);
-                        socket_close(output[1]);
+                                socket_close(output[1]);
                 }
 
+        {
+                static const p8 bad_extension[] = {
+                    '1', ';', 1, '\n', 'A', '\n', '0', '\n', '\n'};
+                static const p8 valid_trailer[] =
+                    "1;ok=\"yes\t\"\r\nA\r\n0\r\nX-Test: yes\r\n\r\n";
+                static const p8 bad_trailer[] =
+                    "0\r\nX-Test: bad\x01\r\n\r\n";
+                static const p8 missing_terminator[] = "0\r\n";
+                static const struct
+                {
+                        const p8 address_to bytes;
+                        positive length;
+                        bipolar expected;
+                } cases[] = {
+                    {bad_extension, sizeof bad_extension, HTTP_MALFORMED},
+                    {valid_trailer, sizeof valid_trailer - 1, HTTP_OK},
+                    {bad_trailer, sizeof bad_trailer - 1, HTTP_MALFORMED},
+                    {missing_terminator, sizeof missing_terminator - 1,
+                     HTTP_MALFORMED},
+                };
+
+                for (positive which = 0; which < array_count(cases); which++)
+                {
+                        b32 input[2];
+                        b32 output[2];
+                        bipolar input_open = system_call_4(
+                            syscall(socketpair), AF_UNIX, SOCK_STREAM, 0,
+                            (positive)input);
+                        bipolar output_open = system_call_4(
+                            syscall(socketpair), AF_UNIX, SOCK_STREAM, 0,
+                            (positive)output);
+
+                        check("streaming chunk parser socket pairs open",
+                              !input_open && !output_open);
+                        if (input_open || output_open)
+                        {
+                                if (!input_open)
+                                {
+                                        socket_close(input[0]);
+                                        socket_close(input[1]);
+                                }
+                                if (!output_open)
+                                {
+                                        socket_close(output[0]);
+                                        socket_close(output[1]);
+                                }
+                                continue;
+                        }
+
+                        check("streaming chunk parser input queues",
+                              socket_send(input[1], cases[which].bytes,
+                                          cases[which].length, 0, null, 0) ==
+                                  (bipolar)cases[which].length);
+                        socket_shutdown(input[1], SHUT_BOTH);
+
+                        http_link link = {.handle = input[0], .tls = false};
+                        http_body body = {.link = address_of link,
+                                          .stash = null,
+                                          .stash_used = 0};
+                        check("streaming chunk extensions and trailers share strict framing",
+                              http_copy_chunked(address_of body, output[0]) ==
+                                  cases[which].expected);
+                        socket_close(input[0]);
+                        socket_close(input[1]);
+                        socket_close(output[0]);
+                        socket_close(output[1]);
+                }
+        }
+
         memory_free(pages, 3 * 4096);
+}
+
+static fn http_bounded_store(void)
+{
+        static const p8 bytes[] = {'a', 'b', 'c', 'd', 'e', 'f'};
+
+        for (positive length = 5; length <= sizeof bytes; length++)
+        {
+                b32 pair[2];
+                http_buffer store = {0};
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+
+                check("bounded HTTP store socket pair opens", opened == 0);
+                if (opened)
+                        continue;
+                check("bounded HTTP response queues",
+                      socket_send(pair[1], bytes, length, 0, null, 0) ==
+                          (bipolar)length);
+                socket_close(pair[1]);
+                bipolar bounded = file_store_read_limit(
+                    pair[0], address_of store, 5);
+                check("the shared bounded reader accepts its limit and refuses more",
+                      bounded == (length == 5 ? 0 : -27) &&
+                          store.used == 5 &&
+                          !memory_compare(store.bytes, bytes, 5));
+                socket_close(pair[0]);
+                http_forget(address_of store);
+        }
+}
+
+static fn network_stream_timeouts(void)
+{
+        b32 pair[2];
+        bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                        SOCK_STREAM, 0, (positive)pair);
+
+        check("stream timeout socket pair opens", opened == 0);
+        if (opened)
+                return;
+
+        check("stream timeout rejects an empty interval",
+              !network_stream_timeout(pair[0], 0, 0));
+        check("stream timeout rejects an invalid microsecond field",
+              !network_stream_timeout(pair[0], 0, 1000000));
+        check("stream timeout installs both directions",
+              network_stream_timeout(pair[0], 0, 100000));
+
+        {
+                timeval receive = {0};
+                timeval send = {0};
+                p32 length = sizeof receive;
+
+                check("stream receive timeout is installed",
+                      socket_option_get(pair[0], SOL_SOCKET, SO_RCVTIMEO,
+                                        address_of receive, address_of length) == 0 &&
+                          length == sizeof receive && !receive.tv_sec &&
+                          receive.tv_usec == 100000);
+
+                length = sizeof send;
+                check("stream send timeout is installed",
+                      socket_option_get(pair[0], SOL_SOCKET, SO_SNDTIMEO,
+                                        address_of send, address_of length) == 0 &&
+                          length == sizeof send && !send.tv_sec &&
+                          send.tv_usec == 100000);
+        }
+
+        {
+                p8 byte = 0;
+
+                check("a silent stream peer reaches its idle deadline",
+                      socket_receive(pair[0], address_of byte, 1, 0, null, 0) < 0);
+        }
+
+        socket_close(pair[0]);
+        socket_close(pair[1]);
 }
 
 static fn tls_closure_boundaries(void)
@@ -39100,6 +39606,649 @@ static fn tls_closure_boundaries(void)
         }
 }
 
+static fn tls_certificate_dates(void)
+{
+        tls_cert cert = {0};
+
+        cert.not_before = 20260102030405ull;
+        cert.not_after = 20261230212223ull;
+
+        check("an unset TLS clock cannot authorize a certificate",
+              !tls_cert_current(address_of cert, 0));
+        check("a certificate is refused before its first valid second",
+              !tls_cert_current(address_of cert, 20260102030404ull));
+        check("a certificate is accepted at its first valid second",
+              tls_cert_current(address_of cert, 20260102030405ull));
+        check("a certificate is accepted at its last valid second",
+              tls_cert_current(address_of cert, 20261230212223ull));
+        check("a certificate is refused after its last valid second",
+              !tls_cert_current(address_of cert, 20261230212224ull));
+
+        cert.unsupported_critical = true;
+        check("an unknown critical extension is refused while current",
+              !tls_cert_current(address_of cert, 20260601000000ull));
+}
+
+static fn tls_certificate_identity_rules(void)
+{
+        static p8 dns[] = "example.com";
+        static p8 numeric_dns[] = "192.0.2.1";
+        static p8 ip[] = {192, 0, 2, 1};
+        static p8 other_ip[] = {192, 0, 2, 2};
+        static p8 constrained[] = {
+            0xa3, 0x0d,             // extensions wrapper
+            0x30, 0x0b,             // extensions sequence
+            0x30, 0x09,             // one extension
+            0x06, 0x03, 0x55, 0x1d, 0x1e, // nameConstraints
+            0x04, 0x02, 0x30, 0x00};      // empty constraints sequence
+        static p8 san_good[] = {
+            0x30, 0x0d, 0x82, 0x0b,
+            'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm'};
+        static p8 san_trailing[] = {
+            0x30, 0x0d, 0x82, 0x0b,
+            'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm', 0};
+        static p8 san_truncated[] = {
+            0x30, 0x0f, 0x82, 0x0b,
+            'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+            0x87, 0x04};
+        static p8 san_control[] = {
+            0x30, 0x10, 0x82, 0x0b,
+            'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+            0x86, 0x01, 0x01};
+        static p8 san_bad_ip[] = {
+            0x30, 0x14, 0x82, 0x0b,
+            'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+            0x87, 0x05, 192, 0, 2, 1, 0};
+        tls_cert cert = {0};
+        bool matched = false;
+
+        check("an exact dNSName identifies a named host",
+              tls_general_name_match("example.com", 0x82, dns,
+                                     sizeof dns - 1));
+        check("a lookalike ASN.1 tag is not a dNSName",
+              !tls_general_name_match("example.com", 0xa2, dns,
+                                      sizeof dns - 1));
+        check("a numeric host is not identified by a textual dNSName",
+              !tls_general_name_match("192.0.2.1", 0x82, numeric_dns,
+                                      sizeof numeric_dns - 1));
+        check("an IPv4 iPAddress SAN identifies its numeric host",
+              tls_general_name_match("192.0.2.1", 0x87, ip, sizeof ip));
+        check("a different IPv4 iPAddress SAN is refused",
+              !tls_general_name_match("192.0.2.1", 0x87, other_ip,
+                                      sizeof other_ip));
+        check("a complete GeneralNames value records its hostname match",
+              tls_parse_san(san_good, sizeof san_good, "example.com",
+                            address_of matched) && matched);
+        check("trailing DER after GeneralNames invalidates an early match",
+              !tls_parse_san(san_trailing, sizeof san_trailing,
+                             "example.com", address_of matched));
+        check("a truncated later GeneralName invalidates an early match",
+              !tls_parse_san(san_truncated, sizeof san_truncated,
+                             "example.com", address_of matched));
+        check("a control-bearing later IA5 name invalidates an early match",
+              !tls_parse_san(san_control, sizeof san_control,
+                             "example.com", address_of matched));
+        check("a malformed later IP SAN invalidates an early match",
+              !tls_parse_san(san_bad_ip, sizeof san_bad_ip,
+                             "example.com", address_of matched));
+        check("name constraints are refused even when non-critical",
+              tls_parse_extensions(constrained, sizeof constrained, 0,
+                                   address_of cert, null) == TLS_FAIL);
+}
+
+static fn tls_client_hello_bounds(void)
+{
+        tls_conn client = {.host = "example.com"};
+        p8 hello[160];
+        positive used = 99;
+
+        memory_fill(hello, 0xa5, sizeof hello);
+        check("an undersized ClientHello buffer is refused",
+              tls_client_hello(address_of client, hello, 50,
+                               address_of used) == TLS_FAIL);
+        check("a refused ClientHello leaves its result length alone", used == 99);
+        {
+                bool bounded = true;
+
+                for (positive at = 50; at < sizeof hello; at++)
+                        bounded &= hello[at] == 0xa5;
+                check("ClientHello construction stays inside its declared room",
+                      bounded);
+        }
+
+        used = 0;
+        check("a ClientHello fits its exact named-host bound",
+              tls_client_hello(address_of client, hello, 136,
+                               address_of used) == TLS_OK &&
+                  used == 136);
+
+        client.host = "127.0.0.1";
+        used = 0;
+        check("a numeric-host ClientHello omits SNI at its exact bound",
+              tls_client_hello(address_of client, hello, 116,
+                               address_of used) == TLS_OK &&
+                  used == 116);
+}
+
+static bool tls_hello_offers_group(p8 address_to hello, positive length,
+                                   positive group)
+{
+        positive at;
+        positive ext_end;
+        positive session;
+        positive cipher_len;
+        positive comp_len;
+
+        if (length < 44 || hello[0] != TLS_HS_CLIENT_HELLO)
+                return false;
+        {
+                positive hs = ((positive)hello[1] << 16) | ((positive)hello[2] << 8) |
+                              hello[3];
+                if (hs + 4 != length)
+                        return false;
+        }
+
+        at = 4 + 2 + 32;
+        session = hello[at++];
+        at += session;
+        if (at + 2 > length)
+                return false;
+        cipher_len = ((positive)hello[at] << 8) | hello[at + 1];
+        at += 2 + cipher_len;
+        if (at + 1 > length)
+                return false;
+        comp_len = hello[at++];
+        at += comp_len;
+        if (at + 2 > length)
+                return false;
+        {
+                positive ext_length = ((positive)hello[at] << 8) | hello[at + 1];
+                at += 2;
+                ext_end = at + ext_length;
+                if (ext_end != length)
+                        return false;
+        }
+
+        while (at < ext_end)
+        {
+                positive id;
+                positive elen;
+
+                if (at + 4 > ext_end)
+                        return false;
+                id = ((positive)hello[at] << 8) | hello[at + 1];
+                elen = ((positive)hello[at + 2] << 8) | hello[at + 3];
+                at += 4;
+                if (at + elen > ext_end)
+                        return false;
+                if (id == 0x000a)
+                {
+                        positive list;
+                        positive item;
+
+                        if (elen < 2)
+                                return false;
+                        list = ((positive)hello[at] << 8) | hello[at + 1];
+                        if (list + 2 != elen || (list & 1))
+                                return false;
+                        for (item = 0; item < list; item += 2)
+                        {
+                                positive offered =
+                                    ((positive)hello[at + 2 + item] << 8) |
+                                    hello[at + 3 + item];
+                                if (offered == group)
+                                        return true;
+                        }
+                        return false;
+                }
+                at += elen;
+        }
+
+        return false;
+}
+
+static bool tls_hello_offers_cipher(p8 address_to hello, positive length,
+                                    positive cipher)
+{
+        positive at;
+        positive session;
+        positive cipher_len;
+        positive item;
+
+        if (length < 44 || hello[0] != TLS_HS_CLIENT_HELLO)
+                return false;
+        at = 4 + 2 + 32;
+        session = hello[at++];
+        at += session;
+        if (at + 2 > length)
+                return false;
+        cipher_len = ((positive)hello[at] << 8) | hello[at + 1];
+        at += 2;
+        if (at + cipher_len > length || (cipher_len & 1))
+                return false;
+        for (item = 0; item < cipher_len; item += 2)
+        {
+                positive offered = ((positive)hello[at + item] << 8) |
+                    hello[at + item + 1];
+                if (offered == cipher)
+                        return true;
+        }
+        return false;
+}
+
+static fn tls_client_hello_groups(void)
+{
+        static string_address hosts[] = {
+            "example.com", "repo.chimera-linux.org", "geo.mirror.pkgbuild.com",
+            "dl-cdn.alpinelinux.org", "127.0.0.1", "192.0.2.1"};
+        static const positive ciphers[] = {0x1301};
+        tls_conn client = {0};
+        p8 hello[256];
+        positive host;
+        positive at;
+
+        for (host = 0; host < array_count(hosts); host++)
+        {
+                positive used = 0;
+
+                client.host = hosts[host];
+                check("a ClientHello can be built to inspect its groups",
+                      tls_client_hello(address_of client, hello, sizeof hello,
+                                       address_of used) == TLS_OK &&
+                          used);
+                check("ClientHello advertises its implemented X25519 group",
+                      tls_hello_offers_group(hello, used, 0x001d));
+                check("ClientHello does not advertise unsupported P-256 key exchange",
+                      !tls_hello_offers_group(hello, used, 0x0017));
+                check("ClientHello does not advertise unsupported P-384 key exchange",
+                      !tls_hello_offers_group(hello, used, 0x0018));
+                for (at = 0; at < array_count(ciphers); at++)
+                        check("ClientHello offers the TLS 1.3 ciphers it implements",
+                              tls_hello_offers_cipher(hello, used, ciphers[at]));
+        }
+}
+
+static fn tls_server_hello_validation(void)
+{
+        p8 hello[91] = {0};
+        p8 peer[32] = {0};
+        p8 changed[91];
+
+        hello[0] = TLS_HS_SERVER_HELLO;
+        hello[3] = 86;
+        hello[4] = 0x03;
+        hello[5] = 0x03;
+        hello[38] = 0;             // empty session id echo
+        hello[39] = 0x13;
+        hello[40] = 0x01;
+        hello[41] = 0;             // legacy compression
+        hello[42] = 0;
+        hello[43] = 46;
+
+        hello[44] = 0;
+        hello[45] = 0x2b;          // supported_versions
+        hello[46] = 0;
+        hello[47] = 2;
+        hello[48] = 0x03;
+        hello[49] = 0x04;
+
+        hello[50] = 0;
+        hello[51] = 0x33;          // key_share
+        hello[52] = 0;
+        hello[53] = 36;
+        hello[54] = 0;
+        hello[55] = 0x1d;          // x25519
+        hello[56] = 0;
+        hello[57] = 32;
+        hello[58] = 9;
+
+        check("a complete TLS 1.3 ServerHello is accepted",
+              tls_server_hello_share(hello, 90, peer) == TLS_OK &&
+                  !memory_compare(peer, hello + 58, 32));
+
+        memory_copy(changed, hello, 90);
+        changed[5] = 0x02;
+        check("a ServerHello with the wrong legacy version is refused",
+              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+
+        memory_copy(changed, hello, 90);
+        changed[38] = 1;
+        check("a ServerHello cannot invent a session id echo",
+              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+
+        memory_copy(changed, hello, 90);
+        changed[41] = 1;
+        check("a ServerHello with compression is refused",
+              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+
+        memory_copy(changed, hello, 90);
+        changed[49] = 0x03;
+        check("a ServerHello must select TLS 1.3",
+              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+
+        memory_copy(changed, hello, 90);
+        changed[45] = 0x34;
+        check("an unexpected ServerHello extension is refused",
+              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+
+        memory_copy(changed, hello, 90);
+        changed[3] = 87;
+        changed[43] = 47;
+        changed[90] = 0;
+        check("trailing ServerHello extension bytes are refused",
+              tls_server_hello_share(changed, 91, peer) == TLS_FAIL);
+
+        memory_copy(changed, hello, 90);
+        changed[3] = 87;
+        changed[43] = 47;
+        changed[53] = 37;
+        changed[90] = 0;
+        check("an overlong X25519 ServerHello share is refused",
+              tls_server_hello_share(changed, 91, peer) == TLS_FAIL);
+
+        {
+                p8 assembled[128];
+                positive used = 0;
+
+                check("a fragmented ServerHello header is retained",
+                      tls_handshake_one_append(
+                          assembled, sizeof assembled, address_of used,
+                          hello, 2) == TLS_HANDSHAKE_MORE && used == 2);
+                check("a fragmented ServerHello body is reassembled",
+                      tls_handshake_one_append(
+                          assembled, sizeof assembled, address_of used,
+                          hello + 2, 88) == TLS_HANDSHAKE_COMPLETE &&
+                          used == 90 &&
+                          tls_server_hello_share(assembled, used, peer) ==
+                              TLS_OK);
+
+                memory_copy(changed, hello, 90);
+                changed[90] = 0;
+                used = 0;
+                check("bytes after a plaintext ServerHello are refused",
+                      tls_handshake_one_append(
+                          assembled, sizeof assembled, address_of used,
+                          changed, 91) == TLS_FAIL);
+                check("an empty ServerHello fragment is refused",
+                      tls_handshake_one_append(
+                          assembled, sizeof assembled, address_of used,
+                          hello, 0) == TLS_FAIL);
+        }
+}
+
+static fn tls_server_flight_validation(void)
+{
+        p8 state = TLS_SERVER_FLIGHT_EE;
+
+        check("TLS server flight accepts EncryptedExtensions first",
+              tls_server_flight_step(address_of state,
+                                     TLS_HS_ENCRYPTED_EXTS));
+        check("TLS server flight accepts Certificate second",
+              tls_server_flight_step(address_of state,
+                                     TLS_HS_CERTIFICATE));
+        check("TLS server flight accepts CertificateVerify third",
+              tls_server_flight_step(address_of state,
+                                     TLS_HS_CERT_VERIFY));
+        check("TLS server flight accepts Finished last",
+              tls_server_flight_step(address_of state,
+                                     TLS_HS_FINISHED) &&
+                  state == TLS_SERVER_FLIGHT_COMPLETE);
+        check("TLS server flight rejects anything after Finished",
+              !tls_server_flight_step(address_of state,
+                                      TLS_HS_FINISHED));
+
+        state = TLS_SERVER_FLIGHT_EE;
+        check("TLS server flight rejects an early Certificate",
+              !tls_server_flight_step(address_of state,
+                                      TLS_HS_CERTIFICATE));
+        check("a rejected TLS transition does not advance state",
+              state == TLS_SERVER_FLIGHT_EE);
+        check("TLS server flight begins normally after a rejection",
+              tls_server_flight_step(address_of state,
+                                     TLS_HS_ENCRYPTED_EXTS));
+        check("TLS server flight rejects duplicate EncryptedExtensions",
+              !tls_server_flight_step(address_of state,
+                                      TLS_HS_ENCRYPTED_EXTS));
+
+        {
+                p8 one = 1;
+                p8 zero = 0;
+
+                check("TLS compatibility CCS is exactly one byte 1",
+                      tls_compatibility_ccs_valid(address_of one, 1, false));
+                check("TLS compatibility CCS cannot be empty",
+                      !tls_compatibility_ccs_valid(address_of one, 0, false));
+                check("TLS compatibility CCS cannot carry another value",
+                      !tls_compatibility_ccs_valid(address_of zero, 1, false));
+                check("TLS compatibility CCS is forbidden after Finished",
+                      !tls_compatibility_ccs_valid(address_of one, 1, true));
+                {
+                        bool seen = false;
+
+                        check("one TLS compatibility CCS may be consumed",
+                              tls_compatibility_ccs_take(address_of seen));
+                        check("a second TLS compatibility CCS is refused",
+                              !tls_compatibility_ccs_take(address_of seen));
+                }
+        }
+
+
+        {
+                p8 header[] = {TLS_CT_APP, 0x03, 0x03, 0, 1};
+
+                check("TLS 1.3 record legacy version is accepted",
+                      tls_record_version_valid(header));
+                header[2] = 0x02;
+                check("a different TLS record legacy version is refused",
+                      !tls_record_version_valid(header));
+        }
+
+        {
+                static p8 empty[] = {0, 0};
+                static p8 one[] = {0, 4, 0, 10, 0, 0};
+                static p8 duplicate[] = {
+                    0, 8, 0, 10, 0, 0, 0, 10, 0, 0};
+                static p8 short_vector[] = {0, 1};
+                static p8 overrun[] = {0, 4, 0, 10, 0, 1};
+
+                check("empty TLS encrypted extensions are framed",
+                      tls_encrypted_extensions_valid(empty, sizeof empty));
+                check("one TLS encrypted extension is framed",
+                      tls_encrypted_extensions_valid(one, sizeof one));
+                check("duplicate TLS encrypted extensions are refused",
+                      !tls_encrypted_extensions_valid(duplicate,
+                                                      sizeof duplicate));
+                check("TLS encrypted extension vector length is exact",
+                      !tls_encrypted_extensions_valid(short_vector,
+                                                      sizeof short_vector));
+                check("TLS encrypted extension payload cannot overrun",
+                      !tls_encrypted_extensions_valid(overrun,
+                                                      sizeof overrun));
+        }
+}
+
+static fn tls_post_handshake_framing(void)
+{
+        static p8 ticket[] = {
+            TLS_HS_NEW_SESSION_TICKET, 0, 0, 14,
+            0, 0, 0, 60,             /* lifetime */
+            0, 0, 0, 1,              /* age add */
+            0,                         /* nonce */
+            0, 1, 't',                 /* non-empty ticket */
+            0, 0};                     /* extensions */
+        static p8 key_update[] = {24, 0, 0, 1, 0};
+
+        check("a complete post-handshake session ticket may be ignored",
+              tls_post_handshake_valid(ticket, sizeof ticket));
+        {
+                p8 held[TLS_HS_MAX];
+                positive held_length = 0;
+
+                check("a fragmented post-handshake ticket is held",
+                      tls_post_handshake_append(
+                          held, address_of held_length, ticket, 7) == TLS_OK &&
+                          held_length == 7);
+                check("a fragmented post-handshake ticket is reassembled",
+                      tls_post_handshake_append(
+                          held, address_of held_length, ticket + 7,
+                          sizeof ticket - 7) == TLS_OK &&
+                          !held_length);
+        }
+        check("an unsupported TLS KeyUpdate is not silently ignored",
+              !tls_post_handshake_valid(key_update, sizeof key_update));
+        check("an empty authenticated handshake record is refused",
+              !tls_post_handshake_valid(ticket, 0));
+
+        ticket[14] = 0;
+        check("a zero-length TLS session ticket is refused",
+              !tls_post_handshake_valid(ticket, sizeof ticket));
+        ticket[14] = 1;
+}
+
+static fn tls_certificate_framing(void)
+{
+        {
+                static p8 name_a[] = {0x30, 0x03, 0x31, 0x01, 'a'};
+                static p8 name_b[] = {0x30, 0x03, 0x31, 0x01, 'b'};
+                tls_cert child = {
+                    .issuer = name_a,
+                    .issuer_length = sizeof name_a,
+                };
+                tls_cert issuer = {
+                    .subject = name_a,
+                    .subject_length = sizeof name_a,
+                };
+
+                check("a certificate issuer Name matches its issuer subject",
+                      tls_certificate_names_chain(address_of child,
+                                                  address_of issuer));
+                issuer.subject = name_b;
+                check("a reused CA key cannot bridge different issuer Names",
+                      !tls_certificate_names_chain(address_of child,
+                                                   address_of issuer));
+        }
+
+        {
+                static p8 short_long[] = {0x30, 0x81, 0x01, 0};
+                static p8 leading_zero[] = {0x30, 0x82, 0, 0x80};
+                positive at = 0;
+                positive stop = 0;
+
+                check("DER rejects long-form lengths below 128",
+                      tls_asn1_enter(short_long, sizeof short_long, 0x30,
+                                     address_of at, address_of stop) ==
+                          TLS_FAIL);
+                at = 0;
+                check("DER rejects a leading zero in a long-form length",
+                      tls_asn1_enter(leading_zero, sizeof leading_zero, 0x30,
+                                     address_of at, address_of stop) ==
+                          TLS_FAIL);
+        }
+
+        {
+                static p8 empty[] = {0, 0, 0, 0};
+                static p8 context[] = {1, 'x', 0, 0, 0};
+                static p8 trailing[] = {0, 0, 0, 0, 0};
+                positive at = 99;
+                positive stop = 99;
+
+                check("TLS server Certificate has an exact empty list vector",
+                      tls_certificate_body_open(empty, sizeof empty,
+                                                address_of at,
+                                                address_of stop) &&
+                          at == sizeof empty && stop == sizeof empty);
+                check("TLS server Certificate request context must be empty",
+                      !tls_certificate_body_open(context, sizeof context,
+                                                 address_of at,
+                                                 address_of stop));
+                check("TLS server Certificate list consumes its whole body",
+                      !tls_certificate_body_open(trailing, sizeof trailing,
+                                                 address_of at,
+                                                 address_of stop));
+        }
+
+        {
+                static p8 valid[] = {
+                    0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02};
+                static p8 outside[] = {
+                    0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0};
+                static p8 inside[] = {
+                    0x30, 0x07, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0};
+                p8 r[48];
+                p8 s[48];
+                positive r_length = 0;
+                positive s_length = 0;
+
+                check("an exact DER ECDSA signature is parsed",
+                      tls_parse_ecdsa_sig(valid, sizeof valid, r,
+                                          address_of r_length, s,
+                                          address_of s_length) == TLS_OK &&
+                          r_length == 1 && s_length == 1 && r[0] == 1 &&
+                          s[0] == 2);
+                check("DER ECDSA bytes outside the sequence are refused",
+                      tls_parse_ecdsa_sig(outside, sizeof outside, r,
+                                          address_of r_length, s,
+                                          address_of s_length) == TLS_FAIL);
+                check("DER ECDSA bytes after the second integer are refused",
+                      tls_parse_ecdsa_sig(inside, sizeof inside, r,
+                                          address_of r_length, s,
+                                          address_of s_length) == TLS_FAIL);
+                {
+                        static p8 redundant_zero[] = {
+                            0x30, 0x07, 0x02, 0x02, 0, 1,
+                            0x02, 0x01, 2};
+                        static p8 negative[] = {
+                            0x30, 0x06, 0x02, 0x01, 0x80,
+                            0x02, 0x01, 2};
+
+                        check("a redundant DER ECDSA integer sign byte is refused",
+                              tls_parse_ecdsa_sig(
+                                  redundant_zero, sizeof redundant_zero, r,
+                                  address_of r_length, s,
+                                  address_of s_length) == TLS_FAIL);
+                        check("a negative DER ECDSA integer is refused",
+                              tls_parse_ecdsa_sig(
+                                  negative, sizeof negative, r,
+                                  address_of r_length, s,
+                                  address_of s_length) == TLS_FAIL);
+                }
+        }
+
+        {
+                static p8 ecdsa_alg[] = {
+                    0x30, 0x0a, 0x06, 0x08,
+                    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02};
+                static p8 ecdsa_null[] = {
+                    0x30, 0x0c, 0x06, 0x08,
+                    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02,
+                    0x05, 0x00};
+                static p8 rsa_alg[] = {
+                    0x30, 0x0d, 0x06, 0x09,
+                    0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b,
+                    0x05, 0x00};
+                p8 address_to oid = null;
+                positive oid_length = 0;
+                positive at = 0;
+
+                check("ECDSA certificate AlgorithmIdentifier has no parameters",
+                      tls_signature_algorithm(
+                          ecdsa_alg, sizeof ecdsa_alg, address_of at,
+                          address_of oid, address_of oid_length) &&
+                          at == sizeof ecdsa_alg && oid_length == 8);
+                at = 0;
+                check("ECDSA certificate AlgorithmIdentifier rejects NULL parameters",
+                      !tls_signature_algorithm(
+                          ecdsa_null, sizeof ecdsa_null, address_of at,
+                          address_of oid, address_of oid_length));
+                at = 0;
+                check("RSA certificate AlgorithmIdentifier accepts exact NULL",
+                      tls_signature_algorithm(
+                          rsa_alg, sizeof rsa_alg, address_of at,
+                          address_of oid, address_of oid_length) &&
+                          at == sizeof rsa_alg && oid_length == 9);
+        }
+}
+
 static bool crypto_bytes_are(p8 address_to got, positive length, string_address hex)
 {
         p8 expect[128];
@@ -39196,6 +40345,7 @@ static fn crypto_floor_aes(void)
         p8 bob_pub[32];
         p8 ab[32];
         p8 ba[32];
+        p8 zero[32] = {0};
 
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
@@ -39248,26 +40398,111 @@ static fn crypto_floor_aes(void)
                       crypto_ecdsa_p256(digest, 32, (p8 address_to)r, 32,
                                         (p8 address_to)s, 32, (p8 address_to)qx,
                                         (p8 address_to)qy));
+                check("the P-256 public point is on its selected curve",
+                      crypto_point_is_on_curve(
+                          (p8 address_to)qx, (p8 address_to)qy, 4,
+                          crypto_p256_p, (p8 address_to)crypto_p256_b_be));
+                {
+                        p8 order[32];
+                        p8 wrong_y[32];
+
+                        crypto_fe_store_be(order, crypto_p256_n, 4);
+                        check("ECDSA refuses r equal to the group order",
+                              !crypto_ecdsa_p256(
+                                  digest, 32, order, sizeof order,
+                                  (p8 address_to)s, sizeof s,
+                                  (p8 address_to)qx, (p8 address_to)qy));
+                        memory_copy(wrong_y, qy, sizeof wrong_y);
+                        wrong_y[sizeof wrong_y - 1] ^= 1;
+                        check("ECDSA refuses a public point off the selected curve",
+                              !crypto_point_is_on_curve(
+                                  (p8 address_to)qx, wrong_y, 4,
+                                  crypto_p256_p,
+                                  (p8 address_to)crypto_p256_b_be) &&
+                                  !crypto_ecdsa_p256(
+                                      digest, 32, (p8 address_to)r, sizeof r,
+                                      (p8 address_to)s, sizeof s,
+                                      (p8 address_to)qx, wrong_y));
+                }
         }
 
-        crypto_x25519(alice_pub, (p8 address_to)alice, (p8 address_to)nine);
-        crypto_x25519(bob_pub, (p8 address_to)bob, (p8 address_to)nine);
-        crypto_x25519(ab, (p8 address_to)alice, bob_pub);
-        crypto_x25519(ba, (p8 address_to)bob, alice_pub);
+        check("the standard P-384 base point is on its curve",
+              crypto_point_is_on_curve(
+                  (p8 address_to)crypto_p384_gx_be,
+                  (p8 address_to)crypto_p384_gy_be, 6, crypto_p384_p,
+                  (p8 address_to)crypto_p384_b_be));
+
+        {
+                p8 modulus[256];
+                p8 signature[256];
+                p64 mod[CRYPTO_RSA_LIMBS];
+                p64 base[CRYPTO_RSA_LIMBS];
+                positive limbs = 0;
+
+                memory_fill(modulus, 0xa5, sizeof modulus);
+                modulus[0] = 0x80;
+                modulus[sizeof modulus - 1] |= 1;
+                memory_fill(signature, 0, sizeof signature);
+                check("RSA accepts canonical 2048-bit public-operation inputs",
+                      crypto_rsa_prepare(
+                          modulus, sizeof modulus, 65537, signature,
+                          sizeof signature, mod, base, address_of limbs) &&
+                          limbs == 32);
+                memory_copy(signature, modulus, sizeof signature);
+                check("RSA refuses a signature representative equal to n",
+                      !crypto_rsa_prepare(
+                          modulus, sizeof modulus, 65537, signature,
+                          sizeof signature, mod, base, address_of limbs));
+                signature[0] = 0;
+                check("RSA refuses invalid public exponents and weak moduli",
+                      !crypto_rsa_prepare(
+                          modulus, sizeof modulus, 1, signature,
+                          sizeof signature, mod, base, address_of limbs) &&
+                          !crypto_rsa_prepare(
+                              modulus, sizeof modulus, 4, signature,
+                              sizeof signature, mod, base,
+                              address_of limbs) &&
+                          !crypto_rsa_prepare(
+                              modulus, sizeof modulus - 1, 65537, signature,
+                              sizeof modulus - 1, mod, base,
+                              address_of limbs));
+                modulus[0] = 0x7f;
+                check("RSA enforces a full 2048-bit minimum modulus",
+                      !crypto_rsa_prepare(
+                          modulus, sizeof modulus, 65537, signature,
+                          sizeof signature, mod, base, address_of limbs));
+        }
+
+        bool alice_valid =
+            crypto_x25519(alice_pub, (p8 address_to)alice, (p8 address_to)nine);
+        bool bob_valid =
+            crypto_x25519(bob_pub, (p8 address_to)bob, (p8 address_to)nine);
+        bool ab_valid = crypto_x25519(ab, (p8 address_to)alice, bob_pub);
+        bool ba_valid = crypto_x25519(ba, (p8 address_to)bob, alice_pub);
         check("X25519 RFC 7748 public",
-              crypto_bytes_are(
+              alice_valid && bob_valid && crypto_bytes_are(
                   alice_pub, 32,
                   "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"));
         check("X25519 RFC 7748 shared",
-              crypto_bytes_are(
+              ab_valid && ba_valid && crypto_bytes_are(
                   ab, 32,
                   "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742") &&
                   !memory_compare(ab, ba, 32));
+        check("an all-zero X25519 shared secret is refused",
+              !crypto_x25519(ab, (p8 address_to)alice, zero) &&
+                  crypto_bytes_are(
+                      ab, 32,
+                      "0000000000000000000000000000000000000000000000000000000000000000"));
 }
 
 static fn redirect_urls(void)
 {
         p8 into[256];
+        p8 host[64];
+        string_address path;
+        p16 port;
+        bool tls;
+        bool secure = false;
 
         check("absolute Location wins",
               http_absolutize(true, "geo.mirror.pkgbuild.com", 443, "/iso/latest/",
@@ -39283,6 +40518,20 @@ static fn redirect_urls(void)
               http_absolutize(false, "h", 80, "/dir/old", "new", into, sizeof into) ==
                       HTTP_OK &&
                   string_equals(into, "http://h/dir/new"));
+
+        check("a redirect chain may begin on HTTP",
+              http_transport_allowed(address_of secure, false) && !secure);
+        check("a redirect chain remembers its HTTPS upgrade",
+              http_transport_allowed(address_of secure, true) && secure);
+        check("a redirect chain cannot downgrade after HTTPS",
+              !http_transport_allowed(address_of secure, false) && secure);
+        check("an absolute HTTP Location remains visible to the downgrade guard",
+              http_absolutize(true, "example.com", 443, "/old",
+                              "http://example.com/new", into, sizeof into) ==
+                      HTTP_OK &&
+                  http_split_into(into, host, sizeof host, address_of port,
+                                  address_of path, address_of tls) == HTTP_OK &&
+                  !tls && !http_transport_allowed(address_of secure, tls));
 }
 
 /*
@@ -39358,6 +40607,13 @@ static fn fetching_for_real(void)
                                          "Content-Length: 5\r\n"
                                          "\r\n"
                                          "hello";
+                p8 answer_interim[] = "HTTP/1.1 103 Early Hints\r\n"
+                                      "Link: </style.css>; rel=preload\r\n"
+                                      "\r\n"
+                                      "HTTP/1.0 200 OK\r\n"
+                                      "Content-Length: 5\r\n"
+                                      "\r\n"
+                                      "final";
                 string_address answers[] = {
                     (string_address)answer_good,
                     (string_address)answer_short,
@@ -39365,7 +40621,8 @@ static fn fetching_for_real(void)
                     (string_address)answer_conflicting,
                     (string_address)answer_bad_length,
                     (string_address)answer_overflow,
-                    (string_address)answer_bad_status};
+                    (string_address)answer_bad_status,
+                    (string_address)answer_interim};
                 positive sizes[] = {
                     sizeof(answer_good) - 1,
                     sizeof(answer_short) - 1,
@@ -39373,7 +40630,8 @@ static fn fetching_for_real(void)
                     sizeof(answer_conflicting) - 1,
                     sizeof(answer_bad_length) - 1,
                     sizeof(answer_overflow) - 1,
-                    sizeof(answer_bad_status) - 1};
+                    sizeof(answer_bad_status) - 1,
+                    sizeof(answer_interim) - 1};
 
                 for (positive at = 0;
                      at < array_count(answers) + array_count(status_mutations) +
@@ -39483,6 +40741,15 @@ static fn fetching_for_real(void)
                 check("a malformed HTTP version is refused",
                       status == HTTP_MALFORMED);
 
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a buffered fetch skips informational responses",
+                      status == HTTP_OK && code == 200 && body.used == 5 &&
+                          body.bytes &&
+                          !memory_compare(body.bytes, "final", 5));
+
                 /* Independently damage each fixed status-line field, then
                    cut the reply before and at its smallest parsed boundary.
                    Every rejected frame must retain the caller's old body. */
@@ -39500,8 +40767,8 @@ static fn fetching_for_real(void)
                         check("a damaged or truncated status line is refused",
                               status == expected);
                         check("a refused status line preserves the prior body",
-                              body.used == 11 && body.bytes &&
-                              !memory_compare(body.bytes, "hello there", 11));
+                              body.used == 5 && body.bytes &&
+                              !memory_compare(body.bytes, "final", 5));
                 }
 
                 http_forget(address_of body);
@@ -39528,6 +40795,24 @@ static fn leasing(void)
         dhcp_lease lease;
         positive length;
         p8 kind = 0;
+
+        {
+                dhcp_lease answer = {.server = 0x0a000202};
+
+                check("the selected DHCP server may acknowledge",
+                      dhcp_answer_matches(DHCP_ACK, address_of answer,
+                                          0x0a000202));
+                check("the selected DHCP server may refuse",
+                      dhcp_answer_matches(DHCP_NAK, address_of answer,
+                                          0x0a000202));
+                check("a different DHCP server cannot complete the exchange",
+                      !dhcp_answer_matches(DHCP_ACK, address_of answer,
+                                           0x0a000203));
+                answer.server = 0;
+                check("a DHCP answer without its server id is refused",
+                      !dhcp_answer_matches(DHCP_ACK, address_of answer,
+                                           0x0a000202));
+        }
 
         length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 0xdeadbeef,
                             hardware, 0, 0, 0);
@@ -39608,13 +40893,31 @@ static fn leasing(void)
                 check("the server is read", lease.server == 0x0a000202);
                 check("the lease time is read", lease.seconds == 86400);
 
+                {
+                        /* The first fixed option sequence places the mask at
+                           this known byte offset.  A broken mask must reject
+                           the whole packet without changing prior state. */
+                        positive mask_at = DHCP_HEAD + 4 + 3 + 2 + 4 + 2;
+                        dhcp_lease before = lease;
+
+                        network_store_32(packet + mask_at, 0xff00ff00);
+                        check("a non-contiguous DHCP subnet mask is refused",
+                              dhcp_read(packet, at, 0xdeadbeef, hardware,
+                                        address_of lease,
+                                        address_of kind) < 0 &&
+                                  !memory_compare(address_of lease,
+                                                  address_of before,
+                                                  sizeof lease));
+                        network_store_32(packet + mask_at, 0xffffff00);
+                }
+
                 const p8 options[] = {DHCP_OPTION_MASK, DHCP_OPTION_ROUTER,
                     DHCP_OPTION_DNS, DHCP_OPTION_SERVER, DHCP_OPTION_LEASE, 99};
                 for (positive i = 0; i < array_count(options); i++)
                 for (positive size = 0; size < 256; size++)
                 {
                         p8 option = options[i];
-                        p32 value = 0x12345678;
+                        p32 value = i == 0 ? 0xffff0000 : 0x12345678;
                         bool take = size == 4 || (size > 4 && (i == 1 || i == 2));
                         dhcp_lease expected = {0x0a00020f,
                             take && i == 0 ? value : 0xffffff00,
@@ -39760,6 +41063,22 @@ static fn leasing(void)
         check("a /16 mask is a /16", dhcp_prefix_of(0xffff0000) == 16);
         check("a /32 mask is a /32", dhcp_prefix_of(0xffffffff) == 32);
         check("no mask at all falls back to /24", dhcp_prefix_of(0) == 24);
+        check("non-contiguous masks are not silently shortened",
+              !dhcp_mask_valid(0xff00ff00));
+        {
+                dhcp_lease usable = {
+                    .address = 0x0a00020f,
+                    .mask = 0xffffff00,
+                    .server = 0x0a000202,
+                    .seconds = 3600,
+                };
+
+                check("a timed DHCP lease is usable",
+                      dhcp_lease_usable(address_of usable));
+                usable.seconds = 0;
+                check("a zero-lifetime DHCP lease is refused",
+                      !dhcp_lease_usable(address_of usable));
+        }
         for (positive bits = 0; bits < 64; bits++)
         {
                 dhcp_lease held = {1, 2, 3, 4, 5, 6};
@@ -39819,7 +41138,17 @@ b32 main(void)
         resolving_edges();
         fetching();
         streaming_chunk_boundaries();
+        http_bounded_store();
+        network_stream_timeouts();
         tls_closure_boundaries();
+        tls_certificate_dates();
+        tls_certificate_identity_rules();
+        tls_client_hello_bounds();
+        tls_client_hello_groups();
+        tls_server_hello_validation();
+        tls_server_flight_validation();
+        tls_post_handshake_framing();
+        tls_certificate_framing();
         crypto_floor();
         crypto_floor_aes();
         redirect_urls();
@@ -39895,10 +41224,113 @@ static fn launchers(void)
         }
 }
 
+static fn isolation(void)
+{
+        /* Pacman 7.1 [options] keywords. Isolation text is parsed as
+           pacman.conf; an unrecognized directive is a warning and is not
+           isolation. */
+        static string_address pacman7[] = {
+            "RootDir", "DBPath", "CacheDir", "HookDir", "GPGDir", "LogFile",
+            "HoldPkg", "IgnorePkg", "IgnoreGroup", "Include", "Architecture",
+            "XferCommand", "NoUpgrade", "NoExtract", "CleanMethod", "SigLevel",
+            "LocalFileSigLevel", "RemoteFileSigLevel", "UseSyslog", "Color",
+            "NoProgressBar", "CheckSpace", "VerbosePkgLists",
+            "DisableDownloadTimeout", "ParallelDownloads", "DownloadUser",
+            "DisableSandbox", "DisableSandboxFilesystem",
+            "DisableSandboxSyscalls"};
+        static string_address words[] = {
+            "DisableHook", "DisableSandbox", "DisableSandboxFilesystem",
+            "DisableSandboxSyscalls", "DisableSandboxSomething", "HookDir",
+            "ILoveCandy", "Disable", "Architecture"};
+        p8 text[512];
+        p8 line[80];
+        positive used = 0;
+        positive at = 0;
+        positive word;
+        positive form;
+
+        check("bowl isolation text fits",
+              bowl_put_isolation(text, sizeof(text), address_of used) && used &&
+                  used < sizeof(text));
+        text[used] = 0;
+
+        while (at < used)
+        {
+                positive stop = at;
+                positive length = 0;
+                p8 name[64];
+                bool known = false;
+                positive item;
+
+                while (stop < used && text[stop] != '\n')
+                        stop++;
+                if (stop == at)
+                {
+                        at++;
+                        continue;
+                }
+
+                while (at + length < stop && text[at + length] != ' ' &&
+                       text[at + length] != '\t' && text[at + length] != '=')
+                        length++;
+
+                if (!length || length >= sizeof(name))
+                {
+                        check("bowl isolation lines have a keyword", false);
+                        break;
+                }
+
+                memory_copy(name, text + at, length);
+                name[length] = 0;
+                for (item = 0; item < array_count(pacman7); item++)
+                        if (string_equals(name, pacman7[item]))
+                                known = true;
+                check("every isolation directive is a Pacman 7 options keyword",
+                      known);
+                at = stop + (stop < used);
+        }
+
+        for (word = 0; word < array_count(words); word++)
+        for (form = 0; form < 4; form++)
+        {
+                positive length = string_length(words[word]);
+                bool known = false;
+                positive item;
+
+                memory_fill(line, 0, sizeof(line));
+                if (form == 0)
+                        memory_copy(line, words[word], length + 1);
+                else if (form == 1)
+                {
+                        memory_copy(line, words[word], length);
+                        memory_copy(line + length, " = x", 5);
+                }
+                else if (form == 2)
+                {
+                        memory_copy(line, words[word], length);
+                        memory_copy(line + length, "=\n", 3);
+                }
+                else
+                {
+                        line[0] = ' ';
+                        memory_copy(line + 1, words[word], length + 1);
+                }
+
+                if (!bowl_isolation_keyword(line))
+                        continue;
+                for (item = 0; item < array_count(pacman7); item++)
+                        if (string_equals(words[word], pacman7[item]))
+                                known = true;
+                check("every isolation directive is a Pacman 7 options keyword",
+                      known);
+        }
+}
+
 b32 main(void)
 {
         names();
         launchers();
+        isolation();
         return test_report(null);
 }
 #endif /* CHECK_bowl */
@@ -39916,11 +41348,12 @@ b32 main(void)
 static fn checksums(void)
 {
         p8 block[TAR_BLOCK];
+        p8 flipped[TAR_BLOCK];
+        positive at;
 
         memory_fill(block, 0, TAR_BLOCK);
         check("a zero block sums to zero", tar_header_zero(block));
 
-        block[0] = 'a';
         block[156] = '0';
         memory_copy(block + 257, "ustar", 5);
         block[263] = '0';
@@ -39929,73 +41362,405 @@ static fn checksums(void)
         check("a ustar header checksums with memory_sum_bytes",
               tar_header_ok(block) && !tar_header_zero(block));
 
-        block[0] = 'b';
-        check("a flipped name fails the checksum", !tar_header_ok(block));
+        for (at = 0; at < TAR_BLOCK; at++)
+        {
+                if (at >= TAR_CHKSUM && at < TAR_CHKSUM + TAR_CHKSUM_WIDTH)
+                        continue;
+                memory_copy(flipped, block, TAR_BLOCK);
+                flipped[at] ^= 1;
+                check("any non-checksum header byte is covered by the checksum",
+                      !tar_header_ok(flipped));
+        }
 }
 
 static fn fields(void)
 {
-        p8 mode[8];
-        p8 size[12];
-        p64 value = 1;
+        static p64 values[] = {0, 1, 7, 8, 0777, 0x7f, 0x80, 0xff, TAR_BLOCK - 1,
+                               TAR_BLOCK, TAR_BLOCK + 1, 0xffff, 0x7fffffff};
+        static positive widths[] = {8, 12};
+        p8 field[12];
+        p64 got;
+        p64 size;
+        positive width;
+        positive at;
 
-        memory_fill(mode, 0, sizeof(mode));
-        memory_copy(mode, "0000644", 7);
-        check("an octal mode field",
-              tar_field_value(mode, 8, address_of value) && value == 0644);
+        for (width = 0; width < array_count(widths); width++)
+        for (at = 0; at < array_count(values); at++)
+        {
+                memory_fill(field, 0xa5, sizeof(field));
+                tar_field_put(field, widths[width], values[at]);
+                check("ustar numeric fields round-trip every width",
+                      tar_field_value(field, widths[width], address_of got) &&
+                          got == values[at]);
+        }
 
-        memory_fill(mode, ' ', sizeof(mode));
+        memory_fill(field, ' ', sizeof(field));
         check("a blank field is zero",
-              tar_field_value(mode, 8, address_of value) && value == 0);
+              tar_field_value(field, 8, address_of got) && got == 0);
 
-        memory_fill(size, 0, sizeof(size));
-        size[0] = 0x80;
-        size[11] = 7;
-        check("a GNU base-256 size",
-              tar_field_value(size, 12, address_of value) && value == 7);
+        for (size = 0; size <= TAR_BLOCK * 3 + 1; size++)
+        {
+                positive padded = tar_padded(size);
+                positive want = size
+                    ? (positive)((size + TAR_BLOCK - 1) & ~(p64)(TAR_BLOCK - 1))
+                    : 0;
 
-        check("empty file needs no padding", tar_padded(0) == 0);
-        check("one byte occupies a block", tar_padded(1) == TAR_BLOCK);
-        check("a full block is itself", tar_padded(TAR_BLOCK) == TAR_BLOCK);
-        check("one past a block occupies two",
-              tar_padded(TAR_BLOCK + 1) == TAR_BLOCK * 2);
+                check("tar padding is a whole number of blocks", padded == want);
+        }
 }
 
 static fn paths(void)
 {
+        static string_address piece[] = {"a", "b", ".", ".."};
+        static string_address prefixes[] = {"", "usr", "usr/local"};
+        static string_address names[] = {"a", "bin/jq", "x"};
+        p8 path[48];
         p8 into[64];
-        p8 prefix[TAR_PREFIX + 1];
-        p8 name[TAR_NAME + 1];
+        p8 joined[64];
+        positive n;
+        positive a;
+        positive b;
+        positive c;
+        positive strip;
+        positive slash;
+        positive abs;
+        positive prefix;
+        positive name;
 
-        check("strip one component",
-              tar_safe_path("usr/bin/jq", 1, false, into, sizeof(into), null) &&
-                  string_equals(into, "bin/jq"));
-        check("strip two components",
-              tar_safe_path("usr/bin/jq", 2, false, into, sizeof(into), null) &&
-                  string_equals(into, "jq"));
-        check("strip past the name",
-              !tar_safe_path("usr/bin/jq", 3, false, into, sizeof(into), null));
-        check("a leading slash is dropped",
-              tar_safe_path("/etc/hosts", 0, false, into, sizeof(into), null) &&
-                  string_equals(into, "etc/hosts"));
-        check("dotdot is refused",
-              !tar_safe_path("../etc/passwd", 0, false, into, sizeof(into), null));
-        check("an interior dotdot is refused",
-              !tar_safe_path("a/../b", 0, false, into, sizeof(into), null));
-        check("a leading dot is skipped",
-              tar_safe_path("./a", 0, false, into, sizeof(into), null) &&
-                  string_equals(into, "a"));
-        check("an absolute name can be kept",
-              tar_safe_path("/etc/hosts", 0, true, into, sizeof(into), null) &&
-                  string_equals(into, "/etc/hosts"));
+        for (n = 1; n <= 3; n++)
+        for (a = 0; a < array_count(piece); a++)
+        for (b = 0; b < (n > 1 ? array_count(piece) : 1); b++)
+        for (c = 0; c < (n > 2 ? array_count(piece) : 1); c++)
+        for (slash = 0; slash < 2; slash++)
+        for (abs = 0; abs < 2; abs++)
+        for (strip = 0; strip <= n; strip++)
+        {
+                string_address parts[3];
+                positive used = 0;
+                positive kept = 0;
+                positive at;
+                bool climb = false;
+                bool ok;
+                bool expect;
 
-        memory_fill(prefix, 0, sizeof(prefix));
-        memory_fill(name, 0, sizeof(name));
-        memory_copy(prefix, "usr", 3);
-        memory_copy(name, "bin/jq", 6);
-        check("ustar prefix and name join",
-              tar_join_name(prefix, name, into, sizeof(into)) &&
-                  string_equals(into, "usr/bin/jq"));
+                parts[0] = piece[a];
+                parts[1] = piece[b];
+                parts[2] = piece[c];
+                if (slash)
+                        path[used++] = '/';
+                for (at = 0; at < n; at++)
+                {
+                        positive length = string_length(parts[at]);
+
+                        if (at)
+                                path[used++] = '/';
+                        memory_copy(path + used, parts[at], length);
+                        used += length;
+                }
+                path[used] = 0;
+
+                for (at = 0; at < n; at++)
+                {
+                        if (string_equals(parts[at], ".."))
+                                climb = true;
+                        else if (!string_equals(parts[at], "."))
+                                kept++;
+                }
+
+                /* Absolute `/` plus only stripped or `.` components is the
+                   archive root and is kept; a relative path that reduces to
+                   nothing is not. */
+                expect = !climb &&
+                    (abs && slash ? strip <= kept : strip < kept);
+                ok = tar_safe_path(path, strip, abs, into, sizeof(into), null);
+                check("tar path component grammar", ok == expect);
+                if (ok && abs && slash)
+                        check("an absolute path keeps its leading slash",
+                              into[0] == '/');
+                if (ok && !abs)
+                        check("a relative path has no leading slash",
+                              into[0] != '/');
+        }
+
+        for (prefix = 0; prefix < array_count(prefixes); prefix++)
+        for (name = 0; name < array_count(names); name++)
+        {
+                p8 head[TAR_PREFIX + 1];
+                p8 leaf[TAR_NAME + 1];
+                bool ok;
+                bool expect = prefixes[prefix][0] || names[name][0];
+
+                memory_fill(head, 0, sizeof(head));
+                memory_fill(leaf, 0, sizeof(leaf));
+                memory_copy(head, prefixes[prefix],
+                            string_length(prefixes[prefix]));
+                memory_copy(leaf, names[name], string_length(names[name]));
+                ok = tar_join_name(head, leaf, joined, sizeof(joined));
+                check("ustar prefix and name join", ok == expect &&
+                      (!ok || (prefixes[prefix][0]
+                                   ? path_join(into, sizeof(into),
+                                               prefixes[prefix],
+                                               names[name]) &&
+                                         string_equals(joined, into)
+                                   : string_equals(joined, names[name]))));
+        }
+}
+
+static fn packs(void)
+{
+        static const struct
+        {
+                p8 magic[8];
+                positive n;
+                p8 pack;
+                bool packed;
+        } magics[] = {
+            {{0x1f, 0x8b}, 2, TAR_PACK_GZIP, true},
+            {{0xfd, 0x37, 0x7a, 0x58, 0x5a, 0}, 6, TAR_PACK_XZ, true},
+            {{0x28, 0xb5, 0x2f, 0xfd}, 4, TAR_PACK_ZSTD, true},
+            {{0x1f, 0x9d}, 2, TAR_PACK_NONE, true},
+            {{'u', 's', 't', 'a', 'r'}, 5, TAR_PACK_NONE, false},
+        };
+        static string_address stems[] = {"", "a", "a.tar", "archive"};
+        static const struct
+        {
+                string_address suffix;
+                p8 pack;
+                bool packed;
+        } suffixes[] = {
+            {".gz", TAR_PACK_GZIP, true},
+            {".tgz", TAR_PACK_GZIP, true},
+            {".xz", TAR_PACK_XZ, true},
+            {".txz", TAR_PACK_XZ, true},
+            {".zst", TAR_PACK_ZSTD, true},
+            {".tzst", TAR_PACK_ZSTD, true},
+            {".bz2", TAR_PACK_NONE, true},
+            {".tbz2", TAR_PACK_NONE, true},
+            {".tbz", TAR_PACK_NONE, true},
+            {".Z", TAR_PACK_NONE, true},
+            {".tar", TAR_PACK_NONE, false},
+            {"", TAR_PACK_NONE, false},
+        };
+        p8 held[16];
+        p8 name[80];
+        p8 digit;
+        positive at;
+        positive stem;
+        positive suffix;
+
+        check("empty magic is not a packed stream",
+              tar_pack_from_magic(held, 0) == TAR_PACK_NONE);
+
+        for (at = 0; at < array_count(magics); at++)
+        {
+                p8 sniffed = tar_pack_from_magic(magics[at].magic, magics[at].n);
+
+                if (magics[at].pack != TAR_PACK_NONE)
+                        check("supported tar compression magics sniff as their pack",
+                              sniffed == magics[at].pack);
+                else if (magics[at].packed)
+                        check("unsupported tar compression is still named as compression",
+                              sniffed != TAR_PACK_NONE);
+                else
+                        check("uncompressed tar is not a packed stream",
+                              sniffed == TAR_PACK_NONE);
+
+                if (magics[at].n > 1)
+                {
+                        p8 short_magic = tar_pack_from_magic(magics[at].magic,
+                                                             magics[at].n - 1);
+
+                        check("a truncated compression magic is not that pack",
+                              short_magic != magics[at].pack ||
+                                  magics[at].pack == TAR_PACK_NONE);
+                }
+
+                memory_copy(held, magics[at].magic, magics[at].n);
+                held[magics[at].n] = 0xff;
+                if (magics[at].pack != TAR_PACK_NONE)
+                        check("trailing bytes after a magic keep the pack",
+                              tar_pack_from_magic(held, magics[at].n + 1) ==
+                                  magics[at].pack);
+
+                memory_copy(held, magics[at].magic, magics[at].n);
+                held[magics[at].n - 1] ^= 1;
+                if (magics[at].packed && magics[at].pack != TAR_PACK_NONE)
+                        check("a mutated supported magic is not that pack",
+                              tar_pack_from_magic(held, magics[at].n) !=
+                                  magics[at].pack);
+        }
+
+        for (digit = '0'; digit <= '9'; digit++)
+        {
+                p8 magic[4] = {'B', 'Z', 'h', digit};
+
+                check("unsupported tar compression is still named as compression",
+                      tar_pack_from_magic(magic, 4) != TAR_PACK_NONE);
+        }
+
+        for (stem = 0; stem < array_count(stems); stem++)
+        for (suffix = 0; suffix < array_count(suffixes); suffix++)
+        {
+                positive used = string_length(stems[stem]);
+                p8 named;
+
+                memory_copy(name, stems[stem], used);
+                memory_copy(name + used, suffixes[suffix].suffix,
+                            string_length(suffixes[suffix].suffix) + 1);
+                named = tar_pack_from_name(name);
+                if (suffixes[suffix].pack != TAR_PACK_NONE)
+                        check("supported tar compression suffixes agree",
+                              named == suffixes[suffix].pack);
+                else if (suffixes[suffix].packed)
+                        check("unsupported tar compression is still named as compression",
+                              named != TAR_PACK_NONE);
+                else
+                        check("uncompressed tar is not a packed stream",
+                              named == TAR_PACK_NONE);
+        }
+}
+
+static bool tar_pax_record(p8 address_to into, positive room,
+                           positive address_to used, string_address key,
+                           const p8 address_to value, positive n)
+{
+        p8 digits[16];
+        positive key_len = string_length(key);
+        positive width;
+
+        for (width = 1; width < sizeof(digits); width++)
+        {
+                positive rest = 1 + key_len + 1 + n + 1;
+                positive total = width + rest;
+                positive shown = positive_into_base(digits, total, 10, false);
+
+                if (shown != width)
+                        continue;
+                if (address_to used + total > room)
+                        return false;
+
+                memory_copy(into + address_to used, digits, width);
+                into[address_to used + width] = ' ';
+                memory_copy(into + address_to used + width + 1, key, key_len);
+                into[address_to used + width + 1 + key_len] = '=';
+                if (n)
+                        memory_copy(into + address_to used + width + 2 + key_len,
+                                    value, n);
+                into[address_to used + total - 1] = '\n';
+                address_to used += total;
+                return true;
+        }
+
+        return false;
+}
+
+static fn pax_records(void)
+{
+        static string_address keys[] = {
+            "path", "linkpath", "size", "uid", "gid", "uname", "gname", "atime",
+            "ctime", "mtime", "comment", "hdrcharset",
+            "SCHILY.xattr.security.capability", "SCHILY.xattr.security.selinux",
+            "LIBARCHIVE.xattr.user.foo", "GNU.sparse.major", "GNU.sparse.minor",
+            "GNU.sparse.map"};
+        static const struct
+        {
+                p8 bytes[8];
+                positive n;
+                bool numeric;
+        } values[] = {
+            {{0}, 0, true},
+            {{'0'}, 1, true},
+            {{'1'}, 1, true},
+            {{'1', '2'}, 2, true},
+            {{'a'}, 1, false},
+            {{'/', 'b', 'i', 'n'}, 4, false},
+            {{1, 0, 0, 2}, 4, false},
+            {{0xff, 0xfe}, 2, false},
+            {{'a', '=', 'b'}, 3, false},
+            {{'a', ' ', 'b'}, 3, false},
+        };
+        p8 body[TAR_PATH];
+        p8 extra[64];
+        positive key;
+        positive value;
+        positive poke;
+
+        for (key = 0; key < array_count(keys); key++)
+        for (value = 0; value < array_count(values); value++)
+        {
+                positive used = 0;
+                positive extra_used = 0;
+                bool size_key = string_equals(keys[key], "size");
+                bool well = !size_key ||
+                    (values[value].numeric && values[value].n);
+
+                tar_clear_pax();
+                check("a pax record encodes its own length",
+                      tar_pax_record(body, sizeof(body), address_of used,
+                                     keys[key], values[value].bytes,
+                                     values[value].n) &&
+                          used && body[used - 1] == '\n');
+                check("well-formed pax records apply, including NULs in values",
+                      tar_pax_apply(body, used) == well);
+                if (well && string_equals(keys[key], "path"))
+                        check("pax path values are kept",
+                              tar_pax_has_path &&
+                                  !memory_compare(tar_pax_path,
+                                                  values[value].bytes,
+                                                  values[value].n) &&
+                                  tar_pax_path[values[value].n] == 0);
+                if (well && string_equals(keys[key], "linkpath"))
+                        check("pax linkpath values are kept",
+                              tar_pax_has_link &&
+                                  !memory_compare(tar_pax_link,
+                                                  values[value].bytes,
+                                                  values[value].n));
+                if (well && size_key && values[value].n)
+                        check("pax size values are kept", tar_pax_has_size);
+
+                extra_used = 0;
+                check("a following pax record still encodes",
+                      tar_pax_record(extra, sizeof(extra), address_of extra_used,
+                                     "comment", (const p8 address_to) "z", 1));
+                memory_copy(body + used, extra, extra_used);
+                tar_clear_pax();
+                check("pax bodies are a sequence of records",
+                      tar_pax_apply(body, used + extra_used) == well);
+        }
+
+        for (key = 0; key < array_count(keys); key++)
+        {
+                positive used = 0;
+                p8 good[TAR_PATH];
+
+                tar_pax_record(good, sizeof(good), address_of used, keys[key],
+                               (const p8 address_to) "abc", 3);
+                for (poke = 0; poke < 5; poke++)
+                {
+                        p8 bad[TAR_PATH];
+                        positive length = used;
+
+                        memory_copy(bad, good, used);
+                        if (poke == 0)
+                                length = used - 1;
+                        else if (poke == 1)
+                        {
+                                p8 address_to equal = memory_first_of(bad, '=',
+                                                                      used);
+                                if (equal)
+                                        address_to equal = ' ';
+                        }
+                        else if (poke == 2)
+                                bad[0] = '9';
+                        else if (poke == 3)
+                                bad[0] = '0';
+                        else
+                                bad[0] = 'x';
+                        tar_clear_pax();
+                        check("a mutated pax record is refused",
+                              !tar_pax_apply(bad, length));
+                }
+        }
 }
 
 b32 main(void)
@@ -40003,6 +41768,8 @@ b32 main(void)
         checksums();
         fields();
         paths();
+        packs();
+        pax_records();
         return test_report(null);
 }
 #endif /* CHECK_tar */
@@ -40663,13 +42430,11 @@ static fn streamed(void)
         bipolar m;
 
         memory_fill(src, 'a', sizeof(src));
-        xz_in_fd = -1;
-        xz_enc_mem = null;
-        xz_feed = null;
+        xz_input.fd = -1;
         xz_out_fd = -1;
-        xz_out_mem = packed;
-        xz_out_cap = sizeof(packed);
-        xz_out_used = 0;
+        xz_output.bytes = packed;
+        xz_output.room = sizeof(packed);
+        xz_output.used = 0;
         check("stream begin", xz_encode_setup(6));
         for (at = 0; at < sizeof(src); at += 512)
         {
@@ -40683,12 +42448,12 @@ static fn streamed(void)
         check("stream writes", wrote);
         check("stream end", xz_encode_end());
         check("stream size",
-              xz_out_used > 0 && xz_out_used < sizeof(packed));
-        m = xz_inflate_mem(packed, xz_out_used, back, sizeof(back));
+              xz_output.used > 0 && xz_output.used < sizeof(packed));
+        m = xz_inflate_mem(packed, xz_output.used, back, sizeof(back));
         check("stream roundtrip",
               m == (bipolar)sizeof(src) &&
                   !memory_compare(back, src, sizeof(src)));
-        xz_out_mem = null;
+        xz_output.bytes = null;
 }
 
 b32 main(void)
@@ -40767,6 +42532,134 @@ static fn reuse_capture(address_any data, positive length)
         if (length <= sizeof(reuse_output) - reuse_used)
                 memory_copy(reuse_output + reuse_used, data, length);
         reuse_used += length;
+}
+
+static positive reuse_bulk_calls;
+static fn reuse_bulk_capture(address_any data, positive length)
+{
+        reuse_bulk_calls++;
+        reuse_capture(data, length);
+}
+
+static fn reuse_bulk_output(void)
+{
+        p8 expected[4096], actual[4096];
+        const positive widths[] = {0, 1, 2, 15, 16, 255, 256, 257, 1024, 4096};
+        p8 body[] = {'a', 0, 'z'};
+        for (positive left = 0; left < 2; left++)
+        for (positive pad = 0; pad < 256; pad += 17)
+        for (positive length = 0; length <= sizeof(body); length++)
+        for (positive i = 0; i < array_count(widths); i++)
+        {
+                positive width = widths[i], size = max(length, width);
+                memory_fill(expected, 0xa5, sizeof(expected));
+                memory_fill(expected, pad, size);
+                if (length)
+                        memory_copy(expected + (left ? 0 : size - length), body, length);
+                memory_fill(actual, 0xa5, sizeof(actual));
+                reuse_used = reuse_bulk_calls = 0;
+                writer_field_bulk(reuse_bulk_capture, length ? body : null,
+                                  length, width, pad, left);
+                memory_copy(actual, reuse_output, reuse_used);
+                positive padding = size - length;
+                check("bulk fields preserve bounded bytes, alignment and NUL padding",
+                      reuse_used == size && !memory_compare(actual, expected, sizeof(actual)));
+                check("bulk padding bounds callback work independently of width",
+                      reuse_bulk_calls == (padding + 255) / 256 + (length != 0));
+        }
+        for (positive room = 0; room <= 32; room++)
+        for (positive prefix = 0; prefix <= room; prefix++)
+        for (positive length = 0; length <= 33; length++)
+        {
+                p8 source[33], target[34];
+                memory_fill(source, 0x37, sizeof(source));
+                memory_fill(target, 0xa5, sizeof(target));
+                byte_store sink = {target + 1, room, prefix};
+                bool complete = byte_store_append_span(&sink, length ? source : null, length);
+                positive kept = min(length, room - prefix);
+                bool okay = complete == (kept == length) && sink.used == prefix + kept;
+                for (positive at = 0; at < sizeof(target); at++)
+                        okay &= target[at] == (at > prefix && at <= prefix + kept ? 0x37 : 0xa5);
+                check("bounded sink preserves its prefix and both guards", okay);
+                memory_fill(target, 0xa5, sizeof(target));
+                sink.used = prefix;
+                complete = byte_store_append_exact(&sink, length ? source : null, length);
+                kept = length <= room - prefix ? length : 0;
+                okay = complete == (length <= room - prefix) && sink.used == prefix + kept;
+                for (positive at = 0; at < sizeof(target); at++)
+                        okay &= target[at] == (at > prefix && at <= prefix + kept ? 0x37 : 0xa5);
+                check("atomic sink either commits the whole span or preserves its state", okay);
+        }
+        byte_store invalid = {null, 1, 2};
+        check("bounded sink refuses an invalid cursor without reading a source",
+              !byte_store_append_span(&invalid, null, positive_max) && invalid.used == 2 &&
+              !byte_store_append_exact(&invalid, null, positive_max) && invalid.used == 2);
+}
+
+static fn reuse_stable_arena(void)
+{
+        p8 held[160] __attribute__((aligned(32)));
+        for (positive alignment = 1; alignment <= 32; alignment *= 2)
+        for (positive prefix = 0; prefix <= 128; prefix += alignment)
+        for (positive wanted = 0; wanted <= 129; wanted++)
+        {
+                memory_fill(held, 0xa5, sizeof(held));
+                memory_arena arena = {held, 128, prefix};
+                positive rounded = (wanted + alignment - 1) & ~(alignment - 1);
+                p8 address_to answer = memory_arena_take(&arena, wanted, alignment);
+                bool fits = rounded <= 128 - prefix;
+                bool okay = fits ? answer == held + prefix && arena.used == prefix + rounded
+                                 : !answer && arena.used == prefix;
+                for (positive at = 0; at < sizeof(held); at++)
+                        okay &= held[at] == 0xa5;
+                check("stable arena checks capacity before changing its cursor", okay);
+        }
+        memory_arena arena = {held, 128, 16};
+        check("stable arena refuses wrapping and invalid alignment",
+              !memory_arena_take(&arena, positive_max, 16) && arena.used == 16 &&
+              !memory_arena_take(&arena, 1, 0) && arena.used == 16 &&
+              !memory_arena_take(&arena, 1, 3) && arena.used == 16);
+        const positive firsts[] = {0, 1, 16, 63, 64};
+        p8 input[64];
+        for (positive at = 0; at < sizeof(input); at++) input[at] = (p8)at;
+        for (positive first_at = 0; first_at < array_count(firsts); first_at++)
+        for (positive length = 0; length <= sizeof(input); length++)
+        {
+                b32 pipe[2];
+                if (system_call_2(syscall(pipe2), (positive)pipe, 0) < 0)
+                {
+                        check("arena read fixture opens its pipe", false);
+                        return;
+                }
+                bool sent = system_call_3(syscall(write), pipe[1],
+                                           (positive)input, length) == (bipolar)length;
+                system_close(pipe[1]);
+                memory_fill(held, 0xa5, sizeof(held));
+                arena = (memory_arena){held, 80, 16};
+                positive first = firsts[first_at], used = 0;
+                bool read_failed = false;
+                p8 address_to start = memory_arena_take(&arena, first, 16);
+                p8 address_to answer = memory_arena_read_tail(
+                    &arena, pipe[0], 16, first, 16, &used, &read_failed);
+                system_close(pipe[0]);
+                bool fits = first && length < 64;
+                bool okay = sent && start == held + 16 && !read_failed &&
+                    (fits ? answer == start && used == length && !answer[length] &&
+                            !memory_compare(answer, input, length) &&
+                            arena.used == 16 + ((length + 16) & ~(positive)15)
+                          : !answer && !used && arena.used == 16);
+                for (positive at = 0; at < 16; at++) okay &= held[at] == 0xa5;
+                for (positive at = 80; at < sizeof(held); at++) okay &= held[at] == 0xa5;
+                check("arena read grows in place, keeps a sentinel and rolls exhaustion back", okay);
+        }
+        arena = (memory_arena){held, 80, 16};
+        positive used = 0;
+        bool read_failed = false;
+        memory_arena_take(&arena, 16, 16);
+        check("arena read failure retains the previous allocations",
+              !memory_arena_read_tail(&arena, (positive)-1, 16, 16, 16,
+                                       &used, &read_failed) &&
+              read_failed && !used && arena.used == 16);
 }
 
 static p8 reuse_hex(p8 value)
@@ -41295,6 +43188,8 @@ b32 main(void)
               !seq_format_read("%18446744073709551616f", &sequence) &&
               !seq_format_read("%f%%f%f", &sequence));
         reuse_arguments();
+        reuse_bulk_output();
+        reuse_stable_arena();
         reuse_masks();
         reuse_lists();
         reuse_uuid();
@@ -42833,8 +44728,8 @@ static fn storage_test_lsfd(void)
               !ul_lsfd_snapshot.header.process_count);
         program_arguments_own();
         p8 resident;
-        check("lsfd keeps borrowed arena mapped", text_arena &&
-              system_call_3(syscall(mincore), (positive)text_arena, 1,
+        check("lsfd keeps borrowed arena mapped", utility_arena.bytes &&
+              system_call_3(syscall(mincore), (positive)utility_arena.bytes, 1,
                             (positive)address_of resident) == 0);
 
         static const string_address samples[] = {
@@ -42889,6 +44784,8 @@ static positive storage_test_output_used;
 
 static fn storage_test_capture(address_any bytes, positive length)
 {
+        if (!length)
+                length = string_length((string_address)bytes);
         if (length > sizeof(storage_test_output) - storage_test_output_used)
         {
                 check("storage cell capture capacity", false);
@@ -43016,19 +44913,432 @@ static fn storage_test_script_rollback(void)
 static fn storage_test_link_state(void)
 {
         net_holding held = {0};
+
+        held.index = 41;
+        held.lease.address = 0x0a000102;
+        check("a first observed down event invalidates the active link",
+              net_link_news(41, 0, address_of held) && held.lost);
+        netlink_forget(address_of net_states);
+        net_state_count = 0;
+        memory_fill(address_of held, 0, sizeof held);
+
+        {
+                p8 record[NETLINK_HEADER + sizeof(netlink_link)] = {0};
+                netlink_header address_to header =
+                    (netlink_header address_to)record;
+                netlink_link address_to link =
+                    (netlink_link address_to)(record + NETLINK_HEADER);
+
+                held.index = 42;
+                held.lease.address = 0x0a000202;
+                check("an active link can seed deletion state",
+                      !net_link_news(42, IFF_RUNNING, address_of held) &&
+                          net_state_count == 1);
+                header->type = RTM_DELLINK;
+                header->length = NETLINK_HEADER;
+                link->index = 42;
+                check("a truncated link deletion cannot consume its body",
+                      !net_link_event(header, address_of held) && !held.lost);
+                header->length = sizeof record;
+                check("device removal invalidates its lease and carrier snapshot",
+                      net_link_event(header, address_of held) && held.lost &&
+                          net_state_count == 0);
+        }
+        netlink_forget(address_of net_states);
+        net_state_count = 0;
+        memory_fill(address_of held, 0, sizeof held);
+
         check("new down interface can be configured", net_link_news(11, 0, address_of held));
         check("initial carrier can be configured", net_link_news(11, IFF_RUNNING, address_of held));
         held.index = 11;
+        held.lease.address = 0x0a000102;
+        held.lease.mask = 0xffffff00;
+        held.lease.router = 0x0a000101;
         check("unchanged carrier keeps lease", !net_link_news(11, IFF_RUNNING, address_of held));
         check("second live interface keeps lease", !net_link_news(12, IFF_RUNNING, address_of held));
-        check("carrier loss invalidates the sole configured state",
-              net_link_news(11, 0, address_of held) && !held.index);
-        check("failed reconfiguration cannot revive lost interface",
-              net_auto(-1, address_of held) != 0 && !held.index);
+        check("carrier loss retains state until kernel cleanup",
+              net_link_news(11, 0, address_of held) && held.index == 11 &&
+                  held.lost);
+        check("failed reconfiguration cannot forget stale kernel state",
+              net_auto(-1, address_of held) != 0 && held.index == 11 &&
+                  held.lost);
         check("new interface can retry after configuration failure",
               net_link_news(13, 0, address_of held));
+
+        dhcp_lease same = held.lease;
+        dhcp_lease changed = held.lease;
+        check("the held address includes interface, host and prefix",
+              net_holds_address(address_of held, 11, address_of same) &&
+                  !net_holds_address(address_of held, 12, address_of same));
+        changed.address++;
+        check("a replacement DHCP address is detected",
+              !net_holds_address(address_of held, 11, address_of changed));
+        changed = held.lease;
+        changed.mask = 0xffff0000;
+        check("a replacement DHCP prefix is a distinct kernel address",
+              !net_holds_address(address_of held, 11, address_of changed));
+        changed = held.lease;
+        changed.router = 0;
+        check("a lease without a router clears the old default",
+              !net_holds_route(address_of held, 11, address_of changed));
+        check("missing kernel state is an idempotent cleanup result",
+              net_change_gone(0) && net_change_gone(-ERROR_NO_ENTRY) &&
+                  net_change_gone(-ERROR_NO_PROCESS) &&
+                  net_change_gone(-ERROR_NO_DEVICE) &&
+                  !net_change_gone(-ERROR_ACCESS));
+
+        {
+                net_holding timed = {.index = 7, .taken = 100};
+
+                timed.lease.seconds = 60;
+                check("a DHCP lease remains valid before its deadline",
+                      !net_lease_expired_at(address_of timed, 159));
+                check("a DHCP renewal wait reaches the half-life",
+                      net_lease_due_in(address_of timed, 120) == 10);
+                check("a DHCP lease expires at its exact deadline",
+                      net_lease_expired_at(address_of timed, 160) &&
+                          net_lease_due_in(address_of timed, 160) == 1);
+                check("a regressed lease clock fails closed",
+                      net_lease_expired_at(address_of timed, 99) &&
+                          net_lease_due_in(address_of timed, 99) == 1);
+                check("an unavailable lease clock fails closed",
+                      net_lease_expired_at(address_of timed, 0) &&
+                          net_lease_due_in(address_of timed, 0) == 1);
+                timed.lease.seconds = 0;
+                check("an unbounded DHCP lease has no local deadline",
+                      !net_lease_expired_at(address_of timed, 1000));
+        }
+
         netlink_forget(address_of net_states);
         net_state_count = 0;
+}
+
+static fn storage_test_netlink_output(void)
+{
+        writer saved = net_out;
+        netlink_header short_message = {.length = NETLINK_HEADER};
+
+        storage_test_output_used = 0;
+        net_out = storage_test_capture;
+        net_link_line(address_of short_message, null);
+        net_address_line(address_of short_message, null);
+        net_route_line(address_of short_message, null);
+        check("header-only netlink messages are not dereferenced or printed",
+              storage_test_output_used == 0);
+
+        {
+                netlink_buffer message = {0};
+                p8 unsafe[] = {'e', 27, 0};
+
+                check("netlink link output fixture builds",
+                      netlink_begin(address_of message, RTM_NEWLINK, 0, 1,
+                                    sizeof(netlink_link)));
+                if (!message.failed)
+                {
+                        netlink_link address_to body =
+                            (netlink_link address_to)netlink_body(
+                                address_of message);
+                        body->index = 3;
+                        netlink_attribute_add(address_of message,
+                                              IFLA_IFNAME, unsafe,
+                                              sizeof unsafe);
+                        storage_test_output_used = 0;
+                        net_link_line((netlink_header address_to)message.bytes,
+                                      null);
+                        static p8 wanted[] =
+                            "3: e\\x1b: <> state DOWN\n";
+                        check("link names are terminal escaped",
+                              storage_test_output_used == sizeof wanted - 1 &&
+                                  !memory_compare(storage_test_output, wanted,
+                                                  sizeof wanted - 1));
+                }
+                netlink_forget(address_of message);
+        }
+
+        {
+                netlink_buffer message = {0};
+                p32 wire = network_order_32(0x0a000001);
+                p8 unsafe[] = {'e', 27, 0};
+
+                check("netlink address output fixture builds",
+                      netlink_begin(address_of message, RTM_NEWADDR, 0, 1,
+                                    sizeof(netlink_address)));
+                if (!message.failed)
+                {
+                        netlink_address address_to body =
+                            (netlink_address address_to)netlink_body(
+                                address_of message);
+                        body->family = AF_INET;
+                        body->prefix = 24;
+                        body->index = 9;
+                        netlink_attribute_add(address_of message, IFA_LOCAL,
+                                              address_of wire, sizeof wire);
+                        netlink_attribute_add(address_of message, IFA_LABEL,
+                                              unsafe, sizeof unsafe);
+                        storage_test_output_used = 0;
+                        net_address_line(
+                            (netlink_header address_to)message.bytes, null);
+                        static p8 wanted[] =
+                            "9: e\\x1b    inet 10.0.0.1/24\n";
+                        check("address labels are terminal escaped",
+                              storage_test_output_used == sizeof wanted - 1 &&
+                                  !memory_compare(storage_test_output, wanted,
+                                                  sizeof wanted - 1));
+
+                        positive label_size = 0;
+                        p8 address_to label = (p8 address_to)netlink_find(
+                            (netlink_header address_to)message.bytes,
+                            sizeof(netlink_address), IFA_LABEL,
+                            address_of label_size);
+                        if (label && label_size)
+                                label[label_size - 1] = 'x';
+                        storage_test_output_used = 0;
+                        net_address_line(
+                            (netlink_header address_to)message.bytes, null);
+                        static p8 unknown[] =
+                            "9: ?    inet 10.0.0.1/24\n";
+                        check("unterminated address labels are not read",
+                              storage_test_output_used ==
+                                      sizeof unknown - 1 &&
+                                  !memory_compare(storage_test_output, unknown,
+                                                  sizeof unknown - 1));
+                }
+                netlink_forget(address_of message);
+        }
+
+        {
+                netlink_buffer message = {0};
+                p8 one = 1;
+
+                check("malformed route output fixture builds",
+                      netlink_begin(address_of message, RTM_NEWROUTE, 0, 1,
+                                    sizeof(netlink_route)));
+                if (!message.failed)
+                {
+                        netlink_route address_to body =
+                            (netlink_route address_to)netlink_body(
+                                address_of message);
+                        body->family = AF_INET;
+                        body->table = RT_TABLE_MAIN;
+                        netlink_attribute_add(address_of message, RTA_GATEWAY,
+                                              address_of one, 1);
+                        storage_test_output_used = 0;
+                        net_route_line(
+                            (netlink_header address_to)message.bytes, null);
+                        check("wrong-width route attributes are not read",
+                              storage_test_output_used == 0);
+                }
+                netlink_forget(address_of message);
+        }
+
+        {
+                netlink_buffer message = {0};
+                p32 index = 7;
+
+                net_name_count = 0;
+                check("route name table fixture reserves room",
+                      net_room(address_of net_names, sizeof(net_name)));
+                if (!net_names.failed)
+                {
+                        net_name address_to entry =
+                            (net_name address_to)net_names.bytes;
+                        entry->index = index;
+                        entry->name[0] = 'd';
+                        entry->name[1] = 27;
+                        entry->name[2] = 0;
+                        net_name_count = 1;
+                }
+
+                check("netlink route output fixture builds",
+                      netlink_begin(address_of message, RTM_NEWROUTE, 0, 1,
+                                    sizeof(netlink_route)));
+                if (!message.failed && net_name_count)
+                {
+                        netlink_route address_to body =
+                            (netlink_route address_to)netlink_body(
+                                address_of message);
+                        body->family = AF_INET;
+                        body->table = RT_TABLE_MAIN;
+                        netlink_attribute_add(address_of message, RTA_OIF,
+                                              address_of index,
+                                              sizeof index);
+                        storage_test_output_used = 0;
+                        net_route_line(
+                            (netlink_header address_to)message.bytes, null);
+                        static p8 wanted[] = "default dev d\\x1b\n";
+                        check("route device names are terminal escaped",
+                              storage_test_output_used == sizeof wanted - 1 &&
+                                  !memory_compare(storage_test_output, wanted,
+                                                  sizeof wanted - 1));
+                }
+                netlink_forget(address_of message);
+                netlink_forget(address_of net_names);
+                net_name_count = 0;
+        }
+
+        {
+                socket_address_netlink source = {.family = AF_NETLINK,
+                                                 .port = 0};
+
+                check("kernel netlink sender is accepted",
+                      netlink_source_is_kernel(address_of source,
+                                               sizeof source));
+                source.port = 9;
+                check("userspace netlink sender is refused",
+                      !netlink_source_is_kernel(address_of source,
+                                                sizeof source));
+                source.port = 0;
+                check("short netlink sender address is refused",
+                      !netlink_source_is_kernel(address_of source,
+                                                sizeof source - 1));
+        }
+
+        check("ip command abbreviations stay within the full word",
+              net_word_is((string_address) "add", "address", 1) &&
+                  !net_word_is((string_address) "address-too-long",
+                               "address", 1));
+
+        net_out = saved;
+}
+
+static bipolar storage_test_file_read(string_address path,
+                                      p8 address_to into, positive room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+        bipolar got = handle < 0
+                          ? handle
+                          : system_read_retry((positive)handle, into, room);
+
+        if (handle >= 0)
+                system_close(handle);
+        return got;
+}
+
+static fn storage_test_net_files(void)
+{
+        p8 root[FILE_PATH_MAX] = {0};
+        p8 target[FILE_PATH_MAX] = {0};
+        p8 retained[FILE_PATH_MAX] = {0};
+        p8 raced[FILE_PATH_MAX] = {0};
+        p8 bytes[128];
+        positive used = string_copy_end(
+                            root,
+                            (string_address) "/tmp/moonwater-net-stage-") -
+                        root;
+        positive_into_string(root + used, system_nonce());
+
+        check("network staging test directory is private",
+              system_make_directory_at(AT_FDCWD, root, 0700) == 0);
+        check("network staging target path fits",
+              file_path_join(target, root, (string_address) "result"));
+
+        bipolar seed = system_open_at_mode(
+            AT_FDCWD, target, FILE_WRITE | O_CLOEXEC, 0644);
+        check("network staging fixture opens", seed >= 0);
+        check("network staging fixture writes",
+              seed >= 0 && system_write_all((positive)seed, "old", 3) == 3);
+        if (seed >= 0)
+                system_close(seed);
+
+        net_staging staged;
+        bipolar handle = net_staging_open(
+            address_of staged, target,
+            (string_address) ".moonwater-test-",
+            sizeof(".moonwater-test-") - 1, 0644);
+        check("network publication opens an adjacent exclusive stage",
+              handle >= 0);
+        check("network publication writes through its pinned descriptor",
+              handle >= 0 &&
+                  system_write_all((positive)handle, "new", 3) == 3);
+        check("network publication atomically replaces the destination",
+              handle >= 0 && net_staging_finish(address_of staged, true) == 0);
+        bipolar got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("network publication exposes only completed bytes",
+              got == 3 && !memory_compare(bytes, "new", 3));
+
+        handle = net_staging_open(
+            address_of staged, target,
+            (string_address) ".moonwater-test-",
+            sizeof(".moonwater-test-") - 1, 0644);
+        check("failed network publication has a private stage", handle >= 0);
+        if (handle >= 0)
+        {
+                check("failed network publication stage path fits",
+                      file_path_join(retained, root, staged.temporary));
+                system_write_all((positive)handle, "partial", 7);
+                check("failed network staging is removed by live identity",
+                      net_staging_finish(address_of staged, false) == 0);
+        }
+        got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("abandoned network output preserves the caller destination",
+              got == 3 && !memory_compare(bytes, "new", 3));
+        got = retained[0]
+                  ? storage_test_file_read(retained, bytes, sizeof bytes)
+                  : -1;
+        check("failed staging cleanup removes only its own inode",
+              got == -ERROR_NO_ENTRY);
+
+        handle = net_staging_open(
+            address_of staged, target,
+            (string_address) ".moonwater-test-",
+            sizeof(".moonwater-test-") - 1, 0644);
+        check("identity-race network stage opens", handle >= 0);
+        if (handle >= 0)
+        {
+                system_write_all((positive)handle, "ours", 4);
+                check("identity-race stage path fits",
+                      file_path_join(raced, root, staged.temporary));
+                check("identity-race fixture displaces the named stage",
+                      system_remove_at(staged.directory,
+                                       staged.temporary, 0) == 0);
+                bipolar attacker = system_open_at_mode(
+                    staged.directory, staged.temporary,
+                    FILE_WRITE | FILE_EXCLUSIVE | O_CLOEXEC, 0644);
+                check("identity-race replacement opens", attacker >= 0);
+                if (attacker >= 0)
+                {
+                        system_write_all((positive)attacker, "other", 5);
+                        system_close(attacker);
+                }
+                check("a swapped staging name cannot be published",
+                      net_staging_finish(address_of staged, true) ==
+                          -ERROR_AGAIN);
+        }
+        got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("a staging identity race preserves the destination",
+              got == 3 && !memory_compare(bytes, "new", 3));
+        got = raced[0]
+                  ? storage_test_file_read(raced, bytes, sizeof bytes)
+                  : -1;
+        check("a staging identity race retains the untrusted replacement",
+              got == 5 && !memory_compare(bytes, "other", 5));
+
+        check("resolver contents publish through the same atomic path",
+              net_write_resolv_to(target, 0x0a000001) == 0);
+        static p8 wanted[] =
+            "nameserver 1.1.1.1\nnameserver 10.0.0.1\n";
+        got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("resolver writes are complete and ordered",
+              got == sizeof(wanted) - 1 &&
+                  !memory_compare(bytes, wanted, sizeof(wanted) - 1));
+
+        p8 unsafe[] = {'h', 'o', 's', 't', 27, 0};
+        storage_test_output_used = 0;
+        file_name_message(storage_test_capture, (string_address) "bad ",
+                          unsafe, (string_address) "\n");
+        static p8 escaped[] = "bad host\\x1b\n";
+        check("network diagnostics escape terminal control bytes",
+              storage_test_output_used == sizeof(escaped) - 1 &&
+                  !memory_compare(storage_test_output, escaped,
+                                  sizeof(escaped) - 1));
+
+        system_remove_at(AT_FDCWD, target, 0);
+        if (retained[0])
+                system_remove_at(AT_FDCWD, retained, 0);
+        if (raced[0])
+                system_remove_at(AT_FDCWD, raced, 0);
+        system_remove_at(AT_FDCWD, root, AT_REMOVEDIR);
 }
 
 b32 main(void)
@@ -43049,6 +45359,8 @@ b32 main(void)
         storage_test_findmnt();
         storage_test_script_rollback();
         storage_test_link_state();
+        storage_test_netlink_output();
+        storage_test_net_files();
         return test_report(null);
 }
 #endif /* CHECK_storage_io */
@@ -55750,8 +58062,8 @@ static fn floor_lzma_span(void)
                 p8 address_to bytes = input + 5 * 4096 - packed;
                 memory_copy_apart(bytes, xz_rc_buf, packed);
                 memory_copy_apart(xz_in_buf, bytes, packed);
-                xz_in_at = 0; xz_in_have = packed; xz_in_eof = true;
-                xz_in_mem = null; xz_in_fd = -1; xz_in_abs = 0;
+                xz_input.at = 0; xz_input.have = packed; xz_input.eof = true;
+                xz_input.mem = null; xz_input.fd = -1; xz_in_abs = 0;
                 xz_unpacked = 0; xz_dict_pos = 0; xz_dict_full = 0;
                 memory_fill(xz_dict, 0, 4096);
                 memory_fill(output + 4096, 0, 4096);
@@ -55784,7 +58096,7 @@ static fn floor_lzma_span(void)
                                 }
                                 bool same = !xz_why && xz_unpacked == job.unpacked &&
                                     xz_range == job.range && xz_code == job.code &&
-                                    xz_in_at == (positive)(job.next - bytes) &&
+                                    xz_input.at == (positive)(job.next - bytes) &&
                                     xz_dict_pos == job.pos && xz_dict_full == job.full &&
                                     xz_state == job.state &&
                                     !memory_compare(xz_rep, job.rep, sizeof(xz_rep)) &&
@@ -55795,13 +58107,13 @@ static fn floor_lzma_span(void)
                         }
                         else
                         {
-                                check("LZMA short span consumes no input", job.next == bytes + xz_in_at);
+                                check("LZMA short span consumes no input", job.next == bytes + xz_input.at);
                                 xz_out_fill = 0;
                                 bool ok = xz_lzma_packet();
                                 check("LZMA scalar refill/wrap tail", ok);
                                 if (!ok) break;
                                 job.range = xz_range; job.code = xz_code;
-                                job.next = bytes + xz_in_at; job.pos = xz_dict_pos;
+                                job.next = bytes + xz_input.at; job.pos = xz_dict_pos;
                                 job.full = xz_dict_full; job.unpacked = xz_unpacked;
                                 job.state = xz_state;
                                 memory_copy_apart(job.rep, xz_rep, sizeof(xz_rep));

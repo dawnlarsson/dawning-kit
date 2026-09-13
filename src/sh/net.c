@@ -137,7 +137,9 @@ static bool net_word_is(string_address word, const char *full, positive least)
         if (!word)
                 return false;
         positive length = string_length(word);
-        return length >= least && !string_compare_max(word, (string_address)full, length);
+        positive full_length = string_length((string_address)full);
+        return length >= least && length <= full_length &&
+               !string_compare_max(word, (string_address)full, length);
 }
 
 //      The errno the kernel gave, said as plainly as this can say it.
@@ -327,7 +329,9 @@ static bool net_link_line(netlink_header address_to header, address_any context)
         if (!name)
                 return true;
 
-        string_format(net_out, "%p: %s: ", (positive)link->index, name);
+        string_format(net_out, "%p: ", (positive)link->index);
+        writer_terminal_name(net_out, name);
+        string_format(net_out, ": ");
         net_say_flags(link->flags);
         string_format(net_out, " state %s\n",
                       (link->flags & IFF_UP) ? (string_address) "UP"
@@ -348,24 +352,37 @@ typedef struct
 //      whole link table being held.
 static bool net_address_line(netlink_header address_to header, address_any context)
 {
-        netlink_address address_to body =
-            (netlink_address address_to)((p8 address_to)header + NETLINK_HEADER);
+        netlink_address address_to body;
         net_naming address_to naming = (net_naming address_to)context;
         positive size = 0;
-        p8 address_to held = (p8 address_to)netlink_find(header, sizeof(netlink_address),
-                                                         IFA_LOCAL, address_of size);
-        string_address label = (string_address)netlink_find(header, sizeof(netlink_address),
-                                                            IFA_LABEL, null);
+        positive label_size = 0;
+        p8 address_to held;
+        string_address label;
         p8 written[32];
         p32 host;
+
+        if (header->length < NETLINK_HEADER + sizeof(netlink_address))
+                return true;
+
+        body = (netlink_address address_to)((p8 address_to)header +
+                                             NETLINK_HEADER);
+        held = (p8 address_to)netlink_find(header, sizeof(netlink_address),
+                                           IFA_LOCAL, address_of size);
+        label = (string_address)netlink_find(header, sizeof(netlink_address),
+                                             IFA_LABEL,
+                                             address_of label_size);
+        if (!label_size || !label || !memory_first_of(label, 0, label_size))
+                label = null;
 
         if (!held || size != 4 || body->family != AF_INET)
                 return true;
 
         host = network_order_32(address_to((p32 address_to)held));
 
-        string_format(net_out, "%p: %s    inet %s/%p\n", (positive)body->index,
-                      label ? label : (string_address) "?",
+        string_format(net_out, "%p: ", (positive)body->index);
+        writer_terminal_name(net_out,
+                             label ? label : (string_address) "?");
+        string_format(net_out, "    inet %s/%p\n",
                       net_host_text(written, host), (positive)body->prefix);
 
         (void)naming;
@@ -375,18 +392,39 @@ static bool net_address_line(netlink_header address_to header, address_any conte
 
 static bool net_route_line(netlink_header address_to header, address_any context)
 {
-        netlink_route address_to body =
-            (netlink_route address_to)((p8 address_to)header + NETLINK_HEADER);
-        p8 address_to gateway = (p8 address_to)netlink_find(header, sizeof(netlink_route),
-                                                            RTA_GATEWAY, null);
-        p8 address_to destination = (p8 address_to)netlink_find(
-            header, sizeof(netlink_route), RTA_DST, null);
-        p8 address_to out = (p8 address_to)netlink_find(header, sizeof(netlink_route),
-                                                        RTA_OIF, null);
+        netlink_route address_to body;
+        positive gateway_size = 0;
+        positive destination_size = 0;
+        positive out_size = 0;
+        p8 address_to gateway;
+        p8 address_to destination;
+        p8 address_to out;
         p8 written[32];
         (void)context;
 
+        if (header->length < NETLINK_HEADER + sizeof(netlink_route))
+                return true;
+
+        body = (netlink_route address_to)((p8 address_to)header +
+                                           NETLINK_HEADER);
+        gateway = (p8 address_to)netlink_find(
+            header, sizeof(netlink_route), RTA_GATEWAY,
+            address_of gateway_size);
+        destination = (p8 address_to)netlink_find(
+            header, sizeof(netlink_route), RTA_DST,
+            address_of destination_size);
+        out = (p8 address_to)netlink_find(
+            header, sizeof(netlink_route), RTA_OIF, address_of out_size);
+
         if (body->family != AF_INET || body->table != RT_TABLE_MAIN)
+                return true;
+
+        /* Every IPv4 route value used below is exactly one p32.  A shorter
+           attribute would read into padding or the next attribute; a longer
+           one is not the route shape this formatter understands. */
+        if ((gateway && gateway_size != 4) ||
+            (destination && destination_size != 4) ||
+            (out && out_size != 4))
                 return true;
 
         if (destination)
@@ -408,7 +446,10 @@ static bool net_route_line(netlink_header address_to header, address_any context
                 string_address name = net_name_of(index);
 
                 if (name)
-                        string_format(net_out, " dev %s", name);
+                {
+                        string_format(net_out, " dev ");
+                        writer_terminal_name(net_out, name);
+                }
                 else
                         string_format(net_out, " dev %p", (positive)index);
         }
@@ -472,7 +513,10 @@ static b32 net_host(void)
 
                 if (server < 0)
                 {
-                        string_format(net_out, "host: %s is not an address\n", net_word(2));
+                        file_name_message(net_out,
+                                          (string_address) "host: ",
+                                          net_word(2),
+                                          (string_address) " is not an address\n");
                         net_flush();
                         return 1;
                 }
@@ -488,14 +532,19 @@ static b32 net_host(void)
         switch (status)
         {
         case DNS_OK:
-                string_format(net_out, "%s has address %s\n", net_word(1),
-                              net_host_text(written, found));
+                file_name_message(net_out, (string_address) "", net_word(1),
+                                  (string_address) " has address ");
+                string_format(net_out, "%s\n", net_host_text(written, found));
                 break;
         case DNS_NO_SUCH_NAME:
-                string_format(net_out, "host: %s: no such name\n", net_word(1));
+                file_name_message(net_out, (string_address) "host: ",
+                                  net_word(1),
+                                  (string_address) ": no such name\n");
                 break;
         case DNS_NO_ADDRESS:
-                string_format(net_out, "host: %s exists but has no address\n", net_word(1));
+                file_name_message(net_out, (string_address) "host: ",
+                                  net_word(1),
+                                  (string_address) " exists but has no address\n");
                 break;
         case DNS_NO_REPLY:
                 string_format(net_out, "host: no reply from the nameserver\n");
@@ -510,6 +559,9 @@ static b32 net_host(void)
                 break;
         case DNS_REFUSED:
                 string_format(net_out, "host: the nameserver refused the question\n");
+                break;
+        case DNS_NO_RANDOM:
+                string_format(net_out, "host: secure randomness is not ready\n");
                 break;
         default:
                 string_format(net_out, "host: the reply made no sense\n");
@@ -562,8 +614,9 @@ static b32 net_fetch(void)
 
         if (status < 0)
         {
-                string_format(net_out, "fetch: %s is not a url this understands\n",
-                              net_word(1));
+                file_name_message(
+                    net_out, (string_address) "fetch: ", net_word(1),
+                    (string_address) " is not a url this understands\n");
                 net_flush();
                 return 1;
         }
@@ -582,7 +635,9 @@ static b32 net_fetch(void)
                 if (dns_resolve_any((string_address) "/etc/resolv.conf", name,
                                     address_of host, 3) != DNS_OK)
                 {
-                        string_format(net_out, "fetch: cannot resolve %s\n", name);
+                        file_name_message(net_out,
+                                          (string_address) "fetch: cannot resolve ",
+                                          name, (string_address) "\n");
                         net_flush();
                         return 1;
                 }
@@ -593,9 +648,13 @@ static b32 net_fetch(void)
         if (status < 0)
         {
                 if (status == HTTP_NO_ROUTE)
-                        string_format(net_out, "fetch: cannot reach %s\n", name);
+                        file_name_message(net_out,
+                                          (string_address) "fetch: cannot reach ",
+                                          name, (string_address) "\n");
                 else if (status == HTTP_NO_REPLY)
-                        string_format(net_out, "fetch: no reply from %s\n", name);
+                        file_name_message(net_out,
+                                          (string_address) "fetch: no reply from ",
+                                          name, (string_address) "\n");
                 else
                         string_format(net_out, "fetch: the reply made no sense\n");
 
@@ -639,6 +698,84 @@ static const file_long wget_longs[] = {
     {null, 0},
 };
 
+/* A download and resolv.conf update share the same publication rule: write a
+   fresh regular file through its exclusive descriptor, sync it, prove its
+   directory entry while that descriptor remains open, then rename it over
+   the destination in one operation. The parent directory
+   remains pinned throughout, so renaming a command-line ancestor cannot send
+   publication somewhere else. Failed staging is removed only through the
+   still-open descriptor; an entry whose identity changed is retained. */
+typedef struct
+{
+        bipolar directory;
+        bipolar handle;
+        p8 destination[SYSTEM_PATH_LEAF_ROOM];
+        p8 temporary[SYSTEM_PATH_LEAF_ROOM];
+} net_staging;
+
+static bipolar net_staging_open(net_staging address_to file,
+                                string_address destination,
+                                string_address marker,
+                                positive marker_length,
+                                positive mode)
+{
+        file->directory = system_open_parent_pinned(
+            AT_FDCWD, destination, file->destination,
+            sizeof(file->destination));
+        file->handle = -1;
+        file->temporary[0] = end;
+
+        if (file->directory < 0)
+                return file->directory;
+
+        file->handle = file_temporary_open_at(
+            file->directory, file->destination, file->temporary,
+            sizeof(file->temporary), marker, marker_length, system_nonce(),
+            128, mode);
+
+        if (file->handle < 0)
+        {
+                bipolar failed = file->handle;
+                system_close(file->directory);
+                file->directory = -1;
+                return failed;
+        }
+
+        return file->handle;
+}
+
+static bipolar net_staging_finish(net_staging address_to file, bool publish)
+{
+        bipolar failed = 0;
+
+        if (publish)
+                failed = system_call_1(syscall(fsync),
+                                       (positive)file->handle);
+
+        if (!publish)
+                failed = system_path_remove_opened_at(
+                    file->directory, file->temporary, file->handle, 0);
+
+        if (publish && !failed)
+                failed = file_temporary_publish_at(
+                    file->directory, file->temporary, file->destination,
+                    file->handle, 0);
+
+        bipolar closed = system_close(file->handle);
+        file->handle = -1;
+
+        /* Once a synced file has been atomically published, a later close
+           error cannot be rolled back without replacing a possibly changed
+           destination. Before publication, close failure remains failure. */
+        if (!publish && !failed && closed < 0)
+                failed = closed;
+
+        system_close(file->directory);
+        file->directory = -1;
+
+        return failed;
+}
+
 /*
         wget [ -q ] [ -O FILE ] [ --no-check-certificate ] URL
 
@@ -667,6 +804,7 @@ static b32 net_wget(void)
         bipolar status;
         b32 code = 0;
         bool own_file = false;
+        net_staging staged;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -689,8 +827,10 @@ static b32 net_wget(void)
 
         if (taking.first + 1 < (positive)program_argument_count())
         {
-                string_format(log_error, "wget: extra operand '%s'\n",
-                              program_argument((b32)(taking.first + 1)));
+                file_name_message(
+                    log_error, (string_address) "wget: extra operand '",
+                    program_argument((b32)(taking.first + 1)),
+                    (string_address) "'\n");
                 return 1;
         }
 
@@ -703,8 +843,9 @@ static b32 net_wget(void)
                                  address_of path, address_of tls);
         if (status)
         {
-                string_format(log_error, "wget: %s is not a url this understands\n",
-                              url);
+                file_name_message(
+                    log_error, (string_address) "wget: ", url,
+                    (string_address) " is not a url this understands\n");
                 return 1;
         }
 
@@ -717,11 +858,15 @@ static b32 net_wget(void)
                         http_url_leaf(path, leaf, sizeof leaf);
                         output = leaf;
                 }
-                dest = system_open_at_mode(AT_FDCWD, output,
-                                           FILE_WRITE | O_CLOEXEC, 0644);
+                dest = net_staging_open(
+                    address_of staged, output,
+                    (string_address) ".moonwater-wget-",
+                    sizeof(".moonwater-wget-") - 1, 0644);
                 if (dest < 0)
                 {
-                        string_format(log_error, "wget: cannot write %s\n", output);
+                        file_name_message(log_error,
+                                          (string_address) "wget: cannot write ",
+                                          output, (string_address) "\n");
                         return 1;
                 }
                 own_file = true;
@@ -729,27 +874,42 @@ static b32 net_wget(void)
 
         if (!quiet)
         {
-                string_format(log_error, "%s\nSaving to: '%s'\n", url, output);
+                file_name_pair_message(log_error, (string_address) "", url,
+                                       (string_address) "\nSaving to: '", output,
+                                       (string_address) "'\n");
         }
 
         status = http_fetch_to(url, dest, check_cert, address_of code);
-        if (own_file)
-                system_close(dest);
 
         if (status)
         {
                 if (own_file)
-                        system_remove_at(AT_FDCWD, output, 0);
+                {
+                        if (net_staging_finish(address_of staged, false) < 0)
+                                file_name_message(
+                                    log_error,
+                                    (string_address) "wget: incomplete staging file retained beside '",
+                                    output, (string_address) "'\n");
+                }
                 if (status == HTTP_NO_HOST)
-                        string_format(log_error, "wget: cannot resolve %s\n", name);
+                        file_name_message(log_error,
+                                          (string_address) "wget: cannot resolve ",
+                                          name, (string_address) "\n");
                 else if (status == HTTP_NO_ROUTE)
-                        string_format(log_error, "wget: cannot reach %s\n", name);
+                        file_name_message(log_error,
+                                          (string_address) "wget: cannot reach ",
+                                          name, (string_address) "\n");
                 else if (status == HTTP_TLS)
                         string_format(log_error, "wget: TLS handshake failed\n");
+                else if (status == HTTP_DOWNGRADE)
+                        string_format(log_error,
+                                      "wget: refused an HTTPS to HTTP redirect\n");
                 else if (status == HTTP_REDIRECTS)
                         string_format(log_error, "wget: too many redirects\n");
                 else if (status == HTTP_NO_REPLY)
-                        string_format(log_error, "wget: no reply from %s\n", name);
+                        file_name_message(log_error,
+                                          (string_address) "wget: no reply from ",
+                                          name, (string_address) "\n");
                 else
                         string_format(log_error, "wget: download failed\n");
                 return 1;
@@ -758,9 +918,23 @@ static b32 net_wget(void)
         if (code >= 400)
         {
                 if (own_file)
-                        system_remove_at(AT_FDCWD, output, 0);
+                {
+                        if (net_staging_finish(address_of staged, false) < 0)
+                                file_name_message(
+                                    log_error,
+                                    (string_address) "wget: rejected response retained beside '",
+                                    output, (string_address) "'\n");
+                }
                 string_format(log_error, "wget: server returned %p\n",
                               (positive)code);
+                return 1;
+        }
+
+        if (own_file && net_staging_finish(address_of staged, true) < 0)
+        {
+                file_name_message(
+                    log_error, (string_address) "wget: cannot publish ", output,
+                    (string_address) "; staging file retained\n");
                 return 1;
         }
 
@@ -787,36 +961,45 @@ static b32 net_wget(void)
         resolver means changing which server is preferred is one line in a
         file, not a rebuild.
 */
-static fn net_write_resolv(p32 nameserver)
+static bipolar net_write_resolv_to(string_address path, p32 nameserver)
 {
         p8 line[64];
-        positive used;
-        b32 handle;
+        positive used = 11;
+        net_staging staged;
+        bipolar handle;
 
-        //      O_WRONLY | O_CREAT | O_TRUNC, 0644
-        handle = (b32)system_open_at_mode(AT_FDCWD,
-                                     "/etc/resolv.conf",
-                                    (1 | 0100 | 01000), 0644);
-
-        if (handle < 0)
-                return;
-
-        used = 11;
         memory_copy(line, "nameserver ", 11);
         used += host_into(line + used, DNS_FALLBACK);
         line[used++] = '\n';
-        system_write_all((positive)handle, line, used);
 
         if (nameserver && nameserver != DNS_FALLBACK)
         {
-                used = 11;
-                memory_copy(line, "nameserver ", 11);
+                memory_copy(line + used, "nameserver ", 11);
+                used += 11;
                 used += host_into(line + used, nameserver);
                 line[used++] = '\n';
-                system_write_all((positive)handle, line, used);
         }
 
-        system_close(handle);
+        handle = net_staging_open(
+            address_of staged, path, (string_address) ".moonwater-resolv-",
+            sizeof(".moonwater-resolv-") - 1, 0644);
+
+        if (handle < 0)
+                return handle;
+
+        if (system_write_all((positive)handle, line, used) != used)
+        {
+                net_staging_finish(address_of staged, false);
+                return -ERROR_INPUT_OUTPUT;
+        }
+
+        return net_staging_finish(address_of staged, true);
+}
+
+static bipolar net_write_resolv(p32 nameserver)
+{
+        return net_write_resolv_to((string_address) "/etc/resolv.conf",
+                                   nameserver);
 }
 
 /*
@@ -846,6 +1029,7 @@ typedef struct
         p8 hardware[6];
         dhcp_lease lease;
         positive taken;
+        bool lost;
 } net_holding;
 
 #define NET_CLOCK_MONOTONIC 1
@@ -864,11 +1048,305 @@ static positive net_seconds(void)
         return (positive)now.tv_sec;
 }
 
+/* Deleting state which the kernel already discarded is the same outcome as
+   deleting it ourselves. A vanished interface reports ENODEV; absent
+   addresses and routes are reported as ENOENT or ESRCH. */
+static bool net_change_gone(bipolar status)
+{
+        return status >= 0 || status == -ERROR_NO_ENTRY ||
+               status == -ERROR_NO_PROCESS || status == -ERROR_NO_DEVICE;
+}
+
+static bool net_holds_address(const net_holding address_to held, p32 index,
+                              const dhcp_lease address_to lease)
+{
+        return held && held->index == index &&
+               held->lease.address == lease->address &&
+               dhcp_prefix_of(held->lease.mask) == dhcp_prefix_of(lease->mask);
+}
+
+static bool net_holds_route(const net_holding address_to held, p32 index,
+                            const dhcp_lease address_to lease)
+{
+        if (!held)
+                return !lease->router;
+
+        return held->lease.router == lease->router &&
+               (!lease->router || held->index == index);
+}
+
+/* Unsigned subtraction deliberately treats a clock failure or regression as
+   an expired lease: keeping an address past the server's deadline can create
+   an address collision, while releasing it merely requires reacquisition. */
+static bool net_lease_expired_at(const net_holding address_to held,
+                                 positive now)
+{
+        if (!held || !held->index || !held->lease.seconds)
+                return false;
+
+        return !now || !held->taken || now < held->taken ||
+               now - held->taken >= held->lease.seconds;
+}
+
+static positive net_lease_due_in(const net_holding address_to held,
+                                 positive now)
+{
+        positive half;
+        positive gone;
+
+        if (!held || !held->index || !held->lease.seconds)
+                return 0;
+        if (net_lease_expired_at(held, now))
+                return 1;
+
+        half = held->lease.seconds / 2;
+        gone = now - held->taken;
+        return gone >= half ? 1 : half - gone;
+}
+
+static bipolar net_holding_release(b32 handle, net_holding address_to held)
+{
+        bipolar failed = 0;
+
+        if (!held || !held->index)
+                return 0;
+
+        if (held->lease.router)
+        {
+                bipolar status = netlink_route_delete(handle, 0, 0,
+                                                       held->lease.router,
+                                                       held->index);
+                if (!net_change_gone(status))
+                        failed = status;
+        }
+
+        if (held->lease.address)
+        {
+                bipolar status = netlink_address_delete(
+                    handle, held->index, held->lease.address,
+                    dhcp_prefix_of(held->lease.mask));
+                if (!net_change_gone(status) && !failed)
+                        failed = status;
+        }
+
+        /* Once the address is no longer ours, a DHCP-provided resolver is no
+           longer ours either.  Keep the always-available fallback as the
+           complete resolver file, using the same checked atomic publication
+           path as lease installation. */
+        {
+                bipolar status = net_write_resolv(0);
+
+                if (status < 0 && !failed)
+                        failed = status;
+        }
+
+        if (!failed)
+                memory_fill(held, 0, sizeof(*held));
+        return failed;
+}
+
+static fn net_rollback_record(bipolar status,
+                              bipolar address_to first)
+{
+        if (!net_change_gone(status) && !*first)
+                *first = status;
+}
+
+/* Put the kernel back on the previous lease after any later step fails. The
+   old address is restored before its route; a new route is removed before
+   its address. Failures are remembered, but every independent cleanup is
+   still attempted so one refusal cannot strand the rest. */
+static bipolar net_lease_rollback(
+    b32 handle, const net_holding address_to previous,
+    p32 index, const dhcp_lease address_to lease,
+    bool address_changed, bool route_changed)
+{
+        bipolar failed = 0;
+
+        if (address_changed && previous)
+        {
+                bipolar status = netlink_address_add(
+                    handle, previous->index, previous->lease.address,
+                    dhcp_prefix_of(previous->lease.mask));
+                if (status < 0 && !failed)
+                        failed = status;
+        }
+
+        if (route_changed)
+        {
+                if (previous && previous->lease.router)
+                {
+                        bipolar status = netlink_route_add(
+                            handle, 0, 0, previous->lease.router,
+                            previous->index);
+                        if (status < 0 && !failed)
+                                failed = status;
+
+                        if (lease->router &&
+                            (lease->router != previous->lease.router ||
+                             index != previous->index))
+                                net_rollback_record(
+                                    netlink_route_delete(handle, 0, 0,
+                                                         lease->router, index),
+                                    address_of failed);
+                }
+                else if (lease->router)
+                        net_rollback_record(
+                            netlink_route_delete(handle, 0, 0,
+                                                 lease->router, index),
+                            address_of failed);
+        }
+
+        /* address_changed includes a prefix-only replacement.  The newly
+           installed address is therefore always distinct from the previous
+           kernel object and must be removed on rollback. */
+        if (address_changed)
+                net_rollback_record(
+                    netlink_address_delete(handle, index, lease->address,
+                                           dhcp_prefix_of(lease->mask)),
+                    address_of failed);
+
+        return failed;
+}
+
+static b32 net_apply_lease(b32 handle, p32 index, string_address name,
+                           p8 address_to hardware,
+                           const dhcp_lease address_to lease,
+                           net_holding address_to held, bool announce)
+{
+        net_holding previous_value = {0};
+        const net_holding address_to previous =
+            held && held->index ? address_of previous_value : null;
+        bool address_changed;
+        bool route_changed;
+        bool address_applied = false;
+        bool route_applied = false;
+        string_address doing = null;
+        bipolar status = 0;
+        p8 written[32];
+
+        if (previous)
+                previous_value = *held;
+
+        address_changed = !net_holds_address(previous, index, lease);
+        route_changed = !net_holds_route(previous, index, lease);
+
+        if (address_changed)
+        {
+                status = netlink_address_add(handle, index, lease->address,
+                                             dhcp_prefix_of(lease->mask));
+                if (status < 0)
+                {
+                        doing = (string_address) "addr add";
+                        goto failed;
+                }
+                address_applied = true;
+        }
+
+        if (route_changed && lease->router)
+        {
+                status = netlink_route_add(handle, 0, 0, lease->router, index);
+                if (status < 0)
+                {
+                        doing = (string_address) "route add";
+                        goto failed;
+                }
+                route_applied = true;
+        }
+
+        if (route_changed && previous && previous->lease.router)
+        {
+                status = netlink_route_delete(handle, 0, 0,
+                                              previous->lease.router,
+                                              previous->index);
+                if (!net_change_gone(status))
+                {
+                        doing = (string_address) "old route delete";
+                        goto failed;
+                }
+                route_applied = true;
+        }
+
+        /* A prefix is part of an address object's identity.  Since
+           address_changed compares index, host and prefix, every previous
+           object in this branch must be removed, including an otherwise
+           identical address whose mask changed. */
+        if (address_changed && previous)
+        {
+                status = netlink_address_delete(
+                    handle, previous->index, previous->lease.address,
+                    dhcp_prefix_of(previous->lease.mask));
+                if (!net_change_gone(status))
+                {
+                        doing = (string_address) "old addr delete";
+                        goto failed;
+                }
+        }
+
+        status = net_write_resolv(lease->nameserver);
+        if (status < 0)
+        {
+                doing = (string_address) "write resolv.conf";
+                goto failed;
+        }
+
+        if (announce)
+        {
+                string_format(net_out, "ip: %s/%p on ",
+                              net_host_text(written, lease->address),
+                              (positive)dhcp_prefix_of(lease->mask));
+                writer_terminal_name(net_out, name);
+                string_format(net_out, "\n");
+
+                if (lease->router)
+                        string_format(net_out, "ip: default via %s\n",
+                                      net_host_text(written, lease->router));
+
+                string_format(net_out, "ip: nameserver %s",
+                              net_host_text(written, DNS_FALLBACK));
+
+                if (lease->nameserver && lease->nameserver != DNS_FALLBACK)
+                        string_format(net_out, ", then %s",
+                                      net_host_text(written,
+                                                    lease->nameserver));
+
+                string_format(net_out, "\n");
+        }
+
+        if (held)
+        {
+                net_holding next = {.index = index, .lease = *lease,
+                                    .taken = net_seconds()};
+                string_copy_max_end(next.name, name, IFNAME_SIZE - 1);
+                memory_copy(next.hardware, hardware, 6);
+                *held = next;
+        }
+
+        net_flush();
+        return 0;
+
+failed:
+        {
+                bipolar rollback = net_lease_rollback(
+                    handle, previous, index, lease,
+                    address_applied, route_applied);
+
+                if (rollback < 0)
+                {
+                        if (held)
+                                held->lost = true;
+                        net_refused((string_address) "lease rollback",
+                                    rollback);
+                }
+        }
+
+        return net_refused(doing, status);
+}
+
 static b32 net_auto(b32 handle, net_holding address_to held)
 {
         netlink_search search;
         dhcp_lease lease;
-        p8 written[32];
         bipolar status;
 
         memory_fill(address_of search, 0, sizeof search);
@@ -883,12 +1361,15 @@ static b32 net_auto(b32 handle, net_holding address_to held)
 
         if (!search.has_hardware)
         {
-                string_format(net_out, "ip: %s has no hardware address\n", search.name);
+                file_name_message(net_out, (string_address) "ip: ",
+                                  search.name,
+                                  (string_address) " has no hardware address\n");
                 net_flush();
                 return 1;
         }
 
-        string_format(net_out, "ip: using %s\n", search.name);
+        file_name_message(net_out, (string_address) "ip: using ",
+                          search.name, (string_address) "\n");
 
         if (!(search.flags & IFF_UP))
         {
@@ -916,52 +1397,22 @@ static b32 net_auto(b32 handle, net_holding address_to held)
                 return 1;
         }
 
-        string_format(net_out, "ip: %s/%p on %s\n",
-                      net_host_text(written, lease.address),
-                      (positive)dhcp_prefix_of(lease.mask), search.name);
+        return net_apply_lease(handle, search.index, search.name,
+                               search.hardware, address_of lease, held, true);
+}
 
-        status = netlink_address_add(handle, search.index, lease.address,
-                                     dhcp_prefix_of(lease.mask));
-
-        if (status < 0)
-                return net_refused((string_address) "addr add", status);
-
-        if (lease.router)
+static b32 net_reconfigure(b32 handle, net_holding address_to held)
+{
+        if (held && held->lost)
         {
-                status = netlink_route_add(handle, 0, 0, lease.router, search.index);
+                bipolar status = net_holding_release(handle, held);
 
                 if (status < 0)
-                        return net_refused((string_address) "route add", status);
-
-                string_format(net_out, "ip: default via %s\n",
-                              net_host_text(written, lease.router));
+                        return net_refused((string_address) "lease release",
+                                           status);
         }
 
-        net_write_resolv(lease.nameserver);
-
-        string_format(net_out, "ip: nameserver %s",
-                      net_host_text(written, DNS_FALLBACK));
-
-        if (lease.nameserver && lease.nameserver != DNS_FALLBACK)
-        {
-                string_format(net_out, ", then %s",
-                              net_host_text(written, lease.nameserver));
-        }
-
-        string_format(net_out, "\n");
-
-        if (held)
-        {
-                held->index = search.index;
-                held->lease = lease;
-                held->taken = net_seconds();
-                string_copy_max_end(held->name, search.name, IFNAME_SIZE - 1);
-                memory_copy(held->hardware, search.hardware, 6);
-        }
-
-        net_flush();
-
-        return 0;
+        return net_auto(handle, held);
 }
 
 
@@ -1006,7 +1457,6 @@ static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
 {
         net_state address_to entry;
         positive at;
-        bool had_carrier = false;
 
         for (at = 0; at < net_state_count; at++)
         {
@@ -1014,8 +1464,6 @@ static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
 
                 if (entry->index != index)
                         continue;
-
-                had_carrier = (entry->flags & IFF_RUNNING) != 0;
 
                 if (((entry->flags ^ flags) & IFF_RUNNING) == 0)
                         return false;
@@ -1034,9 +1482,52 @@ static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
         entry->flags = flags;
 
 changed:
-        if (held->index == index && had_carrier && !(flags & IFF_RUNNING))
-                held->index = 0;
-        return held->index == 0;
+        if (held && held->index == index && !(flags & IFF_RUNNING))
+                held->lost = true;
+        return !held || held->index == 0 || held->lost;
+}
+
+static bool net_link_removed(p32 index, net_holding address_to held)
+{
+        net_state address_to states = (net_state address_to)net_states.bytes;
+
+        /* Forget the carrier snapshot as well as the lease.  Interface
+           indexes may be reused, and retaining the deleted device's flags
+           could suppress the replacement device's first event. */
+        for (positive at = 0; at < net_state_count; at++)
+                if (states[at].index == index)
+                {
+                        net_state_count--;
+                        if (at != net_state_count)
+                                states[at] = states[net_state_count];
+                        break;
+                }
+
+        if (!held || held->index != index)
+                return false;
+        held->lost = true;
+        return true;
+}
+
+/* Link multicast records are untrusted variable-length netlink messages.
+   DELLINK needs only the fixed interface index; it must not consult flags or
+   optional attributes from a device which no longer exists. */
+static bool net_link_event(netlink_header address_to header,
+                           net_holding address_to held)
+{
+        netlink_link address_to link;
+
+        if (!header || header->port ||
+            header->length < NETLINK_HEADER + sizeof(netlink_link))
+                return false;
+
+        link = (netlink_link address_to)((p8 address_to)header +
+                                         NETLINK_HEADER);
+        if (header->type == RTM_DELLINK)
+                return net_link_removed(link->index, held);
+        if (header->type != RTM_NEWLINK || (link->flags & IFF_LOOPBACK))
+                return false;
+        return net_link_news(link->index, link->flags, held);
 }
 
 static b32 net_watch(void)
@@ -1075,7 +1566,7 @@ static b32 net_watch(void)
 
         if (handle >= 0)
         {
-                net_auto((b32)handle, address_of held);
+                net_reconfigure((b32)handle, address_of held);
                 socket_close((b32)handle);
         }
 
@@ -1095,17 +1586,26 @@ static b32 net_watch(void)
                 */
                 {
                         positive due = 0;
+                        bipolar ready;
 
                         if (held.index && held.lease.seconds)
-                        {
-                                positive half = held.lease.seconds / 2;
-                                positive gone = net_seconds() - held.taken;
+                                due = net_lease_due_in(address_of held,
+                                                       net_seconds());
 
-                                due = gone >= half ? 1 : half - gone;
+                        ready = network_wait_readable(
+                            events, due ? due : 3600, 0);
+                        if (ready < 0)
+                        {
+                                /* A signal does not turn the following
+                                   receive into an unbounded wait: recompute
+                                   the lease deadline and poll again. Other
+                                   descriptor failures terminate the watcher. */
+                                if (ready == NETWORK_INTERRUPTED)
+                                        continue;
+                                break;
                         }
 
-                        if (network_wait_readable(events, due ? due : 3600,
-                                                  0) == 0)
+                        if (!ready)
                         {
                                 //      Nothing arrived, so this is the lease
                                 //      falling due. Ask to keep what we have;
@@ -1115,22 +1615,68 @@ static b32 net_watch(void)
                                 if (!held.index || !held.lease.seconds)
                                         continue;
 
-                                if (dhcp_renew(held.name, held.hardware,
-                                               address_of held.lease) == DHCP_OK)
+                                /* A renewal timeout must not extend a lease.
+                                   At the actual deadline first remove the old
+                                   address, route and resolver, then discover
+                                   from a clean state. */
+                                if (net_lease_expired_at(address_of held,
+                                                         net_seconds()))
                                 {
-                                        held.taken = net_seconds();
-                                        string_format(net_out,
-                                                      "ip: lease renewed on %s\n",
-                                                      held.name);
-                                        net_flush();
+                                        held.lost = true;
+                                        handle = netlink_open_groups(0);
+
+                                        if (handle >= 0)
+                                        {
+                                                net_reconfigure(
+                                                    (b32)handle,
+                                                    address_of held);
+                                                socket_close((b32)handle);
+                                        }
                                         continue;
                                 }
+
+                                dhcp_lease renewed = held.lease;
+                                bipolar renewal = dhcp_renew(
+                                    held.name, held.hardware,
+                                    address_of renewed);
+
+                                if (renewal == DHCP_OK)
+                                {
+                                        handle = netlink_open_groups(0);
+
+                                        if (handle >= 0)
+                                        {
+                                                if (!net_apply_lease(
+                                                        (b32)handle,
+                                                        held.index, held.name,
+                                                        held.hardware,
+                                                        address_of renewed,
+                                                        address_of held,
+                                                        false))
+                                                {
+                                                        file_name_message(
+                                                            net_out,
+                                                            (string_address) "ip: lease renewed on ",
+                                                            held.name,
+                                                            (string_address) "\n");
+                                                        net_flush();
+                                                }
+                                                socket_close((b32)handle);
+                                        }
+                                        continue;
+                                }
+
+                                if (renewal == DHCP_REFUSED ||
+                                    net_lease_expired_at(address_of held,
+                                                         net_seconds()))
+                                        held.lost = true;
 
                                 handle = netlink_open_groups(0);
 
                                 if (handle >= 0)
                                 {
-                                        net_auto((b32)handle, address_of held);
+                                        net_reconfigure((b32)handle,
+                                                        address_of held);
                                         socket_close((b32)handle);
                                 }
 
@@ -1138,14 +1684,13 @@ static b32 net_watch(void)
                         }
                 }
 
-                got = netlink_receive((b32)events, address_of message);
+                got = netlink_receive((b32)events, address_of message, null);
 
                 if (got < 0)
                         break;
 
                 while (at + NETLINK_HEADER <= message.used)
                 {
-                        netlink_link address_to link;
                         bool interesting = false;
 
                         header = (netlink_header address_to)(message.bytes + at);
@@ -1154,16 +1699,8 @@ static b32 net_watch(void)
                             at + header->length > message.used)
                                 break;
 
-                        if (header->type == RTM_NEWLINK &&
-                            header->length >= NETLINK_HEADER + sizeof(netlink_link))
-                        {
-                                link = (netlink_link address_to)(message.bytes + at +
-                                                                 NETLINK_HEADER);
-
-                                interesting = !(link->flags & IFF_LOOPBACK) &&
-                                    net_link_news(link->index, link->flags,
-                                                  address_of held);
-                        }
+                        interesting = net_link_event(header,
+                                                     address_of held);
 
                         at += netlink_align(header->length);
 
@@ -1175,7 +1712,7 @@ static b32 net_watch(void)
                         if (handle < 0)
                                 continue;
 
-                        net_auto((b32)handle, address_of held);
+                        net_reconfigure((b32)handle, address_of held);
                         socket_close((b32)handle);
                 }
         }

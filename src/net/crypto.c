@@ -954,7 +954,7 @@ static fn crypto_cswap(crypto_x25519_fe a, crypto_x25519_fe b, p64 swap)
         }
 }
 
-static fn crypto_x25519(p8 address_to out, p8 address_to scalar, p8 address_to u)
+static bool crypto_x25519(p8 address_to out, p8 address_to scalar, p8 address_to u)
 {
         p8 e[32];
         crypto_x25519_fe x1, x2, z2, x3, z3;
@@ -1021,6 +1021,18 @@ static fn crypto_x25519(p8 address_to out, p8 address_to scalar, p8 address_to u
         crypto_x25519_invert(z2, z2);
         crypto_x25519_mul(x2, x2, z2);
         crypto_x25519_store(out, x2);
+
+        /* RFC 7748's low-order inputs produce the all-zero shared secret.
+           Returning its validity lets a protocol reject that public result
+           without adding a second, easy-to-forget check at every caller. */
+        {
+                p8 nonzero = 0;
+
+                for (i = 0; i < 32; i++)
+                        nonzero |= out[i];
+
+                return nonzero != 0;
+        }
 }
 
 #define CRYPTO_FE_MAX 6
@@ -1039,6 +1051,10 @@ static const p8 crypto_p256_gy_be[32] = {
     0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a,
     0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce,
     0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5};
+static const p8 crypto_p256_b_be[32] = {
+    0x5a, 0xc6, 0x35, 0xd8, 0xaa, 0x3a, 0x93, 0xe7, 0xb3, 0xeb, 0xbd, 0x55,
+    0x76, 0x98, 0x86, 0xbc, 0x65, 0x1d, 0x06, 0xb0, 0xcc, 0x53, 0xb0, 0xf6,
+    0x3b, 0xce, 0x3c, 0x3e, 0x27, 0xd2, 0x60, 0x4b};
 
 static const p8 crypto_p384_gx_be[48] = {
     0xaa, 0x87, 0xca, 0x22, 0xbe, 0x8b, 0x05, 0x37, 0x8e, 0xb1, 0xc7, 0x1e,
@@ -1050,6 +1066,11 @@ static const p8 crypto_p384_gy_be[48] = {
     0x92, 0x92, 0xdc, 0x29, 0xf8, 0xf4, 0x1d, 0xbd, 0x28, 0x9a, 0x14, 0x7c,
     0xe9, 0xda, 0x31, 0x13, 0xb5, 0xf0, 0xb8, 0xc0, 0x0a, 0x60, 0xb1, 0xce,
     0x1d, 0x7e, 0x81, 0x9d, 0x7a, 0x43, 0x1d, 0x7c, 0x90, 0xea, 0x0e, 0x5f};
+static const p8 crypto_p384_b_be[48] = {
+    0xb3, 0x31, 0x2f, 0xa7, 0xe2, 0x3e, 0xe7, 0xe4, 0x98, 0x8e, 0x05, 0x6b,
+    0xe3, 0xf8, 0x2d, 0x19, 0x18, 0x1d, 0x9c, 0x6e, 0xfe, 0x81, 0x41, 0x12,
+    0x03, 0x14, 0x08, 0x8f, 0x50, 0x13, 0x87, 0x5a, 0xc6, 0x56, 0x39, 0x8d,
+    0x8a, 0x2e, 0xd1, 0x9d, 0x2a, 0x85, 0xc8, 0xed, 0xd3, 0xec, 0x2a, 0xef};
 
 static const p64 crypto_p384_p[6] = {
     0x00000000ffffffffull, 0xffffffff00000000ull, 0xfffffffffffffffeull,
@@ -1427,19 +1448,50 @@ static fn crypto_point_affine(crypto_point address_to p)
         p->z[0] = 1;
 }
 
-static fn crypto_fe_from_int_be(p64 address_to out, p8 address_to bytes,
-                                positive length, p64 address_to n, positive limbs)
+static bool crypto_scalar_from_int_be(p64 address_to out,
+                                      p8 address_to bytes,
+                                      positive length, p64 address_to n,
+                                      positive limbs)
 {
         p8 padded[48];
 
+        if (!length || length > limbs * 8)
+                return false;
         memory_fill(out, 0, limbs * 8);
         memory_fill(padded, 0, sizeof(padded));
-        if (length > limbs * 8)
-                length = limbs * 8;
         memory_copy(padded + limbs * 8 - length, bytes, length);
         crypto_fe_load_be(out, padded, limbs);
-        while (crypto_fe_cmp(out, n, limbs) >= 0)
-                crypto_fe_sub(out, out, n, n, limbs);
+        return !crypto_fe_is_zero(out, limbs) &&
+               crypto_fe_cmp(out, n, limbs) < 0;
+}
+
+static bool crypto_point_is_on_curve(p8 address_to x_bytes,
+                                     p8 address_to y_bytes,
+                                     positive limbs, p64 address_to p,
+                                     p8 address_to b_bytes)
+{
+        p64 x[CRYPTO_FE_MAX], y[CRYPTO_FE_MAX], b[CRYPTO_FE_MAX];
+        p64 left[CRYPTO_FE_MAX], right[CRYPTO_FE_MAX];
+        p64 x2[CRYPTO_FE_MAX];
+
+        crypto_fe_load_be(x, x_bytes, limbs);
+        crypto_fe_load_be(y, y_bytes, limbs);
+        crypto_fe_load_be(b, b_bytes, limbs);
+        if (crypto_fe_cmp(x, p, limbs) >= 0 ||
+            crypto_fe_cmp(y, p, limbs) >= 0)
+                return false;
+
+        /* NIST P-256 and P-384 both use y^2 = x^3 - 3x + b.  Affine
+           infinity has no encoding, and (0,0) fails this equation. */
+        crypto_fe_sqr(left, y, p, limbs);
+        crypto_fe_sqr(x2, x, p, limbs);
+        crypto_fe_mul(right, x2, x, p, limbs);
+        crypto_fe_sub(right, right, x, p, limbs);
+        crypto_fe_sub(right, right, x, p, limbs);
+        crypto_fe_sub(right, right, x, p, limbs);
+        crypto_fe_add(right, right, b, p, limbs);
+
+        return crypto_fe_cmp(left, right, limbs) == 0;
 }
 
 static bool crypto_ecdsa_verify(p8 address_to hash, positive hash_length,
@@ -1447,7 +1499,8 @@ static bool crypto_ecdsa_verify(p8 address_to hash, positive hash_length,
                                 p8 address_to s_bytes, positive s_length,
                                 p8 address_to qx, p8 address_to qy, positive limbs,
                                 p64 address_to p, p64 address_to n,
-                                p8 address_to gx, p8 address_to gy)
+                                p8 address_to gx, p8 address_to gy,
+                                p8 address_to b)
 {
         p64 r[CRYPTO_FE_MAX], s[CRYPTO_FE_MAX], e[CRYPTO_FE_MAX];
         p64 w[CRYPTO_FE_MAX], u1[CRYPTO_FE_MAX], u2[CRYPTO_FE_MAX];
@@ -1456,12 +1509,9 @@ static bool crypto_ecdsa_verify(p8 address_to hash, positive hash_length,
         crypto_point g, q, p1, p2, rpoint;
         p8 ehash[48];
 
-        if (!r_length || !s_length)
-                return false;
-
-        crypto_fe_from_int_be(r, r_bytes, r_length, n, limbs);
-        crypto_fe_from_int_be(s, s_bytes, s_length, n, limbs);
-        if (crypto_fe_is_zero(r, limbs) || crypto_fe_is_zero(s, limbs))
+        if (!crypto_scalar_from_int_be(r, r_bytes, r_length, n, limbs) ||
+            !crypto_scalar_from_int_be(s, s_bytes, s_length, n, limbs) ||
+            !crypto_point_is_on_curve(qx, qy, limbs, p, b))
                 return false;
 
         memory_fill(ehash, 0, sizeof(ehash));
@@ -1502,7 +1552,8 @@ static bool crypto_ecdsa_p256(p8 address_to hash, positive hash_length,
 {
         return crypto_ecdsa_verify(hash, hash_length, r, r_length, s, s_length,
                                    qx, qy, 4, crypto_p256_p, crypto_p256_n,
-                                   crypto_p256_gx_be, crypto_p256_gy_be);
+                                   crypto_p256_gx_be, crypto_p256_gy_be,
+                                   crypto_p256_b_be);
 }
 
 static bool crypto_ecdsa_p384(p8 address_to hash, positive hash_length,
@@ -1511,7 +1562,8 @@ static bool crypto_ecdsa_p384(p8 address_to hash, positive hash_length,
 {
         return crypto_ecdsa_verify(hash, hash_length, r, r_length, s, s_length,
                                    qx, qy, 6, crypto_p384_p, crypto_p384_n,
-                                   crypto_p384_gx_be, crypto_p384_gy_be);
+                                   crypto_p384_gx_be, crypto_p384_gy_be,
+                                   crypto_p384_b_be);
 }
 
 #define CRYPTO_RSA_LIMBS 64
@@ -1554,6 +1606,40 @@ static fn crypto_rsa_modexp(p64 address_to out, p64 address_to base, p64 exp,
         memory_copy(out, result, n * 8);
 }
 
+/* Decode the public operation once for both RSA signature encodings.  The
+   signature representative is an integer in [0,n), never an arbitrary byte
+   string reduced modulo n, and a usable RSA public exponent is odd and at
+   least three. */
+static bool crypto_rsa_prepare(p8 address_to n_bytes, positive n_length,
+                               p64 exponent, p8 address_to sig,
+                               positive sig_length, p64 address_to mod,
+                               p64 address_to base,
+                               positive address_to limbs)
+{
+        p8 padded[512];
+
+        if (n_length > sizeof(padded) || n_length < 256 ||
+            sig_length != n_length || !n_bytes[0] ||
+            (n_length == 256 && !(n_bytes[0] & 0x80)) ||
+            !(n_bytes[n_length - 1] & 1) || exponent < 3 ||
+            !(exponent & 1))
+                return false;
+
+        address_to limbs = (n_length + 7) / 8;
+        memory_fill(mod, 0, CRYPTO_RSA_LIMBS * sizeof(p64));
+        memory_fill(base, 0, CRYPTO_RSA_LIMBS * sizeof(p64));
+        memory_fill(padded, 0, sizeof(padded));
+        memory_copy(padded + address_to limbs * 8 - n_length, n_bytes,
+                    n_length);
+        crypto_fe_load_be(mod, padded, address_to limbs);
+        memory_fill(padded, 0, sizeof(padded));
+        memory_copy(padded + address_to limbs * 8 - sig_length, sig,
+                    sig_length);
+        crypto_fe_load_be(base, padded, address_to limbs);
+
+        return crypto_fe_cmp(base, mod, address_to limbs) < 0;
+}
+
 static bool crypto_rsa_pkcs1_sha256(p8 address_to n_bytes, positive n_length,
                                     p64 exponent, p8 address_to sig,
                                     positive sig_length, p8 address_to hash)
@@ -1569,21 +1655,9 @@ static bool crypto_rsa_pkcs1_sha256(p8 address_to n_bytes, positive n_length,
         positive k;
         positive i;
 
-        if (n_length > 512 || sig_length != n_length || n_length < 64)
+        if (!crypto_rsa_prepare(n_bytes, n_length, exponent, sig,
+                                sig_length, mod, base, address_of limbs))
                 return false;
-
-        limbs = (n_length + 7) / 8;
-        memory_fill(mod, 0, sizeof(mod));
-        memory_fill(base, 0, sizeof(base));
-        {
-                p8 padded[512];
-                memory_fill(padded, 0, sizeof(padded));
-                memory_copy(padded + limbs * 8 - n_length, n_bytes, n_length);
-                crypto_fe_load_be(mod, padded, limbs);
-                memory_fill(padded, 0, sizeof(padded));
-                memory_copy(padded + limbs * 8 - sig_length, sig, sig_length);
-                crypto_fe_load_be(base, padded, limbs);
-        }
 
         crypto_rsa_modexp(out, base, exponent, mod, limbs);
         k = n_length;
@@ -1664,7 +1738,8 @@ static bool crypto_rsa_pss_sha256(p8 address_to n_bytes, positive n_length,
         positive at;
         positive i;
 
-        if (n_length > 512 || sig_length != n_length || n_length < 64)
+        if (!crypto_rsa_prepare(n_bytes, n_length, exponent, sig,
+                                sig_length, mod, base, address_of limbs))
                 return false;
 
         for (i = 0; i < n_length; i++)
@@ -1689,20 +1764,6 @@ static bool crypto_rsa_pss_sha256(p8 address_to n_bytes, positive n_length,
         k = (em_bits + 7) / 8;
         if (k > n_length || k < 32 + 32 + 2)
                 return false;
-
-        limbs = (n_length + 7) / 8;
-        memory_fill(mod, 0, sizeof(mod));
-        memory_fill(base, 0, sizeof(base));
-        {
-                p8 padded[512];
-
-                memory_fill(padded, 0, sizeof(padded));
-                memory_copy(padded + limbs * 8 - n_length, n_bytes, n_length);
-                crypto_fe_load_be(mod, padded, limbs);
-                memory_fill(padded, 0, sizeof(padded));
-                memory_copy(padded + limbs * 8 - sig_length, sig, sig_length);
-                crypto_fe_load_be(base, padded, limbs);
-        }
 
         crypto_rsa_modexp(out, base, exponent, mod, limbs);
         {

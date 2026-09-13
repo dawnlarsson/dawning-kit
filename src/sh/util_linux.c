@@ -581,8 +581,8 @@ static b32 util_linux_bits()
                          (width % positive_bits != 0);
         if (words > positive_max / (2 * sizeof(positive)))
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "mask is too large"));
-        text_arena_used = 0;
-        positive address_to result = (positive address_to)text_arena_take(
+        utility_arena.used = 0;
+        positive address_to result = (positive address_to)utility_arena_take(
             words * 2 * sizeof(positive));
         if (!result)
                 return text_done(1);
@@ -1178,13 +1178,14 @@ typedef struct
         bool multiline;
         bool decimal; // Getter returns only decimal digits (no escaping needed).
         bool printable; // Getter and heading are printable ASCII, without newlines.
+        p8 requires; // Acquisition dependencies, interpreted by the row owner.
 } ul_table_column;
 
 /*      How a column list came out: taken, empty (which the reference refuses
         without a word) or naming something no column is called. */
-#define UL_COLUMNS_OK 0
-#define UL_COLUMNS_EMPTY 1
-#define UL_COLUMNS_UNKNOWN 2
+#define UL_COLUMNS_OK NAME_LIST_OK
+#define UL_COLUMNS_EMPTY NAME_LIST_EMPTY
+#define UL_COLUMNS_UNKNOWN NAME_LIST_UNKNOWN
 #define UL_COLUMN_NAME 64
 
 /*      The empty list is the reference's silent refusal; anything else names
@@ -1366,45 +1367,9 @@ static b32 ul_limit_columns(string_address text, p8 address_to columns,
                             positive address_to count, p8 address_to unknown)
 {
         address_to count = 0;
-        unknown[0] = 0;
-
-        if (!string_get(text))
-                return UL_COLUMNS_EMPTY;
-
-        while (string_get(text))
-        {
-                string_address comma = string_first_of_or_end(text, ',');
-                positive length = (positive)(comma - text);
-                positive found = UL_LIMIT_COLUMNS;
-
-                for (positive i = 0; i < UL_LIMIT_COLUMNS; i++)
-                {
-                        string_address name = ul_limit_definitions[i].name;
-
-                        if (string_length(name) == length &&
-                            !memory_compare_ascii_case(name, text, length))
-                        {
-                                found = i;
-                                break;
-                        }
-                }
-
-                if (found == UL_LIMIT_COLUMNS ||
-                    address_to count == UL_LIMIT_COLUMNS)
-                {
-                        positive kept = min(length, (positive)UL_COLUMN_NAME - 1);
-                        memory_copy_apart(unknown, (address_any)text, kept);
-                        unknown[kept] = 0;
-                        return UL_COLUMNS_UNKNOWN;
-                }
-
-                columns[(address_to count)++] = (p8)found;
-                if (!string_get(comma))
-                        break;
-                text = comma + 1;
-        }
-
-        return address_to count ? UL_COLUMNS_OK : UL_COLUMNS_EMPTY;
+        return name_list_columns(text, ul_limit_definitions,
+            sizeof(ul_limit_definitions[0]), UL_LIMIT_COLUMNS, columns, count,
+            unknown, UL_COLUMN_NAME);
 }
 
 static positive ul_limit_text(p64 value, p8 address_to into)
@@ -2426,7 +2391,7 @@ static b32 util_linux_flock()
                                      (elapsed % 1000000000) / 1000);
                 string_format(log, "flock: getting lock took %p.",
                               elapsed / 1000000000);
-                string_to_field(log, fraction_text, 6, '0', false);
+                string_to_field_bulk(log, fraction_text, 6, '0', false);
                 string_format(log, " seconds\n");
         }
         if (blocked || descriptor)
@@ -3657,133 +3622,26 @@ static b32 ul_table_column_list(
                 text++;
         }
 
-        if (!string_get(text))
-                return UL_COLUMNS_EMPTY;
-
-        while (string_get(text))
-        {
-                string_address comma = string_first_of_or_end(text, ',');
-                positive length = (positive)(comma - text);
-                positive found = definition_count;
-
-                for (positive i = 0; i < definition_count; i++)
-                {
-                        string_address name = definitions[i].name;
-
-                        if (string_length(name) == length &&
-                            !memory_compare_ascii_case(name, text, length))
-                        {
-                                found = i;
-                                break;
-                        }
-                }
-
-                if (found == definition_count ||
-                    address_to count == definition_count)
-                {
-                        positive kept = min(length, (positive)UL_COLUMN_NAME - 1);
-                        memory_copy_apart(unknown, (address_any)text, kept);
-                        unknown[kept] = 0;
-                        return UL_COLUMNS_UNKNOWN;
-                }
-
-                columns[(address_to count)++] = (p8)found;
-                if (!string_get(comma))
-                        break;
-                text = comma + 1;
-        }
-
-        return address_to count ? UL_COLUMNS_OK : UL_COLUMNS_EMPTY;
+        return name_list_columns(text, definitions, sizeof(definitions[0]),
+            definition_count, columns, count, unknown, UL_COLUMN_NAME);
 }
 
-/*      Two options that cannot be given together are refused while the
-        options are being read, before anything else the program would have
-        said, and the message names them in the order the command line wrote
-        them: `-r -J` is "--raw and --json" and `-J -r` the reverse.  A flag
-        word says only that both were given, so the pair and its order are
-        read back off the arguments.
-*/
-typedef struct
+typedef argument_exclusive_pair ul_exclusive;
+
+static p8 ul_exclusive_long(address_any context, positive count,
+                             string_address name, positive length)
 {
-        p8 letter;
-        string_address name;
-} ul_exclusive;
+        (void)count;
+        return file_long_letter(context, name, length);
+}
 
 static b32 ul_refuse_exclusive(file_taking address_to taking,
                                const ul_exclusive address_to group,
                                positive count)
 {
-        p8 seen[2] = {0, 0};
-        positive have = 0;
-        positive arguments = (positive)program_argument_count();
-        bool value_next = false;
-
-        for (positive at = 1; at < arguments && have < 2; at++)
-        {
-                string_address word = program_argument((b32)at);
-
-                if (value_next)
-                {
-                        value_next = false;
-                        continue;
-                }
-                if (!word || word[0] != '-' || !word[1])
-                        continue;
-
-                if (word[1] == '-')
-                {
-                        if (!word[2])
-                                break;
-
-                        string_address equals =
-                            string_first_of_or_end(word + 2, '=');
-                        p8 letter = file_long_letter(
-                            taking, word + 2,
-                            (positive)(equals - (word + 2)));
-
-                        for (positive i = 0; i < count && letter; i++)
-                                if (letter == group[i].letter &&
-                                    (!have || seen[0] != letter))
-                                        seen[have++] = letter;
-                        continue;
-                }
-
-                for (positive i = 1; word[i] && have < 2; i++)
-                {
-                        for (positive g = 0; g < count; g++)
-                                if (word[i] == group[g].letter &&
-                                    (!have || seen[0] != word[i]))
-                                {
-                                        seen[have++] = word[i];
-                                        break;
-                                }
-
-                        if (taking->valued &&
-                            string_first_of(taking->valued, word[i]))
-                        {
-                                value_next = !word[i + 1];
-                                break;
-                        }
-                }
-        }
-
-        if (have < 2)
-                return 0;
-
-        string_address one = null;
-        string_address two = null;
-
-        for (positive i = 0; i < count; i++)
-        {
-                if (group[i].letter == seen[0])
-                        one = group[i].name;
-                if (group[i].letter == seen[1])
-                        two = group[i].name;
-        }
-
-        return string_report(log_error, 1,
-                             "%s: options --%s and --%s cannot be combined\n",
-                             taking->program, one, two);
+        return argument_exclusive_refuse(log_error, taking->program,
+            (positive)program_argument_count(), program_argument_list(),
+            taking, 0, ul_exclusive_long, taking->valued, group, count);
 }
 
 
@@ -3871,14 +3729,14 @@ static fn ul_lsns_safe_span_field(string_address text, positive bytes,
                                   positive width, bool left, bool printable)
 {
         if (printable)
-                return writer_field(log, text, bytes, width, ' ', left);
+                return writer_field_bulk(log, text, bytes, width, ' ', left);
         positive length = ul_lsns_safe_span_length(text, bytes);
         positive padding = width > length ? width - length : 0;
         if (!left)
-                writer_fill(log, padding, ' ');
+                writer_fill_bulk(log, padding, ' ');
         ul_lsns_safe_span(text, bytes);
         if (left)
-                writer_fill(log, padding, ' ');
+                writer_fill_bulk(log, padding, ' ');
 }
 
 static fn ul_table_json_value(string_address value, p8 kind)
@@ -4483,7 +4341,7 @@ static bool ul_lsclock_discover(ul_lsclock_row address_to rows,
                         return false;
                 }
                 positive length = string_length(name);
-                p8 address_to path = text_arena_take(length + 6);
+                p8 address_to path = utility_arena_take(length + 6);
                 if (!path) { file_walk_close(address_of walk); return false; }
                 memory_copy(path, "/dev/", 5);
                 memory_copy_end(path + 5, name, length);
@@ -4575,8 +4433,8 @@ static b32 util_linux_lsclocks()
         if (want_offset && !ul_lsclock_offsets(monotonic, boottime))
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, "/proc/self/timens_offsets", "cannot read"));
 
-        text_arena_used = 0;
-        ul_lsclock_row address_to rows = text_arena_take(
+        utility_arena.used = 0;
+        ul_lsclock_row address_to rows = utility_arena_take(
             UL_LSCLOCK_ROWS * sizeof(*rows));
         if (!rows) return text_done(1);
         positive count = 0;
@@ -4703,7 +4561,7 @@ static b32 util_linux_lsns()
                 return ul_columns_refused("lsns", fault, unknown);
 
         text_begin("lsns");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         if (!system_snapshot_take(address_of ul_lsns_snapshot,
                                   SPARK_SNAPSHOT_PROCESS, true))
@@ -4714,12 +4572,12 @@ static b32 util_linux_lsns()
 
         if (process_count > positive_max / type_count ||
             process_count * type_count >
-                TEXT_ARENA_BYTES / sizeof(ul_lsns_entry))
+                UTILITY_ARENA_BYTES / sizeof(ul_lsns_entry))
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "too many processes"));
 
         positive capacity = process_count * type_count;
         ul_lsns_entry address_to entries =
-            (ul_lsns_entry address_to)text_arena_take(
+            (ul_lsns_entry address_to)utility_arena_take(
                 capacity * sizeof(ul_lsns_entry));
 
         if (!entries)
@@ -4759,7 +4617,7 @@ static b32 util_linux_lsns()
         if (used)
         {
                 ul_lsns_entry address_to spare =
-                    (ul_lsns_entry address_to)text_arena_take(
+                    (ul_lsns_entry address_to)utility_arena_take(
                         used * sizeof(ul_lsns_entry));
 
                 if (!spare)
@@ -5005,7 +4863,7 @@ static fn ul_lslocks_resolve(ul_lslocks_entry address_to lock)
 
                 if (length >= 0 && (positive)length < sizeof(path) - 1)
                 {
-                        p8 address_to copy = (p8 address_to)text_arena_take(
+                        p8 address_to copy = (p8 address_to)utility_arena_take(
                             (positive)length + 1);
 
                         if (copy)
@@ -5155,7 +5013,7 @@ static b32 util_linux_lslocks()
                         return string_report(log_error, 1, "%s: %s\n", "lslocks", "HOLDERS requires an unsupported second process-fd census");
 
         text_begin("lslocks");
-        text_arena_used = 0;
+        utility_arena.used = 0;
         bipolar handle = system_open_at(AT_FDCWD, "/proc/locks",
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
@@ -5163,7 +5021,7 @@ static b32 util_linux_lslocks()
 
         positive length = 0;
         bool read_failed = false;
-        p8 address_to input = text_arena_read_all(
+        p8 address_to input = utility_arena_read_all(
             (positive)handle, 4096, address_of length, address_of read_failed);
         system_close(handle);
         if (!input)
@@ -5172,7 +5030,7 @@ static b32 util_linux_lslocks()
         positive lines = memory_count(input, length, '\n') +
                          (length && input[length - 1] != '\n');
         ul_lslocks_entry address_to locks =
-            (ul_lslocks_entry address_to)text_arena_take(
+            (ul_lslocks_entry address_to)utility_arena_take(
                 lines * sizeof(ul_lslocks_entry));
         if (!locks && lines)
                 return text_done(1);
@@ -5181,7 +5039,7 @@ static b32 util_linux_lslocks()
         p8 address_to cursor = input;
         p8 address_to input_end = input + length;
 
-        /* text_arena_read_all supplies the sentinel for a final record with
+        /* utility_arena_read_all supplies the sentinel for a final record with
            no newline; the kernel's lock fields use the shared space/tab
            grammar consumed by storage_field. */
         p8 address_to line;
@@ -5468,7 +5326,7 @@ static bipolar ul_lsfd_copy_name(ul_lsfd_entry address_to descriptor,
         if (length < 0 || (positive)length >= sizeof(path) - 1)
                 return -1;
 
-        p8 address_to copy = (p8 address_to)text_arena_take(
+        p8 address_to copy = (p8 address_to)utility_arena_take(
             (positive)length + 1);
         if (!copy)
                 return 0;
@@ -5672,7 +5530,7 @@ static b32 util_linux_lsfd()
                 fields |= (positive)1 << columns[at];
 
         text_begin("lsfd");
-        text_arena_used = 0;
+        utility_arena.used = 0;
 
         /* ps_pid_list borrows the text arena; these are not independent mmap
            allocations and must never be passed to array_store_release. */
@@ -5712,7 +5570,7 @@ static b32 util_linux_lsfd()
         if (!failed && ul_lsfd_entry_count)
         {
                 ul_lsfd_entry address_to spare =
-                    (ul_lsfd_entry address_to)text_arena_take(
+                    (ul_lsfd_entry address_to)utility_arena_take(
                         ul_lsfd_entry_count * sizeof(*spare));
                 if (!spare)
                         failed = true;
@@ -8176,12 +8034,12 @@ static b32 util_linux_getopt()
         bool csh = false;
         string_address diagnostic_name = "getopt";
 
-        text_arena_used = 0;
+        utility_arena.used = 0;
         ul_getopt_keep_unknown = false;
         ul_getopt_long_count = 0;
         ul_getopt_long_room = count;
         ul_getopt_long_lists = count
-            ? (string_address address_to)text_arena_take(
+            ? (string_address address_to)utility_arena_take(
                   count * sizeof(*ul_getopt_long_lists))
             : null;
         if (count && !ul_getopt_long_lists)
@@ -8239,7 +8097,7 @@ static b32 util_linux_getopt()
         }
 
         bool address_to deferred = count
-            ? (bool address_to)text_arena_take(count * sizeof(*deferred))
+            ? (bool address_to)utility_arena_take(count * sizeof(*deferred))
             : null;
         if (count && !deferred)
                 return 2;
@@ -9292,12 +9150,12 @@ static b32 util_linux_wipefs()
         if (offset_text && !ul_size(offset_text, address_of offset))
                 return string_report(log_error, 1, "%s: %s\n", "wipefs", "invalid offset");
 
-        text_arena_used = 0;
+        utility_arena.used = 0;
         ul_wipefs_work work = {
             .room = operands * 13,
             .types = file_option_value(address_of taking, 't'), false,
         };
-        work.rows = text_arena_take(work.room * sizeof(work.rows[0]));
+        work.rows = utility_arena_take(work.room * sizeof(work.rows[0]));
         if (!work.rows)
                 return 1;
 
@@ -9559,8 +9417,8 @@ static b32 util_linux_mkswap()
                         : "changing an existing swap page size is not supported");
         }
 
-        text_arena_used = 0;
-        p8 address_to header = text_arena_take(page);
+        utility_arena.used = 0;
+        p8 address_to header = utility_arena_take(page);
         if (!header)
         {
                 system_close(handle);
@@ -9820,7 +9678,7 @@ static bool ul_lscpu_failed;
 static string_address ul_lscpu_keep(string_address text)
 {
         positive length = string_length(text);
-        p8 address_to copy = text_arena_take(length + 1);
+        p8 address_to copy = utility_arena_take(length + 1);
         if (!copy)
         {
                 ul_lscpu_failed = true;
@@ -10144,26 +10002,23 @@ static bool ul_lscpu_take()
         ul_lscpu.online_count = ul_lscpu_set_count(ul_lscpu_online);
         if (!ul_lscpu.present_count ||
             ul_lscpu.present_count >
-                TEXT_ARENA_BYTES / sizeof(ul_lscpu_cpu))
+                UTILITY_ARENA_BYTES / sizeof(ul_lscpu_cpu))
                 return false;
-        ul_lscpu.cpus = text_arena_take(
+        ul_lscpu.cpus = utility_arena_take(
             ul_lscpu.present_count * sizeof(ul_lscpu_cpu));
         positive maximum_instances =
             ul_lscpu.present_count * UL_LSCPU_CACHE_MAX;
         if (!ul_lscpu.cpus ||
-            maximum_instances > (TEXT_ARENA_BYTES - text_arena_used) /
+            maximum_instances > (UTILITY_ARENA_BYTES - utility_arena.used) /
                                     sizeof(ul_lscpu_instance))
                 return false;
-        ul_lscpu.instances = text_arena_take(
+        ul_lscpu.instances = utility_arena_take(
             maximum_instances * sizeof(ul_lscpu_instance));
         if (!ul_lscpu.instances)
                 return false;
 
         ul_lscpu_info_read();
-        memory_fill(address_of ul_lscpu.machine, 0,
-                    sizeof(ul_lscpu.machine));
-        (void)system_call_1(syscall(uname),
-                            (positive)address_of ul_lscpu.machine);
+        file_machine_read(address_of ul_lscpu.machine);
 
         for (positive id = 0; id < UL_CPU_BITS; id++)
         {
@@ -10248,14 +10103,11 @@ static bool ul_lscpu_take()
         return true;
 }
 
-static p8 address_to ul_lscpu_set_into;
-static positive ul_lscpu_set_used, ul_lscpu_set_room;
+static byte_store ul_lscpu_set_output;
 
 static fn ul_lscpu_set_write(address_any data, positive length)
 {
-        positive take = min(length, ul_lscpu_set_room - ul_lscpu_set_used);
-        memory_copy(ul_lscpu_set_into + ul_lscpu_set_used, data, take);
-        ul_lscpu_set_used += take;
+        byte_store_append_span(address_of ul_lscpu_set_output, data, length);
 }
 
 static fn ul_lscpu_set_text(p8 address_to text, positive room,
@@ -10263,14 +10115,12 @@ static fn ul_lscpu_set_text(p8 address_to text, positive room,
 {
         if (!room)
                 return;
-        ul_lscpu_set_into = text;
-        ul_lscpu_set_used = 0;
-        ul_lscpu_set_room = room - 1;
+        ul_lscpu_set_output = (byte_store){text, room - 1, 0};
         if (hex)
                 ul_cpu_mask_write(ul_lscpu_set_write, set, sizeof(positive) * UL_CPU_WORDS, true);
         else
                 ul_cpu_list_write(ul_lscpu_set_write, set, sizeof(positive) * UL_CPU_WORDS, false);
-        text[ul_lscpu_set_used] = end;
+        text[ul_lscpu_set_output.used] = end;
 }
 
 typedef struct
@@ -10305,7 +10155,7 @@ static fn ul_lscpu_summary_add(ul_lscpu_summary_rows address_to rows,
         if (ul_lscpu_failed || !data || !string_get(data))
                 return;
         if (!array_arena_reserve(rows->items, rows->room, rows->count,
-                                 rows->count + 1, 96, text_arena_grow))
+                                 rows->count + 1, 96, utility_arena_grow))
         {
                 ul_lscpu_failed = true;
                 return;
@@ -10882,7 +10732,7 @@ static b32 util_linux_lscpu()
         if (selected && ul_lscpu_unsupported_column(selected))
                 return string_report(log_error, 1, "%s: %s\n", "lscpu", "physical-address/configured columns are not supported");
 
-        text_arena_used = 0;
+        utility_arena.used = 0;
         ul_lscpu_failed = false;
         if (!ul_lscpu_take())
                 return string_report(log_error, 1, "%s: %s\n", "lscpu", "cannot read CPU topology");
@@ -11123,15 +10973,15 @@ static bool ul_lsmem_take()
         }
         file_walk_close(address_of walk);
         if (!capacity || capacity >
-                (TEXT_ARENA_BYTES - text_arena_used) /
+                (UTILITY_ARENA_BYTES - utility_arena.used) /
                     (sizeof(ul_lsmem_block) * 2 + sizeof(ul_lsmem_range)))
                 return false;
 
-        ul_lsmem.blocks = text_arena_take(
+        ul_lsmem.blocks = utility_arena_take(
             capacity * sizeof(ul_lsmem_block));
-        ul_lsmem_block address_to spare = text_arena_take(
+        ul_lsmem_block address_to spare = utility_arena_take(
             capacity * sizeof(ul_lsmem_block));
-        ul_lsmem.ranges = text_arena_take(
+        ul_lsmem.ranges = utility_arena_take(
             capacity * sizeof(ul_lsmem_range));
         if (!ul_lsmem.blocks || !spare || !ul_lsmem.ranges ||
             !file_walk_open(address_of walk, AT_FDCWD, root))
@@ -11449,7 +11299,7 @@ static b32 util_linux_lsmem()
                 return string_report(log_error, 1, "%s: %s\n", "lsmem",
                     "options --{raw,json,pairs} and --summary=only are mutually exclusive");
 
-        text_arena_used = 0;
+        utility_arena.used = 0;
         if (!ul_lsmem_take())
                 return string_report(log_error, 1, "%s: %s\n", "lsmem", "memory hotplug sysfs is unavailable");
         ul_lsmem_ranges(split, every);
@@ -11499,6 +11349,8 @@ struct ul_lsblk_device
         string_address serial;
         string_address hctl;
         ul_lsblk_device address_to parent;
+        ul_lsblk_device address_to children;
+        ul_lsblk_device address_to sibling;
         positive major;
         positive minor;
         positive size;
@@ -11513,22 +11365,28 @@ struct ul_lsblk_device
         positive read_ahead;
         positive write_same;
         positive mount_count;
-        positive depth;
         positive mode_bits;
         bool removable;
         bool read_only;
         bool rotational;
         bool partition;
         bool scsi;
-        bool last;
         bool selected;
         bool fs_measured;
 };
 
 typedef struct
 {
+        ul_lsblk_device address_to device;
+        positive depth;
+        bool last;
+} ul_lsblk_row;
+
+typedef struct
+{
         ul_lsblk_device address_to devices;
-        ul_lsblk_device address_to rows;
+        ul_lsblk_device address_to address_to order;
+        ul_lsblk_row address_to rows;
         positive capacity;
         positive count;
         positive row_count;
@@ -11540,6 +11398,11 @@ static bool ul_lsblk_bytes;
 static bool ul_lsblk_tree;
 static bool ul_lsblk_json;
 static bool ul_lsblk_paths;
+
+enum {
+        UL_LSBLK_NEED_IDENTITY = 1, UL_LSBLK_NEED_PERMISSIONS = 2, UL_LSBLK_NEED_METADATA = 4,
+        UL_LSBLK_NEED_MOUNTS = 8, UL_LSBLK_NEED_FS_STATS = 16, UL_LSBLK_NEED_MOUNT_TEXT = 32,
+};
 
 #define UL_LSBLK_FIELDS(X) \
     X(UL_LSBLK_NAME, CUSTOM, 0, \
@@ -11559,31 +11422,31 @@ static bool ul_lsblk_paths;
     X(UL_LSBLK_TYPE, NULL_TEXT, device->type, \
       "type", "TYPE", 0, false, UL_TABLE_STRING) \
     X(UL_LSBLK_MOUNTPOINT, CUSTOM, 0, \
-      "mountpoint", "MOUNTPOINT", 0, false, UL_TABLE_NULL_STRING) \
+      "mountpoint", "MOUNTPOINT", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS) \
     X(UL_LSBLK_MOUNTPOINTS, NULL_TEXT, device->mount_text, \
-      "mountpoints", "MOUNTPOINTS", 0, false, UL_TABLE_NULL_STRING, true) \
+      "mountpoints", "MOUNTPOINTS", 0, false, UL_TABLE_NULL_STRING, true, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_MOUNT_TEXT) \
     X(UL_LSBLK_FSTYPE, NULL_TEXT, device->fstype, \
-      "fstype", "FSTYPE", 0, false, UL_TABLE_NULL_STRING) \
+      "fstype", "FSTYPE", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_FSVER, NULL_TEXT, device->fsver, \
-      "fsver", "FSVER", 0, false, UL_TABLE_NULL_STRING) \
+      "fsver", "FSVER", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_LABEL, NULL_TEXT, device->label, \
-      "label", "LABEL", 0, false, UL_TABLE_NULL_STRING) \
+      "label", "LABEL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_UUID, NULL_TEXT, device->uuid, \
-      "uuid", "UUID", 0, false, UL_TABLE_NULL_STRING) \
+      "uuid", "UUID", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_PARTUUID, NULL_TEXT, device->partuuid, \
-      "partuuid", "PARTUUID", 0, false, UL_TABLE_NULL_STRING) \
+      "partuuid", "PARTUUID", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_PARTLABEL, NULL_TEXT, device->partlabel, \
-      "partlabel", "PARTLABEL", 0, false, UL_TABLE_NULL_STRING) \
+      "partlabel", "PARTLABEL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_FSAVAIL, CUSTOM, 0, \
-      "fsavail", "FSAVAIL", 0, true, UL_TABLE_NULL_STRING) \
+      "fsavail", "FSAVAIL", 0, true, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_FS_STATS) \
     X(UL_LSBLK_FSUSE, CUSTOM, 0, \
-      "fsuse%", "FSUSE%", 0, true, UL_TABLE_NULL_STRING) \
+      "fsuse%", "FSUSE%", 0, true, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_FS_STATS) \
     X(UL_LSBLK_OWNER, NULL_TEXT, device->owner, \
-      "owner", "OWNER", 0, false, UL_TABLE_NULL_STRING) \
+      "owner", "OWNER", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
     X(UL_LSBLK_GROUP, NULL_TEXT, device->group, \
-      "group", "GROUP", 0, false, UL_TABLE_NULL_STRING) \
+      "group", "GROUP", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
     X(UL_LSBLK_MODE, NULL_TEXT, device->mode, \
-      "mode", "MODE", 0, false, UL_TABLE_NULL_STRING) \
+      "mode", "MODE", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
     X(UL_LSBLK_ALIGNMENT, UNSIGNED, device->alignment, \
       "alignment", "ALIGNMENT", 0, true, UL_TABLE_NUMBER, .decimal = true) \
     X(UL_LSBLK_MINIO, UNSIGNED, device->minimum_io, \
@@ -11605,17 +11468,17 @@ static bool ul_lsblk_paths;
     X(UL_LSBLK_WSAME, CUSTOM, 0, \
       "wsame", "WSAME", 0, true, UL_TABLE_STRING) \
     X(UL_LSBLK_TRAN, NULL_TEXT, device->transport, \
-      "tran", "TRAN", 0, false, UL_TABLE_NULL_STRING) \
+      "tran", "TRAN", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_VENDOR, NULL_TEXT, device->vendor, \
-      "vendor", "VENDOR", 0, false, UL_TABLE_NULL_STRING) \
+      "vendor", "VENDOR", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_MODEL, NULL_TEXT, device->model, \
-      "model", "MODEL", 0, false, UL_TABLE_NULL_STRING) \
+      "model", "MODEL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_REV, NULL_TEXT, device->revision, \
-      "rev", "REV", 0, false, UL_TABLE_NULL_STRING) \
+      "rev", "REV", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_SERIAL, NULL_TEXT, device->serial, \
-      "serial", "SERIAL", 0, false, UL_TABLE_NULL_STRING) \
+      "serial", "SERIAL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_HCTL, NULL_TEXT, device->hctl, \
-      "hctl", "HCTL", 0, false, UL_TABLE_NULL_STRING)
+      "hctl", "HCTL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA)
 
 enum
 {
@@ -11766,28 +11629,29 @@ static bool ul_lsblk_take_path(string_address path, address_any context)
         return true;
 }
 
-static PURE bipolar ul_lsblk_order(ul_lsblk_device left,
-                                    ul_lsblk_device right)
+static PURE bipolar ul_lsblk_order(ul_lsblk_device address_to left,
+                                    ul_lsblk_device address_to right)
 {
-        if (left.major != right.major)
-                return left.major < right.major ? -1 : 1;
-        if (left.minor != right.minor)
-                return left.minor < right.minor ? -1 : 1;
-        return string_compare(left.kname, right.kname);
+        if (left->major != right->major)
+                return left->major < right->major ? -1 : 1;
+        if (left->minor != right->minor)
+                return left->minor < right->minor ? -1 : 1;
+        return string_compare(left->kname, right->kname);
 }
 
 static ul_lsblk_device address_to ul_lsblk_find(string_address name)
 {
-        positive at = string_table_find(name, ul_lsblk.devices,
-                                        sizeof(ul_lsblk.devices[0]), ul_lsblk.count);
-        return at < ul_lsblk.count ? ul_lsblk.devices + at : null;
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                if (string_equals(name, ul_lsblk.order[i]->kname))
+                        return ul_lsblk.order[i];
+        return null;
 }
 
 static fn ul_lsblk_parents()
 {
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
-                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                ul_lsblk_device address_to device = ul_lsblk.order[i];
                 if (!device->partition)
                         continue;
                 p8 path[384];
@@ -11814,7 +11678,7 @@ static fn ul_lsblk_parents()
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
                 p8 path[384];
-                ul_lsblk_sysfs(path, ul_lsblk.devices[i].kname,
+                ul_lsblk_sysfs(path, ul_lsblk.order[i]->kname,
                                (string_address)"holders");
                 file_walk walk;
                 if (!file_walk_open(address_of walk, AT_FDCWD, path))
@@ -11824,15 +11688,15 @@ static fn ul_lsblk_parents()
                 {
                         ul_lsblk_device address_to holder = ul_lsblk_find(
                             (string_address)entry->d_name);
-                        if (holder && holder != ul_lsblk.devices + i &&
+                        if (holder && holder != ul_lsblk.order[i] &&
                             !holder->parent)
-                                holder->parent = ul_lsblk.devices + i;
+                                holder->parent = ul_lsblk.order[i];
                 }
                 file_walk_close(address_of walk);
         }
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
-                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                ul_lsblk_device address_to device = ul_lsblk.order[i];
                 if (!device->parent)
                         continue;
                 ul_lsblk_device address_to parent = device->parent;
@@ -11866,7 +11730,7 @@ static positive ul_lsblk_percent(p64 part, p64 whole)
         return percent;
 }
 
-static fn ul_lsblk_mounts()
+static fn ul_lsblk_mounts(bool measure)
 {
         storage_mount_table mounts;
         if (storage_mount_table_load(address_of mounts, null))
@@ -11881,7 +11745,7 @@ static fn ul_lsblk_mounts()
                         for (positive j = 0; j < ul_lsblk.count; j++)
                         {
                                 ul_lsblk_device address_to device =
-                                    ul_lsblk.devices + j;
+                                    ul_lsblk.order[j];
                                 if (device->major != major ||
                                     device->minor != minor ||
                                     device->mount_count == UL_LSBLK_MOUNTS)
@@ -11897,7 +11761,7 @@ static fn ul_lsblk_mounts()
                                             device->mountpoints[mount - 1];
                                 device->mountpoints[0] = target;
                                 device->mount_count++;
-                                if (!device->fs_measured)
+                                if (measure && !device->fs_measured)
                                 {
                                         file_mount_facts facts;
                                         memory_fill(address_of facts, 0,
@@ -11941,11 +11805,11 @@ static fn ul_lsblk_mounts()
                         if (!path)
                                 continue;
                         for (positive i = 0; i < ul_lsblk.count; i++)
-                                if (string_equals(path, ul_lsblk.devices[i].path) &&
-                                    ul_lsblk.devices[i].mount_count < UL_LSBLK_MOUNTS)
+                                if (string_equals(path, ul_lsblk.order[i]->path) &&
+                                    ul_lsblk.order[i]->mount_count < UL_LSBLK_MOUNTS)
                                 {
-                                        ul_lsblk.devices[i].mountpoints[
-                                            ul_lsblk.devices[i].mount_count++] =
+                                        ul_lsblk.order[i]->mountpoints[
+                                            ul_lsblk.order[i]->mount_count++] =
                                                 (string_address)"[SWAP]";
                                         break;
                                 }
@@ -11958,7 +11822,7 @@ static bool ul_lsblk_mount_texts()
 {
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
-                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                ul_lsblk_device address_to device = ul_lsblk.order[i];
                 if (!device->mount_count)
                         continue;
                 if (device->mount_count == 1)
@@ -11975,7 +11839,7 @@ static bool ul_lsblk_mount_texts()
                                 return false;
                         bytes += length + (mount != 0);
                 }
-                p8 address_to joined = text_arena_take(bytes);
+                p8 address_to joined = utility_arena_take(bytes);
                 if (!joined)
                         return false;
                 positive used = 0;
@@ -12139,43 +12003,69 @@ static fn ul_lsblk_scsi(ul_lsblk_device address_to device)
         if (ul_lsblk_hctl_valid(word)) device->hctl = word;
 }
 
-static bool ul_lsblk_take(bool identity, bool permissions, bool metadata)
+static fn ul_lsblk_link_children()
 {
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                ul_lsblk.order[i]->children = ul_lsblk.order[i]->sibling = null;
+        /* Prepend in reverse display order so siblings retain sort order. */
+        for (positive i = ul_lsblk.count; i;)
+        {
+                ul_lsblk_device address_to device = ul_lsblk.order[--i];
+                if (device->parent)
+                {
+                        device->sibling = device->parent->children;
+                        device->parent->children = device;
+                }
+        }
+}
+
+static bool ul_lsblk_take(p8 requires)
+{
+        bool identity = (requires & UL_LSBLK_NEED_IDENTITY) != 0;
+        bool permissions = (requires & UL_LSBLK_NEED_PERMISSIONS) != 0;
+        bool metadata = (requires & UL_LSBLK_NEED_METADATA) != 0;
         memory_fill(address_of ul_lsblk, 0, sizeof(ul_lsblk));
         storage_each_block_path(ul_lsblk_count_path, address_of ul_lsblk.capacity);
         if (!ul_lsblk.capacity ||
-            ul_lsblk.capacity > (TEXT_ARENA_BYTES - text_arena_used) /
-                                    (sizeof(ul_lsblk_device) * 3))
+            ul_lsblk.capacity > (UTILITY_ARENA_BYTES - utility_arena.used) /
+                                    (sizeof(ul_lsblk_device) + sizeof(ul_lsblk_row) +
+                                     2 * sizeof(ul_lsblk_device address_to)))
                 return false;
-        ul_lsblk.devices = text_arena_take(
+        ul_lsblk.devices = utility_arena_take(
             ul_lsblk.capacity * sizeof(ul_lsblk_device));
-        ul_lsblk_device address_to spare = text_arena_take(
-            ul_lsblk.capacity * sizeof(ul_lsblk_device));
-        ul_lsblk.rows = text_arena_take(
-            ul_lsblk.capacity * sizeof(ul_lsblk_device));
-        if (!ul_lsblk.devices || !spare || !ul_lsblk.rows)
+        ul_lsblk.order = utility_arena_take(
+            ul_lsblk.capacity * sizeof(ul_lsblk.order[0]));
+        ul_lsblk_device address_to address_to spare = utility_arena_take(
+            ul_lsblk.capacity * sizeof(ul_lsblk.order[0]));
+        ul_lsblk.rows = utility_arena_take(
+            ul_lsblk.capacity * sizeof(ul_lsblk_row));
+        if (!ul_lsblk.devices || !ul_lsblk.order || !spare || !ul_lsblk.rows)
                 return false;
         storage_each_block_path(ul_lsblk_take_path, null);
         if (ul_lsblk.failed || !ul_lsblk.count)
                 return false;
-        ul_lsblk.devices = array_merge_sort(ul_lsblk.devices, spare,
-                                            ul_lsblk.count, ul_lsblk_order);
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                ul_lsblk.order[i] = ul_lsblk.devices + i;
+        ul_lsblk.order = array_merge_sort(ul_lsblk.order, spare,
+                                          ul_lsblk.count, ul_lsblk_order);
         ul_lsblk_parents();
-        ul_lsblk_mounts();
-        if (!ul_lsblk_mount_texts())
+        ul_lsblk_link_children();
+        if (requires & UL_LSBLK_NEED_MOUNTS)
+                ul_lsblk_mounts((requires & UL_LSBLK_NEED_FS_STATS) != 0);
+        if ((requires & UL_LSBLK_NEED_MOUNT_TEXT) && !ul_lsblk_mount_texts())
                 return false;
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
                 if (identity || metadata)
-                        ul_lsblk_identity(ul_lsblk.devices + i, identity);
-                if (permissions) ul_lsblk_permissions(ul_lsblk.devices + i);
-                if (metadata) ul_lsblk_scsi(ul_lsblk.devices + i);
+                        ul_lsblk_identity(ul_lsblk.order[i], identity);
+                if (permissions) ul_lsblk_permissions(ul_lsblk.order[i]);
+                if (metadata) ul_lsblk_scsi(ul_lsblk.order[i]);
         }
         if (metadata)
                 for (positive i = 0; i < ul_lsblk.count; i++)
                 {
                         ul_lsblk_device address_to device =
-                            ul_lsblk.devices + i;
+                            ul_lsblk.order[i];
                         if (!device->transport && device->parent)
                                 device->transport = device->parent->transport;
                 }
@@ -12185,7 +12075,8 @@ static bool ul_lsblk_take(bool identity, bool permissions, bool metadata)
 static string_address ul_lsblk_field(address_any row, p8 column,
                                      p8 address_to scratch)
 {
-        ul_lsblk_device address_to device = (ul_lsblk_device address_to)row;
+        ul_lsblk_row address_to view = row;
+        ul_lsblk_device address_to device = view->device;
         string_address blank = (string_address)"";
         switch (column)
         {
@@ -12194,21 +12085,21 @@ static string_address ul_lsblk_field(address_any row, p8 column,
         {
                 string_address name = ul_lsblk_paths ? device->path
                                                      : device->kname;
-                if (!ul_lsblk_tree || ul_lsblk_json || !device->depth)
+                if (!ul_lsblk_tree || ul_lsblk_json || !view->depth)
                         return name;
                 /* A path plus 32 tree levels can exceed the 96-byte cell scratch. */
                 static p8 tree_name[FILE_PATH_MAX + 64];
                 positive length = string_length_max(name, FILE_PATH_MAX);
-                if (length >= FILE_PATH_MAX || device->depth > 32)
+                if (length >= FILE_PATH_MAX || view->depth > 32)
                         return name;
                 scratch = tree_name;
                 positive used = 0;
-                for (positive i = 1; i < device->depth; i++)
+                for (positive i = 1; i < view->depth; i++)
                 {
                         scratch[used++] = '|';
                         scratch[used++] = ' ';
                 }
-                scratch[used++] = device->last ? '`' : '|';
+                scratch[used++] = view->last ? '`' : '|';
                 scratch[used++] = '-';
                 memory_copy(scratch + used, name, length + 1);
                 return scratch;
@@ -12256,22 +12147,12 @@ static fn ul_lsblk_append(ul_lsblk_device address_to device,
 {
         if (ul_lsblk.row_count == ul_lsblk.capacity)
                 return;
-        ul_lsblk.rows[ul_lsblk.row_count] = *device;
-        ul_lsblk.rows[ul_lsblk.row_count].depth = depth;
-        ul_lsblk.rows[ul_lsblk.row_count].last = last;
-        ul_lsblk.row_count++;
+        ul_lsblk.rows[ul_lsblk.row_count++] = (ul_lsblk_row){device, depth, last};
         if (!dependencies || depth >= 32)
                 return;
-
-        positive children = 0;
-        for (positive i = 0; i < ul_lsblk.count; i++)
-                if (ul_lsblk.devices[i].parent == device)
-                        children++;
-        positive seen = 0;
-        for (positive i = 0; i < ul_lsblk.count; i++)
-                if (ul_lsblk.devices[i].parent == device)
-                        ul_lsblk_append(ul_lsblk.devices + i, depth + 1,
-                                        ++seen == children, true);
+        for (ul_lsblk_device address_to child = device->children;
+             child; child = child->sibling)
+                ul_lsblk_append(child, depth + 1, !child->sibling, true);
 }
 
 static bool ul_lsblk_under_selection(ul_lsblk_device address_to device)
@@ -12298,7 +12179,7 @@ static bool ul_lsblk_select_operands(positive first)
         if (first == count)
         {
                 for (positive i = 0; i < ul_lsblk.count; i++)
-                        ul_lsblk.devices[i].selected = true;
+                        ul_lsblk.order[i]->selected = true;
                 return true;
         }
 
@@ -12312,10 +12193,10 @@ static bool ul_lsblk_select_operands(positive first)
                 ul_lsblk_asked++;
                 if (present)
                         for (positive i = 0; i < ul_lsblk.count; i++)
-                                if (facts.rdev_major == ul_lsblk.devices[i].major &&
-                                    facts.rdev_minor == ul_lsblk.devices[i].minor)
+                                if (facts.rdev_major == ul_lsblk.order[i]->major &&
+                                    facts.rdev_minor == ul_lsblk.order[i]->minor)
                                 {
-                                        found = ul_lsblk.devices + i;
+                                        found = ul_lsblk.order[i];
                                         break;
                                 }
                 if (!found)
@@ -12347,14 +12228,14 @@ static b32 ul_lsblk_operand_status()
         positive silent = 0;
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
-                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                ul_lsblk_device address_to device = ul_lsblk.order[i];
                 if (!device->selected)
                         continue;
 
                 bool shown = false;
                 for (positive row = 0; row < ul_lsblk.row_count && !shown; row++)
-                        shown = ul_lsblk.rows[row].major == device->major &&
-                                ul_lsblk.rows[row].minor == device->minor;
+                        shown = ul_lsblk.rows[row].device->major == device->major &&
+                                ul_lsblk.rows[row].device->minor == device->minor;
                 if (!shown)
                         silent++;
         }
@@ -12373,7 +12254,7 @@ static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
         {
                 for (positive i = 0; i < ul_lsblk.count; i++)
                 {
-                        ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                        ul_lsblk_device address_to device = ul_lsblk.order[i];
                         if (!ul_lsblk_under_selection(device) ||
                             (scsi && !device->scsi) ||
                             (!device->size &&
@@ -12381,16 +12262,14 @@ static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
                               (!all && !string_compare_max(device->kname,
                                                            "loop", 4)))))
                                 continue;
-                        ul_lsblk.rows[ul_lsblk.row_count] = *device;
-                        ul_lsblk.rows[ul_lsblk.row_count].depth = 0;
-                        ul_lsblk.row_count++;
+                        ul_lsblk.rows[ul_lsblk.row_count++] = (ul_lsblk_row){device, 0, false};
                 }
                 return;
         }
 
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
-                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                ul_lsblk_device address_to device = ul_lsblk.order[i];
                 if (device->parent || !device->selected ||
                     (scsi && !device->scsi) ||
                     (!device->size &&
@@ -12403,7 +12282,7 @@ static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
            its physical parent was not selected. */
         for (positive i = 0; i < ul_lsblk.count; i++)
         {
-                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                ul_lsblk_device address_to device = ul_lsblk.order[i];
                 if (device->parent && device->selected &&
                     !(device->parent->selected))
                         ul_lsblk_append(device, 0, false, dependencies);
@@ -12416,12 +12295,13 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                                    positive column_count, positive indent,
                                    bool after)
 {
-        ul_lsblk_device address_to device = ul_lsblk.rows + row;
+        ul_lsblk_row address_to view = ul_lsblk.rows + row;
+        ul_lsblk_device address_to device = view->device;
         if (after)
                 log(",{\n", 3);
         else
         {
-                writer_fill(log, indent, ' ');
+                writer_fill_bulk(log, indent, ' ');
                 log("{\n", 2);
         }
         for (positive i = 0; i < column_count; i++)
@@ -12429,7 +12309,7 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                 p8 column = columns[i];
                 if (i)
                         log(",\n", 2);
-                writer_fill(log, indent + 3, ' ');
+                writer_fill_bulk(log, indent + 3, ' ');
                 string_format(log, "\"%s\": ", ul_lsblk_columns[column].name);
                 if (column == UL_LSBLK_MOUNTPOINTS)
                 {
@@ -12444,7 +12324,7 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                                 for (positive m = 0; m < device->mount_count;
                                      m++)
                                 {
-                                        writer_fill(log, indent + 7, ' ');
+                                        writer_fill_bulk(log, indent + 7, ' ');
                                         writer_json_string(
                                             log, device->mountpoints[m]);
                                         if (m + 1 < device->mount_count)
@@ -12452,39 +12332,39 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                                         else
                                                 log("\n", 1);
                                 }
-                                writer_fill(log, indent + 3, ' ');
+                                writer_fill_bulk(log, indent + 3, ' ');
                                 log("]", 1);
                         }
                 }
                 else
                 {
                         p8 scratch[96];
-                        ul_table_json_value(ul_lsblk_field(device, column, scratch),
+                        ul_table_json_value(ul_lsblk_field(view, column, scratch),
                                             ul_lsblk_columns[column].json);
                 }
         }
 
         positive next = row + 1;
         if (ul_lsblk_tree && next < ul_lsblk.row_count &&
-            ul_lsblk.rows[next].depth > device->depth)
+            ul_lsblk.rows[next].depth > view->depth)
         {
                 log(",\n", 2);
-                writer_fill(log, indent + 3, ' ');
+                writer_fill_bulk(log, indent + 3, ' ');
                 log("\"children\": [\n", 14);
                 bool comma = false;
                 while (next < ul_lsblk.row_count &&
-                       ul_lsblk.rows[next].depth > device->depth)
+                       ul_lsblk.rows[next].depth > view->depth)
                 {
                         next = ul_lsblk_json_row(next, columns, column_count,
                                                 indent + 6, comma);
                         comma = true;
                 }
                 log("\n", 1);
-                writer_fill(log, indent + 3, ' ');
+                writer_fill_bulk(log, indent + 3, ' ');
                 log("]", 1);
         }
         log("\n", 1);
-        writer_fill(log, indent, ' ');
+        writer_fill_bulk(log, indent, ' ');
         log("}", 1);
         return next;
 }
@@ -12505,26 +12385,6 @@ static fn ul_lsblk_json_out(p8 address_to columns, positive column_count)
         if (!ul_lsblk.row_count)
                 log("\n", 1);
         log("\n   ]\n}\n", sizeof("\n   ]\n}\n") - 1);
-}
-
-static bool ul_lsblk_column_needs_identity(p8 column)
-{
-        return column == UL_LSBLK_FSTYPE || column == UL_LSBLK_FSVER ||
-               column == UL_LSBLK_LABEL || column == UL_LSBLK_UUID ||
-               column == UL_LSBLK_PARTUUID || column == UL_LSBLK_PARTLABEL;
-}
-
-static bool ul_lsblk_column_needs_permissions(p8 column)
-{
-        return column == UL_LSBLK_OWNER || column == UL_LSBLK_GROUP ||
-               column == UL_LSBLK_MODE;
-}
-
-static bool ul_lsblk_column_needs_metadata(p8 column)
-{
-        return column == UL_LSBLK_TRAN || column == UL_LSBLK_VENDOR ||
-               column == UL_LSBLK_MODEL || column == UL_LSBLK_REV ||
-               column == UL_LSBLK_SERIAL || column == UL_LSBLK_HCTL;
 }
 
 static const file_long ul_lsblk_longs[] = {
@@ -12580,7 +12440,7 @@ static fn ul_lsblk_counter(string_address text, positive name_length,
         p8 counted[32];
         positive digits = positive_into_string(counted, rows);
         log("\nSummary:\n", sizeof("\nSummary:\n") - 1);
-        writer_fill(log, digits < 16 ? 16 - digits : 0, ' ');
+        writer_fill_bulk(log, digits < 16 ? 16 - digits : 0, ' ');
         log(counted, digits);
         log(" ", 1);
         log(name, kept);
@@ -12679,17 +12539,11 @@ static b32 util_linux_lsblk()
                 return ul_columns_refused("lsblk", fault, unknown);
 
         bool scsi = (taking.flags & FILE_FLAG('S')) != 0;
-        bool identity = false;
-        bool permissions = false;
-        bool metadata = scsi;
+        p8 requires = scsi ? UL_LSBLK_NEED_METADATA : 0;
         for (positive i = 0; i < column_count; i++)
-        {
-                identity |= ul_lsblk_column_needs_identity(columns[i]);
-                permissions |= ul_lsblk_column_needs_permissions(columns[i]);
-                metadata |= ul_lsblk_column_needs_metadata(columns[i]);
-        }
-        text_arena_used = 0;
-        if (!ul_lsblk_take(identity, permissions, metadata))
+                requires |= ul_lsblk_columns[columns[i]].requires;
+        utility_arena.used = 0;
+        if (!ul_lsblk_take(requires))
                 return string_report(log_error, 1, "%s: %s\n", "lsblk", "block-device sysfs is unavailable");
         ul_lsblk_select_operands(taking.first);
 
@@ -12861,10 +12715,10 @@ static bool ul_ipc_snapshot_load(positive types)
         if (okay && ul_ipc.capacity)
         {
                 if (ul_ipc.capacity >
-                    (TEXT_ARENA_BYTES - text_arena_used) / sizeof(ul_ipc_row))
+                    (UTILITY_ARENA_BYTES - utility_arena.used) / sizeof(ul_ipc_row))
                         okay = false;
                 else
-                        ul_ipc.rows = text_arena_take(
+                        ul_ipc.rows = utility_arena_take(
                             ul_ipc.capacity * sizeof(ul_ipc_row));
                 if (!ul_ipc.rows)
                         okay = false;
@@ -13514,7 +13368,7 @@ static b32 util_linux_lsipc()
         if (have_id && !(taking.flags & FILE_FLAG('l')))
                 return string_report(log_error, 1, "%s: %s\n", "lsipc", "--id requires --list");
 
-        text_arena_used = 0;
+        utility_arena.used = 0;
         if (!ul_ipc_snapshot_load((positive)1 << type))
                 return string_report(log_error, 1, "%s: %s\n", "lsipc", "cannot read System V IPC snapshot");
         ul_ipc_filter(type, have_id, id);
@@ -13667,7 +13521,7 @@ static b32 util_linux_ipcs()
         if (taking.flags & FILE_FLAG('m')) types |= UL_IPC_SHARED_BIT;
         if (taking.flags & FILE_FLAG('s')) types |= UL_IPC_SEMAPHORE_BIT;
         if (!types || (taking.flags & FILE_FLAG('a'))) types = UL_IPC_ALL_BITS;
-        text_arena_used = 0;
+        utility_arena.used = 0;
         if (!ul_ipc_snapshot_load(types))
                 return string_report(log_error, 1, "%s: %s\n", "ipcs", "cannot read System V IPC snapshot");
         ul_ipc_bytes = !(taking.flags & FILE_FLAG('H'));

@@ -612,10 +612,7 @@ static b32 process_chroot()
 static bool process_nohup_duplicate(bipolar from, b32 to,
                                     string_address what)
 {
-        if (from == to)
-                return true;
-
-        bipolar answer = system_duplicate((b32)from, to, 0);
+        bipolar answer = system_descriptor_install((b32)from, to);
 
         if (answer < 0)
                 return string_report(log_error, false, "nohup: cannot redirect %s: %s\n",

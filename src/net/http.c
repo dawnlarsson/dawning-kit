@@ -13,6 +13,7 @@
 #define STANDARD_MODERN_C_NET_HTTP
 
 #include "tls.c"
+#include "wait.c"
 
 /*
         Enough HTTP to fetch a file, and no more.
@@ -30,7 +31,9 @@
 #define HTTP_HTTPS_PORT 443
 #define HTTP_URL_MAX 2048
 #define HTTP_HEAD_MAX 16384
+#define HTTP_FETCH_MAX (16 * 1024 * 1024)
 #define HTTP_HOPS 10
+#define HTTP_IDLE_SECONDS 30
 
 #define HTTP_OK 0
 #define HTTP_BAD_URL (-1)
@@ -41,6 +44,7 @@
 #define HTTP_NOT_PLAIN (-6)
 #define HTTP_TLS (-7)
 #define HTTP_REDIRECTS (-8)
+#define HTTP_DOWNGRADE (-9)
 
 typedef byte_store http_buffer;
 #define http_forget(buffer) byte_store_release(buffer)
@@ -193,12 +197,176 @@ static string_address http_header(p8 address_to bytes, positive size,
         return found;
 }
 
+static bool http_token_byte(p8 byte)
+{
+        return (byte >= '0' && byte <= '9') ||
+               (byte >= 'A' && byte <= 'Z') ||
+               (byte >= 'a' && byte <= 'z') ||
+               byte == '!' || byte == '#' || byte == '$' || byte == '%' ||
+               byte == '&' || byte == '\'' || byte == '*' || byte == '+' ||
+               byte == '-' || byte == '.' || byte == '^' || byte == '_' ||
+               byte == '`' || byte == '|' || byte == '~';
+}
+
+static bool http_chunk_extensions_valid(string_address at,
+                                        string_address stop)
+{
+        while (at < stop)
+        {
+                string_address name;
+
+                if (*at++ != ';')
+                        return false;
+                name = at;
+                while (at < stop && http_token_byte(*at))
+                        at++;
+                if (at == name)
+                        return false;
+
+                if (at < stop && *at == '=')
+                {
+                        at++;
+                        if (at == stop)
+                                return false;
+                        if (*at == '"')
+                        {
+                                bool closed = false;
+
+                                at++;
+                                while (at < stop)
+                                {
+                                        p8 byte = *at++;
+
+                                        if (byte == '"')
+                                        {
+                                                closed = true;
+                                                break;
+                                        }
+                                        if (byte == '\\')
+                                        {
+                                                if (at == stop)
+                                                        return false;
+                                                byte = *at++;
+                                        }
+                                        if ((byte < 0x20 && byte != '\t') ||
+                                            byte == 0x7f)
+                                                return false;
+                                }
+                                if (!closed)
+                                        return false;
+                        }
+                        else
+                        {
+                                string_address value = at;
+
+                                while (at < stop && http_token_byte(*at))
+                                        at++;
+                                if (at == value)
+                                        return false;
+                        }
+                }
+        }
+
+        return true;
+}
+
+/* Parse one complete chunk-size line for both buffered fetch and streaming
+   wget.  Keeping the extension grammar here prevents the two paths from
+   disagreeing about controls or ambiguous separators. */
+static bipolar http_chunk_line(p8 address_to line, positive line_length,
+                               positive address_to chunk_length)
+{
+        string_address number = (string_address)line;
+        string_address stop = (string_address)(line + line_length);
+        positive parsed;
+
+        if (!line_length || stop[-1] != '\n')
+                return HTTP_MALFORMED;
+        stop--;
+        if (stop > number && stop[-1] == '\r')
+                stop--;
+
+        if (!string_digits_checked(address_of number, 16, address_of parsed))
+                return HTTP_MALFORMED;
+        if (number < stop && byte_is_blank(number[0]))
+                number += string_span_max(number, stop - number,
+                                          string_set_blanks);
+        if (number < stop)
+        {
+                if (!http_chunk_extensions_valid(number, stop))
+                        return HTTP_MALFORMED;
+        }
+
+        address_to chunk_length = parsed;
+        return HTTP_OK;
+}
+
+/* Return one for the terminating blank line, zero for a valid trailer field,
+   and a negative status for malformed framing. */
+static bipolar http_trailer_line(p8 address_to line, positive line_length)
+{
+        positive stop = line_length;
+        positive colon = 0;
+
+        if (!stop || line[stop - 1] != '\n')
+                return HTTP_MALFORMED;
+        stop--;
+        if (stop && line[stop - 1] == '\r')
+                stop--;
+        if (!stop)
+                return 1;
+
+        while (colon < stop && line[colon] != ':')
+        {
+                if (!http_token_byte(line[colon]))
+                        return HTTP_MALFORMED;
+                colon++;
+        }
+        if (!colon || colon == stop)
+                return HTTP_MALFORMED;
+
+        for (positive at = colon + 1; at < stop; at++)
+                if ((line[at] < 0x20 && line[at] != '\t') ||
+                    line[at] == 0x7f)
+                        return HTTP_MALFORMED;
+
+        return 0;
+}
+
+static bipolar http_trailers_buffer(p8 address_to bytes, positive size)
+{
+        positive at = 0;
+
+        while (at < size && at < HTTP_HEAD_MAX)
+        {
+                positive span = memory_span_without_byte(bytes + at, '\n',
+                                                         size - at);
+                positive line_length;
+                bipolar line;
+
+                if (span == size - at)
+                        return HTTP_MALFORMED;
+                line_length = span + 1;
+                if (line_length > HTTP_HEAD_MAX - at)
+                        return HTTP_MALFORMED;
+                line = http_trailer_line(bytes + at, line_length);
+                if (line < 0)
+                        return line;
+                at += line_length;
+                if (line)
+                        return at == size ? HTTP_OK : HTTP_MALFORMED;
+        }
+
+        return HTTP_MALFORMED;
+}
+
 /*
         Chunked, unwrapped in place.
 
         Each chunk is a hexadecimal length on its own line, that many bytes,
-        then a blank line, ending with a zero length. Unwrapping in place is
-        safe because what is written is always behind what is read.
+        then a blank line, ending with a zero length and a complete trailer
+        section. Unwrapping in place is safe because what is written is always
+        behind what is read.
 */
 static bipolar http_unchunk(p8 address_to bytes, positive size)
 {
@@ -209,49 +377,21 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
         {
                 positive line = read;
                 positive length;
-                string_address number;
-                string_address line_end;
                 positive span = memory_span_without_byte(
                     bytes + read, '\n', size - read);
 
                 if (span == size - read)
                         return HTTP_MALFORMED;
 
-                read += span;
-
-                number = (string_address)(bytes + line);
-                line_end = (string_address)(bytes + read);
-                if (line_end > number && line_end[-1] == '\r')
-                        line_end--;
-
-                if (!string_digits_checked(address_of number, 16,
-                                           address_of length))
+                if (http_chunk_line(bytes + line, span + 1,
+                                    address_of length))
                         return HTTP_MALFORMED;
-
-                //      Chunk extensions do not change framing. Preserve the
-                //      semicolon-led extension form while refusing an
-                //      arbitrary suffix after the checked length. The tail
-                //      is still bounded by the newline found above.
-                if (number < line_end && byte_is_blank(number[0]))
-                        number += string_span_max(number, line_end - number,
-                                                   string_set_blanks);
-
-                if (number < line_end)
-                {
-                        if (number[0] != ';')
-                                return HTTP_MALFORMED;
-
-                        positive extension = line_end - ++number;
-                        if (extension && (extension == 1
-                                ? escape_categories[number[0]] & 1
-                                : memory_escape_index(number, extension, 1) != extension))
-                                return HTTP_MALFORMED;
-                }
-
-                read++;
+                read += span + 1;
 
                 if (!length)
-                        return (bipolar)written;
+                        return http_trailers_buffer(bytes + read, size - read)
+                                   ? HTTP_MALFORMED
+                                   : (bipolar)written;
 
                 if (length > size - read)
                         return HTTP_MALFORMED;
@@ -278,67 +418,183 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
 static bipolar http_status_code(p8 address_to bytes, positive size,
                                  b32 address_to code);
 
+#define HTTP_BODY_CLOSE 0
+#define HTTP_BODY_LENGTH 1
+#define HTTP_BODY_CHUNKED 2
+
+typedef struct
+{
+        b32 code;
+        p8 body_kind;
+        positive body_length;
+        string_address location;
+        positive location_length;
+} http_response;
+
+/* Status and body framing have one interpretation in both clients.  This
+   rejects duplicate or conflicting declarations before either the buffered
+   or streaming body path acts on them. */
+static bipolar http_response_framing(p8 address_to bytes, positive size,
+                                     positive address_to header_length,
+                                     http_response address_to response)
+{
+        positive scan = size;
+        positive at = 0;
+
+        if (!size)
+                return HTTP_NO_REPLY;
+        if (scan > HTTP_HEAD_MAX)
+                scan = HTTP_HEAD_MAX;
+
+        for (;;)
+        {
+                bool transfer_repeated = false;
+                bool length_repeated = false;
+                positive value_length = 0;
+                positive content_length_size = 0;
+                string_address transfer;
+                string_address content_length;
+                bipolar header;
+
+                memory_fill(response, 0, sizeof(*response));
+                {
+                        bipolar status = http_status_code(
+                            bytes + at, scan - at,
+                            address_of response->code);
+                        if (status)
+                                return status == HTTP_NO_REPLY &&
+                                               scan == HTTP_HEAD_MAX
+                                           ? HTTP_MALFORMED
+                                           : status;
+                }
+                if (response->code < 100 || response->code > 599)
+                        return HTTP_MALFORMED;
+
+                header = http_header_end(bytes + at, scan - at);
+                if (header < 0)
+                        return scan == HTTP_HEAD_MAX ? HTTP_MALFORMED
+                                                     : HTTP_NO_REPLY;
+
+                transfer = http_header(
+                    bytes + at, (positive)header,
+                    (string_address)"transfer-encoding",
+                    address_of value_length, address_of transfer_repeated);
+                content_length = http_header(
+                    bytes + at, (positive)header,
+                    (string_address)"content-length",
+                    address_of content_length_size, address_of length_repeated);
+                if (transfer_repeated || length_repeated ||
+                    (transfer && content_length))
+                        return HTTP_MALFORMED;
+
+                if (transfer)
+                {
+                        if (value_length < 7 ||
+                            memory_compare_ascii_case(transfer, "chunked", 7) ||
+                            string_span_max(transfer + 7, value_length - 7,
+                                            string_set_blanks) !=
+                                value_length - 7)
+                                return HTTP_MALFORMED;
+                        response->body_kind = HTTP_BODY_CHUNKED;
+                }
+                else if (content_length)
+                {
+                        string_address cursor = content_length;
+                        positive digits;
+
+                        if (!string_digits_checked(
+                                address_of cursor, 10,
+                                address_of response->body_length))
+                                return HTTP_MALFORMED;
+                        digits = (positive)(cursor - content_length);
+                        digits += string_span_max(
+                            cursor, content_length_size - digits,
+                            string_set_blanks);
+                        if (digits != content_length_size)
+                                return HTTP_MALFORMED;
+                        response->body_kind = HTTP_BODY_LENGTH;
+                }
+
+                /* Informational responses precede, rather than replace, the
+                   final response.  They cannot carry message framing, and a
+                   protocol switch is outside this connection-close client. */
+                if (response->code < 200)
+                {
+                        if (response->code == 101 ||
+                            response->body_kind != HTTP_BODY_CLOSE)
+                                return HTTP_MALFORMED;
+                        at += (positive)header;
+                        continue;
+                }
+
+                if (response->code < 400 && response->code >= 300)
+                {
+                        bool repeated = false;
+
+                        response->location = http_header(
+                            bytes + at, (positive)header,
+                            (string_address)"location",
+                            address_of response->location_length,
+                            address_of repeated);
+                        if (repeated)
+                                return HTTP_MALFORMED;
+                }
+
+                address_to header_length = at + (positive)header;
+                return HTTP_OK;
+        }
+}
+
+static bipolar http_get_request(p8 address_to request, positive room,
+                                string_address host, p16 port,
+                                string_address path, bool tls,
+                                p8 version_minor, string_address agent,
+                                positive address_to used);
+
+static bipolar http_stream_open(p32 host, p16 port)
+{
+        socket_address_internet where = {
+            .family = AF_INET, .port = network_order_16(port),
+            .host = network_order_32(host)};
+        bipolar handle = socket_new(AF_INET, SOCK_STREAM, 0);
+
+        if (handle < 0)
+                return HTTP_NO_ROUTE;
+        if (!network_stream_timeout(handle, HTTP_IDLE_SECONDS, 0) ||
+            socket_connect((b32)handle, address_of where, sizeof where) < 0)
+        {
+                socket_close((b32)handle);
+                return HTTP_NO_ROUTE;
+        }
+        return handle;
+}
+
 static bipolar http_get(p32 host, p16 port, string_address name,
                         string_address path, http_buffer address_to body,
                         b32 address_to code)
 {
         http_buffer whole = {0};
         bipolar handle;
-        bipolar header;
-        bipolar parsed;
+        positive header = 0;
         bipolar status = HTTP_MALFORMED;
         positive length = 0;
-        string_address value;
-        positive value_length = 0;
+        http_response response;
 
-        handle = socket_new(AF_INET, SOCK_STREAM, 0);
-
+        handle = http_stream_open(host, port);
         if (handle < 0)
-                return HTTP_NO_ROUTE;
+                return handle;
 
-        socket_address_internet where = {
-            .family = AF_INET, .port = network_order_16(port),
-            .host = network_order_32(host)};
-
-        if (socket_connect((b32)handle, address_of where, sizeof where) < 0)
         {
-                status = HTTP_NO_ROUTE;
-                goto done;
-        }
+                p8 request[2048];
+                positive used = 0;
 
-        //      HTTP/1.0 with an explicit close, so the server ends the body by
-        //      ending the connection and there is no keep-alive to unwind.
-        //      Host: is sent anyway, because a name-based server needs it and
-        //      answers 400 without it whatever the version says.
-        {
-                p8 request[1024];
-                positive path_length = string_length(path);
-                positive name_length = string_length(name);
-                positive fixed = sizeof("GET ") - 1 +
-                                 sizeof(" HTTP/1.0\r\nHost: ") - 1 +
-                                 sizeof("\r\nUser-Agent: dawning\r\n"
-                                        "Connection: close\r\n\r\n") - 1;
-                positive used;
-                p8 address_to into = request;
-
-                if (path_length > sizeof request - fixed ||
-                    name_length > sizeof request - fixed - path_length)
+                status = http_get_request(
+                    request, sizeof request, name, port, path, false, '0',
+                    (string_address)"dawning", address_of used);
+                if (status)
                 {
-                        status = HTTP_BAD_URL;
                         goto done;
                 }
-
-                used = fixed + path_length + name_length;
-
-                into = memory_copy_apart_end(into, "GET ", sizeof("GET ") - 1);
-                into = memory_copy_apart_end(into, path, path_length);
-                into = memory_copy_apart_end(into, " HTTP/1.0\r\nHost: ",
-                                             sizeof(" HTTP/1.0\r\nHost: ") - 1);
-                into = memory_copy_apart_end(into, name, name_length);
-                memory_copy_apart(into,
-                    "\r\nUser-Agent: dawning\r\nConnection: close\r\n\r\n",
-                    sizeof("\r\nUser-Agent: dawning\r\nConnection: close\r\n\r\n") - 1);
-
                 if (system_write_all((positive)handle, request, used) != used)
                 {
                         status = HTTP_NO_REPLY;
@@ -346,91 +602,47 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                 }
         }
 
-        if (file_store_read((positive)handle, address_of whole) < 0)
         {
-                status = HTTP_NO_REPLY;
-                goto done;
+                bipolar read = file_store_read_limit(
+                    (positive)handle, address_of whole, HTTP_FETCH_MAX);
+
+                status = read == -27 ? HTTP_MALFORMED
+                                     : read < 0 ? HTTP_NO_REPLY : HTTP_OK;
         }
+        if (status)
+                goto done;
+        status = HTTP_MALFORMED;
 
         socket_close((b32)handle);
         handle = -1;
 
-        parsed = http_status_code(whole.bytes, whole.used, code);
-        if (parsed < 0)
-        {
-                status = parsed;
+        status = http_response_framing(whole.bytes, whole.used,
+                                       address_of header,
+                                       address_of response);
+        /* The buffered reader has already reached EOF.  Once a status line
+           exists, an incomplete header or an interim response without a final
+           response is malformed rather than something more bytes can repair. */
+        if (status == HTTP_NO_REPLY && whole.used >= 13)
+                status = HTTP_MALFORMED;
+        if (status)
                 goto done;
-        }
+        if (code)
+                address_to code = response.code;
+        status = HTTP_MALFORMED;
+        length = whole.used - (positive)header;
 
-        header = http_header_end(whole.bytes, whole.used);
-
-        if (header < 0)
-                goto done;
-
+        if (response.body_kind == HTTP_BODY_CHUNKED)
         {
-                bool transfer_repeated = false;
-                bool length_repeated = false;
-                string_address content_length;
-                positive content_length_size = 0;
-
-                value = http_header(whole.bytes, (positive)header,
-                                    (string_address) "transfer-encoding",
-                                    address_of value_length,
-                                    address_of transfer_repeated);
-                content_length = http_header(
-                    whole.bytes, (positive)header,
-                    (string_address) "content-length",
-                    address_of content_length_size, address_of length_repeated);
-
-                //      More than one framing declaration, or both kinds at
-                //      once, is ambiguous. Picking the first lets a proxy and
-                //      this client disagree about where the response ends.
-                if (transfer_repeated || length_repeated ||
-                    (value && content_length))
+                bipolar plain = http_unchunk(whole.bytes + header, length);
+                if (plain < 0)
                         goto done;
-
-                length = whole.used - (positive)header;
-
-                if (value)
-                {
-                        bipolar plain;
-
-                        // http_header already consumed leading blanks.
-                        if (value_length < 7 ||
-                            memory_compare_ascii_case(value, "chunked", 7) ||
-                            string_span_max(value + 7, value_length - 7,
-                                            string_set_blanks) != value_length - 7)
-                                goto done;
-
-                        plain = http_unchunk(whole.bytes + header, length);
-                        if (plain < 0)
-                                goto done;
-
-                        length = (positive)plain;
-                }
-                else if (content_length)
-                {
-                        string_address cursor = content_length;
-                        positive said;
-                        positive at;
-
-                        if (!string_digits_checked(address_of cursor, 10,
-                                                   address_of said))
-                                goto done;
-
-                        at = (positive)(cursor - content_length);
-
-                        at += string_span_max(cursor, content_length_size - at,
-                                              string_set_blanks);
-
-                        //      A short close is not a successful partial
-                        //      download, and a numeric prefix is not a valid
-                        //      length. Both used to pass silently.
-                        if (at != content_length_size || said > length)
-                                goto done;
-
-                        length = said;
-                }
+                length = (positive)plain;
+        }
+        else if (response.body_kind == HTTP_BODY_LENGTH)
+        {
+                if (response.body_length > length)
+                        goto done;
+                length = response.body_length;
         }
 
         //      The complete response already owns enough room for the body.
@@ -482,19 +694,10 @@ static fn http_link_close(http_link address_to link)
 static bipolar http_link_open(http_link address_to link, p32 ip, p16 port,
                               string_address host, bool tls, bool check_cert)
 {
-        socket_address_internet where = {
-            .family = AF_INET, .port = network_order_16(port),
-            .host = network_order_32(ip)};
-
         memory_fill(link, 0, sizeof(*link));
-        link->handle = socket_new(AF_INET, SOCK_STREAM, 0);
+        link->handle = http_stream_open(ip, port);
         if (link->handle < 0)
-                return HTTP_NO_ROUTE;
-        if (socket_connect((b32)link->handle, address_of where, sizeof where) < 0)
-        {
-                http_link_close(link);
-                return HTTP_NO_ROUTE;
-        }
+                return link->handle;
         if (tls)
         {
                 if (tls_connect(address_of link->session, link->handle, host,
@@ -640,6 +843,31 @@ static bipolar http_body_fill(http_body address_to body, p8 address_to into,
         return HTTP_OK;
 }
 
+static bipolar http_copy_trailers(http_body address_to body)
+{
+        p8 line[HTTP_HEAD_MAX + 1];
+        positive total = 0;
+
+        while (total < HTTP_HEAD_MAX)
+        {
+                positive line_length = 0;
+                bipolar parsed;
+
+                if (http_line(body, line, sizeof line, address_of line_length))
+                        return HTTP_MALFORMED;
+                if (line_length > HTTP_HEAD_MAX - total)
+                        return HTTP_MALFORMED;
+                total += line_length;
+                parsed = http_trailer_line(line, line_length);
+                if (parsed < 0)
+                        return parsed;
+                if (parsed)
+                        return HTTP_OK;
+        }
+
+        return HTTP_MALFORMED;
+}
+
 static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
 {
         p8 line[128];
@@ -648,27 +876,14 @@ static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
         {
                 positive line_length = 0;
                 positive size = 0;
-                string_address number;
-                string_address stop;
                 p8 delimiter;
 
                 if (http_line(body, line, sizeof line, address_of line_length))
                         return HTTP_MALFORMED;
-                number = (string_address)line;
-                stop = (string_address)(line + line_length);
-                if (stop > number && stop[-1] == '\n')
-                        stop--;
-                if (stop > number && stop[-1] == '\r')
-                        stop--;
-                if (!string_digits_checked(address_of number, 16, address_of size))
-                        return HTTP_MALFORMED;
-                if (number < stop && byte_is_blank(number[0]))
-                        number += string_span_max(number, stop - number,
-                                                  string_set_blanks);
-                if (number < stop && number[0] != ';')
+                if (http_chunk_line(line, line_length, address_of size))
                         return HTTP_MALFORMED;
                 if (!size)
-                        return HTTP_OK;
+                        return http_copy_trailers(body);
                 if (http_copy_n(body, dest, size))
                         return HTTP_NO_REPLY;
                 if (http_body_fill(body, address_of delimiter, 1))
@@ -682,26 +897,56 @@ static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
         }
 }
 
-static positive http_digits(p8 address_to into, positive value)
+
+static bipolar http_get_request(p8 address_to request, positive room,
+                                string_address host, p16 port,
+                                string_address path, bool tls,
+                                p8 version_minor, string_address agent,
+                                positive address_to used)
 {
-        p8 tmp[10];
-        positive n = 0;
-        positive i;
+        static const p8 version[] = " HTTP/1.";
+        static const p8 host_label[] = "\r\nHost: ";
+        static const p8 agent_label[] = "\r\nUser-Agent: ";
+        static const p8 tail[] =
+            "\r\nAccept: */*\r\nConnection: close\r\n\r\n";
+        positive host_length = string_length(host);
+        positive path_length = string_length(path);
+        positive agent_length = string_length(agent);
+        bool named_port = (tls && port != HTTP_HTTPS_PORT) ||
+                          (!tls && port != HTTP_PORT);
+        p8 port_text[6];
+        positive port_length = named_port ? positive_into(port_text, port) : 0;
+        positive fixed = sizeof("GET ") - 1 + sizeof(version) - 1 + 1 +
+                         sizeof(host_label) - 1 + sizeof(agent_label) - 1 +
+                         sizeof(tail) - 1 + (named_port ? 1 : 0);
+        p8 address_to into = request;
 
-        if (!value)
-        {
-                into[0] = '0';
-                return 1;
-        }
+        if (version_minor < '0' || version_minor > '9' || fixed > room ||
+            path_length > room - fixed ||
+            host_length > room - fixed - path_length ||
+            agent_length > room - fixed - path_length - host_length ||
+            port_length >
+                room - fixed - path_length - host_length - agent_length)
+                return HTTP_BAD_URL;
 
-        while (value)
+        into = memory_copy_apart_end(into, "GET ", sizeof("GET ") - 1);
+        into = memory_copy_apart_end(into, path, path_length);
+        into = memory_copy_apart_end(into, version, sizeof(version) - 1);
+        *into++ = version_minor;
+        into = memory_copy_apart_end(into, host_label,
+                                     sizeof(host_label) - 1);
+        into = memory_copy_apart_end(into, host, host_length);
+        if (named_port)
         {
-                tmp[n++] = (p8)('0' + (value % 10));
-                value /= 10;
+                *into++ = ':';
+                into = memory_copy_apart_end(into, port_text, port_length);
         }
-        for (i = 0; i < n; i++)
-                into[i] = tmp[n - 1 - i];
-        return n;
+        into = memory_copy_apart_end(into, agent_label,
+                                     sizeof(agent_label) - 1);
+        into = memory_copy_apart_end(into, agent, agent_length);
+        into = memory_copy_apart_end(into, tail, sizeof(tail) - 1);
+        address_to used = (positive)(into - request);
+        return HTTP_OK;
 }
 
 static bipolar http_put_url(p8 address_to into, positive room, bool tls,
@@ -720,7 +965,7 @@ static bipolar http_put_url(p8 address_to into, positive room, bool tls,
                 path = (string_address) "/";
         path_length = string_length(path);
         if (named_port)
-                port_length = 1 + http_digits(port_text, port);
+                port_length = 1 + positive_into(port_text, port);
         if (scheme_length + host_length + port_length + path_length + 1 > room)
                 return HTTP_BAD_URL;
 
@@ -807,41 +1052,28 @@ static bipolar http_absolutize(bool tls, string_address host, p16 port,
         }
 }
 
+/* Once a redirect chain has reached HTTPS, no later Location may discard
+   transport authentication.  The caller applies this before name lookup or
+   opening the next connection. */
+static bool http_transport_allowed(bool address_to secure, bool tls)
+{
+        if (address_to secure && !tls)
+                return false;
+        address_to secure |= tls;
+        return true;
+}
+
 static bipolar http_send_get(http_link address_to link, string_address host, p16 port,
                              string_address path, bool tls)
 {
         p8 request[2048];
-        p8 address_to into = request;
-        positive path_length = string_length(path);
-        positive host_length = string_length(host);
-        bool named_port = (tls && port != HTTP_HTTPS_PORT) ||
-                          (!tls && port != HTTP_PORT);
-        p8 port_text[6];
-        positive port_length = 0;
-        positive used;
+        positive used = 0;
+        bipolar built = http_get_request(
+            request, sizeof request, host, port, path, tls, '1',
+            (string_address)"Wget", address_of used);
 
-        if (named_port)
-                port_length = http_digits(port_text, port);
-
-        if (path_length + host_length + port_length + 96 >= sizeof request)
-                return HTTP_BAD_URL;
-
-        into = memory_copy_apart_end(into, "GET ", sizeof("GET ") - 1);
-        into = memory_copy_apart_end(into, path, path_length);
-        into = memory_copy_apart_end(into, " HTTP/1.1\r\nHost: ",
-                                     sizeof(" HTTP/1.1\r\nHost: ") - 1);
-        into = memory_copy_apart_end(into, host, host_length);
-        if (named_port)
-        {
-                into = memory_copy_apart_end(into, ":", 1);
-                into = memory_copy_apart_end(into, port_text, port_length);
-        }
-        into = memory_copy_apart_end(
-            into,
-            "\r\nUser-Agent: Wget\r\nAccept: */*\r\nConnection: close\r\n\r\n",
-            sizeof("\r\nUser-Agent: Wget\r\nAccept: */*\r\nConnection: close\r\n\r\n") -
-                1);
-        used = (positive)(into - request);
+        if (built)
+                return built;
         return http_link_write(link, request, used);
 }
 
@@ -904,6 +1136,7 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
 {
         p8 url[HTTP_URL_MAX];
         positive hop;
+        bool secure = false;
 
         if (string_length(start) >= sizeof url)
                 return HTTP_BAD_URL;
@@ -916,24 +1149,21 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 string_address path;
                 p16 port = 80;
                 bool tls = false;
-                bool transfer_repeated = false;
-                bool length_repeated = false;
                 p32 ip;
                 http_link link;
                 http_body body;
-                bipolar header;
+                http_response response;
+                positive header = 0;
                 bipolar status;
                 positive used = 0;
-                positive value_length = 0;
-                string_address value;
-                string_address content_length;
-                positive content_length_size = 0;
                 b32 answer = 0;
 
                 status = http_split_into(url, host, sizeof host, address_of port,
                                          address_of path, address_of tls);
                 if (status)
                         return status;
+                if (!http_transport_allowed(address_of secure, tls))
+                        return HTTP_DOWNGRADE;
 
                 ip = http_lookup(host);
                 if (!ip)
@@ -951,31 +1181,36 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                         return status;
                 }
 
-                while (http_header_end(head, used) < 0)
+                for (;;)
                 {
                         positive got = 0;
 
+                        status = http_response_framing(
+                            head, used, address_of header,
+                            address_of response);
+                        if (status != HTTP_NO_REPLY)
+                                break;
                         if (used == sizeof head)
                         {
-                                http_link_close(address_of link);
-                                return HTTP_MALFORMED;
+                                status = HTTP_MALFORMED;
+                                break;
                         }
                         status = http_link_read(address_of link, head + used,
                                                 sizeof head - used, address_of got);
                         if (status || !got)
                         {
-                                http_link_close(address_of link);
-                                return HTTP_NO_REPLY;
+                                status = HTTP_NO_REPLY;
+                                break;
                         }
                         used += got;
                 }
 
-                header = http_header_end(head, used);
-                if (http_status_code(head, (positive)header, address_of answer))
+                if (status)
                 {
                         http_link_close(address_of link);
-                        return HTTP_MALFORMED;
+                        return status;
                 }
+                answer = response.code;
                 if (code)
                         address_to code = answer;
 
@@ -986,26 +1221,22 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 if (answer >= 300 && answer < 400)
                 {
                         p8 next[HTTP_URL_MAX];
-                        string_address location;
-                        positive location_length = 0;
 
-                        location = http_header(head, (positive)header,
-                                               (string_address) "location",
-                                               address_of location_length, null);
-                        if (!location || !location_length)
+                        if (!response.location || !response.location_length)
                         {
                                 http_link_close(address_of link);
                                 return HTTP_MALFORMED;
                         }
                         {
                                 p8 placed[HTTP_URL_MAX];
-                                if (location_length >= sizeof placed)
+                                if (response.location_length >= sizeof placed)
                                 {
                                         http_link_close(address_of link);
                                         return HTTP_BAD_URL;
                                 }
-                                memory_copy(placed, location, location_length);
-                                placed[location_length] = end;
+                                memory_copy(placed, response.location,
+                                            response.location_length);
+                                placed[response.location_length] = end;
                                 status = http_absolutize(tls, host, port, path, placed,
                                                          next, sizeof next);
                         }
@@ -1024,54 +1255,11 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                         return HTTP_OK;
                 }
 
-                value = http_header(head, (positive)header,
-                                    (string_address) "transfer-encoding",
-                                    address_of value_length,
-                                    address_of transfer_repeated);
-                content_length = http_header(head, (positive)header,
-                                             (string_address) "content-length",
-                                             address_of content_length_size,
-                                             address_of length_repeated);
-                if (transfer_repeated || length_repeated || (value && content_length))
-                {
-                        http_link_close(address_of link);
-                        return HTTP_MALFORMED;
-                }
-
-                if (value)
-                {
-                        if (value_length < 7 ||
-                            memory_compare_ascii_case(value, "chunked", 7) ||
-                            string_span_max(value + 7, value_length - 7,
-                                            string_set_blanks) != value_length - 7)
-                        {
-                                http_link_close(address_of link);
-                                return HTTP_MALFORMED;
-                        }
+                if (response.body_kind == HTTP_BODY_CHUNKED)
                         status = http_copy_chunked(address_of body, dest);
-                }
-                else if (content_length)
-                {
-                        string_address cursor = content_length;
-                        positive said = 0;
-                        positive at;
-
-                        if (!string_digits_checked(address_of cursor, 10,
-                                                   address_of said))
-                        {
-                                http_link_close(address_of link);
-                                return HTTP_MALFORMED;
-                        }
-                        at = (positive)(cursor - content_length);
-                        at += string_span_max(cursor, content_length_size - at,
-                                              string_set_blanks);
-                        if (at != content_length_size)
-                        {
-                                http_link_close(address_of link);
-                                return HTTP_MALFORMED;
-                        }
-                        status = http_copy_n(address_of body, dest, said);
-                }
+                else if (response.body_kind == HTTP_BODY_LENGTH)
+                        status = http_copy_n(address_of body, dest,
+                                             response.body_length);
                 else
                         status = http_copy_all(address_of body, dest);
 

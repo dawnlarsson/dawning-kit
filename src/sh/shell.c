@@ -691,6 +691,10 @@ bool exec_function_environment_fill(string_address address_to environment,
                                     positive count);
 fn exec_function_import_environment(string_address address_to environment);
 
+/* Keep child wiring names at their call sites while ownership and the fd==fd
+   edge live with the shared descriptor operations. */
+#define shell_child_fd_move system_descriptor_move
+
 #include "lex.c"
 #include "file.c"
 #include "gzip.c"
@@ -770,7 +774,6 @@ positive shell_argc;
    trusting the address of lexer storage, which is reused between lines. */
 static bool shell_command_name_stable;
 static string_address shell_command_name_address;
-static positive shell_command_name_length;
 /* parse_program reuses word slots. A remembered builtin is only the same
    command while this generation is unchanged -- a kept loop tree. */
 static positive shell_parse_generation;

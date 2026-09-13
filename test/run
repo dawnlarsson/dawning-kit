@@ -78,13 +78,13 @@ describe()
         hex) echo "bounded hexadecimal encoding, alignment and guard pages on three machines" ;;
         codec) echo "bounded radix codecs, malformed symbols and exact spans on three machines" ;;
         fixed) echo "exact decimal records, rounding and bounded batches on three machines" ;;
-        bowl) echo "Bowl root and launcher parsing without mounts or process launches" ;;
-        tar) echo "tar header checksum, octal fields and safe path stripping" ;;
+        bowl) echo "Bowl root, launcher parsing, and Pacman isolation keywords" ;;
+        tar) echo "tar checksums, paths, compression magics and pax records" ;;
         zstd) echo "RFC 8878 encode/decode, literal codebooks, frames and checksums" ;;
         gzip) echo "RFC 1952 members around RFC 1951 deflate, encode and decode" ;;
         xz) echo "xz stream and LZMA2 encode and decode" ;;
         compression_floor) echo "codec assembly kernels, boundary states and guard pages on three machines" ;;
-        compression) echo "gzip/xz/zstd and compressed tar against the system tools, byte for byte" ;;
+        compression) echo "gzip/xz/zstd and a tar member×codec grammar against the system tools" ;;
         audit) echo "the verified builtin repairs, as pure-state regressions" ;;
         regex) echo "fixed-graph searches against their VM fallback, with captures and resource limits on three machines" ;;
         reuse_shell) echo "shared utility formatting, bounded sinks and skip edge policies" ;;
@@ -104,7 +104,7 @@ describe()
         format)   echo "printf's conversions, every one against glibc" ;;
         stream)   echo "<stdio.h>'s FILE against glibc's, on three machines" ;;
         socket)   echo "byte order against a reference, and real sockets on three machines" ;;
-        net)      echo "the netlink wire built byte by byte, and ip against the kernel" ;;
+        net)      echo "the netlink wire, ip against the kernel, and TLS ClientHello groups" ;;
         slurp)    echo "bounded file reads and forced EINTR at open and read, on three machines" ;;
         wait)     echo "wait4 arguments, statuses and forced EINTR retry, on three machines" ;;
         writer)   echo "buffer boundaries, direct policy and write ordering, on three machines" ;;
@@ -227,15 +227,7 @@ freestanding()
 #       Lanes bootstrap src/build/build.c the same way build.sh does.
 build_tool()
 {
-        if [ ! -x "$root/build" ] ||
-                [ "$root/src/build/build.c" -nt "$root/build" ]
-        then
-                ${CC:-cc} -O2 -static -nostdlib -nostartfiles \
-                        -fno-stack-protector -fno-builtin -w \
-                        -o "$root/build" "$root/src/build/build.c" || return 1
-        fi
-
-        "$root/build" "$@"
+        sh "$root/build.sh" "$@"
 }
 
 #       One section of test/checks.c, which is where every C check lives. The
@@ -3564,6 +3556,8 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
 #include "src/sh/pty.c"
+// The terminal fixture does not execute the desktop launcher.
+#define BOWL_DEFAULT_PATH "/fixture/bin"
 #include "src/sh/screen.c"
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
@@ -4743,7 +4737,7 @@ static positive check_render_reuse()
                                 memory_fill(edit_status_bytes, 0xa5,
                                             sizeof(edit_status_bytes));
                                 edit_status_build();
-                                if (edit_status_length != used ||
+                                if (edit_status_output.used != used ||
                                     edit_status_cells != cells ||
                                     memory_compare(edit_status_bytes, expected, used) ||
                                     edit_status_bytes[used] != 0xa5)
@@ -7275,6 +7269,20 @@ printf 'echo plain-$1\nexit 17\n' > /tmp/plain-script
 chmod +x /tmp/plain-script
 /tmp/plain-script alpha
 printf 'txet%s\n' $? | rev
+#
+#       A fresh shell waits until the live register changes, then asks for the
+#       same denied image directly and through a #! line.  Starting it before
+#       the write keeps this test independent of the parent's cached report;
+#       using printf pieces keeps the successful marker out of console echo.
+#
+printf '%s\n' '#!/bin/dirname' > /tmp/floodlight-entry
+chmod +x /tmp/floodlight-entry
+mkfifo /tmp/floodlight-gate
+/bin/bash -c 'read gate < /tmp/floodlight-gate; /bin/dirname /tmp/direct >/dev/null 2>&1; direct=$?; /tmp/floodlight-entry >/dev/null 2>&1; script=$?; printf "fl-policy-%s-%s\n" "$direct" "$script"' &
+floodlight_child=$!
+printf '%s\n' '/shell run deny' > /dev/floodlight
+printf '%s\n' go > /tmp/floodlight-gate
+wait "$floodlight_child"
 poweroff
 COMMANDS
 
@@ -7423,6 +7431,7 @@ says 'monitor was visible' 'cpu%'
 says 'monitor was clean'   'monitor-clean'
 says 'plain text script'   'plain-alpha'
 says 'plain text status'   '71text'
+says 'shebang policy'      'fl-policy-126-126'
 says 'powered down'        'reboot: Power down'
 
 never 'no panic'           'Kernel panic'

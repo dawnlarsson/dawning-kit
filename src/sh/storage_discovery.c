@@ -593,61 +593,23 @@ static PURE bool storage_mount_options_match(storage_mount address_to mount,
         unknown name is named, and a name written twice is a column written
         twice.  `unknown` is left holding the name that was not recognised. */
 #define STORAGE_COLUMN_NAME 64
-#define STORAGE_COLUMNS_OK 0
-#define STORAGE_COLUMNS_EMPTY 1
-#define STORAGE_COLUMNS_UNKNOWN 2
+#define STORAGE_COLUMNS_OK NAME_LIST_OK
+#define STORAGE_COLUMNS_EMPTY NAME_LIST_EMPTY
+#define STORAGE_COLUMNS_UNKNOWN NAME_LIST_UNKNOWN
 
 static b32 storage_columns(string_address list,
                            storage_findmnt_options address_to options,
                            p8 address_to unknown)
 {
-        unknown[0] = 0;
-
-        /* A leading + keeps what is already chosen -- the defaults, unless an
-           earlier --output replaced them -- and adds to it. */
+        /* + appends to the current selection, including an earlier -o. */
         if (string_is(list, '+'))
                 list++;
         else
                 options->count = 0;
-
-        if (!string_get(list))
-                return STORAGE_COLUMNS_EMPTY;
-
-        while (string_get(list))
-        {
-                string_address comma = string_first_of_or_end(list, ',');
-                positive length = (positive)(comma - list);
-                positive found = STORAGE_COLUMN_MAX;
-
-                for (positive i = 0; i < STORAGE_COLUMN_MAX; i++)
-                {
-                        string_address name = storage_column_table[i].name;
-
-                        if (string_length(name) == length &&
-                            !memory_compare_ascii_case(name, list, length))
-                        {
-                                found = i;
-                                break;
-                        }
-                }
-
-                if (found == STORAGE_COLUMN_MAX ||
-                    options->count == STORAGE_COLUMN_MAX)
-                {
-                        positive kept = min(length,
-                                            (positive)STORAGE_COLUMN_NAME - 1);
-                        memory_copy_apart(unknown, (address_any)list, kept);
-                        unknown[kept] = 0;
-                        return STORAGE_COLUMNS_UNKNOWN;
-                }
-
-                options->columns[options->count++] = (p8)found;
-                if (!string_get(comma))
-                        break;
-                list = comma + 1;
-        }
-
-        return options->count ? STORAGE_COLUMNS_OK : STORAGE_COLUMNS_EMPTY;
+        return name_list_columns(list, storage_column_table,
+            sizeof(storage_column_table[0]), STORAGE_COLUMN_MAX,
+            options->columns, address_of options->count, unknown,
+            STORAGE_COLUMN_NAME);
 }
 
 #define storage_column_name(column) storage_column_table[(column)].name
@@ -831,7 +793,7 @@ static fn storage_findmnt_row(writer output, storage_mount address_to mount,
                         output((address_any)"\"", 1);
                 else if (!options->raw && at + 1 < options->count &&
                          widths[at] > length)
-                        writer_fill(output, widths[at] - length, ' ');
+                        writer_fill_bulk(output, widths[at] - length, ' ');
         }
 
         output((address_any)"\n", 1);

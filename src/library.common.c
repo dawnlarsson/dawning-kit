@@ -353,9 +353,78 @@ bipolar system_read_retry(positive handle, address_any into, positive length);
 #define system_pipe(pair, flags)                                             \
         system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
 
+static inline INLINE positive system_nonce_stir(positive value)
+{
+        value ^= value >> 30;
+        value *= 0xbf58476d1ce4e5b9ULL;
+        value ^= value >> 27;
+        value *= 0x94d049bb133111ebULL;
+        return value ^ (value >> 31);
+}
+
+#if defined(LINUX) && !defined(KERNEL_MODE)
+/* Fill the whole request from getrandom, retrying interruption and preserving
+   the first real kernel error.  Callers choose blocking, nonblocking or
+   early-boot policy through the Linux flags rather than open-coding loops. */
+static bipolar system_random_fill(address_any into, positive length,
+                                  positive flags)
+{
+        positive used = 0;
+
+        while (used < length)
+        {
+                bipolar got = system_call_3(
+                    syscall(getrandom), (positive)((p8 address_to)into + used),
+                    length - used, flags);
+
+                if (got == -4)
+                        continue;
+                if (got <= 0)
+                        return got ? got : -5;
+                used += (positive)got;
+        }
+        return 0;
+}
+
+static inline INLINE positive system_nonce()
+{
+        positive value;
+
+        if (!system_random_fill(address_of value, sizeof value, 1) ||
+            !system_random_fill(address_of value, sizeof value, 4))
+                return value;
+
+        value = get_cpu_time() ^
+                ((positive)system_call(syscall(getpid)) << 32) ^
+                ((positive)address_of value >> 3);
+        return system_nonce_stir(value);
+}
+#endif
+
 #define system_duplicate(from, to, flags)                                    \
         system_call_3(syscall(dup3), (positive)(from), (positive)(to),       \
                       (positive)(flags))
+
+/* Put a descriptor at the number a child will inherit. dup3 deliberately
+   rejects fd == fd; that case still has work to do when pipe2 or open happened
+   to allocate the destination number with O_CLOEXEC set. */
+#define SYSTEM_F_SETFD 2
+#define system_descriptor_install(from, to)                                  \
+        ({ bipolar _install_from = (bipolar)(from);                          \
+           bipolar _install_to = (bipolar)(to);                              \
+           _install_from == _install_to                                      \
+               ? system_call_3(syscall(fcntl), (positive)_install_from,      \
+                               SYSTEM_F_SETFD, 0)                            \
+               : system_duplicate(_install_from, _install_to, 0); })
+
+/* Install and relinquish an owned source descriptor as one operation. */
+#define system_descriptor_move(from, to)                                     \
+        ({ bipolar _move_from = (bipolar)(from);                             \
+           bipolar _move_to = (bipolar)(to);                                \
+           bipolar _moved = system_descriptor_install(_move_from, _move_to); \
+           if (_moved >= 0 && _move_from != _move_to)                       \
+                   system_close(_move_from);                                \
+           _moved; })
 
 #define system_control(handle, request, argument)                            \
         system_call_3(syscall(ioctl), (positive)(handle),                    \
@@ -511,6 +580,197 @@ static COLD bipolar system_open_parent_pinned(
                                        false, 0);
 }
 
+/* Make an unpredictable sibling name while preserving any directory prefix
+   carried by path.  O_EXCL or RENAME_NOREPLACE must claim the result. */
+static COLD bool system_temporary_name(
+    string_address path, p8 address_to into, positive room,
+    string_address marker, positive marker_length, positive value)
+{
+        string_address slash = string_last_of(path, '/');
+        positive prefix = slash ? (positive)(slash - path) + 1 : 0;
+        p8 number[24];
+
+        if (!room || prefix > room || marker_length >= room - prefix)
+        {
+                if (room)
+                        into[0] = end;
+                return false;
+        }
+
+        memory_copy_apart(into, path, prefix);
+        memory_copy_apart(into + prefix, marker, marker_length);
+        positive length = positive_into_string(number, value);
+
+        if (length >= room - prefix - marker_length)
+        {
+                into[0] = end;
+                return false;
+        }
+
+        memory_copy_end(into + prefix + marker_length, number, length);
+        return true;
+}
+
+#if defined(LINUX)
+/* The statx fields needed to compare an open descriptor with a directory
+   entry.  The surrounding bytes keep the kernel's fixed 256-byte ABI. */
+typedef struct
+{
+        p8 before_mode[28];
+        p16 mode;
+        p16 spare;
+        p64 inode;
+        p8 before_device[96];
+        p32 device_major;
+        p32 device_minor;
+        p8 remainder[112];
+} system_path_identity;
+
+_Static_assert(sizeof(system_path_identity) == 256,
+               "statx writes 256 bytes");
+
+static bipolar system_path_same_opened_at(
+    bipolar handle, bipolar directory, string_address name)
+{
+        system_path_identity opened;
+        system_path_identity named;
+        bipolar looked = system_stat_at(
+            handle, (string_address)"", 0x1000 | 0x800, 0x7ff,
+            address_of opened);
+        bipolar found = looked < 0 ? looked : system_stat_at(
+            directory, name, 0x100 | 0x800, 0x7ff, address_of named);
+
+        if (found < 0)
+                return found;
+        return opened.inode == named.inode &&
+                       opened.device_major == named.device_major &&
+                       opened.device_minor == named.device_minor &&
+                       (opened.mode & 0170000) == (named.mode & 0170000)
+                   ? 0 : -11;
+}
+
+/* Atomically detach a name, then prove it still names the open object.  On a
+   mismatch the name is restored when possible and the unexpected object is
+   never removed. */
+static bipolar system_path_detach_opened_at(
+    bipolar directory, string_address name, bipolar handle,
+    p8 address_to temporary, positive room)
+{
+        bipolar moved = -17;
+        positive nonce = system_nonce();
+
+        for (positive attempt = 0; attempt < 128 && moved == -17; attempt++)
+        {
+                if (!system_temporary_name(
+                        name, temporary, room,
+                        (string_address)".moonwater-remove-", 18,
+                        nonce + attempt))
+                        return -22;
+                moved = system_call_5(
+                    syscall(renameat2), (positive)directory, (positive)name,
+                    (positive)directory, (positive)temporary, 1);
+        }
+        if (moved < 0)
+                return moved;
+
+        bipolar same = system_path_same_opened_at(
+            handle, directory, temporary);
+        if (same < 0)
+        {
+                (void)system_call_5(
+                    syscall(renameat2), (positive)directory,
+                    (positive)temporary, (positive)directory,
+                    (positive)name, 1);
+                return same;
+        }
+        return 0;
+}
+
+static bipolar system_path_remove_opened_at(
+    bipolar directory, string_address name, bipolar handle, positive flags)
+{
+        p8 temporary[256];
+        bipolar detached = system_path_detach_opened_at(
+            directory, name, handle, temporary, sizeof(temporary));
+
+        return detached < 0 ? detached
+                            : system_remove_at(directory, temporary, flags);
+}
+
+#if !defined(KERNEL_MODE)
+/* Link the inode behind an open descriptor.  Older kernels require a
+   capability for AT_EMPTY_PATH; procfs exposes the same descriptor without
+   weakening the identity binding. */
+static bipolar system_path_link_opened_at(
+    bipolar handle, bipolar directory, string_address name)
+{
+        bipolar linked = system_call_5(
+            syscall(linkat), (positive)handle,
+            (positive)(string_address)"", (positive)directory,
+            (positive)name, 0x1000);
+        if (linked != -2 && linked != -1 && linked != -95 &&
+            linked != -38 && linked != -18 && linked != -22)
+                return linked;
+
+        p8 path[64];
+        static const p8 prefix[] = "/proc/self/fd/";
+        memory_copy_apart(path, prefix, sizeof(prefix) - 1);
+        positive length = positive_into_string(
+            path + sizeof(prefix) - 1, (positive)handle);
+        path[sizeof(prefix) - 1 + length] = 0;
+        return system_call_5(
+            syscall(linkat), (positive)(bipolar)-100, (positive)path,
+            (positive)directory, (positive)name, 0x400);
+}
+
+#define SYSTEM_PATH_ALIAS_LEAF ((string_address)"object")
+
+/* Prepare a publisher-owned 0700 directory containing an exact hard link to
+   object.  Renaming from its returned descriptor never trusts a chowned
+   staging name.  On failure no destination name has been touched. */
+static bipolar system_path_alias_opened_at(
+    bipolar directory, string_address near, bipolar object,
+    p8 address_to name, positive room)
+{
+        bipolar made = -17;
+        positive nonce = system_nonce();
+
+        for (positive attempt = 0; attempt < 128 && made == -17; attempt++)
+        {
+                if (!system_temporary_name(
+                        near, name, room,
+                        (string_address)".moonwater-publish-", 19,
+                        nonce + attempt))
+                        return -22;
+                made = system_make_directory_at(directory, name, 0700);
+        }
+        if (made < 0)
+                return made;
+
+        bipolar handle = system_open_at(
+            directory, name,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        /* Without an fd there is no identity-safe cleanup: a parent writer
+           could have exchanged the just-created name.  Retain the private
+           0700 directory and report the open failure. */
+        if (handle < 0)
+                return handle;
+
+        bipolar same = system_path_same_opened_at(handle, directory, name);
+        bipolar linked = same < 0 ? same : system_path_link_opened_at(
+            object, handle, SYSTEM_PATH_ALIAS_LEAF);
+        if (linked < 0)
+        {
+                (void)system_path_remove_opened_at(
+                    directory, name, handle, 0x200);
+                system_close(handle);
+                return linked;
+        }
+        return handle;
+}
+#endif
+#endif
+
 #define SYSTEM_PATH_LEAF_ROOM 256
 
 typedef struct
@@ -606,9 +866,15 @@ static bipolar system_path_file_close_handle(system_path_file address_to file)
 
 static bipolar system_path_file_remove(system_path_file address_to file)
 {
-        return file->directory < 0 || !file->leaf[0]
-                   ? -22
-                   : system_remove_at(file->directory, file->leaf, 0);
+        if (file->directory < 0 || file->handle < 0 || !file->leaf[0])
+                return -22;
+
+#if defined(LINUX)
+        return system_path_remove_opened_at(
+            file->directory, file->leaf, file->handle, 0);
+#else
+        return system_remove_at(file->directory, file->leaf, 0);
+#endif
 }
 
 static fn system_path_file_release(system_path_file address_to file)
@@ -624,13 +890,14 @@ static bipolar system_path_file_finish(system_path_file address_to input,
                                        bool success, bool remove_input)
 {
         bipolar output_closed = system_path_file_close_handle(output);
+        bipolar input_removed = 0;
 
-        (void)system_path_file_close_handle(input);
         if (success && output_closed >= 0 && remove_input)
-                system_path_file_remove(input);
+                input_removed = system_path_file_remove(input);
+        (void)system_path_file_close_handle(input);
         system_path_file_release(output);
         system_path_file_release(input);
-        return output_closed;
+        return output_closed < 0 ? output_closed : input_removed;
 }
 #endif
 
@@ -708,6 +975,130 @@ typedef struct
         positive used;
 } byte_store;
 
+/* A bounded byte sink borrows storage and never grows it. Empty spans do
+   nothing, including for a null source. Return whether the complete span
+   fitted; callers choose whether truncation is an error or display policy. */
+static inline bool byte_store_append_span(byte_store address_to store,
+                                           address_any data, positive length)
+{
+        if (store->used > store->room)
+                return false;
+        positive kept = min(length, store->room - store->used);
+        if (kept)
+                memory_copy_apart(store->bytes + store->used, data, kept);
+        store->used += kept;
+        return kept == length;
+}
+
+/* Atomic field variant: a short buffer retains its prior bytes and cursor. */
+static inline bool byte_store_append_exact(byte_store address_to store,
+                                            address_any data, positive length)
+{
+        if (store->used > store->room || length > store->room - store->used)
+                return false;
+        return byte_store_append_span(store, data, length);
+}
+
+/* Stable storage owns its mapping outside these mechanisms. Unlike a moving
+   byte_store, every successful take preserves all earlier addresses. The
+   owner chooses alignment and which marks may be rewound. */
+typedef struct
+{
+        p8 address_to bytes;
+        positive room;
+        positive used;
+} memory_arena;
+
+static inline address_any memory_arena_take(memory_arena address_to arena,
+                                             positive bytes, positive alignment)
+{
+        if (!alignment || (alignment & (alignment - 1)) ||
+            bytes > positive_max - (alignment - 1))
+                return null;
+        bytes = (bytes + alignment - 1) & ~(alignment - 1);
+        if (!arena->bytes || arena->used > arena->room ||
+            bytes > arena->room - arena->used)
+                return null;
+        address_any at = arena->bytes + arena->used;
+        arena->used += bytes;
+        return at;
+}
+
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+/* The allocator decides ownership and failure reporting. All stable arena
+   vectors share checked growth and copy; their typed capacity check remains
+   at each call site through array_arena_reserve. */
+static COLD bool memory_vector_grow(
+    address_any table, positive address_to room, positive used,
+    positive wanted, positive unit, positive first,
+    address_any (*take)(positive))
+{
+        if (wanted < used)
+                return false;
+        if (wanted <= address_to room)
+                return true;
+        positive larger = memory_growth(address_to room, wanted, first);
+        if (!unit || !larger || larger > positive_max / unit)
+                return false;
+        address_any grown = take(larger * unit);
+        if (!grown)
+                return false;
+        if (used)
+                memory_copy_apart(grown,
+                    address_to(address_any address_to)table, used * unit);
+        address_to(address_any address_to)table = grown;
+        address_to room = larger;
+        return true;
+}
+
+/* Read into the newest arena allocation, beginning at mark with first bytes
+   already reserved. Growth changes its capacity without moving its address;
+   EOF keeps a NUL sentinel, failure rolls the entire allocation back. */
+static p8 address_to memory_arena_read_tail(
+    memory_arena address_to arena, positive handle, positive mark,
+    positive first, positive alignment, positive address_to length,
+    bool address_to read_failed)
+{
+        positive room = first, used = 0;
+        p8 address_to bytes = arena->bytes + mark;
+        while (true)
+        {
+                if (used == room)
+                {
+                        positive larger = room < positive_max
+                            ? memory_growth(room, room + 1, first) : 0;
+                        positive available = arena->room - mark;
+                        if (larger > available)
+                                larger = room < available ? available : 0;
+                        if (!larger)
+                                goto failed;
+                        arena->used = mark;
+                        bytes = memory_arena_take(arena, larger, alignment);
+                        if (!bytes)
+                                goto failed;
+                        room = larger;
+                }
+                bipolar got = system_read_retry(handle, bytes + used, room - used);
+                if (got < 0)
+                {
+                        if (read_failed)
+                                address_to read_failed = true;
+                        goto failed;
+                }
+                if (!got)
+                        break;
+                used += (positive)got;
+        }
+        bytes[used] = end;
+        arena->used = mark + ((used + alignment) & ~(alignment - 1));
+        address_to length = used;
+        return bytes;
+failed:
+        arena->used = mark;
+        return null;
+}
+#endif
+
 /* Type-preserving fronts for the untyped allocation ABI.  The element width
    and all address casts live here rather than at every growing vector. */
 #define array_store_reserve(array, room, used, wanted, step)                  \
@@ -762,18 +1153,85 @@ typedef struct
                                _byte_store->used); })
 
 #ifndef KERNEL_MODE
-/* Read through EOF into reusable storage, leaving the descriptor open.
-   Preserve raw read errors; -12 is ENOMEM at the Linux syscall boundary. */
-static HOT bipolar file_store_read(positive handle, byte_store address_to store)
+/* A bounded input window, backed by a descriptor or a borrowed memory span.
+   have is the end offset; at is the consumed prefix. Return available bytes
+   (possibly short at EOF), or the raw read error. The caller owns framing. */
+typedef struct
+{
+        bipolar fd;
+        p8 address_to mem;
+        positive mem_len, mem_at;
+        p8 address_to buf;
+        positive room, at, have;
+        bool eof;
+} byte_input;
+
+static bipolar byte_input_need(byte_input address_to input, positive want)
+{
+        if (input->have - input->at >= want || input->eof)
+                return (bipolar)(input->have - input->at);
+        if (input->at)
+        {
+                input->have -= input->at;
+                if (input->have)
+                        memory_copy(input->buf, input->buf + input->at,
+                                    input->have);
+                input->at = 0;
+        }
+        while (input->have < want && !input->eof)
+        {
+                positive room = input->room - input->have;
+                bipolar got;
+                if (!room)
+                        break;
+                if (input->mem)
+                {
+                        positive take = min(room, input->mem_len - input->mem_at);
+                        if (take)
+                                memory_copy(input->buf + input->have,
+                                            input->mem + input->mem_at, take);
+                        input->mem_at += take;
+                        got = (bipolar)take;
+                        input->eof = input->mem_at == input->mem_len;
+                }
+                else
+                        got = system_read_retry((positive)input->fd,
+                                                input->buf + input->have, room);
+                if (got < 0)
+                        return got;
+                input->have += (positive)got;
+                input->eof |= !got;
+        }
+        return (bipolar)(input->have - input->at);
+}
+
+/* Read no more than maximum bytes and prove EOF with one bounded probe.  This
+   is the shared shape for protocol records whose peer controls their size;
+   -27 (EFBIG) distinguishes a complete maximum-sized value from overflow. */
+static HOT bipolar file_store_read_limit(positive handle,
+                                         byte_store address_to store,
+                                         positive maximum)
 {
         store->used = 0;
-        while (store->used <= positive_max - 4097 &&
-               byte_store_reserve(store, store->used + 4097, 4096))
-        {
-                bipolar got = system_read_retry(
-                    handle, store->bytes + store->used,
-                    store->room - store->used - 1);
+        if (maximum == positive_max)
+                maximum--;
 
+        while (store->used < maximum)
+        {
+                positive remaining = maximum - store->used;
+                positive grow = remaining;
+
+                if (grow > 4096)
+                        grow = 4096;
+                if (!byte_store_reserve(store, store->used + grow + 1, 4096))
+                        return -12;
+
+                positive take = store->room - store->used - 1;
+                if (take > remaining)
+                        take = remaining;
+
+                bipolar got = system_read_retry(
+                    handle, store->bytes + store->used, take);
                 if (got < 0)
                         return got;
                 if (!got)
@@ -781,11 +1239,25 @@ static HOT bipolar file_store_read(positive handle, byte_store address_to store)
                         store->bytes[store->used] = end;
                         return 0;
                 }
-
                 store->used += (positive)got;
         }
 
-        return -12;
+        if (!byte_store_reserve(store, store->used + 1, 1))
+                return -12;
+
+        p8 extra;
+        bipolar got = system_read_retry(handle, address_of extra, 1);
+        if (got < 0)
+                return got;
+        store->bytes[store->used] = end;
+        return got ? -27 : 0;
+}
+
+/* Read through EOF into reusable storage, leaving the descriptor open.
+   Preserve raw read errors; -12 is ENOMEM at the Linux syscall boundary. */
+static HOT bipolar file_store_read(positive handle, byte_store address_to store)
+{
+        return file_store_read_limit(handle, store, positive_max);
 }
 
 /* Procfs may return short reads before EOF; use the same loop as streams. */
@@ -958,6 +1430,42 @@ static inline INLINE conversion_spec conversion_spec_take_max(
         return spec;
 }
 
+/* Stream presentation keeps the legacy writer ABI while explicitly allowing
+   batched padding. The assembly writer_fill/field entry points retain their
+   callback protocol. Empty bounded bodies never request a C-string scan. */
+static fn writer_fill_bulk(writer output, positive count, p8 byte)
+{
+        if (!count)
+                return;
+        p8 block[256];
+        positive chunk = min(count, (positive)sizeof(block));
+        memory_fill(block, byte, chunk);
+        do
+        {
+                output(block, chunk);
+                count -= chunk;
+                chunk = min(count, (positive)sizeof(block));
+        } while (count);
+}
+
+static fn writer_field_bulk(writer output, address_any data, positive length,
+                             positive width, p8 pad, bool left)
+{
+        positive padding = width > length ? width - length : 0;
+        if (!left)
+                writer_fill_bulk(output, padding, pad);
+        if (length)
+                output(data, length);
+        if (left)
+                writer_fill_bulk(output, padding, pad);
+}
+
+static inline fn string_to_field_bulk(writer output, string_address text,
+                                       positive width, p8 pad, bool left)
+{
+        writer_field_bulk(output, text, string_length(text), width, pad, left);
+}
+
 /* Exact fixed-point fields: the unsigned magnitude is scaled by 10^scale,
    scale <= 18, independently of the requested display precision. Preparation
    rounds ties to even once and retains a compact body; arbitrarily wide
@@ -1042,12 +1550,12 @@ static inline fn fixed_decimal_write(writer write,
         if (!field->left)
         {
                 if (field->zero && field->sign) write(field->bytes, 1);
-                writer_fill(write, field->padding, field->zero ? '0' : ' ');
+                writer_fill_bulk(write, field->padding, field->zero ? '0' : ' ');
         }
         positive skip = !field->left && field->zero ? field->sign : 0;
         write(field->bytes + skip, field->length - skip);
-        writer_fill(write, field->zeroes, '0');
-        if (field->left) writer_fill(write, field->padding, ' ');
+        writer_fill_bulk(write, field->zeroes, '0');
+        if (field->left) writer_fill_bulk(write, field->padding, ' ');
 }
 
 /* printf and scanf assign different meanings to `l`, but recognize the same
@@ -1172,6 +1680,60 @@ static inline INLINE fn writer_hex_escaped(writer output, address_any data,
         writer_escaped_bulk(output, data, length, policy);
 }
 
+/* A pathname supplied by an archive or a directory entry may contain bytes
+   that a terminal interprets as cursor movement, erased output, or a forged
+   line.  Ordinary names retain their byte-for-byte output.  Once a control
+   byte is present, backslashes are escaped as well so the visible \xNN form
+   cannot be confused with literal input. */
+static fn writer_terminal_name_span(writer output, string_address value,
+                                    positive length)
+{
+        p8 unsafe = HEX_CONTROL | HEX_TAB | HEX_HIGH;
+
+        if (memory_escape_index(value, length, unsafe) == length)
+        {
+                output(value, length);
+                return;
+        }
+
+        writer_hex_escaped(output, value, length, unsafe | HEX_SLASH);
+}
+
+static fn writer_terminal_name(writer output, string_address value)
+{
+        writer_terminal_name_span(output, value, string_length(value));
+}
+
+/* The body of a pathname already delimited by single quotes in a diagnostic.
+   Backslash and the delimiter are always escaped, while terminal controls and
+   non-ASCII bytes use the same bounded streaming encoder as bare names. */
+static fn writer_terminal_quoted_name_span(writer output,
+                                           string_address value,
+                                           positive length)
+{
+        p8 policy = HEX_CONTROL | HEX_TAB | HEX_HIGH | HEX_SLASH;
+
+        while (length)
+        {
+                p8 address_to quote = memory_first_of(value, '\'', length);
+                positive span = quote ? (positive)(quote - value) : length;
+
+                writer_hex_escaped(output, value, span, policy);
+                value += span;
+                length -= span;
+                if (!length)
+                        break;
+                output("\\'", 2);
+                value++;
+                length--;
+        }
+}
+
+static fn writer_terminal_quoted_name(writer output, string_address value)
+{
+        writer_terminal_quoted_name_span(output, value, string_length(value));
+}
+
 /* JSON byte-string policy shared by UUID output and util-linux tables.
    Controls retain the shared \u00xx spelling; quote/backslash use short
    escapes. Printable spans cross the writer once, not once per byte. */
@@ -1201,11 +1763,20 @@ static fn writer_json_string(writer output, string_address value)
 #define NAME_LIST_CASE_SENSITIVE 1
 #define NAME_LIST_UNIQUE 2
 #define NAME_LIST_REJECT_TRAILING 4
+typedef struct
+{
+        string_address at;
+        positive length;
+} name_list_error;
+
 static COLD bool name_list_select(
     string_address text, const void address_to definitions, positive stride,
     positive definition_count, p8 address_to selected,
-    positive address_to selected_count, positive maximum, p8 policy)
+    positive address_to selected_count, positive maximum, p8 policy,
+    name_list_error address_to error)
 {
+        if (error)
+                address_to error = (name_list_error){text, 0};
         if (definition_count > 256 || stride < sizeof(string_address) ||
             address_to selected_count > maximum)
                 return false;
@@ -1215,6 +1786,8 @@ static COLD bool name_list_select(
                 string_address comma = string_first_of_or_end(text, ',');
                 positive length = (positive)(comma - text);
                 positive found = definition_count;
+                if (error)
+                        address_to error = (name_list_error){text, length};
 
                 for (positive i = 0; i < definition_count; i++)
                 {
@@ -1250,10 +1823,41 @@ static COLD bool name_list_select(
                         break;
                 text = comma + 1;
                 if (!*text && (policy & NAME_LIST_REJECT_TRAILING))
+                {
+                        if (error)
+                                address_to error = (name_list_error){text, 0};
                         return false;
+                }
         }
 
         return address_to selected_count != 0;
+}
+
+enum { NAME_LIST_OK, NAME_LIST_EMPTY, NAME_LIST_UNKNOWN };
+
+/* Column-list policy: retain repeats and trailing commas, reject an empty
+   argument even with a seeded prefix, and report the first rejected span. */
+static COLD b32 name_list_columns(
+    string_address text, const void address_to definitions, positive stride,
+    positive definition_count, p8 address_to selected,
+    positive address_to selected_count, p8 address_to unknown, positive room)
+{
+        if (room)
+                unknown[0] = 0;
+        if (!string_get(text))
+                return NAME_LIST_EMPTY;
+        name_list_error error;
+        if (name_list_select(text, definitions, stride, definition_count,
+                             selected, selected_count, definition_count, 0,
+                             address_of error))
+                return NAME_LIST_OK;
+        if (room)
+        {
+                positive kept = min(error.length, room - 1);
+                memory_copy_apart(unknown, (address_any)error.at, kept);
+                unknown[kept] = 0;
+        }
+        return NAME_LIST_UNKNOWN;
 }
 
 /* Regex, glob and tr share the [:name:] submachine.  A null limit means the
@@ -1517,6 +2121,100 @@ static string_address argument_value(argument_cursor address_to cursor,
                 return value;
         }
         return required && cursor->at < cursor->argc ? cursor->argv[cursor->at++] : null;
+}
+
+/* Long-name policy stays with each option family; the ordered conflict scan
+   only needs its decoded byte. This preserves the legacy scan's treatment
+   of detached short values and its independently chosen diagnostic point. */
+typedef p8 (*argument_lookup)(address_any definitions, positive count,
+                              string_address name, positive length);
+
+/*      Two options that cannot be given together, named in the order the
+        command line wrote them: `-r -R` is "--read-only and --recursive" and
+        `-R -r` the reverse.  The parsed flags say only that both were given,
+        so the pair and its order are read back off the arguments. */
+typedef struct
+{
+        p8 letter;
+        string_address name;
+} argument_exclusive_pair;
+
+static COLD b32 argument_exclusive_refuse(
+    writer diagnostic, string_address program, positive argc,
+    string_address address_to argv,
+    address_any longs, positive long_count, argument_lookup lookup,
+    string_address valued, const argument_exclusive_pair address_to group,
+    positive count)
+{
+        p8 seen[2] = {0, 0};
+        positive have = 0;
+        bool value_next = false;
+
+        for (positive at = 1; at < argc && have < 2; at++)
+        {
+                string_address word = argv[at];
+
+                if (value_next)
+                {
+                        value_next = false;
+                        continue;
+                }
+                if (!word || word[0] != '-' || !word[1])
+                        continue;
+
+                if (word[1] == '-')
+                {
+                        if (!word[2])
+                                break;
+
+                        string_address equals =
+                            string_first_of_or_end(word + 2, '=');
+                        p8 letter = lookup(longs, long_count, word + 2,
+                            (positive)(equals - (word + 2)));
+
+                        for (positive i = 0; i < count && letter; i++)
+                                if (letter == group[i].letter &&
+                                    (!have || seen[0] != letter))
+                                        seen[have++] = letter;
+                        continue;
+                }
+
+                for (positive i = 1; word[i] && have < 2; i++)
+                {
+                        for (positive g = 0; g < count; g++)
+                                if (word[i] == group[g].letter &&
+                                    (!have || seen[0] != word[i]))
+                                {
+                                        seen[have++] = word[i];
+                                        break;
+                                }
+
+                        if (valued && string_first_of(valued, word[i]))
+                        {
+                                value_next = !word[i + 1];
+                                break;
+                        }
+                }
+        }
+
+        if (have < 2)
+                return 0;
+
+        string_address one = null;
+        string_address two = null;
+
+        for (positive i = 0; i < count; i++)
+        {
+                if (group[i].letter == seen[0])
+                        one = group[i].name;
+                if (group[i].letter == seen[1])
+                        two = group[i].name;
+        }
+
+        string_format(diagnostic,
+                      "%s: options --%s and --%s cannot be combined\n",
+                      program, one, two);
+        return 1;
 }
 
 #endif

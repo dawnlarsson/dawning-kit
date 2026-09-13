@@ -12,24 +12,33 @@
 #ifndef STANDARD_MODERN_C_NET_WAIT
 #define STANDARD_MODERN_C_NET_WAIT
 
-/* DHCP and DNS need different-width transaction tags, but their entropy
-   policy is identical: nonblocking kernel randomness when early boot has it,
-   and the hardware counter when it does not.  The width is constant at every
-   caller, so this disappears into the packet builder without a generic
-   runtime path. */
+#define NETWORK_INTERRUPTED (-4)
+
+/* DHCP uses the same availability-oriented entropy policy as temporary-file
+   nonces: nonblocking kernel randomness, then the kernel's early-boot byte
+   stream, and finally a mixed timing/PID/ASLR fallback. The width guard stays
+   here because callers copy only the low bytes into their wire field. DNS,
+   whose 16-bit tag authenticates a remote reply, uses the strict helper
+   below instead. */
 static inline INLINE positive network_transaction(positive width)
 {
-        positive value = 0;
+        if (!width || width > sizeof(positive))
+                return 0;
 
-        if (system_call_3(syscall(getrandom), (positive)address_of value,
-                          width, 1) != width)
-        {
-                value = get_cpu_time();
-                if (width == sizeof(p16))
-                        value ^= value >> 17;
-        }
+        return system_nonce();
+}
 
-        return value;
+/* A DNS id is part of reply authentication, so its availability tradeoff is
+   stricter than DHCP's local-link tag and an exclusive temporary filename.
+   Refuse to send when the kernel CSPRNG is not ready rather than exposing a
+   timing/PID-derived 16-bit value. */
+static inline INLINE bool network_transaction_secure(address_any into,
+                                                      positive width)
+{
+        if (!into || !width || width > sizeof(positive))
+                return false;
+
+        return system_random_fill(into, width, 1) == 0;
 }
 
 /*
@@ -60,6 +69,36 @@ static bipolar network_wait_readable(bipolar handle, positive seconds,
         timespec limit = {seconds, nanoseconds};
 
         return descriptor_wait_readable(handle, address_of limit, null);
+}
+
+/*
+        A stream which has stopped making progress must eventually give its
+        caller back control.  This is installed once, before connect, and
+        Linux then applies the send timeout to connect and writes and the
+        receive timeout to reads, without every TLS and HTTP loop growing its
+        own timer state.
+
+        This is an idle timeout rather than a limit on the size or duration of
+        a transfer: every successful system call starts a fresh wait.  Large
+        downloads therefore remain possible, while a peer which accepts a
+        connection and says nothing cannot hold wget -- or its synchronous
+        bowl caller -- forever.
+*/
+static bool network_stream_timeout(bipolar handle, positive seconds,
+                                   positive microseconds)
+{
+        timeval limit;
+
+        if ((!seconds && !microseconds) || microseconds >= 1000000)
+                return false;
+
+        limit.tv_sec = (b64)seconds;
+        limit.tv_usec = (b64)microseconds;
+
+        return socket_option_set((b32)handle, SOL_SOCKET, SO_RCVTIMEO,
+                                 address_of limit, sizeof limit) >= 0 &&
+               socket_option_set((b32)handle, SOL_SOCKET, SO_SNDTIMEO,
+                                 address_of limit, sizeof limit) >= 0;
 }
 
 #endif

@@ -84,6 +84,16 @@ typedef struct
         p32 seconds;
 } dhcp_lease;
 
+/* A subnet mask is a run of one bits followed by a run of zero bits.  Zero is
+   retained as the existing "server omitted it" /24 policy; any other broken
+   shape would silently configure a different network from the one offered. */
+static CONST bool dhcp_mask_valid(p32 mask)
+{
+        p32 after = ~mask;
+
+        return !mask || !(after & (after + 1));
+}
+
 /* All destinations are actual p32 fields. Address comes from the fixed
    header; the remaining fields are options, some containing address lists. */
 static const struct { p8 option, offset; bool multiple; } dhcp_fields[] = {
@@ -240,7 +250,7 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                 at += 2 + length;
         }
 
-        if (!parsed_kind)
+        if (!parsed_kind || !dhcp_mask_valid(parsed.mask))
                 return -1;
 
         *lease = parsed;
@@ -273,6 +283,22 @@ static fn dhcp_lease_merge(dhcp_lease address_to lease,
                 if (value)
                         *(p32 *)((p8 *)lease + dhcp_fields[i].offset) = value;
         }
+}
+
+static bool dhcp_lease_usable(const dhcp_lease address_to lease)
+{
+        return lease->address && lease->server && lease->seconds &&
+               dhcp_mask_valid(lease->mask);
+}
+
+/* OFFER, ACK and NAK all carry a mandatory server identifier.  Once an
+   OFFER has been selected, only that server may complete or refuse the
+   exchange; xid and chaddr identify the client, not the selected server. */
+static bool dhcp_answer_matches(p8 kind, const dhcp_lease address_to answer,
+                                p32 selected_server)
+{
+        return (kind == DHCP_ACK || kind == DHCP_NAK) && selected_server &&
+               answer->server == selected_server;
 }
 
 static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
@@ -409,7 +435,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                                           0, 250000000))
                                 continue;
 
-                        if (kind != DHCP_OFFER)
+                        if (kind != DHCP_OFFER || !dhcp_lease_usable(lease))
                                 continue;
 
                         //      Take the offer, naming the server so that any
@@ -433,11 +459,16 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                                                   address_of kind, 0, 250000000))
                                         continue;
 
-                                if (kind == DHCP_ACK || kind == DHCP_NAK)
+                                if (dhcp_answer_matches(kind, address_of answer,
+                                                        lease->server))
                                 {
                                         if (kind == DHCP_ACK)
-                                                dhcp_lease_merge(lease,
-                                                                 address_of answer);
+                                        {
+                                            dhcp_lease_merge(lease,
+                                                             address_of answer);
+                                            if (!dhcp_lease_usable(lease))
+                                                    continue;
+                                        }
                                         socket_close((b32)handle);
                                         return kind == DHCP_ACK ? DHCP_OK : DHCP_REFUSED;
                                 }
@@ -485,7 +516,7 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         positive deadline;
         p8 kind = 0;
 
-        if (!lease->address || !lease->server)
+        if (!dhcp_lease_usable(lease))
                 return DHCP_NO_OFFER;
 
         transaction = (p32)network_transaction(sizeof transaction);
@@ -517,19 +548,24 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
                                   1, 0))
                         continue;
 
-                if (kind == DHCP_ACK && fresh.address == lease->address)
+                if (kind == DHCP_ACK && fresh.address == lease->address &&
+                    dhcp_answer_matches(kind, address_of fresh, lease->server))
                 {
                         //      Keep what the renewal said, including the new
                         //      lease time, but do not lose what it left out:
                         //      an ACK need not repeat every option.
                         dhcp_lease_merge(lease, address_of fresh);
 
+                        if (!dhcp_lease_usable(lease))
+                                continue;
+
                         socket_close((b32)handle);
 
                         return DHCP_OK;
                 }
 
-                if (kind == DHCP_NAK)
+                if (kind == DHCP_NAK &&
+                    dhcp_answer_matches(kind, address_of fresh, lease->server))
                 {
                         socket_close((b32)handle);
                         return DHCP_REFUSED;

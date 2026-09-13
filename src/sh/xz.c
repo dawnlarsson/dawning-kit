@@ -28,7 +28,6 @@
 #define XZ_FULL_DIST 128
 #define XZ_HASH_BITS 16
 #define XZ_HASH_SIZE (1u << XZ_HASH_BITS)
-#define XZ_ENC_WIN 32768
 #define XZ_ENC_DICT (1024 * 1024)
 #define XZ_PENDING 65536
 
@@ -37,22 +36,14 @@
 #define XZ_CHECK_CRC64 4
 
 static p8 xz_in_buf[XZ_IN];
-static positive xz_in_at;
-static positive xz_in_have;
-static bool xz_in_eof;
-static bipolar xz_in_fd;
-static p8 address_to xz_in_mem;
-static positive xz_in_mem_len;
-static positive xz_in_mem_at;
+static byte_input xz_input = {.buf = xz_in_buf, .room = XZ_IN};
 
 static p8 xz_out_buf[XZ_OUT + XZ_MATCH_MAX];
 static positive xz_out_fill;
 static positive xz_out_taken;
 static positive xz_out_hashed;
 static bipolar xz_out_fd;
-static p8 address_to xz_out_mem;
-static positive xz_out_cap;
-static positive xz_out_used;
+static byte_store xz_output;
 static bool xz_out_failed;
 static string_address xz_why;
 static b32 xz_status;
@@ -60,7 +51,6 @@ static b32 xz_status;
 static bool xz_pull;
 static bool xz_paused;
 static bool xz_finished;
-static bool xz_stream_open;
 static bool xz_hdr_done;
 static bool xz_block_live;
 static p8 xz_lz2_kind;
@@ -69,9 +59,7 @@ static p64 xz_lz2_want;
 static p64 xz_lz2_pack_from;
 static p64 xz_lz2_pack_want;
 static p64 xz_lz2_chunk_from;
-static bool xz_lz2_have;
 static positive xz_lz2_match_left;
-static positive xz_lz2_match_dist;
 static p64 xz_in_abs;
 static p64 xz_block_body_abs;
 static positive xz_block_hdr_size;
@@ -160,17 +148,6 @@ static p64 xz_crc64;
 static p32 xz_head[XZ_HASH_SIZE];
 static p32 xz_prev[XZ_ENC_DICT];
 static positive xz_match_abs;
-static p8 xz_hold[XZ_ENC_WIN + XZ_MATCH_MAX];
-static positive xz_hold_fill;
-static positive xz_hold_at;
-static positive xz_hold_abs;
-static bool xz_hold_eof;
-static p8 address_to xz_feed;
-static positive xz_feed_len;
-static positive xz_feed_at;
-static p8 address_to xz_enc_mem;
-static positive xz_enc_mem_len;
-static positive xz_enc_mem_at;
 static p8 xz_level;
 static p8 xz_pending_storage[2 * XZ_ENC_DICT + XZ_PENDING];
 static positive xz_pending_position;
@@ -185,8 +162,6 @@ static p64 xz_block_unpacked;
 static p64 xz_index_unpadded[32];
 static p64 xz_index_unpacked[32];
 static positive xz_index_n;
-static p8 xz_index_buf[512];
-static positive xz_index_fill;
 
 static p32 xz_crc32_byte(p32 crc, p8 byte)
 {
@@ -198,65 +173,26 @@ static p32 xz_crc32_bytes(p32 crc, p8 address_to bytes, positive n)
         return hash_crc32(crc, bytes, n);
 }
 
-
 static bool xz_fail(string_address why)
 {
         xz_why = why;
         return false;
 }
 
-static bool xz_in_need(positive want)
+static bool xz_in_need(void)
 {
-        bipolar got;
-
-        if (xz_in_have - xz_in_at >= want)
-                return true;
-        if (xz_in_eof)
-                return xz_in_have > xz_in_at;
-        if (xz_in_at)
-        {
-                if (xz_in_at < xz_in_have)
-                        memory_copy_apart(xz_in_buf, xz_in_buf + xz_in_at,
-                                          xz_in_have - xz_in_at);
-                xz_in_have -= xz_in_at;
-                xz_in_at = 0;
-        }
-        if (xz_in_mem)
-        {
-                positive left = xz_in_mem_len - xz_in_mem_at;
-                positive take = left > (XZ_IN - xz_in_have) ? (XZ_IN - xz_in_have)
-                                                           : left;
-
-                if (take)
-                {
-                        memory_copy(xz_in_buf + xz_in_have,
-                                    xz_in_mem + xz_in_mem_at, take);
-                        xz_in_have += take;
-                        xz_in_mem_at += take;
-                }
-                if (xz_in_mem_at >= xz_in_mem_len)
-                        xz_in_eof = true;
-                return xz_in_have > xz_in_at;
-        }
-        got = system_read_retry((positive)xz_in_fd, xz_in_buf + xz_in_have,
-                                XZ_IN - xz_in_have);
-        if (got < 0)
-                return xz_fail("xz read failed");
-        if (!got)
-                xz_in_eof = true;
-        else
-                xz_in_have += (positive)got;
-        return xz_in_have > xz_in_at;
+        bipolar got = byte_input_need(address_of xz_input, 1);
+        return got < 0 ? xz_fail("xz read failed") : got != 0;
 }
 
 static bipolar xz_in_byte(void)
 {
-        if (xz_in_at >= xz_in_have && !xz_in_need(1))
+        if (xz_input.at >= xz_input.have && !xz_in_need())
                 return -1;
-        if (xz_in_at >= xz_in_have)
+        if (xz_input.at >= xz_input.have)
                 return -1;
         xz_in_abs++;
-        return xz_in_buf[xz_in_at++];
+        return xz_in_buf[xz_input.at++];
 }
 
 /* Hash completed output spans once, before a drain or block check. A
@@ -281,26 +217,18 @@ static bool xz_out_flush(void)
         if (!xz_out_fill)
                 return true;
         xz_output_check();
-        if (xz_out_mem)
+        if (xz_output.bytes)
         {
-                if (xz_out_used > xz_out_cap ||
-                    xz_out_fill > xz_out_cap - xz_out_used)
+                if (!byte_store_append_exact(address_of xz_output,
+                                              xz_out_buf, xz_out_fill))
                 {
                         xz_out_failed = true;
                         return xz_fail("xz output is too small");
                 }
-                memory_copy(xz_out_mem + xz_out_used, xz_out_buf, xz_out_fill);
-                xz_out_used += xz_out_fill;
-                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-                return true;
         }
-        if (xz_out_fd < 0)
-        {
-                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-                return true;
-        }
-        if (system_write_all((positive)xz_out_fd, xz_out_buf, xz_out_fill) !=
-            xz_out_fill)
+        else if (xz_out_fd >= 0 &&
+                 system_write_all((positive)xz_out_fd, xz_out_buf,
+                                  xz_out_fill) != xz_out_fill)
         {
                 xz_out_failed = true;
                 return xz_fail("xz write failed");
@@ -514,13 +442,13 @@ typedef struct
 
 static bipolar xz_rc_tree_fast(p16 address_to probs, positive mode)
 {
-        xz_range_input state = {xz_range, xz_code, xz_in_buf + xz_in_at,
-                               xz_in_buf + xz_in_have};
+        xz_range_input state = {xz_range, xz_code, xz_in_buf + xz_input.at,
+                               xz_in_buf + xz_input.have};
         p8 address_to start = state.next;
         bipolar result = lzma_range_decode(address_of state, probs, mode);
         xz_range = state.range;
         xz_code = state.code;
-        xz_in_at += (positive)(state.next - start);
+        xz_input.at += (positive)(state.next - start);
         xz_in_abs += (positive)(state.next - start);
         return result;
 }
@@ -529,7 +457,7 @@ static bipolar xz_rc_bittree(p16 address_to probs, p8 bits)
 {
         if (!bits)
                 return 0;
-        if (xz_in_have - xz_in_at >= 24)
+        if (xz_input.have - xz_input.at >= 24)
                 return xz_rc_tree_fast(probs, bits);
         positive sym = 1;
         p8 n;
@@ -549,7 +477,7 @@ static bipolar xz_rc_bittree_rev(p16 address_to probs, p8 bits)
 {
         if (!bits)
                 return 0;
-        if (xz_in_have - xz_in_at >= 24)
+        if (xz_input.have - xz_input.at >= 24)
                 return xz_rc_tree_fast(probs, 0x100 | bits);
         positive sym = 0;
         p8 n;
@@ -628,7 +556,7 @@ static bool xz_literal(positive pos_state)
         lit_pos = (p8)(xz_unpacked & ((((positive)1 << xz_lp) - 1)));
         probs = xz_lit +
                 (((((positive)lit_pos << xz_lc) + (prev >> (8 - xz_lc))) * 0x300));
-        if (xz_in_have - xz_in_at >= 24)
+        if (xz_input.have - xz_input.at >= 24)
         {
                 positive mode = 8;
                 if (xz_state >= 7)
@@ -856,9 +784,9 @@ static bool xz_lzma2_raw(void)
                         xz_paused = true;
                         return true;
                 }
-                if (xz_in_at == xz_in_have && !xz_in_need(1))
+                if (xz_input.at == xz_input.have && !xz_in_need())
                         return xz_fail("xz truncated uncompressed");
-                positive take = xz_in_have - xz_in_at;
+                positive take = xz_input.have - xz_input.at;
                 if (take > xz_lz2_raw_left)
                         take = xz_lz2_raw_left;
                 if (take > XZ_OUT - xz_out_fill)
@@ -867,7 +795,7 @@ static bool xz_lzma2_raw(void)
                         take = xz_dict_size - xz_dict_pos;
                 if (!take)
                         return xz_fail("xz truncated uncompressed");
-                p8 address_to bytes = xz_in_buf + xz_in_at;
+                p8 address_to bytes = xz_in_buf + xz_input.at;
                 memory_copy_apart(xz_out_buf + xz_out_fill, bytes, take);
                 memory_copy_apart(xz_dict + xz_dict_pos, bytes, take);
                 xz_dict_pos += take;
@@ -877,7 +805,7 @@ static bool xz_lzma2_raw(void)
                 if (xz_dict_full > xz_dict_size)
                         xz_dict_full = xz_dict_size;
                 xz_out_fill += take;
-                xz_in_at += take;
+                xz_input.at += take;
                 xz_in_abs += take;
                 xz_unpacked += take;
                 xz_lz2_raw_left -= take;
@@ -886,7 +814,6 @@ static bool xz_lzma2_raw(void)
         }
 
         xz_lz2_kind = 0;
-        xz_lz2_have = false;
         return true;
 }
 
@@ -910,7 +837,7 @@ typedef struct
 
 static bool xz_decode_fast(void)
 {
-        positive have = xz_in_have - xz_in_at;
+        positive have = xz_input.have - xz_input.at;
         p64 packed = xz_in_abs - xz_lz2_pack_from;
         if (packed >= xz_lz2_pack_want)
                 return true;
@@ -921,18 +848,18 @@ static bool xz_decode_fast(void)
                 room = xz_dict_size - xz_dict_pos;
         if (have < 64 || room < XZ_MATCH_MAX)
                 return true;
-        xz_decode_job job = {xz_range, xz_code, xz_in_buf + xz_in_at,
-                xz_in_buf + xz_in_at + have, address_of xz_models, xz_dict,
+        xz_decode_job job = {xz_range, xz_code, xz_in_buf + xz_input.at,
+                xz_in_buf + xz_input.at + have, address_of xz_models, xz_dict,
                 xz_dict_size, xz_dict_pos, xz_dict_full, xz_unpacked,
                 xz_lz2_chunk_from + xz_lz2_want, room,
                 xz_state, xz_lc, xz_lp, xz_pb,
                 {xz_rep[0], xz_rep[1], xz_rep[2], xz_rep[3]}, 0};
         lzma_decode_span(address_of job);
         positive produced = job.pos - xz_dict_pos;
-        positive consumed = (positive)(job.next - (xz_in_buf + xz_in_at));
+        positive consumed = (positive)(job.next - (xz_in_buf + xz_input.at));
         xz_range = job.range;
         xz_code = job.code;
-        xz_in_at += consumed;
+        xz_input.at += consumed;
         xz_in_abs += consumed;
         xz_state = (p8)job.state;
         for (positive i = 0; i < 4; i++) xz_rep[i] = job.rep[i];
@@ -1075,7 +1002,6 @@ static bool xz_lzma2(void)
                         }
                         if (!xz_rc_init())
                                 return false;
-                        xz_lz2_have = true;
                 }
 
                 xz_lz2_chunk_from = xz_unpacked;
@@ -1088,7 +1014,6 @@ static bool xz_lzma2(void)
                         return false;
         }
 }
-
 
 static bool xz_pad4(positive n)
 {
@@ -1167,7 +1092,7 @@ static bool xz_block(void)
                         return xz_fail("xz truncated block");
                 if (!hdr0)
                 {
-                        xz_in_at--;
+                        xz_input.at--;
                         xz_in_abs--;
                         return false;
                 }
@@ -1225,7 +1150,6 @@ static bool xz_block(void)
                 xz_crc64 = 0xffffffffffffffffull;
                 xz_probs_reset();
                 xz_lz2_kind = 0;
-                xz_lz2_have = false;
                 xz_lz2_match_left = 0;
                 xz_block_live = true;
         }
@@ -1420,13 +1344,13 @@ static bool xz_stream(void)
                                 return true;
                         continue;
                 }
-                if (!xz_in_need(1))
+                if (!xz_in_need())
                         return xz_fail("xz truncated stream");
-                if (xz_in_at < xz_in_have && xz_in_buf[xz_in_at] == 0)
+                if (xz_input.at < xz_input.have && xz_in_buf[xz_input.at] == 0)
                         break;
                 if (!xz_block())
                 {
-                        if (xz_in_at < xz_in_have && xz_in_buf[xz_in_at] == 0)
+                        if (xz_input.at < xz_input.have && xz_in_buf[xz_input.at] == 0)
                                 break;
                         return false;
                 }
@@ -1447,9 +1371,9 @@ static bool xz_stream_decode(void)
 
         xz_why = null;
         xz_out_failed = false;
-        xz_in_at = 0;
-        xz_in_have = 0;
-        xz_in_eof = false;
+        xz_input.at = 0;
+        xz_input.have = 0;
+        xz_input.eof = false;
         xz_out_fill = xz_out_taken = xz_out_hashed = 0;
         xz_pull = false;
         xz_paused = false;
@@ -1463,9 +1387,9 @@ static bool xz_stream_decode(void)
 
         for (;;)
         {
-                if (!xz_in_need(1))
+                if (!xz_in_need())
                         break;
-                if (xz_in_at >= xz_in_have)
+                if (xz_input.at >= xz_input.have)
                         break;
                 if (!xz_stream())
                         return false;
@@ -1482,18 +1406,18 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
 {
         bool ok;
 
-        xz_in_fd = -1;
-        xz_in_mem = src;
-        xz_in_mem_len = src_len;
-        xz_in_mem_at = 0;
+        xz_input.fd = -1;
+        xz_input.mem = src;
+        xz_input.mem_len = src_len;
+        xz_input.mem_at = 0;
         xz_out_fd = -1;
-        xz_out_mem = dst;
-        xz_out_cap = dst_cap;
-        xz_out_used = 0;
+        xz_output.bytes = dst;
+        xz_output.room = dst_cap;
+        xz_output.used = 0;
         ok = xz_stream_decode();
-        xz_in_mem = null;
-        xz_out_mem = null;
-        return ok ? (bipolar)xz_out_used : -1;
+        xz_input.mem = null;
+        xz_output.bytes = null;
+        return ok ? (bipolar)xz_output.used : -1;
 }
 
 static bool xz_put(p8 byte)
@@ -1523,7 +1447,6 @@ static bool xz_put64(p64 v)
                         return false;
         return true;
 }
-
 
 static p8 xz_prop_from_dict(positive dict)
 {
@@ -2136,115 +2059,6 @@ static bool xz_flush_pending(bool last)
         return !xz_out_failed;
 }
 
-static bool xz_enc_pull(void)
-{
-        bipolar got;
-        positive room;
-
-        if (xz_hold_eof)
-                return true;
-        /* This is an input staging slab. The LZMA matcher owns its history
-           in pending/dict; retaining bytes here only recopies dead input. */
-        if (xz_hold_at)
-        {
-                positive drop = xz_hold_at;
-
-                memory_copy_apart(xz_hold, xz_hold + drop, xz_hold_fill - drop);
-                xz_hold_fill -= drop;
-                xz_hold_at -= drop;
-                xz_hold_abs += drop;
-        }
-        room = sizeof(xz_hold) - xz_hold_fill;
-        if (!room)
-                return true;
-        if (xz_feed)
-        {
-                positive left = xz_feed_len - xz_feed_at;
-                positive take = left > room ? room : left;
-
-                if (take)
-                {
-                        memory_copy(xz_hold + xz_hold_fill, xz_feed + xz_feed_at,
-                                    take);
-                        xz_hold_fill += take;
-                        xz_feed_at += take;
-                }
-                if (xz_feed_at >= xz_feed_len)
-                        xz_feed = null;
-                return true;
-        }
-        if (xz_enc_mem)
-        {
-                positive left = xz_enc_mem_len - xz_enc_mem_at;
-                positive take = left > room ? room : left;
-
-                if (take)
-                {
-                        memory_copy(xz_hold + xz_hold_fill,
-                                    xz_enc_mem + xz_enc_mem_at, take);
-                        xz_hold_fill += take;
-                        xz_enc_mem_at += take;
-                }
-                if (xz_enc_mem_at >= xz_enc_mem_len)
-                        xz_hold_eof = true;
-                return true;
-        }
-        if (xz_in_fd < 0)
-                return true;
-        got = system_read_retry((positive)xz_in_fd, xz_hold + xz_hold_fill, room);
-        if (got < 0)
-                return xz_fail("xz read failed");
-        if (!got)
-                xz_hold_eof = true;
-        else
-                xz_hold_fill += (positive)got;
-        return true;
-}
-
-static bool xz_encode_body(bool finish)
-{
-        for (;;)
-        {
-                positive have;
-                positive room;
-                positive take;
-
-                if (xz_hold_fill - xz_hold_at < 1 && !xz_hold_eof)
-                {
-                        if (!xz_enc_pull())
-                                return false;
-                        if (xz_hold_at >= xz_hold_fill)
-                        {
-                                if (xz_hold_eof)
-                                        break;
-                                if (!finish)
-                                        return true;
-                                continue;
-                        }
-                }
-                if (xz_hold_at >= xz_hold_fill)
-                        break;
-                if (xz_pending_n == XZ_PENDING &&
-                    !xz_flush_pending(false))
-                        return false;
-                have = xz_hold_fill - xz_hold_at;
-                room = XZ_PENDING - xz_pending_n;
-                take = have < room ? have : room;
-                memory_copy(xz_pending + xz_pending_n, xz_hold + xz_hold_at,
-                            take);
-                xz_pending_n += take;
-                xz_hold_at += take;
-                if (xz_pending_n == XZ_PENDING &&
-                    !xz_flush_pending(false))
-                        return false;
-                if (!finish && xz_hold_at >= xz_hold_fill && !xz_hold_eof)
-                        return true;
-        }
-        if (finish)
-                return xz_flush_pending(true);
-        return true;
-}
-
 static bool xz_encode_setup(p8 level)
 {
         xz_encoding = true;
@@ -2252,11 +2066,6 @@ static bool xz_encode_setup(p8 level)
         xz_out_failed = false;
         xz_level = level ? level : 6;
         xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-        xz_hold_fill = 0;
-        xz_hold_at = 0;
-        xz_hold_abs = 0;
-        xz_hold_eof = false;
-        xz_feed = null;
         xz_pending_n = 0;
         xz_need_reset = true;
         xz_enc_have_lzma = false;
@@ -2275,24 +2084,44 @@ static bool xz_encode_setup(p8 level)
         return xz_write_header(XZ_CHECK_CRC32);
 }
 
+/* LZMA owns the history in pending_storage. Feed its chunk directly;
+   the former hold/feed stage only copied these same bytes a second time. */
+static bool xz_encode_write(p8 address_to src, positive n)
+{
+        while (n)
+        {
+                positive take = min(n, XZ_PENDING - xz_pending_n);
+                memory_copy(xz_pending + xz_pending_n, src, take);
+                xz_pending_n += take;
+                src += take;
+                n -= take;
+                if (xz_pending_n == XZ_PENDING && !xz_flush_pending(false))
+                        return false;
+        }
+        return xz_out_flush();
+}
+
+static bool xz_encode_end(void)
+{
+        return xz_flush_pending(true) && xz_write_index_footer();
+}
+
 static bool xz_stream_encode(p8 level)
 {
         if (!xz_encode_setup(level))
                 return false;
         for (;;)
         {
-                if (!xz_enc_pull())
-                        return false;
-                if (xz_hold_eof && xz_hold_at >= xz_hold_fill)
-                        break;
-                if (xz_hold_at >= xz_hold_fill)
-                        continue;
-                if (!xz_encode_body(false))
+                bipolar got = system_read_retry((positive)xz_input.fd,
+                    xz_pending + xz_pending_n, XZ_PENDING - xz_pending_n);
+                if (got < 0)
+                        return xz_fail("xz read failed");
+                if (!got)
+                        return xz_encode_end();
+                xz_pending_n += (positive)got;
+                if (xz_pending_n == XZ_PENDING && !xz_flush_pending(false))
                         return false;
         }
-        if (!xz_encode_body(true))
-                return false;
-        return xz_write_index_footer();
 }
 
 static bipolar xz_deflate_mem(p8 address_to src, positive src_len,
@@ -2300,29 +2129,26 @@ static bipolar xz_deflate_mem(p8 address_to src, positive src_len,
 {
         bool ok;
 
-        xz_in_fd = -1;
-        xz_enc_mem = src;
-        xz_enc_mem_len = src_len;
-        xz_enc_mem_at = 0;
+        xz_input.fd = -1;
         xz_out_fd = -1;
-        xz_out_mem = dst;
-        xz_out_cap = dst_cap;
-        xz_out_used = 0;
-        ok = xz_stream_encode(level);
-        xz_enc_mem = null;
-        xz_out_mem = null;
-        return ok ? (bipolar)xz_out_used : -1;
+        xz_output.bytes = dst;
+        xz_output.room = dst_cap;
+        xz_output.used = 0;
+        ok = xz_encode_setup(level) && xz_encode_write(src, src_len) &&
+             xz_encode_end();
+        xz_output.bytes = null;
+        return ok ? (bipolar)xz_output.used : -1;
 }
 
 static fn xz_in_from_fd(bipolar in)
 {
-        xz_in_fd = in;
-        xz_in_mem = null;
-        xz_in_mem_len = 0;
-        xz_in_mem_at = 0;
-        xz_in_at = 0;
-        xz_in_have = 0;
-        xz_in_eof = false;
+        xz_input.fd = in;
+        xz_input.mem = null;
+        xz_input.mem_len = 0;
+        xz_input.mem_at = 0;
+        xz_input.at = 0;
+        xz_input.have = 0;
+        xz_input.eof = false;
 }
 
 static bool xz_decode_begin(bipolar in)
@@ -2332,16 +2158,14 @@ static bool xz_decode_begin(bipolar in)
         xz_out_failed = false;
         xz_in_from_fd(in);
         xz_out_fd = -1;
-        xz_out_mem = null;
+        xz_output.bytes = null;
         xz_out_fill = xz_out_taken = xz_out_hashed = 0;
         xz_pull = true;
         xz_paused = false;
         xz_finished = false;
-        xz_stream_open = false;
         xz_hdr_done = false;
         xz_block_live = false;
         xz_lz2_kind = 0;
-        xz_lz2_have = false;
         xz_lz2_match_left = 0;
         xz_in_abs = 0;
         xz_unpacked = 0;
@@ -2354,8 +2178,8 @@ static bool xz_decode_begin_prefix(bipolar in, p8 address_to prefix, positive n)
         if (n > XZ_IN)
                 return xz_fail("xz prefix");
         memory_copy(xz_in_buf, prefix, n);
-        xz_in_have = n;
-        xz_in_at = 0;
+        xz_input.have = n;
+        xz_input.at = 0;
         return true;
 }
 
@@ -2381,7 +2205,7 @@ static bipolar xz_decode_read(p8 address_to dst, positive n)
                 }
                 if (xz_finished)
                         break;
-                if (!xz_in_need(1) && !xz_hdr_done && !xz_block_live)
+                if (!xz_in_need() && !xz_hdr_done && !xz_block_live)
                 {
                         xz_finished = true;
                         break;
@@ -2392,7 +2216,7 @@ static bipolar xz_decode_read(p8 address_to dst, positive n)
                 if (xz_paused)
                         continue;
                 if (!xz_out_fill && !xz_hdr_done && !xz_block_live &&
-                    !xz_in_need(1))
+                    !xz_in_need())
                         xz_finished = true;
         }
         return (bipolar)copied;
@@ -2409,38 +2233,9 @@ static bool xz_decode_end(void)
 static bool xz_encode_begin(bipolar out, p8 level)
 {
         xz_out_fd = out;
-        xz_out_mem = null;
-        xz_in_fd = -1;
-        xz_enc_mem = null;
-        xz_feed = null;
+        xz_output.bytes = null;
+        xz_input.fd = -1;
         return xz_encode_setup(level);
-}
-
-static bool xz_encode_write(p8 address_to src, positive n)
-{
-        xz_feed = src;
-        xz_feed_len = n;
-        xz_feed_at = 0;
-        xz_hold_eof = false;
-        while (xz_feed)
-        {
-                if (!xz_enc_pull())
-                        return false;
-                if (!xz_encode_body(false))
-                        return false;
-                if (xz_feed && xz_feed_at >= xz_feed_len)
-                        xz_feed = null;
-        }
-        return xz_out_flush();
-}
-
-static bool xz_encode_end(void)
-{
-        xz_feed = null;
-        xz_hold_eof = true;
-        if (!xz_encode_body(true))
-                return false;
-        return xz_write_index_footer();
 }
 
 #ifndef XZ_CORE_ONLY
@@ -2449,12 +2244,10 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
 {
         bool ok;
 
-        xz_in_fd = in;
-        xz_in_mem = null;
+        xz_input.fd = in;
+        xz_input.mem = null;
         xz_out_fd = out;
-        xz_out_mem = null;
-        xz_enc_mem = null;
-        xz_feed = null;
+        xz_output.bytes = null;
         xz_status = 0;
         if (decode)
                 ok = xz_stream_decode();
@@ -2470,7 +2263,6 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
         }
         return 0;
 }
-
 
 static const file_codec_suffix xz_suffixes[] = {
     {".xz", ""}, {".txz", ".tar"}};

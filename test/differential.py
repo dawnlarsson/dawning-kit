@@ -9526,10 +9526,29 @@ shell_PROBE_RESTRICTED = (
     'printf x | /bin/cat >/dev/null 2>&1; echo "pipeline-last=$?"\n'
     'command -p true >/dev/null 2>&1; echo "cmdp=$?"\n'
     'hash -p /bin/true mw_h >/dev/null 2>&1; echo "hashp=$?"\n'
-    'PATH=/tmp; echo "path=$?:$PATH"\n'
-    'SHELL=/bin/sh; echo "shell=$?:$SHELL"\n'
+    'restricted_path=$PATH; restricted_shell=$SHELL; restricted_history_set=${HISTFILE+x}; restricted_history=${HISTFILE-}\n'
+    '(PATH=/tmp); shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; printf "path-kept=%s\\n" "$?"\n'
+    '(SHELL=/bin/sh); shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$SHELL" = "$restricted_shell" ]; printf "shell-kept=%s\\n" "$?"\n'
+    '(declare -n shell_ref=PATH; shell_ref=/tmp); echo "nameref-path=$?"\n'
+    '(declare -n shell_ref=PATH; shell_ref+=:/tmp); echo "nameref-append=$?"\n'
+    '(declare -n shell_ref=PATH; printf -v shell_ref %s /tmp); echo "nameref-printf=$?"\n'
+    '(declare -n shell_ref=PATH; shell_ref[0]=/tmp); echo "nameref-array=$?"\n'
+    '(declare -n shell_ref=PATH; unset shell_ref); echo "nameref-unset=$?"\n'
+    'declare -n shell_reference_only=PATH; shell_reference_status=$?; [ "$shell_reference_only" = "$restricted_path" ]; echo "nameref-declare=$shell_reference_status:$?"\n'
+    'declare -n PATH=shell_path_target; shell_declare_status=$?; [ "$PATH" = "$restricted_path" ]; echo "declare-path-kept=$shell_declare_status:$?"\n'
+    'declare -n PATH; shell_declare_status=$?; [ "$shell_declare_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; echo "declare-n-path-kept=$?"\n'
+    'printf -v PATH %s /tmp; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; echo "printf-path-kept=$?"\n'
+    'shell_indirect=PATH; printf -v "$shell_indirect" %s /tmp; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; echo "indirect-path-kept=$?"\n'
+    'read PATH <<< /tmp; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; echo "read-path-kept=$?"\n'
+    'OPTIND=1; getopts a PATH -a; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; echo "getopts-path-kept=$?"\n'
+    'read -a PATH <<< "one two"; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; echo "read-array-path-kept=$?"\n'
+    'mapfile PATH <<< changed; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "$PATH" = "$restricted_path" ]; echo "mapfile-path-kept=$?"\n'
+    'printf -v HISTFILE %s /tmp/history; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "${HISTFILE+x}" = "$restricted_history_set" ] && [ "${HISTFILE-}" = "$restricted_history" ]; echo "histfile-kept=$?"\n'
+    'declare -n shell_history_ref=HISTFILE; printf -v shell_history_ref %s /tmp/alias-history; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ "${HISTFILE+x}" = "$restricted_history_set" ] && [ "${HISTFILE-}" = "$restricted_history" ]; echo "histfile-reference-kept=$?"\n'
+    'shell_history_path=$PWD/mw_restricted_history; history -w "$shell_history_path"; shell_write_status=$?; [ "$shell_write_status" -ne 0 ] && [ ! -e "$shell_history_path" ]; echo "history-path-kept=$?"\n'
     'set +r 2>/dev/null; echo "setr=$?"; printf "flags:<%s>\\n" "$-"\n'
-    'shopt -q restricted_shell 2>/dev/null; echo "rshopt=$?"'
+    'shopt -q restricted_shell 2>/dev/null; echo "rshopt=$?"\n'
+    'enable -n echo; shell_disable_status=$?; enable echo; shell_enable_status=$?; shell_disabled=$(enable -n -p); shell_still_disabled=1; case "$shell_disabled" in *"enable -n echo"*) shell_still_disabled=0;; esac; [ "$shell_disable_status" -eq 0 ] && [ "$shell_enable_status" -ne 0 ] && [ "$shell_still_disabled" -eq 0 ]; printf "enable-kept=%s\\n" "$?"'
 )
 
 shell_PROBES = (shell_PROBE_FLAGS, shell_PROBE_ERREXIT, shell_PROBE_NOUNSET, shell_PROBE_CLOBBER,
@@ -9785,6 +9804,27 @@ shell_RESTRICTED = Utility(
 )
 
 
+# A close-on-exec pipe end may land directly on descriptor zero when the
+# invoking shell inherited stdin closed.  Cover both the parent-run lastpipe
+# stage and a forked middle stage which later execs an external reader.
+shell_PIPE_FD_COLLISIONS = Utility(
+    "pipeline_fd_collisions",
+    operands=(
+        ("-c", "exec 0<&-; set +m; shopt -s lastpipe; "
+               "printf 'lastpipe\\n' | { /bin/cat; }; "
+               "printf 'status:%s\\n' \"$?\""),
+        ("-c", "exec 0<&-; printf 'middle\\n' | { /bin/cat; } | /bin/cat; "
+               "printf 'status:%s\\n' \"$?\""),
+    ),
+    stdin=("empty",),
+    fixture="shell",
+    modes=shell_BASH,
+    script=shell_startup_script,
+    max_flags=0,
+    timeout=8.0,
+)
+
+
 # ----------------------------------------------------------------------------
 #       Environment: the exact envp the shell is started with, built by hand
 #       through execve so duplicates, invalid names and empty entries reach
@@ -9862,6 +9902,51 @@ shell_ENVIRONMENT = Utility(
     max_flags=6,
     timeout=8.0,
 )
+
+
+def shell_restricted_function_import(farm):
+    """Restricted startup ignores exported functions and option policy."""
+    target = Path(farm) / "cat"
+    if not target.exists():
+        return 0, 1, ["restricted function import needs a candidate image"]
+
+    with tempfile.TemporaryDirectory(prefix="restricted-function-") as work:
+        shell = Path(work) / "bash"
+        shell.symlink_to(target.resolve())
+        environment = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": work,
+            "LC_ALL": "C",
+            "SHELLOPTS": "xtrace:noglob",
+            "BASHOPTS": "nullglob",
+            "BASH_FUNC_shell_poison%%": "() { printf 'poison\\n'; }",
+        }
+        probe = ("if declare -F shell_poison; then printf 'imported\\n'; "
+                 "else printf 'ignored\\n'; fi; "
+                 "case $- in *f*|*x*) printf 'options-imported\\n';; "
+                 "*) if shopt -q nullglob; then printf 'options-imported\\n'; "
+                 "else printf 'options-ignored\\n'; fi;; esac")
+        invocations = (("-r", "-c", probe), ("-c", probe, "rbash"))
+        passed = 0
+        notes = []
+
+        for invocation in invocations:
+            ran = subprocess.run(
+                [str(shell), *invocation], text=True, capture_output=True,
+                env=environment)
+            good = (ran.returncode == 0 and
+                    ran.stdout == "ignored\noptions-ignored\n")
+            passed += int(good)
+            if not good:
+                notes.append(
+                    "restricted startup imported a function or option policy "
+                    f"for {invocation[:2]!r} (status={ran.returncode}, "
+                    f"stdout={ran.stdout!r}, stderr={ran.stderr!r})")
+
+        return passed, len(invocations), notes
+
+
+SHELL_CHECKS = (shell_restricted_function_import,)
 
 
 # ----------------------------------------------------------------------------
@@ -12833,6 +12918,7 @@ SHELL_UTILITIES = (
     shell_NAMES_BASH,
     shell_NAMES_POSIX,
     shell_RESTRICTED,
+    shell_PIPE_FD_COLLISIONS,
     shell_ENVIRONMENT,
     shell_PRIVILEGED,
     shell_TERMINAL_JOBS,
@@ -15395,10 +15481,10 @@ typedef void fn;
 #define positive_max UINT64_MAX
 #define UL_CPU_WORDS 1024
 #define FILE_PATH_MAX 4096
-#define TEXT_ARENA_BYTES (192u << 20)
+#define UTILITY_ARENA_BYTES (192u << 20)
 #define X64 1
 #define X86 0
-#define TEXT_ARENA_GROW
+#define COLD
 #define memory_copy_apart memcpy
 #define memory_growth(room,wanted,first) ((wanted) > (room)*2 ? ((wanted) > (first) ? (wanted) : (first)) : (room)*2)
 #define memory_fill memset
@@ -15416,9 +15502,8 @@ typedef void fn;
 #define array_count(a) (sizeof(a)/sizeof((a)[0]))
 typedef void (*writer)(address_any,positive);
 typedef struct { p8 system[65],node[65],release[65],version[65],machine[65],domain[65]; } file_machine;
-static p8 fixture_arena[TEXT_ARENA_BYTES];
-static p8 *text_arena;
-static positive text_arena_used;
+static p8 fixture_arena[UTILITY_ARENA_BYTES];
+
 static bool ul_lscpu_failed;
 static positive fixture_errors;
 static void text_error(void *unused, const char *message) { (void)unused; (void)message; fixture_errors++; }
@@ -15451,12 +15536,12 @@ static bipolar ul_slurp_word(p8 *path,p8 *value,positive size) { (void)path;(voi
 
 UL_LSCPU_FIXTURE_MAIN = r'''
 static void run_case(positive n,bool duplicate,bool negative,bool json,bool exhaust) {
-  text_arena=fixture_arena; text_arena_used=0; ul_lscpu_failed=false;
+  utility_arena.bytes=fixture_arena; utility_arena.used=0; ul_lscpu_failed=false;
   captured_count=0; captured_items=NULL; fixture_errors=0;
   memset(&ul_lscpu,0,sizeof ul_lscpu);
   memset(ul_lscpu_present,0,sizeof ul_lscpu_present);
   memset(ul_lscpu_online,0,sizeof ul_lscpu_online);
-  ul_lscpu.cpus=text_arena_take(n*sizeof(*ul_lscpu.cpus));
+  ul_lscpu.cpus=utility_arena_take(n*sizeof(*ul_lscpu.cpus));
   ul_lscpu.cpu_count=ul_lscpu.present_count=ul_lscpu.online_count=ul_lscpu.core_count=n;
   ul_lscpu.node_count=duplicate?1:n;
   memcpy(ul_lscpu.machine.machine,"fixture64",10);
@@ -15466,7 +15551,7 @@ static void run_case(positive n,bool duplicate,bool negative,bool json,bool exha
     ul_lscpu_present[i/64]|=(positive)1<<(i%64);
     ul_lscpu_online[i/64]|=(positive)1<<(i%64);
   }
-  if(exhaust) text_arena_used=TEXT_ARENA_BYTES;
+  if(exhaust) utility_arena.used=UTILITY_ARENA_BYTES;
   mock_next_calls=0;
   ul_lscpu_summary(json,false,false);
   if(exhaust) {
@@ -15502,9 +15587,9 @@ int main(void) {
     run_case(97,false,false,json,true);
   }
   ul_lscpu_summary_rows rows={0}; ul_lscpu_failed=false;
-  text_arena_used=0;
+  utility_arena.used=0;
   for(positive i=0;i<96;i++) ul_lscpu_summary_add(&rows,"field",ul_lscpu_number(i));
-  void *before=rows.items; text_arena_used=TEXT_ARENA_BYTES;
+  void *before=rows.items; utility_arena.used=UTILITY_ARENA_BYTES;
   ul_lscpu_summary_add(&rows,"field","97");
   if(!ul_lscpu_failed || rows.count!=96 || rows.items!=before || strcmp(rows.items[95].data,"95")) abort();
   puts("summary growth allocation failure keeps prior rows OK");
@@ -15565,16 +15650,22 @@ def ul_check_lscpu_summary(farm):
     try:
         definitions = ul_c_span(source, r"^#define UL_LSCPU_CACHE_MAX\b", r"^static positive ul_lscpu_set_count\(")
         summary_types = ul_c_typedefs(source, "ul_lscpu_summary_item", "ul_lscpu_summary_rows")
-        set_globals = ul_c_span(source, r"^static p8 address_to ul_lscpu_set_into;", r"^static fn ul_lscpu_set_write\(")
+        set_globals = ul_c_span(source, r"^static byte_store ul_lscpu_set_output;", r"^static fn ul_lscpu_set_write\(")
         names = ("ul_lscpu_set_count", "ul_lscpu_keep", "ul_lscpu_number", "ul_cpu_has", "ul_cpu_list_write",
                  "ul_cpu_mask_write", "ul_lscpu_set_write", "ul_lscpu_set_text", "ul_lscpu_summary_add",
                  "ul_lscpu_cache_size", "ul_lscpu_cache_summary", "ul_lscpu_summary")
         common = (root / "src" / "library.common.c").read_text()
         arena_macro = ul_c_span(common, r"^#define array_arena_reserve\(", r"^#define byte_store_reserve\(")
-        text_source = (root / "src" / "sh" / "text.c").read_text()
         file_source = (root / "src" / "sh" / "file.c").read_text()
-        program = "\n".join([UL_LSCPU_FIXTURE_PREFIX, arena_macro, ul_c_function(text_source, "text_arena_take"),
-                             ul_c_function(file_source, "text_arena_grow"), definitions, summary_types, set_globals]
+        shared_storage = ul_c_typedefs(common, "byte_store", "memory_arena")
+        program = "\n".join([UL_LSCPU_FIXTURE_PREFIX, shared_storage,
+                             "static memory_arena utility_arena = {.room = UTILITY_ARENA_BYTES};",
+                             arena_macro, ul_c_function(common, "memory_arena_take"),
+                             ul_c_function(common, "memory_vector_grow"),
+                             ul_c_function(common, "byte_store_append_span"),
+                             ul_c_function(file_source, "utility_arena_take"),
+                             ul_c_function(file_source, "utility_arena_grow"),
+                             definitions, summary_types, set_globals]
                             + [ul_c_function(source, name) for name in names] + [UL_LSCPU_FIXTURE_MAIN])
     except (ValueError, AttributeError) as error:
         return 0, 1, [f"marker not found: {error}"]
@@ -19811,6 +19902,22 @@ def harness_floodlight(argv):
     #   removing the policy. Two copies is two things that can drift, and this
     #   is what stops them.
     shell = (ROOT / 'src/sh/builtin.c').read_text()
+    tool_run = shell[shell.index('static bool shell_tool_run_hashed('):
+                     shell.index('// The next signal that arrived',
+                                 shell.index('static bool shell_tool_run_hashed('))]
+    check(bool(re.search(r'shell_exec_file\s*\(\s*found\s*,', tool_run)) and
+          not re.search(r'system_execute\s*\(\s*found\s*,', tool_run) and
+          not re.search(r'floodlight_launch_decide\s*\(\s*found\s*,', tool_run) and
+          bool(re.search(r'external_failed\s*==\s*-ERROR_ACCESS', tool_run)),
+          'a PATH image whose basename is an applet keeps external policy identity')
+    execution = (ROOT / 'src/sh/exec.c').read_text()
+    stage = execution[execution.index('static bipolar exec_stage_spawn('):
+                      execution.index('static b32 coproc_kept(',
+                                      execution.index('static bipolar exec_stage_spawn('))]
+    check(bool(re.search(
+              r'floodlight_launch_decide\s*\(\s*executable\s*,\s*words\s*,.*?false\s*,\s*false\s*,\s*false\s*,\s*null\s*\)',
+              stage, re.S)),
+          'a directly spawned PATH stage keeps external policy identity')
     fallback = re.search(r'static string_address const floodlight_denied\[\] = \{(.*?)null\}',
                          shell, re.S)
     check(bool(fallback), 'the shell carries a built-in copy of what is refused')
@@ -19982,7 +20089,9 @@ def harness_floodlight(argv):
     history_tokens = [token.value for token in lex(history_edit)[0]]
 
     for ok, what in (
-            (source_calls(history_tokens, 'syscall', '(', 'getrandom', ')'),
+            (source_calls(history_tokens, 'system_random_fill', '(', 'random',
+                          ',', 'sizeof', '(', 'random', ')', ',', '0', ')') and
+             'getrandom' in graph.get('system_random_fill', set()),
              'fc draws every temporary name from the kernel CSPRNG'),
             ('syscall(getpid)' not in history_edit,
              'fc has no predictable pid-based temporary name fallback'),
@@ -20096,7 +20205,8 @@ def harness_floodlight(argv):
     #   Linux only, because seccomp is. Skipped elsewhere rather than faked.
     if platform.system() == 'Linux':
         builder = shell[shell.index('#define BPF_LOAD_WORD'):]
-        builder = builder[:builder.index('\n/*\n        Whether this applet')]
+        builder = builder[:builder.index(
+            '\nstatic b32 floodlight_launch_decide(')]
 
         confine = r"""
 #include <errno.h>
@@ -20121,6 +20231,10 @@ typedef unsigned long positive;
 #define syscall_name_execveat SYS_execveat
 #define syscall_name_socket SYS_socket
 #define syscall_name_connect SYS_connect
+#define syscall_name_io_uring_setup SYS_io_uring_setup
+#define syscall_name_io_uring_enter SYS_io_uring_enter
+#define syscall_name_io_uring_register SYS_io_uring_register
+#define syscall_name_pidfd_getfd SYS_pidfd_getfd
 /* Taken before the name is redefined below, or the macro eats the call. */
 static long raw_call(long n, long a, long b, long c, long d, long e)
 {
@@ -20167,13 +20281,61 @@ int main(void)
                 char *argv[] = {(char *)"/bin/sh", (char *)"-c",
                                 (char *)"exit 7", NULL};
 
-                if (!floodlight_confine(refused, 2))
+                if (!floodlight_apply(false, false))
                         _exit(11);
 
                 /* A call the filter says nothing about still works, or the
                    filter has refused the program rather than the exec. */
                 if (getpid() <= 0)
                         _exit(3);
+
+                /* Spawn governs transitions to another program. A child
+                   retaining this image and its inherited filter remains
+                   available for ordinary parallel work. */
+                {
+                        int same_status = 0;
+                        pid_t same = fork();
+
+                        if (same == 0) {
+                                char *same_argv[] = {(char *)"/bin/true", NULL};
+
+                                errno = 0;
+                                execve("/bin/true", same_argv, NULL);
+                                _exit(errno == EPERM ? 0 : 19);
+                        }
+                        if (same < 0 || waitpid(same, &same_status, 0) != same ||
+                            !WIFEXITED(same_status) || WEXITSTATUS(same_status))
+                                _exit(18);
+                }
+
+                errno = 0;
+                raw_call(SYS_socket, 2, 1, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(16);
+                errno = 0;
+                raw_call(SYS_connect, -1, 0, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(17);
+
+                /* These argument shapes ordinarily fail with EFAULT and
+                   EBADF. EPERM proves the production network list caught the
+                   io_uring and cross-process descriptor acquisition paths. */
+                errno = 0;
+                raw_call(SYS_io_uring_setup, 1, 0, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(12);
+                errno = 0;
+                raw_call(SYS_io_uring_enter, -1, 0, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(14);
+                errno = 0;
+                raw_call(SYS_io_uring_register, -1, 0, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(15);
+                errno = 0;
+                raw_call(SYS_pidfd_getfd, -1, 0, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(13);
 
                 errno = 0;
                 execve("/bin/sh", argv, NULL);
@@ -21361,8 +21523,11 @@ def harness_image_nodes(argv):
 def harness_compression(argv):
     """Byte-checked codec/tar interoperability and reproducible CPU benchmarks."""
     import argparse
+    import bz2
+    import gzip
     import hashlib
     import json
+    import lzma
     import platform
     import random
     import shlex
@@ -21612,6 +21777,176 @@ def harness_compression(argv):
                     check(label + '/tar/' + suffix + '/' + direction,
                           made.returncode == unpacked.returncode == 0 and found == expected,
                           made.stderr.decode(errors='replace') + unpacked.stderr.decode(errors='replace'))
+
+        def ustar_header(name, size, typeflag=b'0', linkname=b'', mode=0o644):
+            block = bytearray(512)
+
+            def put(off, width, data):
+                data = data[:width]
+                block[off:off + len(data)] = data
+
+            def octal(off, width, value):
+                put(off, width, ('%0*o' % (width - 1, value)).encode('ascii') + b'\0')
+
+            put(0, 100, name if isinstance(name, bytes) else name.encode())
+            octal(100, 8, mode)
+            octal(108, 8, 0)
+            octal(116, 8, 0)
+            octal(124, 12, size)
+            octal(136, 12, 0)
+            block[156:157] = typeflag if isinstance(typeflag, bytes) else bytes([ord(typeflag)])
+            put(157, 100, linkname if isinstance(linkname, bytes) else linkname.encode())
+            put(257, 6, b'ustar\0')
+            put(263, 2, b'00')
+            put(148, 8, b'        ')
+            put(148, 8, ('%06o' % sum(block)).encode('ascii') + b'\0 ')
+            return bytes(block)
+
+        def pax_record(key, value):
+            key_b = key.encode() if isinstance(key, str) else key
+            val_b = value if isinstance(value, (bytes, bytearray)) else value.encode()
+            for width in range(1, 20):
+                total = width + 1 + len(key_b) + 1 + len(val_b) + 1
+                digits = str(total).encode()
+                if len(digits) == width:
+                    return digits + b' ' + key_b + b'=' + val_b + b'\n'
+            raise ValueError('pax record')
+
+        def padded(payload):
+            return payload + bytes((512 - (len(payload) % 512)) % 512)
+
+        def ustar_archive(members):
+            return b''.join(members) + bytes(1024)
+
+        def member(name, typeflag, data=b'', link=b''):
+            flag = typeflag.encode() if isinstance(typeflag, str) else typeflag
+            return ustar_header(name, len(data), typeflag=flag, linkname=link) + padded(data)
+
+        def emit_type(typeflag, payload=b'hello\n'):
+            if typeflag in ('0', '\0', '7'):
+                return ustar_archive([member('a.txt', typeflag, payload)])
+            if typeflag == '1':
+                return ustar_archive([
+                    member('a.txt', '0', payload),
+                    member('b.txt', '1', link=b'a.txt'),
+                ])
+            if typeflag == '2':
+                return ustar_archive([member('link', '2', link=b'target')])
+            if typeflag == '5':
+                return ustar_archive([member('dir/', '5')])
+            if typeflag == 'S':
+                archive = scratch_base / 'sparse.tar'
+                if not archive.is_file():
+                    src = scratch_base / 'sparse-src'
+                    src.mkdir(exist_ok=True)
+                    hole = src / 'hole'
+                    with open(hole, 'wb') as fh:
+                        fh.write(b'HEAD')
+                        fh.seek(65536)
+                        fh.write(b'TAIL')
+                    made = call([refs['tar'], '--format=gnu', '--sparse', '-cf',
+                                 str(archive), '-C', str(src), 'hole'])
+                    if made.returncode != 0 or not archive.is_file():
+                        raise RuntimeError(made.stderr.decode(errors='replace'))
+                return archive.read_bytes()
+            raise ValueError(typeflag)
+
+        def emit_pax(hdr, key, value, payload=b'hello\n'):
+            body = pax_record(key, value)
+            members = [member('PaxHeaders.0/a', hdr, body),
+                       member('a.txt', '0', payload)]
+            if hdr == 'g':
+                members.append(member('b.txt', '0', b'B\n'))
+            return ustar_archive(members)
+
+        def wrap_codec(data, codec):
+            wraps = {
+                '': lambda blob: blob,
+                'gz': gzip.compress,
+                'xz': lambda blob: lzma.compress(blob, format=lzma.FORMAT_XZ),
+                'bz2': bz2.compress,
+            }
+            if codec == 'zst':
+                packed = call([refs['zstd'], '-c'], data)
+                if packed.returncode:
+                    raise RuntimeError(packed.stderr.decode(errors='replace'))
+                return packed.stdout
+            return wraps[codec](data)
+
+        def tree_state(path):
+            state = {}
+            for item in sorted(path.rglob('*')):
+                rel = str(item.relative_to(path))
+                if item.is_symlink():
+                    state[rel] = ('L', os.readlink(item))
+                elif item.is_dir():
+                    state[rel] = ('D',)
+                elif item.is_file():
+                    state[rel] = ('F', item.read_bytes())
+            return state
+
+        def extract_pair(label, raw, codec, cell, scratch):
+            packed = wrap_codec(raw, codec)
+            archive = scratch / ('a.' + (codec or 'tar'))
+            archive.write_bytes(packed)
+            ours_dir = scratch / ('ours-' + (codec or 'ustar'))
+            refs_dir = scratch / ('ref-' + (codec or 'ustar'))
+            ours_dir.mkdir()
+            refs_dir.mkdir()
+            ours = call(our_tar + ['-xf', str(archive), '-C', str(ours_dir)])
+            reference = call([refs['tar'], '-xf', str(archive), '-C', str(refs_dir)])
+            matched = (ours.returncode == reference.returncode == 0 and
+                       tree_state(ours_dir) == tree_state(refs_dir))
+            err = (ours.stderr + reference.stderr).decode(errors='replace')
+            named = codec in refuse and any(token in ours.stderr.lower()
+                                            for token in refuse[codec])
+            if codec in refuse and not matched:
+                check(label + '/tar-grammar/' + cell,
+                      ours.returncode != 0 and named, err)
+            else:
+                check(label + '/tar-grammar/' + cell, matched, err)
+
+        typeflags = ('0', '\0', '1', '2', '5', '7', 'S')
+        payloads = (b'', b'hello\n', bytes([1, 0, 0, 2]), b'x' * 512, b'x' * 513)
+        # Value shapes follow the key's grammar: opaque bytes, paths, not
+        # GNU.sparse.* (those belong to type S; junk values only make GNU tar
+        # refuse the archive).
+        pax_fields = (
+            ('comment', (b'', b'z', bytes([1, 0, 0, 2]), b'a=b')),
+            ('SCHILY.xattr.security.capability',
+             (b'', bytes([1, 0, 0, 2]), b'cap')),
+            ('path', (b'from-g.txt', b'a.txt')),
+            ('linkpath', (b'target', b'a.txt')),
+        )
+        codecs = ('', 'gz', 'xz', 'zst', 'bz2')
+        refuse = {'bz2': (b'bzip2', b'bz2')}
+        for label, _ in binaries:
+            our_tar = runner + [str(farms[label] / 'tar')]
+            scratch_base = root / ('grammar-' + label)
+            scratch_base.mkdir()
+            cells = []
+            for typeflag in typeflags:
+                cells.append(('type-' + (typeflag.encode('unicode_escape').decode() or 'nul'),
+                              lambda t=typeflag: emit_type(t)))
+            for payload_at, payload in enumerate(payloads):
+                cells.append(('payload-' + str(payload_at),
+                              lambda p=payload: emit_type('0', p)))
+            for hdr in ('x', 'g'):
+                for key, values in pax_fields:
+                    for value_at, value in enumerate(values):
+                        cells.append(('pax-%s-%s-%d' % (hdr, key, value_at),
+                                      lambda h=hdr, k=key, v=value: emit_pax(h, k, v)))
+            for cell, builder in cells:
+                try:
+                    raw = builder()
+                except RuntimeError as error:
+                    check(label + '/tar-grammar/' + cell + '/build', False, str(error))
+                    continue
+                for codec in codecs:
+                    scratch = scratch_base / (cell + '-' + (codec or 'ustar'))
+                    scratch.mkdir()
+                    extract_pair(label, raw, codec, cell + '/' + (codec or 'ustar'),
+                                 scratch)
         if opts.bench:
             # Include filesystem work and the streaming adapters in tar timings.
             # All decoders consume the same reference archive for each mode.

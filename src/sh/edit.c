@@ -1561,15 +1561,12 @@ static fn edit_follow()
         line of the file has to be written whatever it looks like.
 */
 static p8 edit_row_bytes[EDIT_COLUMNS_MAX * 16];
-static positive edit_row_length;
+static byte_store edit_row_output = {
+    edit_row_bytes, sizeof(edit_row_bytes), 0};
 
 static fn edit_row_put(address_any text, positive length)
 {
-        if (edit_row_length + length > sizeof(edit_row_bytes))
-                return;
-
-        memory_copy_apart(edit_row_bytes + edit_row_length, text, length);
-        edit_row_length += length;
+        byte_store_append_exact(address_of edit_row_output, text, length);
 }
 
 #define edit_row_put_literal(literal) \
@@ -1634,7 +1631,7 @@ static fn edit_row_build(positive screen_row)
         positive drawn = 0;
         bool marked = false;
 
-        edit_row_length = 0;
+        edit_row_output.used = 0;
 
         if (line >= edit_line_count)
         {
@@ -1722,17 +1719,15 @@ static fn edit_row_build(positive screen_row)
 //      has to be filled to the width of the window and counting cells through
 //      escape sequences is how a status line ends up one character short.
 static p8 edit_status_bytes[EDIT_COLUMNS_MAX * 4];
-static positive edit_status_length;
+static byte_store edit_status_output = {
+    edit_status_bytes, sizeof(edit_status_bytes), 0};
 static positive edit_status_cells;
 
 static fn edit_status_put(address_any data, positive length)
 {
         p8 address_to text = data;
-        if (edit_status_length + length > sizeof(edit_status_bytes))
+        if (!byte_store_append_exact(address_of edit_status_output, text, length))
                 return;
-
-        memory_copy_apart(edit_status_bytes + edit_status_length, text, length);
-        edit_status_length += length;
 
         for (positive at = 0; at < length; at++)
                 if (!edit_is_continuation((p8)text[at]))
@@ -1748,7 +1743,7 @@ static fn edit_status_put_text(string_address text)
 
 static fn edit_status_build()
 {
-        edit_status_length = 0;
+        edit_status_output.used = 0;
         edit_status_cells = 0;
 
         if (edit_prompt_active)
@@ -1789,14 +1784,14 @@ static fn edit_status_build()
         }
 
         positive padding = min(edit_columns - min(edit_status_cells, edit_columns),
-                               sizeof(edit_status_bytes) - edit_status_length);
-        memory_fill(edit_status_bytes + edit_status_length, ' ', padding);
-        edit_status_length += padding;
+                               sizeof(edit_status_bytes) - edit_status_output.used);
+        memory_fill(edit_status_bytes + edit_status_output.used, ' ', padding);
+        edit_status_output.used += padding;
         edit_status_cells += padding;
 
-        edit_row_length = 0;
+        edit_row_output.used = 0;
         edit_row_put_literal(TERM_REVERSE);
-        edit_row_put(edit_status_bytes, edit_status_length);
+        edit_row_put(edit_status_bytes, edit_status_output.used);
         edit_row_put_literal(TERM_RESET);
 }
 
@@ -1823,14 +1818,14 @@ static fn edit_draw()
                 positive mark;
 
                 edit_row_build(screen_row);
-                mark = memory_hash_33(edit_row_bytes, edit_row_length);
+                mark = memory_hash_33(edit_row_bytes, edit_row_output.used);
 
                 if (edit_row_known[screen_row] &&
                     edit_row_drawn[screen_row] == mark)
                         continue;
 
                 edit_say_at(screen_row, 0);
-                edit_say(edit_row_bytes, edit_row_length);
+                edit_say(edit_row_bytes, edit_row_output.used);
                 edit_say_literal(ANSI "K");
                 edit_row_drawn[screen_row] = mark;
                 edit_row_known[screen_row] = true;
@@ -1840,7 +1835,7 @@ static fn edit_draw()
         edit_status_build();
         edit_say_at(edit_rows - 1, 0);
         edit_say_literal(ANSI "K");
-        edit_say(edit_row_bytes, edit_row_length);
+        edit_say(edit_row_bytes, edit_row_output.used);
 
         /*
                 Where a person's eye goes, which is the primary caret and not
@@ -4156,8 +4151,7 @@ static bool edit_write_file()
         bipolar chmodded;
         bool existed = file_look_at(edit_path, address_of facts);
         positive mode = existed ? facts.mode & 07777 : 0666;
-        positive temporary_nonce =
-            (positive)system_call_1(syscall(getpid), 0) * 67;
+        positive temporary_nonce = system_nonce();
 
         block = edit_bytes_take(address_of length);
 
