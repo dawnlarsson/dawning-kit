@@ -14997,6 +14997,7 @@ static fn floodlight_executable_drop(
 #define BPF_RETURN 0x06
 #define SECCOMP_DATA_NR 0
 #define SECCOMP_DATA_ARCH 4
+#define SECCOMP_DATA_ARGUMENT_1 24
 #define SECCOMP_RET_ERRNO_EPERM 0x00050001u
 #define SECCOMP_RET_ALLOW 0x7fff0000u
 #define SECCOMP_SET_MODE_FILTER 1
@@ -15031,7 +15032,7 @@ typedef struct
 
 static bool floodlight_confine(const p32 address_to numbers, positive count)
 {
-        floodlight_instruction filter[7 + FLOODLIGHT_REFUSED];
+        floodlight_instruction filter[10 + FLOODLIGHT_REFUSED];
         floodlight_program program;
         positive at = 0;
         positive i;
@@ -15060,18 +15061,35 @@ static bool floodlight_confine(const p32 address_to numbers, positive count)
            table before comparing calls, or every denied operation has an x32
            spelling that walks around it on kernels which enable that ABI. */
         filter[at++] = (floodlight_instruction){
-            BPF_JUMP_BITS, (p8)(count + 1), 0, 0x40000000u};
+            BPF_JUMP_BITS, (p8)(count + 4), 0, 0x40000000u};
 #endif
 
         for (i = 0; i < count; i++)
                 filter[at++] = (floodlight_instruction){
-                    BPF_JUMP_EQUAL, (p8)(count - i), 0, numbers[i]};
+                    BPF_JUMP_EQUAL, (p8)(count - i + 3), 0, numbers[i]};
+
+        /* A denied-network child could otherwise open /dev/spark and ask the
+           kernel to spawn an unfiltered process, even when the shell's cached
+           descriptor was CLOEXEC.  Inspect ioctl's request word and refuse the
+           launch operation while leaving ordinary terminal/device ioctls to
+           the applet.  All supported ABIs place the low request word here. */
+        filter[at++] = (floodlight_instruction){
+            BPF_JUMP_EQUAL, 0, 2, (p32)syscall(ioctl)};
+        filter[at++] = (floodlight_instruction){
+            BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_ARGUMENT_1};
+        filter[at++] = (floodlight_instruction){
+            BPF_JUMP_EQUAL, 1, 0, SPARK_IOCTL_SPAWN};
 
         filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ALLOW};
         filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ERRNO_EPERM};
 
         program.count = (p16)at;
         program.filter = filter;
+
+        /* This process is final: stop direct applets from using the cached
+           launch fd, and prevent shell helpers from reopening it after the
+           filter has been installed. */
+        shell_spawn_device_disable();
 
         /* Without this a filter needs privilege to install. With it the
            kernel also refuses to grant any through this process's execs,

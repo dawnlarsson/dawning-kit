@@ -80,7 +80,7 @@ static bipolar http_split_into(string_address url, p8 address_to host, positive 
         else if (!string_compare_max(url, (string_address) "http://", 7))
                 at = url + 7;
 
-        length = string_span_without_set(at, "/:");
+        length = string_span_without_set(at, "/:?#");
         if (length + 1 >= room)
                 return HTTP_BAD_URL;
 
@@ -98,7 +98,7 @@ static bipolar http_split_into(string_address url, p8 address_to host, positive 
                 positive value;
 
                 at++;
-                bound = (positive)(string_first_of_or_end(at, '/') - at);
+                bound = string_span_without_set(at, "/?#");
                 digits = at;
 
                 if (!bound ||
@@ -111,8 +111,45 @@ static bipolar http_split_into(string_address url, p8 address_to host, positive 
                 at = digits;
         }
 
-        address_to path = string_get(at) ? at : (string_address) "/";
+        address_to path = string_get(at) && !string_is(at, '#')
+                              ? at : (string_address) "/";
 
+        return HTTP_OK;
+}
+
+/* Turn the path/query part of a URL into HTTP's origin form.  Fragments are
+   local navigation state and must never cross the request boundary; a bare
+   query still needs the root slash on the wire. */
+static bipolar http_origin_form(string_address path, p8 address_to into,
+                                positive room)
+{
+        string_address hash;
+        positive length;
+        bool root;
+
+        if (!path)
+                return HTTP_BAD_URL;
+
+        hash = string_first_of(path, '#');
+        length = hash ? (positive)(hash - path) : string_length(path);
+        if (!length)
+        {
+                if (room < 2)
+                        return HTTP_BAD_URL;
+                into[0] = '/';
+                into[1] = end;
+                return HTTP_OK;
+        }
+
+        root = path[0] == '?';
+        if (path[0] != '/' && !root)
+                return HTTP_BAD_URL;
+        if (length > room || root >= room - length)
+                return HTTP_BAD_URL;
+
+        if (root)
+                *into++ = '/';
+        memory_copy_end(into, path, length);
         return HTTP_OK;
 }
 
@@ -909,8 +946,10 @@ static bipolar http_get_request(p8 address_to request, positive room,
         static const p8 agent_label[] = "\r\nUser-Agent: ";
         static const p8 tail[] =
             "\r\nAccept: */*\r\nConnection: close\r\n\r\n";
+        p8 target[HTTP_URL_MAX];
         positive host_length = string_length(host);
-        positive path_length = string_length(path);
+        bipolar normalized = http_origin_form(path, target, sizeof target);
+        positive path_length = normalized ? 0 : string_length(target);
         positive agent_length = string_length(agent);
         bool named_port = (tls && port != HTTP_HTTPS_PORT) ||
                           (!tls && port != HTTP_PORT);
@@ -921,7 +960,8 @@ static bipolar http_get_request(p8 address_to request, positive room,
                          sizeof(tail) - 1 + (named_port ? 1 : 0);
         p8 address_to into = request;
 
-        if (version_minor < '0' || version_minor > '9' || fixed > room ||
+        if (normalized || version_minor < '0' || version_minor > '9' ||
+            fixed > room ||
             path_length > room - fixed ||
             host_length > room - fixed - path_length ||
             agent_length > room - fixed - path_length - host_length ||
@@ -930,7 +970,7 @@ static bipolar http_get_request(p8 address_to request, positive room,
                 return HTTP_BAD_URL;
 
         into = memory_copy_apart_end(into, "GET ", sizeof("GET ") - 1);
-        into = memory_copy_apart_end(into, path, path_length);
+        into = memory_copy_apart_end(into, target, path_length);
         into = memory_copy_apart_end(into, version, sizeof(version) - 1);
         *into++ = version_minor;
         into = memory_copy_apart_end(into, host_label,
@@ -987,15 +1027,22 @@ static bipolar http_absolutize(bool tls, string_address host, p16 port,
                                p8 address_to into, positive room)
 {
         p8 kept[HTTP_URL_MAX];
+        p8 base[HTTP_URL_MAX];
         positive length = string_length(location);
         string_address hash;
 
-        if (length >= sizeof kept)
+        if (length >= sizeof kept ||
+            http_origin_form(path, base, sizeof base))
                 return HTTP_BAD_URL;
         memory_copy(kept, location, length + 1);
         hash = string_first_of(kept, '#');
         if (hash)
                 hash[0] = end;
+
+        /* A fragment-only reference identifies the current resource.  The
+           fragment itself was removed above; retain both path and query. */
+        if (!kept[0])
+                return http_put_url(into, room, tls, host, port, base);
 
         if (!string_compare_max(kept, (string_address) "https://", 8) ||
             !string_compare_max(kept, (string_address) "http://", 7))
@@ -1024,25 +1071,37 @@ static bipolar http_absolutize(bool tls, string_address host, p16 port,
         if (kept[0] == '/')
                 return http_put_url(into, room, tls, host, port, kept);
 
+        if (kept[0] == '?')
         {
                 p8 merged[HTTP_URL_MAX];
-                string_address slash = string_last_of(path, '/');
-                positive dir = slash ? (positive)(slash - path) + 1 : 1;
+                string_address query = string_first_of(base, '?');
+                positive used = query ? (positive)(query - base)
+                                      : string_length(base);
+                positive rest = string_length(kept);
+
+                if (used + rest + 1 > sizeof merged)
+                        return HTTP_BAD_URL;
+                memory_copy(merged, base, used);
+                memory_copy_apart_end(merged + used, kept, rest);
+                return http_put_url(into, room, tls, host, port, merged);
+        }
+
+        {
+                p8 merged[HTTP_URL_MAX];
+                string_address query = string_first_of(base, '?');
+                string_address slash;
+                positive dir;
                 positive used = 0;
                 positive rest = string_length(kept);
 
-                if (path[0] != '/')
-                {
-                        merged[0] = '/';
-                        used = 1;
-                }
-                else
-                {
-                        if (dir >= sizeof merged)
-                                return HTTP_BAD_URL;
-                        memory_copy(merged, path, dir);
-                        used = dir;
-                }
+                if (query)
+                        query[0] = end;
+                slash = string_last_of(base, '/');
+                dir = slash ? (positive)(slash - base) + 1 : 1;
+                if (dir >= sizeof merged)
+                        return HTTP_BAD_URL;
+                memory_copy(merged, base, dir);
+                used = dir;
                 if (used + rest + 1 > sizeof merged)
                         return HTTP_BAD_URL;
                 memory_copy(merged + used, kept, rest);
@@ -1109,23 +1168,24 @@ static p32 http_lookup(string_address host)
 
 static fn http_url_leaf(string_address path, p8 address_to into, positive room)
 {
-        string_address query = string_first_of(path, '?');
+        p8 target[HTTP_URL_MAX];
+        string_address query;
         string_address slash;
-        positive length;
-        p8 kept[256];
 
-        if (query)
+        if (!room)
+                return;
+        if (http_origin_form(path, target, sizeof target))
         {
-                length = (positive)(query - path);
-                if (length >= sizeof kept)
-                        length = sizeof kept - 1;
-                memory_copy(kept, path, length);
-                kept[length] = end;
-                path = kept;
+                into[0] = end;
+                return;
         }
 
-        slash = string_last_of(path, '/');
-        path = slash ? slash + 1 : path;
+        query = string_first_of(target, '?');
+        if (query)
+                query[0] = end;
+
+        slash = string_last_of(target, '/');
+        path = slash ? slash + 1 : target;
         if (!string_get(path))
                 path = (string_address) "index.html";
         string_copy_max_end(into, path, room - 1);

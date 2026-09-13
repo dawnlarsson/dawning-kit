@@ -20068,7 +20068,7 @@ def harness_floodlight(argv):
             (calls('BPF_JUMP_EQUAL', ',', '1', ',', '0', ',', 'FLOODLIGHT_AUDIT_ARCH'),
              'the filter checks which architecture the call arrived on'),
             (calls('BPF_JUMP_BITS', ',', '(', 'p8', ')', '(', 'count', '+',
-                   '1', ')', ',', '0', ',', '0x40000000u'),
+                   '4', ')', ',', '0', ',', '0x40000000u'),
              'the x86 filter refuses the x32 syscall table before comparing '
              'native syscall numbers'),
             (source_calls(utilities_tokens, 'shell_tool_as_called_final', '(', ')'),
@@ -20235,6 +20235,9 @@ typedef unsigned long positive;
 #define syscall_name_io_uring_enter SYS_io_uring_enter
 #define syscall_name_io_uring_register SYS_io_uring_register
 #define syscall_name_pidfd_getfd SYS_pidfd_getfd
+#define syscall_name_ioctl SYS_ioctl
+#define SPARK_IOCTL_SPAWN 0x40407301u
+static void shell_spawn_device_disable(void) { }
 /* Taken before the name is redefined below, or the macro eats the call. */
 static long raw_call(long n, long a, long b, long c, long d, long e)
 {
@@ -20336,6 +20339,17 @@ int main(void)
                 raw_call(SYS_pidfd_getfd, -1, 0, 0, 0, 0);
                 if (errno != EPERM)
                         _exit(13);
+
+                /* Only Spark's privileged launch request is refused. Other
+                   ioctls still reach their descriptor and fail normally. */
+                errno = 0;
+                raw_call(SYS_ioctl, -1, SPARK_IOCTL_SPAWN, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(20);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0, 0, 0, 0);
+                if (errno == EPERM)
+                        _exit(21);
 
                 errno = 0;
                 execve("/bin/sh", argv, NULL);

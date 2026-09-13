@@ -38980,6 +38980,17 @@ static fn fetching(void)
               http_split((string_address) "http://dawning.dev", name, sizeof name,
                          address_of port, address_of path) == HTTP_OK);
         check("which is the root", string_equals(path, (string_address) "/"));
+        check("a fragment after a bare authority is not part of the host",
+              http_split((string_address) "http://dawning.dev#private", name,
+                         sizeof name, address_of port, address_of path) ==
+                      HTTP_OK &&
+                  string_equals(name, (string_address) "dawning.dev") &&
+                  string_equals(path, (string_address) "/"));
+        check("a bare query remains available as a request target",
+              http_split((string_address) "http://dawning.dev?q=one#private",
+                         name, sizeof name, address_of port,
+                         address_of path) == HTTP_OK &&
+                  string_equals(path, (string_address) "?q=one#private"));
 
         check("https splits as TLS",
               http_split((string_address) "https://dawning.dev/", name, sizeof name,
@@ -39142,7 +39153,7 @@ static fn fetching(void)
                     "User-Agent: Test\r\n"
                     "Accept: */*\r\n"
                     "Connection: close\r\n\r\n";
-                p8 request[sizeof expected];
+                p8 request[256];
                 positive used = 0;
 
                 check("both HTTP clients share the bounded GET request builder",
@@ -39153,6 +39164,36 @@ static fn fetching(void)
                                        address_of used) == HTTP_OK &&
                           used == sizeof expected - 1 &&
                           !memory_compare(request, expected, used));
+
+                static const p8 fragmentless[] =
+                    "GET /x?q=one HTTP/1.1\r\n"
+                    "Host: example.com\r\n"
+                    "User-Agent: Test\r\n"
+                    "Accept: */*\r\n"
+                    "Connection: close\r\n\r\n";
+                check("the shared request builder never sends a URL fragment",
+                      http_get_request(request, sizeof request,
+                                       (string_address)"example.com", 80,
+                                       (string_address)"/x?q=one#private",
+                                       false, '1', (string_address)"Test",
+                                       address_of used) == HTTP_OK &&
+                          used == sizeof fragmentless - 1 &&
+                          !memory_compare(request, fragmentless, used));
+
+                static const p8 root_query[] =
+                    "GET /?q=one HTTP/1.1\r\n"
+                    "Host: example.com\r\n"
+                    "User-Agent: Test\r\n"
+                    "Accept: */*\r\n"
+                    "Connection: close\r\n\r\n";
+                check("a query-only URL gets the required root slash",
+                      http_get_request(request, sizeof request,
+                                       (string_address)"example.com", 80,
+                                       (string_address)"?q=one#private",
+                                       false, '1', (string_address)"Test",
+                                       address_of used) == HTTP_OK &&
+                          used == sizeof root_query - 1 &&
+                          !memory_compare(request, root_query, used));
         }
 
         {
@@ -40518,6 +40559,22 @@ static fn redirect_urls(void)
               http_absolutize(false, "h", 80, "/dir/old", "new", into, sizeof into) ==
                       HTTP_OK &&
                   string_equals(into, "http://h/dir/new"));
+        check("query-only Location keeps the complete current path",
+              http_absolutize(false, "h", 80, "/dir/old?before", "?after",
+                              into, sizeof into) == HTTP_OK &&
+                  string_equals(into, "http://h/dir/old?after"));
+        check("fragment-only Location keeps the current path and query",
+              http_absolutize(false, "h", 80, "/dir/old?before#local",
+                              "#new", into, sizeof into) == HTTP_OK &&
+                  string_equals(into, "http://h/dir/old?before"));
+        {
+                p8 leaf[32];
+
+                http_url_leaf((string_address)"/dir/archive#private", leaf,
+                              sizeof leaf);
+                check("a URL fragment is not part of wget's output name",
+                      string_equals(leaf, (string_address)"archive"));
+        }
 
         check("a redirect chain may begin on HTTP",
               http_transport_allowed(address_of secure, false) && !secure);

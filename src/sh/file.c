@@ -7873,8 +7873,8 @@ static b32 file_nice()
 
         bipolar answer = file_exec_path_try(words);
 
-        string_format(log_error, "nice: '%s': %s\n", words[0],
-                      file_reason(answer));
+        file_name_reason(log_error, (string_address)"nice: '", words[0],
+                         (string_address)"': ", answer);
         return answer == -ERROR_NO_ENTRY ? 127 : 126;
 }
 
@@ -8128,7 +8128,9 @@ static string_address find_value(string_address word)
 {
         if (find_at >= find_count)
         {
-                string_format(log_error, "find: missing argument to %s\n", word);
+                file_unquoted_name_message(
+                    log_error, (string_address)"find: missing argument to ",
+                    word, (string_address)"\n");
                 find_bad = true;
                 return null;
         }
@@ -8409,7 +8411,10 @@ static b32 find_parse_primary()
                 {
                         if (!file_moment_read(named, find_moment, address_of made->number))
                         {
-                                string_format(log_error, "find: invalid date '%s'\n", named);
+                                file_name_message(
+                                    log_error,
+                                    (string_address)"find: invalid date '",
+                                    named, (string_address)"'\n");
                                 find_bad = true;
                                 return -1;
                         }
@@ -8421,8 +8426,9 @@ static b32 find_parse_primary()
 
                         if (looked < 0)
                         {
-                                string_format(log_error, "find: '%s': %s\n", named,
-                                              file_reason(looked));
+                                file_name_reason(
+                                    log_error, (string_address)"find: '",
+                                    named, (string_address)"': ", looked);
                                 find_bad = true;
                                 return -1;
                         }
@@ -8448,7 +8454,10 @@ static b32 find_parse_primary()
                 //      findutils quotes the predicate the way it quotes
                 //      everything else, with a backquote in front and an
                 //      apostrophe behind.
-                string_format(log_error, "find: unknown predicate `%s'\n", word);
+                file_name_message(
+                    log_error,
+                    (string_address)"find: unknown predicate '", word,
+                    (string_address)"'\n");
                 find_bad = true;
                 return -1;
         }
@@ -8480,8 +8489,11 @@ static b32 find_parse_primary()
                 if (!regex_compile(value, false, node->comparison == 'i', false,
                                    FIND_REGEX_POLICY))
                 {
-                        string_format(log_error,
-                                      "find: invalid regular expression '%s'\n", value);
+                        file_name_message(
+                            log_error,
+                            (string_address)
+                                "find: invalid regular expression '",
+                            value, (string_address)"'\n");
                         goto bad;
                 }
                 break;
@@ -8501,8 +8513,9 @@ static b32 find_parse_primary()
 
                 if (looked < 0)
                 {
-                        string_format(log_error, "find: '%s': %s\n", value,
-                                      file_reason(looked));
+                        file_name_reason(
+                            log_error, (string_address)"find: '", value,
+                            (string_address)"': ", looked);
                         goto bad;
                 }
 
@@ -8539,7 +8552,10 @@ static b32 find_parse_primary()
                                                       ? address_of find_maximum
                                                       : address_of find_minimum))
                 {
-                        string_format(log_error, "find: invalid depth '%s'\n", value);
+                        file_name_message(
+                            log_error,
+                            (string_address)"find: invalid depth '", value,
+                            (string_address)"'\n");
                         goto bad;
                 }
                 node->kind = 'v';
@@ -8579,8 +8595,10 @@ static b32 find_parse_primary()
                 }
                 if (find_at >= find_count)
                 {
-                        string_format(log_error,
-                                      "find: missing argument to `%s'\n", word);
+                        file_name_message(
+                            log_error,
+                            (string_address)"find: missing argument to '",
+                            word, (string_address)"'\n");
                         goto bad;
                 }
                 node->extra = (b64)find_at;
@@ -8596,8 +8614,11 @@ static b32 find_parse_primary()
                 */
                 if (node->extra == node->number)
                 {
-                        string_format(log_error,
-                            "find: invalid argument `;' to `%s'\n", word);
+                        file_name_message(
+                            log_error,
+                            (string_address)
+                                "find: invalid argument ';' to '",
+                            word, (string_address)"'\n");
                         goto bad;
                 }
                 if (node->comparison == '+')
@@ -8640,7 +8661,9 @@ static b32 find_parse_primary()
                 positive mode;
                 if (!file_mode_of(value, 0, false, address_of mode))
                 {
-                        string_format(log_error, "find: invalid mode %s\n", value);
+                        file_unquoted_name_message(
+                            log_error, (string_address)"find: invalid mode ",
+                            value, (string_address)"\n");
                         goto bad;
                 }
                 node->number = (b64)mode;
@@ -8683,8 +8706,13 @@ static b32 find_parse_primary()
                 bipolar who = file_identity_of(value, group);
                 if (who < 0)
                 {
-                        string_format(log_error, "find: '%s' is not the name of a known %s\n",
-                                      value, group ? "group" : "user");
+                        file_name_message(
+                            log_error, (string_address)"find: '", value,
+                            group
+                                ? (string_address)
+                                      "' is not the name of a known group\n"
+                                : (string_address)
+                                      "' is not the name of a known user\n");
                         goto bad;
                 }
                 node->number = (b64)who;
@@ -8698,7 +8726,10 @@ static b32 find_parse_primary()
                 {
                         if (!file_moment_read(value, find_moment, address_of node->number))
                         {
-                                string_format(log_error, "find: invalid date '%s'\n", value);
+                                file_name_message(
+                                    log_error,
+                                    (string_address)"find: invalid date '",
+                                    value, (string_address)"'\n");
                                 goto bad;
                         }
                 }
@@ -8709,8 +8740,9 @@ static b32 find_parse_primary()
                                                         address_of facts);
                         if (looked < 0)
                         {
-                                string_format(log_error, "find: '%s': %s\n", value,
-                                              file_reason(looked));
+                                file_name_reason(
+                                    log_error, (string_address)"find: '",
+                                    value, (string_address)"': ", looked);
                                 goto bad;
                         }
                         node->number = facts.modified.seconds;
@@ -8721,7 +8753,11 @@ static b32 find_parse_primary()
         return index;
 
 bad_number:
-        string_format(log_error, "find: invalid number '%s' for %s\n", value, word);
+        file_name_message(log_error,
+                          (string_address)"find: invalid number '", value,
+                          (string_address)"' for ");
+        file_unquoted_name_message(log_error, (string_address)"", word,
+                                   (string_address)"\n");
 bad:
         find_bad = true;
         return -1;
@@ -8936,8 +8972,12 @@ static string_address find_exec_subject(find_node address_to node, p8 address_to
 // name, and a question mark. Anything but a yes is a no.
 static bool find_exec_asked(find_node address_to node, string_address subject)
 {
-        string_format(log_error, "< %s ... %s > ? ",
-                      program_argument((b32)node->number), subject);
+        log_error("< ", 2);
+        writer_terminal_quoted_name(
+            log_error, program_argument((b32)node->number));
+        log_error(" ... ", 5);
+        writer_terminal_quoted_name(log_error, subject);
+        log_error(" > ? ", 5);
 
         p8 answer[2];
         bipolar got = system_read_once(0, answer, 1);
@@ -9972,8 +10012,14 @@ static b32 file_find()
                 return 1;
 
         if (find_at < count)
-                return string_report(log_error, 1, "find: paths must precede expression: %s\n",
-                              program_argument((b32)find_at));
+        {
+                file_unquoted_name_message(
+                    log_error,
+                    (string_address)
+                        "find: paths must precede expression: ",
+                    program_argument((b32)find_at), (string_address)"\n");
+                return 1;
+        }
 
         // The -print that is only there when nothing else acts.
         if (!find_has_action)
@@ -11173,8 +11219,10 @@ static b32 file_df()
                            it, makes the failure worth reporting. */
                         if (df_all)
                         {
-                                string_format(log_error, "df: %s: %s\n", mount->target,
-                                              file_reason(sample->reason));
+                                file_unquoted_name_reason(
+                                    log_error, (string_address)"df: ",
+                                    mount->target, (string_address)": ",
+                                    sample->reason);
                                 df_failed = true;
                         }
 
@@ -11201,8 +11249,9 @@ static b32 file_df()
 
                         if (answered < 0)
                         {
-                                string_format(log_error, "df: %s: %s\n", path,
-                                              file_reason(answered));
+                                file_unquoted_name_reason(
+                                    log_error, (string_address)"df: ", path,
+                                    (string_address)": ", answered);
                                 df_failed = true;
                                 continue;
                         }
@@ -11221,10 +11270,12 @@ static b32 file_df()
 
                                         if (named->reason)
                                         {
-                                                string_format(
-                                                    log_error, "df: %s: %s\n",
+                                                file_unquoted_name_reason(
+                                                    log_error,
+                                                    (string_address)"df: ",
                                                     path,
-                                                    file_reason(named->reason));
+                                                    (string_address)": ",
+                                                    named->reason);
                                                 df_failed = true;
                                         }
                                         else
@@ -12111,7 +12162,12 @@ static b32 file_chgrp()
 
 // The backup a destination gets before it is written over, shared by cp,
 // mv, ln and install and defined where the copying is.
-static bool file_backup_made(string_address program, string_address destination);
+static p8 file_backup_kind;
+static string_address file_backup_suffix;
+static bool file_backup_made_at(string_address program, bipolar directory,
+                                string_address destination,
+                                string_address shown,
+                                file_facts address_to expected);
 static bool file_backup_taken(file_taking address_to taking, string_address program);
 static bool file_targets_told(string_address program);
 
@@ -12164,6 +12220,8 @@ static bool ln_relative_text(string_address target, string_address name,
 static bool ln_make(string_address target, string_address name)
 {
         p8 relative[FILE_PATH_MAX];
+        file_facts source;
+        bipolar source_handle = -1;
 
         if (ln_relative && ln_symbolic)
         {
@@ -12185,7 +12243,6 @@ static bool ln_make(string_address target, string_address name)
         // name that is not there is named rather than the link that failed.
         if (!ln_symbolic)
         {
-                file_facts source;
                 bipolar looked = file_look_code(AT_FDCWD, target,
                                                 ln_through ? 0 : AT_SYMLINK_NOFOLLOW,
                                                 address_of source);
@@ -12211,63 +12268,116 @@ static bool ln_make(string_address target, string_address name)
                                 ": hard link not allowed for directory\n");
                         return false;
                 }
-        }
 
-        if (ln_ask && file_exists(AT_FDCWD, name) &&
-            !file_ask((string_address) "ln", (string_address) "replace", name))
-                return false;
-
-        if (!file_backup_made((string_address) "ln", name))
-                return false;
-
-        /*
-                A hard link needs its source to be there before the
-                destination is given up: unlinking first and linking second
-                left "ln -f missing keep" with neither, and "ln -f a a" with
-                nothing at all. The source is looked at first, as the
-                reference ln looks, and a destination that is the source is
-                refused rather than removed.
-        */
-        if (!ln_symbolic && (ln_force || ln_ask))
-        {
-                file_facts source;
-                file_facts destination;
-                bipolar looked = file_look_code(AT_FDCWD, target,
-                                                ln_through ? 0 : AT_SYMLINK_NOFOLLOW,
-                                                address_of source);
-
-                if (looked < 0)
+                source_handle = file_open_same(
+                    AT_FDCWD, target, address_of source,
+                    O_PATH | (ln_through ? 0 : O_NOFOLLOW));
+                if (source_handle < 0)
                 {
                         file_name_reason(
                             log_error,
                             (string_address)"ln: failed to access '", target,
-                            (string_address)"': ", looked);
-                        return false;
-                }
-
-                if (file_look(AT_FDCWD, name, AT_SYMLINK_NOFOLLOW,
-                              address_of destination) &&
-                    file_same_identity(address_of source,
-                                       address_of destination))
-                {
-                        file_name_pair_message(
-                            log_error, (string_address)"ln: '", target,
-                            (string_address)"' and '", name,
-                            (string_address)"' are the same file\n");
+                            (string_address)"': ", source_handle);
                         return false;
                 }
         }
 
-        if (ln_force || ln_ask)
-                system_remove_at(AT_FDCWD, name, 0);
+        p8 destination_leaf[FILE_PATH_MAX];
+        bipolar destination_directory =
+            file_parent_open(name, destination_leaf);
+        if (destination_directory < 0)
+        {
+                file_name_reason(
+                    log_error,
+                    (string_address)"ln: failed to access destination '",
+                    name, (string_address)"': ", destination_directory);
+                if (source_handle >= 0)
+                        system_close(source_handle);
+                return false;
+        }
+
+        file_facts destination;
+        bipolar destination_look = file_look_code(
+            destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
+            address_of destination);
+        bool destination_exists = destination_look >= 0;
+
+        if (ln_ask && destination_exists &&
+            !file_ask((string_address)"ln", (string_address)"replace", name))
+        {
+                system_close(destination_directory);
+                if (source_handle >= 0)
+                        system_close(source_handle);
+                return false;
+        }
+
+        /* Bind an interactive overwrite decision to the object that was
+           shown.  An object that appears after an absent -i check is left in
+           place and makes the exclusive link fail. */
+        bool make_backup = file_backup_kind &&
+                           (!ln_ask || destination_exists);
+        if (make_backup &&
+            !file_backup_made_at(
+                (string_address)"ln", destination_directory,
+                destination_leaf, name,
+                destination_exists ? address_of destination : null))
+        {
+                system_close(destination_directory);
+                if (source_handle >= 0)
+                        system_close(source_handle);
+                return false;
+        }
+        if (make_backup && destination_exists)
+                destination_exists = false;
+
+        /*
+                A hard link needs its source pinned before the destination is
+                given up.  A destination that is the same inode is refused;
+                removal atomically detaches and verifies the inode approved
+                above, so a swapped replacement is preserved.
+        */
+        if (!ln_symbolic && destination_exists &&
+            file_same_identity(address_of source, address_of destination))
+        {
+                file_name_pair_message(
+                    log_error, (string_address)"ln: '", target,
+                    (string_address)"' and '", name,
+                    (string_address)"' are the same file\n");
+                system_close(destination_directory);
+                system_close(source_handle);
+                return false;
+        }
+
+        if ((ln_force || ln_ask) && destination_exists)
+        {
+                bipolar removed = file_remove_same(
+                    destination_directory, destination_leaf, 0,
+                    address_of destination);
+                if (removed < 0)
+                {
+                        file_name_reason(
+                            log_error,
+                            (string_address)"ln: failed to replace '", name,
+                            (string_address)"': ", removed);
+                        system_close(destination_directory);
+                        if (source_handle >= 0)
+                                system_close(source_handle);
+                        return false;
+                }
+        }
 
         bipolar done;
 
         if (ln_symbolic)
-                done = system_symbolic_link_at(target, AT_FDCWD, name);
+                done = system_symbolic_link_at(
+                    target, destination_directory, destination_leaf);
         else
-                done = system_link_at(AT_FDCWD, target, AT_FDCWD, name,
-                                      ln_through ? AT_SYMLINK_FOLLOW : 0);
+                done = system_path_link_opened_at(
+                    source_handle, destination_directory, destination_leaf);
+
+        system_close(destination_directory);
+        if (source_handle >= 0)
+                system_close(source_handle);
 
         //      A hard link that could not be made names both ends; a
         //      symbolic one names only the name it was to be given, which is
@@ -14720,8 +14830,12 @@ static b32 file_mknod()
                 //      rather than letting the kernel see a truncated one,
                 //      and answers with that refusal's reason.
                 if (device != (positive)(p32)device)
-                        return string_report(log_error, 1, "mknod: %s: %s\n", path,
-                                             file_reason(-ERROR_INVALID));
+                {
+                        file_unquoted_name_reason(
+                            log_error, (string_address)"mknod: ", path,
+                            (string_address)": ", -ERROR_INVALID);
+                        return 1;
+                }
         }
         else
                 return string_report(log_error, 1, "mknod: invalid device type '%s'\n",
@@ -14756,8 +14870,12 @@ static bool file_sync_one(string_address path, p8 mode)
                                        path, 01 | O_NONBLOCK);
 
         if (opened < 0)
-                return string_report(log_error, false, "sync: error opening '%s': %s\n",
-                              path, file_reason(read_error));
+        {
+                file_name_reason(log_error,
+                                 (string_address)"sync: error opening '", path,
+                                 (string_address)"': ", read_error);
+                return false;
+        }
 
         bipolar flags = system_call_3(syscall(fcntl), (positive)opened,
                                       FILE_F_GETFL, 0);
@@ -14767,9 +14885,11 @@ static bool file_sync_one(string_address path, p8 mode)
                                   (positive)flags & ~O_NONBLOCK) >= 0;
 
         if (!good)
-                string_format(log_error,
-                              "sync: couldn't reset non-blocking mode '%s'\n",
-                              path);
+                file_name_message(
+                    log_error,
+                    (string_address)
+                        "sync: couldn't reset non-blocking mode '",
+                    path, (string_address)"'\n");
         else
         {
                 bipolar synced = mode == 'd'
@@ -14783,8 +14903,10 @@ static bool file_sync_one(string_address path, p8 mode)
 
                 if (synced < 0)
                 {
-                        string_format(log_error, "sync: error syncing '%s': %s\n",
-                                      path, file_reason(synced));
+                        file_name_reason(
+                            log_error,
+                            (string_address)"sync: error syncing '", path,
+                            (string_address)"': ", synced);
                         good = false;
                 }
         }
@@ -14793,8 +14915,9 @@ static bool file_sync_one(string_address path, p8 mode)
 
         if (closed < 0)
         {
-                string_format(log_error, "sync: failed to close '%s': %s\n",
-                              path, file_reason(closed));
+                file_name_reason(log_error,
+                                 (string_address)"sync: failed to close '",
+                                 path, (string_address)"': ", closed);
                 good = false;
         }
 
@@ -15076,19 +15199,28 @@ static bool split_output_open(split_output address_to output)
                 return false;
         if (file_same_as_input(output->protect_input, output->name,
                                address_of output->input))
-                return string_report(log_error, false,
-                              "split: '%s' would overwrite input; aborting\n",
-                              output->name);
+        {
+                file_name_message(
+                    log_error, (string_address)"split: '", output->name,
+                    (string_address)
+                        "' would overwrite input; aborting\n");
+                return false;
+        }
 
         output->handle = system_open_at_mode(AT_FDCWD, output->name,
                                              FILE_WRITE, 0666);
 
         if (output->handle < 0)
-                return string_report(log_error, false, "split: cannot open '%s': %s\n",
-                              output->name, file_reason(output->handle));
+        {
+                file_name_reason(
+                    log_error, (string_address)"split: cannot open '",
+                    output->name, (string_address)"': ", output->handle);
+                return false;
+        }
 
         if (output->verbose)
-                string_format(log, "creating file '%s'\n", output->name);
+                file_name_message(log, (string_address)"creating file '",
+                                  output->name, (string_address)"'\n");
 
         return true;
 }
@@ -15101,8 +15233,12 @@ static bool split_output_write(split_output address_to output,
         if (!split_output_open(output))
                 return false;
         if (system_write_all((positive)output->handle, bytes, length) != length)
-                return string_report(log_error, false, "split: write error on '%s'\n",
-                              output->name);
+        {
+                file_name_message(log_error,
+                                  (string_address)"split: write error on '",
+                                  output->name, (string_address)"'\n");
+                return false;
+        }
         return true;
 }
 
@@ -15116,8 +15252,12 @@ static bool split_output_close(split_output address_to output)
         output->need_advance = true;
 
         if (closed < 0)
-                return string_report(log_error, false, "split: closing '%s': %s\n",
-                              output->name, file_reason(closed));
+        {
+                file_name_reason(log_error,
+                                 (string_address)"split: closing '",
+                                 output->name, (string_address)"': ", closed);
+                return false;
+        }
         return true;
 }
 
@@ -15430,8 +15570,10 @@ static b32 file_split()
 
         if (in < 0)
         {
-                string_format(log_error, "split: cannot open '%s' for reading: %s\n",
-                              input_name, file_reason(in));
+                file_name_reason(log_error,
+                                 (string_address)"split: cannot open '",
+                                 input_name,
+                                 (string_address)"' for reading: ", in);
                 return 1;
         }
 
@@ -15607,16 +15749,24 @@ static bool csplit_section(csplit_state address_to state, positive from,
                 return false;
         if (file_same_as_input(state->protect_input, state->name,
                                address_of state->input_facts))
-                return string_report(log_error, false,
-                              "csplit: '%s' would overwrite input; aborting\n",
-                              state->name);
+        {
+                file_name_message(
+                    log_error, (string_address)"csplit: '", state->name,
+                    (string_address)
+                        "' would overwrite input; aborting\n");
+                return false;
+        }
 
         bipolar out = system_open_at_mode(AT_FDCWD, state->name,
                                           FILE_WRITE, 0666);
 
         if (out < 0)
-                return string_report(log_error, false, "csplit: cannot open '%s': %s\n",
-                              state->name, file_reason(out));
+        {
+                file_name_reason(
+                    log_error, (string_address)"csplit: cannot open '",
+                    state->name, (string_address)"': ", out);
+                return false;
+        }
 
         state->made++;
         bool written = !length ||
@@ -15625,8 +15775,12 @@ static bool csplit_section(csplit_state address_to state, positive from,
         bipolar closed = system_close(out);
 
         if (!written || closed < 0)
-                return string_report(log_error, false, "csplit: write error on '%s'\n",
-                              state->name);
+        {
+                file_name_message(log_error,
+                                  (string_address)"csplit: write error on '",
+                                  state->name, (string_address)"'\n");
+                return false;
+        }
 
         if (!state->quiet)
         {
@@ -15935,8 +16089,12 @@ static b32 file_csplit()
                          : system_open_at(AT_FDCWD, input_name, FILE_READ);
 
         if (in < 0)
-                return string_report(log_error, 1, "csplit: cannot open '%s': %s\n",
-                              input_name, file_reason(in));
+        {
+                file_name_reason(log_error,
+                                 (string_address)"csplit: cannot open '",
+                                 input_name, (string_address)"': ", in);
+                return 1;
+        }
 
         file_facts facts;
         bool looked = file_look(in, (string_address)"", AT_EMPTY_PATH,
@@ -16284,9 +16442,13 @@ static bool truncate_current_size(string_address path, bipolar handle,
                 size = system_seek(handle, 0, FILE_SEEK_END);
 
         if (size < 0)
-                return string_report(log_error, false,
-                              "truncate: cannot get the size of '%s': %s\n",
-                              path, file_reason(size));
+        {
+                file_name_reason(
+                    log_error,
+                    (string_address)"truncate: cannot get the size of '",
+                    path, (string_address)"': ", size);
+                return false;
+        }
 
         address_to out = size;
         return true;
@@ -16308,8 +16470,10 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
                 if (no_create && handle == -ERROR_NO_ENTRY)
                         return true;
 
-                return string_report(log_error, false, "truncate: cannot open '%s' for writing: %s\n",
-                              path, file_reason(handle));
+                file_name_reason(
+                    log_error, (string_address)"truncate: cannot open '",
+                    path, (string_address)"' for writing: ", handle);
+                return false;
         }
 
         file_facts facts;
@@ -16319,7 +16483,9 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
             !file_look(handle, (string_address) "", AT_EMPTY_PATH,
                        address_of facts))
         {
-                string_report(log_error, false, "%s: %s: %s\n", (string_address) "truncate", path, (string_address) "cannot stat");
+                file_unquoted_name_message(
+                    log_error, (string_address)"truncate: ", path,
+                    (string_address)": cannot stat\n");
                 system_close(handle);
                 return false;
         }
@@ -16331,7 +16497,9 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
                 if (!block || size > b64_max / (b64)block ||
                     size < b64_min / (b64)block)
                 {
-                        string_report(log_error, false, "%s: %s: %s\n", (string_address) "truncate", path, (string_address) "size overflow");
+                        file_unquoted_name_message(
+                            log_error, (string_address)"truncate: ", path,
+                            (string_address)": size overflow\n");
                         system_close(handle);
                         return false;
                 }
@@ -16376,7 +16544,9 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
 
         if (overflow)
         {
-                string_report(log_error, false, "%s: %s: %s\n", (string_address) "truncate", path, (string_address) "size overflow");
+                file_unquoted_name_message(
+                    log_error, (string_address)"truncate: ", path,
+                    (string_address)": size overflow\n");
                 system_close(handle);
                 return false;
         }
@@ -16388,12 +16558,21 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         bipolar closed = system_close(handle);
 
         if (done < 0)
-                return string_report(log_error, false, "truncate: failed to truncate '%s': %s\n",
-                              path, file_reason(done));
+        {
+                file_name_reason(
+                    log_error,
+                    (string_address)"truncate: failed to truncate '", path,
+                    (string_address)"': ", done);
+                return false;
+        }
 
         if (closed < 0)
-                return string_report(log_error, false, "truncate: failed to close '%s': %s\n",
-                              path, file_reason(closed));
+        {
+                file_name_reason(log_error,
+                                 (string_address)"truncate: failed to close '",
+                                 path, (string_address)"': ", closed);
+                return false;
+        }
 
         return true;
 }
@@ -16491,8 +16670,14 @@ static b32 file_truncate()
                                                 address_of facts);
 
                 if (looked < 0)
-                        return string_report(log_error, 1, "truncate: cannot stat '%s': %s\n",
-                                      reference_path, file_reason(looked));
+                {
+                        file_name_reason(log_error,
+                                         (string_address)
+                                             "truncate: cannot stat '",
+                                         reference_path,
+                                         (string_address)"': ", looked);
+                        return 1;
+                }
 
                 bipolar handle = -1;
 
@@ -16502,9 +16687,14 @@ static b32 file_truncate()
                                                FILE_READ);
 
                 if (handle < 0 && (facts.mode & MODE_FORMAT) != MODE_FILE)
-                        return string_report(log_error, 1,
-                                      "truncate: cannot get the size of '%s': %s\n",
-                                      reference_path, file_reason(handle));
+                {
+                        file_name_reason(
+                            log_error,
+                            (string_address)
+                                "truncate: cannot get the size of '",
+                            reference_path, (string_address)"': ", handle);
+                        return 1;
+                }
 
                 bool known = truncate_current_size(reference_path, handle,
                                                    address_of facts,
@@ -17738,41 +17928,29 @@ static bool shred_one(string_address path, positive iterations,
 
         if (remove && good)
         {
-                file_facts named;
+                //      The reference says it is removing the name before it
+                //      does. file_remove_same atomically detaches that name
+                //      and proves that the detached inode is the one wiped
+                //      above, so a concurrent replacement is preserved.
+                if (verbose)
+                        file_shell_name_message(
+                            log_error, (string_address)"shred: ", path,
+                            (string_address)": removing\n");
 
-                if (!file_look_at(path, address_of named) ||
-                    !file_same_identity(address_of facts, address_of named))
+                bipolar gone =
+                    file_remove_same(AT_FDCWD, path, 0, address_of facts);
+
+                if (gone < 0)
                 {
-                        file_name_message(
-                            log_error, (string_address)"shred: '", path,
-                            (string_address)
-                                "': name changed; refusing removal\n");
+                        file_shell_name_reason(
+                            log_error, (string_address)"shred: ", path,
+                            (string_address)": cannot remove: ", gone);
                         good = false;
                 }
-                else
-                {
-                        //      The reference says it is removing the name
-                        //      before it does, because between the two it
-                        //      renames the name away and says each rename.
-                        if (verbose)
-                                file_shell_name_message(
-                                    log_error, (string_address)"shred: ", path,
-                                    (string_address)": removing\n");
-
-                        bipolar gone = system_remove_at(AT_FDCWD, path, 0);
-
-                        if (gone < 0)
-                        {
-                                file_shell_name_reason(
-                                    log_error, (string_address)"shred: ", path,
-                                    (string_address)": cannot remove: ", gone);
-                                good = false;
-                        }
-                        else if (verbose)
-                                file_shell_name_message(
-                                    log_error, (string_address)"shred: ", path,
-                                    (string_address)": removed\n");
-                }
+                else if (verbose)
+                        file_shell_name_message(
+                            log_error, (string_address)"shred: ", path,
+                            (string_address)": removed\n");
         }
 
         return good;
@@ -19198,9 +19376,6 @@ static positive cp_umask;
         The name is moved rather than copied, so a backup costs nothing and
         the file that was there keeps its inode.
 */
-static p8 file_backup_kind;
-static string_address file_backup_suffix;
-
 static fn file_name_message(writer output, string_address before,
                             string_address name, string_address after)
 {
@@ -19299,15 +19474,19 @@ static positive file_backup_number_at(bipolar directory,
 
 static bool file_backup_made_at(string_address program, bipolar directory,
                                 string_address destination,
-                                string_address shown)
+                                string_address shown,
+                                file_facts address_to expected)
 {
         p8 kept[FILE_PATH_MAX];
         positive length = string_length(destination);
         file_facts facts;
 
-        if (!file_backup_kind ||
-            !file_look(directory, destination, AT_SYMLINK_NOFOLLOW,
-                       address_of facts))
+        if (!file_backup_kind)
+                return true;
+        if (expected)
+                facts = *expected;
+        else if (!file_look(directory, destination, AT_SYMLINK_NOFOLLOW,
+                            address_of facts))
                 return true;
 
         p8 kind = file_backup_kind;
@@ -19365,20 +19544,6 @@ static bool file_backup_made_at(string_address program, bipolar directory,
         }
 
         return true;
-}
-
-static bool file_backup_made(string_address program,
-                             string_address destination)
-{
-        p8 leaf[FILE_PATH_MAX];
-        bipolar directory = file_parent_open(destination, leaf);
-        if (directory < 0)
-                return false;
-
-        bool made = file_backup_made_at(program, directory, leaf,
-                                        destination);
-        system_close(directory);
-        return made;
 }
 
 // Every program that takes -b reads it the same way, so the reading is
@@ -20253,7 +20418,7 @@ static fn cp_pair(string_address source, string_address destination)
 
         if (!file_backup_made_at((string_address)"cp",
                                  destination_directory, destination_leaf,
-                                 destination))
+                                 destination, null))
         {
                 system_close(source_directory);
                 system_close(destination_directory);
@@ -20678,7 +20843,7 @@ static fn install_pair(string_address source, string_address destination)
 
         if (!file_backup_made_at((string_address)"install",
                                  destination_directory, destination_leaf,
-                                 destination))
+                                 destination, null))
         {
                 system_close(destination_directory);
                 system_close(source_handle);
@@ -20967,7 +21132,8 @@ static fn mv_one(string_address source, string_address destination)
 
         if (!file_backup_made_at((string_address)"mv",
                                  destination_directory, destination_leaf,
-                                 destination))
+                                 destination,
+                                 destination_exists ? address_of to : null))
         {
                 mv_status = 1;
                 goto finished;
@@ -25803,7 +25969,9 @@ static p8 rename_name(string_address source, string_address before,
 
 static bool rename_ask(string_address destination)
 {
-        string_format(log, "rename: overwrite `%s'? ", destination);
+        log("rename: overwrite '", 19);
+        writer_terminal_quoted_name(log, destination);
+        log("'? ", 3);
         log_flush();
 
         p8 answer;
@@ -26634,8 +26802,12 @@ static b32 file_date()
                 bipolar looked = file_look_code(AT_FDCWD, of_file, 0, address_of facts);
 
                 if (looked < 0)
-                        return string_report(log_error, 1, "date: %s: %s\n", of_file,
-                                      file_reason(looked));
+                {
+                        file_unquoted_name_reason(
+                            log_error, (string_address)"date: ", of_file,
+                            (string_address)": ", looked);
+                        return 1;
+                }
 
                 when = (b64)facts.modified.seconds;
         }
@@ -27393,8 +27565,10 @@ static b32 file_xargs()
 
                 if (xargs_input < 0)
                 {
-                        string_format(log_error, "xargs: Cannot open input file '%s': %s\n",
-                                      from, file_reason(xargs_input));
+                        file_name_reason(
+                            log_error,
+                            (string_address)"xargs: Cannot open input file '",
+                            from, (string_address)"': ", xargs_input);
                         return 1;
                 }
         }

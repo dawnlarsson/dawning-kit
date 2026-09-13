@@ -690,6 +690,7 @@ positive exec_function_environment_count();
 bool exec_function_environment_fill(string_address address_to environment,
                                     positive count);
 fn exec_function_import_environment(string_address address_to environment);
+static fn shell_spawn_device_disable();
 
 /* Keep child wiring names at their call sites while ownership and the fd==fd
    edge live with the shared descriptor operations. */
@@ -1152,11 +1153,23 @@ static bool shell_spawn_device_open()
         {
                 spawn_device = system_open_at(AT_FDCWD,
                                              SPARK_DEVICE,
-                                             FILE_READ_WRITE);
+                                             FILE_READ_WRITE | O_CLOEXEC);
                 spawn_device_opened = true;
         }
 
         return spawn_device >= 0;
+}
+
+/* A final Floodlight-confined child must not retain or reopen the privileged
+   launch device.  CLOEXEC protects the ordinary exec boundary; disabling the
+   cache also protects applets which run directly in their forked shell image. */
+static fn shell_spawn_device_disable()
+{
+        if (spawn_device >= 0)
+                system_close(spawn_device);
+
+        spawn_device = -1;
+        spawn_device_opened = true;
 }
 
 /* argv[0] selects a utility in the kernel-owned /shell image. */
