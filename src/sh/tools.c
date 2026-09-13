@@ -642,7 +642,7 @@ static bool logger_connect(logger_control address_to control)
         if (control->server)
         {
                 text_flush();
-                string_format(writer_stderr, logger_port_unknown
+                return string_report(writer_stderr, false, logger_port_unknown
                     ? (string_address)"logger: failed to resolve name %s port %s: Servname not supported for ai_socktype\n"
                     : (string_address)"logger: failed to connect to %s port %s\n",
                               control->server,
@@ -653,16 +653,14 @@ static bool logger_connect(logger_control address_to control)
                               : control->transport == LOGGER_TRANSPORT_STREAM
                                   ? (string_address)"syslog-conn"
                                   : (string_address)"syslog");
-                return false;
         }
         if (control->socket_errors)
         {
                 text_flush();
-                string_format(writer_stderr, "logger: socket %s: %s\n",
+                return string_report(writer_stderr, false, "logger: socket %s: %s\n",
                               control->socket_path ? control->socket_path
                                                    : (string_address)"/dev/log",
                               file_reason(control->last_error));
-                return false;
         }
         return true;
 }
@@ -769,9 +767,8 @@ static bool logger_stream(logger_control address_to control,
                 if (opened < 0)
                 {
                         text_flush();
-                        string_format(writer_stderr, "logger: file %s: %s\n",
+                        return string_report(writer_stderr, false, "logger: file %s: %s\n",
                                       path, file_reason(opened));
-                        return false;
                 }
                 system_close((positive)opened);
         }
@@ -942,9 +939,8 @@ static bool logger_journald(logger_control address_to control,
                 if (handle < 0 && named)
                 {
                         text_flush();
-                        string_format(writer_stderr, "logger: cannot open %s: %s\n",
+                        return string_report(writer_stderr, false, "logger: cannot open %s: %s\n",
                                       path, file_reason(handle));
-                        return false;
                 }
                 if (path && handle >= 0)
                         system_close((positive)handle);
@@ -1013,9 +1009,8 @@ static bool logger_journald(logger_control address_to control,
         if (!fields || malformed)
         {
                 text_flush();
-                string_format(writer_stderr,
+                return string_report(writer_stderr, false,
                     "logger: journald entry could not be written\n");
-                return false;
         }
 
         control->socket_path = (string_address)"/run/systemd/journal/socket";
@@ -1058,25 +1053,22 @@ static bool logger_option_seen(p8 letter, string_address value)
                 string_address level = string_first_of(value, '.');
 
                 text_flush();
-                string_format(writer_stderr, "logger: unknown priority name: %s\n",
+                return string_report(writer_stderr, false, "logger: unknown priority name: %s\n",
                               level ? level + 1 : value);
-                return false;
         }
         if (letter == 'S' && value &&
             !logger_size(value, address_of logger_seen_size))
         {
                 text_flush();
-                string_format(writer_stderr,
+                return string_report(writer_stderr, false,
                     "logger: failed to parse message size: '%s': Invalid argument\n",
                     value);
-                return false;
         }
         if (letter == 'm' && value && !logger_message_id_valid(value))
         {
                 text_flush();
-                string_format(writer_stderr,
+                return string_report(writer_stderr, false,
                               "logger: --msgid cannot contain space\n");
-                return false;
         }
         //      -i and --id answer the same question, so the last of them
         //      written is the one that means it.
@@ -1099,11 +1091,10 @@ static bool logger_option_seen(p8 letter, string_address value)
                                                            address_of parsed);
 
                         text_flush();
-                        string_format(writer_stderr, numeric
+                        return string_report(writer_stderr, false, numeric
                             ? (string_address)"logger: failed to parse id: '%s': Numerical result out of range\n"
                             : (string_address)"logger: failed to parse id: '%s'\n",
                             value);
-                        return false;
                 }
         }
         if (letter == 'f' && value)
@@ -1113,9 +1104,8 @@ static bool logger_option_seen(p8 letter, string_address value)
                 if (handle < 0)
                 {
                         text_flush();
-                        string_format(writer_stderr, "logger: file %s: %s\n",
+                        return string_report(writer_stderr, false, "logger: file %s: %s\n",
                                       value, file_reason(handle));
-                        return false;
                 }
                 system_close((positive)handle);
         }
@@ -1159,9 +1149,8 @@ static bool logger_option_seen(p8 letter, string_address value)
                 if (handle < 0)
                 {
                         text_flush();
-                        string_format(writer_stderr, "logger: cannot open %s: %s\n",
+                        return string_report(writer_stderr, false, "logger: cannot open %s: %s\n",
                                       value, file_reason(handle));
-                        return false;
                 }
                 system_close((positive)handle);
         }
@@ -1175,10 +1164,9 @@ static bool logger_option_seen(p8 letter, string_address value)
                 if (!logger_seen_sd_id)
                 {
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                             "logger: --sd-id was not specified for --sd-param %s\n",
                             value);
-                        return false;
                 }
                 if (logger_seen_sd_count < LOGGER_SD_PARAMETERS)
                         logger_seen_sd_parameter[logger_seen_sd_count++] = value;
@@ -2729,9 +2717,8 @@ static bool login_utmpdump_seen(p8 letter, string_address value)
         login_utmpdump_output = text_open_handle(value, FILE_WRITE, 0666);
         if (login_utmpdump_output < 0)
         {
-                string_format(writer_stderr, "utmpdump: cannot open %s: %s\n", value,
+                return string_report(writer_stderr, false, "utmpdump: cannot open %s: %s\n", value,
                               file_reason(login_utmpdump_output));
-                return false;
         }
         return true;
 }
@@ -3256,8 +3243,7 @@ static bool login_last_seen(p8 letter, string_address value)
         if (letter != 'n' || !value || string_digits_exact(value, address_of scratch))
                 return true;
         text_flush();
-        string_format(writer_stderr, "last: failed to parse number: '%s'\n", value);
-        return false;
+        return string_report(writer_stderr, false, "last: failed to parse number: '%s'\n", value);
 }
 
 static b32 tools_last()
@@ -5596,9 +5582,8 @@ static fn numfmt_fields_begin()
 
 static bool numfmt_hint()
 {
-        string_format(writer_stderr,
+        return string_report(writer_stderr, false,
                       "Try 'numfmt --help' for more information.\n");
-        return false;
 }
 
 /* The reference's complaint about a word that is not one of a fixed set:
@@ -5734,9 +5719,8 @@ static bool numfmt_option_seen(p8 letter, string_address value)
                 if (!string_digits_exact(value, address_of header) || !header)
                 {
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                                       "numfmt: invalid header value '%s'\n", value);
-                        return false;
                 }
         }
         if (letter == 'r' && value &&
@@ -5754,9 +5738,8 @@ static bool numfmt_option_seen(p8 letter, string_address value)
                 if (!numfmt_unit(value, address_of unit))
                 {
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                                       "numfmt: invalid unit size: '%s'\n", value);
-                        return false;
                 }
 
                 if (letter == 'R')
@@ -5769,9 +5752,8 @@ static bool numfmt_option_seen(p8 letter, string_address value)
              !numfmt.padding))
         {
                 text_flush();
-                string_format(writer_stderr,
+                return string_report(writer_stderr, false,
                               "numfmt: invalid padding value '%s'\n", value);
-                return false;
         }
         if (letter == 'u' && value)
         {
@@ -7232,9 +7214,8 @@ static bool tools_mcookie_seen(p8 letter, string_address value)
                 if (handle < 0)
                 {
                         text_flush();
-                        string_format(writer_stderr, "mcookie: cannot open %s: %s\n",
+                        return string_report(writer_stderr, true, "mcookie: cannot open %s: %s\n",
                                       value, file_reason(handle));
-                        return true;
                 }
                 system_close((positive)handle);
         }
@@ -7245,10 +7226,9 @@ static bool tools_mcookie_seen(p8 letter, string_address value)
             !(string_is(value, '0') && !string_get(value + 1)) &&
             !split_size(value, address_of maximum))
         {
-                string_format(writer_stderr,
+                return string_report(writer_stderr, false,
                               "mcookie: failed to parse length: '%s': Invalid argument\n",
                               value);
-                return false;
         }
         return true;
 }
@@ -7659,10 +7639,9 @@ static bool dd_refused;
 static b32 dd_complain(string_address message, string_address value)
 {
         text_flush();
-        string_format(writer_stderr,
+        return string_report(writer_stderr, 1,
                       "dd: %s: '%s'\nTry 'dd --help' for more information.\n",
                       message, value);
-        return 1;
 }
 
 static bool dd_quantity(string_address text, positive address_to out,
@@ -8125,11 +8104,10 @@ static b32 tools_dd(void)
                         if (string_is(argument, '-') && string_is(argument + 1, '-') &&
                             string_get(argument + 2))
                         {
-                                string_format(log_error,
+                                return string_report(log_error, 1,
                                     "dd: unrecognized option '%s'\n"
                                     "Try 'dd --help' for more information.\n",
                                     argument);
-                                return 1;
                         }
 
                         //      Two dashes alone end the options, and dd
@@ -8147,19 +8125,17 @@ static b32 tools_dd(void)
                                 spelled[0] = string_get(argument + 1);
                                 spelled[1] = end;
                                 text_flush();
-                                string_format(writer_stderr,
+                                return string_report(writer_stderr, 1,
                                     "dd: invalid option -- '%s'\n"
                                     "Try 'dd --help' for more information.\n",
                                     (string_address)spelled);
-                                return 1;
                         }
 
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, 1,
                             "dd: unrecognized operand '%s'\n"
                             "Try 'dd --help' for more information.\n",
                             argument);
-                        return 1;
                 }
         }
 
@@ -9263,12 +9239,11 @@ static bool dump_od_seen(p8 letter, string_address value)
                     !string_equals(value, "big"))
                 {
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                                       "od: invalid argument '%s' for '--endian'\n"
                                       "Valid arguments are:\n  - 'little'\n  - 'big'\n"
                                       "Try 'od --help' for more information.\n",
                                       value);
-                        return false;
                 }
 
                 dump_arguments.big_endian = value && string_equals(value, "big");
@@ -9296,10 +9271,9 @@ static bool dump_od_seen(p8 letter, string_address value)
                         p8 shown[2] = {radix, end};
 
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                             "od: invalid output address radix '%s'; it must be one character from [doxn]\n",
                             shown);
-                        return false;
                 }
 
                 return true;
@@ -9341,9 +9315,8 @@ static bool dump_od_seen(p8 letter, string_address value)
                 if (!dump_number(value, address_of width) || !width)
                 {
                         text_flush();
-                        string_format(writer_stderr, "od: invalid -w argument '%s'\n",
+                        return string_report(writer_stderr, false, "od: invalid -w argument '%s'\n",
                                       value);
-                        return false;
                 }
         }
 
@@ -12099,10 +12072,9 @@ static bool diff_option_seen(p8 letter, string_address value)
                         // diff points at its own help after the complaint,
                         // and puts its name on that line too.
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                                       "diff: conflicting output style options\n"
                                       "diff: Try 'diff --help' for more information.\n");
-                        return false;
                 }
 
                 diff_style = style;

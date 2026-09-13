@@ -329,15 +329,11 @@ static bool net_link_line(netlink_header address_to header, address_any context)
         if (!name)
                 return true;
 
-        string_format(net_out, "%p: ", (positive)link->index);
-        writer_terminal_name(net_out, name);
-        string_format(net_out, ": ");
+        string_format(net_out, "%p: %w: ", (positive)link->index, writer_terminal_name, name);
         net_say_flags(link->flags);
-        string_format(net_out, " state %s\n",
+        return string_report(net_out, true, " state %s\n",
                       (link->flags & IFF_UP) ? (string_address) "UP"
                                              : (string_address) "DOWN");
-
-        return true;
 }
 
 typedef struct
@@ -379,10 +375,8 @@ static bool net_address_line(netlink_header address_to header, address_any conte
 
         host = network_order_32(address_to((p32 address_to)held));
 
-        string_format(net_out, "%p: ", (positive)body->index);
-        writer_terminal_name(net_out,
-                             label ? label : (string_address) "?");
-        string_format(net_out, "    inet %s/%p\n",
+        string_format(net_out, "%p: %w    inet %s/%p\n", (positive)body->index,
+                      writer_terminal_name, label ? label : (string_address) "?",
                       net_host_text(written, host), (positive)body->prefix);
 
         (void)naming;
@@ -447,16 +441,13 @@ static bool net_route_line(netlink_header address_to header, address_any context
 
                 if (name)
                 {
-                        string_format(net_out, " dev ");
-                        writer_terminal_name(net_out, name);
+                        string_format(net_out, " dev %w", writer_terminal_name, name);
                 }
                 else
                         string_format(net_out, " dev %p", (positive)index);
         }
 
-        string_format(net_out, "\n");
-
-        return true;
+        return string_report(net_out, true, "\n");
 }
 
 //      Whatever this machine calls its interface, without being told.
@@ -513,10 +504,8 @@ static b32 net_host(void)
 
                 if (server < 0)
                 {
-                        file_name_message(net_out,
-                                          (string_address) "host: ",
-                                          net_word(2),
-                                          (string_address) " is not an address\n");
+                        string_format(net_out, "host: %w is not an address\n",
+                                      writer_terminal_quoted_name, net_word(2));
                         net_flush();
                         return 1;
                 }
@@ -532,19 +521,16 @@ static b32 net_host(void)
         switch (status)
         {
         case DNS_OK:
-                file_name_message(net_out, (string_address) "", net_word(1),
-                                  (string_address) " has address ");
+                string_format(net_out, "%w has address ", writer_terminal_quoted_name, net_word(1));
                 string_format(net_out, "%s\n", net_host_text(written, found));
                 break;
         case DNS_NO_SUCH_NAME:
-                file_name_message(net_out, (string_address) "host: ",
-                                  net_word(1),
-                                  (string_address) ": no such name\n");
+                string_format(net_out, "host: %w: no such name\n", writer_terminal_quoted_name,
+                              net_word(1));
                 break;
         case DNS_NO_ADDRESS:
-                file_name_message(net_out, (string_address) "host: ",
-                                  net_word(1),
-                                  (string_address) " exists but has no address\n");
+                string_format(net_out, "host: %w exists but has no address\n",
+                              writer_terminal_quoted_name, net_word(1));
                 break;
         case DNS_NO_REPLY:
                 string_format(net_out, "host: no reply from the nameserver\n");
@@ -614,9 +600,8 @@ static b32 net_fetch(void)
 
         if (status < 0)
         {
-                file_name_message(
-                    net_out, (string_address) "fetch: ", net_word(1),
-                    (string_address) " is not a url this understands\n");
+                string_format(net_out, "fetch: %w is not a url this understands\n",
+                              writer_terminal_quoted_name, net_word(1));
                 net_flush();
                 return 1;
         }
@@ -635,9 +620,8 @@ static b32 net_fetch(void)
                 if (dns_resolve_any((string_address) "/etc/resolv.conf", name,
                                     address_of host, 3) != DNS_OK)
                 {
-                        file_name_message(net_out,
-                                          (string_address) "fetch: cannot resolve ",
-                                          name, (string_address) "\n");
+                        string_format(net_out, "fetch: cannot resolve %w\n",
+                                      writer_terminal_quoted_name, name);
                         net_flush();
                         return 1;
                 }
@@ -648,13 +632,11 @@ static b32 net_fetch(void)
         if (status < 0)
         {
                 if (status == HTTP_NO_ROUTE)
-                        file_name_message(net_out,
-                                          (string_address) "fetch: cannot reach ",
-                                          name, (string_address) "\n");
+                        string_format(net_out, "fetch: cannot reach %w\n",
+                                      writer_terminal_quoted_name, name);
                 else if (status == HTTP_NO_REPLY)
-                        file_name_message(net_out,
-                                          (string_address) "fetch: no reply from ",
-                                          name, (string_address) "\n");
+                        string_format(net_out, "fetch: no reply from %w\n",
+                                      writer_terminal_quoted_name, name);
                 else
                         string_format(net_out, "fetch: the reply made no sense\n");
 
@@ -757,9 +739,9 @@ static bipolar net_staging_finish(net_staging address_to file, bool publish)
                     file->directory, file->temporary, file->handle, 0);
 
         if (publish && !failed)
-                failed = file_temporary_publish_at(
-                    file->directory, file->temporary, file->destination,
-                    file->handle, 0);
+                failed = file_temporary_publish_decided_at(
+                    file->directory, file->temporary, file->destination, file->handle,
+                    false, null);
 
         bipolar closed = system_close(file->handle);
         file->handle = -1;
@@ -820,18 +802,14 @@ static b32 net_wget(void)
         if (taking.first >= (positive)program_argument_count())
         {
                 string_format(log_error, "wget: missing URL\n");
-                string_format(log_error, "Usage: wget [-q] [-O FILE] "
+                return string_report(log_error, 1, "Usage: wget [-q] [-O FILE] "
                                          "[--no-check-certificate] URL\n");
-                return 1;
         }
 
         if (taking.first + 1 < (positive)program_argument_count())
         {
-                file_name_message(
-                    log_error, (string_address) "wget: extra operand '",
-                    program_argument((b32)(taking.first + 1)),
-                    (string_address) "'\n");
-                return 1;
+                return string_report(log_error, 1, "wget: extra operand '%w'\n", writer_terminal_quoted_name,
+                              program_argument((b32)(taking.first + 1)));
         }
 
         url = program_argument((b32)taking.first);
@@ -843,10 +821,8 @@ static b32 net_wget(void)
                                  address_of path, address_of tls);
         if (status)
         {
-                file_name_message(
-                    log_error, (string_address) "wget: ", url,
-                    (string_address) " is not a url this understands\n");
-                return 1;
+                return string_report(log_error, 1, "wget: %w is not a url this understands\n",
+                              writer_terminal_quoted_name, url);
         }
 
         if (output && string_equals(output, (string_address) "-"))
@@ -864,19 +840,16 @@ static b32 net_wget(void)
                     sizeof(".moonwater-wget-") - 1, 0644);
                 if (dest < 0)
                 {
-                        file_name_message(log_error,
-                                          (string_address) "wget: cannot write ",
-                                          output, (string_address) "\n");
-                        return 1;
+                        return string_report(log_error, 1, "wget: cannot write %w\n",
+                                      writer_terminal_quoted_name, output);
                 }
                 own_file = true;
         }
 
         if (!quiet)
         {
-                file_name_pair_message(log_error, (string_address) "", url,
-                                       (string_address) "\nSaving to: '", output,
-                                       (string_address) "'\n");
+                string_format(log_error, "%w\nSaving to: '%w'\n", writer_terminal_quoted_name, url,
+                              writer_terminal_quoted_name, output);
         }
 
         status = http_fetch_to(url, dest, check_cert, address_of code);
@@ -886,19 +859,15 @@ static b32 net_wget(void)
                 if (own_file)
                 {
                         if (net_staging_finish(address_of staged, false) < 0)
-                                file_name_message(
-                                    log_error,
-                                    (string_address) "wget: incomplete staging file retained beside '",
-                                    output, (string_address) "'\n");
+                                string_format(log_error, "wget: incomplete staging file retained beside '%w'\n",
+                                              writer_terminal_quoted_name, output);
                 }
                 if (status == HTTP_NO_HOST)
-                        file_name_message(log_error,
-                                          (string_address) "wget: cannot resolve ",
-                                          name, (string_address) "\n");
+                        string_format(log_error, "wget: cannot resolve %w\n",
+                                      writer_terminal_quoted_name, name);
                 else if (status == HTTP_NO_ROUTE)
-                        file_name_message(log_error,
-                                          (string_address) "wget: cannot reach ",
-                                          name, (string_address) "\n");
+                        string_format(log_error, "wget: cannot reach %w\n",
+                                      writer_terminal_quoted_name, name);
                 else if (status == HTTP_TLS)
                         string_format(log_error, "wget: TLS handshake failed\n");
                 else if (status == HTTP_DOWNGRADE)
@@ -907,9 +876,8 @@ static b32 net_wget(void)
                 else if (status == HTTP_REDIRECTS)
                         string_format(log_error, "wget: too many redirects\n");
                 else if (status == HTTP_NO_REPLY)
-                        file_name_message(log_error,
-                                          (string_address) "wget: no reply from ",
-                                          name, (string_address) "\n");
+                        string_format(log_error, "wget: no reply from %w\n",
+                                      writer_terminal_quoted_name, name);
                 else
                         string_format(log_error, "wget: download failed\n");
                 return 1;
@@ -920,22 +888,17 @@ static b32 net_wget(void)
                 if (own_file)
                 {
                         if (net_staging_finish(address_of staged, false) < 0)
-                                file_name_message(
-                                    log_error,
-                                    (string_address) "wget: rejected response retained beside '",
-                                    output, (string_address) "'\n");
+                                string_format(log_error, "wget: rejected response retained beside '%w'\n",
+                                              writer_terminal_quoted_name, output);
                 }
-                string_format(log_error, "wget: server returned %p\n",
+                return string_report(log_error, 1, "wget: server returned %p\n",
                               (positive)code);
-                return 1;
         }
 
         if (own_file && net_staging_finish(address_of staged, true) < 0)
         {
-                file_name_message(
-                    log_error, (string_address) "wget: cannot publish ", output,
-                    (string_address) "; staging file retained\n");
-                return 1;
+                return string_report(log_error, 1, "wget: cannot publish %w; staging file retained\n",
+                              writer_terminal_quoted_name, output);
         }
 
         return 0;
@@ -1292,11 +1255,8 @@ static b32 net_apply_lease(b32 handle, p32 index, string_address name,
 
         if (announce)
         {
-                string_format(net_out, "ip: %s/%p on ",
-                              net_host_text(written, lease->address),
-                              (positive)dhcp_prefix_of(lease->mask));
-                writer_terminal_name(net_out, name);
-                string_format(net_out, "\n");
+                string_format(net_out, "ip: %s/%p on %w\n", net_host_text(written, lease->address),
+                              (positive)dhcp_prefix_of(lease->mask), writer_terminal_name, name);
 
                 if (lease->router)
                         string_format(net_out, "ip: default via %s\n",
@@ -1361,15 +1321,13 @@ static b32 net_auto(b32 handle, net_holding address_to held)
 
         if (!search.has_hardware)
         {
-                file_name_message(net_out, (string_address) "ip: ",
-                                  search.name,
-                                  (string_address) " has no hardware address\n");
+                string_format(net_out, "ip: %w has no hardware address\n",
+                              writer_terminal_quoted_name, search.name);
                 net_flush();
                 return 1;
         }
 
-        file_name_message(net_out, (string_address) "ip: using ",
-                          search.name, (string_address) "\n");
+        string_format(net_out, "ip: using %w\n", writer_terminal_quoted_name, search.name);
 
         if (!(search.flags & IFF_UP))
         {
@@ -1654,11 +1612,9 @@ static b32 net_watch(void)
                                                         address_of held,
                                                         false))
                                                 {
-                                                        file_name_message(
-                                                            net_out,
-                                                            (string_address) "ip: lease renewed on ",
-                                                            held.name,
-                                                            (string_address) "\n");
+                                                        string_format(net_out, "ip: lease renewed on %w\n",
+                                                                      writer_terminal_quoted_name,
+                                                                      held.name);
                                                         net_flush();
                                                 }
                                                 socket_close((b32)handle);

@@ -1467,8 +1467,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                         return 32;
                 }
 
-                string_format(output, "%p:%p\n", (positive)facts.rdev_major, (positive)facts.rdev_minor);
-                return 0;
+                return string_report(output, 0, "%p:%p\n", (positive)facts.rdev_major, (positive)facts.rdev_minor);
         }
 
         bipolar handle = system_open_at(AT_FDCWD,
@@ -1578,8 +1577,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
 
         if (mounted && fs_devno)
         {
-                string_format(output, "%p:%p\n", (positive)here.device_major, (positive)here.device_minor);
-                return 0;
+                return string_report(output, 0, "%p:%p\n", (positive)here.device_major, (positive)here.device_minor);
         }
 
         if (!quiet)

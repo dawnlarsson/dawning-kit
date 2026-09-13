@@ -575,8 +575,8 @@ static b32 process_chroot()
                         //      coreutils sends the reader on to --help here,
                         //      as it does for every usage complaint.
                         log_error("chroot: option --skip-chdir only permitted if NEWROOT is old '/'\n", 0);
-                        log_error("Try 'chroot --help' for more information.\n", 0);
-                        return 125;
+                        return string_report(log_error, 125,
+                                             "Try 'chroot --help' for more information.\n");
                 }
         }
 
@@ -1394,10 +1394,9 @@ static bool process_timeout_seen(p8 letter, string_address value)
 
                 if (named < 0 || named > 64)
                 {
-                        string_format(log_error, "timeout: '%s': invalid signal\n"
+                        return string_report(log_error, false, "timeout: '%s': invalid signal\n"
                                                  "Try 'timeout --help' for more information.\n",
                                       value);
-                        return false;
                 }
         }
         if (letter == 'k' && value)
@@ -1406,10 +1405,9 @@ static bool process_timeout_seen(p8 letter, string_address value)
 
                 if (!process_timeout_duration(value, address_of after))
                 {
-                        string_format(log_error, "timeout: invalid time interval '%s'\n"
+                        return string_report(log_error, false, "timeout: invalid time interval '%s'\n"
                                                  "Try 'timeout --help' for more information.\n",
                                       value);
-                        return false;
                 }
         }
         return true;
@@ -2935,11 +2933,10 @@ static bool process_replay_number(p8 letter, string_address value)
         {
                 if (file_duration_read(value, false, address_of scratch))
                         return true;
-                string_format(log_error, letter == 'd'
+                return string_report(log_error, false, letter == 'd'
                                   ? "scriptreplay: failed to parse number: '%s'\n"
                                   : "scriptreplay: failed to parse maximal delay argument: '%s'\n",
                               value);
-                return false;
         }
         if (letter == 'x')
         {
@@ -2948,8 +2945,7 @@ static bool process_replay_number(p8 letter, string_address value)
                     string_equals(value, (string_address)"signal") ||
                     string_equals(value, (string_address)"info"))
                         return true;
-                string_format(log_error, "scriptreplay: unsupported stream name: '%s'\n", value);
-                return false;
+                return string_report(log_error, false, "scriptreplay: unsupported stream name: '%s'\n", value);
         }
         if (letter == 'c')
         {
@@ -2957,8 +2953,7 @@ static bool process_replay_number(p8 letter, string_address value)
                     string_equals(value, (string_address)"never") ||
                     string_equals(value, (string_address)"always"))
                         return true;
-                string_format(log_error, "scriptreplay: unsupported mode name: '%s'\n", value);
-                return false;
+                return string_report(log_error, false, "scriptreplay: unsupported mode name: '%s'\n", value);
         }
         return true;
 }
@@ -3025,9 +3020,8 @@ static b32 process_scriptreplay()
         string_address out_option = file_option_value(address_of taking, 'O');
         if (out_option && file_option_value(address_of taking, 's'))
         {
-                log_error("scriptreplay: options --log-out and --typescript cannot be combined\n",
-                          0);
-                return 1;
+                return string_report(log_error, 1,
+                                     "scriptreplay: options --log-out and --typescript cannot be combined\n");
         }
         if (!out_option)
                 out_option = file_option_value(address_of taking, 's');
@@ -3296,9 +3290,8 @@ static b32 process_ctrlaltdel()
                         system_close(handle);
                 if (got < 0)
                 {
-                        string_format(log_error, "ctrlaltdel: cannot read %s: %s\n",
+                        return string_report(log_error, 1, "ctrlaltdel: cannot read %s: %s\n",
                                       knob, file_reason(got));
-                        return 1;
                 }
                 log(got > 0 && setting[0] == '1' ? "hard\n" : "soft\n", 5);
                 log_flush();

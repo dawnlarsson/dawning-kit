@@ -1044,9 +1044,8 @@ static b32 ul_renice_one(string_address operand, b32 which,
         raw = system_call_2(syscall(getpriority), (positive)which, id);
         bipolar now = raw < 0 ? wanted : 20 - raw;
 
-        string_format(log, "%p (%s) old priority %b, new priority %b\n",
+        return string_report(log, 0, "%p (%s) old priority %b, new priority %b\n",
                       id, kind, old, now);
-        return 0;
 }
 
 static bool ul_renice_long_value(string_address word, string_address name,
@@ -2345,10 +2344,9 @@ static b32 util_linux_flock()
                 if (!ul_signed(target, b32_min, b32_max,
                                address_of descriptor_number))
                 {
-                        string_format(log_error,
+                        return string_report(log_error, 64,
                                       "flock: bad file descriptor: '%s'\n",
                                       target);
-                        return 64;
                 }
                 descriptor = true;
         }
@@ -8743,8 +8741,7 @@ static b32 ul_blockdev_report_one(string_address path, bool quiet)
         positive_to_padded(log, (positive)values[4], 16, ' ', 0);
         log("   ", 3);
         log(path, string_length(path));
-        log("\n", 1);
-        return 0;
+        return string_report(log, 0, "\n");
 }
 
 static bool ul_blockdev_report_visit(string_address path, address_any opaque)

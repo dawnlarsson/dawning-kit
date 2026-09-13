@@ -11046,7 +11046,8 @@ ASM_FUNC(positive_to_string)
     ".Lstring_format_spec:\n   movzbl 1(%rbp), %eax\n   inc %rbp\n   cmp $115, %al  # s\n"
     "je .Lstring_format_string\n   cmp $112, %al  # p\n"
     "je .Lstring_format_positive\n   cmp $98, %al  # b\n"
-    "je .Lstring_format_bipolar\n"
+    "je .Lstring_format_bipolar\n   cmp $119, %al  # w: renderer, value\n"
+    "je .Lstring_format_custom\n"
 #ifndef KERNEL_MODE
     "cmp $102, %al  # f\n"
     "je .Lstring_format_decimal\n"
@@ -11061,6 +11062,19 @@ ASM_FUNC(positive_to_string)
     "add $8, %r13\n"
     ".Lstring_format_string_go:\n   xor %esi, %esi  # zero length: the writer runs to the terminator\n"
     ASM_CALL("rbx")
+    "jmp .Lstring_format_next\n"
+    // %w takes a renderer(writer, value) and a value. Both consume ordinary
+    // integer argument slots, including when the pair straddles the stack.
+    ".Lstring_format_custom:\n   test %r13, %r13\n   jns .Lformat_custom_fn_stack\n"
+    "mov 160(%rsp,%r13), %rax\n   add $8, %r13\n   jmp .Lformat_custom_value\n"
+    ".Lformat_custom_fn_stack:\n   mov 168(%rsp), %rdx\n   mov (%rdx), %rax\n"
+    "addq $8, 168(%rsp)\n"
+    ".Lformat_custom_value:\n   test %r13, %r13\n   jns .Lformat_custom_value_stack\n"
+    "mov 160(%rsp,%r13), %rsi\n   add $8, %r13\n   jmp .Lformat_custom_call\n"
+    ".Lformat_custom_value_stack:\n   mov 168(%rsp), %rdx\n   mov (%rdx), %rsi\n"
+    "addq $8, 168(%rsp)\n"
+    ".Lformat_custom_call:\n   mov %rbx, %rdi\n"
+    ASM_CALL("rax")
     "jmp .Lstring_format_next\n"
     ".Lstring_format_positive:\n   test %r13, %r13\n   jns .Lstring_format_positive_stack\n   mov 160(%rsp,%r13), %rsi\n"
     "add $8, %r13\n"
@@ -17541,7 +17555,8 @@ ASM_FUNC(positive_to_string)
     "cmp w9, #115  // s\n"
     "b.eq .Lstring_format_string\n   cmp w9, #112  // p\n"
     "b.eq .Lstring_format_positive\n   cmp w9, #98  // b\n"
-    "b.eq .Lstring_format_bipolar\n"
+    "b.eq .Lstring_format_bipolar\n   cmp w9, #119  // w\n"
+    "b.eq .Lstring_format_custom\n"
 #ifndef KERNEL_MODE
     "cmp w9, #102  // f\n"
     "b.eq .Lstring_format_decimal\n"
@@ -17557,6 +17572,15 @@ ASM_FUNC(positive_to_string)
     ".Lstring_format_string:\n   cmp x21, x22\n   b.hs .Lstring_format_string_stack\n   ldr x0, [x21], #8\n"
     ".Lstring_format_string_go:\n   mov x1, #0  // zero length: the writer runs to the terminator\n"
     ASM_CALL("x19")
+    "b .Lstring_format_next\n"
+    ".Lstring_format_custom:\n   cmp x21, x22\n   b.hs .Lformat_custom_fn_stack\n"
+    "ldr x9, [x21], #8\n   b .Lformat_custom_value\n"
+    ".Lformat_custom_fn_stack:\n   ldr x9, [x24], #8\n"
+    ".Lformat_custom_value:\n   cmp x21, x22\n   b.hs .Lformat_custom_value_stack\n"
+    "ldr x1, [x21], #8\n   b .Lformat_custom_call\n"
+    ".Lformat_custom_value_stack:\n   ldr x1, [x24], #8\n"
+    ".Lformat_custom_call:\n   mov x0, x19\n"
+    ASM_CALL("x9")
     "b .Lstring_format_next\n"
     ".Lstring_format_positive:\n   cmp x21, x22\n   b.hs .Lstring_format_positive_stack\n   ldr x1, [x21], #8\n"
     ".Lstring_format_positive_go:\n   mov x0, x19\n   bl positive_to_string\n   b .Lstring_format_next\n"
@@ -23947,7 +23971,8 @@ ASM_FUNC(positive_to_string)
     ".Lstring_format_spec:\n   lbu t0, 1(s1)\n   addi s1, s1, 1\n   li t1, 115  # s\n"
     "beq t0, t1, .Lstring_format_string\n   li t1, 112  # p\n"
     "beq t0, t1, .Lstring_format_positive\n   li t1, 98  # b\n"
-    "beq t0, t1, .Lstring_format_bipolar\n"
+    "beq t0, t1, .Lstring_format_bipolar\n   li t1, 119  # w\n"
+    "beq t0, t1, .Lstring_format_custom\n"
 #ifndef KERNEL_MODE
     "li t1, 102  # f\n"
     "beq t0, t1, .Lstring_format_decimal\n"
@@ -23960,6 +23985,10 @@ ASM_FUNC(positive_to_string)
     "j .Lstring_format_next\n"
     ".Lstring_format_string:\n   ld a0, 0(s2)\n   addi s2, s2, 8\n   li a1, 0  # zero length: the writer runs to the terminator\n"
     ASM_CALL("s0")
+    "j .Lstring_format_next\n"
+    ".Lstring_format_custom:\n   ld t0, 0(s2)\n   ld a1, 8(s2)\n   addi s2, s2, 16\n"
+    "mv a0, s0\n"
+    ASM_CALL("t0")
     "j .Lstring_format_next\n"
     ".Lstring_format_positive:\n   ld a1, 0(s2)\n   addi s2, s2, 8\n   mv a0, s0\n"
     "call positive_to_string\n   j .Lstring_format_next\n"
@@ -26186,6 +26215,8 @@ fn decimal_to_string(writer write, decimal value);
     defined(string_format_extension_2) || defined(string_format_extension_3)
 #error "string_format is assembly now and carries no extension hooks"
 #endif
+// %w consumes a renderer(writer, value) function pointer followed by its
+// value pointer. It composes typed renderers with ordinary format fields.
 fn string_format(writer write, string_address format, ...);
 // Same formatting and writer contract; returns result without flushing or
 // terminating beyond what the selected writer itself does.

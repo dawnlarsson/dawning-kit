@@ -479,8 +479,7 @@ static bool cksum_option_seen(p8 letter, string_address value)
             value);
         for (positive at = 0; at < array_count(known); at++)
                 string_format(writer_stderr, "  - '%s'\n", known[at]);
-        string_format(writer_stderr, "Try 'cksum --help' for more information.\n");
-        return false;
+        return string_report(writer_stderr, false, "Try 'cksum --help' for more information.\n");
 }
 
 /* --tag and --untagged are the same choice written two ways, so the last of

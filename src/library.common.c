@@ -2223,10 +2223,9 @@ static COLD b32 argument_exclusive_refuse(
                         two = group[i].name;
         }
 
-        string_format(diagnostic,
+        return string_report(diagnostic, 1,
                       "%s: options --%s and --%s cannot be combined\n",
                       program, one, two);
-        return 1;
 }
 
 #endif

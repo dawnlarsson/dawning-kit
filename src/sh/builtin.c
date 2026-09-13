@@ -130,8 +130,7 @@ static COLD bool shell_option_bad(string_address name, string_address said)
                 return false;
         }
 
-        string_format(log_error, "%s: %s: invalid option\n", name, said);
-        return true;
+        return string_report(log_error, true, "%s: %s: invalid option\n", name, said);
 }
 
 static COLD bool shell_letter_bad(string_address name, p8 letter)
@@ -252,9 +251,7 @@ static COLD bool shell_read_refused(string_address name)
         if (!env_readonly(name))
         {
                 shell_diagnostic_where();
-                string_format(log_error, "read: no room for %s\n", name);
-
-                return false;
+                return string_report(log_error, false, "read: no room for %s\n", name);
         }
 
         shell_readonly_refused(null, (string_address) "read", name,

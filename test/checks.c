@@ -10588,8 +10588,61 @@ fn check_diagnostic()
         system_call_1(syscall(close), pipes[0]);
 }
 
+/* Reenter the formatter while its outer variadic cursor is live. */
+static fn format_render_nested(writer output, string_address value)
+{
+        string_format(output, "{%s}", value);
+}
+
+static fn format_render_binary(writer output, address_any value)
+{
+        output(value, 3);
+}
+
+static fn check_format_renderers()
+{
+#define FORMAT_RENDER_CASE(wanted, format, ...)                              \
+        do {                                                                \
+                catch_reset();                                              \
+                string_format(catch_writer, format, __VA_ARGS__);           \
+                same_bytes("format renderer", "bytes", caught, wanted,      \
+                           sizeof(wanted));                                 \
+                catch_reset();                                              \
+                same("format renderer", "report result",                   \
+                     string_report(catch_writer, 73, format, __VA_ARGS__), 73); \
+                same_bytes("format renderer", "reported bytes",             \
+                           caught, wanted, sizeof(wanted));                 \
+        } while (0)
+        /* Exercise both halves of the renderer/value pair in every integer
+           register/overflow position on SysV, AAPCS64 and RV64. */
+        FORMAT_RENDER_CASE("{x}", "%w", format_render_nested, "x");
+        FORMAT_RENDER_CASE("0{x}", "%p%w", (positive)0, format_render_nested, "x");
+        FORMAT_RENDER_CASE("01{x}", "%p%p%w", (positive)0, (positive)1,
+                           format_render_nested, "x");
+        FORMAT_RENDER_CASE("012{x}", "%p%p%p%w", (positive)0, (positive)1,
+                           (positive)2, format_render_nested, "x");
+        FORMAT_RENDER_CASE("0123{x}", "%p%p%p%p%w", (positive)0, (positive)1,
+                           (positive)2, (positive)3, format_render_nested, "x");
+        FORMAT_RENDER_CASE("01234{x}", "%p%p%p%p%p%w", (positive)0, (positive)1,
+                           (positive)2, (positive)3, (positive)4,
+                           format_render_nested, "x");
+        FORMAT_RENDER_CASE("012345{x}", "%p%p%p%p%p%p%w", (positive)0,
+                           (positive)1, (positive)2, (positive)3, (positive)4,
+                           (positive)5, format_render_nested, "x");
+        FORMAT_RENDER_CASE("{a}{b}{c}{d}{e}end", "%w%w%w%w%w%s",
+                           format_render_nested, "a", format_render_nested, "b",
+                           format_render_nested, "c", format_render_nested, "d",
+                           format_render_nested, "e", "end");
+        FORMAT_RENDER_CASE("{x}:-9:7", "%w:%b:%p", format_render_nested, "x",
+                           (b32)-9, (positive)7);
+        FORMAT_RENDER_CASE("[a\0b]", "[%w]", format_render_binary, "a\0b");
+        FORMAT_RENDER_CASE("{}%", "%w%%", format_render_nested, "");
+#undef FORMAT_RENDER_CASE
+}
+
 fn check_format()
 {
+        check_format_renderers();
         check_report();
         check_diagnostic();
         // string_format drives most of what anything here prints, so the check
@@ -17424,17 +17477,17 @@ fn check_format_deep()
                 position in eight is the one a hand written case lands on.
         */
         // The filler is spelled out rather than counted off the alphabet
-        // because 's', 'p', 'b' and 'f' are specifiers: a percent landing in
+        // because 's', 'p', 'b', 'f' and 'w' take arguments: a percent landing in
         // front of one of those asks for an argument nobody passed, and the
         // routine reads whatever the register happened to hold. It did, and
         // the crash was in the writer rather than anywhere near the cause.
-        static string_address filler = (string_address) "acdeghijklmnoqrtuvwxyz";
+        static const b8 filler[] = "acdeghijklmnoqrtuvxyz";
 
         for (positive length = 1; length < 40; length++)
                 for (positive where = 0; where < length; where++)
                 {
                         for (positive i = 0; i < length; i++)
-                                format_text[i] = (b8)filler[i % 22];
+                                format_text[i] = (b8)filler[i % (sizeof(filler) - 1)];
 
                         format_text[where] = '%';
                         format_text[length] = 0;
@@ -17489,7 +17542,7 @@ fn check_format_deep()
                 for (positive where = 0; where < length; where++)
                 {
                         for (positive i = 0; i < length; i++)
-                                format_text[i] = (b8)filler[i % 22];
+                                format_text[i] = (b8)filler[i % (sizeof(filler) - 1)];
 
                         format_text[where] = (b8)(0x80 + (where * 7) % 128);
                         format_text[length] = 0;
@@ -45421,8 +45474,8 @@ static fn storage_test_net_files(void)
 
         p8 unsafe[] = {'h', 'o', 's', 't', 27, 0};
         storage_test_output_used = 0;
-        file_name_message(storage_test_capture, (string_address) "bad ",
-                          unsafe, (string_address) "\n");
+        string_format(storage_test_capture, "bad %w\n",
+                      writer_terminal_quoted_name, unsafe);
         static p8 escaped[] = "bad host\\x1b\n";
         check("network diagnostics escape terminal control bytes",
               storage_test_output_used == sizeof(escaped) - 1 &&

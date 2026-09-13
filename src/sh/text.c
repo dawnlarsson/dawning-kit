@@ -173,9 +173,8 @@ static b32 text_argmatch(string_address option, string_address value,
         text_flush();
         string_format(writer_stderr, "%s: invalid argument '%s' for '%s'\n%s%s",
                       text_name, value, option, list, usage ? usage : (string_address) "");
-        string_format(writer_stderr, "Try '%s --help' for more information.\n",
+        return string_report(writer_stderr, 1, "Try '%s --help' for more information.\n",
                       text_name);
-        return 1;
 }
 
 static b32 text_done(b32 code)
@@ -18768,9 +18767,8 @@ static bool sort_key_seen(p8 letter, string_address value)
                 if (value[1] && !escaped)
                 {
                         text_flush();
-                        string_format(writer_stderr, "%s: multi-character tab '%s'\n",
+                        return string_report(writer_stderr, false, "%s: multi-character tab '%s'\n",
                                       text_name, value);
-                        return false;
                 }
 
                 tab = escaped ? 0 : value[0];
@@ -18785,9 +18783,8 @@ static bool sort_key_seen(p8 letter, string_address value)
         if (letter == 'S' && !sort_size_valid(value))
         {
                 text_flush();
-                string_format(writer_stderr, "%s: invalid -S argument '%s'\n",
+                return string_report(writer_stderr, false, "%s: invalid -S argument '%s'\n",
                               text_name, value);
-                return false;
         }
 
         if (letter == 'B')
@@ -18798,20 +18795,18 @@ static bool sort_key_seen(p8 letter, string_address value)
                     number > 1021)
                 {
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                                       "%s: invalid --batch-size argument '%s'\n",
                                       text_name, value);
-                        return false;
                 }
 
                 if (number < 2)
                 {
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                                       "%s: invalid --batch-size argument '%s'\n"
                                       "%s: minimum --batch-size argument is '2'\n",
                                       text_name, value, text_name);
-                        return false;
                 }
         }
 
@@ -18822,10 +18817,9 @@ static bool sort_key_seen(p8 letter, string_address value)
                 if (!text_unsigned_option(value, false, address_of number))
                 {
                         text_flush();
-                        string_format(writer_stderr,
+                        return string_report(writer_stderr, false,
                                       "%s: invalid --parallel argument '%s'\n",
                                       text_name, value);
-                        return false;
                 }
 
                 if (!number)

@@ -2013,8 +2013,7 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
            util-linux preserves even an empty word here, including its line. */
         if (!*string_first_of_or_end(argv[1], '='))
         {
-                string_format(output, "%s\n", argv[1]);
-                return 0;
+                return string_report(output, 0, "%s\n", argv[1]);
         }
 
         {
@@ -2029,10 +2028,8 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
 
         if (!storage_resolve_tag(argv[1], path, sizeof(path)))
         {
-                string_format(error, "findfs: unable to resolve '%s'\n", argv[1]);
-                return 1;
+                return string_report(error, 1, "findfs: unable to resolve '%s'\n", argv[1]);
         }
 
-        string_format(output, "%s\n", path);
-        return 0;
+        return string_report(output, 0, "%s\n", path);
 }

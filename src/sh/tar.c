@@ -561,9 +561,7 @@ static fn tar_name_line(writer output, string_address name)
 
 static fn tar_fail(string_address what, bipolar failed)
 {
-        log_error("tar: ", 5);
-        writer_terminal_name(log_error, what);
-        string_format(log_error, ": %s\n", file_reason(failed));
+        string_format(log_error, "tar: %w: %s\n", writer_terminal_name, what, file_reason(failed));
         tar_status = 2;
 }
 
@@ -1148,34 +1146,17 @@ static bool tar_extract_regular(bipolar archive, bipolar directory,
                 return false;
         }
 
-        if (tar_preserve)
+        bipolar changed = system_call_2(syscall(fchmod), (positive)made, mode);
+        if (changed < 0)
         {
-                bipolar changed = system_call_2(syscall(fchmod),
-                                                  (positive)made, mode & 07777);
-                if (changed < 0)
-                {
-                        (void)file_stage_close_at(
-                            directory, temporary, made, changed, 0);
-                        tar_fail(path, changed);
-                        return false;
-                }
-        }
-        else
-        {
-                bipolar changed = system_call_2(
-                    syscall(fchmod), (positive)made,
-                    (positive)mode & 0777 & ~file_umask());
-                if (changed < 0)
-                {
-                        (void)file_stage_close_at(
-                            directory, temporary, made, changed, 0);
-                        tar_fail(path, changed);
-                        return false;
-                }
+                (void)file_stage_close_at(directory, temporary, made, changed, 0);
+                tar_fail(path, changed);
+                return false;
         }
 
-        bipolar published = file_temporary_publish_at(
-            directory, temporary, leaf, made, 0);
+        bipolar published = file_temporary_publish_decided_at(
+            directory, temporary, leaf, made,
+            false, null);
         published = file_stage_close_at(
             directory, temporary, made, published, 0);
         if (published < 0)
@@ -1183,49 +1164,21 @@ static bool tar_extract_regular(bipolar archive, bipolar directory,
         return published >= 0;
 }
 
-static bool tar_temporary_name(string_address leaf, p8 address_to temporary,
-                               positive nonce, positive attempt)
-{
-        return system_temporary_name(
-            leaf, temporary, TAR_PATH, (string_address)".moonwater-tar-", 15,
-            nonce + attempt);
-}
-
-/* Publish a just-created non-directory object through its open inode.  The
-   old destination is untouched until the staged object is ready. */
-static bipolar tar_created_stage_publish(
-    bipolar directory, string_address temporary, string_address destination,
-    bipolar mode, file_stage_expectation address_to expected)
-{
-        bipolar handle = file_stage_open_verified_at(
-            directory, temporary, expected);
-        if (handle < 0)
-                return handle;
-
-        bipolar same = 0;
-        if (same >= 0 && mode >= 0)
-                same = system_call_4(
-                    syscall(fchmodat2), (positive)handle,
-                    (positive)(string_address)"", (positive)mode,
-                    AT_EMPTY_PATH);
-        bipolar published =
-            same < 0 ? same
-                     : file_temporary_publish_at(
-                           directory, temporary, destination, handle, 0);
-        return file_stage_close_at(
-            directory, temporary, handle, published, 0);
-}
-
 static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                              string_address link, p64 size, p64 mode,
                              p64 major, p64 minor, bool seekable, bool verbose)
 {
+        positive final_mode = (positive)mode & (tar_preserve ? 07777 : 0777);
         bipolar made = 0;
         bipolar parent;
         p8 leaf[TAR_PATH];
         string_address slash = string_last_of(path, '/');
         bool directory = type == '5' || (slash && !slash[1]);
         bool regular = !directory && (!type || type == '0' || type == '7');
+
+        if (!tar_preserve && (directory || regular ||
+                              type == '3' || type == '4' || type == '6'))
+                final_mode &= ~file_umask();
 
         if (verbose)
                 tar_name_line(log_error, path);
@@ -1235,9 +1188,8 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         {
                 p8 shown[2] = {type, end};
 
-                log_error("tar: ", 5);
-                writer_terminal_name(log_error, path);
-                string_format(log_error, ": unknown file type '%s'\n", shown);
+                string_format(log_error, "tar: %w: unknown file type '%s'\n", writer_terminal_name,
+                              path, shown);
                 tar_status = tar_status ? tar_status : 1;
                 tar_skip(archive, tar_padded(size), seekable);
                 return;
@@ -1255,7 +1207,7 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         if (regular)
         {
                 tar_extract_regular(archive, parent, leaf, path, size,
-                                     (positive)mode, seekable);
+                                     final_mode, seekable);
                 system_close(parent);
                 return;
         }
@@ -1278,12 +1230,6 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                                 made = file_look_code(
                                     opened, (string_address)"", AT_EMPTY_PATH,
                                     address_of facts);
-                                positive final_mode =
-                                    (positive)mode &
-                                    (tar_preserve ? 07777 : 0777);
-                                if (!tar_preserve)
-                                        final_mode &= ~file_umask();
-
                                 /* Explicit directory entries remain private
                                    but traversable until all descendants have
                                    been created. The final archived mode is
@@ -1305,136 +1251,67 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                         }
                 }
         }
-        else if (type == '2')
-        {
-                p8 temporary[TAR_PATH];
-                positive nonce = system_nonce();
-                made = -ERROR_EXISTS;
-
-                for (positive attempt = 0;
-                     attempt < 128 && made == -ERROR_EXISTS; attempt++)
-                {
-                        if (!tar_temporary_name(leaf, temporary, nonce,
-                                                attempt))
-                        {
-                                made = -ERROR_INVALID;
-                                break;
-                        }
-                        made = system_symbolic_link_at(
-                            link, parent, temporary);
-                }
-                if (made >= 0)
-                {
-                        file_stage_expectation expected = {
-                            .kind = MODE_LINK,
-                            .link = link,
-                        };
-                        made = tar_created_stage_publish(
-                            parent, temporary, leaf, -1,
-                            address_of expected);
-                }
-        }
-        else if (type == '1')
-        {
-                p8 source[TAR_PATH];
-                p8 temporary[TAR_PATH];
-                bipolar source_parent = system_open_parent_nofollow(
-                    AT_FDCWD, link, false, 0, source, sizeof(source));
-
-                if (source_parent < 0)
-                        made = source_parent;
-                else
-                {
-                        bipolar source_handle = system_open_at(
-                            source_parent, source,
-                            O_PATH | O_NOFOLLOW | O_CLOEXEC);
-                        if (source_handle < 0)
-                                made = source_handle;
-                        else
-                        {
-                                file_facts source_facts;
-                                made = file_look_code(
-                                    source_handle, (string_address)"",
-                                    AT_EMPTY_PATH, address_of source_facts);
-                                if (made >= 0)
-                                {
-                                        positive nonce = system_nonce();
-                                        made = -ERROR_EXISTS;
-                                        for (positive attempt = 0;
-                                             attempt < 128 &&
-                                                 made == -ERROR_EXISTS;
-                                             attempt++)
-                                        {
-                                                if (!tar_temporary_name(
-                                                        leaf, temporary,
-                                                        nonce, attempt))
-                                                {
-                                                        made = -ERROR_INVALID;
-                                                        break;
-                                                }
-                                                made = system_path_link_opened_at(
-                                                    source_handle, parent,
-                                                    temporary);
-                                        }
-                                }
-                                if (made >= 0)
-                                {
-                                        file_stage_expectation expected = {
-                                            .kind = source_facts.mode &
-                                                    MODE_FORMAT,
-                                            .identity = address_of source_facts,
-                                        };
-                                        made = tar_created_stage_publish(
-                                            parent, temporary, leaf, -1,
-                                            address_of expected);
-                                }
-                                system_close(source_handle);
-                        }
-                        system_close(source_parent);
-                }
-        }
         else
         {
-                positive kind = type == '6' ? MODE_PIPE :
-                    type == '3' ? MODE_CHARACTER : MODE_BLOCK;
-                positive final_mode =
-                    (positive)mode & (tar_preserve ? 07777 : 0777);
-                if (!tar_preserve)
-                        final_mode &= ~file_umask();
-
-                /* Keep the staged node private. Its final permissions are
-                   applied through O_PATH immediately before publication. */
                 p8 temporary[TAR_PATH];
-                positive nonce = system_nonce();
-                made = -ERROR_EXISTS;
-                for (positive attempt = 0;
-                     attempt < 128 && made == -ERROR_EXISTS; attempt++)
+                file_facts source_facts;
+                bipolar source_handle = -1;
+                file_stage_expectation expected = {
+                    .kind = type == '2' ? MODE_LINK : type == '6' ? MODE_PIPE :
+                            type == '3' ? MODE_CHARACTER : MODE_BLOCK,
+                    .link = type == '2' ? link : null,
+                    .device_major = type == '6' ? 0 : (p32)major,
+                    .device_minor = type == '6' ? 0 : (p32)minor,
+                };
+                if (type == '1')
                 {
-                        if (!tar_temporary_name(leaf, temporary, nonce,
-                                                attempt))
+                        p8 source[TAR_PATH];
+                        bipolar source_parent = system_open_parent_nofollow(
+                            AT_FDCWD, link, false, 0, source, sizeof(source));
+                        made = source_parent;
+                        if (source_parent >= 0)
                         {
-                                made = -ERROR_INVALID;
-                                break;
+                                source_handle = system_open_at(source_parent,
+                                    source, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+                                system_close(source_parent);
+                                made = source_handle < 0 ? source_handle :
+                                    file_look_code(source_handle,
+                                        (string_address)"", AT_EMPTY_PATH,
+                                        address_of source_facts);
+                                if (made >= 0)
+                                {
+                                        expected.kind = source_facts.mode & MODE_FORMAT;
+                                        expected.identity = address_of source_facts;
+                                }
                         }
-                        made = system_call_4(
-                            syscall(mknodat), (positive)parent,
-                            (positive)temporary,
-                            0600 | kind,
-                            type == '6'
-                                ? 0
-                                : file_device((p32)major, (p32)minor));
                 }
                 if (made >= 0)
                 {
-                        file_stage_expectation expected = {
-                            .kind = kind,
-                            .device_major = (p32)major,
-                            .device_minor = (p32)minor,
-                        };
-                        made = tar_created_stage_publish(
-                            parent, temporary, leaf, (bipolar)final_mode,
-                            address_of expected);
+                        bipolar handle = file_stage_claim_at(
+                            parent, leaf, temporary, sizeof(temporary),
+                            (string_address)".moonwater-tar-", 0600,
+                            source_handle, address_of expected);
+                        if (handle >= 0)
+                                handle = file_stage_open_verified_at(
+                                    parent, temporary, address_of expected);
+                        made = handle;
+                        if (handle >= 0)
+                        {
+                                if (type != '1' && type != '2')
+                                        made = system_call_4(
+                                            syscall(fchmodat2), (positive)handle,
+                                            (positive)(string_address)"",
+                                            final_mode, AT_EMPTY_PATH);
+                                if (made >= 0)
+                                        made = file_temporary_publish_decided_at(
+                                            parent, temporary, leaf, handle,
+                                            false, null);
+                                made = file_stage_close_at(
+                                    parent, temporary, handle, made, 0);
+                        }
                 }
+                if (source_handle >= 0)
+                        system_close(source_handle);
         }
 
         system_close(parent);
@@ -1687,9 +1564,8 @@ static b32 tar_read_archive(struct tar_options address_to options)
                                 is worth saying anything about. */
                         if (escaped)
                         {
-                                log_error("tar: ", 5);
-                                writer_terminal_name(log_error, tar_name);
-                                log_error(": member name is unsafe\n", 24);
+                                string_format(log_error, "tar: %w: member name is unsafe\n",
+                                              writer_terminal_name, tar_name);
                                 tar_status = 2;
                         }
 
@@ -1920,9 +1796,7 @@ static b32 tar_add_named(bipolar archive, bipolar directory,
 
         if ((facts.mode & MODE_FORMAT) == MODE_SOCKET)
         {
-                log_error("tar: ", 5);
-                writer_terminal_name(log_error, member);
-                log_error(": socket ignored\n", 17);
+                string_format(log_error, "tar: %w: socket ignored\n", writer_terminal_name, member);
                 tar_status = tar_status ? tar_status : 1;
                 return tar_status;
         }
@@ -2443,8 +2317,7 @@ static bool tar_parse(struct tar_options address_to options)
         if (!options->mode)
         {
                 tar_refuse("you must specify one of the '-c', '-t', or '-x' options");
-                string_format(log_error, "Try 'tar --help' for more information.\n");
-                return false;
+                return string_report(log_error, false, "Try 'tar --help' for more information.\n");
         }
 
         return true;

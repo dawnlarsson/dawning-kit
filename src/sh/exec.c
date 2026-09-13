@@ -6154,10 +6154,9 @@ static bool exec_redirect_apply(b32 index)
                 {
                         exec_redirect_status = 1;
                         shell_diagnostic_where();
-                        string_format(log_error,
+                        return string_report(log_error, false,
                                       "%s: restricted: cannot redirect "
                                       "output\n", target);
-                        return false;
                 }
 
                 /*
