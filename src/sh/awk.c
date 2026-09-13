@@ -6483,8 +6483,10 @@ static b32 text_awk()
         awk_builder program;
         file_taking taking = {
             .program = (string_address) "awk",
-            .allowed = (string_address) "Ffv",
-            .valued = (string_address) "Ffv",
+            .options = (const argument_option[]){
+    {"Ffv", 0, ARGUMENT_REQUIRED},
+    {null},
+        },
             .seen = awk_option_seen,
         };
 

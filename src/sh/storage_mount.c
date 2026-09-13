@@ -466,7 +466,6 @@ static bipolar storage_mount_one(string_address source, string_address target,
         column, and the difference is the whole exit status -- one failure
         beside one ignored record is 32, "all failed", not 64. */
 
-
 static b32 storage_mount_fstab_record(string_address program,
                                       storage_fstab address_to record,
                                       storage_mount_options address_to extra,
@@ -623,38 +622,39 @@ static b32 storage_mount_list(writer write, writer diagnostic,
 b32 storage_mount_command(positive argc, string_address address_to argv,
                           writer write, writer diagnostic)
 {
-        static const storage_argument_name arguments[] = {
-            STORAGE_ARGUMENT("all", 'a'),
-            STORAGE_ARGUMENT("types", 't'),
-            STORAGE_ARGUMENT("options", 'o'),
-            STORAGE_ARGUMENT("fstab", 'T'),
-            STORAGE_ARGUMENT("label", 'L'),
-            STORAGE_ARGUMENT("uuid", 'U'),
-            STORAGE_ARGUMENT("source", 'S'),
-            STORAGE_ARGUMENT("target", 'X'),
-            STORAGE_ARGUMENT("read-only", 'r'),
-            STORAGE_ARGUMENT("read-write", 'w'),
-            STORAGE_ARGUMENT("bind", 'B'),
-            STORAGE_ARGUMENT("rbind", 'R'),
-            STORAGE_ARGUMENT("move", 'M'),
-            STORAGE_ARGUMENT("make-shared", '1'),
-            STORAGE_ARGUMENT("make-rshared", '2'),
-            STORAGE_ARGUMENT("make-private", '3'),
-            STORAGE_ARGUMENT("make-rprivate", '4'),
-            STORAGE_ARGUMENT("make-slave", '5'),
-            STORAGE_ARGUMENT("make-rslave", '6'),
-            STORAGE_ARGUMENT("make-unbindable", '7'),
-            STORAGE_ARGUMENT("make-runbindable", '8'),
-            STORAGE_ARGUMENT("verbose", 'v'),
-            STORAGE_ARGUMENT("no-mtab", 'n'),
-            STORAGE_ARGUMENT("no-canonicalize", 'c'),
-            STORAGE_ARGUMENT("internal-only", 'i'),
-            STORAGE_ARGUMENT("sloppy", 's'),
-            STORAGE_ARGUMENT("fake", 'f'),
-            STORAGE_ARGUMENT("show-labels", 'l'),
-            STORAGE_ARGUMENT("fork", 'F'),
-            STORAGE_ARGUMENT("ro", 'r'),
-            STORAGE_ARGUMENT("rw", 'w'),
+        static const argument_option arguments[] = {
+            {"all", 'a'},
+            {"types", 't', ARGUMENT_REQUIRED},
+            {"options", 'o', ARGUMENT_REQUIRED},
+            {"fstab", 'T', ARGUMENT_REQUIRED},
+            {"label", 'L', ARGUMENT_REQUIRED},
+            {"uuid", 'U', ARGUMENT_REQUIRED},
+            {"source", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+            {"target", 'X', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+            {"read-only", 'r'},
+            {"read-write", 'w'},
+            {"bind", 'B'},
+            {"rbind", 'R'},
+            {"move", 'M'},
+            {"make-shared", '1', ARGUMENT_LONG_ONLY},
+            {"make-rshared", '2', ARGUMENT_LONG_ONLY},
+            {"make-private", '3', ARGUMENT_LONG_ONLY},
+            {"make-rprivate", '4', ARGUMENT_LONG_ONLY},
+            {"make-slave", '5', ARGUMENT_LONG_ONLY},
+            {"make-rslave", '6', ARGUMENT_LONG_ONLY},
+            {"make-unbindable", '7', ARGUMENT_LONG_ONLY},
+            {"make-runbindable", '8', ARGUMENT_LONG_ONLY},
+            {"verbose", 'v'},
+            {"no-mtab", 'n'},
+            {"no-canonicalize", 'c'},
+            {"internal-only", 'i'},
+            {"sloppy", 's'},
+            {"fake", 'f'},
+            {"show-labels", 'l'},
+            {"fork", 'F'},
+            {"ro", 'r'},
+            {"rw", 'w'},
+            {null},
         };
         string_address type = null;
         string_address fstab = (string_address)"/etc/fstab";
@@ -676,10 +676,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         memory_fill(address_of tag_source, 0, sizeof(tag_source));
         memory_fill(address_of options, 0, sizeof(options));
 
-        while ((option = storage_argument_next(
-                    address_of taking, (string_address)"arwBRMvncistoflFTLU",
-                    (string_address)"toTLUSX", arguments,
-                    array_count(arguments), address_of value)) !=
+        while ((option = storage_argument_next(address_of taking, arguments, address_of value)) !=
                ARGUMENT_END)
         {
                 if (option == ARGUMENT_OPERAND)
@@ -781,16 +778,12 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         }
 
         {
-                static const storage_exclusive_pair attach[] = {
+                static const argument_exclusive_pair attach[] = {
                     {'B', (string_address)"bind"},
                     {'M', (string_address)"move"},
                     {'R', (string_address)"rbind"}};
 
-                if (storage_exclusive_refuse(
-                        diagnostic, (string_address)"mount", argc, argv,
-                        arguments, array_count(arguments),
-                        (string_address)"toTLUSX", attach,
-                        array_count(attach)))
+                if (argument_exclusive_refuse(diagnostic, (string_address)"mount", argc, argv, arguments, false, attach, array_count(attach)))
                         goto done;
         }
 
@@ -1265,22 +1258,23 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
 b32 storage_umount_command(positive argc, string_address address_to argv,
                            writer write, writer diagnostic)
 {
-        static const storage_argument_name arguments[] = {
-            STORAGE_ARGUMENT("all", 'a'),
-            STORAGE_ARGUMENT("lazy", 'l'),
-            STORAGE_ARGUMENT("force", 'f'),
-            STORAGE_ARGUMENT("recursive", 'R'),
-            STORAGE_ARGUMENT("read-only", 'r'),
-            STORAGE_ARGUMENT("types", 't'),
-            STORAGE_ARGUMENT("verbose", 'v'),
-            STORAGE_ARGUMENT("no-mtab", 'n'),
-            STORAGE_ARGUMENT("no-canonicalize", 'c'),
-            STORAGE_ARGUMENT("internal-only", 'i'),
-            STORAGE_ARGUMENT("all-targets", 'A'),
-            STORAGE_ARGUMENT("quiet", 'q'),
-            STORAGE_ARGUMENT("detach-loop", 'd'),
-            STORAGE_ARGUMENT("test-opts", 'O'),
-            STORAGE_ARGUMENT("fake", 'F'),
+        static const argument_option arguments[] = {
+            {"all", 'a'},
+            {"lazy", 'l'},
+            {"force", 'f'},
+            {"recursive", 'R'},
+            {"read-only", 'r'},
+            {"types", 't', ARGUMENT_REQUIRED},
+            {"verbose", 'v'},
+            {"no-mtab", 'n'},
+            {"no-canonicalize", 'c'},
+            {"internal-only", 'i'},
+            {"all-targets", 'A'},
+            {"quiet", 'q'},
+            {"detach-loop", 'd'},
+            {"test-opts", 'O', ARGUMENT_REQUIRED},
+            {"fake", 'F', ARGUMENT_LONG_ONLY},
+            {null},
         };
         /*  umount(8) takes no UMOUNT_NOFOLLOW: only its set-user-id path
             does, and then it chdirs to the parent first. So a symlink named
@@ -1308,10 +1302,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         b32 failed = 0;
 
         (void)write;
-        while ((option = storage_argument_next(
-                    address_of taking, (string_address)"alfRrvncitAqdO",
-                    (string_address)"tO", arguments, array_count(arguments),
-                    address_of value)) != ARGUMENT_END)
+        while ((option = storage_argument_next(address_of taking, arguments, address_of value)) != ARGUMENT_END)
         {
                 if (option == ARGUMENT_OPERAND)
                 {
@@ -1373,21 +1364,15 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         }
 
         {
-                static const storage_exclusive_pair reach[] = {
+                static const argument_exclusive_pair reach[] = {
                     {'a', (string_address)"all"},
                     {'A', (string_address)"all-targets"}};
-                static const storage_exclusive_pair depth[] = {
+                static const argument_exclusive_pair depth[] = {
                     {'r', (string_address)"read-only"},
                     {'R', (string_address)"recursive"}};
 
-                if (storage_exclusive_refuse(
-                        diagnostic, (string_address)"umount", argc, argv,
-                        arguments, array_count(arguments),
-                        (string_address)"tO", reach, array_count(reach)) ||
-                    storage_exclusive_refuse(
-                        diagnostic, (string_address)"umount", argc, argv,
-                        arguments, array_count(arguments),
-                        (string_address)"tO", depth, array_count(depth)))
+                if (argument_exclusive_refuse(diagnostic, (string_address)"umount", argc, argv, arguments, false, reach, array_count(reach)) ||
+                    argument_exclusive_refuse(diagnostic, (string_address)"umount", argc, argv, arguments, false, depth, array_count(depth)))
                         goto failed_early;
         }
 
@@ -1584,5 +1569,3 @@ failed_early:
         array_store_release(operand, operand_room, operands);
         return 1;
 }
-
-#undef STORAGE_ARGUMENT

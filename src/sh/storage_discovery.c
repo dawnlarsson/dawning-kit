@@ -1033,25 +1033,23 @@ static fn storage_findmnt_release(storage_findmnt_options address_to options,
 b32 storage_findmnt(positive argc, string_address address_to argv,
                     writer output, writer diagnostic)
 {
-        static const storage_argument_name arguments[] = {
-            STORAGE_ARGUMENT("noheadings", 'n'),
-            STORAGE_ARGUMENT("raw", 'r'),
-            STORAGE_ARGUMENT("list", 'l'),
-            STORAGE_ARGUMENT("nofsroot", 'v'),
-            STORAGE_ARGUMENT("pairs", 'P'),
-            STORAGE_ARGUMENT("first-only", 'f'),
-            STORAGE_ARGUMENT("invert", 'i'),
-            STORAGE_ARGUMENT("submounts", 'R'),
-            STORAGE_ARGUMENT("source", 'S'),
-            STORAGE_ARGUMENT("target", 'T'),
-            STORAGE_ARGUMENT("mountpoint", 'M'),
-            STORAGE_ARGUMENT("types", 't'),
-            STORAGE_ARGUMENT("options", 'O'),
-            STORAGE_ARGUMENT("output", 'o'),
-            /*  Paths are written as hyperlinks only for a terminal, and
-                nothing here writes to one, so the choice is read and the
-                paths are written plainly whichever way it fell. */
-            STORAGE_ARGUMENT("hyperlink", 'y'),
+        static const argument_option arguments[] = {
+            {"noheadings", 'n'},
+            {"raw", 'r'},
+            {"list", 'l'},
+            {"nofsroot", 'v'},
+            {"pairs", 'P'},
+            {"first-only", 'f'},
+            {"invert", 'i'},
+            {"submounts", 'R'},
+            {"source", 'S', ARGUMENT_REQUIRED},
+            {"target", 'T', ARGUMENT_REQUIRED},
+            {"mountpoint", 'M', ARGUMENT_REQUIRED},
+            {"types", 't', ARGUMENT_REQUIRED},
+            {"options", 'O', ARGUMENT_REQUIRED},
+            {"output", 'o', ARGUMENT_REQUIRED},
+            {"hyperlink", 'y', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+            {null},
         };
         storage_findmnt_options options = {
             .columns = {STORAGE_TARGET, STORAGE_SOURCE,
@@ -1066,10 +1064,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         string_address value;
         b32 option;
 
-        while ((option = storage_argument_next(
-                    address_of taking, (string_address)"nrlvPfiRSTMtoO",
-                    (string_address)"STMtoOy", arguments,
-                    array_count(arguments), address_of value)) !=
+        while ((option = storage_argument_next(address_of taking, arguments, address_of value)) !=
                ARGUMENT_END)
         {
                 if (option == ARGUMENT_OPERAND)
@@ -1158,16 +1153,12 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         }
 
         {
-                static const storage_exclusive_pair shapes[] = {
+                static const argument_exclusive_pair shapes[] = {
                     {'l', (string_address)"list"},
                     {'P', (string_address)"pairs"},
                     {'r', (string_address)"raw"}};
 
-                if (storage_exclusive_refuse(
-                        diagnostic, (string_address)"findmnt", argc, argv,
-                        arguments, array_count(arguments),
-                        (string_address)"STMtoOy", shapes,
-                        array_count(shapes)))
+                if (argument_exclusive_refuse(diagnostic, (string_address)"findmnt", argc, argv, arguments, false, shapes, array_count(shapes)))
                         return 1;
         }
 
@@ -1371,12 +1362,13 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room)
 b32 storage_mountpoint(positive argc, string_address address_to argv,
                        writer output, writer diagnostic)
 {
-        static const storage_argument_name options[] = {
-            STORAGE_ARGUMENT("quiet", 'q'),
-            STORAGE_ARGUMENT("fs-devno", 'd'),
-            STORAGE_ARGUMENT("devno", 'x'),
-            STORAGE_ARGUMENT("nofollow", 'N'),
-            STORAGE_ARGUMENT("show", 'S'),
+        static const argument_option options[] = {
+            {"quiet", 'q'},
+            {"fs-devno", 'd'},
+            {"devno", 'x'},
+            {"nofollow", 'N', ARGUMENT_LONG_ONLY},
+            {"show", 'S', ARGUMENT_LONG_ONLY},
+            {null},
         };
         bool quiet = false;
         bool fs_devno = false;
@@ -1388,10 +1380,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         string_address value;
         b32 option;
 
-        while ((option = storage_argument_next(
-                    address_of taking, (string_address)"qdx",
-                    (string_address)"", options, array_count(options),
-                    address_of value)) != ARGUMENT_END)
+        while ((option = storage_argument_next(address_of taking, options, address_of value)) != ARGUMENT_END)
         {
                 if (option == 'q')
                         quiet = true;

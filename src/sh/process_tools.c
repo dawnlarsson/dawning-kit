@@ -42,11 +42,11 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 #define STDBUF_ELF_DYNAMIC 1
 #define STDBUF_ELF_STATIC 2
 
-static const file_long process_stdbuf_longs[] = {
-    {(string_address) "input", 'i'},
-    {(string_address) "output", 'o'},
-    {(string_address) "error", 'e'},
-    {null, 0},
+static const argument_option process_stdbuf_options[] = {
+    {"input", 'i', ARGUMENT_REQUIRED},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"error", 'e', ARGUMENT_REQUIRED},
+    {null},
 };
 
 static p8 stdbuf_input_assignment[48];
@@ -447,9 +447,7 @@ static b32 process_stdbuf()
 {
         file_taking taking = {
             .program = (string_address) "stdbuf",
-            .allowed = (string_address) "ioe",
-            .valued = (string_address) "ioe",
-            .longs = process_stdbuf_longs,
+            .options = process_stdbuf_options,
             .seen = process_stdbuf_seen,
         };
 
@@ -537,17 +535,16 @@ static b32 process_stdbuf()
 
 // chroot ----------------------------------------------------------
 
-static const file_long process_chroot_longs[] = {
-    {(string_address) "skip-chdir", 'k'},
-    {null, 0},
+static const argument_option process_chroot_options[] = {
+    {"skip-chdir", 'k', ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 static b32 process_chroot()
 {
         file_taking taking = {
             .program = (string_address) "chroot",
-            .allowed = (string_address) "",
-            .longs = process_chroot_longs,
+            .options = process_chroot_options,
         };
         positive count = (positive)program_argument_count();
 
@@ -648,8 +645,9 @@ static b32 process_nohup()
 {
         file_taking taking = {
             .program = (string_address) "nohup",
-            .allowed = (string_address) "",
-        };
+            .options = (const argument_option[]){
+    {null},
+        }};
         positive count = (positive)program_argument_count();
 
         if (!file_take(address_of taking))
@@ -749,20 +747,20 @@ static b32 process_nohup()
 #define PIPESZ_GET 1032
 #define PIPESZ_UNREAD 0x541b
 
-static const file_long process_pipesz_longs[] = {
-    {(string_address)"get", 'g'},
-    {(string_address)"set", 's'},
-    {(string_address)"file", 'f'},
-    {(string_address)"fd", 'n'},
-    {(string_address)"stdin", 'i'},
-    {(string_address)"stdout", 'o'},
-    {(string_address)"stderr", 'e'},
-    {(string_address)"check", 'c'},
-    {(string_address)"quiet", 'q'},
-    {(string_address)"verbose", 'v'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option process_pipesz_options[] = {
+    {"get", 'g'},
+    {"set", 's', ARGUMENT_REQUIRED},
+    {"file", 'f', ARGUMENT_REQUIRED},
+    {"fd", 'n', ARGUMENT_REQUIRED},
+    {"stdin", 'i'},
+    {"stdout", 'o'},
+    {"stderr", 'e'},
+    {"check", 'c'},
+    {"quiet", 'q'},
+    {"verbose", 'v'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 typedef struct
@@ -776,9 +774,7 @@ static b32 process_pipesz()
 {
         file_taking taking = {
             .program = (string_address)"pipesz",
-            .allowed = (string_address)"gsfnioecqvhV",
-            .valued = (string_address)"sfn",
-            .longs = process_pipesz_longs,
+            .options = process_pipesz_options,
         };
 
         if (!file_take(address_of taking))
@@ -952,14 +948,14 @@ static b32 process_pipesz()
 #define PROCESS_SCHED_CORE_THREAD_GROUP 1
 #define PROCESS_SCHED_CORE_PROCESS_GROUP 2
 
-static const file_long process_coresched_longs[] = {
-    {(string_address)"source", 's'},
-    {(string_address)"dest", 'd'},
-    {(string_address)"dest-type", 't'},
-    {(string_address)"verbose", 'v'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option process_coresched_options[] = {
+    {"source", 's', ARGUMENT_REQUIRED},
+    {"dest", 'd', ARGUMENT_REQUIRED},
+    {"dest-type", 't', ARGUMENT_REQUIRED},
+    {"verbose", 'v'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bipolar process_coresched_call(positive operation, positive process,
@@ -1007,9 +1003,7 @@ static b32 process_coresched()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"coresched",
-            .allowed = (string_address)"sdtvhV",
-            .valued = (string_address)"sdt",
-            .longs = process_coresched_longs,
+            .options = process_coresched_options,
             .operand = file_operand,
         };
         if (!file_take(address_of taking) || file_operand_failed)
@@ -1160,13 +1154,13 @@ typedef struct
         b16 returned;
 } process_timeout_poll;
 
-static const file_long process_timeout_longs[] = {
-    {(string_address) "foreground", 'f'},
-    {(string_address) "kill-after", 'k'},
-    {(string_address) "preserve-status", 'p'},
-    {(string_address) "signal", 's'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option process_timeout_options[] = {
+    {"foreground", 'f'},
+    {"kill-after", 'k', ARGUMENT_REQUIRED},
+    {"preserve-status", 'p'},
+    {"signal", 's', ARGUMENT_REQUIRED},
+    {"verbose", 'v'},
+    {null},
 };
 
 /* HUP, INT, QUIT and TERM are relayed to the command. SIGCHLD shares the
@@ -1417,9 +1411,7 @@ static b32 process_timeout()
 {
         file_taking taking = {
             .program = (string_address) "timeout",
-            .allowed = (string_address) "kpfsv",
-            .valued = (string_address) "ks",
-            .longs = process_timeout_longs,
+            .options = process_timeout_options,
             .seen = process_timeout_seen,
         };
         positive count = (positive)program_argument_count();
@@ -2348,36 +2340,31 @@ static b32 process_script_record(process_script_state address_to state,
         return failed ? 1 : wait_status_code(status);
 }
 
-static const file_long process_script_longs[] = {
-    {(string_address)"log-in", 'I'},
-    {(string_address)"log-out", 'O'},
-    {(string_address)"log-io", 'B'},
-    {(string_address)"log-timing", 'T'},
-    {(string_address)"timing", 't'},
-    {(string_address)"logging-format", 'm'},
-    {(string_address)"append", 'a'},
-    {(string_address)"command", 'c'},
-    {(string_address)"return", 'e'},
-    {(string_address)"flush", 'f'},
-    {(string_address)"force", 'X'},
-    {(string_address)"echo", 'E'},
-    {(string_address)"output-limit", 'o'},
-    {(string_address)"quiet", 'q'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option process_script_options[] = {
+    {"log-in", 'I', ARGUMENT_REQUIRED},
+    {"log-out", 'O', ARGUMENT_REQUIRED},
+    {"log-io", 'B', ARGUMENT_REQUIRED},
+    {"log-timing", 'T', ARGUMENT_REQUIRED},
+    {"timing", 't', ARGUMENT_OPTIONAL | ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"logging-format", 'm', ARGUMENT_REQUIRED},
+    {"append", 'a'},
+    {"command", 'c', ARGUMENT_REQUIRED},
+    {"return", 'e'},
+    {"flush", 'f'},
+    {"force", 'X'},
+    {"echo", 'E', ARGUMENT_REQUIRED},
+    {"output-limit", 'o', ARGUMENT_REQUIRED},
+    {"quiet", 'q'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static b32 process_script()
 {
         file_taking taking = {
             .program = (string_address)"script",
-            .allowed = (string_address)"IOBTtmacefXEoqhV",
-            .valued = (string_address)"IOBTmcEo",
-            .optional = (string_address)"t",
-            .long_optional = (string_address)"t",
-            .sticky_optional = (string_address)"t",
-            .longs = process_script_longs,
+            .options = process_script_options,
         };
         positive count = (positive)program_argument_count();
         b32 answer;
@@ -2960,35 +2947,31 @@ static bool process_replay_number(p8 letter, string_address value)
 
 //      -t and -T name the same file, so the last of them written wins.
 static p8 process_replay_timing_letter;
-static const file_supersede process_scriptreplay_supersedes[] = {
-    {(string_address)"tT", address_of process_replay_timing_letter}, {null, null},
-};
 
-static const file_long process_scriptreplay_longs[] = {
-    {(string_address)"timing", 't'},
-    {(string_address)"log-timing", 'T'},
-    {(string_address)"log-in", 'I'},
-    {(string_address)"log-out", 'O'},
-    {(string_address)"log-io", 'B'},
-    {(string_address)"typescript", 's'},
-    {(string_address)"summary", 'S'},
-    {(string_address)"divisor", 'd'},
-    {(string_address)"maxdelay", 'm'},
-    {(string_address)"stream", 'x'},
-    {(string_address)"cr-mode", 'c'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+
+static const argument_option process_scriptreplay_options[] = {
+    {"timing", 't', ARGUMENT_REQUIRED, 1},
+    {"log-timing", 'T', ARGUMENT_REQUIRED, 1},
+    {"log-in", 'I', ARGUMENT_REQUIRED},
+    {"log-out", 'O', ARGUMENT_REQUIRED},
+    {"log-io", 'B', ARGUMENT_REQUIRED},
+    {"typescript", 's', ARGUMENT_REQUIRED},
+    {"summary", 'S'},
+    {"divisor", 'd', ARGUMENT_REQUIRED},
+    {"maxdelay", 'm', ARGUMENT_REQUIRED},
+    {"stream", 'x', ARGUMENT_REQUIRED},
+    {"cr-mode", 'c', ARGUMENT_REQUIRED},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static b32 process_scriptreplay()
 {
         file_taking taking = {
             .program = (string_address)"scriptreplay",
-            .allowed = (string_address)"tTIOBsdmxcShV",
-            .valued = (string_address)"tTIOBsdmxc",
-            .longs = process_scriptreplay_longs,
-            .supersedes = process_scriptreplay_supersedes,
+            .options = process_scriptreplay_options,
+            .selection = address_of process_replay_timing_letter,
             .seen = process_replay_number,
         };
         positive argument_count = (positive)program_argument_count();
@@ -3210,18 +3193,17 @@ replay_open_failed:
 /* Keep this applet as the syscall-shaped primitive it is.  Bowl setup can
    construct the mount tree with the existing mount/unshare tools and then
    cross the root boundary without launching a second utility runtime. */
-static const file_long process_pivot_root_longs[] = {
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option process_pivot_root_options[] = {
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static b32 process_pivot_root()
 {
         file_taking taking = {
             .program = (string_address)"pivot_root",
-            .allowed = (string_address)"hV",
-            .longs = process_pivot_root_longs,
+            .options = process_pivot_root_options,
         };
         positive count = (positive)program_argument_count();
 
@@ -3251,18 +3233,17 @@ static b32 process_pivot_root()
 #define PROCESS_REBOOT_CAD_OFF 0
 #define PROCESS_REBOOT_CAD_ON 0x89abcdef
 
-static const file_long process_ctrlaltdel_longs[] = {
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option process_ctrlaltdel_options[] = {
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static b32 process_ctrlaltdel()
 {
         file_taking taking = {
             .program = (string_address)"ctrlaltdel",
-            .allowed = (string_address)"hV",
-            .longs = process_ctrlaltdel_longs,
+            .options = process_ctrlaltdel_options,
         };
         positive count = (positive)program_argument_count();
 

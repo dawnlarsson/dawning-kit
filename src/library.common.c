@@ -2079,7 +2079,7 @@ typedef struct
 } argument_cursor;
 
 enum { ARGUMENT_END, ARGUMENT_OPERAND = 256, ARGUMENT_LONG,
-       ARGUMENT_UNKNOWN = -1, ARGUMENT_MISSING = -2 };
+       ARGUMENT_UNKNOWN = -1, ARGUMENT_MISSING = -2, ARGUMENT_UNEXPECTED = -3 };
 
 static b32 argument_next(argument_cursor address_to cursor)
 {
@@ -2135,12 +2135,129 @@ static string_address argument_value(argument_cursor address_to cursor,
         return required && cursor->at < cursor->argc ? cursor->argv[cursor->at++] : null;
 }
 
+/* One declaration owns spelling and argument policy. A zero letter groups
+   short-only options in name; null name ends the table. */
+enum {
+        ARGUMENT_REQUIRED = 1, ARGUMENT_OPTIONAL = 2,
+        ARGUMENT_LONG_ONLY = 4, ARGUMENT_LONG_OPTIONAL = 8,
+        ARGUMENT_STICKY = 16,
+};
+
+/* A named row maps a long spelling to its option letter. With letter zero,
+   name groups short-only letters with identical rules. A null name ends the
+   table. Long-only aliases still expose their arity to legacy prescans. */
+typedef struct
+{
+        string_address name;
+        p8 letter;
+        p8 mode;
+        p16 selection;
+} argument_option;
+
+_Static_assert(sizeof(argument_option) == sizeof(named_byte),
+               "option rules fit the former name/letter row");
+
+/* A selection record contains byte fields. Each selected field receives the
+   option letter; overlapping groups therefore retain independent answers. */
+#define ARGUMENT_SELECT(type, field) (1u << __builtin_offsetof(type, field))
+
+static fn argument_select(p8 address_to into, p16 selected, p8 letter)
+{
+        while (into && selected)
+        {
+                into[bits_first_set((b32)selected) - 1] = letter;
+                selected &= selected - 1;
+        }
+}
+
+static const argument_option address_to argument_option_short(
+    const argument_option address_to options, p8 letter)
+{
+        for (; options && options->name; options++)
+                if (options->letter == letter ||
+                    (!options->letter && string_first_of(options->name, letter)))
+                        return options;
+        return null;
+}
+
+static p8 argument_option_mode(const argument_option address_to options,
+                                p8 letter)
+{
+        const argument_option address_to option = argument_option_short(options, letter);
+        return option ? option->mode : 0;
+}
+
+static const argument_option address_to argument_option_long(
+    const argument_option address_to options, string_address name,
+    positive length, bool prefix)
+{
+        const argument_option address_to candidate = null;
+        if (!length)
+                return null;
+        for (; options && options->name; options++)
+        {
+                if (!options->letter || string_compare_max(options->name, name, length))
+                        continue;
+                if (!options->name[length])
+                        return options;
+                if (prefix)
+                {
+                        if (candidate)
+                                return null;
+                        candidate = options;
+                }
+        }
+        return candidate;
+}
+
+typedef struct
+{
+        string_address value;
+        p16 selection;
+        p8 letter, mode;
+        bool optional;
+} argument_match;
+
+/* Resolve and consume one option without diagnostics or application effects.
+   On a missing value the match still identifies the option, so callers can
+   preserve their pre-error state transitions. Explicit empty values are
+   non-null; optional short and long spellings can have different arities. */
+static b32 argument_option_take(argument_cursor address_to cursor,
+    const argument_option address_to options, bool prefix,
+    argument_match address_to match)
+{
+        b32 token = argument_next(cursor);
+        *match = (argument_match){};
+        if (token == ARGUMENT_END || token == ARGUMENT_OPERAND)
+        {
+                match->value = cursor->word;
+                return token;
+        }
+        const argument_option address_to option = cursor->long_option
+            ? argument_option_long(options, cursor->word + 2, cursor->name_length, prefix)
+            : argument_option_short(options, (p8)token);
+        match->letter = cursor->long_option ? (option ? option->letter : 0) : (p8)token;
+        if (!option || (!cursor->long_option && (option->mode & ARGUMENT_LONG_ONLY)))
+                return ARGUMENT_UNKNOWN;
+        match->mode = option->mode;
+        match->selection = option->selection;
+        match->optional = (option->mode & ARGUMENT_OPTIONAL) ||
+            (cursor->long_option && (option->mode & ARGUMENT_LONG_OPTIONAL));
+        bool required = (option->mode & ARGUMENT_REQUIRED) && !match->optional;
+        if (cursor->attached && !match->optional && !required)
+                return ARGUMENT_UNEXPECTED;
+        if (required || match->optional)
+        {
+                match->value = argument_value(cursor, required);
+                if (required && !match->value)
+                        return ARGUMENT_MISSING;
+        }
+        return match->letter;
+}
+
 /* Long-name policy stays with each option family; the ordered conflict scan
    only needs its decoded byte. This preserves the legacy scan's treatment
    of detached short values and its independently chosen diagnostic point. */
-typedef p8 (*argument_lookup)(address_any definitions, positive count,
-                              string_address name, positive length);
-
 /*      Two options that cannot be given together, named in the order the
         command line wrote them: `-r -R` is "--read-only and --recursive" and
         `-R -r` the reverse.  The parsed flags say only that both were given,
@@ -2154,8 +2271,8 @@ typedef struct
 static COLD b32 argument_exclusive_refuse(
     writer diagnostic, string_address program, positive argc,
     string_address address_to argv,
-    address_any longs, positive long_count, argument_lookup lookup,
-    string_address valued, const argument_exclusive_pair address_to group,
+    const argument_option address_to options, bool prefix,
+    const argument_exclusive_pair address_to group,
     positive count)
 {
         p8 seen[2] = {0, 0};
@@ -2181,8 +2298,9 @@ static COLD b32 argument_exclusive_refuse(
 
                         string_address equals =
                             string_first_of_or_end(word + 2, '=');
-                        p8 letter = lookup(longs, long_count, word + 2,
-                            (positive)(equals - (word + 2)));
+                        const argument_option address_to option = argument_option_long(
+                            options, word + 2, (positive)(equals - (word + 2)), prefix);
+                        p8 letter = option ? option->letter : 0;
 
                         for (positive i = 0; i < count && letter; i++)
                                 if (letter == group[i].letter &&
@@ -2201,7 +2319,7 @@ static COLD b32 argument_exclusive_refuse(
                                         break;
                                 }
 
-                        if (valued && string_first_of(valued, word[i]))
+                        if (argument_option_mode(options, word[i]) & ARGUMENT_REQUIRED)
                         {
                                 value_next = !word[i + 1];
                                 break;

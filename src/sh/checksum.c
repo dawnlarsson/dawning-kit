@@ -68,31 +68,30 @@ static const checksum_algorithm checksum_algorithms[] = {
      (string_address) "sha512", (string_address) "SHA512", 64, false},
 };
 
+typedef struct { p8 style, mode, verify; } checksum_selection;
+_Static_assert(sizeof(checksum_selection) <= 16, "selection record fits its mask");
+
 /* BLAKE2 alone exposes length; every other sum uses the common tail. */
-static const file_long checksum_longs[] = {
-    {(string_address) "length", 'l'},
-    {(string_address) "binary", 'b'},
-    {(string_address) "check", 'c'},
-    {(string_address) "ignore-missing", 'i'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "status", 's'},
-    {(string_address) "strict", 'S'},
-    {(string_address) "tag", 'T'},
-    {(string_address) "text", 't'},
-    {(string_address) "warn", 'w'},
-    {(string_address) "zero", 'z'},
-    {null, 0},
+static const argument_option checksum_options[] = {
+    {"length", 'l', ARGUMENT_REQUIRED},
+    {"binary", 'b', 0, ARGUMENT_SELECT(checksum_selection, mode)},
+    {"check", 'c'},
+    {"ignore-missing", 'i', ARGUMENT_LONG_ONLY},
+    {"quiet", 'q', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(checksum_selection, verify)},
+    {"status", 's', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(checksum_selection, verify)},
+    {"strict", 'S', ARGUMENT_LONG_ONLY},
+    {"tag", 'T', ARGUMENT_LONG_ONLY},
+    {"text", 't', 0, ARGUMENT_SELECT(checksum_selection, mode)},
+    {"warn", 'w', 0, ARGUMENT_SELECT(checksum_selection, verify)},
+    {"zero", 'z'},
+    {null},
 };
 
-static bool checksum_binary;
-static bool checksum_warn;
 // Which of -b/-t was given last, and whether either was: GNU refuses --tag
 // with an explicit --text and both with --check.
-static bool checksum_text_given;
-static bool checksum_mode_given;
 // The last of --status, --warn and --quiet wins, as in GNU.
-static p8 checksum_verify_mode;
 // Output shapes: NUL-terminated unescaped lines, base64 or raw digests.
+static checksum_selection checksum_selected;
 static bool checksum_zero;
 static bool checksum_base64;
 static bool checksum_raw;
@@ -104,42 +103,13 @@ static string_address checksum_check_label;
    them behind the options, so the manifests are named from there. */
 static bool checksum_manifest_files;
 
-static bool checksum_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'b')
-        {
-                checksum_binary = true;
-                checksum_text_given = false;
-                checksum_mode_given = true;
-        }
-        else if (letter == 't')
-        {
-                checksum_binary = false;
-                checksum_text_given = true;
-                checksum_mode_given = true;
-        }
-        if (letter == 'w' || letter == 'q' || letter == 's')
-        {
-                checksum_warn = letter == 'w';
-                checksum_verify_mode = letter;
-        }
-
-        return true;
-}
-
 static fn checksum_modes_reset()
 {
+        checksum_selected = (checksum_selection){};
         checksum_program = null;
         checksum_check_label = null;
         checksum_manifest_files = false;
 
-        checksum_binary = false;
-        checksum_warn = false;
-        checksum_text_given = false;
-        checksum_mode_given = false;
-        checksum_verify_mode = 0;
         checksum_zero = false;
         checksum_base64 = false;
         checksum_raw = false;
@@ -607,7 +577,7 @@ static fn checksum_line_put(const checksum_algorithm address_to algorithm,
         {
                 checksum_digest_put(digest, algorithm->bytes);
                 text_put_character(' ');
-                text_put_character(checksum_binary ? '*' : ' ');
+                text_put_character(checksum_selected.mode == 'b' ? '*' : ' ');
         }
         checksum_filename_put(name, escaped);
         if (tagged)
@@ -877,8 +847,8 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                 checksum_check_label = algorithm ? algorithm->label
                                                  : (string_address) "CRC";
 
-        bool quiet = checksum_verify_mode == 'q';
-        bool status = checksum_verify_mode == 's';
+        bool quiet = checksum_selected.verify == 'q';
+        bool status = checksum_selected.verify == 's';
         bool strict = (taking->flags & FILE_FLAG('S')) != 0;
         bool ignore_missing = (taking->flags & FILE_FLAG('i')) != 0;
         positive manifests = checksum_manifest_files
@@ -955,7 +925,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                                  address_of filename))
                         {
                                 malformed++;
-                                if (checksum_warn)
+                                if (checksum_selected.verify == 'w')
                                 {
                                         text_flush();
                                      {
@@ -1074,14 +1044,8 @@ static b32 checksum_main()
 
         file_taking taking = {
             .program = command,
-            .allowed = algorithm->variable_length
-                           ? (string_address) "bctlwz"
-                           : (string_address) "bctwz",
-            .valued = algorithm->variable_length
-                          ? (string_address) "l"
-                          : null,
-            .longs = checksum_longs + !algorithm->variable_length,
-            .seen = checksum_option_seen,
+            .options = checksum_options + !algorithm->variable_length,
+            .selection = (p8 address_to)&checksum_selected,
         };
 
         if (!file_take(address_of taking))
@@ -1099,22 +1063,22 @@ static b32 checksum_main()
                 return checksum_usage_error(command, "the --zero option is not supported when verifying checksums");
         if (tagged && checking)
                 return checksum_usage_error(command, "the --tag option is meaningless when verifying checksums");
-        if (checking && checksum_mode_given)
+        if (checking && checksum_selected.mode)
                 return checksum_usage_error(command, "the --binary and --text options are meaningless when verifying checksums");
         if (!checking)
         {
                 if (taking.flags & FILE_FLAG('i'))
                         return checksum_usage_error(command, "the --ignore-missing option is meaningful only when verifying checksums");
-                if (checksum_verify_mode == 's')
+                if (checksum_selected.verify == 's')
                         return checksum_usage_error(command, "the --status option is meaningful only when verifying checksums");
-                if (checksum_verify_mode == 'w')
+                if (checksum_selected.verify == 'w')
                         return checksum_usage_error(command, "the --warn option is meaningful only when verifying checksums");
-                if (checksum_verify_mode == 'q')
+                if (checksum_selected.verify == 'q')
                         return checksum_usage_error(command, "the --quiet option is meaningful only when verifying checksums");
                 if (taking.flags & FILE_FLAG('S'))
                         return checksum_usage_error(command, "the --strict option is meaningful only when verifying checksums");
         }
-        if (tagged && checksum_text_given)
+        if (tagged && checksum_selected.mode == 't')
                 return checksum_usage_error(command, "--tag does not support --text mode");
 
         bipolar transform = checksum_kernel_open(algorithm);

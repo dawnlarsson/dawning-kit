@@ -422,15 +422,15 @@ enum
         UL_BITS_LIST = 'l',
 };
 
-static const file_long ul_bits_longs[] = {
-    {(string_address)"width", 'w'},
-    {(string_address)"mask", 'm'},
-    {(string_address)"grouped-mask", 'g'},
-    {(string_address)"binary", 'b'},
-    {(string_address)"list", 'l'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_bits_options[] = {
+    {"width", 'w', ARGUMENT_REQUIRED},
+    {"mask", 'm', 0, 1},
+    {"grouped-mask", 'g', 0, 1},
+    {"binary", 'b', 0, 1},
+    {"list", 'l', 0, 1},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 /* A mask is read from its least-significant nibble, so an arbitrarily long
@@ -533,16 +533,12 @@ static b32 util_linux_bits()
 {
         file_operands_begin();
         p8 mode = UL_BITS_MASK;
-        const file_supersede supersedes[] = {
-            {(string_address)"mgbl", address_of mode}, {null, null},
-        };
+
         file_taking taking = {
             .program = (string_address)"bits",
-            .allowed = (string_address)"wmgblhV",
-            .valued = (string_address)"w",
-            .longs = ul_bits_longs,
+            .options = ul_bits_options,
             .operand = file_operand,
-            .supersedes = supersedes,
+            .selection = address_of mode,
         };
 
         text_begin("bits");
@@ -911,21 +907,20 @@ static b32 ul_taskset_one(b32 pid, address_any context)
         return 0;
 }
 
-static const file_long ul_taskset_longs[] = {
-    {(string_address)"all-tasks", 'a'},
-    {(string_address)"pid", 'p'},
-    {(string_address)"cpu-list", 'c'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_taskset_options[] = {
+    {"all-tasks", 'a'},
+    {"pid", 'p'},
+    {"cpu-list", 'c'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static b32 util_linux_taskset()
 {
         file_taking taking = {
             .program = (string_address)"taskset",
-            .allowed = (string_address)"apcVh",
-            .longs = ul_taskset_longs,
+            .options = ul_taskset_options,
         };
         positive count = (positive)program_argument_count();
         ul_taskset_work work = {.list = false, .setting = false, .report = true};
@@ -1275,20 +1270,18 @@ static const ul_resource ul_resources[] = {
 
 #define UL_RESOURCES (array_count(ul_resources))
 
-static const file_long ul_prlimit_longs[] = {
-    {(string_address)"pid", 'p'}, {(string_address)"output", 'o'},
-    {(string_address)"noheadings", 'H'}, {(string_address)"raw", 'R'},
-    {(string_address)"verbose", 'z'},
-    {(string_address)"core", 'c'}, {(string_address)"data", 'd'},
-    {(string_address)"nice", 'e'}, {(string_address)"fsize", 'f'},
-    {(string_address)"sigpending", 'i'}, {(string_address)"memlock", 'l'},
-    {(string_address)"rss", 'm'}, {(string_address)"nofile", 'n'},
-    {(string_address)"msgqueue", 'q'}, {(string_address)"rtprio", 'r'},
-    {(string_address)"stack", 's'}, {(string_address)"cpu", 't'},
-    {(string_address)"nproc", 'u'}, {(string_address)"as", 'v'},
-    {(string_address)"locks", 'x'}, {(string_address)"rttime", 'y'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_prlimit_options[] = {
+    {"pid", 'p', ARGUMENT_REQUIRED}, {"output", 'o', ARGUMENT_REQUIRED},
+    {"noheadings", 'H', ARGUMENT_LONG_ONLY}, {"raw", 'R', ARGUMENT_LONG_ONLY},
+    {"verbose", 'z', ARGUMENT_LONG_ONLY}, {"core", 'c', ARGUMENT_OPTIONAL},
+    {"data", 'd', ARGUMENT_OPTIONAL}, {"nice", 'e', ARGUMENT_OPTIONAL},
+    {"fsize", 'f', ARGUMENT_OPTIONAL}, {"sigpending", 'i', ARGUMENT_OPTIONAL},
+    {"memlock", 'l', ARGUMENT_OPTIONAL}, {"rss", 'm', ARGUMENT_OPTIONAL},
+    {"nofile", 'n', ARGUMENT_OPTIONAL}, {"msgqueue", 'q', ARGUMENT_OPTIONAL},
+    {"rtprio", 'r', ARGUMENT_OPTIONAL}, {"stack", 's', ARGUMENT_OPTIONAL},
+    {"cpu", 't', ARGUMENT_OPTIONAL}, {"nproc", 'u', ARGUMENT_OPTIONAL},
+    {"as", 'v', ARGUMENT_OPTIONAL}, {"locks", 'x', ARGUMENT_OPTIONAL},
+    {"rttime", 'y', ARGUMENT_OPTIONAL}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static bool ul_limit_value(string_address text, p64 current,
@@ -1418,10 +1411,7 @@ static b32 util_linux_prlimit()
 {
         file_taking taking = {
             .program = (string_address)"prlimit",
-            .allowed = (string_address)"pocdefilmnqrstuvxyVh",
-            .valued = (string_address)"po",
-            .optional = (string_address)"cdefilmnqrstuvxy",
-            .longs = ul_prlimit_longs,
+            .options = ul_prlimit_options,
         };
         b32 answer;
 
@@ -1657,23 +1647,14 @@ static b32 ul_chrt_one(b32 pid, address_any context)
 }
 
 static p8 ul_chrt_policy;
-static const file_supersede ul_chrt_supersedes[] = {
-    {(string_address)"bdefior", address_of ul_chrt_policy},
-    {null, null},
-};
 
-static const file_long ul_chrt_longs[] = {
-    {(string_address)"batch", 'b'}, {(string_address)"deadline", 'd'},
-    {(string_address)"ext", 'e'}, {(string_address)"fifo", 'f'},
-    {(string_address)"idle", 'i'}, {(string_address)"other", 'o'},
-    {(string_address)"rr", 'r'}, {(string_address)"reset-on-fork", 'R'},
-    {(string_address)"sched-runtime", 'T'},
-    {(string_address)"sched-period", 'P'},
-    {(string_address)"sched-deadline", 'D'},
-    {(string_address)"all-tasks", 'a'}, {(string_address)"max", 'm'},
-    {(string_address)"pid", 'p'}, {(string_address)"verbose", 'v'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+
+static const argument_option ul_chrt_options[] = {
+    {"batch", 'b', 0, 1}, {"deadline", 'd', 0, 1}, {"ext", 'e', 0, 1}, {"fifo", 'f', 0, 1},
+    {"idle", 'i', 0, 1}, {"other", 'o', 0, 1}, {"rr", 'r', 0, 1}, {"reset-on-fork", 'R'},
+    {"sched-runtime", 'T', ARGUMENT_REQUIRED}, {"sched-period", 'P', ARGUMENT_REQUIRED},
+    {"sched-deadline", 'D', ARGUMENT_REQUIRED}, {"all-tasks", 'a'}, {"max", 'm'}, {"pid", 'p'},
+    {"verbose", 'v'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 ul_chrt_max()
@@ -1698,10 +1679,8 @@ static b32 util_linux_chrt()
 {
         file_taking taking = {
             .program = (string_address)"chrt",
-            .allowed = (string_address)"bdefiorRTPDampvVh",
-            .valued = (string_address)"TPD",
-            .longs = ul_chrt_longs,
-            .supersedes = ul_chrt_supersedes,
+            .options = ul_chrt_options,
+            .selection = address_of ul_chrt_policy,
         };
         b32 answer;
 
@@ -1873,20 +1852,16 @@ static b32 ul_uclamp_one(b32 pid, address_any context)
         return 0;
 }
 
-static const file_long ul_uclamp_longs[] = {
-    {(string_address)"all-tasks", 'a'}, {(string_address)"pid", 'p'},
-    {(string_address)"system", 's'}, {(string_address)"reset-on-fork", 'R'},
-    {(string_address)"verbose", 'v'}, {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'}, {null, 0},
+static const argument_option ul_uclamp_options[] = {
+    {"all-tasks", 'a'}, {"pid", 'p', ARGUMENT_REQUIRED}, {"system", 's'}, {"reset-on-fork", 'R'},
+    {"verbose", 'v'}, {"help", 'h'}, {"version", 'V'}, {"mM", 0, ARGUMENT_REQUIRED}, {null},
 };
 
 static b32 util_linux_uclampset()
 {
         file_taking taking = {
             .program = (string_address)"uclampset",
-            .allowed = (string_address)"mMapsRvVh",
-            .valued = (string_address)"mMp",
-            .longs = ul_uclamp_longs,
+            .options = ul_uclamp_options,
         };
         b32 answer;
 
@@ -2170,21 +2145,15 @@ static b32 ul_flock_exec(string_address address_to words)
 }
 
 static p8 ul_flock_kind;
-static const file_supersede ul_flock_supersedes[] = {
-    {(string_address)"sxu", address_of ul_flock_kind}, {null, null},
-};
 
-static const file_long ul_flock_longs[] = {
-    {(string_address)"shared", 's'}, {(string_address)"exclusive", 'x'},
-    {(string_address)"unlock", 'u'}, {(string_address)"nb", 'n'},
-    {(string_address)"nonblocking", 'n'}, {(string_address)"timeout", 'w'},
-    {(string_address)"wait", 'w'},
-    {(string_address)"conflict-exit-code", 'E'},
-    {(string_address)"close", 'o'},
-    {(string_address)"no-fork", 'F'}, {(string_address)"fcntl", 'L'},
-    {(string_address)"start", 'S'}, {(string_address)"length", 'N'},
-    {(string_address)"verbose", 'v'}, {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'}, {null, 0},
+
+static const argument_option ul_flock_options[] = {
+    {"shared", 's', 0, 1}, {"exclusive", 'x', 0, 1}, {"unlock", 'u', 0, 1}, {"nb", 'n'},
+    {"nonblocking", 'n'}, {"timeout", 'w', ARGUMENT_REQUIRED}, {"wait", 'w', ARGUMENT_REQUIRED},
+    {"conflict-exit-code", 'E', ARGUMENT_REQUIRED}, {"close", 'o'}, {"no-fork", 'F'},
+    {"fcntl", 'L', ARGUMENT_LONG_ONLY}, {"start", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"length", 'N', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"verbose", 'v', ARGUMENT_LONG_ONLY},
+    {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static COLD b32 ul_flock_usage()
@@ -2245,10 +2214,8 @@ static b32 util_linux_flock()
 {
         file_taking taking = {
             .program = (string_address)"flock",
-            .allowed = (string_address)"sxunwEoFVh",
-            .valued = (string_address)"wESN",
-            .longs = ul_flock_longs,
-            .supersedes = ul_flock_supersedes,
+            .options = ul_flock_options,
+            .selection = address_of ul_flock_kind,
             .seen = ul_flock_seen,
         };
         b32 answer;
@@ -2649,14 +2616,13 @@ static bool ul_setarch_flag(p8 letter, p32 address_to bit,
         return true;
 }
 
-static const file_long ul_setarch_longs[] = {
-    {"help", 'h'}, {"version", 'V'}, {"verbose", 'v'},
-    {"addr-no-randomize", 'R'}, {"fdpic-funcptrs", 'F'},
-    {"mmap-page-zero", 'Z'}, {"addr-compat-layout", 'L'},
-    {"read-implies-exec", 'X'}, {"32bit", 'B'}, {"short-inode", 'I'},
-    {"whole-seconds", 'S'}, {"sticky-timeouts", 'T'}, {"3gb", '3'},
-    {"4gb", '4'}, {"uname-2.6", 'u'}, {"list", 'l'}, {"show", 's'},
-    {"pid", 'p'}, {null, 0},
+static const argument_option ul_setarch_arguments[] = {
+    {"help", 'h'}, {"version", 'V'}, {"verbose", 'v'}, {"addr-no-randomize", 'R'},
+    {"fdpic-funcptrs", 'F'}, {"mmap-page-zero", 'Z'}, {"addr-compat-layout", 'L'},
+    {"read-implies-exec", 'X'}, {"32bit", 'B'}, {"short-inode", 'I'}, {"whole-seconds", 'S'},
+    {"sticky-timeouts", 'T'}, {"3gb", '3'}, {"4gb", '4', ARGUMENT_LONG_ONLY},
+    {"uname-2.6", 'u', ARGUMENT_LONG_ONLY}, {"list", 'l', ARGUMENT_LONG_ONLY},
+    {"show", 's', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY}, {"pid", 'p', ARGUMENT_REQUIRED}, {null},
 };
 
 static p32 ul_setarch_options;
@@ -2719,8 +2685,8 @@ static b32 util_linux_setarch()
         b32 pid = 0;
         b32 answer;
         file_taking taking = {
-            .program = "setarch", .allowed = "hVv3BFILRSTXZp",
-            .valued = "p", .optional = "s", .longs = ul_setarch_longs,
+            .program = "setarch",
+            .options = ul_setarch_arguments,
             .seen = ul_setarch_take,
         };
 
@@ -2845,20 +2811,16 @@ static bool ul_wait_operand(string_address text, b32 address_to pid,
         return true;
 }
 
-static const file_long ul_waitpid_longs[] = {
-    {(string_address)"verbose", 'v'}, {(string_address)"timeout", 't'},
-    {(string_address)"exited", 'e'}, {(string_address)"count", 'c'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_waitpid_options[] = {
+    {"verbose", 'v'}, {"timeout", 't', ARGUMENT_REQUIRED}, {"exited", 'e'},
+    {"count", 'c', ARGUMENT_REQUIRED}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_waitpid()
 {
         file_taking taking = {
             .program = (string_address)"waitpid",
-            .allowed = (string_address)"vetcVh",
-            .valued = (string_address)"tc",
-            .longs = ul_waitpid_longs,
+            .options = ul_waitpid_options,
             .operand = file_operand,
         };
         b32 answer;
@@ -3261,24 +3223,37 @@ static COLD __attribute__((noinline)) b32 ul_setpriv_dump()
         return 0;
 }
 
-static const file_long ul_setpriv_longs[] = {
-    {"dump", 'd'}, {"nnp", 'n'}, {"no-new-privs", 'n'},
-    {"ambient-caps", 'a'}, {"inh-caps", 'i'}, {"bounding-set", 'b'},
-    {"ruid", 'r'}, {"euid", 'u'}, {"rgid", 'g'}, {"egid", 'G'},
-    {"reuid", 'U'}, {"regid", 'R'}, {"clear-groups", 'c'},
-    {"keep-groups", 'k'}, {"init-groups", 'I'}, {"groups", 's'},
-    {"list-caps", 'l'}, {"securebits", 'S'}, {"pdeathsig", 'p'},
-    {"ptracer", 'P'}, {"selinux-label", 'x'}, {"apparmor-profile", 'A'},
-    {"landlock-access", 'L'}, {"landlock-rule", 'D'},
-    {"seccomp-filter", 'f'}, {"reset-env", 'e'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_setpriv_options[] = {
+    {"dump", 'd'}, {"nnp", 'n', ARGUMENT_LONG_ONLY}, {"no-new-privs", 'n', ARGUMENT_LONG_ONLY},
+    {"ambient-caps", 'a', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"inh-caps", 'i', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"bounding-set", 'b', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"ruid", 'r', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"euid", 'u', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"rgid", 'g', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"egid", 'G', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"reuid", 'U', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"regid", 'R', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"clear-groups", 'c', ARGUMENT_LONG_ONLY}, {"keep-groups", 'k', ARGUMENT_LONG_ONLY},
+    {"init-groups", 'I', ARGUMENT_LONG_ONLY},
+    {"groups", 's', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"list-caps", 'l', ARGUMENT_LONG_ONLY},
+    {"securebits", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"pdeathsig", 'p', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"ptracer", 'P', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"selinux-label", 'x', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"apparmor-profile", 'A', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"landlock-access", 'L', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"landlock-rule", 'D', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"seccomp-filter", 'f', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"reset-env", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"help", 'h'}, {"version", 'V'},
+    {null},
 };
 
 static b32 util_linux_setpriv()
 {
         file_taking taking = {
-            .program = "setpriv", .allowed = "dhV",
-            .valued = "aibrugGURsSpPxALDfe", .longs = ul_setpriv_longs,
+            .program = "setpriv",
+            .options = ul_setpriv_options,
             .seen = ul_setpriv_take,
         };
         ul_setpriv set = {0};
@@ -3543,22 +3518,22 @@ typedef struct
 
 static system_snapshot ul_lsns_snapshot;
 
-static const file_long ul_lsns_longs[] = {
-    {(string_address)"json", 'J'},
-    {(string_address)"list", 'l'},
-    {(string_address)"noheadings", 'n'},
-    {(string_address)"output", 'o'},
-    {(string_address)"output-all", 'A'},
-    {(string_address)"persistent", 'P'},
-    {(string_address)"task", 'p'},
-    {(string_address)"raw", 'r'},
-    {(string_address)"notruncate", 'u'},
-    {(string_address)"nowrap", 'W'},
-    {(string_address)"type", 't'},
-    {(string_address)"tree", 'T'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_lsns_options[] = {
+    {"json", 'J'},
+    {"list", 'l'},
+    {"noheadings", 'n'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"output-all", 'A', ARGUMENT_LONG_ONLY},
+    {"persistent", 'P'},
+    {"task", 'p', ARGUMENT_REQUIRED},
+    {"raw", 'r'},
+    {"notruncate", 'u'},
+    {"nowrap", 'W'},
+    {"type", 't', ARGUMENT_REQUIRED},
+    {"tree", 'T', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static PURE bipolar ul_lsns_order(ul_lsns_entry left, ul_lsns_entry right)
@@ -3624,24 +3599,14 @@ static b32 ul_table_column_list(
             definition_count, columns, count, unknown, UL_COLUMN_NAME);
 }
 
-typedef argument_exclusive_pair ul_exclusive;
-
-static p8 ul_exclusive_long(address_any context, positive count,
-                             string_address name, positive length)
-{
-        (void)count;
-        return file_long_letter(context, name, length);
-}
-
 static b32 ul_refuse_exclusive(file_taking address_to taking,
-                               const ul_exclusive address_to group,
+                               const argument_exclusive_pair address_to group,
                                positive count)
 {
         return argument_exclusive_refuse(log_error, taking->program,
             (positive)program_argument_count(), program_argument_list(),
-            taking, 0, ul_exclusive_long, taking->valued, group, count);
+            taking->options, true, group, count);
 }
-
 
 static string_address ul_lsns_table_field(address_any row, p8 column,
                                           p8 address_to scratch)
@@ -4053,12 +4018,12 @@ static const ul_table_column ul_lsclock_columns[] = {
     {"ns_offset", "NS_OFFSET", 0, true, UL_TABLE_NULL_NUMBER},
 };
 
-static const file_long ul_lsclock_longs[] = {
-    {"json", 'J'}, {"noheadings", 'n'}, {"output", 'o'},
-    {"output-all", 'A'}, {"raw", 'r'}, {"time", 't'},
-    {"no-discover-dynamic", 'D'}, {"no-discover-rtc", 'R'},
-    {"dynamic-clock", 'd'}, {"cpu-clock", 'c'}, {"rtc", 'x'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_lsclock_options[] = {
+    {"json", 'J'}, {"noheadings", 'n'}, {"output", 'o', ARGUMENT_REQUIRED}, {"output-all", 'A'},
+    {"raw", 'r'}, {"time", 't', ARGUMENT_REQUIRED}, {"no-discover-dynamic", 'D'},
+    {"no-discover-rtc", 'R'}, {"dynamic-clock", 'd', ARGUMENT_REQUIRED},
+    {"cpu-clock", 'c', ARGUMENT_REQUIRED}, {"rtc", 'x', ARGUMENT_REQUIRED}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static string_address ul_lsclock_type_name(p8 type)
@@ -4361,8 +4326,8 @@ static bool ul_lsclock_discover(ul_lsclock_row address_to rows,
 static b32 util_linux_lsclocks()
 {
         file_taking taking = {
-            .program = "lsclocks", .allowed = "JnortdcxADRVh",
-            .valued = "otdcx", .longs = ul_lsclock_longs,
+            .program = "lsclocks",
+            .options = ul_lsclock_options,
         };
         b32 answer;
         text_begin("lsclocks");
@@ -4485,9 +4450,7 @@ static b32 util_linux_lsns()
 {
         file_taking taking = {
             .program = (string_address)"lsns",
-            .allowed = (string_address)"JlnoprutPWVh",
-            .valued = (string_address)"optT",
-            .longs = ul_lsns_longs,
+            .options = ul_lsns_options,
         };
         b32 answer;
 
@@ -4495,7 +4458,7 @@ static b32 util_linux_lsns()
                     address_of answer))
                 return answer;
 
-        static const ul_exclusive lsns_formats[] = {
+        static const argument_exclusive_pair lsns_formats[] = {
             {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
         b32 clash = ul_refuse_exclusive(address_of taking, lsns_formats,
                                         array_count(lsns_formats));
@@ -4736,21 +4699,21 @@ typedef struct
 static system_snapshot ul_lslocks_snapshot;
 static bool ul_lslocks_bytes;
 
-static const file_long ul_lslocks_longs[] = {
-    {(string_address)"bytes", 'b'},
-    {(string_address)"json", 'J'},
-    {(string_address)"noinaccessible", 'i'},
-    {(string_address)"noheadings", 'n'},
-    {(string_address)"output", 'o'},
-    {(string_address)"output-all", 'A'},
-    {(string_address)"pid", 'p'},
-    {(string_address)"filter", 'Q'},
-    {(string_address)"raw", 'r'},
-    {(string_address)"notruncate", 'u'},
-    {(string_address)"list-columns", 'H'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_lslocks_options[] = {
+    {"bytes", 'b'},
+    {"json", 'J'},
+    {"noinaccessible", 'i'},
+    {"noheadings", 'n'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"output-all", 'A', ARGUMENT_LONG_ONLY},
+    {"pid", 'p', ARGUMENT_REQUIRED},
+    {"filter", 'Q', ARGUMENT_REQUIRED},
+    {"raw", 'r'},
+    {"notruncate", 'u'},
+    {"list-columns", 'H'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bool ul_lslocks_id(string_address text, positive address_to value)
@@ -4960,16 +4923,14 @@ static b32 util_linux_lslocks()
 {
         file_taking taking = {
             .program = (string_address)"lslocks",
-            .allowed = (string_address)"bJinorupQHVh",
-            .valued = (string_address)"opQ",
-            .longs = ul_lslocks_longs,
+            .options = ul_lslocks_options,
         };
         b32 answer;
 
         if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
 
-        static const ul_exclusive lslocks_formats[] = {
+        static const argument_exclusive_pair lslocks_formats[] = {
             {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
         b32 clash = ul_refuse_exclusive(address_of taking, lslocks_formats,
                                         array_count(lslocks_formats));
@@ -5207,25 +5168,25 @@ static ul_lsfd_entry address_to ul_lsfd_entries;
 static positive ul_lsfd_entry_room;
 static positive ul_lsfd_entry_count;
 
-static const file_long ul_lsfd_longs[] = {
-    {(string_address)"threads", 'l'},
-    {(string_address)"json", 'J'},
-    {(string_address)"noheadings", 'n'},
-    {(string_address)"output", 'o'},
-    {(string_address)"raw", 'r'},
-    {(string_address)"notruncate", 'u'},
-    {(string_address)"pid", 'p'},
-    {(string_address)"inet", 'i'},
-    {(string_address)"filter", 'Q'},
-    {(string_address)"debug-filter", 'D'},
-    {(string_address)"counter", 'C'},
-    {(string_address)"dump-counters", 'd'},
-    {(string_address)"hyperlink", 'k'},
-    {(string_address)"summary", 's'},
-    {(string_address)"list-columns", 'H'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_lsfd_options[] = {
+    {"threads", 'l'},
+    {"json", 'J'},
+    {"noheadings", 'n'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"raw", 'r'},
+    {"notruncate", 'u'},
+    {"pid", 'p', ARGUMENT_REQUIRED},
+    {"inet", 'i', ARGUMENT_OPTIONAL},
+    {"filter", 'Q', ARGUMENT_REQUIRED},
+    {"debug-filter", 'D'},
+    {"counter", 'C', ARGUMENT_REQUIRED},
+    {"dump-counters", 'd', ARGUMENT_LONG_ONLY},
+    {"hyperlink", 'k', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"summary", 's', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"list-columns", 'H'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static fn ul_lsfd_release()
@@ -5476,11 +5437,7 @@ static b32 util_linux_lsfd()
 {
         file_taking taking = {
             .program = (string_address)"lsfd",
-            .allowed = (string_address)"lJnorupiQDCHVh",
-            .valued = (string_address)"opQC",
-            .optional = (string_address)"i",
-            .long_optional = (string_address)"ks",
-            .longs = ul_lsfd_longs,
+            .options = ul_lsfd_options,
         };
         b32 answer;
 
@@ -6076,25 +6033,31 @@ static b32 ul_namespace_persistence_finish(
         return failed || answer;
 }
 
-static const file_long ul_unshare_longs[] = {
-    {(string_address)"mount", 'm'}, {(string_address)"uts", 'u'},
-    {(string_address)"ipc", 'i'}, {(string_address)"net", 'n'},
-    {(string_address)"pid", 'p'}, {(string_address)"user", 'U'},
-    {(string_address)"cgroup", 'C'}, {(string_address)"time", 'T'},
-    {(string_address)"fork", 'f'}, {(string_address)"mount-proc", 'q'},
-    {(string_address)"propagation", 'P'}, {(string_address)"root", 'R'},
-    {(string_address)"wd", 'w'}, {(string_address)"setuid", 'S'},
-    {(string_address)"setgid", 'G'}, {(string_address)"map-user", 'x'},
-    {(string_address)"map-group", 'y'},
-    {(string_address)"map-root-user", 'r'},
-    {(string_address)"map-current-user", 'c'},
-    {(string_address)"map-users", 'd'},
-    {(string_address)"map-groups", 'g'},
-    {(string_address)"setgroups", 's'},
-    {(string_address)"monotonic", 'o'},
-    {(string_address)"boottime", 'b'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+typedef struct { p8 uid, gid; } ul_unshare_selection;
+_Static_assert(sizeof(ul_unshare_selection) <= 16, "selection mask covers every field");
+static const argument_option ul_unshare_options[] = {
+    {"mount", 'm', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"uts", 'u', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"ipc", 'i', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"net", 'n', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"pid", 'p', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"user", 'U', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"cgroup", 'C', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+    {"time", 'T', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY}, {"fork", 'f'},
+    {"mount-proc", 'q', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"propagation", 'P', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"root", 'R', ARGUMENT_REQUIRED},
+    {"wd", 'w', ARGUMENT_REQUIRED}, {"setuid", 'S', ARGUMENT_REQUIRED},
+    {"setgid", 'G', ARGUMENT_REQUIRED},
+    {"map-user", 'x', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ul_unshare_selection, uid)},
+    {"map-group", 'y', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ul_unshare_selection, gid)},
+    {"map-root-user", 'r', 0, ARGUMENT_SELECT(ul_unshare_selection, uid) | ARGUMENT_SELECT(ul_unshare_selection, gid)},
+    {"map-current-user", 'c', 0, ARGUMENT_SELECT(ul_unshare_selection, uid) | ARGUMENT_SELECT(ul_unshare_selection, gid)},
+    {"map-users", 'd', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"map-groups", 'g', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"setgroups", 's', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"monotonic", 'o', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"boottime", 'b', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"help", 'h'}, {"version", 'V'},
+    {null},
 };
 
 static positive ul_unshare_propagation(string_address text)
@@ -6140,23 +6103,13 @@ static b32 util_linux_unshare()
         positive count = (positive)program_argument_count();
         ul_id_map uid_ranges[count];
         ul_id_map gid_ranges[count];
-        p8 uid_choice = 0;
-        p8 gid_choice = 0;
-        const file_supersede choices[] = {
-            {(string_address)"rcx", address_of uid_choice},
-            {(string_address)"rcy", address_of gid_choice},
-            {null, null},
-        };
+        ul_unshare_selection ul_unshare_selected = {.uid = 0, .gid = 0};
+
         file_taking taking = {
             .program = (string_address)"unshare",
-            .allowed = (string_address)"muinpUCTfrcRwSGVh",
-            .valued = (string_address)"PRwSGxydgsob",
-            .optional = (string_address)"q",
-            .long_optional = (string_address)"muinpUCT",
-            .sticky_optional = (string_address)"muinpUCT",
-            .longs = ul_unshare_longs,
+            .options = ul_unshare_options,
             .seen = ul_unshare_seen,
-            .supersedes = choices,
+            .selection = (p8 address_to)address_of ul_unshare_selected,
         };
         b32 answer;
 
@@ -6175,7 +6128,7 @@ static b32 util_linux_unshare()
 
         string_address map_user = file_option_value(address_of taking, 'x');
         string_address map_group = file_option_value(address_of taking, 'y');
-        if (uid_choice || gid_choice || ul_unshare_uid_range_count ||
+        if (ul_unshare_selected.uid || ul_unshare_selected.gid || ul_unshare_uid_range_count ||
             ul_unshare_gid_range_count)
                 flags |= CLONE_NEWUSER;
 
@@ -6213,11 +6166,11 @@ static b32 util_linux_unshare()
                 positive real_uid = (positive)system_call(syscall(geteuid));
                 positive real_gid = (positive)system_call(syscall(getegid));
                 ul_user_mapping map = {
-                    .uid = uid_choice != 0,
-                    .gid = gid_choice != 0,
-                    .uid_single = {uid_choice == 'r' ? 0 : real_uid,
+                    .uid = ul_unshare_selected.uid != 0,
+                    .gid = ul_unshare_selected.gid != 0,
+                    .uid_single = {ul_unshare_selected.uid == 'r' ? 0 : real_uid,
                                    real_uid, 1},
-                    .gid_single = {gid_choice == 'r' ? 0 : real_gid,
+                    .gid_single = {ul_unshare_selected.gid == 'r' ? 0 : real_gid,
                                    real_gid, 1},
                     .uid_ranges = uid_ranges,
                     .gid_ranges = gid_ranges,
@@ -6226,13 +6179,13 @@ static b32 util_linux_unshare()
                 };
 
                 positive id;
-                if (uid_choice == 'x')
+                if (ul_unshare_selected.uid == 'x')
                 {
                         if (!ul_namespace_id(map_user, false, address_of id))
                                 return string_report(log_error, 1, "%s: %s\n", "unshare", "invalid map user");
                         map.uid_single.inside = (p32)id;
                 }
-                if (gid_choice == 'y')
+                if (ul_unshare_selected.gid == 'y')
                 {
                         if (!ul_namespace_id(map_group, true, address_of id))
                                 return string_report(log_error, 1, "%s: %s\n", "unshare", "invalid map group");
@@ -6342,7 +6295,7 @@ static b32 util_linux_unshare()
            orders it: before the helper has written the id maps the kernel
            refuses setgroups in the new user namespace outright. */
         if (ul_namespace_identity("unshare", set_uid, set_gid, uid, gid, 0,
-                                  uid_choice == 'r', gid_choice == 'r', -1,
+                                  ul_unshare_selected.uid == 'r', ul_unshare_selected.gid == 'r', -1,
                                   false))
                 return 1;
 
@@ -6351,29 +6304,28 @@ static b32 util_linux_unshare()
             : ul_exec_shell("unshare");
 }
 
-static const file_long ul_nsenter_longs[] = {
-    {(string_address)"all", 'a'}, {(string_address)"target", 't'},
-    {(string_address)"mount", 'm'}, {(string_address)"uts", 'u'},
-    {(string_address)"ipc", 'i'}, {(string_address)"net", 'n'},
-    {(string_address)"pid", 'p'}, {(string_address)"user", 'U'},
-    {(string_address)"cgroup", 'C'}, {(string_address)"time", 'T'},
-    {(string_address)"setuid", 'S'}, {(string_address)"setgid", 'G'},
-    {(string_address)"preserve-credentials", 'q'},
-    {(string_address)"root", 'r'}, {(string_address)"wd", 'w'},
-    {(string_address)"wdns", 'W'}, {(string_address)"no-fork", 'F'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_nsenter_options[] = {
+    {"all", 'a'}, {"target", 't', ARGUMENT_REQUIRED},
+    {"mount", 'm', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"uts", 'u', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"ipc", 'i', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"net", 'n', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"pid", 'p', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"user", 'U', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"cgroup", 'C', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"time", 'T', ARGUMENT_OPTIONAL | ARGUMENT_STICKY}, {"setuid", 'S', ARGUMENT_REQUIRED},
+    {"setgid", 'G', ARGUMENT_REQUIRED}, {"preserve-credentials", 'q', ARGUMENT_LONG_ONLY},
+    {"root", 'r', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"wd", 'w', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"wdns", 'W', ARGUMENT_OPTIONAL | ARGUMENT_STICKY}, {"no-fork", 'F'}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static b32 util_linux_nsenter()
 {
         file_taking taking = {
             .program = (string_address)"nsenter",
-            .allowed = (string_address)"atmuinpUCTSGrwWFVh",
-            .valued = (string_address)"tSG",
-            .optional = (string_address)"muinpUCTrwW",
-            .sticky_optional = (string_address)"muinpUCTrwW",
-            .longs = ul_nsenter_longs,
+            .options = ul_nsenter_options,
         };
         b32 answer;
         positive count = (positive)program_argument_count();
@@ -6625,18 +6577,15 @@ nsenter_failed:
         return 1;
 }
 
-static const file_long ul_setsid_longs[] = {
-    {(string_address)"ctty", 'c'}, {(string_address)"fork", 'f'},
-    {(string_address)"wait", 'w'}, {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'}, {null, 0},
+static const argument_option ul_setsid_options[] = {
+    {"ctty", 'c'}, {"fork", 'f'}, {"wait", 'w'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_setsid()
 {
         file_taking taking = {
             .program = (string_address)"setsid",
-            .allowed = (string_address)"cfwVh",
-            .longs = ul_setsid_longs,
+            .options = ul_setsid_options,
         };
         b32 answer;
         bipolar pid;
@@ -6685,17 +6634,15 @@ static b32 util_linux_setsid()
         return ul_exec(taking.first, "setsid");
 }
 
-static const file_long ul_setpgid_longs[] = {
-    {(string_address)"foreground", 'f'}, {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'}, {null, 0},
+static const argument_option ul_setpgid_options[] = {
+    {"foreground", 'f'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_setpgid()
 {
         file_taking taking = {
             .program = (string_address)"setpgid",
-            .allowed = (string_address)"fVh",
-            .longs = ul_setpgid_longs,
+            .options = ul_setpgid_options,
         };
         b32 answer;
         bipolar changed;
@@ -6761,20 +6708,20 @@ static fn ul_human_size(p8 address_to into, positive bytes)
                 }
 }
 
-static const file_long ul_fallocate_longs[] = {
-    {(string_address)"collapse-range", 'c'},
-    {(string_address)"insert-range", 'i'},
-    {(string_address)"keep-size", 'n'},
-    {(string_address)"length", 'l'},
-    {(string_address)"offset", 'o'},
-    {(string_address)"posix", 'x'},
-    {(string_address)"punch-hole", 'p'},
-    {(string_address)"write-zeroes", 'w'},
-    {(string_address)"zero-range", 'z'},
-    {(string_address)"verbose", 'v'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_fallocate_options[] = {
+    {"collapse-range", 'c'},
+    {"insert-range", 'i'},
+    {"keep-size", 'n'},
+    {"length", 'l', ARGUMENT_REQUIRED},
+    {"offset", 'o', ARGUMENT_REQUIRED},
+    {"posix", 'x'},
+    {"punch-hole", 'p'},
+    {"write-zeroes", 'w'},
+    {"zero-range", 'z'},
+    {"verbose", 'v'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 /*
@@ -6788,9 +6735,7 @@ static b32 util_linux_fallocate()
 {
         file_taking taking = {
             .program = (string_address)"fallocate",
-            .allowed = (string_address)"cilnopvwxzVh",
-            .valued = (string_address)"lo",
-            .longs = ul_fallocate_longs,
+            .options = ul_fallocate_options,
         };
         positive count = (positive)program_argument_count();
         positive length;
@@ -6890,11 +6835,11 @@ static b32 util_linux_fallocate()
         return 0;
 }
 
-static const file_long ul_copyfilerange_longs[] = {
-    {(string_address)"verbose", 'v'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_copyfilerange_options[] = {
+    {"verbose", 'v'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 /* source-offset:destination-offset:length, with an empty offset continuing
@@ -6997,8 +6942,7 @@ static b32 util_linux_copyfilerange()
 {
         file_taking taking = {
             .program = (string_address)"copyfilerange",
-            .allowed = (string_address)"vVh",
-            .longs = ul_copyfilerange_longs,
+            .options = ul_copyfilerange_options,
         };
         positive count = (positive)program_argument_count();
         b32 answer;
@@ -7065,11 +7009,10 @@ static b32 util_linux_copyfilerange()
         return complete ? 0 : 1;
 }
 
-static const file_long ul_fadvise_longs[] = {
-    {(string_address)"advice", 'a'}, {(string_address)"fd", 'd'},
-    {(string_address)"length", 'l'}, {(string_address)"offset", 'o'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_fadvise_options[] = {
+    {"advice", 'a', ARGUMENT_REQUIRED}, {"fd", 'd', ARGUMENT_REQUIRED},
+    {"length", 'l', ARGUMENT_REQUIRED}, {"offset", 'o', ARGUMENT_REQUIRED}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static PURE b32 ul_fadvise_kind(string_address name)
@@ -7089,9 +7032,7 @@ static b32 util_linux_fadvise()
 {
         file_taking taking = {
             .program = (string_address)"fadvise",
-            .allowed = (string_address)"adloVh",
-            .valued = (string_address)"adlo",
-            .longs = ul_fadvise_longs,
+            .options = ul_fadvise_options,
         };
         positive offset = 0;
         positive length = 0;
@@ -7191,12 +7132,10 @@ static b32 util_linux_fadvise()
         return 0;
 }
 
-static const file_long ul_ionice_longs[] = {
-    {(string_address)"class", 'c'}, {(string_address)"classdata", 'n'},
-    {(string_address)"pid", 'p'}, {(string_address)"pgid", 'P'},
-    {(string_address)"uid", 'u'}, {(string_address)"ignore", 't'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option ul_ionice_options[] = {
+    {"class", 'c', ARGUMENT_REQUIRED}, {"classdata", 'n', ARGUMENT_REQUIRED},
+    {"pid", 'p', ARGUMENT_REQUIRED}, {"pgid", 'P', ARGUMENT_REQUIRED},
+    {"uid", 'u', ARGUMENT_REQUIRED}, {"ignore", 't'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static string_address ul_ionice_classes[] = {
@@ -7280,9 +7219,7 @@ static b32 util_linux_ionice()
 {
         file_taking taking = {
             .program = (string_address)"ionice",
-            .allowed = (string_address)"cnpPutVh",
-            .valued = (string_address)"cnpPu",
-            .longs = ul_ionice_longs,
+            .options = ul_ionice_options,
             .seen = ul_ionice_seen,
         };
         positive count = (positive)program_argument_count();
@@ -7379,9 +7316,9 @@ static b32 util_linux_ionice()
 }
 
 // choom -----------------------------------------------------------
-static const file_long ul_choom_longs[] = {
-    {"adjust", 'n'}, {"pid", 'p'}, {"help", 'h'}, {"version", 'V'},
-    {null, 0},
+static const argument_option ul_choom_options[] = {
+    {"adjust", 'n', ARGUMENT_REQUIRED}, {"pid", 'p', ARGUMENT_REQUIRED}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static bool ul_choom_read(string_address path, b32 address_to value)
@@ -7409,8 +7346,8 @@ static bool ul_choom_write(string_address path, b32 value)
 static b32 util_linux_choom()
 {
         file_taking taking = {
-            .program = "choom", .allowed = "nphV", .valued = "np",
-            .longs = ul_choom_longs,
+            .program = "choom",
+            .options = ul_choom_options,
         };
         b32 answer;
 
@@ -7483,14 +7420,15 @@ static b32 util_linux_choom()
 // exch ------------------------------------------------------------
 #define UL_RENAME_EXCHANGE 2
 
-static const file_long ul_exch_longs[] = {
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_exch_options[] = {
+    {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_exch()
 {
         file_taking taking = {
-            .program = "exch", .allowed = "hV", .longs = ul_exch_longs,
+            .program = "exch",
+            .options = ul_exch_options,
         };
         b32 answer;
 
@@ -7516,11 +7454,12 @@ static b32 util_linux_exch()
 }
 
 // getino ----------------------------------------------------------
-static const file_long ul_getino_longs[] = {
-    {"pidfs", '0'}, {"cgroupns", '1'}, {"ipcns", '2'},
-    {"mntns", '3'}, {"netns", '4'}, {"pidns", '5'},
-    {"timens", '6'}, {"userns", '7'}, {"utsns", '8'},
-    {"print-pid", 'p'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_getino_options[] = {
+    {"pidfs", '0', ARGUMENT_LONG_ONLY}, {"cgroupns", '1', ARGUMENT_LONG_ONLY},
+    {"ipcns", '2', ARGUMENT_LONG_ONLY}, {"mntns", '3', ARGUMENT_LONG_ONLY},
+    {"netns", '4', ARGUMENT_LONG_ONLY}, {"pidns", '5', ARGUMENT_LONG_ONLY},
+    {"timens", '6', ARGUMENT_LONG_ONLY}, {"userns", '7', ARGUMENT_LONG_ONLY},
+    {"utsns", '8', ARGUMENT_LONG_ONLY}, {"print-pid", 'p'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 /* _IO(0xff, n), the pidfs namespace descriptor requests. */
@@ -7531,8 +7470,8 @@ static const p16 ul_getino_requests[] = {
 static b32 util_linux_getino()
 {
         file_taking taking = {
-            .program = "getino", .allowed = "phV",
-            .longs = ul_getino_longs, .operand = file_operand,
+            .program = "getino",
+            .options = ul_getino_options, .operand = file_operand,
         };
         b32 answer;
 
@@ -7614,14 +7553,11 @@ static b32 util_linux_getino()
 
 // getopt ----------------------------------------------------------
 
-static const file_long ul_getopt_longs[] = {
-    {"alternative", 'a'}, {"longoptions", 'l'},
-    {"name", 'n'},        {"options", 'o'},
-    {"quiet", 'q'},       {"quiet-output", 'Q'},
-    {"shell", 's'},       {"test", 'T'},
-    {"unquoted", 'u'},    {"unknown", 'U'},
-    {"help", 'h'},        {"version", 'V'},
-    {null, 0},
+static const argument_option ul_getopt_options[] = {
+    {"alternative", 'a'}, {"longoptions", 'l', ARGUMENT_REQUIRED}, {"name", 'n', ARGUMENT_REQUIRED},
+    {"options", 'o', ARGUMENT_REQUIRED}, {"quiet", 'q'}, {"quiet-output", 'Q'},
+    {"shell", 's', ARGUMENT_REQUIRED}, {"test", 'T'}, {"unquoted", 'u'}, {"unknown", 'U'},
+    {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 /* -U keeps an option getopt(3) rejects as a quoted word in the output. */
@@ -8051,10 +7987,10 @@ static b32 util_linux_getopt()
         else
         {
                 file_taking taking = {
-                    .program = "getopt", .allowed = "alnoqQsTuUhV",
-                    .valued = "lnos", .longs = ul_getopt_longs,
+                    .program = "getopt",
+            .options = ul_getopt_options,
                     .seen = ul_getopt_seen,
-                };
+        };
                 b32 answer;
 
                 if (!file_take(address_of taking))
@@ -8326,11 +8262,12 @@ static bool ul_block_start(bipolar handle, positive number,
 
 static b32 ul_partition_program(string_address program, b32 operation)
 {
-        static const file_long longs[] = {
-            {"help", 'h'}, {"version", 'V'}, {null, 0},
-        };
+        static const argument_option longs_options[] = {
+    {"help", 'h'}, {"version", 'V'}, {null},
+};
         file_taking taking = {
-            .program = program, .allowed = "hV", .longs = longs,
+            .program = program,
+            .options = longs_options,
         };
         b32 answer;
 
@@ -8539,21 +8476,23 @@ static bool ul_blockdev_seen(p8 letter, string_address value)
         return true;
 }
 
-static const file_long ul_blockdev_longs[] = {
-    {"report", 'R'}, {"getsz", '0'}, {"setro", '1'},
-    {"setrw", '2'}, {"getro", '3'}, {"getdiscardzeroes", '4'},
-    {"getss", '5'}, {"getpbsz", '6'}, {"getiomin", '7'},
-    {"getioopt", '8'}, {"getalignoff", '9'}, {"getmaxsect", 'A'},
-    {"getbsz", 'B'}, {"setbsz", 'C'}, {"getsize", 'D'},
-    {"getsize64", 'E'}, {"setra", 'F'}, {"getra", 'G'},
-    {"setfra", 'H'}, {"getfra", 'I'}, {"getdiskseq", 'J'},
-    {"getzonesz", 'K'}, {"flushbufs", 'L'}, {"rereadpt", 'M'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_blockdev_options[] = {
+    {"report", 'R', ARGUMENT_LONG_ONLY}, {"getsz", '0', ARGUMENT_LONG_ONLY},
+    {"setro", '1', ARGUMENT_LONG_ONLY}, {"setrw", '2', ARGUMENT_LONG_ONLY},
+    {"getro", '3', ARGUMENT_LONG_ONLY}, {"getdiscardzeroes", '4', ARGUMENT_LONG_ONLY},
+    {"getss", '5', ARGUMENT_LONG_ONLY}, {"getpbsz", '6', ARGUMENT_LONG_ONLY},
+    {"getiomin", '7', ARGUMENT_LONG_ONLY}, {"getioopt", '8', ARGUMENT_LONG_ONLY},
+    {"getalignoff", '9', ARGUMENT_LONG_ONLY}, {"getmaxsect", 'A', ARGUMENT_LONG_ONLY},
+    {"getbsz", 'B', ARGUMENT_LONG_ONLY}, {"setbsz", 'C', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"getsize", 'D', ARGUMENT_LONG_ONLY}, {"getsize64", 'E', ARGUMENT_LONG_ONLY},
+    {"setra", 'F', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"getra", 'G', ARGUMENT_LONG_ONLY},
+    {"setfra", 'H', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"getfra", 'I', ARGUMENT_LONG_ONLY},
+    {"getdiskseq", 'J', ARGUMENT_LONG_ONLY}, {"getzonesz", 'K', ARGUMENT_LONG_ONLY},
+    {"flushbufs", 'L', ARGUMENT_LONG_ONLY}, {"rereadpt", 'M', ARGUMENT_LONG_ONLY}, {"help", 'h'},
+    {"version", 'V'}, {"qv", 0, 0, 1}, {null},
 };
 
-static const file_supersede ul_blockdev_supersedes[] = {
-    {"qv", address_of ul_blockdev_verbosity}, {null, null},
-};
+
 
 static bipolar ul_blockdev_query(bipolar handle,
                                  const ul_blockdev_descriptor address_to descriptor,
@@ -8757,10 +8696,10 @@ static b32 util_linux_blockdev()
         ul_blockdev_command_count = 0;
         ul_blockdev_verbosity = 0;
         file_taking taking = {
-            .program = "blockdev", .allowed = "qvhV",
-            .valued = "CFH", .longs = ul_blockdev_longs,
+            .program = "blockdev",
+            .options = ul_blockdev_options,
             .seen = ul_blockdev_seen,
-            .supersedes = ul_blockdev_supersedes,
+            .selection = address_of ul_blockdev_verbosity,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[-v|-q] commands devices",
@@ -8805,16 +8744,15 @@ static b32 util_linux_blockdev()
 
 // ISO9660 and signature inventory --------------------------------
 
-static const file_long ul_isosize_longs[] = {
-    {"divisor", 'd'}, {"sectors", 'x'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_isosize_options[] = {
+    {"divisor", 'd', ARGUMENT_REQUIRED}, {"sectors", 'x'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_isosize()
 {
         file_taking taking = {
-            .program = "isosize", .allowed = "dxhV", .valued = "d",
-            .longs = ul_isosize_longs,
+            .program = "isosize",
+            .options = ul_isosize_options,
         };
         b32 answer;
 
@@ -9097,27 +9035,26 @@ static fn ul_wipefs_no_act(ul_wipefs_work address_to work,
         }
 }
 
-static const file_long ul_wipefs_longs[] = {
-    {"all", 'a'}, {"backup", 'b'}, {"force", 'f'},
-    {"noheadings", 'i'}, {"json", 'J'}, {"no-act", 'n'},
-    {"offset", 'o'}, {"output", 'O'}, {"parsable", 'p'},
-    {"quiet", 'q'}, {"types", 't'}, {"lock", 'k'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_wipefs_options[] = {
+    {"all", 'a'}, {"backup", 'b', ARGUMENT_OPTIONAL}, {"force", 'f'}, {"noheadings", 'i'},
+    {"json", 'J'}, {"no-act", 'n'}, {"offset", 'o', ARGUMENT_REQUIRED},
+    {"output", 'O', ARGUMENT_REQUIRED}, {"parsable", 'p'}, {"quiet", 'q'},
+    {"types", 't', ARGUMENT_REQUIRED}, {"lock", 'k', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_wipefs()
 {
         file_taking taking = {
-            .program = "wipefs", .allowed = "abfiJnoOpqthV",
-            .valued = "oOt", .optional = "b",
-            .long_optional = "k", .longs = ul_wipefs_longs,
+            .program = "wipefs",
+            .options = ul_wipefs_options,
         };
         b32 answer;
 
         if (ul_options_done(address_of taking, "[options] <device>",
                     address_of answer))
                 return answer;
-        static const ul_exclusive wipefs_pair[] = {
+        static const argument_exclusive_pair wipefs_pair[] = {
             {'o', (string_address)"offset"},
             {'O', (string_address)"output"}};
         b32 clash = ul_refuse_exclusive(address_of taking, wipefs_pair,
@@ -9303,20 +9240,20 @@ static bool ul_swap_uuid(string_address text, tools_uuid address_to uuid,
         return true;
 }
 
-static const file_long ul_mkswap_longs[] = {
-    {"check", 'c'}, {"force", 'f'}, {"quiet", 'q'},
-    {"pagesize", 'p'}, {"label", 'L'}, {"swapversion", 'v'},
-    {"uuid", 'U'}, {"endianness", 'e'}, {"offset", 'o'},
-    {"size", 's'}, {"file", 'F'}, {"verbose", 'z'},
-    {"lock", 'k'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_mkswap_options[] = {
+    {"check", 'c'}, {"force", 'f'}, {"quiet", 'q'}, {"pagesize", 'p', ARGUMENT_REQUIRED},
+    {"label", 'L', ARGUMENT_REQUIRED}, {"swapversion", 'v', ARGUMENT_REQUIRED},
+    {"uuid", 'U', ARGUMENT_REQUIRED}, {"endianness", 'e', ARGUMENT_REQUIRED},
+    {"offset", 'o', ARGUMENT_REQUIRED}, {"size", 's', ARGUMENT_REQUIRED}, {"file", 'F'},
+    {"verbose", 'z'}, {"lock", 'k', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static b32 util_linux_mkswap()
 {
         file_taking taking = {
-            .program = "mkswap", .allowed = "cfqpLvUeosFzhV",
-            .valued = "pLvUeos", .long_optional = "k",
-            .longs = ul_mkswap_longs,
+            .program = "mkswap",
+            .options = ul_mkswap_options,
         };
         b32 answer;
 
@@ -9461,16 +9398,16 @@ static b32 util_linux_mkswap()
         return 0;
 }
 
-static const file_long ul_swaplabel_longs[] = {
-    {"label", 'L'}, {"uuid", 'U'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_swaplabel_options[] = {
+    {"label", 'L', ARGUMENT_REQUIRED}, {"uuid", 'U', ARGUMENT_REQUIRED}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static b32 util_linux_swaplabel()
 {
         file_taking taking = {
-            .program = "swaplabel", .allowed = "LUhV",
-            .valued = "LU", .longs = ul_swaplabel_longs,
+            .program = "swaplabel",
+            .options = ul_swaplabel_options,
         };
         b32 answer;
 
@@ -10655,13 +10592,13 @@ static fn ul_lscpu_parse(p8 address_to columns, positive column_count,
         }
 }
 
-static const file_long ul_lscpu_longs[] = {
-    {"all", 'a'}, {"bytes", 'B'}, {"caches", 'C'},
-    {"extended", 'e'}, {"hex", 'x'}, {"json", 'J'},
-    {"offline", 'c'}, {"online", 'b'}, {"output", 'o'},
-    {"parse", 'p'}, {"physical", 'y'}, {"raw", 'r'},
-    {"sysroot", 's'}, {"list-columns", 'H'}, {"output-all", 'A'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_lscpu_options[] = {
+    {"all", 'a'}, {"bytes", 'B'}, {"caches", 'C', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"extended", 'e', ARGUMENT_OPTIONAL | ARGUMENT_STICKY}, {"hex", 'x'}, {"json", 'J'},
+    {"offline", 'c'}, {"online", 'b'}, {"output", 'o', ARGUMENT_REQUIRED},
+    {"parse", 'p', ARGUMENT_OPTIONAL | ARGUMENT_STICKY}, {"physical", 'y'}, {"raw", 'r'},
+    {"sysroot", 's', ARGUMENT_REQUIRED}, {"list-columns", 'H'}, {"output-all", 'A'}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static bool ul_lscpu_unsupported_column(string_address text)
@@ -10685,9 +10622,8 @@ static bool ul_lscpu_unsupported_column(string_address text)
 static b32 util_linux_lscpu()
 {
         file_taking taking = {
-            .program = "lscpu", .allowed = "aBbCcJeoprxysHAVh",
-            .valued = "os", .optional = "peC", .sticky_optional = "peC",
-            .longs = ul_lscpu_longs,
+            .program = "lscpu",
+            .options = ul_lscpu_options,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[options]", address_of answer))
@@ -11191,28 +11127,27 @@ static fn ul_lsmem_summary()
                      false, false, ul_lscpu_summary_field);
 }
 
-static const file_long ul_lsmem_longs[] = {
-    {"json", 'J'}, {"pairs", 'P'}, {"all", 'a'}, {"bytes", 'b'},
-    {"noheadings", 'n'}, {"output", 'o'}, {"output-all", 'A'},
-    {"raw", 'r'}, {"split", 'S'}, {"sysroot", 's'},
-    {"summary", 'q'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_lsmem_options[] = {
+    {"json", 'J'}, {"pairs", 'P'}, {"all", 'a'}, {"bytes", 'b'}, {"noheadings", 'n'},
+    {"output", 'o', ARGUMENT_REQUIRED}, {"output-all", 'A'}, {"raw", 'r'},
+    {"split", 'S', ARGUMENT_REQUIRED}, {"sysroot", 's', ARGUMENT_REQUIRED},
+    {"summary", 'q', ARGUMENT_OPTIONAL | ARGUMENT_STICKY}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_lsmem()
 {
         file_taking taking = {
-            .program = "lsmem", .allowed = "JPabnroASsqhV",
-            .valued = "oSs", .optional = "q", .sticky_optional = "q",
-            .longs = ul_lsmem_longs,
+            .program = "lsmem",
+            .options = ul_lsmem_options,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
 
-        static const ul_exclusive lsmem_formats[] = {
+        static const argument_exclusive_pair lsmem_formats[] = {
             {'J', (string_address)"json"}, {'P', (string_address)"pairs"},
             {'r', (string_address)"raw"}};
-        static const ul_exclusive lsmem_split[] = {
+        static const argument_exclusive_pair lsmem_split[] = {
             {'a', (string_address)"all"}, {'S', (string_address)"split"}};
         b32 clash = ul_refuse_exclusive(address_of taking, lsmem_formats,
                                         array_count(lsmem_formats));
@@ -12384,16 +12319,16 @@ static fn ul_lsblk_json_out(p8 address_to columns, positive column_count)
         log("\n   ]\n}\n", sizeof("\n   ]\n}\n") - 1);
 }
 
-static const file_long ul_lsblk_longs[] = {
-    {"noempty", 'A'}, {"discard", 'D'}, {"json", 'J'},
-    {"output-all", 'O'}, {"pairs", 'P'}, {"scsi", 'S'},
-    {"all", 'a'}, {"bytes", 'b'}, {"nodeps", 'd'}, {"fs", 'f'},
-    {"ascii", 'i'}, {"list", 'l'}, {"perms", 'm'},
-    {"noheadings", 'n'}, {"output", 'o'}, {"paths", 'p'},
-    {"raw", 'r'}, {"topology", 't'}, {"zoned", 'z'},
-    {"sysroot", 's'}, {"ct", 'c'}, {"ct-filter", 'C'},
-    {"highlight", 'g'}, {"filter", 'Q'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_lsblk_options[] = {
+    {"noempty", 'A'}, {"discard", 'D'}, {"json", 'J'}, {"output-all", 'O'}, {"pairs", 'P'},
+    {"scsi", 'S'}, {"all", 'a'}, {"bytes", 'b'}, {"nodeps", 'd'}, {"fs", 'f'}, {"ascii", 'i'},
+    {"list", 'l'}, {"perms", 'm'}, {"noheadings", 'n'}, {"output", 'o', ARGUMENT_REQUIRED},
+    {"paths", 'p'}, {"raw", 'r'}, {"topology", 't'}, {"zoned", 'z'},
+    {"sysroot", 's', ARGUMENT_REQUIRED}, {"ct", 'c', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"ct-filter", 'C', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"highlight", 'g', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"filter", 'Q', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"help", 'h'}, {"version", 'V'},
+    {null},
 };
 
 /*      A counter is name[:parameter[:function]] and the function it has when
@@ -12447,17 +12382,17 @@ static fn ul_lsblk_counter(string_address text, positive name_length,
 static b32 util_linux_lsblk()
 {
         file_taking taking = {
-            .program = "lsblk", .allowed = "ADJOPSabdfilmnoprtszVh",
-            .valued = "oscCgQ", .longs = ul_lsblk_longs,
+            .program = "lsblk",
+            .options = ul_lsblk_options,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[options] [device ...]",
                     address_of answer))
                 return answer;
-        static const ul_exclusive lsblk_formats[] = {
+        static const argument_exclusive_pair lsblk_formats[] = {
             {'J', (string_address)"json"}, {'P', (string_address)"pairs"},
             {'r', (string_address)"raw"}};
-        static const ul_exclusive lsblk_shapes[] = {
+        static const argument_exclusive_pair lsblk_shapes[] = {
             {'l', (string_address)"list"}, {'P', (string_address)"pairs"},
             {'r', (string_address)"raw"}};
         b32 clash = ul_refuse_exclusive(address_of taking, lsblk_formats,
@@ -12985,18 +12920,18 @@ static bipolar ul_ipc_create_one(p8 type, positive value, positive mode,
         return -ERROR_EXISTS;
 }
 
-static const file_long ul_ipcmk_longs[] = {
-    {"shmem", 'M'}, {"posix-shmem", 'm'}, {"semaphore", 'S'},
-    {"posix-semaphore", 's'}, {"queue", 'Q'}, {"posix-mqueue", 'q'},
-    {"mode", 'p'}, {"name", 'n'}, {"help", 'h'}, {"version", 'V'},
-    {null, 0},
+static const argument_option ul_ipcmk_options[] = {
+    {"shmem", 'M', ARGUMENT_REQUIRED}, {"posix-shmem", 'm', ARGUMENT_REQUIRED},
+    {"semaphore", 'S', ARGUMENT_REQUIRED}, {"posix-semaphore", 's'}, {"queue", 'Q'},
+    {"posix-mqueue", 'q'}, {"mode", 'p', ARGUMENT_REQUIRED}, {"name", 'n', ARGUMENT_REQUIRED},
+    {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_ipcmk()
 {
         file_taking taking = {
-            .program = "ipcmk", .allowed = "MmSsQqpnVh",
-            .valued = "MmSpn", .longs = ul_ipcmk_longs,
+            .program = "ipcmk",
+            .options = ul_ipcmk_options,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[options]", address_of answer))
@@ -13075,12 +13010,13 @@ static b32 util_linux_ipcmk()
         return 0;
 }
 
-static const file_long ul_ipcrm_longs[] = {
-    {"shmem-id", 'm'}, {"shmem-key", 'M'}, {"queue-id", 'q'},
-    {"queue-key", 'Q'}, {"semaphore-id", 's'}, {"semaphore-key", 'S'},
-    {"posix-shmem", 'x'}, {"posix-mqueue", 'y'},
-    {"posix-semaphore", 'z'}, {"all", 'a'}, {"verbose", 'v'},
-    {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_ipcrm_options[] = {
+    {"shmem-id", 'm', ARGUMENT_REQUIRED}, {"shmem-key", 'M', ARGUMENT_REQUIRED},
+    {"queue-id", 'q', ARGUMENT_REQUIRED}, {"queue-key", 'Q', ARGUMENT_REQUIRED},
+    {"semaphore-id", 's', ARGUMENT_REQUIRED}, {"semaphore-key", 'S', ARGUMENT_REQUIRED},
+    {"posix-shmem", 'x', ARGUMENT_REQUIRED}, {"posix-mqueue", 'y', ARGUMENT_REQUIRED},
+    {"posix-semaphore", 'z', ARGUMENT_REQUIRED}, {"all", 'a'}, {"verbose", 'v'}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static bipolar ul_ipc_id_by_key(p8 type, positive key)
@@ -13127,8 +13063,8 @@ static b32 ul_ipcrm_remove(p8 type, string_address text, bool key,
 static b32 util_linux_ipcrm()
 {
         file_taking taking = {
-            .program = "ipcrm", .allowed = "mMqQsSxyzavVh",
-            .valued = "mMqQsSxyz", .longs = ul_ipcrm_longs,
+            .program = "ipcrm",
+            .options = ul_ipcrm_options,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[options] | shm|msg|sem id ...",
@@ -13216,16 +13152,14 @@ static const p8 ul_lsipc_sem_defaults[] = {
     UL_IPC_KEY, UL_IPC_ID, UL_IPC_PERMS, UL_IPC_OWNER, UL_IPC_NSEMS,
 };
 
-static const file_long ul_lsipc_longs[] = {
-    {"shmems", 'm'}, {"posix-shmems", 'M'}, {"queues", 'q'},
-    {"posix-mqueues", 'Q'}, {"semaphores", 's'},
-    {"posix-semaphores", 'S'}, {"global", 'g'}, {"id", 'i'},
-    {"name", 'N'}, {"noheadings", 'H'}, {"notruncate", 'u'},
-    {"time-format", 'F'}, {"bytes", 'b'}, {"creator", 'c'},
-    {"export", 'e'}, {"json", 'J'}, {"newline", 'n'}, {"list", 'l'},
-    {"output", 'o'}, {"numeric-perms", 'P'}, {"raw", 'r'},
-    {"time", 't'}, {"shell", 'y'}, {"help", 'h'}, {"version", 'V'},
-    {null, 0},
+static const argument_option ul_lsipc_options[] = {
+    {"shmems", 'm'}, {"posix-shmems", 'M'}, {"queues", 'q'}, {"posix-mqueues", 'Q'},
+    {"semaphores", 's'}, {"posix-semaphores", 'S'}, {"global", 'g'}, {"id", 'i', ARGUMENT_REQUIRED},
+    {"name", 'N', ARGUMENT_REQUIRED}, {"noheadings", 'H'}, {"notruncate", 'u'},
+    {"time-format", 'F', ARGUMENT_REQUIRED}, {"bytes", 'b'}, {"creator", 'c'}, {"export", 'e'},
+    {"json", 'J'}, {"newline", 'n'}, {"list", 'l'}, {"output", 'o', ARGUMENT_REQUIRED},
+    {"numeric-perms", 'P'}, {"raw", 'r'}, {"time", 't'}, {"shell", 'y'}, {"help", 'h'},
+    {"version", 'V'}, {null},
 };
 
 static fn ul_lsipc_newline(p8 address_to columns, positive column_count)
@@ -13249,16 +13183,16 @@ static fn ul_lsipc_newline(p8 address_to columns, positive column_count)
 static b32 util_linux_lsipc()
 {
         file_taking taking = {
-            .program = "lsipc", .allowed = "mMqQsSgiNHuFbceJnlPortyVh",
-            .valued = "iNFo", .longs = ul_lsipc_longs,
+            .program = "lsipc",
+            .options = ul_lsipc_options,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "-m|-q|-s [options]", address_of answer))
                 return answer;
-        static const ul_exclusive lsipc_pairs[] = {
+        static const argument_exclusive_pair lsipc_pairs[] = {
             {'c', (string_address)"creator"}, {'t', (string_address)"time"},
             {'o', (string_address)"output"}};
-        static const ul_exclusive lsipc_formats[] = {
+        static const argument_exclusive_pair lsipc_formats[] = {
             {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
         b32 clash = ul_refuse_exclusive(address_of taking, lsipc_pairs,
                                         array_count(lsipc_pairs));
@@ -13482,19 +13416,17 @@ static fn ul_ipcs_table(p8 type)
         ul_table_pad_extra = 0;
 }
 
-static const file_long ul_ipcs_longs[] = {
-    {"id", 'i'}, {"shmems", 'm'}, {"queues", 'q'},
-    {"semaphores", 's'}, {"all", 'a'}, {"time", 't'}, {"pid", 'p'},
-    {"creator", 'c'}, {"limits", 'l'}, {"summary", 'u'},
-    {"human", 'H'}, {"bytes", 'b'}, {"help", 'h'}, {"version", 'V'},
-    {null, 0},
+static const argument_option ul_ipcs_options[] = {
+    {"id", 'i', ARGUMENT_REQUIRED}, {"shmems", 'm'}, {"queues", 'q'}, {"semaphores", 's'},
+    {"all", 'a'}, {"time", 't'}, {"pid", 'p'}, {"creator", 'c'}, {"limits", 'l'}, {"summary", 'u'},
+    {"human", 'H'}, {"bytes", 'b'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_ipcs()
 {
         file_taking taking = {
-            .program = "ipcs", .allowed = "imqsatpclubHVh",
-            .valued = "i", .longs = ul_ipcs_longs,
+            .program = "ipcs",
+            .options = ul_ipcs_options,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[-m|-q|-s] [options]",
@@ -13537,14 +13469,15 @@ static b32 util_linux_ipcs()
         procfs: that saves a readlink and remains correct if the pts name is
         renamed or hidden by a mount namespace.
 */
-static const file_long ul_mesg_longs[] = {
-    {"verbose", 'v'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+static const argument_option ul_mesg_options[] = {
+    {"verbose", 'v'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 static b32 util_linux_mesg()
 {
         file_taking taking = {
-            .program = "mesg", .allowed = "vhV", .longs = ul_mesg_longs,
+            .program = "mesg",
+            .options = ul_mesg_options,
         };
         b32 answer;
 
@@ -13699,15 +13632,15 @@ static const ul_table_column ul_rfkill_columns[] = {
     {"hard", "HARD", 0, true, UL_TABLE_STRING},
 };
 
-static const file_long ul_rfkill_longs[] = {
+static const argument_option ul_rfkill_options[] = {
     {"json", 'J'},
     {"noheadings", 'n'},
-    {"output", 'o'},
-    {"output-all", 'A'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"output-all", 'A', ARGUMENT_LONG_ONLY},
     {"raw", 'r'},
     {"help", 'h'},
     {"version", 'V'},
-    {null, 0},
+    {null},
 };
 
 static ul_rfkill_row ul_rfkill_rows[UL_RFKILL_MAX];
@@ -14003,8 +13936,8 @@ static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
 static b32 util_linux_rfkill()
 {
         file_taking taking = {
-            .program = "rfkill", .allowed = "JnroVh", .valued = "o",
-            .longs = ul_rfkill_longs,
+            .program = "rfkill",
+            .options = ul_rfkill_options,
         };
         b32 answer;
 
@@ -14012,7 +13945,7 @@ static b32 util_linux_rfkill()
                     "[options] command [identifier ...]",
                     address_of answer))
                 return answer;
-        static const ul_exclusive rfkill_formats[] = {
+        static const argument_exclusive_pair rfkill_formats[] = {
             {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
         b32 clash = ul_refuse_exclusive(address_of taking, rfkill_formats,
                                         array_count(rfkill_formats));

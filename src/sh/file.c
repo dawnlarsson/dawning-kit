@@ -2725,29 +2725,9 @@ static b32 file_word_among(string_address program, string_address option,
 }
 
 // -t names one directory; a second one is a question with two answers.
-static bool file_one_target;
-static bool file_two_targets;
-
-static fn file_targets_begin()
+static bool file_targets_told(string_address program, bool repeated)
 {
-        file_one_target = false;
-        file_two_targets = false;
-}
-
-static bool file_target_seen(p8 letter, string_address value)
-{
-        if (letter != 't' || !value)
-                return true;
-
-        file_two_targets |= file_one_target;
-        file_one_target = true;
-
-        return true;
-}
-
-static bool file_targets_told(string_address program)
-{
-        if (!file_two_targets)
+        if (!repeated)
                 return true;
 
         return string_report(log_error, false, "%s: multiple target directories specified\n", program);
@@ -2788,117 +2768,23 @@ bool file_ask(string_address program, string_address question, string_address su
         return file_answer_is_yes();
 }
 
-/*
-        The long spellings.
-
-        Every tool here thinks in letters, and GNU's tools answer to a word as
-        well: --zero for -z, --canonicalize-missing for -m. One table per tool
-        turns the word back into its letter before anything else looks at it,
-        so what reads the flags below goes on reading letters.
-
-        A letter that appears only in a table is reachable only by its word,
-        which is how --relative-to gets a bit of the flag word to live in
-        without inventing a -R that GNU has not got.
-*/
-typedef named_byte file_long;
-
-/*
-        The options that supersede one another.
-
-        -i and -n both say what to do about a collision and the last one
-        written is the one that means it; -H, -L and -P all say how far a link
-        is followed and likewise. One bit per letter cannot say which came
-        last, so each row names a set of letters and the place the last of
-        them seen is kept, and the tool reads that place instead of the bits.
-
-        This is the flagless twin of `last` below, which answers the same
-        question for the options that carry a value.
-*/
-typedef struct
-{
-        string_address letters;
-        p8 address_to into;
-} file_supersede;
-
 // file_letter_bit answers 62 for anything that is not a letter or a digit.
 #define FILE_LETTERS 63
 
-/*
-        The leading options, letters and words both, and a complaint when the
-        word is neither.
-
-        A word that is not a known option stops the tool rather than being
-        left as an operand, which is what GNU's do and the difference is not
-        academic: realpath -E used to print the resolved name of a file
-        called -E and exit as though that had been the question.
-
-        Letters named in `valued` take an argument -- the rest of the word, or
-        the word after it -- kept under the bit that letter sets, so a tool
-        asks for it by letter the way it asks for everything else.
-*/
+/* Parsing keeps all occurrences in flags/bare and the last value per letter.
+   Callbacks run in argument order; operands either stop parsing or go to the
+   supplied collector. Legacy numeric options are handled before tokenization. */
 typedef struct
 {
         string_address program;
-        string_address allowed;
-        string_address valued;
-
-        /*
-                Letters that take an argument only when it is written onto the
-                option itself: date -Ihours, mktemp --tmpdir=/x. A bare one
-                means whatever the tool calls the default and never eats the
-                word after it, which is the only way --tmpdir and --tmpdir=/x
-                can both be spelled by one option.
-
-                A letter named here and in `allowed` too takes the rest of its
-                cluster as the value, which is right for -Ihours and -i.bak
-                and wrong for every name GNU spells as a plain flag: give
-                those a letter of their own and leave it out of `allowed`, or
-                --all-repeated turns uniq -Di into a complaint about i.
-        */
-        string_address optional;
-        // Long-only optional values keep short namespace flags clusterable.
-        string_address long_optional;
-        // A later bare occurrence records `bare` without erasing a path.
-        string_address sticky_optional;
-        const file_long address_to longs;
-
-        // seq is the one tool here where -4 is a number and not a flag.
+        const argument_option address_to options;
         bool numbers;
-
-        // head -5 and tail -5 and fold -5 are the count said without its
-        // letter, and this is the letter it belongs to.
         p8 digits;
-
-        // The text tools go on reading options after an operand, the way
-        // GNU's do -- wc -l a -c counts the bytes too. Each operand is handed
-        // over as it is reached, in the order it was written, because that
-        // order is the whole of what an operand list is.
         fn(address_to operand)(b32 index);
-
-        // env is the one tool here where an option given twice means it
-        // twice, and one value per letter is not enough to say so: it is
-        // told about each option as the option is read.
         bool(address_to seen)(p8 letter, string_address value);
-
-        // Sets of options that supersede one another, each remembered in the
-        // place its row names. Filled in as the option is read, before the
-        // tool's own `seen` hook is told about it.
-        const file_supersede address_to supersedes;
-
-        /*
-                The last letter that carried a value.
-
-                One value per letter cannot say which of two options that
-                answer the same question was written last, and GNU answers
-                with the last: head -n 2 -c 5 is five bytes and head -c 5 -n 2
-                is two lines. A tool with such a pair reads this instead of
-                asking which flag is present.
-        */
+        p8 address_to selection;
         p8 last;
-
-        positive flags;
-        positive bare;
-        positive first;
+        positive flags, repeated, bare, first;
         string_address value[FILE_LETTERS];
 } file_taking;
 
@@ -2916,19 +2802,6 @@ static bool file_meta(file_taking address_to taking, string_address syntax,
 static string_address file_option_value(file_taking address_to taking, p8 letter)
 {
         return taking->value[file_letter_bit(letter)];
-}
-
-static bool file_option_among(string_address set, p8 letter)
-{
-        return set && string_first_of(set, letter);
-}
-
-// The last letter of each superseding set, remembered where its row says.
-static fn file_option_supersede(file_taking address_to taking, p8 letter)
-{
-        for (positive i = 0; taking->supersedes && taking->supersedes[i].letters; i++)
-                if (file_option_among(taking->supersedes[i].letters, letter))
-                        address_to taking->supersedes[i].into = letter;
 }
 
 // Said the way getopt says it, which is what every script that matches on a
@@ -2957,30 +2830,9 @@ static bool file_option_needs(file_taking address_to taking, string_address word
 static p8 file_long_letter(file_taking address_to taking, string_address name,
                            positive length)
 {
-        if (!taking->longs || !length)
-                return 0;
-
-        p8 candidate = 0;
-
-        for (positive i = 0; taking->longs[i].name; i++)
-        {
-                string_address spelling = taking->longs[i].name;
-
-                if (string_compare_max(spelling, name, length))
-                        continue;
-
-                // Prefer an exact spelling; otherwise accept only one GNU
-                // style unambiguous prefix.
-                if (string_is(spelling + length, end))
-                        return taking->longs[i].value;
-
-                if (candidate)
-                        return 0;
-
-                candidate = taking->longs[i].value;
-        }
-
-        return candidate;
+        const argument_option address_to option =
+            argument_option_long(taking->options, name, length, true);
+        return option ? option->letter : 0;
 }
 
 static bool file_take_from(file_taking address_to taking, positive index)
@@ -3002,6 +2854,7 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                 if (taking->digits && byte_is_digit(word[1]))
                                 {
                                         positive bit = file_letter_bit(taking->digits);
+                                        taking->repeated |= taking->flags & ((positive)1 << bit);
                                         taking->flags |= (positive)1 << bit;
                                         taking->value[bit] = word + 1;
                                         taking->last = taking->digits;
@@ -3011,7 +2864,8 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                 }
                         }
                 }
-                b32 option = argument_next(&cursor);
+                argument_match match;
+                b32 option = argument_option_take(&cursor, taking->options, true, &match);
                 if (option == ARGUMENT_END)
                         break;
                 if (option == ARGUMENT_OPERAND)
@@ -3024,13 +2878,12 @@ static bool file_take_from(file_taking address_to taking, positive index)
                         taking->operand((b32)(cursor.at - 1));
                         continue;
                 }
-                bool long_option = option == ARGUMENT_LONG;
-                p8 letter = long_option
-                    ? file_long_letter(taking, cursor.word + 2, cursor.name_length)
-                    : (p8)option;
+                bool long_option = cursor.long_option;
+                p8 letter = match.letter;
+                p8 mode = match.mode;
                 p8 named[3] = {'-', letter, end};
                 string_address shown = long_option ? cursor.word : named;
-                if (!letter || (!long_option && !string_first_of(taking->allowed, letter)))
+                if (option == ARGUMENT_UNKNOWN)
                 {
                         if (long_option)
                                 string_format(log_error, "%s: unrecognized option '%s'\n",
@@ -3051,10 +2904,9 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                       taking->program);
                 }
                 positive bit = file_letter_bit(letter);
-                bool optional = file_option_among(taking->optional, letter) ||
-                    (long_option && file_option_among(taking->long_optional, letter));
-                bool valued = file_option_among(taking->valued, letter);
-                if (cursor.attached && !optional && !valued)
+                bool optional = match.optional;
+                bool valued = (mode & ARGUMENT_REQUIRED) != 0;
+                if (option == ARGUMENT_UNEXPECTED)
                 {
                         p8 name[FILE_NAME_MAX];
 
@@ -3070,15 +2922,16 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                       "Try '%s --help' for more information.\n",
                                       taking->program);
                 }
+                taking->repeated |= taking->flags & ((positive)1 << bit);
                 taking->flags |= (positive)1 << bit;
                 /* Short options supersede before missing-value errors; long
                    options do so only after their values have been accepted. */
                 if (!long_option)
-                        file_option_supersede(taking, letter);
+                        argument_select(taking->selection, match.selection, letter);
                 if (optional || valued)
                 {
                         taking->last = letter;
-                        string_address value = argument_value(&cursor, !optional);
+                        string_address value = match.value;
                         if (value)
                                 taking->value[bit] = value;
                         else if (!optional)
@@ -3086,12 +2939,12 @@ static bool file_take_from(file_taking address_to taking, positive index)
                         else
                         {
                                 taking->bare |= (positive)1 << bit;
-                                if (!file_option_among(taking->sticky_optional, letter))
+                                if (!(mode & ARGUMENT_STICKY))
                                         taking->value[bit] = null;
                         }
                 }
                 if (long_option)
-                        file_option_supersede(taking, letter);
+                        argument_select(taking->selection, match.selection, letter);
                 if (taking->seen && !taking->seen(letter,
                     long_option || optional || valued ? taking->value[bit] : null))
                         return false;
@@ -4418,42 +4271,12 @@ static positive ls_listed_count;
 static p8 ls_host[FILE_NAME_MAX];
 static p8 ls_cwd[FILE_PATH_MAX];
 
-static p8 ls_format_option;
-static p8 ls_sort_option;
-static p8 ls_time_option;
-static p8 ls_quote_option;
-static p8 ls_indicator_option;
-static p8 ls_hidden_option;
-static p8 ls_deref_option;
-static p8 ls_size_option;
-static p8 ls_control_option;
+typedef struct { p8 format, sort, time, quote, indicator, hidden, deref, size, control, stamp; } ls_selection;
+_Static_assert(sizeof(ls_selection) <= 16, "selection mask covers every field");
+static ls_selection ls_selected;
 //      --zero read while --format=WORD stood: whether the word was the long
 //      one is not known until the word is read, so the question waits.
 static bool ls_zero_after_word;
-static p8 ls_stamp_option;
-
-static const file_supersede ls_supersedes[] = {
-    {(string_address) "CxmlgonJMD", address_of ls_format_option},
-    {(string_address) "tSUvX3f", address_of ls_sort_option},
-    {(string_address) "cu4", address_of ls_time_option},
-    //      --zero says how a name is spelled and whether control bytes are
-    //      shown, so it stands in those two rows and a later -Q or -q takes
-    //      it back, which is what the reference does.
-    {(string_address) "NQbz6", address_of ls_quote_option},
-    //      --classify is not in this row: it turns the style on and
-    //      never off, so it is answered where it is written.
-    {(string_address) "FpjY", address_of ls_indicator_option},
-    {(string_address) "aAf", address_of ls_hidden_option},
-    {(string_address) "HLV", address_of ls_deref_option},
-    {(string_address) "hP7", address_of ls_size_option},
-    {(string_address) "q26", address_of ls_control_option},
-    //      --full-time is --time-style=full-iso written shorter, and the
-    //      reference stores it in the same place: the last of the two is the
-    //      style, and a style the earlier one could not read is never looked
-    //      at again.
-    {(string_address) "5M", address_of ls_stamp_option},
-    {null, null},
-};
 
 static bool date_shape(writer write, b64 when, string_address format);
 bool shell_match(string_address pattern, string_address text);
@@ -6606,50 +6429,56 @@ static fn ls_directory(string_address path, bool heading, positive depth,
 
 // ---- Options -------------------------------------------------------------
 
-static const file_long ls_longs[] = {
-    {(string_address) "all", 'a'},
-    {(string_address) "almost-all", 'A'},
-    {(string_address) "author", '8'},
-    {(string_address) "escape", 'b'},
-    {(string_address) "block-size", '7'},
-    {(string_address) "ignore-backups", 'B'},
-    {(string_address) "color", 'K'},
-    {(string_address) "directory", 'd'},
-    {(string_address) "dired", 'D'},
-    {(string_address) "classify", 'E'},
-    {(string_address) "file-type", 'j'},
-    {(string_address) "format", 'J'},
-    {(string_address) "full-time", 'M'},
-    {(string_address) "group-directories-first", 'O'},
-    {(string_address) "no-group", 'G'},
-    {(string_address) "human-readable", 'h'},
-    {(string_address) "si", 'P'},
-    {(string_address) "dereference-command-line", 'H'},
-    {(string_address) "dereference-command-line-symlink-to-dir", 'V'},
-    {(string_address) "hide", 'W'},
-    {(string_address) "hyperlink", 'y'},
-    {(string_address) "indicator-style", 'Y'},
-    {(string_address) "inode", 'i'},
-    {(string_address) "ignore", 'I'},
-    {(string_address) "kibibytes", 'k'},
-    {(string_address) "dereference", 'L'},
-    {(string_address) "numeric-uid-gid", 'n'},
-    {(string_address) "literal", 'N'},
-    {(string_address) "hide-control-chars", 'q'},
-    {(string_address) "show-control-chars", '2'},
-    {(string_address) "quote-name", 'Q'},
-    {(string_address) "quoting-style", 'z'},
-    {(string_address) "reverse", 'r'},
-    {(string_address) "recursive", 'R'},
-    {(string_address) "size", 's'},
-    {(string_address) "sort", '3'},
-    {(string_address) "time", '4'},
-    {(string_address) "time-style", '5'},
-    {(string_address) "tabsize", 'T'},
-    {(string_address) "width", 'w'},
-    {(string_address) "context", 'Z'},
-    {(string_address) "zero", '6'},
-    {null, 0},
+static const argument_option ls_options[] = {
+    {"all", 'a', 0, ARGUMENT_SELECT(ls_selection, hidden)},
+    {"almost-all", 'A', 0, ARGUMENT_SELECT(ls_selection, hidden)},
+    {"author", '8', ARGUMENT_LONG_ONLY},
+    {"escape", 'b', 0, ARGUMENT_SELECT(ls_selection, quote)},
+    {"block-size", '7', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, size)},
+    {"ignore-backups", 'B'},
+    {"color", 'K', ARGUMENT_LONG_OPTIONAL},
+    {"directory", 'd'},
+    {"dired", 'D', 0, ARGUMENT_SELECT(ls_selection, format)},
+    {"classify", 'E', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"file-type", 'j', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, indicator)},
+    {"format", 'J', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, format)},
+    {"full-time", 'M', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, format) | ARGUMENT_SELECT(ls_selection, stamp)},
+    {"group-directories-first", 'O', ARGUMENT_LONG_ONLY},
+    {"no-group", 'G'},
+    {"human-readable", 'h', 0, ARGUMENT_SELECT(ls_selection, size)},
+    {"si", 'P', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, size)},
+    {"dereference-command-line", 'H', 0, ARGUMENT_SELECT(ls_selection, deref)},
+    {"dereference-command-line-symlink-to-dir", 'V', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, deref)},
+    {"hide", 'W', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"hyperlink", 'y', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"indicator-style", 'Y', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, indicator)},
+    {"inode", 'i'},
+    {"ignore", 'I', ARGUMENT_REQUIRED},
+    {"kibibytes", 'k'},
+    {"dereference", 'L', 0, ARGUMENT_SELECT(ls_selection, deref)},
+    {"numeric-uid-gid", 'n', 0, ARGUMENT_SELECT(ls_selection, format)},
+    {"literal", 'N', 0, ARGUMENT_SELECT(ls_selection, quote)},
+    {"hide-control-chars", 'q', 0, ARGUMENT_SELECT(ls_selection, control)},
+    {"show-control-chars", '2', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, control)},
+    {"quote-name", 'Q', 0, ARGUMENT_SELECT(ls_selection, quote)},
+    {"quoting-style", 'z', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, quote)},
+    {"reverse", 'r'},
+    {"recursive", 'R'},
+    {"size", 's'},
+    {"sort", '3', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, sort)},
+    {"time", '4', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, time)},
+    {"time-style", '5', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, stamp)},
+    {"tabsize", 'T', ARGUMENT_REQUIRED},
+    {"width", 'w', ARGUMENT_REQUIRED},
+    {"context", 'Z'},
+    {"zero", '6', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(ls_selection, quote) | ARGUMENT_SELECT(ls_selection, control)},
+    {"cu", 0, 0, ARGUMENT_SELECT(ls_selection, time)},
+    {"Cglmox", 0, 0, ARGUMENT_SELECT(ls_selection, format)},
+    {"f", 0, 0, ARGUMENT_SELECT(ls_selection, sort) | ARGUMENT_SELECT(ls_selection, hidden)},
+    {"Fp", 0, 0, ARGUMENT_SELECT(ls_selection, indicator)},
+    {"StUvX", 0, 0, ARGUMENT_SELECT(ls_selection, sort)},
+    {"1", 0},
+    {null},
 };
 
 // -I and --hide are the two options ls takes more than once.
@@ -6774,14 +6603,14 @@ static bool ls_option_seen(p8 letter, string_address value)
         */
         if (letter == '1' || letter == '6')
         {
-                p8 chosen = ls_format_option;
+                p8 chosen = ls_selected.format;
 
                 if (chosen == 'J')
                         chosen = 'l'; // decided by its word, checked below
 
                 if (!chosen || !string_first_of((string_address) "lgonMD", chosen))
-                        ls_format_option = '1';
-                else if (ls_format_option == 'J')
+                        ls_selected.format = '1';
+                else if (ls_selected.format == 'J')
                         ls_zero_after_word = true;
 
                 return true;
@@ -6813,7 +6642,7 @@ static bool ls_option_seen(p8 letter, string_address value)
                                  : 'a';
 
                 if (when >= 0 && ls_when_active((p8)when))
-                        ls_indicator_option = 'E';
+                        ls_selected.indicator = 'E';
 
                 return true;
         }
@@ -6943,16 +6772,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         positive count = (positive)program_argument_count();
 
         ls_program = program;
-        ls_format_option = 0;
-        ls_sort_option = 0;
-        ls_time_option = 0;
-        ls_quote_option = 0;
-        ls_indicator_option = 0;
-        ls_hidden_option = 0;
-        ls_deref_option = 0;
-        ls_size_option = 0;
-        ls_control_option = 0;
-        ls_stamp_option = 0;
+        ls_selected = (ls_selection){};
         ls_terminal = stream_is_terminal(1);
         ls_zero_after_word = false;
         ls_option_status = 0;
@@ -6969,13 +6789,9 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
 
         file_taking taking = {
             .program = program,
-            .allowed = (string_address) "aAbBcCdDfFgGhHiIkKlLmnNopqQrRsStTuUvwxXZ1",
-            .valued = (string_address) "IwT7JWYz345",
-            .optional = (string_address) "",
-            .long_optional = (string_address) "KEy",
-            .longs = ls_longs,
+            .options = ls_options,
             .seen = ls_option_seen,
-            .supersedes = ls_supersedes,
+            .selection = (p8 address_to)address_of ls_selected,
         };
 
         if (!file_take(address_of taking))
@@ -6992,7 +6808,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         // the last word on it wins; -g, -o, -n, --full-time and --dired are
         // all ways of asking for the long one.
         ls_format = default_format ? default_format : ls_terminal ? 'C' : '1';
-        if (ls_format_option == 'J')
+        if (ls_selected.format == 'J')
         {
                 b32 word = ls_word_among((string_address) "--format",
                                          file_option_value(address_of taking, 'J'),
@@ -7001,10 +6817,10 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                         return 1;
                 ls_format = (p8)word;
         }
-        else if (ls_format_option && string_first_of((string_address) "lgonMD", ls_format_option))
+        else if (ls_selected.format && string_first_of((string_address) "lgonMD", ls_selected.format))
                 ls_format = 'l';
-        else if (ls_format_option)
-                ls_format = ls_format_option;
+        else if (ls_selected.format)
+                ls_format = ls_selected.format;
 
         //      --zero came after a --format=WORD that turned out not to be
         //      the long one, so it has its say after all.
@@ -7038,12 +6854,12 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         ls_eol = (flags & FILE_FLAG('6')) ? 0 : '\n';
 
         // Which entries: -f is -a with no sorting, and a later -A narrows it.
-        ls_hidden = ls_hidden_option == 'a' || ls_hidden_option == 'f';
-        ls_almost = ls_hidden_option == 'A';
+        ls_hidden = ls_selected.hidden == 'a' || ls_selected.hidden == 'f';
+        ls_almost = ls_selected.hidden == 'A';
 
         // The order.
         ls_sorting = 'n';
-        if (ls_sort_option == '3')
+        if (ls_selected.sort == '3')
         {
                 b32 word = ls_word_among((string_address) "--sort",
                                          file_option_value(address_of taking, '3'),
@@ -7052,14 +6868,14 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                         return 1;
                 ls_sorting = (p8)word;
         }
-        else if (ls_sort_option == 'f')
+        else if (ls_selected.sort == 'f')
                 ls_sorting = 'U';
-        else if (ls_sort_option)
-                ls_sorting = ls_sort_option;
+        else if (ls_selected.sort)
+                ls_sorting = ls_selected.sort;
 
         // Which time.
         ls_time_key = 'm';
-        if (ls_time_option == '4')
+        if (ls_selected.time == '4')
         {
                 b32 word = ls_word_among((string_address) "--time",
                                          file_option_value(address_of taking, '4'),
@@ -7068,9 +6884,9 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                         return 1;
                 ls_time_key = (p8)word;
         }
-        else if (ls_time_option == 'c')
+        else if (ls_selected.time == 'c')
                 ls_time_key = 'c';
-        else if (ls_time_option == 'u')
+        else if (ls_selected.time == 'u')
                 ls_time_key = 'a';
 
         /*
@@ -7081,7 +6897,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                 it is -t that orders it. So this is the case where neither
                 was named.
         */
-        if (ls_time_key != 'm' && !ls_sort_option && ls_format != 'l')
+        if (ls_time_key != 'm' && !ls_selected.sort && ls_format != 'l')
                 ls_sorting = 't';
 
         /*
@@ -7092,7 +6908,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                 while `ls -l --time-style=bogus` is the error.
         */
         ls_time_style = 'd';
-        if (ls_stamp_option == '5' && ls_format == 'l')
+        if (ls_selected.stamp == '5' && ls_format == 'l')
         {
                 string_address style = file_option_value(address_of taking, '5');
 
@@ -7137,12 +6953,12 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                       program, style);
                 }
         }
-        if (ls_stamp_option == 'M')
+        if (ls_selected.stamp == 'M')
                 ls_time_style = 'f';
 
         // How a name is spelled.
         ls_quoting = default_quoting ? default_quoting : ls_terminal ? 'e' : 'L';
-        if (ls_quote_option == 'z')
+        if (ls_selected.quote == 'z')
         {
                 b32 word = ls_word_among((string_address) "--quoting-style",
                                          file_option_value(address_of taking, 'z'),
@@ -7151,21 +6967,21 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                         return 1;
                 ls_quoting = (p8)word;
         }
-        else if (ls_quote_option == 'N')
+        else if (ls_selected.quote == 'N')
                 ls_quoting = 'L';
-        else if (ls_quote_option == 'Q')
+        else if (ls_selected.quote == 'Q')
                 ls_quoting = 'c';
-        else if (ls_quote_option == 'b')
+        else if (ls_selected.quote == 'b')
                 ls_quoting = 'b';
-        if (ls_quote_option == '6')
+        if (ls_selected.quote == '6')
                 ls_quoting = 'L';
 
-        ls_hide_controls = ls_control_option ? ls_control_option == 'q'
+        ls_hide_controls = ls_selected.control ? ls_selected.control == 'q'
                                              : ls_terminal && !(flags & FILE_FLAG('6'));
 
         // The letter after a name.
         ls_indicator = 0;
-        if (ls_indicator_option == 'Y')
+        if (ls_selected.indicator == 'Y')
         {
                 b32 word = ls_word_among((string_address) "--indicator-style",
                                          file_option_value(address_of taking, 'Y'),
@@ -7174,19 +6990,19 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                         return 1;
                 ls_indicator = word == 'N' ? 0 : (p8)word;
         }
-        else if (ls_indicator_option == 'E')
+        else if (ls_selected.indicator == 'E')
                 ls_indicator = 'F';
-        else if (ls_indicator_option == 'p')
+        else if (ls_selected.indicator == 'p')
                 ls_indicator = '/';
-        else if (ls_indicator_option == 'j')
+        else if (ls_selected.indicator == 'j')
                 ls_indicator = 'f';
-        else if (ls_indicator_option == 'F')
+        else if (ls_selected.indicator == 'F')
                 ls_indicator = 'F';
 
         // What is followed.
-        ls_dereference = ls_deref_option == 'L'   ? 'L'
-                         : ls_deref_option == 'H' ? 'H'
-                         : ls_deref_option == 'V' ? 'D'
+        ls_dereference = ls_selected.deref == 'L'   ? 'L'
+                         : ls_selected.deref == 'H' ? 'H'
+                         : ls_selected.deref == 'V' ? 'D'
                          : (ls_as_itself || ls_indicator == 'F' || ls_format == 'l') ? 'N'
                                                                                      : 'D';
 
@@ -7201,12 +7017,12 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         ls_block_si = false;
         ls_block_suffix[0] = end;
 
-        if (ls_size_option == 'h' || ls_size_option == 'P')
+        if (ls_selected.size == 'h' || ls_selected.size == 'P')
         {
                 ls_size_human = ls_block_human = true;
-                ls_size_si = ls_block_si = ls_size_option == 'P';
+                ls_size_si = ls_block_si = ls_selected.size == 'P';
         }
-        else if (ls_size_option == '7')
+        else if (ls_selected.size == '7')
         {
                 string_address given = file_option_value(address_of taking, '7');
 
@@ -10374,11 +10190,11 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         log("\n", 1);
 }
 
-static const file_long stat_longs[] = {
-    {(string_address) "dereference", 'L'},
-    {(string_address) "file-system", 'f'},
-    {(string_address) "format", 'c'},
-    {null, 0},
+static const argument_option stat_options[] = {
+    {"dereference", 'L'},
+    {"file-system", 'f'},
+    {"format", 'c', ARGUMENT_REQUIRED},
+    {null},
 };
 
 static b32 file_stat()
@@ -10387,9 +10203,7 @@ static b32 file_stat()
         stat_status = 0;
         file_taking taking = {
             .program = (string_address) "stat",
-            .allowed = (string_address) "Lcf",
-            .valued = (string_address) "c",
-            .longs = stat_longs,
+            .options = stat_options,
         };
 
         if (!file_take(address_of taking))
@@ -10765,11 +10579,6 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
         return total;
 }
 
-static const file_supersede du_supersedes[] = {
-    {(string_address) "bkm", address_of du_unit_option},
-    {null, null},
-};
-
 static bool du_exclude_seen(p8 letter, string_address value)
 {
         if (letter != 'e' || !value)
@@ -10783,20 +10592,21 @@ static bool du_exclude_seen(p8 letter, string_address value)
         return true;
 }
 
-static const file_long du_longs[] = {
-    {(string_address) "all", 'a'},
-    {(string_address) "apparent-size", 'A'},
-    {(string_address) "bytes", 'b'},
-    {(string_address) "count-links", 'l'},
-    {(string_address) "dereference", 'L'},
-    {(string_address) "exclude", 'e'},
-    {(string_address) "human-readable", 'h'},
-    {(string_address) "max-depth", 'd'},
-    {(string_address) "one-file-system", 'x'},
-    {(string_address) "separate-dirs", 'S'},
-    {(string_address) "summarize", 's'},
-    {(string_address) "total", 'c'},
-    {null, 0},
+static const argument_option du_options[] = {
+    {"all", 'a'},
+    {"apparent-size", 'A', ARGUMENT_LONG_ONLY},
+    {"bytes", 'b', 0, 1},
+    {"count-links", 'l'},
+    {"dereference", 'L'},
+    {"exclude", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"human-readable", 'h'},
+    {"max-depth", 'd', ARGUMENT_REQUIRED},
+    {"one-file-system", 'x'},
+    {"separate-dirs", 'S'},
+    {"summarize", 's'},
+    {"total", 'c'},
+    {"km", 0, 0, 1},
+    {null},
 };
 
 static b32 file_du()
@@ -10817,11 +10627,9 @@ static b32 file_du()
 
         file_taking taking = {
             .program = (string_address) "du",
-            .allowed = (string_address) "abcdhklLmsSx",
-            .valued = (string_address) "de",
-            .longs = du_longs,
+            .options = du_options,
             .seen = du_exclude_seen,
-            .supersedes = du_supersedes,
+            .selection = address_of du_unit_option,
         };
 
         if (!file_take(address_of taking))
@@ -11038,13 +10846,14 @@ static fn df_row(string_address device, string_address type, string_address wher
         log("\n", 1);
 }
 
-static const file_long df_longs[] = {
-    {(string_address) "all", 'a'},
-    {(string_address) "human-readable", 'h'},
-    {(string_address) "inodes", 'i'},
-    {(string_address) "portability", 'P'},
-    {(string_address) "print-type", 'T'},
-    {null, 0},
+static const argument_option df_options[] = {
+    {"all", 'a'},
+    {"human-readable", 'h'},
+    {"inodes", 'i'},
+    {"portability", 'P'},
+    {"print-type", 'T'},
+    {"kv", 0},
+    {null},
 };
 
 static b32 file_df()
@@ -11057,9 +10866,7 @@ static b32 file_df()
             .program = (string_address) "df",
             //      -v is accepted and does nothing, which is all the
             //      reference does with it too.
-            .allowed = (string_address) "ahikPTv",
-            .valued = (string_address) "",
-            .longs = df_longs,
+            .options = df_options,
         };
 
         if (!file_take(address_of taking))
@@ -11285,7 +11092,9 @@ static bool chmod_loud;
 static bool chmod_changes;
 static bool chmod_quiet;
 static bool chmod_referenced;
-static p8 chmod_dereference_option;
+typedef struct { p8 dereference, loudness, traverse; } chmod_selection;
+_Static_assert(sizeof(chmod_selection) <= 16, "selection mask covers every field");
+static chmod_selection chmod_selected;
 static positive chmod_reference_mode;
 static positive chmod_umask;
 static bool chmod_surprising;
@@ -11335,7 +11144,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         // one too, or chmod -R 000 over a tree with a link to /etc in it
         // changes /etc.
         bool operand = directory == AT_FDCWD;
-        bool through = operand && chmod_dereference_option != 'h';
+        bool through = operand && chmod_selected.dereference != 'h';
         bipolar looked = file_look_code(directory, name,
                                         through ? 0 : AT_SYMLINK_NOFOLLOW,
                                         address_of facts);
@@ -11441,30 +11250,23 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         }
 }
 
-static p8 chmod_loudness_option;
-static p8 chmod_traverse_option;
 
-static const file_supersede chmod_supersedes[] = {
-    {(string_address) "dh", address_of chmod_dereference_option},
-    //      How much to say -- every mode, only the ones that moved -- and
-    //      which links a -R walk goes through. Each row's last letter wins.
-    {(string_address) "cv", address_of chmod_loudness_option},
-    {(string_address) "HLP", address_of chmod_traverse_option},
-    {null, null},
-};
 
-static const file_long chmod_longs[] = {
-    {(string_address) "changes", 'c'},
-    {(string_address) "dereference", 'd'},
-    {(string_address) "no-dereference", 'h'},
-    {(string_address) "no-preserve-root", 'N'},
-    {(string_address) "preserve-root", 'N'},
-    {(string_address) "quiet", 'f'},
-    {(string_address) "recursive", 'R'},
-    {(string_address) "reference", 'e'},
-    {(string_address) "silent", 'f'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+
+static const argument_option chmod_options[] = {
+    {"changes", 'c', 0, ARGUMENT_SELECT(chmod_selection, loudness)},
+    {"dereference", 'd', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(chmod_selection, dereference)},
+    {"no-dereference", 'h', 0, ARGUMENT_SELECT(chmod_selection, dereference)},
+    {"no-preserve-root", 'N'},
+    {"preserve-root", 'N'},
+    {"quiet", 'f'},
+    {"recursive", 'R'},
+    {"reference", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"silent", 'f'},
+    {"verbose", 'v', 0, ARGUMENT_SELECT(chmod_selection, loudness)},
+    {"HLP", 0, 0, ARGUMENT_SELECT(chmod_selection, traverse)},
+    {"rwxXstugoa", 0, ARGUMENT_OPTIONAL},
+    {null},
 };
 
 static b32 file_chmod()
@@ -11475,9 +11277,7 @@ static b32 file_chmod()
         //      Nothing written is neither -h nor --dereference: the walk
         //      follows what it is handed, and -P has nothing to disagree
         //      with.
-        chmod_dereference_option = 0;
-        chmod_loudness_option = 0;
-        chmod_traverse_option = 0;
+        chmod_selected = (chmod_selection){};
 
         //      -H, -L and -P say which symbolic links a -R walk goes
         //      through. This walk goes through none of them, which is what
@@ -11485,11 +11285,8 @@ static b32 file_chmod()
         //      not change the walk, and the ledger records that.
         file_taking taking = {
             .program = (string_address) "chmod",
-            .allowed = (string_address) "HLPRcfhvrwxXstugoaN",
-            .valued = (string_address) "e",
-            .optional = (string_address) "rwxXstugoa",
-            .longs = chmod_longs,
-            .supersedes = chmod_supersedes,
+            .options = chmod_options,
+            .selection = (p8 address_to)address_of chmod_selected,
         };
 
         if (!file_take(address_of taking))
@@ -11497,8 +11294,8 @@ static b32 file_chmod()
 
         positive first = taking.first;
 
-        chmod_loud = chmod_loudness_option == 'v';
-        chmod_changes = chmod_loudness_option == 'c';
+        chmod_loud = chmod_selected.loudness == 'v';
+        chmod_changes = chmod_selected.loudness == 'c';
         chmod_quiet = (taking.flags & FILE_FLAG('f')) != 0;
 
         /*
@@ -11509,8 +11306,8 @@ static b32 file_chmod()
                 mode, before --reference's file, before it notices there are
                 no operands at all. Nothing given is -H, which agrees.
         */
-        if ((taking.flags & FILE_FLAG('R')) && chmod_dereference_option == 'd' &&
-            chmod_traverse_option == 'P')
+        if ((taking.flags & FILE_FLAG('R')) && chmod_selected.dereference == 'd' &&
+            chmod_selected.traverse == 'P')
                 return string_report(log_error, 1,
                                      "chmod: -R --dereference requires either -H or -L\n");
 
@@ -11615,7 +11412,9 @@ static positive chown_flags;
 static bool chown_loud;
 static bool chown_changes;
 static bool chown_quiet;
-static p8 chown_dereference_option;
+typedef struct { p8 dereference, traverse, loudness; } chown_selection;
+_Static_assert(sizeof(chown_selection) <= 16, "selection mask covers every field");
+static chown_selection chown_selected;
 static string_address chown_program;
 static bool chown_groups_only;
 //      The spec exactly as it was written, which is what the reference puts
@@ -11627,18 +11426,9 @@ static string_address chown_spec;
 static bipolar chown_from_user = -1;
 static bipolar chown_from_group = -1;
 
-static p8 chown_traverse_option;
 
-static p8 chown_loudness_option;
 
-static const file_supersede chown_supersedes[] = {
-    {(string_address) "dh", address_of chown_dereference_option},
-    {(string_address) "HLP", address_of chown_traverse_option},
-    //      How much to say: every change, only the changes, or nothing.
-    //      The last of the two is the one that answers.
-    {(string_address) "cv", address_of chown_loudness_option},
-    {null, null},
-};
+
 
 // Who a file will belong to, said the way chown says it: the user alone when
 // only a user was named, and user:group when a group was.
@@ -11705,9 +11495,9 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         //      the default over a tree the caller does not fully control is
         //      to change the link and not what it aims at. A link the caller
         //      named keeps the old following default.
-        positive through = chown_dereference_option == 'h'
-                || (file_change_descended && chown_traverse_option != 'L'
-                    && chown_traverse_option != 'H')
+        positive through = chown_selected.dereference == 'h'
+                || (file_change_descended && chown_selected.traverse != 'L'
+                    && chown_selected.traverse != 'H')
             ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
         bipolar looked = file_look_code(directory, name, through, address_of facts);
@@ -11800,19 +11590,20 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         chown_said(shown, address_of facts, changed);
 }
 
-static const file_long chown_longs[] = {
-    {(string_address) "changes", 'c'},
-    {(string_address) "from", 'F'},
-    {(string_address) "no-preserve-root", 'N'},
-    {(string_address) "preserve-root", 'N'},
-    {(string_address) "dereference", 'd'},
-    {(string_address) "no-dereference", 'h'},
-    {(string_address) "quiet", 'f'},
-    {(string_address) "recursive", 'R'},
-    {(string_address) "reference", 'e'},
-    {(string_address) "silent", 'f'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option chown_options[] = {
+    {"changes", 'c', 0, ARGUMENT_SELECT(chown_selection, loudness)},
+    {"from", 'F', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"no-preserve-root", 'N'},
+    {"preserve-root", 'N'},
+    {"dereference", 'd', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(chown_selection, dereference)},
+    {"no-dereference", 'h', 0, ARGUMENT_SELECT(chown_selection, dereference)},
+    {"quiet", 'f'},
+    {"recursive", 'R'},
+    {"reference", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"silent", 'f'},
+    {"verbose", 'v', 0, ARGUMENT_SELECT(chown_selection, loudness)},
+    {"HLP", 0, 0, ARGUMENT_SELECT(chown_selection, traverse)},
+    {null},
 };
 
 /*
@@ -11891,19 +11682,15 @@ static b32 file_chown_common(string_address program, bool groups_only)
         chown_from_user = -1;
         chown_from_group = -1;
         chown_status = 0;
-        chown_dereference_option = 'd';
-        chown_traverse_option = 0;
-        chown_loudness_option = 0;
+        chown_selected = (chown_selection){.dereference = 'd'};
         chown_program = program;
         chown_groups_only = groups_only;
         chown_spec = (string_address) "";
 
         file_taking taking = {
             .program = program,
-            .allowed = (string_address) "HLPRcfhvN",
-            .valued = (string_address) "eF",
-            .longs = chown_longs,
-            .supersedes = chown_supersedes,
+            .options = chown_options,
+            .selection = (p8 address_to)address_of chown_selected,
         };
 
         if (!file_take(address_of taking))
@@ -11923,7 +11710,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
         //      that answers: -P, or none at all, leaves the question open
         //      and the reference refuses the pair.
         if ((taking.flags & FILE_FLAG('R')) && (taking.flags & FILE_FLAG('d')) &&
-            chown_traverse_option != 'H' && chown_traverse_option != 'L')
+            chown_selected.traverse != 'H' && chown_selected.traverse != 'L')
                 return string_report(log_error, 1,
                                      "%s: -R --dereference requires either -H or -L\n",
                                      program);
@@ -11931,8 +11718,8 @@ static b32 file_chown_common(string_address program, bool groups_only)
         positive first = taking.first;
 
         chown_flags = taking.flags;
-        chown_loud = chown_loudness_option == 'v';
-        chown_changes = chown_loudness_option == 'c';
+        chown_loud = chown_selected.loudness == 'v';
+        chown_changes = chown_selected.loudness == 'c';
         chown_quiet = (taking.flags & FILE_FLAG('f')) != 0;
 
         string_address like = file_option_value(address_of taking, 'e');
@@ -12030,7 +11817,6 @@ static bool file_backup_made_at(string_address program, bipolar directory,
                                 string_address shown,
                                 file_facts address_to expected);
 static bool file_backup_taken(file_taking address_to taking, string_address program);
-static bool file_targets_told(string_address program);
 
 // ln ------------------------------------------------------------
 // ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
@@ -12041,14 +11827,11 @@ static bool ln_ask;
 static bool ln_loud;
 static bool ln_relative;
 static bool ln_through;
-static p8 ln_collision_option;
-static p8 ln_dereference_option;
+typedef struct { p8 collision, dereference; } ln_selection;
+_Static_assert(sizeof(ln_selection) <= 16, "selection mask covers every field");
+static ln_selection ln_selected;
 
-static const file_supersede ln_supersedes[] = {
-    {(string_address) "fi", address_of ln_collision_option},
-    {(string_address) "LP", address_of ln_dereference_option},
-    {null, null},
-};
+
 
 // realpath's, and named here because ln is written before it.
 static bool realpath_relative(string_address from, string_address path,
@@ -12249,42 +12032,36 @@ static bool ln_make(string_address target, string_address name)
         return true;
 }
 
-static const file_long ln_longs[] = {
-    {(string_address) "backup", 'B'},
-    {(string_address) "directory", 'd'},
-    {(string_address) "force", 'f'},
-    {(string_address) "suffix", 'S'},
-    {(string_address) "interactive", 'i'},
-    {(string_address) "logical", 'L'},
-    {(string_address) "no-dereference", 'n'},
-    {(string_address) "no-target-directory", 'T'},
-    {(string_address) "physical", 'P'},
-    {(string_address) "relative", 'r'},
-    {(string_address) "symbolic", 's'},
-    {(string_address) "target-directory", 't'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option ln_options[] = {
+    {"backup", 'B', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"directory", 'd'},
+    {"force", 'f', 0, ARGUMENT_SELECT(ln_selection, collision)},
+    {"suffix", 'S', ARGUMENT_REQUIRED},
+    {"interactive", 'i', 0, ARGUMENT_SELECT(ln_selection, collision)},
+    {"logical", 'L', 0, ARGUMENT_SELECT(ln_selection, dereference)},
+    {"no-dereference", 'n'},
+    {"no-target-directory", 'T'},
+    {"physical", 'P', 0, ARGUMENT_SELECT(ln_selection, dereference)},
+    {"relative", 'r'},
+    {"symbolic", 's'},
+    {"target-directory", 't', ARGUMENT_REQUIRED},
+    {"verbose", 'v'},
+    {"bF", 0},
+    {null},
 };
 
 static b32 file_ln()
 {
         positive count = (positive)program_argument_count();
-        ln_collision_option = 0;
-        ln_dereference_option = 0;
-
-        file_targets_begin();
+        ln_selected = (ln_selection){};
 
         file_taking taking = {
             .program = (string_address) "ln",
             //      -d, -F and --directory ask for a hard link to a
             //      directory, which the kernel gives only to a privileged
             //      caller; taken and left to the link call to refuse.
-            .allowed = (string_address) "bdfFiLnPrsStTv",
-            .valued = (string_address) "tS",
-            .long_optional = (string_address) "B",
-            .longs = ln_longs,
-            .seen = file_target_seen,
-            .supersedes = ln_supersedes,
+            .options = ln_options,
+            .selection = (p8 address_to)address_of ln_selected,
         };
 
         if (!file_take(address_of taking))
@@ -12293,7 +12070,7 @@ static b32 file_ln()
         if (!file_backup_taken(address_of taking, (string_address) "ln"))
                 return 1;
 
-        if (!file_targets_told((string_address) "ln"))
+        if (!file_targets_told((string_address) "ln", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
 
         positive flags = taking.flags;
@@ -12301,8 +12078,8 @@ static b32 file_ln()
 
         ln_symbolic = (flags & FILE_FLAG('s')) != 0;
         ln_directories = (flags & (FILE_FLAG('d') | FILE_FLAG('F'))) != 0;
-        ln_force = ln_collision_option == 'f';
-        ln_ask = ln_collision_option == 'i';
+        ln_force = ln_selected.collision == 'f';
+        ln_ask = ln_selected.collision == 'i';
         ln_loud = (flags & FILE_FLAG('v')) != 0;
         ln_relative = (flags & FILE_FLAG('r')) != 0;
 
@@ -12313,7 +12090,7 @@ static b32 file_ln()
 
         // -L makes a hard link to what a symbolic target points at rather
         // than to the link, which is the one thing -L and -P are about.
-        ln_through = ln_dereference_option == 'L';
+        ln_through = ln_selected.dereference == 'L';
 
         if (first >= count)
         {
@@ -12417,8 +12194,10 @@ static bool file_simple_operands(string_address program, positive wanted)
 {
         file_simple_operand_count = 0;
         file_taking taking = {
-            .program = program, .allowed = (string_address)"",
-            .valued = (string_address)"", .operand = file_simple_operand,
+            .program = program,
+            .options = (const argument_option[]){
+    {null},
+        }, .operand = file_simple_operand,
         };
 
         if (!file_take(address_of taking))
@@ -12531,16 +12310,16 @@ static string_address namei_operand;
 static bool namei_no_symlinks;
 static bool namei_mounts;
 
-static const file_long namei_longs[] = {
-    {(string_address)"long", 'l'},
-    {(string_address)"modes", 'm'},
-    {(string_address)"owners", 'o'},
-    {(string_address)"mountpoints", 'x'},
-    {(string_address)"nosymlinks", 'n'},
-    {(string_address)"vertical", 'v'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option namei_options[] = {
+    {"long", 'l'},
+    {"modes", 'm'},
+    {"owners", 'o'},
+    {"mountpoints", 'x'},
+    {"nosymlinks", 'n'},
+    {"vertical", 'v'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bool namei_save(string_address text, positive length,
@@ -12832,9 +12611,7 @@ static b32 file_namei()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"namei",
-            .allowed = (string_address)"lmoxnvhV",
-            .valued = (string_address)"",
-            .longs = namei_longs,
+            .options = namei_options,
             .operand = file_operand,
         };
 
@@ -13382,40 +13159,30 @@ static b32 file_whereis()
         nothing about the rest of the path; those three resolve the whole name
         and differ only in how much of it has to be there.
 */
-static const file_long readlink_longs[] = {
-    {(string_address) "canonicalize", 'f'},
-    {(string_address) "canonicalize-existing", 'e'},
-    {(string_address) "canonicalize-missing", 'm'},
-    {(string_address) "no-newline", 'n'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "silent", 's'},
-    {(string_address) "verbose", 'v'},
-    {(string_address) "zero", 'z'},
-    {null, 0},
+typedef struct { p8 canonical, loudness; } readlink_selection;
+_Static_assert(sizeof(readlink_selection) <= 16, "selection mask covers every field");
+static const argument_option readlink_options[] = {
+    {"canonicalize", 'f', 0, ARGUMENT_SELECT(readlink_selection, canonical)},
+    {"canonicalize-existing", 'e', 0, ARGUMENT_SELECT(readlink_selection, canonical)},
+    {"canonicalize-missing", 'm', 0, ARGUMENT_SELECT(readlink_selection, canonical)},
+    {"no-newline", 'n'},
+    {"quiet", 'q', 0, ARGUMENT_SELECT(readlink_selection, loudness)},
+    {"silent", 's', 0, ARGUMENT_SELECT(readlink_selection, loudness)},
+    {"verbose", 'v', 0, ARGUMENT_SELECT(readlink_selection, loudness)},
+    {"zero", 'z'},
+    {null},
 };
 
-static p8 readlink_canonical_option;
-static p8 readlink_loudness_option;
-
-static const file_supersede readlink_supersedes[] = {
-    {(string_address) "fem", address_of readlink_canonical_option},
-    //      -q and -s ask for silence, -v for the reason; the last of them
-    //      written is the one that answers.
-    {(string_address) "qsv", address_of readlink_loudness_option},
-    {null, null},
-};
+static readlink_selection readlink_selected;
 
 static b32 file_readlink()
 {
-        readlink_canonical_option = 0;
-        readlink_loudness_option = 0;
+        readlink_selected = (readlink_selection){};
 
         file_taking taking = {
             .program = (string_address) "readlink",
-            .allowed = (string_address) "fneqsvmz",
-            .valued = (string_address) "",
-            .longs = readlink_longs,
-            .supersedes = readlink_supersedes,
+            .options = readlink_options,
+            .selection = (p8 address_to)address_of readlink_selected,
         };
 
         if (!file_take(address_of taking))
@@ -13428,11 +13195,11 @@ static b32 file_readlink()
         if (first >= count)
                 return string_report(log_error, 1, "%s: missing operand\n", (string_address) "readlink");
 
-        bool resolve = readlink_canonical_option != 0;
+        bool resolve = readlink_selected.canonical != 0;
         bool no_newline = (flags & FILE_FLAG('n')) != 0;
         // Silent unless asked: readlink says nothing about a name it could
         // not read, and -q and -s are there only to say so twice.
-        bool loud = readlink_loudness_option == 'v';
+        bool loud = readlink_selected.loudness == 'v';
         bool zero = (flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
 
@@ -13454,16 +13221,16 @@ static b32 file_readlink()
 
                 if (resolve)
                 {
-                        p8 policy = readlink_canonical_option == 'm'
+                        p8 policy = readlink_selected.canonical == 'm'
                                         ? FILE_RESOLVE_UNRESOLVED
-                                    : readlink_canonical_option == 'e'
+                                    : readlink_selected.canonical == 'e'
                                         ? FILE_RESOLVE_DIRECTORIES
                                         : FILE_RESOLVE_DIRECTORIES |
                                               FILE_RESOLVE_FINAL_MISSING;
                         bool valid = file_resolve_as(path, answer, true,
                                                      policy);
 
-                        if (valid && readlink_canonical_option != 'm')
+                        if (valid && readlink_selected.canonical != 'm')
                         {
                                 p8 above[FILE_PATH_MAX];
 
@@ -13472,7 +13239,7 @@ static b32 file_readlink()
                                 // -f wants the parent to be real, -e wants
                                 // the whole path to be, -m wants neither.
                                 valid = file_is_directory_through(above) &&
-                                        (readlink_canonical_option != 'e' ||
+                                        (readlink_selected.canonical != 'e' ||
                                          file_exists(AT_FDCWD, answer));
                         }
 
@@ -13524,11 +13291,11 @@ static b32 file_readlink()
 
 // basename ------------------------------------------------------------
 // basename NAME [SUFFIX], and the -a / -s / -z forms that take many names.
-static const file_long basename_longs[] = {
-    {(string_address) "multiple", 'a'},
-    {(string_address) "suffix", 's'},
-    {(string_address) "zero", 'z'},
-    {null, 0},
+static const argument_option basename_options[] = {
+    {"multiple", 'a'},
+    {"suffix", 's', ARGUMENT_REQUIRED},
+    {"zero", 'z'},
+    {null},
 };
 
 static fn basename_one(string_address name, string_address suffix, bool zero)
@@ -13575,9 +13342,7 @@ static b32 file_basename()
 {
         file_taking taking = {
             .program = (string_address) "basename",
-            .allowed = (string_address) "asz",
-            .valued = (string_address) "s",
-            .longs = basename_longs,
+            .options = basename_options,
         };
 
         if (!file_take(address_of taking))
@@ -13619,9 +13384,9 @@ static b32 file_basename()
 
 // dirname ------------------------------------------------------------
 // dirname [-z] NAME..., the directory part of every name given.
-static const file_long dirname_longs[] = {
-    {(string_address) "zero", 'z'},
-    {null, 0},
+static const argument_option dirname_options[] = {
+    {"zero", 'z'},
+    {null},
 };
 
 static fn dirname_one(string_address name, bool zero)
@@ -13669,9 +13434,7 @@ static b32 file_dirname()
 {
         file_taking taking = {
             .program = (string_address) "dirname",
-            .allowed = (string_address) "z",
-            .valued = (string_address) "",
-            .longs = dirname_longs,
+            .options = dirname_options,
         };
 
         if (!file_take(address_of taking))
@@ -13707,29 +13470,26 @@ static b32 file_dirname()
         -L and -P are taken and both resolve as -P does, which is GNU's own
         default: the two only part company over a .. that follows a link.
 */
-static const file_long realpath_longs[] = {
-    {(string_address) "canonicalize", 'E'},
-    {(string_address) "canonicalize-existing", 'e'},
-    {(string_address) "canonicalize-missing", 'm'},
-    {(string_address) "logical", 'L'},
-    {(string_address) "physical", 'P'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "relative-to", 'R'},
-    {(string_address) "relative-base", 'B'},
-    {(string_address) "strip", 's'},
-    {(string_address) "no-symlinks", 's'},
-    {(string_address) "zero", 'z'},
-    {null, 0},
+typedef struct { p8 missing, walk; } realpath_selection;
+_Static_assert(sizeof(realpath_selection) <= 16, "selection mask covers every field");
+static const argument_option realpath_options[] = {
+    {"canonicalize", 'E', 0, ARGUMENT_SELECT(realpath_selection, missing)},
+    {"canonicalize-existing", 'e', 0, ARGUMENT_SELECT(realpath_selection, missing)},
+    {"canonicalize-missing", 'm', 0, ARGUMENT_SELECT(realpath_selection, missing)},
+    {"logical", 'L', 0, ARGUMENT_SELECT(realpath_selection, walk)},
+    {"physical", 'P', 0, ARGUMENT_SELECT(realpath_selection, walk)},
+    {"quiet", 'q'},
+    {"relative-to", 'R', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"relative-base", 'B', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"strip", 's'},
+    {"no-symlinks", 's'},
+    {"zero", 'z'},
+    {null},
 };
 
-static p8 realpath_missing_option;
-static p8 realpath_walk_option;
+static realpath_selection realpath_selected;
 
-static const file_supersede realpath_supersedes[] = {
-    {(string_address) "Eem", address_of realpath_missing_option},
-    {(string_address) "LP", address_of realpath_walk_option},
-    {null, null},
-};
+
 
 // Whether one canonical path is the other or lies under it. Whole components
 // only: /usr/lib is not under /usr/li.
@@ -13829,15 +13589,13 @@ static bool realpath_relative(string_address from, string_address path,
 
 static b32 file_realpath()
 {
-        realpath_missing_option = 'E';
-        realpath_walk_option = 'P';
+        realpath_selected.missing = 'E';
+        realpath_selected.walk = 'P';
 
         file_taking taking = {
             .program = (string_address) "realpath",
-            .allowed = (string_address) "EeLmPqsz",
-            .valued = (string_address) "RB",
-            .longs = realpath_longs,
-            .supersedes = realpath_supersedes,
+            .options = realpath_options,
+            .selection = (p8 address_to)address_of realpath_selected,
         };
 
         if (!file_take(address_of taking))
@@ -13849,9 +13607,9 @@ static b32 file_realpath()
         if (first >= count)
                 return string_report(log_error, 1, "%s: missing operand\n", (string_address) "realpath");
 
-        bool allow_missing = realpath_missing_option == 'm';
+        bool allow_missing = realpath_selected.missing == 'm';
         bool written_name = (taking.flags & FILE_FLAG('s')) != 0;
-        bool logical = realpath_walk_option == 'L';
+        bool logical = realpath_selected.walk == 'L';
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool zero = (taking.flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
@@ -13913,7 +13671,7 @@ static b32 file_realpath()
                                                         address_of facts);
 
                         if (looked < 0 &&
-                            (realpath_missing_option == 'e' ||
+                            (realpath_selected.missing == 'e' ||
                              looked != -ERROR_NO_ENTRY))
                         {
                                 reason = file_reason(looked);
@@ -13925,7 +13683,7 @@ static b32 file_realpath()
 
                 if (!written_name &&
                     ((!allow_missing && !file_is_directory_through(scratch)) ||
-                     (realpath_missing_option == 'e' &&
+                     (realpath_selected.missing == 'e' &&
                       !file_exists(AT_FDCWD, answer))))
                 {
                         reason = (string_address) "No such file or directory";
@@ -13966,9 +13724,10 @@ failed:
 #define PATHCHK_POSIX_PATH 256
 #define PATHCHK_POSIX_NAME 14
 
-static const file_long pathchk_longs[] = {
-    {(string_address) "portability", 'Q'},
-    {null, 0},
+static const argument_option pathchk_options[] = {
+    {"portability", 'Q', ARGUMENT_LONG_ONLY},
+    {"pP", 0},
+    {null},
 };
 
 // The reference's shapes: a stat failure is "name: reason", the checks name
@@ -14166,9 +13925,7 @@ static b32 file_pathchk()
 {
         file_taking taking = {
             .program = (string_address) "pathchk",
-            .allowed = (string_address) "pP",
-            .valued = (string_address) "",
-            .longs = pathchk_longs,
+            .options = pathchk_options,
         };
 
         if (!file_take(address_of taking))
@@ -14224,12 +13981,12 @@ static bool file_context_seen(p8 letter, string_address value)
         return true;
 }
 
-static const file_long mkdir_longs[] = {
-    {(string_address) "context", 'Z'},
-    {(string_address) "mode", 'm'},
-    {(string_address) "parents", 'p'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option mkdir_options[] = {
+    {"context", 'Z', ARGUMENT_LONG_OPTIONAL},
+    {"mode", 'm', ARGUMENT_REQUIRED},
+    {"parents", 'p'},
+    {"verbose", 'v'},
+    {null},
 };
 
 static fn mkdir_told(string_address path)
@@ -14242,10 +13999,7 @@ static b32 file_mkdir()
         positive count = (positive)program_argument_count();
         file_taking taking = {
             .program = (string_address) "mkdir",
-            .allowed = (string_address) "mpvZ",
-            .valued = (string_address) "m",
-            .long_optional = (string_address) "Z",
-            .longs = mkdir_longs,
+            .options = mkdir_options,
             .seen = file_context_seen,
         };
 
@@ -14358,10 +14112,11 @@ static b32 file_mkdir()
         applies the umask once more, so an explicit mode is restored after a
         successful creation exactly as GNU does.
 */
-static const file_long file_node_longs[] = {
-    {(string_address) "context", 'C'},
-    {(string_address) "mode", 'm'},
-    {null, 0},
+static const argument_option file_node_arguments[] = {
+    {"context", 'C', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"mode", 'm', ARGUMENT_REQUIRED},
+    {"Z", 0},
+    {null},
 };
 
 //      A mode outside the nine permission bits is read here and refused by
@@ -14409,10 +14164,7 @@ static bool file_node_options(string_address program, file_taking address_to tak
 {
         file_operands_begin();
         taking->program = program;
-        taking->allowed = (string_address) "mZ";
-        taking->valued = (string_address) "m";
-        taking->optional = (string_address) "C";
-        taking->longs = file_node_longs;
+        taking->options = file_node_arguments;
         taking->operand = file_operand;
         //      This image has neither SELinux nor SMACK. -Z and a bare
         //      --context are no-ops; a named context is ignored with a
@@ -14640,10 +14392,10 @@ static b32 file_mknod()
 #define FILE_F_GETFL 3
 #define FILE_F_SETFL 4
 
-static const file_long sync_longs[] = {
-    {(string_address) "data", 'd'},
-    {(string_address) "file-system", 'f'},
-    {null, 0},
+static const argument_option sync_options[] = {
+    {"data", 'd'},
+    {"file-system", 'f'},
+    {null},
 };
 
 static bool file_sync_one(string_address path, p8 mode)
@@ -14709,9 +14461,7 @@ static b32 file_sync()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "sync",
-            .allowed = (string_address) "df",
-            .valued = (string_address) "",
-            .longs = sync_longs,
+            .options = sync_options,
             .operand = file_operand,
         };
 
@@ -14784,18 +14534,18 @@ typedef struct
 
 static PURE p8 file_size_power(p8 suffix, bool every_lower);
 
-static const file_long split_longs[] = {
-    {(string_address) "additional-suffix", 'S'},
-    {(string_address) "bytes", 'b'},
-    {(string_address) "hex-suffixes", 'x'},
-    {(string_address) "line-bytes", 'C'},
-    {(string_address) "lines", 'l'},
-    {(string_address) "numeric-suffixes", 'd'},
-    {(string_address) "number", 'n'},
-    {(string_address) "separator", 't'},
-    {(string_address) "suffix-length", 'a'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option split_options[] = {
+    {"additional-suffix", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"bytes", 'b', ARGUMENT_REQUIRED},
+    {"hex-suffixes", 'x', ARGUMENT_LONG_OPTIONAL, 1},
+    {"line-bytes", 'C', ARGUMENT_REQUIRED},
+    {"lines", 'l', ARGUMENT_REQUIRED},
+    {"numeric-suffixes", 'd', ARGUMENT_LONG_OPTIONAL, 1},
+    {"number", 'n', ARGUMENT_REQUIRED},
+    {"separator", 't', ARGUMENT_REQUIRED},
+    {"suffix-length", 'a', ARGUMENT_REQUIRED},
+    {"verbose", 'v', ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 static bool split_size(string_address text, positive address_to out)
@@ -15257,24 +15007,18 @@ static bool split_separator(string_address text, p8 address_to separator)
 static b32 file_split()
 {
         p8 suffix_kind = 0;
-        file_supersede supersedes[] = {
-            {(string_address)"dx", address_of suffix_kind},
-            {null, null},
-        };
+
 
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"split",
-            .allowed = (string_address)"abCdlntx",
-            .valued = (string_address)"abClnSt",
+            .options = split_options,
             /* Only the long spellings take an optional FROM.  In `-d7 -b3`,
                coreutils reads 7 as the old -7 line count and diagnoses the
                line/byte mode conflict; it is not a suffix start. */
-            .long_optional = (string_address)"dx",
-            .longs = split_longs,
             .digits = 'l',
             .operand = file_operand,
-            .supersedes = supersedes,
+            .selection = address_of suffix_kind,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -15488,15 +15232,15 @@ typedef struct
 static file_facts address_to csplit_outputs;
 static positive csplit_output_room;
 
-static const file_long csplit_longs[] = {
-    {(string_address)"digits", 'n'},
-    {(string_address)"elide-empty-files", 'z'},
-    {(string_address)"keep-files", 'k'},
-    {(string_address)"prefix", 'f'},
-    {(string_address)"quiet", 's'},
-    {(string_address)"silent", 's'},
-    {(string_address)"suppress-matched", 'M'},
-    {null, 0},
+static const argument_option csplit_options[] = {
+    {"digits", 'n', ARGUMENT_REQUIRED},
+    {"elide-empty-files", 'z'},
+    {"keep-files", 'k'},
+    {"prefix", 'f', ARGUMENT_REQUIRED},
+    {"quiet", 's'},
+    {"silent", 's'},
+    {"suppress-matched", 'M', ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 static bool csplit_name(csplit_state address_to state, positive number)
@@ -15856,9 +15600,7 @@ static b32 file_csplit()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"csplit",
-            .allowed = (string_address)"fknsz",
-            .valued = (string_address)"fn",
-            .longs = csplit_longs,
+            .options = csplit_options,
             .operand = file_operand,
         };
 
@@ -16072,12 +15814,12 @@ enum
         TRUNCATE_ROUND_UP,
 };
 
-static const file_long truncate_longs[] = {
-    {(string_address) "no-create", 'c'},
-    {(string_address) "io-blocks", 'o'},
-    {(string_address) "reference", 'r'},
-    {(string_address) "size", 's'},
-    {null, 0},
+static const argument_option truncate_options[] = {
+    {"no-create", 'c'},
+    {"io-blocks", 'o'},
+    {"reference", 'r', ARGUMENT_REQUIRED},
+    {"size", 's', ARGUMENT_REQUIRED},
+    {null},
 };
 
 /* The exponent is shared by dd, truncate and util-linux's strtosize. Their
@@ -16412,9 +16154,7 @@ static b32 file_truncate()
 
         file_taking taking = {
             .program = (string_address) "truncate",
-            .allowed = (string_address) "cors",
-            .valued = (string_address) "rs",
-            .longs = truncate_longs,
+            .options = truncate_options,
             .operand = file_operand,
             .seen = truncate_option_seen,
         };
@@ -17146,24 +16886,24 @@ static fn hardlink_list_pair(hardlink_file address_to keep,
         }
 }
 
-static const file_long hardlink_longs[] = {
-    {(string_address)"content", 'c'},
-    {(string_address)"io-size", 'b'},
-    {(string_address)"respect-name", 'f'},
-    {(string_address)"list-duplicates", 'l'},
-    {(string_address)"dry-run", 'n'},
-    {(string_address)"ignore-owner", 'o'},
-    {(string_address)"ignore-mode", 'p'},
-    {(string_address)"quiet", 'q'},
-    {(string_address)"reflink", 'R'},
-    {(string_address)"minimum-size", 's'},
-    {(string_address)"maximum-size", 'S'},
-    {(string_address)"ignore-time", 't'},
-    {(string_address)"verbose", 'v'},
-    {(string_address)"zero", 'z'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option hardlink_options[] = {
+    {"content", 'c'},
+    {"io-size", 'b', ARGUMENT_REQUIRED},
+    {"respect-name", 'f'},
+    {"list-duplicates", 'l'},
+    {"dry-run", 'n'},
+    {"ignore-owner", 'o'},
+    {"ignore-mode", 'p'},
+    {"quiet", 'q'},
+    {"reflink", 'R', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"minimum-size", 's', ARGUMENT_REQUIRED},
+    {"maximum-size", 'S', ARGUMENT_REQUIRED},
+    {"ignore-time", 't'},
+    {"verbose", 'v'},
+    {"zero", 'z'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bool hardlink_size(string_address text, p64 address_to size)
@@ -17182,10 +16922,7 @@ static b32 file_hardlink()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"hardlink",
-            .allowed = (string_address)"bcflnopqSstvzhV",
-            .valued = (string_address)"bsS",
-            .long_optional = (string_address)"R",
-            .longs = hardlink_longs,
+            .options = hardlink_options,
             .operand = file_operand,
         };
 
@@ -17411,16 +17148,16 @@ static b32 file_hardlink()
         copy-on-write filesystems, snapshots, flash translation layers,
         mirrors or backups overwrite their older physical copies.
 */
-static const file_long shred_longs[] = {
-    {(string_address) "exact", 'x'},
-    {(string_address) "force", 'f'},
-    {(string_address) "iterations", 'n'},
-    {(string_address) "random-source", 'R'},
-    {(string_address) "remove", 'u'},
-    {(string_address) "size", 's'},
-    {(string_address) "verbose", 'v'},
-    {(string_address) "zero", 'z'},
-    {null, 0},
+static const argument_option shred_options[] = {
+    {"exact", 'x'},
+    {"force", 'f'},
+    {"iterations", 'n', ARGUMENT_REQUIRED},
+    {"random-source", 'R', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"remove", 'u', ARGUMENT_LONG_OPTIONAL},
+    {"size", 's', ARGUMENT_REQUIRED},
+    {"verbose", 'v'},
+    {"zero", 'z'},
+    {null},
 };
 
 static bool shred_size(string_address text, positive address_to size)
@@ -17789,10 +17526,7 @@ static b32 file_shred()
 
         file_taking taking = {
             .program = (string_address) "shred",
-            .allowed = (string_address) "fnsuvxz",
-            .valued = (string_address) "nRs",
-            .long_optional = (string_address) "u",
-            .longs = shred_longs,
+            .options = shred_options,
             .operand = file_operand,
             .seen = shred_option_seen,
         };
@@ -17854,15 +17588,15 @@ typedef struct
         file_staged_name stage;
 } shuf_output;
 
-static const file_long shuf_longs[] = {
-    {(string_address) "echo", 'e'},
-    {(string_address) "head-count", 'n'},
-    {(string_address) "input-range", 'i'},
-    {(string_address) "output", 'o'},
-    {(string_address) "random-source", 'R'},
-    {(string_address) "repeat", 'r'},
-    {(string_address) "zero-terminated", 'z'},
-    {null, 0},
+static const argument_option shuf_options[] = {
+    {"echo", 'e'},
+    {"head-count", 'n', ARGUMENT_REQUIRED},
+    {"input-range", 'i', ARGUMENT_REQUIRED},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"random-source", 'R', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"repeat", 'r'},
+    {"zero-terminated", 'z'},
+    {null},
 };
 
 static bool shuf_write_failed(shuf_output address_to output)
@@ -18277,9 +18011,7 @@ static b32 file_shuf()
         shuf_ranged = false;
         file_taking taking = {
             .program = (string_address) "shuf",
-            .allowed = (string_address) "einorz",
-            .valued = (string_address) "inoR",
-            .longs = shuf_longs,
+            .options = shuf_options,
             .operand = file_operand,
             .seen = shuf_seen,
         };
@@ -18539,21 +18271,18 @@ static const dircolors_keyword dircolors_keywords[] = {
     {null, null},
 };
 
-static const file_long dircolors_longs[] = {
-    {(string_address) "bourne-shell", 'b'},
-    {(string_address) "sh", 'b'},
-    {(string_address) "c-shell", 'c'},
-    {(string_address) "csh", 'c'},
-    {(string_address) "print-database", 'p'},
-    {(string_address) "print-ls-colors", 'L'},
-    {null, 0},
+static const argument_option dircolors_options[] = {
+    {"bourne-shell", 'b', 0, 1},
+    {"sh", 'b', 0, 1},
+    {"c-shell", 'c', 0, 1},
+    {"csh", 'c', 0, 1},
+    {"print-database", 'p'},
+    {"print-ls-colors", 'L', ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 static p8 dircolors_shell_option;
-static const file_supersede dircolors_supersedes[] = {
-    {(string_address) "bc", address_of dircolors_shell_option},
-    {null, null},
-};
+
 
 typedef struct
 {
@@ -18853,11 +18582,9 @@ static b32 file_dircolors()
         dircolors_shell_option = 0;
         file_taking taking = {
             .program = (string_address) "dircolors",
-            .allowed = (string_address) "bcp",
-            .valued = (string_address) "",
-            .longs = dircolors_longs,
+            .options = dircolors_options,
             .operand = file_operand,
-            .supersedes = dircolors_supersedes,
+            .selection = address_of dircolors_shell_option,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -19004,11 +18731,11 @@ static b32 file_dircolors()
 // rmdir ------------------------------------------------------------
 // rmdir [-p] DIRECTORY..., where -p goes on removing the parents while they
 // are empty too.
-static const file_long rmdir_longs[] = {
-    {(string_address) "ignore-fail-on-non-empty", 'I'},
-    {(string_address) "parents", 'p'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option rmdir_options[] = {
+    {"ignore-fail-on-non-empty", 'I'},
+    {"parents", 'p'},
+    {"verbose", 'v'},
+    {null},
 };
 
 static b32 file_rmdir()
@@ -19016,9 +18743,7 @@ static b32 file_rmdir()
         positive count = (positive)program_argument_count();
         file_taking taking = {
             .program = (string_address) "rmdir",
-            .allowed = (string_address) "pvI",
-            .valued = (string_address) "",
-            .longs = rmdir_longs,
+            .options = rmdir_options,
         };
 
         if (!file_take(address_of taking))
@@ -19144,15 +18869,11 @@ static bool mv_destination_decided;
 static bool mv_destination_existed;
 static bool mv_collision_seen;
 static file_facts mv_destination_facts;
-static p8 cp_collision_option;
-static p8 cp_dereference_option;
+typedef struct { p8 collision, dereference; } cp_selection;
+_Static_assert(sizeof(cp_selection) <= 16, "selection mask covers every field");
+static cp_selection cp_selected;
 
 /* -f is independent; only -i and -n supersede one another. */
-static const file_supersede cp_supersedes[] = {
-    {(string_address) "in", address_of cp_collision_option},
-    {(string_address) "HLPda", address_of cp_dereference_option},
-    {null, null},
-};
 
 // 0 copies a symbolic link as itself, 1 copies what it points at, 2 does
 // that only for the links named on the command line.
@@ -20260,56 +19981,51 @@ static bool cp_words_read(string_address option, string_address value,
         return true;
 }
 
-static const file_long cp_longs[] = {
-    {(string_address) "archive", 'a'},
-    {(string_address) "attributes-only", 'A'},
-    {(string_address) "backup", 'B'},
-    {(string_address) "context", 'Z'},
-    {(string_address) "copy-contents", 'C'},
-    {(string_address) "debug", 'v'},
-    {(string_address) "keep-directory-symlink", 'K'},
-    {(string_address) "no-preserve", 'N'},
-    {(string_address) "one-file-system", 'x'},
-    {(string_address) "parents", 'e'},
-    {(string_address) "reflink", 'k'},
-    {(string_address) "remove-destination", 'D'},
-    {(string_address) "sparse", 'z'},
-    {(string_address) "strip-trailing-slashes", 'w'},
-    {(string_address) "suffix", 'S'},
-    {(string_address) "update", 'u'},
-    {(string_address) "dereference", 'L'},
-    {(string_address) "force", 'f'},
-    {(string_address) "interactive", 'i'},
-    {(string_address) "link", 'l'},
-    {(string_address) "no-clobber", 'n'},
-    {(string_address) "no-dereference", 'P'},
-    {(string_address) "no-target-directory", 'T'},
-    {(string_address) "preserve", 'p'},
-    {(string_address) "recursive", 'R'},
-    {(string_address) "symbolic-link", 's'},
-    {(string_address) "target-directory", 't'},
-    {(string_address) "update", 'u'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option cp_options[] = {
+    {"archive", 'a', 0, ARGUMENT_SELECT(cp_selection, dereference)},
+    {"attributes-only", 'A'},
+    {"backup", 'B', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"context", 'Z', ARGUMENT_LONG_OPTIONAL},
+    {"copy-contents", 'C'},
+    {"debug", 'v'},
+    {"keep-directory-symlink", 'K', ARGUMENT_LONG_ONLY},
+    {"no-preserve", 'N', ARGUMENT_REQUIRED},
+    {"one-file-system", 'x'},
+    {"parents", 'e'},
+    {"reflink", 'k', ARGUMENT_LONG_OPTIONAL},
+    {"remove-destination", 'D'},
+    {"sparse", 'z', ARGUMENT_REQUIRED},
+    {"strip-trailing-slashes", 'w'},
+    {"suffix", 'S', ARGUMENT_REQUIRED},
+    {"update", 'u', ARGUMENT_LONG_OPTIONAL},
+    {"dereference", 'L', 0, ARGUMENT_SELECT(cp_selection, dereference)},
+    {"force", 'f'},
+    {"interactive", 'i', 0, ARGUMENT_SELECT(cp_selection, collision)},
+    {"link", 'l'},
+    {"no-clobber", 'n', 0, ARGUMENT_SELECT(cp_selection, collision)},
+    {"no-dereference", 'P', 0, ARGUMENT_SELECT(cp_selection, dereference)},
+    {"no-target-directory", 'T'},
+    {"preserve", 'p', ARGUMENT_LONG_OPTIONAL},
+    {"recursive", 'R'},
+    {"symbolic-link", 's'},
+    {"target-directory", 't', ARGUMENT_REQUIRED},
+    {"update", 'u', ARGUMENT_LONG_OPTIONAL},
+    {"verbose", 'v'},
+    {"br", 0},
+    {"dH", 0, 0, ARGUMENT_SELECT(cp_selection, dereference)},
+    {null},
 };
 
 static b32 file_cp()
 {
         positive count = (positive)program_argument_count();
         cp_status = 0;
-        cp_collision_option = 0;
-        cp_dereference_option = 0;
-
-        file_targets_begin();
+        cp_selected = (cp_selection){};
 
         file_taking taking = {
             .program = (string_address) "cp",
-            .allowed = (string_address) "aAbCdDefHiklLnNpPrRsStTuvwxzZ",
-            .valued = (string_address) "tSNz",
-            .long_optional = (string_address) "BkupZ",
-            .longs = cp_longs,
-            .seen = file_target_seen,
-            .supersedes = cp_supersedes,
+            .options = cp_options,
+            .selection = (p8 address_to)address_of cp_selected,
         };
 
         if (!file_take(address_of taking))
@@ -20318,7 +20034,7 @@ static b32 file_cp()
         if (!file_backup_taken(address_of taking, (string_address) "cp"))
                 return 1;
 
-        if (!file_targets_told((string_address) "cp"))
+        if (!file_targets_told((string_address) "cp", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
 
         bool wants_context = false;
@@ -20372,8 +20088,8 @@ static b32 file_cp()
         cp_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R') | FILE_FLAG('a'))) != 0;
         cp_preserve = (flags & (FILE_FLAG('p') | FILE_FLAG('a'))) != 0;
         cp_force = (flags & FILE_FLAG('f')) != 0;
-        cp_ask = cp_collision_option == 'i';
-        cp_never_clobber = cp_collision_option == 'n';
+        cp_ask = cp_selected.collision == 'i';
+        cp_never_clobber = cp_selected.collision == 'n';
         cp_newer_only = (flags & FILE_FLAG('u')) != 0;
         cp_hard = (flags & FILE_FLAG('l')) != 0;
         cp_symbolic = (flags & FILE_FLAG('s')) != 0;
@@ -20385,11 +20101,11 @@ static b32 file_cp()
         // not, because the tree is what -R was asked for.
         cp_dereference = cp_recursive ? 0 : 1;
 
-        if (cp_dereference_option == 'H')
+        if (cp_selected.dereference == 'H')
                 cp_dereference = 2;
-        else if (cp_dereference_option == 'L')
+        else if (cp_selected.dereference == 'L')
                 cp_dereference = 1;
-        else if (cp_dereference_option)
+        else if (cp_selected.dereference)
                 cp_dereference = 0;
 
         string_address into = file_option_value(address_of taking, 't');
@@ -20422,20 +20138,21 @@ static bool install_preserve;
 static bool install_loud;
 static b32 install_status;
 
-static const file_long install_longs[] = {
-    {(string_address) "backup", 'B'},
-    {(string_address) "compare", 'C'},
-    {(string_address) "create-leading-directories", 'D'},
-    {(string_address) "suffix", 'S'},
-    {(string_address) "directory", 'd'},
-    {(string_address) "group", 'g'},
-    {(string_address) "mode", 'm'},
-    {(string_address) "owner", 'o'},
-    {(string_address) "preserve-timestamps", 'p'},
-    {(string_address) "no-target-directory", 'T'},
-    {(string_address) "target-directory", 't'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option install_options[] = {
+    {"backup", 'B', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"compare", 'C'},
+    {"create-leading-directories", 'D'},
+    {"suffix", 'S', ARGUMENT_REQUIRED},
+    {"directory", 'd'},
+    {"group", 'g', ARGUMENT_REQUIRED},
+    {"mode", 'm', ARGUMENT_REQUIRED},
+    {"owner", 'o', ARGUMENT_REQUIRED},
+    {"preserve-timestamps", 'p'},
+    {"no-target-directory", 'T'},
+    {"target-directory", 't', ARGUMENT_REQUIRED},
+    {"verbose", 'v'},
+    {"bc", 0},
+    {null},
 };
 
 static bool install_identity(string_address text, bool group,
@@ -20649,15 +20366,10 @@ static fn install_pair(string_address source, string_address destination)
 static b32 file_install()
 {
         positive count = (positive)program_argument_count();
-        file_targets_begin();
 
         file_taking taking = {
             .program = (string_address) "install",
-            .allowed = (string_address) "bCDcdgmopSTtv",
-            .valued = (string_address) "gmotS",
-            .long_optional = (string_address) "B",
-            .longs = install_longs,
-            .seen = file_target_seen,
+            .options = install_options,
         };
 
         install_mode = 0755;
@@ -20667,7 +20379,7 @@ static b32 file_install()
 
         if (!file_take(address_of taking))
                 return 1;
-        if (!file_targets_told((string_address) "install"))
+        if (!file_targets_told((string_address) "install", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
         if (!file_backup_taken(address_of taking,
                                (string_address)"install"))
@@ -20760,10 +20472,7 @@ static b32 mv_status;
 static bool mv_loud;
 static p8 mv_collision_option;
 
-static const file_supersede mv_supersedes[] = {
-    {(string_address) "fin", address_of mv_collision_option},
-    {null, null},
-};
+
 
 // -n, -i and -f are the same question mv asks about a destination that is
 // already there, and -f is the default it asks nothing under.
@@ -20995,22 +20704,23 @@ finished:
                 system_close(destination_directory);
 }
 
-static const file_long mv_longs[] = {
-    {(string_address) "backup", 'B'},
-    {(string_address) "context", 'Z'},
-    {(string_address) "debug", 'v'},
-    {(string_address) "exchange", 'X'},
-    {(string_address) "force", 'f'},
-    {(string_address) "no-copy", 'c'},
-    {(string_address) "strip-trailing-slashes", 'w'},
-    {(string_address) "suffix", 'S'},
-    {(string_address) "update", 'u'},
-    {(string_address) "interactive", 'i'},
-    {(string_address) "no-clobber", 'n'},
-    {(string_address) "no-target-directory", 'T'},
-    {(string_address) "target-directory", 't'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option mv_options[] = {
+    {"backup", 'B', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"context", 'Z'},
+    {"debug", 'v'},
+    {"exchange", 'X'},
+    {"force", 'f', 0, 1},
+    {"no-copy", 'c'},
+    {"strip-trailing-slashes", 'w'},
+    {"suffix", 'S', ARGUMENT_REQUIRED},
+    {"update", 'u', ARGUMENT_LONG_OPTIONAL},
+    {"interactive", 'i', 0, 1},
+    {"no-clobber", 'n', 0, 1},
+    {"no-target-directory", 'T'},
+    {"target-directory", 't', ARGUMENT_REQUIRED},
+    {"verbose", 'v'},
+    {"b", 0},
+    {null},
 };
 
 static b32 file_mv()
@@ -21019,20 +20729,14 @@ static b32 file_mv()
         mv_status = 0;
         mv_collision_option = 0;
 
-        file_targets_begin();
-
         file_taking taking = {
             .program = (string_address) "mv",
             //      X carries --exchange, which has no letter of its own
             //      in the reference either.
-            .allowed = (string_address) "bcfinSTtuvwXZ",
-            .valued = (string_address) "tS",
+            .options = mv_options,
             //      mv's --context takes no value at all, unlike cp's and
             //      mkdir's, so Z is not among the ones that may carry one.
-            .long_optional = (string_address) "Bu",
-            .longs = mv_longs,
-            .seen = file_target_seen,
-            .supersedes = mv_supersedes,
+            .selection = address_of mv_collision_option,
         };
 
         if (!file_take(address_of taking))
@@ -21041,7 +20745,7 @@ static b32 file_mv()
         if (!file_backup_taken(address_of taking, (string_address) "mv"))
                 return 1;
 
-        if (!file_targets_told((string_address) "mv"))
+        if (!file_targets_told((string_address) "mv", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
 
         mv_newer_only = (taking.flags & FILE_FLAG('u')) != 0;
@@ -21108,15 +20812,9 @@ static file_facts rm_root;
 static p32 rm_device_major;
 static p32 rm_device_minor;
 static b32 rm_status;
-static p8 rm_collision_option;
-
-static p8 rm_prompt_option;
-
-static const file_supersede rm_supersedes[] = {
-    {(string_address) "fiI", address_of rm_collision_option},
-    {(string_address) "fiIW", address_of rm_prompt_option},
-    {null, null},
-};
+typedef struct { p8 collision, prompt; } rm_selection;
+_Static_assert(sizeof(rm_selection) <= 16, "selection mask covers every field");
+static rm_selection rm_selected;
 
 static bool rm_tree(bipolar directory, string_address name, string_address shown,
                     positive depth);
@@ -21137,7 +20835,6 @@ static string_address rm_wording(file_facts address_to facts)
         return facts->size ? (string_address) "remove regular file"
                            : (string_address) "remove regular empty file";
 }
-
 
 static bool rm_contents(bipolar directory, string_address shown, positive depth)
 {
@@ -21374,20 +21071,18 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         return complete;
 }
 
-static const file_long rm_longs[] = {
-    {(string_address) "dir", 'd'},
-    {(string_address) "force", 'f'},
-    //      Its own letter, not -i's, because the two are not the same
-    //      option: -i and -f each say what to do about a name that is not
-    //      there as well as whether to ask, and --interactive says only
-    //      the second.
-    {(string_address) "interactive", 'W'},
-    {(string_address) "one-file-system", 'o'},
-    {(string_address) "no-preserve-root", 'N'},
-    {(string_address) "preserve-root", 'P'},
-    {(string_address) "recursive", 'R'},
-    {(string_address) "verbose", 'v'},
-    {null, 0},
+static const argument_option rm_options[] = {
+    {"dir", 'd'},
+    {"force", 'f', 0, ARGUMENT_SELECT(rm_selection, collision) | ARGUMENT_SELECT(rm_selection, prompt)},
+    {"interactive", 'W', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(rm_selection, prompt)},
+    {"one-file-system", 'o', ARGUMENT_LONG_ONLY},
+    {"no-preserve-root", 'N', ARGUMENT_LONG_ONLY},
+    {"preserve-root", 'P', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"recursive", 'R'},
+    {"verbose", 'v'},
+    {"iI", 0, 0, ARGUMENT_SELECT(rm_selection, collision) | ARGUMENT_SELECT(rm_selection, prompt)},
+    {"r", 0},
+    {null},
 };
 
 /*
@@ -21412,17 +21107,12 @@ static b32 file_rm()
 {
         positive count = (positive)program_argument_count();
         rm_status = 0;
-        rm_collision_option = 0;
-
-        rm_prompt_option = 0;
+        rm_selected = (rm_selection){};
 
         file_taking taking = {
             .program = (string_address) "rm",
-            .allowed = (string_address) "dfiIrRv",
-            .valued = (string_address) "",
-            .long_optional = (string_address) "WP",
-            .longs = rm_longs,
-            .supersedes = rm_supersedes,
+            .options = rm_options,
+            .selection = (p8 address_to)address_of rm_selected,
         };
 
         if (!file_take(address_of taking))
@@ -21453,7 +21143,7 @@ static b32 file_rm()
 
         //      --interactive=WHEN names one of the three policies; a bare
         //      --interactive is the one -i asks for.
-        p8 prompting = rm_prompt_option;
+        p8 prompting = rm_selected.prompt;
 
         if (prompting == 'W')
         {
@@ -21475,7 +21165,7 @@ static b32 file_rm()
                 }
         }
 
-        rm_force = rm_collision_option == 'f';
+        rm_force = rm_selected.collision == 'f';
         rm_ask = prompting == 'i';
         rm_ask_once = prompting == 'I';
         rm_loud = (flags & FILE_FLAG('v')) != 0;
@@ -21695,13 +21385,15 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
         return true;
 }
 
-static const file_long touch_longs[] = {
-    {(string_address) "date", 'd'},
-    {(string_address) "no-create", 'c'},
-    {(string_address) "no-dereference", 'h'},
-    {(string_address) "reference", 'r'},
-    {(string_address) "time", 'T'},
-    {null, 0},
+static const argument_option touch_options[] = {
+    {"date", 'd', ARGUMENT_REQUIRED},
+    {"no-create", 'c'},
+    {"no-dereference", 'h'},
+    {"reference", 'r', ARGUMENT_REQUIRED},
+    {"time", 'T', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"afm", 0},
+    {"t", 0, ARGUMENT_REQUIRED},
+    {null},
 };
 
 /*
@@ -21760,9 +21452,7 @@ static b32 file_touch()
 
         file_taking taking = {
             .program = (string_address) "touch",
-            .allowed = (string_address) "acdfhmrt",
-            .valued = (string_address) "drtT",
-            .longs = touch_longs,
+            .options = touch_options,
             .seen = touch_option_seen,
         };
 
@@ -22129,10 +21819,10 @@ static b32 file_stty()
 }
 
 // tty --------------------------------------------------------------
-static const file_long tty_longs[] = {
-    {(string_address) "quiet", 's'},
-    {(string_address) "silent", 's'},
-    {null, 0},
+static const argument_option tty_options[] = {
+    {"quiet", 's'},
+    {"silent", 's'},
+    {null},
 };
 
 static b32 file_tty()
@@ -22140,9 +21830,7 @@ static b32 file_tty()
         file_simple_operand_count = 0;
         file_taking taking = {
             .program = (string_address) "tty",
-            .allowed = (string_address) "s",
-            .valued = (string_address) "",
-            .longs = tty_longs,
+            .options = tty_options,
             .operand = file_simple_operand,
         };
 
@@ -22545,20 +22233,18 @@ static positive seq_format_literal_into(p8 address_to into,
         return used;
 }
 
-static const file_long seq_longs[] = {
-    {(string_address) "equal-width", 'w'},
-    {(string_address) "format", 'f'},
-    {(string_address) "separator", 's'},
-    {null, 0},
+static const argument_option seq_options[] = {
+    {"equal-width", 'w'},
+    {"format", 'f', ARGUMENT_REQUIRED},
+    {"separator", 's', ARGUMENT_REQUIRED},
+    {null},
 };
 
 static b32 file_seq()
 {
         file_taking taking = {
             .program = (string_address) "seq",
-            .allowed = (string_address) "fsw",
-            .valued = (string_address) "fs",
-            .longs = seq_longs,
+            .options = seq_options,
             .numbers = true,
         };
 
@@ -22789,9 +22475,7 @@ static b32 file_yes()
         // and printing -x for ever is not what was meant by it.
         file_taking taking = {
             .program = (string_address) "yes",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
-            .longs = null,
+            .options = null,
         };
 
         if (!file_take(address_of taking))
@@ -22890,19 +22574,19 @@ static b32 file_yes()
         command inherits. -v and --list-signal-handling are ignored in
         silence, since all they ever wrote was the error stream itself.
 */
-static const file_long env_longs[] = {
-    {(string_address) "argv0", 'a'},
-    {(string_address) "ignore-environment", 'i'},
-    {(string_address) "null", '0'},
-    {(string_address) "unset", 'u'},
-    {(string_address) "chdir", 'C'},
-    {(string_address) "split-string", 'S'},
-    {(string_address) "block-signal", 'b'},
-    {(string_address) "default-signal", 'd'},
-    {(string_address) "ignore-signal", 'g'},
-    {(string_address) "list-signal-handling", 'l'},
-    {(string_address) "debug", 'v'},
-    {null, 0},
+static const argument_option env_options[] = {
+    {"argv0", 'a', ARGUMENT_REQUIRED},
+    {"ignore-environment", 'i'},
+    {"null", '0'},
+    {"unset", 'u', ARGUMENT_REQUIRED},
+    {"chdir", 'C', ARGUMENT_REQUIRED},
+    {"split-string", 'S', ARGUMENT_REQUIRED},
+    {"block-signal", 'b', ARGUMENT_LONG_ONLY},
+    {"default-signal", 'd', ARGUMENT_LONG_ONLY},
+    {"ignore-signal", 'g', ARGUMENT_LONG_ONLY},
+    {"list-signal-handling", 'l', ARGUMENT_LONG_ONLY},
+    {"debug", 'v'},
+    {null},
 };
 
 static string_address address_to env_list;
@@ -23033,9 +22717,7 @@ static b32 file_env()
 
         file_taking taking = {
             .program = (string_address) "env",
-            .allowed = (string_address) "ai0uCSv",
-            .valued = (string_address) "auCS",
-            .longs = env_longs,
+            .options = env_options,
             .seen = env_seen,
         };
 
@@ -23158,18 +22840,16 @@ static b32 file_env()
 }
 
 // printenv -------------------------------------------------------
-static const file_long printenv_longs[] = {
-    {(string_address) "null", '0'},
-    {null, 0},
+static const argument_option printenv_options[] = {
+    {"null", '0'},
+    {null},
 };
 
 static b32 file_printenv()
 {
         file_taking taking = {
             .program = (string_address) "printenv",
-            .allowed = (string_address) "0",
-            .valued = (string_address) "",
-            .longs = printenv_longs,
+            .options = printenv_options,
         };
 
         // GNU reserves 2 for syntax and 1 for a name that is not present.
@@ -23223,15 +22903,16 @@ static b32 file_printenv()
         kernel can only be asked about this process, and this process is not
         the user being asked about.
 */
-static const file_long id_longs[] = {
-    {(string_address) "context", 'Z'},
-    {(string_address) "group", 'g'},
-    {(string_address) "groups", 'G'},
-    {(string_address) "name", 'n'},
-    {(string_address) "real", 'r'},
-    {(string_address) "user", 'u'},
-    {(string_address) "zero", 'z'},
-    {null, 0},
+static const argument_option id_options[] = {
+    {"context", 'Z'},
+    {"group", 'g'},
+    {"groups", 'G'},
+    {"name", 'n'},
+    {"real", 'r'},
+    {"user", 'u'},
+    {"zero", 'z'},
+    {"a", 0},
+    {null},
 };
 
 static fn id_named(positive value, bool group)
@@ -23432,9 +23113,7 @@ static b32 file_id()
 {
         file_taking taking = {
             .program = (string_address) "id",
-            .allowed = (string_address) "aguGnrzZ",
-            .valued = (string_address) "",
-            .longs = id_longs,
+            .options = id_options,
         };
 
         if (!file_take(address_of taking))
@@ -23584,8 +23263,9 @@ static b32 file_groups()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "groups",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
+            .options = (const argument_option[]){
+    {null},
+        },
             .operand = file_operand,
         };
 
@@ -23646,8 +23326,9 @@ static b32 file_whoami()
         file_simple_operand_count = 0;
         file_taking taking = {
             .program = (string_address) "whoami",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
+            .options = (const argument_option[]){
+    {null},
+        },
             .operand = file_simple_operand,
         };
 
@@ -23677,20 +23358,18 @@ static b32 file_whoami()
         large /etc/nologin.txt neither allocates nor gets truncated.  util-linux
         accepts -c for su compatibility but deliberately does not execute it.
 */
-static const file_long nologin_longs[] = {
-    {(string_address)"command", 'c'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option nologin_options[] = {
+    {"command", 'c', ARGUMENT_REQUIRED},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static b32 file_nologin()
 {
         file_taking taking = {
             .program = (string_address)"nologin",
-            .allowed = (string_address)"chV",
-            .valued = (string_address)"c",
-            .longs = nologin_longs,
+            .options = nologin_options,
         };
 
         if (!file_take(address_of taking))
@@ -23815,8 +23494,9 @@ static b32 file_logname()
         file_simple_operand_count = 0;
         file_taking taking = {
             .program = (string_address) "logname",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
+            .options = (const argument_option[]){
+    {null},
+        },
             .operand = file_simple_operand,
         };
 
@@ -23875,9 +23555,10 @@ static b32 file_hostname()
         // knows, and the full name -f asks for is a question for a resolver.
         file_taking taking = {
             .program = (string_address) "hostname",
-            .allowed = (string_address) "s",
-            .valued = (string_address) "",
-        };
+            .options = (const argument_option[]){
+    {"s", 0},
+    {null},
+        }};
 
         if (!file_take(address_of taking))
                 return 1;
@@ -23912,17 +23593,17 @@ static b32 file_hostname()
         processor type is not a field the kernel keeps either, and the machine
         name is a different question wearing its coat.
 */
-static const file_long uname_longs[] = {
-    {(string_address) "all", 'a'},
-    {(string_address) "kernel-name", 's'},
-    {(string_address) "nodename", 'n'},
-    {(string_address) "kernel-release", 'r'},
-    {(string_address) "kernel-version", 'v'},
-    {(string_address) "machine", 'm'},
-    {(string_address) "processor", 'p'},
-    {(string_address) "hardware-platform", 'i'},
-    {(string_address) "operating-system", 'o'},
-    {null, 0},
+static const argument_option uname_options[] = {
+    {"all", 'a'},
+    {"kernel-name", 's'},
+    {"nodename", 'n'},
+    {"kernel-release", 'r'},
+    {"kernel-version", 'v'},
+    {"machine", 'm'},
+    {"processor", 'p'},
+    {"hardware-platform", 'i'},
+    {"operating-system", 'o'},
+    {null},
 };
 
 static b32 file_uname()
@@ -23930,9 +23611,7 @@ static b32 file_uname()
         file_machine facts;
         file_taking taking = {
             .program = (string_address) "uname",
-            .allowed = (string_address) "asnrvmpio",
-            .valued = (string_address) "",
-            .longs = uname_longs,
+            .options = uname_options,
         };
 
         if (!file_take(address_of taking))
@@ -24307,10 +23986,10 @@ static positive nproc_omp(string_address name)
         return value;
 }
 
-static const file_long nproc_longs[] = {
-    {(string_address) "all", 'a'},
-    {(string_address) "ignore", 'i'},
-    {null, 0},
+static const argument_option nproc_options[] = {
+    {"all", 'a', ARGUMENT_LONG_ONLY},
+    {"ignore", 'i', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 //      --ignore's number is read where the option is written, so a line
@@ -24376,9 +24055,7 @@ static b32 file_nproc()
 
         file_taking taking = {
             .program = (string_address) "nproc",
-            .allowed = (string_address) "",
-            .valued = (string_address) "i",
-            .longs = nproc_longs,
+            .options = nproc_options,
             .operand = file_simple_operand,
             .seen = nproc_option_seen,
         };
@@ -24467,24 +24144,21 @@ static fn mktemp_letters_into(p8 address_to at, positive count)
 
 // --tmpdir is the one option here spelled without a letter, and T is a letter
 // mktemp has not got: it is left out of `allowed` so -T is still a mistake.
-static const file_long mktemp_longs[] = {
-    {(string_address) "directory", 'd'},
-    {(string_address) "dry-run", 'u'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "suffix", 'S'},
-    {(string_address) "tmpdir", 'T'},
-    {null, 0},
+static const argument_option mktemp_options[] = {
+    {"directory", 'd'},
+    {"dry-run", 'u'},
+    {"quiet", 'q'},
+    {"suffix", 'S', ARGUMENT_REQUIRED},
+    {"tmpdir", 'T', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY, 1},
+    {"p", 0, ARGUMENT_REQUIRED, 1},
+    {"t", 0},
+    {null},
 };
 
 //      -p and --tmpdir answer the same question, so the last one written is
 //      the one that answers it; a bare --tmpdir is that answer too, and
 //      means the environment's directory rather than a named one.
 static p8 mktemp_where_option;
-
-static const file_supersede mktemp_supersedes[] = {
-    {(string_address) "pT", address_of mktemp_where_option},
-    {null, null},
-};
 
 static b32 file_mktemp()
 {
@@ -24493,12 +24167,9 @@ static b32 file_mktemp()
 
         file_taking taking = {
             .program = (string_address) "mktemp",
-            .allowed = (string_address) "Sdpqtu",
-            .valued = (string_address) "Sp",
-            .optional = (string_address) "T",
-            .longs = mktemp_longs,
+            .options = mktemp_options,
             .operand = mktemp_operand,
-            .supersedes = mktemp_supersedes,
+            .selection = address_of mktemp_where_option,
         };
 
         mktemp_where_option = 0;
@@ -25514,17 +25185,17 @@ static b32 file_kill()
 
 // rename ----------------------------------------------------------
 
-static const file_long rename_longs[] = {
-    {(string_address)"verbose", 'v'},
-    {(string_address)"symlink", 's'},
-    {(string_address)"no-act", 'n'},
-    {(string_address)"all", 'a'},
-    {(string_address)"last", 'l'},
-    {(string_address)"no-overwrite", 'o'},
-    {(string_address)"interactive", 'i'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option rename_options[] = {
+    {"verbose", 'v'},
+    {"symlink", 's'},
+    {"no-act", 'n'},
+    {"all", 'a'},
+    {"last", 'l'},
+    {"no-overwrite", 'o'},
+    {"interactive", 'i'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 /* Return zero for no occurrence, one for a complete new name and two when
@@ -25748,9 +25419,7 @@ static b32 file_rename()
 
         file_taking taking = {
             .program = (string_address)"rename",
-            .allowed = (string_address)"vsnaloihV",
-            .valued = (string_address)"",
-            .longs = rename_longs,
+            .options = rename_options,
             .operand = file_operand,
             .seen = rename_option_seen,
         };
@@ -25972,25 +25641,25 @@ typedef struct
         p8 row[CAL_ROWS][CAL_JULIAN_WIDTH];
 } cal_month_block;
 
-static const file_long cal_longs[] = {
-    {(string_address)"one", '1'},
-    {(string_address)"three", '3'},
-    {(string_address)"months", 'n'},
-    {(string_address)"span", 'S'},
-    {(string_address)"sunday", 's'},
-    {(string_address)"monday", 'm'},
-    {(string_address)"julian", 'j'},
-    {(string_address)"reform", 'R'},
-    {(string_address)"iso", 'I'},
-    {(string_address)"year", 'y'},
-    {(string_address)"twelve", 'Y'},
-    {(string_address)"week", 'w'},
-    {(string_address)"vertical", 'v'},
-    {(string_address)"columns", 'c'},
-    {(string_address)"color", 'C'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option cal_options[] = {
+    {"one", '1'},
+    {"three", '3'},
+    {"months", 'n', ARGUMENT_REQUIRED},
+    {"span", 'S'},
+    {"sunday", 's', 0, 1},
+    {"monday", 'm', 0, 1},
+    {"julian", 'j'},
+    {"reform", 'R', ARGUMENT_REQUIRED},
+    {"iso", 'I'},
+    {"year", 'y'},
+    {"twelve", 'Y'},
+    {"week", 'w', ARGUMENT_LONG_OPTIONAL},
+    {"vertical", 'v'},
+    {"columns", 'c', ARGUMENT_REQUIRED},
+    {"color", 'C', ARGUMENT_LONG_OPTIONAL},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bipolar cal_month_number(string_address text)
@@ -26199,18 +25868,12 @@ static b32 file_cal()
 {
         file_operands_begin();
         p8 week_start = 0;
-        const file_supersede supersedes[] = {
-            {(string_address)"sm", address_of week_start},
-            {null, null},
-        };
+
         file_taking taking = {
             .program = (string_address)"cal",
-            .allowed = (string_address)"13nSsmjRIyYwvcChV",
-            .valued = (string_address)"nRc",
-            .long_optional = (string_address)"wC",
-            .longs = cal_longs,
+            .options = cal_options,
             .operand = file_operand,
-            .supersedes = supersedes,
+            .selection = address_of week_start,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -26447,15 +26110,15 @@ static bool date_shape(writer write, b64 when, string_address format)
         return false;
 }
 
-static const file_long date_longs[] = {
-    {(string_address) "date", 'd'},
-    {(string_address) "reference", 'r'},
-    {(string_address) "utc", 'u'},
-    {(string_address) "universal", 'u'},
-    {(string_address) "rfc-2822", 'R'},
-    {(string_address) "rfc-email", 'R'},
-    {(string_address) "iso-8601", 'I'},
-    {null, 0},
+static const argument_option date_options[] = {
+    {"date", 'd', ARGUMENT_REQUIRED},
+    {"reference", 'r', ARGUMENT_REQUIRED},
+    {"utc", 'u'},
+    {"universal", 'u'},
+    {"rfc-2822", 'R'},
+    {"rfc-email", 'R'},
+    {"iso-8601", 'I', ARGUMENT_OPTIONAL},
+    {null},
 };
 
 static b32 file_date()
@@ -26463,10 +26126,7 @@ static b32 file_date()
         positive count = (positive)program_argument_count();
         file_taking taking = {
             .program = (string_address) "date",
-            .allowed = (string_address) "IRdru",
-            .valued = (string_address) "dr",
-            .optional = (string_address) "I",
-            .longs = date_longs,
+            .options = date_options,
         };
 
         if (!file_take(address_of taking))
@@ -27137,22 +26797,24 @@ static bool xargs_delimiter_read(string_address text, p8 address_to into)
                       text);
 }
 
-static const file_long xargs_longs[] = {
-    {(string_address) "arg-file", 'a'},
-    {(string_address) "delimiter", 'd'},
-    {(string_address) "eof", 'E'},
-    {(string_address) "exit", 'x'},
-    {(string_address) "interactive", 'p'},
-    {(string_address) "max-args", 'n'},
-    {(string_address) "max-chars", 's'},
-    {(string_address) "max-lines", 'l'},
-    {(string_address) "max-procs", 'P'},
-    {(string_address) "no-run-if-empty", 'r'},
-    {(string_address) "null", '0'},
-    {(string_address) "process-slot-var", 'V'},
-    {(string_address) "replace", 'I'},
-    {(string_address) "verbose", 't'},
-    {null, 0},
+static const argument_option xargs_options[] = {
+    {"arg-file", 'a', ARGUMENT_REQUIRED},
+    {"delimiter", 'd', ARGUMENT_REQUIRED},
+    {"eof", 'E', ARGUMENT_REQUIRED},
+    {"exit", 'x'},
+    {"interactive", 'p'},
+    {"max-args", 'n', ARGUMENT_REQUIRED},
+    {"max-chars", 's', ARGUMENT_REQUIRED},
+    {"max-lines", 'l', ARGUMENT_OPTIONAL},
+    {"max-procs", 'P', ARGUMENT_REQUIRED},
+    {"no-run-if-empty", 'r'},
+    {"null", '0'},
+    {"process-slot-var", 'V', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"replace", 'I', ARGUMENT_REQUIRED},
+    {"verbose", 't'},
+    {"L", 0, ARGUMENT_REQUIRED},
+    {"i", 0, ARGUMENT_OPTIONAL},
+    {null},
 };
 
 static b32 file_xargs()
@@ -27183,10 +26845,7 @@ static b32 file_xargs()
 
         file_taking taking = {
             .program = (string_address) "xargs",
-            .allowed = (string_address) "0aEdILilnPprstx",
-            .valued = (string_address) "aEdILnPsV",
-            .optional = (string_address) "il",
-            .longs = xargs_longs,
+            .options = xargs_options,
         };
 
         if (!file_take(address_of taking))

@@ -857,16 +857,15 @@ static string_address text_digits_misplaced(file_taking address_to taking)
                                         name++;
 
                                 if (!before[name] &&
-                                    file_option_among(taking->valued,
-                                                      file_long_letter(taking, before + 2,
-                                                                       name - 2)))
+                                    (argument_option_mode(taking->options,
+                                        file_long_letter(taking, before + 2, name - 2)) & ARGUMENT_REQUIRED))
                                         continue;
                         }
                         else if (!byte_is_digit(before[1]))
                         {
                                 positive last = string_length(before) - 1;
 
-                                if (file_option_among(taking->valued, before[last]))
+                                if ((argument_option_mode(taking->options, before[last]) & ARGUMENT_REQUIRED))
                                         continue;
                         }
                 }
@@ -1471,26 +1470,26 @@ static b32 z85_decode(bool ignore_garbage)
         return text_done((!valid || text_status) ? 1 : 0);
 }
 
-static const file_long encoding_plain_longs[] = {
-    {(string_address)"decode", 'd'},
-    {(string_address)"ignore-garbage", 'i'},
-    {(string_address)"wrap", 'w'},
-    {null, 0},
+static const argument_option encoding_plain_options[] = {
+    {"decode", 'd'},
+    {"ignore-garbage", 'i'},
+    {"wrap", 'w', ARGUMENT_REQUIRED},
+    {null},
 };
 
-static const file_long basenc_longs[] = {
-    {(string_address)"decode", 'd'},
-    {(string_address)"ignore-garbage", 'i'},
-    {(string_address)"wrap", 'w'},
-    {(string_address)"base64", '6'},
-    {(string_address)"base64url", 'u'},
-    {(string_address)"base32", '3'},
-    {(string_address)"base32hex", 'x'},
-    {(string_address)"base16", 'h'},
-    {(string_address)"base2msbf", 'm'},
-    {(string_address)"base2lsbf", 'l'},
-    {(string_address)"z85", 'z'},
-    {null, 0},
+static const argument_option basenc_options[] = {
+    {"decode", 'd'},
+    {"ignore-garbage", 'i'},
+    {"wrap", 'w', ARGUMENT_REQUIRED},
+    {"base64", '6', ARGUMENT_LONG_ONLY},
+    {"base64url", 'u', ARGUMENT_LONG_ONLY},
+    {"base32", '3', ARGUMENT_LONG_ONLY},
+    {"base32hex", 'x', ARGUMENT_LONG_ONLY},
+    {"base16", 'h', ARGUMENT_LONG_ONLY},
+    {"base2msbf", 'm', ARGUMENT_LONG_ONLY},
+    {"base2lsbf", 'l', ARGUMENT_LONG_ONLY},
+    {"z85", 'z', ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 // Every -w is checked where it is written, and a wrap past the address space
@@ -1517,10 +1516,8 @@ static b32 text_encoding(string_address name, positive format)
 {
         file_taking taking = {
             .program = name,
-            .allowed = (string_address)"diw",
-            .valued = (string_address)"w",
-            .longs = format == ENCODING_NONE ? basenc_longs
-                                             : encoding_plain_longs,
+            .options = format == ENCODING_NONE ? basenc_options
+                                             : encoding_plain_options,
             .seen = encoding_option_seen,
         };
 
@@ -1768,13 +1765,14 @@ static p8 text_record_hold[TEXT_LINE_MAX + 1];
 
 /* comm ---------------------------------------------------- */
 
-static const file_long comm_longs[] = {
-    {(string_address)"check-order", 'C'},
-    {(string_address)"nocheck-order", 'N'},
-    {(string_address)"output-delimiter", 'O'},
-    {(string_address)"total", 'T'},
-    {(string_address)"zero-terminated", 'z'},
-    {null, 0},
+static const argument_option comm_options[] = {
+    {"check-order", 'C', ARGUMENT_LONG_ONLY, 1},
+    {"nocheck-order", 'N', ARGUMENT_LONG_ONLY, 1},
+    {"output-delimiter", 'O', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"total", 'T', ARGUMENT_LONG_ONLY},
+    {"zero-terminated", 'z'},
+    {"123", 0},
+    {null},
 };
 
 enum
@@ -1783,20 +1781,6 @@ enum
         RELATION_ORDER_FORCE,
         RELATION_ORDER_NONE,
 };
-
-static positive comm_order_mode;
-
-static bool comm_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'C')
-                comm_order_mode = RELATION_ORDER_FORCE;
-        else if (letter == 'N')
-                comm_order_mode = RELATION_ORDER_NONE;
-
-        return true;
-}
 
 static fn comm_separator(string_address delimiter)
 {
@@ -1840,18 +1824,16 @@ static bool comm_advance(text_record_cursor address_to cursor,
 
 static b32 text_comm()
 {
+        p8 comm_order_mode = 0;
         file_taking taking = {
             .program = (string_address)"comm",
-            .allowed = (string_address)"123z",
-            .valued = (string_address)"O",
-            .longs = comm_longs,
+            .options = comm_options,
+            .selection = &comm_order_mode,
             .operand = text_file_add,
-            .seen = comm_option_seen,
         };
 
         text_begin("comm");
         text_delimiter = '\n';
-        comm_order_mode = RELATION_ORDER_DEFAULT;
 
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
@@ -1931,17 +1913,17 @@ static b32 text_comm()
                 if (which != 1)
                         have_left = comm_advance(
                             sides, text_delimiter,
-                            comm_order_mode != RELATION_ORDER_NONE,
+                            comm_order_mode != 'N',
                             address_of disorder);
-                if (disorder && comm_order_mode == RELATION_ORDER_FORCE)
+                if (disorder && comm_order_mode == 'C')
                         break;
                 if (which != 0)
                         have_right = comm_advance(
                             sides + 1, text_delimiter,
-                            comm_order_mode != RELATION_ORDER_NONE,
+                            comm_order_mode != 'N',
                             address_of disorder);
 
-                if (disorder && comm_order_mode == RELATION_ORDER_FORCE)
+                if (disorder && comm_order_mode == 'C')
                         break;
 
                 if (sides[0].reader.failed || sides[1].reader.failed)
@@ -1952,12 +1934,12 @@ static b32 text_comm()
         // so does disorder when the order was to be checked: the total that
         // would have followed is not written either.
         bool stopped = sides[0].reader.failed || sides[1].reader.failed ||
-                       (disorder && comm_order_mode == RELATION_ORDER_FORCE);
+                       (disorder && comm_order_mode == 'C');
         bool remaining[] = {have_left && !stopped, have_right && !stopped};
         for (positive side = 0; side < array_count(remaining); side++)
         {
                 while (remaining[side] &&
-                       !(disorder && comm_order_mode == RELATION_ORDER_FORCE) &&
+                       !(disorder && comm_order_mode == 'C') &&
                        !sides[0].reader.failed && !sides[1].reader.failed)
                 {
                         unpaired = true;
@@ -1968,17 +1950,17 @@ static b32 text_comm()
                                             text_delimiter);
                         remaining[side] = comm_advance(
                             sides + side, text_delimiter,
-                            comm_order_mode != RELATION_ORDER_NONE,
+                            comm_order_mode != 'N',
                             address_of disorder);
                 }
         }
 
         bool failed = sides[0].reader.failed || sides[1].reader.failed;
         bool order_failed = disorder &&
-            (comm_order_mode == RELATION_ORDER_FORCE || unpaired);
+            (comm_order_mode == 'C' || unpaired);
 
         if ((taking.flags & FILE_FLAG('T')) && !failed &&
-            !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
+            !(disorder && comm_order_mode == 'C'))
         {
                 for (positive side = 0; side < array_count(totals); side++)
                 {
@@ -1999,11 +1981,11 @@ static b32 text_comm()
 
 /* paste --------------------------------------------------- */
 
-static const file_long paste_longs[] = {
-    {(string_address)"delimiters", 'd'},
-    {(string_address)"serial", 's'},
-    {(string_address)"zero-terminated", 'z'},
-    {null, 0},
+static const argument_option paste_options[] = {
+    {"delimiters", 'd', ARGUMENT_REQUIRED},
+    {"serial", 's'},
+    {"zero-terminated", 'z'},
+    {null},
 };
 
 /* 256 is the empty delimiter.  A NUL delimiter is still the byte zero. */
@@ -2073,9 +2055,7 @@ static b32 text_paste()
 {
         file_taking taking = {
             .program = (string_address)"paste",
-            .allowed = (string_address)"dsz",
-            .valued = (string_address)"d",
-            .longs = paste_longs,
+            .options = paste_options,
             .operand = text_file_add,
         };
 
@@ -2436,13 +2416,14 @@ static bool join_option_seen(p8 letter, string_address value)
         return true;
 }
 
-static const file_long join_longs[] = {
-    {(string_address)"ignore-case", 'i'},
-    {(string_address)"check-order", 'C'},
-    {(string_address)"nocheck-order", 'N'},
-    {(string_address)"header", 'H'},
-    {(string_address)"zero-terminated", 'z'},
-    {null, 0},
+static const argument_option join_options[] = {
+    {"ignore-case", 'i'},
+    {"check-order", 'C', ARGUMENT_LONG_ONLY},
+    {"nocheck-order", 'N', ARGUMENT_LONG_ONLY},
+    {"header", 'H', ARGUMENT_LONG_ONLY},
+    {"zero-terminated", 'z'},
+    {"12aejotv", 0, ARGUMENT_REQUIRED},
+    {null},
 };
 
 static fn join_fields_begin(join_fields address_to fields,
@@ -2798,9 +2779,7 @@ static b32 text_join()
 {
         file_taking taking = {
             .program = (string_address)"join",
-            .allowed = (string_address)"12aeijotvz",
-            .valued = (string_address)"12aejotv",
-            .longs = join_longs,
+            .options = join_options,
             .operand = text_file_add,
             .seen = join_option_seen,
         };
@@ -3416,15 +3395,16 @@ static fn cat_walked()
         }
 }
 
-static const file_long cat_longs[] = {
-    {(string_address) "show-all", 'A'},
-    {(string_address) "number-nonblank", 'b'},
-    {(string_address) "show-ends", 'E'},
-    {(string_address) "number", 'n'},
-    {(string_address) "squeeze-blank", 's'},
-    {(string_address) "show-tabs", 'T'},
-    {(string_address) "show-nonprinting", 'v'},
-    {null, 0},
+static const argument_option cat_options[] = {
+    {"show-all", 'A'},
+    {"number-nonblank", 'b'},
+    {"show-ends", 'E'},
+    {"number", 'n'},
+    {"squeeze-blank", 's'},
+    {"show-tabs", 'T'},
+    {"show-nonprinting", 'v'},
+    {"etu", 0},
+    {null},
 };
 
 static b32 text_cat()
@@ -3432,9 +3412,7 @@ static b32 text_cat()
         file_taking taking = {
             .program = (string_address) "cat",
             // -u asks for unbuffered, which this always is.
-            .allowed = (string_address) "AETbenstuv",
-            .valued = (string_address) "",
-            .longs = cat_longs,
+            .options = cat_options,
         };
 
         text_begin("cat");
@@ -3494,19 +3472,16 @@ static b32 text_cat()
         return text_done(text_status);
 }
 
-static const file_long wc_longs[] = {
-    {(string_address) "lines", 'l'},
-    {(string_address) "words", 'w'},
-    {(string_address) "bytes", 'c'},
-    {(string_address) "chars", 'm'},
-    {(string_address) "max-line-length", 'L'},
-    {(string_address) "total", 'T'},
-    {(string_address) "files0-from", 'Z'},
-    // --debug names the counting strategy on the error stream and leaves
-    // the counts alone, and there is one strategy here to name. It borrows a
-    // D that `allowed` refuses, so wc -D stays the error GNU makes of it.
-    {(string_address) "debug", 'D'},
-    {null, 0},
+static const argument_option wc_options[] = {
+    {"lines", 'l'},
+    {"words", 'w'},
+    {"bytes", 'c'},
+    {"chars", 'm'},
+    {"max-line-length", 'L'},
+    {"total", 'T', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"files0-from", 'Z', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"debug", 'D', ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 /*
@@ -3597,9 +3572,7 @@ static b32 text_wc()
 {
         file_taking taking = {
             .program = (string_address) "wc",
-            .allowed = (string_address) "Lclmw",
-            .valued = (string_address) "TZ",
-            .longs = wc_longs,
+            .options = wc_options,
             .operand = text_file_add,
         };
 
@@ -3877,9 +3850,10 @@ static b32 text_wc()
 
 // sum ----------------------------------------------------------------
 
-static const file_long sum_longs[] = {
-    {(string_address) "sysv", 's'},
-    {null, 0},
+static const argument_option sum_options[] = {
+    {"sysv", 's', 0, 1},
+    {"r", 0, 0, 1},
+    {null},
 };
 
 static fn sum_output(p32 checksum, p64 bytes, string_address name,
@@ -3912,17 +3886,12 @@ static fn sum_output(p32 checksum, p64 bytes, string_address name,
 static b32 text_sum()
 {
         p8 sum_option = 0;
-        file_supersede supersedes[] = {
-            {(string_address) "rs", address_of sum_option},
-            {null, null},
-        };
+
         file_taking taking = {
             .program = (string_address) "sum",
-            .allowed = (string_address) "rs",
-            .valued = (string_address) "",
-            .longs = sum_longs,
+            .options = sum_options,
             .operand = text_file_add,
-            .supersedes = supersedes,
+            .selection = address_of sum_option,
         };
 
         text_begin("sum");
@@ -4109,20 +4078,18 @@ static fn tac_regex(p8 address_to data, positive length, bool before)
                 text_put(data, past);
 }
 
-static const file_long tac_longs[] = {
-    {(string_address) "before", 'b'},
-    {(string_address) "regex", 'r'},
-    {(string_address) "separator", 's'},
-    {null, 0},
+static const argument_option tac_options[] = {
+    {"before", 'b'},
+    {"regex", 'r'},
+    {"separator", 's', ARGUMENT_REQUIRED},
+    {null},
 };
 
 static b32 text_tac()
 {
         file_taking taking = {
             .program = (string_address) "tac",
-            .allowed = (string_address) "brs",
-            .valued = (string_address) "s",
-            .longs = tac_longs,
+            .options = tac_options,
             .operand = text_file_add,
         };
         tac_buffer input = {0};
@@ -4174,18 +4141,16 @@ static b32 text_tac()
 }
 
 // util-linux's rev, not coreutils': -0 rather than -z, and no -q or -v.
-static const file_long rev_longs[] = {
-    {(string_address) "zero", '0'},
-    {null, 0},
+static const argument_option rev_options[] = {
+    {"zero", '0'},
+    {null},
 };
 
 static b32 text_rev()
 {
         file_taking taking = {
             .program = (string_address) "rev",
-            .allowed = (string_address) "0",
-            .valued = (string_address) "",
-            .longs = rev_longs,
+            .options = rev_options,
             .operand = text_file_add,
         };
 
@@ -4564,14 +4529,14 @@ static fn text_stream_span(positive start, positive stop)
         text_stream_count(stop > start ? stop - start : 0);
 }
 
-static const file_long head_longs[] = {
-    {(string_address) "bytes", 'c'},
-    {(string_address) "lines", 'n'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "silent", 'q'},
-    {(string_address) "verbose", 'v'},
-    {(string_address) "zero-terminated", 'z'},
-    {null, 0},
+static const argument_option head_options[] = {
+    {"bytes", 'c', ARGUMENT_REQUIRED},
+    {"lines", 'n', ARGUMENT_REQUIRED},
+    {"quiet", 'q'},
+    {"silent", 'q'},
+    {"verbose", 'v'},
+    {"zero-terminated", 'z'},
+    {null},
 };
 
 /*
@@ -4713,20 +4678,21 @@ static bool head_tail_seen(p8 letter, string_address value)
 // and --debug say nothing about the bytes. P and R are letters tail has not
 // got, so the words reach a bit of the flag word and -P stays a mistake.
 
-static const file_long tail_longs[] = {
-    {(string_address) "bytes", 'c'},
-    {(string_address) "lines", 'n'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "silent", 'q'},
-    {(string_address) "verbose", 'v'},
-    {(string_address) "follow", 'F'},
-    {(string_address) "retry", 'R'},
-    {(string_address) "pid", 'P'},
-    {(string_address) "sleep-interval", 's'},
-    {(string_address) "max-unchanged-stats", 'M'},
-    {(string_address) "debug", 'D'},
-    {(string_address) "zero-terminated", 'z'},
-    {null, 0},
+static const argument_option tail_options[] = {
+    {"bytes", 'c', ARGUMENT_REQUIRED},
+    {"lines", 'n', ARGUMENT_REQUIRED},
+    {"quiet", 'q'},
+    {"silent", 'q'},
+    {"verbose", 'v'},
+    {"follow", 'F', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"retry", 'R', ARGUMENT_LONG_ONLY},
+    {"pid", 'P', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"sleep-interval", 's', ARGUMENT_REQUIRED},
+    {"max-unchanged-stats", 'M', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"debug", 'D', ARGUMENT_LONG_ONLY},
+    {"zero-terminated", 'z'},
+    {"f", 0},
+    {null},
 };
 
 /* Shared option/operand lifetime; the constant tool choice leaves each
@@ -4738,10 +4704,7 @@ static inline INLINE b32 text_head_tail(bool tail)
             // -f waits for more to be written, which is a wait this does not
             // do: the file is read to its end and that is where GNU would
             // still be sitting. -s is how long it would have waited.
-            .allowed = tail ? (string_address)"cfnqsvz" : (string_address)"cnqvz",
-            .valued = tail ? (string_address)"PMcns" : (string_address)"cn",
-            .optional = tail ? (string_address)"F" : null,
-            .longs = tail ? tail_longs : head_longs,
+            .options = tail ? tail_options : head_options,
             .operand = text_file_add,
             .seen = head_tail_seen,
             .digits = 'n',
@@ -4925,11 +4888,12 @@ static b32 text_tail() { return text_head_tail(true); }
         bytes, and both are taken and dropped -- but a letter that is not one
         of tee's is refused, because a script that misspelled one is told so.
 */
-static const file_long tee_longs[] = {
-    {(string_address) "append", 'a'},
-    {(string_address) "ignore-interrupts", 'i'},
-    {(string_address) "output-error", 'O'},
-    {null, 0},
+static const argument_option tee_options[] = {
+    {"append", 'a'},
+    {"ignore-interrupts", 'i'},
+    {"output-error", 'O', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"p", 0},
+    {null},
 };
 
 // The four words --output-error takes, and the two that end tee where a
@@ -4986,13 +4950,10 @@ static b32 text_tee()
         positive handle_count = 0;
         file_taking taking = {
             .program = (string_address) "tee",
-            .allowed = (string_address) "aip",
-            .valued = (string_address) "",
+            .options = tee_options,
             // --output-error names a kind of failure to go on through, and
             // the word it carries is taken and dropped like -i and -p are. O
             // is a letter tee has not got, so -p stays a plain flag.
-            .optional = (string_address) "O",
-            .longs = tee_longs,
             .operand = text_file_add,
             .seen = tee_option_seen,
         };
@@ -5100,19 +5061,19 @@ static b32 text_tee()
         comes out in its place is an empty line, measured, not a line of the
         padding an unnumbered line gets.
 */
-static const file_long nl_longs[] = {
-    {(string_address) "body-numbering", 'b'},
-    {(string_address) "section-delimiter", 'd'},
-    {(string_address) "footer-numbering", 'f'},
-    {(string_address) "header-numbering", 'h'},
-    {(string_address) "line-increment", 'i'},
-    {(string_address) "join-blank-lines", 'l'},
-    {(string_address) "number-format", 'n'},
-    {(string_address) "no-renumber", 'p'},
-    {(string_address) "number-separator", 's'},
-    {(string_address) "starting-line-number", 'v'},
-    {(string_address) "number-width", 'w'},
-    {null, 0},
+static const argument_option nl_options[] = {
+    {"body-numbering", 'b', ARGUMENT_REQUIRED},
+    {"section-delimiter", 'd', ARGUMENT_REQUIRED},
+    {"footer-numbering", 'f', ARGUMENT_REQUIRED},
+    {"header-numbering", 'h', ARGUMENT_REQUIRED},
+    {"line-increment", 'i', ARGUMENT_REQUIRED},
+    {"join-blank-lines", 'l', ARGUMENT_REQUIRED},
+    {"number-format", 'n', ARGUMENT_REQUIRED},
+    {"no-renumber", 'p'},
+    {"number-separator", 's', ARGUMENT_REQUIRED},
+    {"starting-line-number", 'v', ARGUMENT_REQUIRED},
+    {"number-width", 'w', ARGUMENT_REQUIRED},
+    {null},
 };
 
 static regex_program nl_patterns[3];
@@ -5247,9 +5208,7 @@ static b32 text_nl()
 {
         file_taking taking = {
             .program = (string_address) "nl",
-            .allowed = (string_address) "bdfhilnpsvw",
-            .valued = (string_address) "bdfhilnsvw",
-            .longs = nl_longs,
+            .options = nl_options,
             .operand = text_file_add,
             .seen = nl_option_seen,
         };
@@ -5456,12 +5415,12 @@ static b32 text_nl()
         return text_done(text_status);
 }
 
-static const file_long fold_longs[] = {
-    {(string_address) "bytes", 'b'},
-    {(string_address) "characters", 'c'},
-    {(string_address) "spaces", 's'},
-    {(string_address) "width", 'w'},
-    {null, 0},
+static const argument_option fold_options[] = {
+    {"bytes", 'b'},
+    {"characters", 'c'},
+    {"spaces", 's'},
+    {"width", 'w', ARGUMENT_REQUIRED},
+    {null},
 };
 
 /*
@@ -6041,17 +6000,17 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
         }
 }
 
-static const file_long expand_longs[] = {
-    {(string_address) "initial", 'i'},
-    {(string_address) "tabs", 't'},
-    {null, 0},
+static const argument_option expand_options[] = {
+    {"initial", 'i'},
+    {"tabs", 't', ARGUMENT_REQUIRED},
+    {null},
 };
 
-static const file_long unexpand_longs[] = {
-    {(string_address) "all", 'a'},
-    {(string_address) "first-only", 'f'},
-    {(string_address) "tabs", 't'},
-    {null, 0},
+static const argument_option unexpand_options[] = {
+    {"all", 'a'},
+    {"first-only", 'f', ARGUMENT_LONG_ONLY},
+    {"tabs", 't', ARGUMENT_REQUIRED},
+    {null},
 };
 
 /* Both names feed the same tab machine; only their option policy differs. */
@@ -6060,9 +6019,7 @@ static inline INLINE b32 text_tabs(bool unexpand)
         file_taking taking = {
             .program = unexpand ? (string_address)"unexpand"
                                 : (string_address)"expand",
-            .allowed = unexpand ? (string_address)"at" : (string_address)"it",
-            .valued = (string_address) "t",
-            .longs = unexpand ? unexpand_longs : expand_longs,
+            .options = unexpand ? unexpand_options : expand_options,
             .operand = text_file_add,
             .digits = 'T',
         };
@@ -6631,24 +6588,22 @@ static fn fmt_file()
         }
 }
 
-static const file_long fmt_longs[] = {
-    {(string_address) "crown-margin", 'c'},
-    {(string_address) "goal", 'g'},
-    {(string_address) "prefix", 'p'},
-    {(string_address) "split-only", 's'},
-    {(string_address) "tagged-paragraph", 't'},
-    {(string_address) "uniform-spacing", 'u'},
-    {(string_address) "width", 'w'},
-    {null, 0},
+static const argument_option fmt_options[] = {
+    {"crown-margin", 'c'},
+    {"goal", 'g', ARGUMENT_REQUIRED},
+    {"prefix", 'p', ARGUMENT_REQUIRED},
+    {"split-only", 's'},
+    {"tagged-paragraph", 't'},
+    {"uniform-spacing", 'u'},
+    {"width", 'w', ARGUMENT_REQUIRED},
+    {null},
 };
 
 static b32 text_fmt()
 {
         file_taking taking = {
             .program = (string_address) "fmt",
-            .allowed = (string_address) "cgpstuw",
-            .valued = (string_address) "gpw",
-            .longs = fmt_longs,
+            .options = fmt_options,
             .operand = text_file_add,
             .digits = 'W',
         };
@@ -7558,43 +7513,40 @@ static fn pr_merge_files()
                 text_record_close(cursors + input);
 }
 
-static const file_long pr_longs[] = {
-    {(string_address)"pages", 'P'},
-    {(string_address)"columns", 'C'},
-    {(string_address)"across", 'a'},
-    {(string_address)"show-control-chars", 'c'},
-    {(string_address)"double-space", 'd'},
-    {(string_address)"date-format", 'D'},
-    {(string_address)"expand-tabs", 'e'},
-    {(string_address)"form-feed", 'F'},
-    {(string_address)"header", 'h'},
-    {(string_address)"output-tabs", 'i'},
-    {(string_address)"join-lines", 'J'},
-    {(string_address)"length", 'l'},
-    {(string_address)"merge", 'm'},
-    {(string_address)"number-lines", 'n'},
-    {(string_address)"first-line-number", 'N'},
-    {(string_address)"indent", 'o'},
-    {(string_address)"no-file-warnings", 'r'},
-    {(string_address)"separator", 's'},
-    {(string_address)"sep-string", 'S'},
-    {(string_address)"omit-header", 't'},
-    {(string_address)"omit-pagination", 'T'},
-    {(string_address)"show-nonprinting", 'v'},
-    {(string_address)"width", 'w'},
-    {(string_address)"page-width", 'W'},
-    {null, 0},
+static const argument_option pr_options[] = {
+    {"pages", 'P', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"columns", 'C', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"across", 'a'},
+    {"show-control-chars", 'c'},
+    {"double-space", 'd'},
+    {"date-format", 'D', ARGUMENT_REQUIRED},
+    {"expand-tabs", 'e', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"form-feed", 'F'},
+    {"header", 'h', ARGUMENT_REQUIRED},
+    {"output-tabs", 'i', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"join-lines", 'J'},
+    {"length", 'l', ARGUMENT_REQUIRED},
+    {"merge", 'm'},
+    {"number-lines", 'n', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"first-line-number", 'N', ARGUMENT_REQUIRED},
+    {"indent", 'o', ARGUMENT_REQUIRED},
+    {"no-file-warnings", 'r'},
+    {"separator", 's', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"sep-string", 'S', ARGUMENT_OPTIONAL | ARGUMENT_STICKY},
+    {"omit-header", 't'},
+    {"omit-pagination", 'T'},
+    {"show-nonprinting", 'v'},
+    {"width", 'w', ARGUMENT_REQUIRED},
+    {"page-width", 'W', ARGUMENT_REQUIRED},
+    {"f", 0},
+    {null},
 };
 
 static b32 text_pr()
 {
         file_taking taking = {
             .program = (string_address)"pr",
-            .allowed = (string_address)"acDdeFfhJilmnNorsStTvwW",
-            .valued = (string_address)"PCDhlNoWw",
-            .optional = (string_address)"einsS",
-            .sticky_optional = (string_address)"einsS",
-            .longs = pr_longs,
+            .options = pr_options,
             .operand = pr_operand_add,
             .seen = pr_option_seen,
             .digits = 'C',
@@ -8534,24 +8486,25 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
         text_put_character('\n');
 }
 
-static const file_long ptx_longs[] = {
-    {(string_address)"auto-reference", 'A'},
-    {(string_address)"traditional", 'G'},
-    {(string_address)"flag-truncation", 'F'},
-    {(string_address)"macro-name", 'M'},
-    {(string_address)"format", 'Q'},
-    {(string_address)"right-side-refs", 'R'},
-    {(string_address)"sentence-regexp", 'S'},
-    {(string_address)"word-regexp", 'W'},
-    {(string_address)"break-file", 'b'},
-    {(string_address)"ignore-case", 'f'},
-    {(string_address)"gap-size", 'g'},
-    {(string_address)"ignore-file", 'i'},
-    {(string_address)"only-file", 'o'},
-    {(string_address)"references", 'r'},
-    {(string_address)"typeset-mode", 't'},
-    {(string_address)"width", 'w'},
-    {null, 0},
+static const argument_option ptx_options[] = {
+    {"auto-reference", 'A'},
+    {"traditional", 'G'},
+    {"flag-truncation", 'F', ARGUMENT_REQUIRED},
+    {"macro-name", 'M', ARGUMENT_REQUIRED},
+    {"format", 'Q', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"right-side-refs", 'R'},
+    {"sentence-regexp", 'S', ARGUMENT_REQUIRED},
+    {"word-regexp", 'W', ARGUMENT_REQUIRED},
+    {"break-file", 'b', ARGUMENT_REQUIRED},
+    {"ignore-case", 'f'},
+    {"gap-size", 'g', ARGUMENT_REQUIRED},
+    {"ignore-file", 'i', ARGUMENT_REQUIRED},
+    {"only-file", 'o', ARGUMENT_REQUIRED},
+    {"references", 'r'},
+    {"typeset-mode", 't'},
+    {"width", 'w', ARGUMENT_REQUIRED},
+    {"OT", 0},
+    {null},
 };
 
 static positive ptx_unescape(p8 address_to text)
@@ -8664,9 +8617,7 @@ static b32 text_ptx()
 {
         file_taking taking = {
             .program = (string_address)"ptx",
-            .allowed = (string_address)"AFGMORSTWbfgiortw",
-            .valued = (string_address)"FMSWbgiowQ",
-            .longs = ptx_longs,
+            .options = ptx_options,
             .operand = text_file_add,
             .seen = ptx_option_seen,
         };
@@ -9760,49 +9711,46 @@ static fn column_table_output(bool noheadings, positive width,
                                   properties, widths, separator);
 }
 
-static const file_long column_longs[] = {
-    {(string_address)"columns", 'c'},
-    {(string_address)"color", 'q'},
-    {(string_address)"fillrows", 'x'},
-    {(string_address)"input-separator", 's'},
-    {(string_address)"json", 'J'},
-    {(string_address)"keep-empty-lines", 'L'},
-    {(string_address)"output-separator", 'o'},
-    {(string_address)"output-width", 'c'},
-    {(string_address)"separator", 's'},
-    {(string_address)"table", 't'},
-    {(string_address)"table-colorscheme", 'Q'},
-    {(string_address)"table-columns", 'N'},
-    {(string_address)"table-column", 'C'},
-    {(string_address)"table-columns-limit", 'l'},
-    {(string_address)"table-hide", 'H'},
-    {(string_address)"table-name", 'n'},
-    {(string_address)"table-maxout", 'm'},
-    {(string_address)"table-noextreme", 'E'},
-    {(string_address)"table-noheadings", 'd'},
-    {(string_address)"table-order", 'O'},
-    {(string_address)"table-right", 'R'},
-    {(string_address)"table-truncate", 'T'},
-    {(string_address)"table-wrap", 'W'},
-    {(string_address)"table-empty-lines", 'L'},
-    {(string_address)"table-header-repeat", 'e'},
-    {(string_address)"table-header-as-columns", 'K'},
-    {(string_address)"tree", 'r'},
-    {(string_address)"tree-id", 'i'},
-    {(string_address)"tree-parent", 'p'},
-    {(string_address)"use-spaces", 'S'},
-    {(string_address)"wrap-separator", 'G'},
-    {null, 0},
+static const argument_option column_options[] = {
+    {"columns", 'c', ARGUMENT_REQUIRED},
+    {"color", 'q', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"fillrows", 'x'},
+    {"input-separator", 's', ARGUMENT_REQUIRED},
+    {"json", 'J'},
+    {"keep-empty-lines", 'L'},
+    {"output-separator", 'o', ARGUMENT_REQUIRED},
+    {"output-width", 'c', ARGUMENT_REQUIRED},
+    {"separator", 's', ARGUMENT_REQUIRED},
+    {"table", 't'},
+    {"table-colorscheme", 'Q', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"table-columns", 'N', ARGUMENT_REQUIRED},
+    {"table-column", 'C', ARGUMENT_REQUIRED},
+    {"table-columns-limit", 'l', ARGUMENT_REQUIRED},
+    {"table-hide", 'H', ARGUMENT_REQUIRED},
+    {"table-name", 'n', ARGUMENT_REQUIRED},
+    {"table-maxout", 'm'},
+    {"table-noextreme", 'E', ARGUMENT_REQUIRED},
+    {"table-noheadings", 'd'},
+    {"table-order", 'O', ARGUMENT_REQUIRED},
+    {"table-right", 'R', ARGUMENT_REQUIRED},
+    {"table-truncate", 'T', ARGUMENT_REQUIRED},
+    {"table-wrap", 'W', ARGUMENT_REQUIRED},
+    {"table-empty-lines", 'L'},
+    {"table-header-repeat", 'e'},
+    {"table-header-as-columns", 'K'},
+    {"tree", 'r', ARGUMENT_REQUIRED},
+    {"tree-id", 'i', ARGUMENT_REQUIRED},
+    {"tree-parent", 'p', ARGUMENT_REQUIRED},
+    {"use-spaces", 'S', ARGUMENT_REQUIRED},
+    {"wrap-separator", 'G', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {null},
 };
 
 static b32 text_column()
 {
         file_taking taking = {
             .program = (string_address)"column",
-            .allowed = (string_address)"CcdEeHiJKlLNnmOopRrSsTtWx",
-            .valued = (string_address)"CcEHilNnOopQRrSsTWG",
-            .long_optional = (string_address)"q",
-            .longs = column_longs,
+            .options = column_options,
             .operand = text_file_add,
         };
 
@@ -11078,14 +11026,14 @@ static fn terminal_col_output(terminal_state address_to state)
                 terminal_half_gap((positive)tail, state->fine);
 }
 
-static const file_long col_longs[] = {
-    {(string_address)"no-backspaces", 'b'},
-    {(string_address)"fine", 'f'},
-    {(string_address)"pass", 'p'},
-    {(string_address)"tabs", 'h'},
-    {(string_address)"spaces", 'x'},
-    {(string_address)"lines", 'l'},
-    {null, 0},
+static const argument_option col_options[] = {
+    {"no-backspaces", 'b'},
+    {"fine", 'f'},
+    {"pass", 'p'},
+    {"tabs", 'h'},
+    {"spaces", 'x'},
+    {"lines", 'l', ARGUMENT_REQUIRED},
+    {null},
 };
 
 // Every -l is checked where it is written, not only the last.
@@ -11105,9 +11053,7 @@ static b32 text_col()
 {
         file_taking taking = {
             .program = (string_address)"col",
-            .allowed = (string_address)"bfhlpx",
-            .valued = (string_address)"l",
-            .longs = col_longs,
+            .options = col_options,
             .seen = col_option_seen,
         };
 
@@ -11181,18 +11127,17 @@ static fn terminal_colcrt_operand(b32 which)
                 text_file_add(which);
 }
 
-static const file_long colcrt_longs[] = {
-    {(string_address)"no-underlining", 'q'},
-    {(string_address)"half-lines", '2'},
-    {null, 0},
+static const argument_option colcrt_options[] = {
+    {"no-underlining", 'q', ARGUMENT_LONG_ONLY},
+    {"half-lines", '2'},
+    {null},
 };
 
 static b32 text_colcrt()
 {
         file_taking taking = {
             .program = (string_address)"colcrt",
-            .allowed = (string_address)"2",
-            .longs = colcrt_longs,
+            .options = colcrt_options,
             .operand = terminal_colcrt_operand,
         };
 
@@ -11265,16 +11210,6 @@ static b32 text_colrm()
         return text_done(text_status);
 }
 
-static string_address terminal_ul_option;
-
-static bool terminal_ul_option_seen(p8 letter, string_address value)
-{
-        if (letter == 't' || letter == 'T')
-                terminal_ul_option = value;
-
-        return true;
-}
-
 static p8 terminal_ul_type(string_address name, bool explicit)
 {
         if (!name)
@@ -11307,29 +11242,27 @@ static p8 terminal_ul_type(string_address name, bool explicit)
         return TERMINAL_UL_DUMB;
 }
 
-static const file_long ul_longs[] = {
-    {(string_address)"indicated", 'i'},
-    {(string_address)"terminal", 't'},
-    {null, 0},
+static const argument_option ul_options[] = {
+    {"indicated", 'i'},
+    {"terminal", 't', ARGUMENT_REQUIRED},
+    {"T", 0, ARGUMENT_REQUIRED},
+    {null},
 };
 
 static b32 text_ul()
 {
         file_taking taking = {
             .program = (string_address)"ul",
-            .allowed = (string_address)"itT",
-            .valued = (string_address)"tT",
-            .longs = ul_longs,
+            .options = ul_options,
             .operand = text_file_add,
-            .seen = terminal_ul_option_seen,
         };
 
         text_begin("ul");
-        terminal_ul_option = null;
 
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
+        string_address terminal_ul_option = file_option_value(&taking, taking.last);
         string_address terminal = terminal_ul_option
                                       ? terminal_ul_option
                                       : file_environment(
@@ -11527,22 +11460,20 @@ static bool look_streamed()
         return found;
 }
 
-static const file_long look_longs[] = {
-    {(string_address)"alternative", 'a'},
-    {(string_address)"binary", 'b'},
-    {(string_address)"alphanum", 'd'},
-    {(string_address)"ignore-case", 'f'},
-    {(string_address)"terminate", 't'},
-    {null, 0},
+static const argument_option look_options[] = {
+    {"alternative", 'a'},
+    {"binary", 'b'},
+    {"alphanum", 'd'},
+    {"ignore-case", 'f'},
+    {"terminate", 't', ARGUMENT_REQUIRED},
+    {null},
 };
 
 static b32 text_look()
 {
         file_taking taking = {
             .program = (string_address)"look",
-            .allowed = (string_address)"abdft",
-            .valued = (string_address)"t",
-            .longs = look_longs,
+            .options = look_options,
         };
 
         text_begin("look");
@@ -11671,8 +11602,9 @@ static b32 text_line_command()
 {
         file_taking taking = {
             .program = (string_address)"line",
-            .allowed = (string_address)"",
-        };
+            .options = (const argument_option[]){
+    {null},
+        }};
 
         text_begin("line");
         text_delimiter = '\n';
@@ -11742,9 +11674,7 @@ static b32 text_fold()
 {
         file_taking taking = {
             .program = (string_address) "fold",
-            .allowed = (string_address) "bcsw",
-            .valued = (string_address) "w",
-            .longs = fold_longs,
+            .options = fold_options,
             .operand = text_file_add,
             .seen = fold_option_seen,
             // fold -5 is fold -w 5, and the digits are the width.
@@ -12064,35 +11994,23 @@ static bool text_list_has(positive which)
         Not here, and deliberately: --zero-terminated, which is the line
         reader's business rather than cut's.
 */
-static const file_long cut_longs[] = {
-    {(string_address) "bytes", 'b'},
-    {(string_address) "characters", 'c'},
-    {(string_address) "delimiter", 'd'},
-    {(string_address) "fields", 'f'},
-    {(string_address) "complement", 'C'},
-    {(string_address) "no-partial", 'n'},
-    {(string_address) "only-delimited", 's'},
-    // -O is not in cut's own help and cut takes it anyway, which is where
-    // this one comes from.
-    {(string_address) "output-delimiter", 'O'},
-    {(string_address) "whitespace-delimited", 'w'},
-    {(string_address) "zero-terminated", 'z'},
-    {null, 0},
+static const argument_option cut_options[] = {
+    {"bytes", 'b', ARGUMENT_REQUIRED},
+    {"characters", 'c', ARGUMENT_REQUIRED},
+    {"delimiter", 'd', ARGUMENT_REQUIRED},
+    {"fields", 'f', ARGUMENT_REQUIRED},
+    {"complement", 'C', ARGUMENT_LONG_ONLY},
+    {"no-partial", 'n'},
+    {"only-delimited", 's'},
+    {"output-delimiter", 'O', ARGUMENT_REQUIRED},
+    {"whitespace-delimited", 'w', ARGUMENT_LONG_OPTIONAL},
+    {"zero-terminated", 'z'},
+    {"F", 0, ARGUMENT_REQUIRED},
+    {null},
 };
 
 // A list given twice is two lists, and GNU refuses two -- which one value per
 // letter cannot say on its own, so the options are counted as they arrive.
-static b32 cut_lists;
-
-static bool cut_list_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'b' || letter == 'c' || letter == 'f' || letter == 'F')
-                cut_lists++;
-
-        return true;
-}
 
 static b32 text_cut()
 {
@@ -12100,17 +12018,12 @@ static b32 text_cut()
             .program = (string_address) "cut",
             // -n says a multibyte character is not to be split by -b, and
             // every character here is one byte.
-            .allowed = (string_address) "FObcdfnswz",
-            .valued = (string_address) "FObcdf",
-            .long_optional = (string_address) "w",
-            .longs = cut_longs,
+            .options = cut_options,
             .operand = text_file_add,
-            .seen = cut_list_seen,
         };
 
         text_begin("cut");
 
-        cut_lists = 0;
         text_list_too_large = false;
 
         if (!file_take(address_of taking))
@@ -12132,7 +12045,8 @@ static b32 text_cut()
         bool have_delimiter = (flags & FILE_FLAG('d')) != 0;
         bool whitespace = (flags & FILE_FLAG('w')) != 0 || (by_blanks && !have_delimiter);
         bool trimmed = false;
-        b32 kinds = cut_lists;
+        positive lists = FILE_FLAG('b') | FILE_FLAG('c') | FILE_FLAG('f') | FILE_FLAG('F');
+        bool multiple_lists = (taking.repeated & lists) || bits_counted(flags & lists) > 1;
         string_address separator = file_option_value(address_of taking, 'O');
         positive separator_length = separator ? string_length(separator) : 0;
 
@@ -12180,7 +12094,7 @@ static b32 text_cut()
         if (flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
 
-        if (have_list && kinds == 1 && !text_list_parse(said))
+        if (have_list && !multiple_lists && !text_list_parse(said))
                 return text_done(string_diagnostic(&text_diagnostic, 1, text_list_too_large ? said : null,
                                                   text_list_too_large
                                                       ? (by_field ? "field number is too large"
@@ -12196,7 +12110,7 @@ static b32 text_cut()
                 in it, and -s for the same reason -- and refusing them is what
                 stops cut -d: -c1 from quietly ignoring the -d.
         */
-        if (kinds > 1)
+        if (multiple_lists)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "only one type of list may be specified"));
 
         if ((flags & FILE_FLAG('w')) && have_delimiter)
@@ -12808,21 +12722,20 @@ static fn text_set_build(string_address spec, p8 address_to into, p8 address_to 
         }
 }
 
-static const file_long tr_longs[] = {
-    {(string_address) "complement", 'c'},
-    {(string_address) "delete", 'd'},
-    {(string_address) "squeeze-repeats", 's'},
-    {(string_address) "truncate-set1", 't'},
-    {null, 0},
+static const argument_option tr_options[] = {
+    {"complement", 'c'},
+    {"delete", 'd'},
+    {"squeeze-repeats", 's'},
+    {"truncate-set1", 't'},
+    {"C", 0},
+    {null},
 };
 
 static b32 text_tr()
 {
         file_taking taking = {
             .program = (string_address) "tr",
-            .allowed = (string_address) "Ccdst",
-            .valued = (string_address) "",
-            .longs = tr_longs,
+            .options = tr_options,
         };
 
         text_begin("tr");
@@ -13128,18 +13041,19 @@ static b32 text_tr()
 // A name that carries a word needs a letter of its own: -D is a plain flag
 // and -Dc is two of them, where --all-repeated=WORD is one option and a word.
 // A and G are letters uniq has not got and that `allowed` goes on refusing.
-static const file_long uniq_longs[] = {
-    {(string_address) "count", 'c'},
-    {(string_address) "repeated", 'd'},
-    {(string_address) "all-repeated", 'A'},
-    {(string_address) "group", 'G'},
-    {(string_address) "skip-fields", 'f'},
-    {(string_address) "ignore-case", 'i'},
-    {(string_address) "skip-chars", 's'},
-    {(string_address) "unique", 'u'},
-    {(string_address) "check-chars", 'w'},
-    {(string_address) "zero-terminated", 'z'},
-    {null, 0},
+static const argument_option uniq_options[] = {
+    {"count", 'c'},
+    {"repeated", 'd'},
+    {"all-repeated", 'A', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"group", 'G', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"skip-fields", 'f', ARGUMENT_REQUIRED},
+    {"ignore-case", 'i'},
+    {"skip-chars", 's', ARGUMENT_REQUIRED},
+    {"unique", 'u'},
+    {"check-chars", 'w', ARGUMENT_REQUIRED},
+    {"zero-terminated", 'z'},
+    {"D", 0},
+    {null},
 };
 
 enum
@@ -13226,10 +13140,7 @@ static b32 text_uniq()
 {
         file_taking taking = {
             .program = (string_address) "uniq",
-            .allowed = (string_address) "Dcdfisuwz",
-            .valued = (string_address) "fsw",
-            .optional = (string_address) "AG",
-            .longs = uniq_longs,
+            .options = uniq_options,
             .operand = text_file_add,
             .seen = uniq_option_seen,
         };
@@ -14369,53 +14280,54 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
         regular expression language. Colour is handled at the output seams,
         after matching, so it never enters byte offsets or regular expressions.
 */
-static const file_long grep_longs[] = {
-    {(string_address) "extended-regexp", 'E'},
-    {(string_address) "fixed-strings", 'F'},
-    {(string_address) "basic-regexp", 'G'},
-    {(string_address) "regexp", 'e'},
-    {(string_address) "file", 'f'},
-    {(string_address) "ignore-case", 'i'},
-    {(string_address) "no-ignore-case", 'M'},
-    {(string_address) "word-regexp", 'w'},
-    {(string_address) "line-regexp", 'x'},
-    {(string_address) "no-messages", 's'},
-    {(string_address) "invert-match", 'v'},
-    {(string_address) "max-count", 'm'},
-    {(string_address) "byte-offset", 'b'},
-    {(string_address) "line-number", 'n'},
-    {(string_address) "line-buffered", 'K'},
-    {(string_address) "with-filename", 'H'},
-    {(string_address) "no-filename", 'h'},
-    {(string_address) "label", 'J'},
-    {(string_address) "only-matching", 'o'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "silent", 'q'},
-    {(string_address) "binary-files", 'N'},
-    {(string_address) "text", 'a'},
-    {(string_address) "binary", 'U'},
-    {(string_address) "files-without-match", 'L'},
-    {(string_address) "files-with-matches", 'l'},
-    {(string_address) "count", 'c'},
-    {(string_address) "initial-tab", 'T'},
-    {(string_address) "null", 'Z'},
-    {(string_address) "null-data", 'z'},
-    {(string_address) "directories", 'd'},
-    {(string_address) "devices", 'D'},
-    {(string_address) "group-separator", 'O'},
-    {(string_address) "no-group-separator", 'P'},
-    {(string_address) "before-context", 'B'},
-    {(string_address) "after-context", 'A'},
-    {(string_address) "context", 'C'},
-    {(string_address) "recursive", 'r'},
-    {(string_address) "dereference-recursive", 'R'},
-    {(string_address) "include", 'Q'},
-    {(string_address) "exclude", 'S'},
-    {(string_address) "exclude-from", 'X'},
-    {(string_address) "exclude-dir", 'V'},
-    {(string_address) "color", 'W'},
-    {(string_address) "colour", 'W'},
-    {null, 0},
+static const argument_option grep_options[] = {
+    {"extended-regexp", 'E'},
+    {"fixed-strings", 'F'},
+    {"basic-regexp", 'G'},
+    {"regexp", 'e', ARGUMENT_REQUIRED},
+    {"file", 'f', ARGUMENT_REQUIRED},
+    {"ignore-case", 'i'},
+    {"no-ignore-case", 'M', ARGUMENT_LONG_ONLY},
+    {"word-regexp", 'w'},
+    {"line-regexp", 'x'},
+    {"no-messages", 's'},
+    {"invert-match", 'v'},
+    {"max-count", 'm', ARGUMENT_REQUIRED},
+    {"byte-offset", 'b'},
+    {"line-number", 'n'},
+    {"line-buffered", 'K', ARGUMENT_LONG_ONLY},
+    {"with-filename", 'H'},
+    {"no-filename", 'h'},
+    {"label", 'J', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"only-matching", 'o'},
+    {"quiet", 'q'},
+    {"silent", 'q'},
+    {"binary-files", 'N', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"text", 'a'},
+    {"binary", 'U'},
+    {"files-without-match", 'L'},
+    {"files-with-matches", 'l'},
+    {"count", 'c'},
+    {"initial-tab", 'T'},
+    {"null", 'Z'},
+    {"null-data", 'z'},
+    {"directories", 'd', ARGUMENT_REQUIRED},
+    {"devices", 'D', ARGUMENT_REQUIRED},
+    {"group-separator", 'O', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"no-group-separator", 'P', ARGUMENT_LONG_ONLY},
+    {"before-context", 'B', ARGUMENT_REQUIRED},
+    {"after-context", 'A', ARGUMENT_REQUIRED},
+    {"context", 'C', ARGUMENT_REQUIRED},
+    {"recursive", 'r'},
+    {"dereference-recursive", 'R'},
+    {"include", 'Q', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"exclude", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"exclude-from", 'X', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"exclude-dir", 'V', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"color", 'W', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"colour", 'W', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"Iy", 0},
+    {null},
 };
 
 /*
@@ -14644,10 +14556,7 @@ static b32 text_grep()
             // -a says read a binary file as text, -I and -U say what to do
             // about the ones that are not, and neither describes anything
             // this does.
-            .allowed = (string_address) "ABCDEFGHILRTUZabcdefhilmnoqrsvwxyz",
-            .valued = (string_address) "ABCDJNOQSVXdefm",
-            .optional = (string_address) "W",
-            .longs = grep_longs,
+            .options = grep_options,
             .operand = grep_operand,
             .seen = grep_option_seen,
             // grep -2 is two lines of context either side.
@@ -16955,21 +16864,22 @@ static bool sed_substitute(sed_command address_to command)
 */
 // P is a letter sed has not got, and is where the two words that take away
 // what is not here to take go.
-static const file_long sed_longs[] = {
-    {(string_address) "quiet", 'n'},
-    {(string_address) "silent", 'n'},
-    {(string_address) "expression", 'e'},
-    {(string_address) "file", 'f'},
-    {(string_address) "in-place", 'i'},
-    {(string_address) "line-length", 'l'},
-    {(string_address) "regexp-extended", 'E'},
-    {(string_address) "separate", 's'},
-    {(string_address) "unbuffered", 'u'},
-    {(string_address) "null-data", 'z'},
-    {(string_address) "posix", 'P'},
-    {(string_address) "sandbox", 'P'},
-    {(string_address) "follow-symlinks", 'F'},
-    {null, 0},
+static const argument_option sed_options[] = {
+    {"quiet", 'n'},
+    {"silent", 'n'},
+    {"expression", 'e', ARGUMENT_REQUIRED},
+    {"file", 'f', ARGUMENT_REQUIRED},
+    {"in-place", 'i', ARGUMENT_OPTIONAL},
+    {"line-length", 'l', ARGUMENT_REQUIRED},
+    {"regexp-extended", 'E'},
+    {"separate", 's'},
+    {"unbuffered", 'u'},
+    {"null-data", 'z'},
+    {"posix", 'P', ARGUMENT_LONG_ONLY},
+    {"sandbox", 'P', ARGUMENT_LONG_ONLY},
+    {"follow-symlinks", 'F', ARGUMENT_LONG_ONLY},
+    {"r", 0},
+    {null},
 };
 
 // The first word that is not an option is the script, and every word after it
@@ -17125,12 +17035,9 @@ static b32 text_sed()
             // -u asks for output a line at a time, which costs something only
             // when somebody is reading it live. -l is how wide the l command
             // wraps, and there is no l command here to wrap.
-            .allowed = (string_address) "Eefilnrsuz",
-            .valued = (string_address) "efl",
+            .options = sed_options,
             // -i takes its suffix joined on -- sed -in is in place with a
             // backup called n, not -i -n.
-            .optional = (string_address) "i",
-            .longs = sed_longs,
             .operand = sed_operand,
             .seen = sed_option_seen,
         };
@@ -18662,32 +18569,33 @@ static bool sort_parse_key(string_address spec)
 */
 // D takes a word and drops it, W is --sort, K is --check carrying one. None
 // of the three is a letter sort has, so -D and -W and -K stay mistakes.
-static const file_long sort_longs[] = {
-    {(string_address) "ignore-leading-blanks", 'b'},
-    {(string_address) "dictionary-order", 'd'},
-    {(string_address) "ignore-case", 'f'},
-    {(string_address) "ignore-nonprinting", 'i'},
-    {(string_address) "human-numeric-sort", 'h'},
-    {(string_address) "month-sort", 'M'},
-    {(string_address) "numeric-sort", 'n'},
-    {(string_address) "reverse", 'r'},
-    {(string_address) "sort", 'W'},
-    {(string_address) "check", 'K'},
-    {(string_address) "version-sort", 'V'},
-    {(string_address) "key", 'k'},
-    {(string_address) "merge", 'm'},
-    {(string_address) "output", 'o'},
-    {(string_address) "stable", 's'},
-    {(string_address) "buffer-size", 'S'},
-    {(string_address) "field-separator", 't'},
-    {(string_address) "temporary-directory", 'T'},
-    {(string_address) "compress-program", 'D'},
-    {(string_address) "batch-size", 'B'},
-    {(string_address) "parallel", 'p'},
-    {(string_address) "files0-from", 'Z'},
-    {(string_address) "unique", 'u'},
-    {(string_address) "zero-terminated", 'z'},
-    {null, 0},
+static const argument_option sort_options[] = {
+    {"ignore-leading-blanks", 'b'},
+    {"dictionary-order", 'd'},
+    {"ignore-case", 'f'},
+    {"ignore-nonprinting", 'i'},
+    {"human-numeric-sort", 'h'},
+    {"month-sort", 'M'},
+    {"numeric-sort", 'n'},
+    {"reverse", 'r'},
+    {"sort", 'W', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"check", 'K', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"version-sort", 'V'},
+    {"key", 'k', ARGUMENT_REQUIRED},
+    {"merge", 'm'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"stable", 's'},
+    {"buffer-size", 'S', ARGUMENT_REQUIRED},
+    {"field-separator", 't', ARGUMENT_REQUIRED},
+    {"temporary-directory", 'T', ARGUMENT_REQUIRED},
+    {"compress-program", 'D', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"batch-size", 'B', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"parallel", 'p', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"files0-from", 'Z', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"unique", 'u'},
+    {"zero-terminated", 'z'},
+    {"Cc", 0},
+    {null},
 };
 
 // -S takes a count with GNU's suffixes or a percentage; the number is not
@@ -18853,10 +18761,7 @@ static b32 text_sort()
             // -g wants a floating point number parsed, and there is no
             // floating point anywhere in this file. -S and -T tune a
             // temporary file this sort has not got.
-            .allowed = (string_address) "CMSTVbcdfhikmnorstuz",
-            .valued = (string_address) "BDSTWZkopt",
-            .optional = (string_address) "K",
-            .longs = sort_longs,
+            .options = sort_options,
             .operand = text_file_add,
             .seen = sort_key_seen,
         };
@@ -19364,14 +19269,14 @@ static fn cmp_octal(positive value)
         positive_to_base_field(text_put, value, 8, 3, -1, 0);
 }
 
-static const file_long cmp_longs[] = {
-    {(string_address) "print-bytes", 'b'},
-    {(string_address) "ignore-initial", 'i'},
-    {(string_address) "bytes", 'n'},
-    {(string_address) "quiet", 's'},
-    {(string_address) "silent", 's'},
-    {(string_address) "verbose", 'l'},
-    {null, 0},
+static const argument_option cmp_options[] = {
+    {"print-bytes", 'b'},
+    {"ignore-initial", 'i', ARGUMENT_REQUIRED},
+    {"bytes", 'n', ARGUMENT_REQUIRED},
+    {"quiet", 's'},
+    {"silent", 's'},
+    {"verbose", 'l'},
+    {null},
 };
 
 /*
@@ -19444,9 +19349,7 @@ static b32 text_cmp()
 {
         file_taking taking = {
             .program = (string_address) "cmp",
-            .allowed = (string_address) "bilns",
-            .valued = (string_address) "in",
-            .longs = cmp_longs,
+            .options = cmp_options,
             .seen = cmp_option_seen,
         };
 

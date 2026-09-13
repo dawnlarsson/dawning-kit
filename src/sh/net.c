@@ -671,13 +671,13 @@ static b32 net_fetch(void)
 }
 
 
-static const file_long wget_longs[] = {
-    {(string_address) "output-document", 'O'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "help", 'h'},
-    {(string_address) "version", 'V'},
-    {(string_address) "no-check-certificate", 'K'},
-    {null, 0},
+static const argument_option wget_options[] = {
+    {"output-document", 'O', ARGUMENT_REQUIRED},
+    {"quiet", 'q'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {"no-check-certificate", 'K'},
+    {null},
 };
 
 /* A download and resolv.conf update share the same publication rule: write a
@@ -769,9 +769,7 @@ static b32 net_wget(void)
 {
         file_taking taking = {
             .program = (string_address) "wget",
-            .allowed = (string_address) "OqhVK",
-            .valued = (string_address) "O",
-            .longs = wget_longs,
+            .options = wget_options,
         };
         string_address url;
         string_address output;

@@ -73,9 +73,9 @@ static b32 tools_hostid()
 {
         file_taking taking = {
             .program = (string_address) "hostid",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
-        };
+            .options = (const argument_option[]){
+    {null},
+        }};
 
         text_begin("hostid");
 
@@ -894,30 +894,33 @@ static bool logger_operands(logger_control address_to control)
         return answer;
 }
 
-static const file_long logger_longs[] = {
-    {(string_address)"skip-empty", 'e'},
-    {(string_address)"file", 'f'},
-    {(string_address)"id", 'I'},
-    {(string_address)"priority", 'p'},
-    {(string_address)"stderr", 's'},
-    {(string_address)"size", 'S'},
-    {(string_address)"tag", 't'},
-    {(string_address)"socket", 'u'},
-    {(string_address)"udp", 'd'},
-    {(string_address)"tcp", 'T'},
-    {(string_address)"server", 'n'},
-    {(string_address)"port", 'P'},
-    {(string_address)"no-act", 'A'},
-    {(string_address)"octet-count", 'O'},
-    {(string_address)"prio-prefix", 'q'},
-    {(string_address)"rfc3164", '3'},
-    {(string_address)"rfc5424", '4'},
-    {(string_address)"msgid", 'm'},
-    {(string_address)"socket-errors", 'E'},
-    {(string_address)"journald", 'J'},
-    {(string_address)"sd-id", 'D'},
-    {(string_address)"sd-param", 'X'},
-    {null, 0},
+typedef struct { p8 transport, protocol; } logger_selection;
+_Static_assert(sizeof(logger_selection) <= 16, "selection mask covers every field");
+static const argument_option logger_options[] = {
+    {"skip-empty", 'e'},
+    {"file", 'f', ARGUMENT_REQUIRED},
+    {"id", 'I', ARGUMENT_OPTIONAL | ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"priority", 'p', ARGUMENT_REQUIRED},
+    {"stderr", 's'},
+    {"size", 'S', ARGUMENT_REQUIRED},
+    {"tag", 't', ARGUMENT_REQUIRED},
+    {"socket", 'u', ARGUMENT_REQUIRED},
+    {"udp", 'd', 0, ARGUMENT_SELECT(logger_selection, transport)},
+    {"tcp", 'T', 0, ARGUMENT_SELECT(logger_selection, transport)},
+    {"server", 'n', ARGUMENT_REQUIRED},
+    {"port", 'P', ARGUMENT_REQUIRED},
+    {"no-act", 'A', ARGUMENT_LONG_ONLY},
+    {"octet-count", 'O', ARGUMENT_LONG_ONLY},
+    {"prio-prefix", 'q', ARGUMENT_LONG_ONLY},
+    {"rfc3164", '3', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(logger_selection, protocol)},
+    {"rfc5424", '4', ARGUMENT_OPTIONAL | ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(logger_selection, protocol)},
+    {"msgid", 'm', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"socket-errors", 'E', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"journald", 'J', ARGUMENT_OPTIONAL | ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"sd-id", 'D', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"sd-param", 'X', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"i", 0},
+    {null},
 };
 
 static bool logger_journald(logger_control address_to control,
@@ -1177,23 +1180,14 @@ static bool logger_option_seen(p8 letter, string_address value)
 
 static b32 tools_logger()
 {
-        p8 chosen_transport = LOGGER_TRANSPORT_ANY;
-        p8 chosen_protocol = 0;
-        const file_supersede supersedes[] = {
-            {(string_address)"dT", address_of chosen_transport},
-            {(string_address)"34", address_of chosen_protocol},
-            {null, null},
-        };
+        logger_selection logger_selected = {.transport = LOGGER_TRANSPORT_ANY, .protocol = 0};
+
         // Options after the message are still options, as with getopt.
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"logger",
-            .allowed = (string_address)"efipSstudTnP",
-            .valued = (string_address)"fpStunPEmDX",
-            .optional = (string_address)"I4J",
-            .long_optional = (string_address)"I4J",
-            .longs = logger_longs,
-            .supersedes = supersedes,
+            .options = logger_options,
+            .selection = (p8 address_to)address_of logger_selected,
             .operand = file_operand,
             .seen = logger_option_seen,
         };
@@ -1234,17 +1228,17 @@ static b32 tools_logger()
             .message_id = file_option_value(address_of taking, 'm'),
         };
 
-        if (chosen_transport == 'd')
+        if (logger_selected.transport == 'd')
                 control.transport = LOGGER_TRANSPORT_DGRAM;
-        else if (chosen_transport == 'T')
+        else if (logger_selected.transport == 'T')
                 control.transport = LOGGER_TRANSPORT_STREAM;
 
-        if (chosen_protocol == '3')
+        if (logger_selected.protocol == '3')
         {
                 control.protocol = LOGGER_PROTOCOL_3164;
                 control.protocol_given = true;
         }
-        else if (chosen_protocol == '4')
+        else if (logger_selected.protocol == '4')
         {
                 control.protocol = LOGGER_PROTOCOL_5424;
                 control.protocol_given = true;
@@ -2104,10 +2098,10 @@ static bipolar login_message_send(string_address line,
         return answer;
 }
 
-static const file_long login_write_longs[] = {
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option login_write_options[] = {
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bool login_message_meta(file_taking address_to taking,
@@ -2137,9 +2131,7 @@ static b32 tools_write()
 {
         file_taking taking = {
             .program = (string_address)"write",
-            .allowed = (string_address)"hV",
-            .valued = (string_address)"",
-            .longs = login_write_longs,
+            .options = login_write_options,
         };
         text_begin("write");
 
@@ -2278,13 +2270,13 @@ static b32 tools_write()
         return text_done(copied && !text_out_failed ? 0 : 1);
 }
 
-static const file_long login_wall_longs[] = {
-    {(string_address)"nobanner", 'n'},
-    {(string_address)"timeout", 't'},
-    {(string_address)"group", 'g'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option login_wall_options[] = {
+    {"nobanner", 'n'},
+    {"timeout", 't', ARGUMENT_REQUIRED},
+    {"group", 'g', ARGUMENT_REQUIRED},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bool login_wall_group(string_address word, p32 address_to group)
@@ -2350,9 +2342,7 @@ static b32 tools_wall()
 {
         file_taking taking = {
             .program = (string_address)"wall",
-            .allowed = (string_address)"ntghV",
-            .valued = (string_address)"tg",
-            .longs = login_wall_longs,
+            .options = login_wall_options,
         };
         text_begin("wall");
         if (!file_take(address_of taking))
@@ -2695,13 +2685,13 @@ static bool login_utmpdump_visit(login_record address_to record)
         return true;
 }
 
-static const file_long login_utmpdump_longs[] = {
-    {(string_address)"follow", 'f'},
-    {(string_address)"reverse", 'r'},
-    {(string_address)"output", 'o'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option login_utmpdump_options[] = {
+    {"follow", 'f'},
+    {"reverse", 'r'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 static bipolar login_utmpdump_output;
@@ -2729,9 +2719,7 @@ static b32 tools_utmpdump()
         login_utmpdump_output = -1;
         file_taking taking = {
             .program = (string_address)"utmpdump",
-            .allowed = (string_address)"frohV",
-            .valued = (string_address)"o",
-            .longs = login_utmpdump_longs,
+            .options = login_utmpdump_options,
             .operand = file_operand,
             .seen = login_utmpdump_seen,
         };
@@ -3220,17 +3208,12 @@ static bool login_last_emit(login_record address_to record,
         return login_last.shown == login_last.limit;
 }
 
-static const file_long login_last_longs[] = {
-    {(string_address)"hostlast", 'a'}, {(string_address)"dns", 'd'},
-    {(string_address)"file", 'f'}, {(string_address)"fulltimes", 'F'},
-    {(string_address)"ip", 'i'}, {(string_address)"limit", 'n'},
-    {(string_address)"present", 'p'}, {(string_address)"nohostname", 'R'},
-    {(string_address)"since", 's'}, {(string_address)"until", 't'},
-    {(string_address)"tab-separated", 'T'},
-    {(string_address)"time-format", 'z'},
-    {(string_address)"fullnames", 'w'}, {(string_address)"system", 'x'},
-    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option login_last_arguments[] = {
+    {"hostlast", 'a'}, {"dns", 'd'}, {"file", 'f', ARGUMENT_REQUIRED}, {"fulltimes", 'F'},
+    {"ip", 'i'}, {"limit", 'n', ARGUMENT_REQUIRED}, {"present", 'p', ARGUMENT_REQUIRED},
+    {"nohostname", 'R'}, {"since", 's', ARGUMENT_REQUIRED}, {"until", 't', ARGUMENT_REQUIRED},
+    {"tab-separated", 'T'}, {"time-format", 'z', ARGUMENT_REQUIRED}, {"fullnames", 'w'},
+    {"system", 'x'}, {"help", 'h'}, {"version", 'V'}, {null},
 };
 
 /*      The line limit is read where it was written, because that is where
@@ -3251,9 +3234,7 @@ static b32 tools_last()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"last",
-            .allowed = (string_address)"adfFinpRstTwxzhV",
-            .valued = (string_address)"fnpstz",
-            .longs = login_last_longs,
+            .options = login_last_arguments,
             .operand = file_operand,
             // last -3 is the line limit said without its letter.
             .digits = 'n',
@@ -3711,28 +3692,31 @@ static bool login_who_visit(login_record address_to record)
         return true;
 }
 
-static const file_long login_pinky_longs[] = {
-    {(string_address) "lookup", 'L'},
-    {null, 0},
+static const argument_option login_pinky_arguments[] = {
+    {"lookup", 'L'},
+    {"sl", 0, 0, 1},
+    {"fwiqbhp", 0},
+    {null},
 };
 
-static const file_long login_who_longs[] = {
-    {(string_address) "lookup", 'L'},
-    {(string_address) "all", 'a'},
-    {(string_address) "boot", 'b'},
-    {(string_address) "count", 'q'},
-    {(string_address) "dead", 'd'},
-    {(string_address) "heading", 'H'},
-    {(string_address) "login", 'l'},
-    {(string_address) "message", 'T'},
-    {(string_address) "mesg", 'T'},
-    {(string_address) "process", 'p'},
-    {(string_address) "runlevel", 'r'},
-    {(string_address) "short", 's'},
-    {(string_address) "time", 't'},
-    {(string_address) "users", 'u'},
-    {(string_address) "writable", 'T'},
-    {null, 0},
+static const argument_option login_who_arguments[] = {
+    {"lookup", 'L'},
+    {"all", 'a'},
+    {"boot", 'b'},
+    {"count", 'q'},
+    {"dead", 'd'},
+    {"heading", 'H'},
+    {"login", 'l'},
+    {"message", 'T'},
+    {"mesg", 'T'},
+    {"process", 'p'},
+    {"runlevel", 'r'},
+    {"short", 's'},
+    {"time", 't'},
+    {"users", 'u'},
+    {"writable", 'T'},
+    {"mw", 0},
+    {null},
 };
 
 static b32 tools_who()
@@ -3740,9 +3724,7 @@ static b32 tools_who()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "who",
-            .allowed = (string_address) "abdlmpqrstuwHTL",
-            .valued = (string_address) "",
-            .longs = login_who_longs,
+            .options = login_who_arguments,
             .operand = file_operand,
         };
 
@@ -3853,8 +3835,9 @@ static b32 tools_users()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "users",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
+            .options = (const argument_option[]){
+    {null},
+        },
             .operand = file_operand,
         };
 
@@ -3890,7 +3873,6 @@ static b32 tools_users()
 
 typedef struct
 {
-        bool short_output;
         bool heading;
         bool fullname;
         bool where;
@@ -3898,16 +3880,6 @@ typedef struct
 } login_pinky_options;
 
 static login_pinky_options login_pinky;
-
-static bool login_pinky_seen(p8 letter, string_address value)
-{
-        (void)value;
-        if (letter == 's')
-                login_pinky.short_output = true;
-        else if (letter == 'l')
-                login_pinky.short_output = false;
-        return true;
-}
 
 static bool login_fullname(string_address name, p8 address_to into,
                            positive room)
@@ -4045,19 +4017,17 @@ static bool login_pinky_visit(login_record address_to record)
 
 static b32 tools_pinky()
 {
+        p8 output_mode = 0;
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "pinky",
-            .allowed = (string_address) "sfwiqbhlpL",
-            .valued = (string_address) "",
+            .options = login_pinky_arguments,
+            .selection = &output_mode,
             .operand = file_operand,
-            .longs = login_pinky_longs,
-            .seen = login_pinky_seen,
         };
 
         text_begin("pinky");
         login_pinky = (login_pinky_options){
-            .short_output = true,
             .heading = true,
             .fullname = true,
             .where = true,
@@ -4067,7 +4037,7 @@ static b32 tools_pinky()
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
 
-        if (!login_pinky.short_output)
+        if (output_mode == 'l')
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "long format is not supported"));
 
         positive flags = taking.flags;
@@ -4237,9 +4207,9 @@ static b32 tools_tsort()
 {
         file_taking taking = {
             .program = (string_address) "tsort",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
-        };
+            .options = (const argument_option[]){
+    {null},
+        }};
 
         text_begin("tsort");
         utility_arena.used = 0;
@@ -4547,24 +4517,24 @@ typedef struct
 
 static numfmt_options numfmt;
 
-static const file_long numfmt_longs[] = {
-    {(string_address) "debug", 'D'},
-    {(string_address) "delimiter", 'd'},
-    {(string_address) "field", 'f'},
-    {(string_address) "format", 'm'},
-    {(string_address) "from", 'r'},
-    {(string_address) "from-unit", 'R'},
-    {(string_address) "grouping", 'g'},
-    {(string_address) "header", 'h'},
-    {(string_address) "invalid", 'i'},
-    {(string_address) "padding", 'p'},
-    {(string_address) "round", 'u'},
-    {(string_address) "suffix", 's'},
-    {(string_address) "unit-separator", 'S'},
-    {(string_address) "to", 't'},
-    {(string_address) "to-unit", 'T'},
-    {(string_address) "zero-terminated", 'z'},
-    {null, 0},
+static const argument_option numfmt_arguments[] = {
+    {"debug", 'D', ARGUMENT_LONG_ONLY},
+    {"delimiter", 'd', ARGUMENT_REQUIRED},
+    {"field", 'f', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"format", 'm', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"from", 'r', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"from-unit", 'R', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"grouping", 'g', ARGUMENT_LONG_ONLY},
+    {"header", 'h', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"invalid", 'i', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"padding", 'p', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"round", 'u', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"suffix", 's', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"unit-separator", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"to", 't', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"to-unit", 'T', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"zero-terminated", 'z'},
+    {null},
 };
 
 static positive tools_gcd(positive left, positive right)
@@ -5803,10 +5773,7 @@ static b32 tools_numfmt()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "numfmt",
-            .allowed = (string_address) "dz",
-            .valued = (string_address) "dfmpriRsStuT",
-            .long_optional = (string_address) "h",
-            .longs = numfmt_longs,
+            .options = numfmt_arguments,
             .operand = file_operand,
             .seen = numfmt_option_seen,
         };
@@ -6426,9 +6393,9 @@ invalid:
         return false;
 }
 
-static const file_long factor_longs[] = {
-    {(string_address) "exponents", 'h'},
-    {null, 0},
+static const argument_option factor_options[] = {
+    {"exponents", 'h'},
+    {null},
 };
 
 static b32 tools_factor()
@@ -6436,9 +6403,7 @@ static b32 tools_factor()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "factor",
-            .allowed = (string_address) "h",
-            .valued = (string_address) "",
-            .longs = factor_longs,
+            .options = factor_options,
             .operand = file_operand,
         };
 
@@ -6642,18 +6607,18 @@ static bool tools_uuid_name(bipolar transform, tools_uuid address_to space,
 }
 #endif
 
-static const file_long tools_uuidgen_longs[] = {
-    {(string_address)"count", 'C'},
-    {(string_address)"hex", 'x'},
-    {(string_address)"md5", 'm'},
-    {(string_address)"name", 'N'},
-    {(string_address)"namespace", 'n'},
-    {(string_address)"random", 'r'},
-    {(string_address)"sha1", 's'},
-    {(string_address)"time", 't'},
-    {(string_address)"time-v6", '6'},
-    {(string_address)"time-v7", '7'},
-    {null, 0},
+static const argument_option tools_uuidgen_options[] = {
+    {"count", 'C', ARGUMENT_REQUIRED},
+    {"hex", 'x'},
+    {"md5", 'm'},
+    {"name", 'N', ARGUMENT_REQUIRED},
+    {"namespace", 'n', ARGUMENT_REQUIRED},
+    {"random", 'r'},
+    {"sha1", 's'},
+    {"time", 't'},
+    {"time-v6", '6'},
+    {"time-v7", '7'},
+    {null},
 };
 
 static bool tools_uuidgen_namespace(string_address text,
@@ -6706,9 +6671,7 @@ static b32 tools_uuidgen()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"uuidgen",
-            .allowed = (string_address)"rtmnNsC67x",
-            .valued = (string_address)"nNC",
-            .longs = tools_uuidgen_longs,
+            .options = tools_uuidgen_options,
             .operand = file_operand,
         };
 
@@ -7007,12 +6970,12 @@ static fn tools_uuid_safe_cell(string_address value)
                            HEX_CONTROL | HEX_TAB | HEX_SPACE | HEX_SLASH);
 }
 
-static const file_long tools_uuidparse_longs[] = {
-    {(string_address)"json", 'J'},
-    {(string_address)"noheadings", 'n'},
-    {(string_address)"output", 'o'},
-    {(string_address)"raw", 'r'},
-    {null, 0},
+static const argument_option tools_uuidparse_options[] = {
+    {"json", 'J'},
+    {"noheadings", 'n'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"raw", 'r'},
+    {null},
 };
 
 static b32 tools_uuidparse()
@@ -7020,9 +6983,7 @@ static b32 tools_uuidparse()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"uuidparse",
-            .allowed = (string_address)"Jnro",
-            .valued = (string_address)"o",
-            .longs = tools_uuidparse_longs,
+            .options = tools_uuidparse_options,
             .operand = file_operand,
         };
 
@@ -7174,11 +7135,11 @@ static b32 tools_uuidparse()
         return text_done(0);
 }
 
-static const file_long tools_mcookie_longs[] = {
-    {(string_address)"file", 'f'},
-    {(string_address)"max-size", 'm'},
-    {(string_address)"verbose", 'v'},
-    {null, 0},
+static const argument_option tools_mcookie_options[] = {
+    {"file", 'f', ARGUMENT_REQUIRED},
+    {"max-size", 'm', ARGUMENT_REQUIRED},
+    {"verbose", 'v'},
+    {null},
 };
 
 static fn tools_mcookie_mix(file_random_state address_to random,
@@ -7237,9 +7198,7 @@ static b32 tools_mcookie()
 {
         file_taking taking = {
             .program = (string_address)"mcookie",
-            .allowed = (string_address)"fmv",
-            .valued = (string_address)"fm",
-            .longs = tools_mcookie_longs,
+            .options = tools_mcookie_options,
             .seen = tools_mcookie_seen,
         };
 
@@ -9127,17 +9086,18 @@ static p8 dump_od_types(string_address word)
         return DUMP_OD_TYPE_OK;
 }
 
-static const file_long dump_od_longs[] = {
-    {(string_address) "address-radix", 'A'},
-    {(string_address) "skip-bytes", 'j'},
-    {(string_address) "read-bytes", 'N'},
-    {(string_address) "format", 't'},
-    {(string_address) "output-duplicates", 'v'},
-    {(string_address) "width", 'w'},
-    {(string_address) "endian", 'E'},
-    {(string_address) "strings", 'S'},
-    {(string_address) "traditional", 'T'},
-    {null, 0},
+static const argument_option dump_od_options[] = {
+    {"address-radix", 'A', ARGUMENT_REQUIRED},
+    {"skip-bytes", 'j', ARGUMENT_REQUIRED},
+    {"read-bytes", 'N', ARGUMENT_REQUIRED},
+    {"format", 't', ARGUMENT_REQUIRED},
+    {"output-duplicates", 'v'},
+    {"width", 'w', ARGUMENT_OPTIONAL | ARGUMENT_LONG_OPTIONAL},
+    {"endian", 'E', ARGUMENT_REQUIRED},
+    {"strings", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_OPTIONAL},
+    {"traditional", 'T'},
+    {"aBbcDdeFfhHiIlLoOsxX", 0},
+    {null},
 };
 
 /* GNU rounds the row to the widest type: sixteen bytes made a multiple of
@@ -9340,19 +9300,19 @@ static bool dump_od_seen(p8 letter, string_address value)
         return true;
 }
 
-static const file_long dump_hex_longs[] = {
-    {(string_address) "one-byte-octal", 'b'},
-    {(string_address) "one-byte-char", 'c'},
-    {(string_address) "canonical", 'C'},
-    {(string_address) "two-bytes-decimal", 'd'},
-    {(string_address) "two-bytes-octal", 'o'},
-    {(string_address) "two-bytes-hex", 'x'},
-    {(string_address) "one-byte-hex", 'X'},
-    {(string_address) "length", 'n'},
-    {(string_address) "skip", 's'},
-    {(string_address) "no-squeezing", 'v'},
-    {(string_address) "color", 'L'},
-    {null, 0},
+static const argument_option dump_hex_options[] = {
+    {"one-byte-octal", 'b'},
+    {"one-byte-char", 'c'},
+    {"canonical", 'C'},
+    {"two-bytes-decimal", 'd'},
+    {"two-bytes-octal", 'o'},
+    {"two-bytes-hex", 'x'},
+    {"one-byte-hex", 'X'},
+    {"length", 'n', ARGUMENT_REQUIRED},
+    {"skip", 's', ARGUMENT_REQUIRED},
+    {"no-squeezing", 'v'},
+    {"color", 'L', ARGUMENT_OPTIONAL | ARGUMENT_LONG_OPTIONAL},
+    {null},
 };
 
 /* hexdump permits more than one stock display and writes them in command-line
@@ -10041,11 +10001,7 @@ static b32 tools_od(void)
 {
         file_taking taking = {
             .program = (string_address) "od",
-            .allowed = (string_address) "AaBbcDdeEFfhHiIjlLNoOSsTtvwxX",
-            .valued = (string_address) "AEjNSt",
-            .optional = (string_address) "w",
-            .long_optional = (string_address) "Sw",
-            .longs = dump_od_longs,
+            .options = dump_od_options,
             .seen = dump_od_seen,
         };
 
@@ -10167,11 +10123,7 @@ static b32 tools_hexdump(void)
 
         file_taking taking = {
             .program = (string_address) "hexdump",
-            .allowed = (string_address) "bcCdoxXnsvL",
-            .valued = (string_address) "ns",
-            .optional = (string_address) "L",
-            .long_optional = (string_address) "L",
-            .longs = dump_hex_longs,
+            .options = dump_hex_options,
             .seen = dump_hex_seen,
         };
 
@@ -12000,26 +11952,28 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
         return one;
 }
 
-static const file_long diff_longs[] = {
-    {(string_address) "normal", 'z'},
-    {(string_address) "unified", 'v'},
-    {(string_address) "brief", 'q'},
-    {(string_address) "report-identical-files", 's'},
-    {(string_address) "recursive", 'r'},
-    {(string_address) "new-file", 'N'},
-    {(string_address) "unidirectional-new-file", 'O'},
-    {(string_address) "no-ignore-file-name-case", 'J'},
-    {(string_address) "ignore-case", 'i'},
-    {(string_address) "ignore-tab-expansion", 'E'},
-    {(string_address) "ignore-all-space", 'w'},
-    {(string_address) "ignore-space-change", 'b'},
-    {(string_address) "ignore-trailing-space", 'Z'},
-    {(string_address) "ignore-blank-lines", 'B'},
-    {(string_address) "text", 'a'},
-    {(string_address) "strip-trailing-cr", 'R'},
-    {(string_address) "speed-large-files", 'h'},
-    {(string_address) "label", 'L'},
-    {null, 0},
+static const argument_option diff_options[] = {
+    {"normal", 'z', ARGUMENT_LONG_ONLY},
+    {"unified", 'v', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
+    {"brief", 'q'},
+    {"report-identical-files", 's'},
+    {"recursive", 'r'},
+    {"new-file", 'N'},
+    {"unidirectional-new-file", 'O', ARGUMENT_LONG_ONLY},
+    {"no-ignore-file-name-case", 'J', ARGUMENT_LONG_ONLY},
+    {"ignore-case", 'i'},
+    {"ignore-tab-expansion", 'E'},
+    {"ignore-all-space", 'w'},
+    {"ignore-space-change", 'b'},
+    {"ignore-trailing-space", 'Z'},
+    {"ignore-blank-lines", 'B'},
+    {"text", 'a'},
+    {"strip-trailing-cr", 'R', ARGUMENT_LONG_ONLY},
+    {"speed-large-files", 'h', ARGUMENT_LONG_ONLY},
+    {"label", 'L', ARGUMENT_REQUIRED},
+    {"U", 0, ARGUMENT_REQUIRED},
+    {"u", 0},
+    {null},
 };
 
 static bool diff_context_set(string_address value)
@@ -12093,10 +12047,7 @@ static b32 tools_diff(void)
 {
         file_taking taking = {
             .program = (string_address) "diff",
-            .allowed = (string_address) "BELNUZabiqrsuw",
-            .valued = (string_address) "LU",
-            .optional = (string_address) "v",
-            .longs = diff_longs,
+            .options = diff_options,
             .seen = diff_option_seen,
         };
 
@@ -13587,40 +13538,41 @@ static const string_address tools_dmesg_facilities[] = {
     (string_address)"local6", (string_address)"local7",
 };
 
-static const file_long tools_dmesg_longs[] = {
-    {(string_address)"clear", 'C'},
-    {(string_address)"read-clear", 'c'},
-    {(string_address)"console-off", 'D'},
-    {(string_address)"console-on", 'E'},
-    {(string_address)"file", 'F'},
-    {(string_address)"kmsg-file", 'K'},
-    {(string_address)"facility", 'f'},
-    {(string_address)"human", 'H'},
-    {(string_address)"json", 'J'},
-    {(string_address)"kernel", 'k'},
-    {(string_address)"color", 'L'},
-    {(string_address)"level", 'l'},
-    {(string_address)"console-level", 'n'},
-    {(string_address)"nopager", 'P'},
-    {(string_address)"force-prefix", 'p'},
-    {(string_address)"raw", 'r'},
-    {(string_address)"noescape", 'N'},
-    {(string_address)"syslog", 'S'},
-    {(string_address)"buffer-size", 's'},
-    {(string_address)"userspace", 'u'},
-    {(string_address)"follow", 'w'},
-    {(string_address)"follow-new", 'W'},
-    {(string_address)"decode", 'x'},
-    {(string_address)"show-delta", 'd'},
-    {(string_address)"reltime", 'e'},
-    {(string_address)"ctime", 'T'},
-    {(string_address)"notime", 't'},
-    {(string_address)"time-format", 'q'},
-    {(string_address)"since", 'a'},
-    {(string_address)"until", 'b'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option tools_dmesg_options[] = {
+    {"clear", 'C'},
+    {"read-clear", 'c'},
+    {"console-off", 'D'},
+    {"console-on", 'E'},
+    {"file", 'F', ARGUMENT_REQUIRED},
+    {"kmsg-file", 'K', ARGUMENT_REQUIRED},
+    {"facility", 'f', ARGUMENT_REQUIRED},
+    {"human", 'H'},
+    {"json", 'J'},
+    {"kernel", 'k'},
+    {"color", 'L', ARGUMENT_OPTIONAL | ARGUMENT_LONG_OPTIONAL},
+    {"level", 'l', ARGUMENT_REQUIRED},
+    {"console-level", 'n', ARGUMENT_REQUIRED},
+    {"nopager", 'P'},
+    {"force-prefix", 'p'},
+    {"raw", 'r'},
+    {"noescape", 'N', ARGUMENT_LONG_ONLY},
+    {"syslog", 'S'},
+    {"buffer-size", 's', ARGUMENT_REQUIRED},
+    {"userspace", 'u'},
+    {"follow", 'w'},
+    {"follow-new", 'W'},
+    {"decode", 'x'},
+    {"show-delta", 'd'},
+    {"reltime", 'e'},
+    {"ctime", 'T'},
+    {"notime", 't'},
+    {"time-format", 'q', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"since", 'a', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"until", 'b', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"help", 'h'},
+    {"version", 'V'},
+    {"jo", 0},
+    {null},
 };
 
 static bool tools_dmesg_span_number(p8 address_to address_to cursor,
@@ -14166,11 +14118,7 @@ static b32 tools_dmesg_main()
 {
         file_taking taking = {
             .program = (string_address)"dmesg",
-            .allowed = (string_address)"CcDEFKfHjkLlnoPprSsuwWxdeTtJVh",
-            .valued = (string_address)"FKflnsqab",
-            .optional = (string_address)"L",
-            .long_optional = (string_address)"L",
-            .longs = tools_dmesg_longs,
+            .options = tools_dmesg_options,
         };
 
         text_begin("dmesg");
@@ -14419,19 +14367,19 @@ static ul_table_column tools_fincore_columns[] = {
     {(string_address)"file", (string_address)"FILE", 0, false, UL_TABLE_STRING},
 };
 
-static const file_long tools_fincore_longs[] = {
-    {(string_address)"json", 'J'},
-    {(string_address)"bytes", 'b'},
-    {(string_address)"total", 'c'},
-    {(string_address)"noheadings", 'n'},
-    {(string_address)"output", 'o'},
-    {(string_address)"output-all", 'A'},
-    {(string_address)"raw", 'r'},
-    {(string_address)"recursive", 'R'},
-    {(string_address)"cachestat", 'C'},
-    {(string_address)"help", 'h'},
-    {(string_address)"version", 'V'},
-    {null, 0},
+static const argument_option tools_fincore_options[] = {
+    {"json", 'J'},
+    {"bytes", 'b'},
+    {"total", 'c'},
+    {"noheadings", 'n'},
+    {"output", 'o', ARGUMENT_REQUIRED},
+    {"output-all", 'A'},
+    {"raw", 'r'},
+    {"recursive", 'R'},
+    {"cachestat", 'C'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null},
 };
 
 /* Adapt the shared nearest IEC formatter to util-linux's compact spelling:
@@ -14610,9 +14558,7 @@ static b32 tools_fincore_main()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"fincore",
-            .allowed = (string_address)"JbcnorRCAhV",
-            .valued = (string_address)"o",
-            .longs = tools_fincore_longs,
+            .options = tools_fincore_options,
             .operand = file_operand,
         };
 

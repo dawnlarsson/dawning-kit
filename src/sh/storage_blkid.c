@@ -1787,71 +1787,16 @@ static bool storage_blkid_visit(
         return !context->first_only;
 }
 
-/* Length occupies padding the generic named-byte row would leave unused, so
-   table lookup never has to rescan constant option names. */
-typedef struct
+/* Storage retains exact long names and its own diagnostics. Failed reads
+   leave the caller's last value intact; an unexpected attachment is unknown. */
+static COLD b32 storage_argument_next(argument_cursor address_to taking,
+    const argument_option address_to options, string_address address_to value)
 {
-        string_address name;
-        p8 value;
-        p8 length;
-} storage_argument_name;
-
-#define STORAGE_ARGUMENT(name, value)                                      \
-        {(string_address)(name), (value), sizeof(name) - 1}
-
-static PURE p8 storage_argument_long(address_any definitions, positive count,
-                                     string_address name, positive length)
-{
-        const storage_argument_name address_to options = definitions;
-        for (positive at = 0; at < count; at++)
-                if (options[at].length == length &&
-                    !memory_compare(name, options[at].name, length))
-                        return options[at].value;
-
-        return 0;
-}
-
-/* Storage keeps exact long names and required values; shared argv mechanics
-   preserve its caller-owned argument vector and diagnostic cursor. */
-static COLD b32 storage_argument_next(
-    argument_cursor address_to taking, string_address allowed,
-    string_address valued, const storage_argument_name address_to longs,
-    positive long_count, string_address address_to value)
-{
-        b32 option = argument_next(taking);
-        if (option == ARGUMENT_END)
-                return option;
-        if (option == ARGUMENT_OPERAND)
-        {
-                *value = taking->word;
-                return option;
-        }
-        if (option == ARGUMENT_LONG)
-                option = storage_argument_long((address_any)longs, long_count,
-                                                taking->word + 2, taking->name_length);
-        else if (!string_first_of(allowed, option))
-                return ARGUMENT_UNKNOWN;
-        if (!option || (taking->attached && !string_first_of(valued, option)))
-                return ARGUMENT_UNKNOWN;
-        string_address taken = null;
-        if (string_first_of(valued, option) && !(taken = argument_value(taking, true)))
-                return ARGUMENT_MISSING;
-        *value = taken;
-        return option;
-}
-
-typedef argument_exclusive_pair storage_exclusive_pair;
-
-static COLD b32 storage_exclusive_refuse(
-    writer diagnostic, string_address program, positive argc,
-    string_address address_to argv,
-    const storage_argument_name address_to longs, positive long_count,
-    string_address valued, const storage_exclusive_pair address_to group,
-    positive count)
-{
-        return argument_exclusive_refuse(diagnostic, program, argc, argv,
-            (address_any)longs, long_count, storage_argument_long, valued,
-            group, count);
+        argument_match match;
+        b32 option = argument_option_take(taking, options, false, &match);
+        if (option > 0)
+                *value = match.value;
+        return option == ARGUMENT_UNEXPECTED ? ARGUMENT_UNKNOWN : option;
 }
 
 /*
@@ -1862,14 +1807,15 @@ static COLD b32 storage_exclusive_refuse(
 b32 storage_blkid_run(positive argc, string_address address_to argv,
                       writer output, writer error)
 {
-        static const storage_argument_name options[] = {
-            STORAGE_ARGUMENT("uuid", 'U'),
-            STORAGE_ARGUMENT("label", 'L'),
-            STORAGE_ARGUMENT("match-tag", 's'),
-            STORAGE_ARGUMENT("match-token", 't'),
-            STORAGE_ARGUMENT("output", 'o'),
-            STORAGE_ARGUMENT("cache-file", 'c'),
-            STORAGE_ARGUMENT("garbage-collect", 'g'),
+        static const argument_option options[] = {
+            {"uuid", 'U', ARGUMENT_REQUIRED},
+            {"label", 'L', ARGUMENT_REQUIRED},
+            {"match-tag", 's', ARGUMENT_REQUIRED},
+            {"match-token", 't', ARGUMENT_REQUIRED},
+            {"output", 'o', ARGUMENT_REQUIRED},
+            {"cache-file", 'c', ARGUMENT_REQUIRED},
+            {"garbage-collect", 'g'},
+            {null},
         };
         storage_blkid_context context;
         string_address inline_devices[8];
@@ -1883,10 +1829,7 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
         memory_zero(address_of context, sizeof(context));
         context.output = output;
 
-        while ((option = storage_argument_next(
-                    address_of taking, (string_address)"ULstocg",
-                    (string_address)"ULstoc", options, array_count(options),
-                    address_of value)) != ARGUMENT_END)
+        while ((option = storage_argument_next(address_of taking, options, address_of value)) != ARGUMENT_END)
         {
                 if (option == ARGUMENT_OPERAND)
                 {

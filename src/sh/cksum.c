@@ -424,22 +424,22 @@ static b32 cksum_digest(const checksum_algorithm address_to algorithm, bool tagg
 }
 #endif
 
-static const file_long cksum_longs[] = {
-    {(string_address) "algorithm", 'a'},
-    {(string_address) "untagged", 'U'},
-    {(string_address) "tag", 'T'},
-    {(string_address) "raw", 'R'},
-    {(string_address) "base64", 'B'},
-    {(string_address) "zero", 'z'},
-    {(string_address) "length", 'l'},
-    {(string_address) "check", 'c'},
-    {(string_address) "ignore-missing", 'i'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "status", 's'},
-    {(string_address) "strict", 'S'},
-    {(string_address) "warn", 'w'},
-    {(string_address) "debug", 'D'},
-    {null, 0},
+static const argument_option cksum_options[] = {
+    {"algorithm", 'a', ARGUMENT_REQUIRED},
+    {"untagged", 'U', 0, 1},
+    {"tag", 'T', 0, 1},
+    {"raw", 'R'},
+    {"base64", 'B'},
+    {"zero", 'z'},
+    {"length", 'l', ARGUMENT_REQUIRED},
+    {"check", 'c'},
+    {"ignore-missing", 'i'},
+    {"quiet", 'q', 0, ARGUMENT_SELECT(checksum_selection, verify)},
+    {"status", 's', 0, ARGUMENT_SELECT(checksum_selection, verify)},
+    {"strict", 'S'},
+    {"warn", 'w', 0, ARGUMENT_SELECT(checksum_selection, verify)},
+    {"debug", 'D'},
+    {null},
 };
 
 /* cksum's usage complaint: the sentence, then where to look. */
@@ -459,13 +459,6 @@ static bool cksum_option_seen(p8 letter, string_address value)
             "sha384", "sha512", "sha2", "sha3", "blake2b", "sm3",
         };
 
-        if (letter == 'w' || letter == 'q' || letter == 's')
-        {
-                // The last of --warn, --quiet and --status wins, as in GNU.
-                checksum_warn = letter == 'w';
-                checksum_verify_mode = letter;
-        }
-
         if (letter != 'a' || !value)
                 return true;
 
@@ -482,27 +475,16 @@ static bool cksum_option_seen(p8 letter, string_address value)
         return string_report(writer_stderr, false, "Try 'cksum --help' for more information.\n");
 }
 
-/* --tag and --untagged are the same choice written two ways, so the last of
-   them is what was asked for. */
-static p8 cksum_style;
-static const file_supersede cksum_supersedes[] = {
-    {(string_address) "TU", address_of cksum_style},
-    {null, null},
-};
-
 static b32 cksum_main()
 {
         file_taking taking = {
             .program = (string_address) "cksum",
-            .allowed = (string_address) "aUTRBzlciqsSwD",
-            .valued = (string_address) "al",
-            .longs = cksum_longs,
+            .options = cksum_options,
             .operand = text_file_add,
             .seen = cksum_option_seen,
-            .supersedes = cksum_supersedes,
+            .selection = (p8 address_to)&checksum_selected,
         };
 
-        cksum_style = 0;
 
         text_begin("cksum");
 #if defined(LINUX)
@@ -518,7 +500,7 @@ static b32 cksum_main()
         string_address length = file_option_value(address_of taking, 'l');
         bool raw = (taking.flags & FILE_FLAG('R')) != 0;
         bool checking = (taking.flags & FILE_FLAG('c')) != 0;
-        bool tagged = cksum_style == 'T';
+        bool tagged = checksum_selected.style == 'T';
 
         checksum_zero = (taking.flags & FILE_FLAG('z')) != 0;
 
@@ -554,11 +536,11 @@ static b32 cksum_main()
         {
                 if (taking.flags & FILE_FLAG('i'))
                         return cksum_usage_error("the --ignore-missing option is meaningful only when verifying checksums");
-                if (checksum_verify_mode == 's')
+                if (checksum_selected.verify == 's')
                         return cksum_usage_error("the --status option is meaningful only when verifying checksums");
-                if (checksum_verify_mode == 'w')
+                if (checksum_selected.verify == 'w')
                         return cksum_usage_error("the --warn option is meaningful only when verifying checksums");
-                if (checksum_verify_mode == 'q')
+                if (checksum_selected.verify == 'q')
                         return cksum_usage_error("the --quiet option is meaningful only when verifying checksums");
                 if (taking.flags & FILE_FLAG('S'))
                         return cksum_usage_error("the --strict option is meaningful only when verifying checksums");
@@ -607,7 +589,7 @@ static b32 cksum_main()
                 {
                         checksum_raw = raw;
                         checksum_base64 = (taking.flags & FILE_FLAG('B')) != 0;
-                        return cksum_digest(digest, cksum_style != 'U');
+                        return cksum_digest(digest, checksum_selected.style != 'U');
                 }
 #endif
 

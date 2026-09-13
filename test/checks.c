@@ -42649,29 +42649,73 @@ static fn reuse_arguments(void)
               !argument_value(&cursor, false) && argument_next(&cursor) == ARGUMENT_OPERAND &&
               cursor.word == valued[4]);
 
-        const storage_argument_name names[] = {{"value", 'v', 5}};
+        const argument_option names[] = {
+            {"value", 'v', ARGUMENT_REQUIRED},
+            {null},
+        };
         string_address storage[] = {"test", "--val", "-v"}, value = "prior";
         cursor = (argument_cursor){.argc = array_count(storage), .argv = storage, .at = 1};
         check("storage long names remain exact",
-              storage_argument_next(&cursor, "v", "v", names, 1, &value) == ARGUMENT_UNKNOWN &&
+              storage_argument_next(&cursor, names, &value) == ARGUMENT_UNKNOWN &&
               string_equals(value, "prior") && cursor.word == storage[1]);
         check("storage missing values retain the diagnostic letter and prior value",
-              storage_argument_next(&cursor, "v", "v", names, 1, &value) == ARGUMENT_MISSING &&
+              storage_argument_next(&cursor, names, &value) == ARGUMENT_MISSING &&
               string_equals(value, "prior") && cursor.letters[-1] == 'v');
 
         string_address address_to saved = program_argument_list();
         b32 count = program_argument_count();
-        const file_long longs[] = {{"value", 'v'}, {"namespace", 'n'}, {null, 0}};
+        const argument_option options[] = {
+            {"value", 'v', ARGUMENT_REQUIRED},
+            {"namespace", 'n', ARGUMENT_LONG_OPTIONAL | ARGUMENT_STICKY},
+            {"a", 0},
+            {null},
+        };
         string_address utility[] = {"test", "--val=", "-na", "--namespace=kept",
                                     "--namespace", "--", "-v"};
         program_arguments_use(utility, array_count(utility));
-        file_taking taking = {.allowed = "nav", .valued = "v", .longs = longs,
-                              .long_optional = "n", .sticky_optional = "n"};
+        file_taking taking = {
+            .options = options,
+        };
         check("utility prefixes, short clusters and sticky long values retain their policies",
               file_take(&taking) && taking.first == 6 && taking.last == 'n' &&
               (taking.flags & FILE_FLAG('a')) && (taking.bare & FILE_FLAG('n')) &&
               taking.value[file_letter_bit('v')] == utility[1] + 6 &&
               string_equals(taking.value[file_letter_bit('n')], "kept"));
+        const argument_option selecting[] = {
+            {"force", 'f', 0, 1}, {"interactive", 'i', 0, 3},
+            {"directory", 't', ARGUMENT_REQUIRED},
+            {"quiet", 'q', ARGUMENT_LONG_ONLY, 2},
+            {"optional", 'o', ARGUMENT_OPTIONAL}, {null},
+        };
+        p8 selected[] = {'x', 'y', 0xa5};
+        string_address ordered[] = {"test", "-if", "--quiet", "-tfirst",
+                                    "--directory=last", "-o", "operand"};
+        program_arguments_use(ordered, array_count(ordered));
+        taking = (file_taking){.options = selecting, .selection = selected};
+        check("overlapping selections retain their own last occurrence and bounds",
+              file_take(&taking) && selected[0] == 'f' && selected[1] == 'q' &&
+              selected[2] == 0xa5 && taking.first == 6);
+        check("short and long aliases share duplicate tracking and last values",
+              taking.repeated == FILE_FLAG('t') && taking.last == 'o' &&
+              string_equals(file_option_value(&taking, 't'), "last") &&
+              !file_option_value(&taking, 'o') && (taking.bare & FILE_FLAG('o')));
+        string_address missing[] = {"test", "--directory"};
+        cursor = (argument_cursor){.argc = array_count(missing), .argv = missing, .at = 1};
+        argument_match match;
+        check("missing values expose their option without applying selection effects",
+              argument_option_take(&cursor, selecting, true, &match) == ARGUMENT_MISSING &&
+              match.letter == 't' && !match.value && cursor.long_option);
+        string_address short_only[] = {"test", "-q", "--quiet=", "--qui", "-oattached"};
+        cursor = (argument_cursor){.argc = array_count(short_only), .argv = short_only, .at = 1};
+        check("long-only names reject short spellings and attached flag arguments",
+              argument_option_take(&cursor, selecting, true, &match) == ARGUMENT_UNKNOWN &&
+              match.letter == 'q' &&
+              argument_option_take(&cursor, selecting, true, &match) == ARGUMENT_UNEXPECTED);
+        check("prefix lookup and attached optional values keep independent policies",
+              argument_option_take(&cursor, selecting, true, &match) == 'q' &&
+              match.selection == 2 &&
+              argument_option_take(&cursor, selecting, true, &match) == 'o' &&
+              string_equals(match.value, "attached"));
         program_arguments_use(saved, count);
 }
 
