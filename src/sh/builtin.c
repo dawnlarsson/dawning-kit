@@ -15215,20 +15215,21 @@ static bool floodlight_network_stdio_drop()
                     descriptor, (string_address)"", AT_EMPTY_PATH,
                     address_of facts);
 
-                if (looked == -ERROR_BAD_DESCRIPTOR)
-                        missing[descriptor] = true;
-                else if (looked < 0 ||
-                         (facts.mode & MODE_FORMAT) == MODE_SOCKET ||
+                if (looked < 0 ||
+                    (facts.mode & MODE_FORMAT) == MODE_SOCKET ||
                          ((facts.mode & MODE_FORMAT) == MODE_CHARACTER &&
                           facts.rdev_major == FLOODLIGHT_TUN_MAJOR &&
                           facts.rdev_minor == FLOODLIGHT_TUN_MINOR))
                 {
-                        if (system_close(descriptor) < 0 &&
-                            looked != -ERROR_BAD_DESCRIPTOR)
+                        bipolar closed = system_close(descriptor);
+
+                        /* EBADF from statx is not proof that the descriptor
+                           is absent: an inherited seccomp filter can forge
+                           that answer.  close(2) is harmless when it truly is
+                           absent and removes the channel when it is not. */
+                        if (closed < 0 && closed != -ERROR_BAD_DESCRIPTOR)
                                 safe = false;
                         missing[descriptor] = true;
-                        if (looked < 0)
-                                safe = false;
                 }
         }
 
@@ -15269,12 +15270,12 @@ static bool floodlight_network_stdio_drop()
    keep submitting after the descriptor is closed and without io_uring_enter.
    Close every copy we can see and refuse the launch, since closing it cannot
    prove that no live mapping remains. */
-static bool floodlight_network_descriptors_drop()
+static bool floodlight_network_descriptors_drop(bool standard_prepared)
 {
         static string_address ring = (string_address)"anon_inode:[io_uring]";
         file_walk walk;
         struct linux_dirent64 address_to entry;
-        bool safe = floodlight_network_stdio_drop();
+        bool safe = standard_prepared || floodlight_network_stdio_drop();
 
         if (!floodlight_descriptor_table_open(address_of walk))
                 return false;
@@ -15502,7 +15503,7 @@ static bool floodlight_apply(bool spawn_allowed, bool network_allowed,
 
         if (!network_allowed && !network_prepared)
         {
-                if (!floodlight_network_descriptors_drop())
+                if (!floodlight_network_descriptors_drop(false))
                         return false;
         }
 
@@ -15591,8 +15592,8 @@ static b32 floodlight_launch_decide(
 
         if (floodlight_report_state == FLOODLIGHT_REPORT_REFUSED)
         {
-                if (final)
-                        floodlight_network_stdio_drop();
+                if (final && !floodlight_network_stdio_drop())
+                        diagnose = false;
                 if (diagnose)
                         log_error("floodlight: policy unavailable; refusing launch\n",
                                   0);
@@ -15605,7 +15606,8 @@ static b32 floodlight_launch_decide(
                  floodlight_report_state == FLOODLIGHT_REPORT_VALID &&
                  final && !pinned)
         {
-                floodlight_network_stdio_drop();
+                if (!floodlight_network_stdio_drop())
+                        diagnose = false;
                 if (diagnose)
                         log_error("floodlight: cannot pin executable; refusing launch\n",
                                   0);
@@ -15626,8 +15628,8 @@ static b32 floodlight_launch_decide(
 
         if (!subject)
         {
-                if (final)
-                        floodlight_network_stdio_drop();
+                if (final && !floodlight_network_stdio_drop())
+                        diagnose = false;
                 if (diagnose)
                         log_error("floodlight: cannot identify executable; refusing launch\n",
                                   0);
@@ -15641,9 +15643,12 @@ static b32 floodlight_launch_decide(
            any run or flag refusal through inherited descriptors. */
         if (final && !network_allowed)
         {
-                if (!floodlight_network_descriptors_drop())
+                bool standard_safe = floodlight_network_stdio_drop();
+
+                if (!standard_safe ||
+                    !floodlight_network_descriptors_drop(true))
                 {
-                        if (diagnose)
+                        if (diagnose && standard_safe)
                                 log_error("floodlight: cannot sanitize network descriptors; refusing launch\n",
                                           0);
                         goto refuse;

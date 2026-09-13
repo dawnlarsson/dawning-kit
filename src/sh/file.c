@@ -21309,15 +21309,14 @@ static b32 file_install()
             .seen = file_target_seen,
         };
 
-        if (!file_targets_told((string_address) "install"))
-                return 1;
-
         install_mode = 0755;
         install_owner = -1;
         install_group = -1;
         install_status = 0;
 
         if (!file_take(address_of taking))
+                return 1;
+        if (!file_targets_told((string_address) "install"))
                 return 1;
         if (!file_backup_taken(address_of taking,
                                (string_address)"install"))

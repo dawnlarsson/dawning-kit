@@ -20256,6 +20256,7 @@ def harness_floodlight(argv):
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <sys/vfs.h>
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
@@ -20351,6 +20352,7 @@ typedef struct {
 
 static int fail_walk;
 static int fake_walk;
+static int fake_statx_ebadf;
 static char fake_walk_path[PATH_MAX];
 static bool file_walk_open(file_walk *walk, bipolar parent, string_address path)
 {
@@ -20419,6 +20421,10 @@ static bool file_look(bipolar fd, string_address path, positive flags,
                       file_facts *facts)
 {
         struct statx st;
+        if (fake_statx_ebadf && fd == 2) {
+                errno = EBADF;
+                return false;
+        }
         if (statx((int)fd, path, (int)flags, STATX_BASIC_STATS | STATX_MNT_ID, &st) < 0)
                 return false;
         facts->mode = st.stx_mode;
@@ -20618,7 +20624,7 @@ int main(void)
                 if (diagnostic != 2)
                         close(diagnostic);
                 fail_walk = 1;
-                if (floodlight_network_descriptors_drop())
+                if (floodlight_network_descriptors_drop(false))
                         _exit(29);
                 if (fstat(2, &st) < 0 || !S_ISCHR(st.st_mode) ||
                     major(st.st_rdev) != 1 || minor(st.st_rdev) != 3)
@@ -20640,7 +20646,7 @@ int main(void)
                         _exit(37);
                 fake_walk = 1;
                 inherited = (int)raw_call(SYS_socket, 2, 2, 0, 0, 0);
-                if (inherited < 0 || floodlight_network_descriptors_drop())
+                if (inherited < 0 || floodlight_network_descriptors_drop(false))
                         _exit(38);
                 close(inherited);
                 rmdir(fake_walk_path);
@@ -20649,6 +20655,34 @@ int main(void)
         if (child < 0 || waitpid(child, &status, 0) != child ||
             !WIFEXITED(status) || WEXITSTATUS(status))
                 return 39;
+
+        /* EBADF from statx can itself come from an inherited filter.  It is
+           never accepted as proof that a socket standard stream is absent. */
+        child = fork();
+        if (child == 0) {
+                int pair[2];
+                char byte;
+                ssize_t got;
+                if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair) < 0 ||
+                    dup2(pair[0], 2) != 2)
+                        _exit(55);
+                if (pair[0] != 2)
+                        close(pair[0]);
+                fake_statx_ebadf = 1;
+                if (floodlight_network_stdio_drop())
+                        _exit(56);
+                write(2, "x", 1);
+                got = recv(pair[1], &byte, 1, MSG_DONTWAIT);
+                if (got > 0 || (got < 0 && errno != EAGAIN))
+                        _exit(57);
+                close(pair[1]);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status))
+                return 58;
+        if (WEXITSTATUS(status))
+                return WEXITSTATUS(status);
 
         /* Network-only policy leaves program transitions available while it
            independently closes acquisition, TUN and parent-takeover paths. */
@@ -20928,7 +20962,7 @@ static bipolar test_read_link_at(bipolar directory, string_address path,
         test_read_link_at((directory), (path), (into), (room))
 static string_address shell_tool_name(string_address name) { return name; }
 static bool floodlight_network_stdio_drop(void) { return true; }
-static bool floodlight_network_descriptors_drop(void) { return true; }
+static bool floodlight_network_descriptors_drop(bool prepared) { (void)prepared; return true; }
 static bool floodlight_apply(bool spawn_allowed, bool network_allowed,
                              bool network_prepared)
 {
