@@ -1,35 +1,23 @@
 #!/bin/sh
 set -eu
 
-# Remote and local sudo builds enter through a checkout owned by the invoking
-# user. Return to that user before sourcing or touching anything in the
-# checkout; otherwise even a secure child file can be replaced from its
-# user-writable parent while this hook still has root authority.
-firmware_initial_uid=$(/usr/bin/id -u) || {
+# A sudo build creates artifacts and dist as root before this hook runs, while
+# its private checkout remains owned by the invoking user. That checkout owner
+# already controls this root-executed hook source. Accept those two owners and
+# nobody else; a non-root process never trusts an environment-supplied UID.
+firmware_uid=$(id -u) || {
         printf 'rpi: could not identify the current user\n' >&2
         exit 1
 }
-if [ "$firmware_initial_uid" = 0 ]; then
-        if [ "${MOONWATER_RPI_DROPPED:-}" = 1 ]; then
-                printf 'rpi: could not return to the invoking build user\n' >&2
-                exit 1
-        fi
+firmware_invoking_uid=
+if [ "$firmware_uid" = 0 ]; then
         case ${SUDO_UID:-} in
         ''|*[!0-9]*|0) ;;
-        *)
-                [ -x /usr/bin/sudo ] || {
-                        printf 'rpi: sudo is required to return to the invoking build user\n' >&2
-                        exit 1
-                }
-                exec /usr/bin/sudo -u "#$SUDO_UID" -- /usr/bin/env \
-                        MOONWATER_RPI_DROPPED=1 \
-                        PATH="${PATH:-/usr/bin:/bin}" \
-                        /bin/sh "$0" "$@"
-                ;;
+        *) firmware_invoking_uid=$SUDO_UID ;;
         esac
 fi
 
-. kit/common
+. src/build/host.sh
 
 # The immutable commit is the official raspberrypi/firmware master observed on
 # 2026-09-13. Updating it requires updating every digest below from the bytes
@@ -82,7 +70,12 @@ firmware_same_file()
 firmware_directory_safe()
 {
         [ -d "$1" ] && [ ! -L "$1" ] || return 1
-        [ "$(firmware_owner_of "$1")" = "$firmware_uid" ] || return 1
+        directory_owner=$(firmware_owner_of "$1") || return 1
+        if [ "$directory_owner" != "$firmware_uid" ]; then
+                [ -n "$firmware_invoking_uid" ] &&
+                        [ "$directory_owner" = "$firmware_invoking_uid" ] ||
+                        return 1
+        fi
         directory_mode=$(firmware_mode_of "$1") || return 1
         case $directory_mode in
         [0-7][0145][0145]|[0-7][0-7][0145][0145]) return 0 ;;
@@ -139,6 +132,14 @@ firmware_stage_seal()
 
 firmware_stage_publish()
 {
+        # `mv source symlink-to-directory` moves source inside the symlink
+        # target instead of replacing the link. Accepted parents exclude
+        # co-tenant writers, so a link can be removed safely before the rename;
+        # a real directory is never a firmware destination.
+        if [ -L "$1" ]; then
+                rm -f -- "$1" || firmware_fail "could not replace $2 link"
+        fi
+        [ ! -d "$1" ] || firmware_fail "$2 destination is a directory"
         mv -f -- "$firmware_payload" "$1" ||
                 firmware_fail "could not publish $2"
         firmware_payload=
@@ -154,7 +155,6 @@ done
 
 label "$GREEN"'Raspberry Pi Post build setup'
 
-firmware_uid=$(/usr/bin/id -u) || firmware_fail 'could not identify the current user'
 firmware_directory_safe . ||
         firmware_fail 'the build directory is writable by another user'
 for directory in artifacts artifacts/pi dist dist/boot; do

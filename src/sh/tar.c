@@ -847,8 +847,7 @@ static bool tar_pax_apply(p8 address_to body, positive length)
                         return false;
 
                 mark = body + at + used;
-                if (body[at + record - 1] != '\n' ||
-                    memory_first_of(mark + 1, 0, record - used - 2))
+                if (body[at + record - 1] != '\n')
                         return false;
 
                 equal = memory_first_of(mark + 1, '=', record - used - 2);

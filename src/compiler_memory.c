@@ -440,8 +440,7 @@ static inline INLINE address_any copy_apart_known(address_any destination,
         the routine, and for the sizes that actually arrive the call is most
         of the cost. A histogram on printf's own output -- twenty eight bytes
         for "%08d:%-12s:%6.3f" -- counted nine calls into the routine, six of
-        them to move a single byte. The instrumented counts in
-        kit/code_map/FREQUENCY_FLOOR.md say the same of the tools: sed's
+        them to move a single byte. Instrumented tool counts agree: sed's
         literal pass enters the copy 4,333,556 times with 81.9% of those
         between eight and fifteen bytes, and 666,666 of them zero.
 
@@ -1394,7 +1393,7 @@ SEARCH_KNOWN(search_case_known, memory_first_of_ascii_case)
         align down before they read a word. So the word step is not written
         there at all, and what is left is the byte walk, which is only ahead
         while the bound is very short. Guest instructions a call, counted with
-        kit/insn.c, source longer than the bound:
+        test/insn.c, source longer than the bound:
 
             bound             1     2     4     8    16
             length_max     30/10 30/13 30/29 30/49 39/89

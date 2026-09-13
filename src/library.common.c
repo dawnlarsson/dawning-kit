@@ -315,6 +315,15 @@ static bipolar system_open_output_at(bipolar directory, string_address path,
         system_call_3(syscall(write), (positive)(handle), (positive)(data),  \
                       (positive)(length))
 
+/* The platform leaves the kernel's error convention at this boundary:
+   Linux already returns negative errno, while Darwin's assembly leaf turns
+   its carry-plus-positive-errno result into the same shape before retrying.
+   Keep the declaration above shared slurp helpers so C99 builds never rely
+   on an implicit declaration. */
+#if defined(LINUX) || defined(MACOS)
+bipolar system_read_retry(positive handle, address_any into, positive length);
+#endif
+
 #define system_seek(handle, offset, origin)                                  \
         system_call_3(syscall(lseek), (positive)(handle),                    \
                       (positive)(offset), (positive)(origin))
@@ -399,7 +408,8 @@ static COLD bipolar system_make_directory_exact_at(
    survive descriptor cleanup. */
 static COLD bipolar system_open_parent_walk(
     bipolar directory, string_address path, bool create, positive mode,
-    p8 address_to leaf, positive room, bool contained)
+    p8 address_to leaf, positive room, bool contained,
+    bool (*accept)(bipolar))
 {
         if (!path || !string_get(path) || !leaf || !room)
                 return -22;
@@ -409,6 +419,11 @@ static COLD bipolar system_open_parent_walk(
         bipolar held = system_open_at(directory, path[0] == '/' ? "/" : ".", flags);
         if (held < 0)
                 return held;
+        if (accept && !accept(held))
+        {
+                system_close(held);
+                return -13;
+        }
 
         while (true)
         {
@@ -454,6 +469,11 @@ static COLD bipolar system_open_parent_walk(
                                 next = made < 0 && made != -17
                                            ? made : system_open_at(held, leaf, flags);
                         }
+                        if (next >= 0 && accept && !accept(next))
+                        {
+                                system_close(next);
+                                next = -13;
+                        }
                         system_close(held);
                         if (next < 0)
                                 return next;
@@ -468,7 +488,17 @@ static COLD bipolar system_open_parent_nofollow(
     p8 address_to leaf, positive room)
 {
         return system_open_parent_walk(directory, path, create, mode, leaf,
-                                       room, true);
+                                       room, true, 0);
+}
+
+/* The caller supplies the ownership/mode policy while this shared walk keeps
+   every accepted component pinned until its child has been opened. */
+static COLD bipolar system_open_parent_nofollow_checked(
+    bipolar directory, string_address path, bool create, positive mode,
+    p8 address_to leaf, positive room, bool (*accept)(bipolar))
+{
+        return system_open_parent_walk(directory, path, create, mode, leaf,
+                                       room, true, accept);
 }
 
 /* A command-line pathname may legitimately contain `..`; opening that
@@ -478,7 +508,7 @@ static COLD bipolar system_open_parent_pinned(
     bipolar directory, string_address path, p8 address_to leaf, positive room)
 {
         return system_open_parent_walk(directory, path, false, 0, leaf, room,
-                                       false);
+                                       false, 0);
 }
 
 #define SYSTEM_PATH_LEAF_ROOM 256

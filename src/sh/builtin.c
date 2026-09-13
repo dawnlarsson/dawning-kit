@@ -381,9 +381,15 @@ string_address shell_arguments();
 fn shell_execute_command();
 bipolar shell_spawn_tool(string_address address_to arguments,
                          b32 output, bool quiet);
+typedef struct
+{
+        bipolar handle;
+        p8 identity[FILE_PATH_MAX];
+} floodlight_executable;
+
 static bool floodlight_external_final(
     string_address executable, string_address address_to arguments,
-    positive count);
+    positive count, floodlight_executable address_to pinned);
 fn parse_nest_enter();
 fn parse_nest_leave();
 static bool exec_arithmetic_value(string_address text,
@@ -420,6 +426,41 @@ static bool shell_pipe_status_wanted(const_string name, positive length)
         pathname. The remaining operands keep their exact addresses and order.
 */
 #define ERROR_EXEC_FORMAT 8
+#define FLOODLIGHT_F_SETFD 2
+#define FLOODLIGHT_DESCRIPTOR_PATH_ROOM 64
+#define FLOODLIGHT_DESCRIPTOR_PREFIX "/proc/self/fd/"
+
+static fn floodlight_descriptor_path(p8 address_to into, bipolar handle)
+{
+        positive used = sizeof(FLOODLIGHT_DESCRIPTOR_PREFIX) - 1;
+
+        memory_copy_apart(into, FLOODLIGHT_DESCRIPTOR_PREFIX, used);
+        positive_into_string(into + used, (positive)handle);
+}
+
+/* execveat with an empty path makes the opened file, rather than a pathname
+   which may be switched after policy was checked, the executable.  Keep the
+   close-on-exec bit for ordinary ELF images.  Linux needs it cleared for a
+   #! interpreter to reopen the script descriptor, so retry that one ENOENT
+   after making the descriptor inheritable. */
+static bipolar floodlight_execute_pinned(
+    bipolar handle, string_address address_to arguments,
+    string_address address_to environment)
+{
+        bipolar answered = system_call_5(
+            syscall(execveat), (positive)handle, (positive)"",
+            (positive)arguments, (positive)environment, AT_EMPTY_PATH);
+
+        if (answered == -ERROR_NO_ENTRY &&
+            system_call_3(syscall(fcntl), (positive)handle,
+                          FLOODLIGHT_F_SETFD, 0) >= 0)
+                answered = system_call_5(
+                    syscall(execveat), (positive)handle, (positive)"",
+                    (positive)arguments, (positive)environment,
+                    AT_EMPTY_PATH);
+
+        return answered;
+}
 
 bipolar shell_exec_file(string_address path,
                          string_address address_to arguments,
@@ -428,33 +469,54 @@ bipolar shell_exec_file(string_address path,
 {
         bipolar answered;
         string_address address_to fallback;
+        floodlight_executable pinned = {.handle = -1};
+        p8 descriptor_path[FLOODLIGHT_DESCRIPTOR_PATH_ROOM];
         positive entries;
         positive bytes;
 
-        if (!floodlight_external_final(path, arguments, count))
+        if (!floodlight_external_final(path, arguments, count, &pinned))
                 return -ERROR_ACCESS;
 
-        answered = system_execute(path, arguments, environment);
+        answered = pinned.handle >= 0
+                       ? floodlight_execute_pinned(pinned.handle, arguments,
+                                                   environment)
+                       : system_execute(path, arguments, environment);
 
         if (answered != -ERROR_EXEC_FORMAT)
-                return answered;
+                goto finished;
 
         if (count > positive_max - 2)
-                return answered;
+                goto finished;
 
         entries = count + 2;
 
         if (entries > positive_max / sizeof(fallback[0]))
-                return answered;
+                goto finished;
 
         bytes = entries * sizeof(fallback[0]);
         fallback = (string_address address_to)memory(bytes);
 
         if (!fallback || system_failed(fallback))
-                return answered;
+                goto finished;
 
         fallback[0] = (string_address)"/proc/self/exe";
-        fallback[1] = path;
+
+        if (pinned.handle >= 0)
+        {
+                /* The interpreter opens this name after exec, so the script
+                   descriptor has to survive that exec as well. */
+                if (system_call_3(syscall(fcntl), (positive)pinned.handle,
+                                  FLOODLIGHT_F_SETFD, 0) < 0)
+                {
+                        memory_free(fallback, bytes);
+                        goto finished;
+                }
+
+                floodlight_descriptor_path(descriptor_path, pinned.handle);
+                fallback[1] = descriptor_path;
+        }
+        else
+                fallback[1] = path;
 
         if (count > 1)
                 memory_copy_apart(fallback + 2, arguments + 1,
@@ -471,6 +533,11 @@ bipolar shell_exec_file(string_address path,
         }
 
         memory_free(fallback, bytes);
+
+finished:
+        if (pinned.handle >= 0)
+                system_close(pinned.handle);
+
         return answered;
 }
 
@@ -14556,6 +14623,62 @@ static bool floodlight_may(string_address name, positive setting,
                    : otherwise;
 }
 
+/* External policy rows name one physical absolute path.  Open the command
+   spelling first, then ask /proc for that held file's path: resolving a name
+   and opening it afterwards leaves a switch between those two operations.
+   The descriptor supplies both the policy identity and the eventual image,
+   while the caller's pathname and argv remain unmodified, including argv[0]. */
+static bool floodlight_executable_prepare(
+    string_address executable,
+    floodlight_executable address_to image)
+{
+        static string_address deleted = (string_address)" (deleted)";
+        p8 descriptor_path[FLOODLIGHT_DESCRIPTOR_PATH_ROOM];
+        bipolar length;
+        positive deleted_length = string_length(deleted);
+
+        image->handle = -1;
+        image->identity[0] = end;
+
+        if (!executable || !string_get(executable))
+                return false;
+
+        image->handle = system_open_at(
+            AT_FDCWD, executable, O_PATH | O_CLOEXEC);
+
+        if (image->handle < 0)
+                return false;
+
+        floodlight_descriptor_path(descriptor_path, image->handle);
+        length = system_read_link_at(
+            AT_FDCWD, descriptor_path, image->identity, FILE_PATH_MAX - 1);
+
+        if (length <= 0 || image->identity[0] != '/' ||
+            ((positive)length >= deleted_length &&
+             !memory_compare(image->identity + (positive)length - deleted_length,
+                             deleted, deleted_length)))
+        {
+                system_close(image->handle);
+                image->handle = -1;
+                image->identity[0] = end;
+                return false;
+        }
+
+        image->identity[length] = end;
+
+        return true;
+}
+
+static fn floodlight_executable_drop(
+    floodlight_executable address_to image)
+{
+        if (image->handle >= 0)
+        {
+                system_close(image->handle);
+                image->handle = -1;
+        }
+}
+
 #define FLOODLIGHT_LAUNCH_ALLOW 0
 #define FLOODLIGHT_LAUNCH_PROCESS 1
 #define FLOODLIGHT_LAUNCH_REFUSE 2
@@ -14713,29 +14836,65 @@ static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
 */
 static b32 floodlight_launch_decide(
     string_address executable, string_address address_to arguments,
-    positive count, bool tool, bool final, bool diagnose)
+    positive count, bool tool, bool final, bool diagnose,
+    floodlight_executable address_to pinned)
 {
-        string_address subject = tool && arguments && count
-                                     ? shell_tool_name(arguments[0])
-                                     : executable;
+        floodlight_executable scratch;
+        floodlight_executable address_to image = pinned ? pinned : &scratch;
+        string_address subject = null;
         bool spawn_allowed;
         bool network_allowed;
 
+        image->handle = -1;
+        image->identity[0] = end;
+
         floodlight_load();
 
-        if (floodlight_report_state == FLOODLIGHT_REPORT_REFUSED || !subject)
+        if (floodlight_report_state == FLOODLIGHT_REPORT_REFUSED)
         {
                 if (diagnose)
                         log_error("floodlight: policy unavailable; refusing launch\n",
                                   0);
-                return FLOODLIGHT_LAUNCH_REFUSE;
+                goto refuse;
+        }
+
+        if (tool && arguments && count)
+                subject = shell_tool_name(arguments[0]);
+        else if (!tool &&
+                 floodlight_report_state == FLOODLIGHT_REPORT_VALID &&
+                 final && !pinned)
+        {
+                if (diagnose)
+                        log_error("floodlight: cannot pin executable; refusing launch\n",
+                                  0);
+                goto refuse;
+        }
+        else if (!tool &&
+                 floodlight_report_state == FLOODLIGHT_REPORT_VALID &&
+                 floodlight_executable_prepare(executable, image))
+                subject = (string_address)image->identity;
+        else if (!tool && executable && string_get(executable) &&
+                 floodlight_report_state == FLOODLIGHT_REPORT_BUILTIN)
+        {
+                /* A stock kernel has no path rows to consult. Preserve its
+                   ordinary exec result when a path cannot be canonicalized;
+                   a valid or promised register must instead fail closed. */
+                return FLOODLIGHT_LAUNCH_ALLOW;
+        }
+
+        if (!subject)
+        {
+                if (diagnose)
+                        log_error("floodlight: cannot identify executable; refusing launch\n",
+                                  0);
+                goto refuse;
         }
 
         if (!floodlight_may(subject, FLOODLIGHT_RUN, true))
         {
                 if (diagnose)
                         log_error("floodlight: run refused\n", 0);
-                return FLOODLIGHT_LAUNCH_REFUSE;
+                goto refuse;
         }
 
         for (positive at = 1; arguments && at < count; at++)
@@ -14745,7 +14904,7 @@ static b32 floodlight_launch_decide(
                 {
                         if (diagnose)
                                 log_error("floodlight: flag refused\n", 0);
-                        return FLOODLIGHT_LAUNCH_REFUSE;
+                        goto refuse;
                 }
         }
 
@@ -14753,6 +14912,16 @@ static b32 floodlight_launch_decide(
             subject, FLOODLIGHT_SPAWN,
             tool ? floodlight_built_in(subject) : true);
         network_allowed = floodlight_may(subject, FLOODLIGHT_NETWORK, true);
+
+        /* Spark accepts a pathname rather than an executable descriptor.
+           Once the register is active, every external launch therefore takes
+           the portable child path whose final decision pins the image. */
+        if (!tool && !final &&
+            floodlight_report_state == FLOODLIGHT_REPORT_VALID)
+        {
+                floodlight_executable_drop(image);
+                return FLOODLIGHT_LAUNCH_PROCESS;
+        }
 
         if (spawn_allowed && network_allowed)
                 return FLOODLIGHT_LAUNCH_ALLOW;
@@ -14765,7 +14934,7 @@ static b32 floodlight_launch_decide(
                 if (diagnose)
                         log_error("floodlight: cannot confine external program spawning; refusing launch\n",
                                   0);
-                return FLOODLIGHT_LAUNCH_REFUSE;
+                goto refuse;
         }
 
         if (!floodlight_apply(spawn_allowed, network_allowed))
@@ -14773,18 +14942,22 @@ static b32 floodlight_launch_decide(
                 if (diagnose)
                         log_error("floodlight: cannot install confinement; refusing launch\n",
                                   0);
-                return FLOODLIGHT_LAUNCH_REFUSE;
+                goto refuse;
         }
 
         return FLOODLIGHT_LAUNCH_ALLOW;
+
+refuse:
+        floodlight_executable_drop(image);
+        return FLOODLIGHT_LAUNCH_REFUSE;
 }
 
 static bool floodlight_external_final(
     string_address executable, string_address address_to arguments,
-    positive count)
+    positive count, floodlight_executable address_to pinned)
 {
         return floodlight_launch_decide(executable, arguments, count, false,
-                                        true, true) ==
+                                        true, true, pinned) ==
                FLOODLIGHT_LAUNCH_ALLOW;
 }
 
@@ -14792,7 +14965,7 @@ static bool floodlight_confines(string_address name)
 {
         (void)name;
         return floodlight_launch_decide(null, shell_argv, shell_argc, true,
-                                        false, false) !=
+                                        false, false, null) !=
                FLOODLIGHT_LAUNCH_ALLOW;
 }
 
@@ -14820,7 +14993,7 @@ static b32 shell_tool_call_in(positive which, bool own_process)
            irreversible filter cannot be attached to a process that continues
            afterwards. Refuse that case instead of silently omitting policy. */
         if (floodlight_launch_decide(null, arguments, count, true,
-                                     own_process, true) !=
+                                     own_process, true, null) !=
             FLOODLIGHT_LAUNCH_ALLOW)
                 return 126;
 
@@ -15018,7 +15191,7 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
                     shell_find_in_path_alloc(shell_argv[0], address_of found,
                                              address_of found_room) == 1 &&
                     floodlight_launch_decide(found, shell_argv, shell_argc,
-                                             true, false, false) ==
+                                             true, false, false, null) ==
                         FLOODLIGHT_LAUNCH_ALLOW)
                         system_execute(found, shell_argv, environment);
 

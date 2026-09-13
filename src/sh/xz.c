@@ -198,10 +198,6 @@ static p32 xz_crc32_bytes(p32 crc, p8 address_to bytes, positive n)
         return hash_crc32(crc, bytes, n);
 }
 
-static p64 xz_crc64_byte(p64 crc, p8 byte)
-{
-        return hash_crc64_tab[(crc ^ byte) & 255] ^ (crc >> 8);
-}
 
 static bool xz_fail(string_address why)
 {
@@ -1093,25 +1089,6 @@ static bool xz_lzma2(void)
         }
 }
 
-static bipolar xz_vli(void)
-{
-        p64 v = 0;
-        p8 shift = 0;
-
-        for (;;)
-        {
-                bipolar byte = xz_in_byte();
-
-                if (byte < 0)
-                        return -1;
-                v |= (p64)((p8)byte & 0x7f) << shift;
-                if (!((p8)byte & 0x80))
-                        return (bipolar)v;
-                shift += 7;
-                if (shift >= 63)
-                        return xz_fail("xz VLI"), -1;
-        }
-}
 
 static bool xz_pad4(positive n)
 {
@@ -1547,16 +1524,6 @@ static bool xz_put64(p64 v)
         return true;
 }
 
-static bool xz_put_vli(p64 v)
-{
-        while (v >= 0x80)
-        {
-                if (!xz_put((p8)(v | 0x80)))
-                        return false;
-                v >>= 7;
-        }
-        return xz_put((p8)v);
-}
 
 static p8 xz_prop_from_dict(positive dict)
 {
@@ -2504,11 +2471,6 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
         return 0;
 }
 
-static fn xz_refuse(string_address message)
-{
-        string_format(log_error, "xz: %s\n", message);
-        xz_status = 1;
-}
 
 static const file_codec_suffix xz_suffixes[] = {
     {".xz", ""}, {".txz", ".tar"}};

@@ -11669,7 +11669,7 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
            can run the resident applet under its filter. */
         if (floodlight_launch_decide(executable, words,
                                      (positive)node->word_count, tool,
-                                     false, false) !=
+                                     false, false, null) !=
             FLOODLIGHT_LAUNCH_ALLOW)
                 return -1;
 

@@ -123,7 +123,7 @@ describe()
         storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
         term)     echo "the emulator driven a byte at a time, and the line being edited" ;;
         edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
-        kit)      echo "the byte and document kits the build scripts are made of" ;;
+        kit)      echo "build, source-inventory, remote-host and firmware tooling" ;;
         boot)     echo "the image boots, init starts, and the shell answers" ;;
         canvas)   echo "what is actually on the screen, read back a pixel at a time" ;;
         esac
@@ -210,7 +210,7 @@ freestanding()
         esac
 
         if $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-                -fno-builtin "$@" -w -T kit/spark.ld -Wl,-e,_start \
+                -fno-builtin "$@" -w -T src/build/spark.ld -Wl,-e,_start \
                 -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
                 -o "$output" "$source_file" 2> "$output.err"
         then
@@ -224,9 +224,7 @@ freestanding()
 
 #       The build tool, bootstrapped if this is the first thing to want it.
 #
-#       src/build/build.c is the whole build path -- what kit/build, kit/spark,
-#       kit/asm, kit/config and kit/verify_config used to be -- and lanes reach
-#       it the same way build.sh does, with the one documented command.
+#       Lanes bootstrap src/build/build.c the same way build.sh does.
 build_tool()
 {
         if [ ! -x "$root/build" ] ||
@@ -908,7 +906,7 @@ riscv_alignment_audit()
         if ! "$@" -O2 -static -nostdlib -nostartfiles \
                 -fno-stack-protector -fno-builtin -w \
                 -march=rv64imafd_zicsr_zicntr -mabi=lp64d \
-                -DSTANDARD_NO_PLATFORM -T kit/spark.ld -Wl,-e,string_length \
+                -DSTANDARD_NO_PLATFORM -T src/build/spark.ld -Wl,-e,string_length \
                 -Wl,--build-id=none -o "$alignment_image" src/library.c \
                 2> "$alignment_error"
         then
@@ -1778,7 +1776,7 @@ lane_standard()
         #       inactive branches too, so moving a body behind an #if cannot
         #       make the check disappear.
         if command -v python3 > /dev/null 2>&1; then
-                if python3 kit/compact/inventory.py --check --target all src/library.c \
+                if python3 test/assembly/inventory.py --check --target all src/library.c \
                         > /dev/null 2> "$work/asm-only.err"
                 then
                         tally asm-only 1 1
@@ -1855,7 +1853,7 @@ lane_verify() { target_lane verify_one; }
 #       in the verify lane can reach any of that: its sizes come from loop
 #       counters, so every one of them is a call, and the expansions would ship
 #       having never run. The CHECK_exact section of test/checks.c is written
-#       out one size at a time by kit/exact.py for that reason.
+#       with shared literal-size lists for that reason.
 #
 #       On all three machines, because the expansion differs on each: x86 has a
 #       hand written window between thirty three and a hundred and twenty eight
@@ -1864,32 +1862,7 @@ exact_one() { freestanding_checks_one exact exact "$@"; }
 
 lane_exact()
 {
-        generated=0
-
-        #
-        #       The file is generated, so the file can drift from what
-        #       generates it. That is not hypothetical here: the inventory
-        #       paragraph at the top of library.c spent months saying there
-        #       was no SIMD in the file, and saying it in both places, so
-        #       every regeneration put it back.
-        #
-        if command -v python3 > /dev/null 2>&1; then
-                sed -n '/^#ifdef CHECK_exact$/,/^#endif \/\* CHECK_exact \*\/$/p' \
-                        test/checks.c | sed '1d;$d' > "$work/exact.section"
-                if ! python3 kit/exact.py | diff -q - "$work/exact.section" > /dev/null; then
-                        note "the CHECK_exact section of test/checks.c is not what kit/exact.py writes"
-                        note "  regenerate it: python3 kit/exact.py, pasted between its #ifdef and #endif"
-                        generated=1
-                fi
-        else
-                note "no python3, so the exact section was not checked against its generator"
-        fi
-
-        outcome=0
-        target_lane exact_one || outcome=$?
-
-        [ "$generated" = 0 ] || return 1
-        return "$outcome"
+        target_lane exact_one
 }
 
 #
@@ -2069,7 +2042,7 @@ build_ours() {
         esac
 
         $cross -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-                -fno-builtin "$@" -DWORK="\"$where\"" -w -T kit/spark.ld \
+                -fno-builtin "$@" -DWORK="\"$where\"" -w -T src/build/spark.ld \
                 -Wl,-e,_start -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
                 -o "$output" "-DCHECK_$check" test/checks.c 2> "$output.err"
 }
@@ -2266,7 +2239,7 @@ build_ours() {
 
         # shellcheck disable=SC2086
         $cross -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-                -fno-builtin "$@" $extra -w -T kit/spark.ld -Wl,-e,_start \
+                -fno-builtin "$@" $extra -w -T src/build/spark.ld -Wl,-e,_start \
                 -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
                 -o "$output" "-DCHECK_$check" test/checks.c 2> "$output.err"
 }
@@ -2509,7 +2482,7 @@ mkdir -p "$work" || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
 flags="-O2 -static -nostdlib -nostartfiles -fno-stack-protector -fno-builtin -w"
-link="-T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none -Wl,--no-warn-rwx-segments"
+link="-T src/build/spark.ld -Wl,-e,_start -Wl,--build-id=none -Wl,--no-warn-rwx-segments"
 
 failed=0
 
@@ -3151,6 +3124,8 @@ stack_recursion_check()
         #       subshell drops its cores and the announcement with them.
         lowest=none
         for limit in 16 32 64 128 256 384 512 1024 2048 4096 8192; do
+                # dash and bash support these resource limits.
+                # shellcheck disable=SC3045
                 ( ulimit -c 0 2>/dev/null
                   ulimit -s "$limit" 2>/dev/null || exit 111
                   "$farm/ls" -R "$tree" > /dev/null 2>&1 ) 2>/dev/null
@@ -3166,6 +3141,7 @@ stack_recursion_check()
                 note "ls -R over $LS_RECURSION_DEPTH levels needs ${lowest} kB of stack (GNU ls: 16)"
         fi
 
+        # shellcheck disable=SC3045
         ( ulimit -c 0 2>/dev/null
           ulimit -s "$LS_RECURSION_STACK_KB" 2>/dev/null || exit 111
           "$farm/ls" -R "$tree" > /dev/null 2>&1 ) 2>/dev/null
@@ -3978,7 +3954,7 @@ HARNESS
 
 if ! $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
         -fno-builtin -Wall -Wextra -Werror=unused-variable \
-        -Werror=unused-but-set-variable -I "$root" -T kit/spark.ld -Wl,-e,_start \
+        -Werror=unused-but-set-variable -I "$root" -T src/build/spark.ld -Wl,-e,_start \
         -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
         -o "$work/term" "$work/harness.c" 2> "$work/err"
 then
@@ -6027,7 +6003,7 @@ HARNESS
 
 if ! $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
         -fno-builtin -Wall -Wextra -Werror=unused-variable \
-        -Werror=unused-but-set-variable -I "$root" -T kit/spark.ld -Wl,-e,_start \
+        -Werror=unused-but-set-variable -I "$root" -T src/build/spark.ld -Wl,-e,_start \
         -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
         -o "$work/edit" "$work/harness.c" 2> "$work/err"
 then
@@ -6460,19 +6436,11 @@ fi
 )
 
 #
-#       The kits the build scripts are made of.
+#       Build and development tooling.
 #
 #           sh test/run kit
 #
-#       kit/bit.sh writes bytes and kit/doc.sh writes HTML, and both were
-#       tested only by heredocs pasted into the CI workflow -- which meant
-#       they could not be run without pushing, and were not run at all by
-#       anybody working on them.
-#
-#       bit_N has to emit the same bytes under bash and under dash, and the
-#       right NUMBER of bytes for input that does not fit. doc has to escape
-#       what a document can contain, because a generator that does not is a
-#       way of writing somebody else's script into a page.
+#       Build, source-inventory, remote-host and firmware tooling checks.
 #
 lane_kit()
 (
@@ -6480,9 +6448,11 @@ python3 test/differential.py --harness core_state || exit 1
 python3 test/differential.py --harness canvas_lifetime || exit 1
 python3 test/differential.py --harness canvas_view || exit 1
 python3 test/differential.py --harness audit_shell_functions || exit 1
-python3 test/differential.py --harness code_map || exit 1
 python3 test/differential.py --harness spark_entry || exit 1
-python3 kit/function_audit.py --check || exit 1
+if [ "$(uname -s)" = Darwin ]; then
+        python3 test/differential.py --harness macos_read_retry || exit 1
+fi
+python3 test/function_audit.py --check || exit 1
 python3 test/differential.py --harness floodlight || exit 1
 python3 test/differential.py --harness surface_coreutils_gap || exit 1
 python3 test/differential.py --harness image_nodes || exit 1
@@ -6529,24 +6499,54 @@ SCRIPT
 cat > "$work/build-bin/rsync" <<'SCRIPT'
 #!/bin/sh
 printf '%s\n' "$@" > "$MOONWATER_TEST_COPY"
+for argument do
+        case $argument in
+        --rsync-path=*) printf '%s' "${argument#--rsync-path=}" > "$MOONWATER_TEST_COPY.stage" ;;
+        esac
+done
 exit 23
 SCRIPT
 chmod +x "$work/build-bin/ssh" "$work/build-bin/rsync"
+hostile_remote="$work/remote path; printf injected >$work/rsync-injected; : #"
 PATH="$work/build-bin:$PATH" MOONWATER_TEST_COPY="$work/copy-arguments" \
+        MOONWATER_BUILD_DIR="$hostile_remote" \
         sh build.sh --host build-fixture > "$work/build-log" 2>&1
 copy_status=$?
+copy_target=$(tail -1 "$work/copy-arguments")
+python3 - "$work/copy-arguments" "$copy_target" "$hostile_remote" <<'PY'
+import pathlib
+import platform
+import shlex
+import sys
+
+record, target, remote = sys.argv[1:]
+if platform.system() == 'Darwin':
+    assert target.startswith('build-fixture:')
+    assert shlex.split(target[len('build-fixture:'):]) == [remote + '/']
+else:
+    assert target == 'build-fixture:./'
+    command = shlex.split(pathlib.Path(record + '.stage').read_text())
+    assert len(command) == 6
+    assert command[:2] == ['sh', '-c']
+    assert command[3:] == ['sh', remote, 'rsync']
+PY
+copy_decode_status=$?
 if [ "$copy_status" -ne 0 ] &&
-        grep -q -x -F '.claude' "$work/copy-arguments"; then
+        grep -q -x -F '.claude' "$work/copy-arguments" &&
+        [ "$copy_decode_status" -eq 0 ] &&
+        [ ! -e "$work/rsync-injected" ]; then
         won
 else
-        lost 'agent worktree excluded' "copy status $copy_status"
+        lost 'quoted remote copy' \
+                "copy $copy_status decode $copy_decode_status target [$copy_target]"
 fi
 
+if [ "$(uname -s)" = Darwin ]; then
 # Exercise the Mac-side remote path without a remote machine. The local rsync
-# stub runs its --rsync-path command as the remote shell would; stat supplies
-# GNU's two queried formats on Darwin as well as Linux.
+# stub runs stage preparation as the remote shell would. Native Linux
+# exercises the C remote entry in the build_tools harness below.
 mkdir -p "$work/secure-bin" "$work/remote-parent" \
-        "$work/remote-fixture/src" "$work/remote-fixture/kit" \
+        "$work/remote-fixture/src" "$work/remote-fixture/kernel" \
         "$work/remote-fixture/dist"
 chmod 700 "$work/remote-parent"
 : > "$work/remote-fixture/build.sh"
@@ -6555,29 +6555,25 @@ cat > "$work/secure-bin/stat" <<'SCRIPT'
 format=$2
 shift 2
 [ "$1" != -- ] || shift
-if [ "$(uname -s)" = Darwin ]; then
+if [ "$(/usr/bin/uname -s)" = Darwin ]; then
         case $format in
         %u) exec /usr/bin/stat -f %u "$1" ;;
-        %a) exec /usr/bin/stat -f %Lp "$1" ;;
+        %a|%Lp) exec /usr/bin/stat -f %Lp "$1" ;;
+        %s|%z) exec /usr/bin/stat -f %z "$1" ;;
         esac
 fi
+case $format in %z) format=%s ;; %Lp) format=%a ;; esac
 exec /usr/bin/stat -c "$format" -- "$1"
 SCRIPT
 cat > "$work/secure-bin/rsync" <<'SCRIPT'
 #!/bin/sh
-[ "${MOONWATER_TEST_REMOTE_RSYNC:-}" != 1 ] || exit 0
-remote_command=
-for argument do
-        case $argument in
-        --rsync-path=*) remote_command=${argument#--rsync-path=} ;;
-        esac
-done
-[ -n "$remote_command" ] || exit 1
-MOONWATER_TEST_REMOTE_RSYNC=1 sh -c "$remote_command"
+exit 0
 SCRIPT
 cat > "$work/secure-bin/ssh" <<'SCRIPT'
 #!/bin/sh
-case "$*" in
+command=
+for command do :; done
+case "$command" in
 *"'./build' 'key-one' 'kernel_export'"*)
         printf '%s\n' "${MOONWATER_TEST_IMAGE:-dist/image.efi}" ;;
 *"'cat' '--'"*)
@@ -6591,7 +6587,9 @@ case "$*" in
         fi
         printf '%s' 'new image bytes'
         exit "${MOONWATER_TEST_FETCH_STATUS:-0}" ;;
-*) exit 0 ;;
+*"'sudo' 'env'"*) exit 0 ;;
+true) exit 0 ;;
+*) sh -c "$command" ;;
 esac
 SCRIPT
 cat > "$work/secure-bin/mktemp" <<'SCRIPT'
@@ -6625,10 +6623,57 @@ ln -s "$work/outside-image" "$work/remote-fixture/dist/image.efi"
 )
 secure_status=$?
 secure_type=regular
-[ ! -L "$work/remote-fixture/dist/image.efi" ] || secure_type=link
+[ ! -L "$work/remote-fixture/dist/image.efi" ] || secure_type='link'
 same 'private atomic remote build' \
         '0:regular:new image bytes:outside stays:directory:700:600' \
         "$secure_status:$secure_type:$(cat "$work/remote-fixture/dist/image.efi"):$(cat "$work/outside-image"):$(cat "$work/build-mktemp-log"):$($work/secure-bin/stat -c %a -- "$work/remote-parent/stage"):$($work/secure-bin/stat -c %a -- "$work/remote-parent/stage/.moonwater-stage-v1")"
+
+rm -f -- "$work/remote-fixture/dist/image.efi"
+mkdir -p "$work/fetch-directory-target"
+ln -s "$work/fetch-directory-target" \
+        "$work/remote-fixture/dist/image.efi"
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture \
+                > "$work/fetch-link-directory-log" 2>&1
+)
+fetch_link_directory_status=$?
+fetch_link_directory_type=regular
+[ ! -L "$work/remote-fixture/dist/image.efi" ] ||
+        fetch_link_directory_type='link'
+fetch_link_directory_escape=no
+[ ! -e "$work/fetch-directory-target/image" ] ||
+        fetch_link_directory_escape=yes
+same 'fetch replaces directory symlink safely' \
+        '0:regular:new image bytes:no' \
+        "$fetch_link_directory_status:$fetch_link_directory_type:$(cat "$work/remote-fixture/dist/image.efi"):$fetch_link_directory_escape"
+
+rm -f -- "$work/remote-fixture/dist/image.efi"
+mkdir "$work/remote-fixture/dist/image.efi"
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture \
+                > "$work/fetch-directory-log" 2>&1
+)
+fetch_directory_status=$?
+same 'fetch refuses directory destination' '1:directory' \
+        "$fetch_directory_status:$([ -d "$work/remote-fixture/dist/image.efi" ] && printf directory || printf changed)"
+rmdir "$work/remote-fixture/dist/image.efi"
+
+artifact_cr=$(printf '\r')
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_TEST_IMAGE="dist/image${artifact_cr}.efi" \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture \
+                > "$work/fetch-cr-log" 2>&1
+)
+same 'remote carriage return refused' 1 "$?"
 
 printf '%s' 'old image bytes' > "$work/remote-fixture/dist/image.efi"
 (
@@ -6713,12 +6758,42 @@ for unsafe_stage in "$work/unclaimed-stage" "$work/remote-parent/stage-link"; do
         same "unsafe stage $(basename "$unsafe_stage")" 1 "$unsafe_status"
 done
 
+fi
+
 # The Raspberry Pi hook verifies both cached and newly downloaded bytes, and
 # writes private stages through pinned descriptors before publication. Fake
 # downloads make those transitions deterministic and keep this lane offline.
-mkdir -p "$work/rpi/kit" "$work/rpi/artifacts/pi" \
+mkdir -p "$work/rpi/src/build" "$work/rpi/artifacts/pi" \
         "$work/rpi/dist/boot" "$work/rpi-bin"
-cp kit/common "$work/rpi/kit/common"
+cp src/build/host.sh "$work/rpi/src/build/host.sh"
+rpi_fixture_uid=$(id -u)
+cat > "$work/rpi-bin/id" <<'SCRIPT'
+#!/bin/sh
+if [ -n "${MOONWATER_TEST_UID:-}" ]; then
+        printf '%s\n' "$MOONWATER_TEST_UID"
+else
+        exec /usr/bin/id "$@"
+fi
+SCRIPT
+cat > "$work/rpi-bin/stat" <<'SCRIPT'
+#!/bin/sh
+format=$2
+shift 2
+[ "$1" != -- ] || shift
+path=$1
+if [ "${MOONWATER_TEST_ROOT_OUTPUTS:-}" = 1 ] && [ "$format" = %u ]; then
+        case $path in
+        artifacts|artifacts/*|dist|dist/*) printf '0\n'; exit 0 ;;
+        esac
+fi
+if [ "$(uname -s)" = Darwin ]; then
+        case $format in
+        %u) exec /usr/bin/stat -f %u "$path" ;;
+        %a) exec /usr/bin/stat -f %Lp "$path" ;;
+        esac
+fi
+exec /usr/bin/stat -c "$format" -- "$path"
+SCRIPT
 cat > "$work/rpi-bin/sha256sum" <<'SCRIPT'
 #!/bin/sh
 read -r digest path || exit 1
@@ -6767,7 +6842,8 @@ case $output in
 *) printf '%s' "$bytes" > "$output" ;;
 esac
 SCRIPT
-chmod +x "$work/rpi-bin/sha256sum" \
+chmod +x "$work/rpi-bin/id" "$work/rpi-bin/stat" \
+        "$work/rpi-bin/sha256sum" \
         "$work/rpi-bin/curl"
 printf '%s' 'firmware:bootcode.bin' > "$work/rpi/artifacts/pi/bootcode.bin"
 printf '%s' 'outside firmware stays' > "$work/rpi-outside"
@@ -6785,14 +6861,64 @@ ln -s "$work/rpi-outside" "$work/rpi/dist/boot/bootcode.bin"
 rpi_status=$?
 rpi_types=regular
 for firmware in bootcode.bin start.elf fixup.dat; do
-        [ ! -L "$work/rpi/artifacts/pi/$firmware" ] || rpi_types=link
-        [ ! -L "$work/rpi/dist/boot/$firmware" ] || rpi_types=link
+        [ ! -L "$work/rpi/artifacts/pi/$firmware" ] || rpi_types='link'
+        [ ! -L "$work/rpi/dist/boot/$firmware" ] || rpi_types='link'
 done
 same 'verified named firmware' \
         '0:regular:firmware:bootcode.bin:firmware:start.elf:firmware:fixup.dat:outside firmware stays' \
         "$rpi_status:$rpi_types:$(cat "$work/rpi/dist/boot/bootcode.bin"):$(cat "$work/rpi/dist/boot/start.elf"):$(cat "$work/rpi/dist/boot/fixup.dat"):$(cat "$work/rpi-outside")"
 same 'firmware writer uses descriptors' '-:-' \
         "$(paste -sd: "$work/rpi-output-log")"
+
+# Model a fresh sudo build: the checkout remains owned by the invoking user,
+# while artifacts and dist were created by the root build before this hook.
+# The process itself stays unprivileged so the fixture can run everywhere;
+# the id/stat wrappers expose the ownership combination the hook decides on.
+(
+        cd "$work/rpi" || exit 1
+        PATH="$work/rpi-bin:$PATH" MOONWATER_TEST_UID=0 \
+                MOONWATER_TEST_ROOT_OUTPUTS=1 SUDO_UID="$rpi_fixture_uid" \
+                sh "$root/kernel/profile/post/rpi.sh" \
+                > "$work/rpi-sudo-owner-log" 2>&1
+)
+rpi_sudo_owner_status=$?
+same 'sudo accepts invoking checkout and root output' 0 \
+        "$rpi_sudo_owner_status"
+
+# mv follows a destination link when that link names a directory. Publication
+# must replace the link itself, and must refuse an actual directory rather than
+# nesting the generic staged name inside either target.
+mkdir "$work/rpi-outside-directory"
+rm -f "$work/rpi/dist/boot/start.elf"
+ln -s "$work/rpi-outside-directory" "$work/rpi/dist/boot/start.elf"
+(
+        cd "$work/rpi" || exit 1
+        PATH="$work/rpi-bin:$PATH" sh "$root/kernel/profile/post/rpi.sh" \
+                > "$work/rpi-directory-link-log" 2>&1
+)
+rpi_directory_link_status=$?
+rpi_directory_link_type=regular
+[ ! -L "$work/rpi/dist/boot/start.elf" ] || rpi_directory_link_type='link'
+rpi_directory_link_escape=$(find "$work/rpi-outside-directory" -mindepth 1 \
+        -print | wc -l | tr -d ' ')
+same 'firmware replaces directory symlink safely' \
+        '0:regular:firmware:start.elf:0' \
+        "$rpi_directory_link_status:$rpi_directory_link_type:$(cat "$work/rpi/dist/boot/start.elf"):$rpi_directory_link_escape"
+
+rm -f "$work/rpi/dist/boot/start.elf"
+mkdir "$work/rpi/dist/boot/start.elf"
+(
+        cd "$work/rpi" || exit 1
+        PATH="$work/rpi-bin:$PATH" sh "$root/kernel/profile/post/rpi.sh" \
+                > "$work/rpi-directory-target-log" 2>&1
+)
+rpi_directory_target_status=$?
+rpi_directory_target_escape=$(find "$work/rpi/dist/boot/start.elf" -mindepth 1 \
+        -print | wc -l | tr -d ' ')
+same 'firmware refuses directory destination' '1:0' \
+        "$rpi_directory_target_status:$rpi_directory_target_escape"
+rmdir "$work/rpi/dist/boot/start.elf"
+printf '%s' 'firmware:start.elf' > "$work/rpi/dist/boot/start.elf"
 
 printf '%s' 'old invalid firmware' > "$work/rpi/artifacts/pi/fixup.dat"
 (
@@ -6845,7 +6971,7 @@ hook_gates=$(grep -E -c 'if \(build_shell_key\("(pre|post)"\)\)' \
 same 'build hooks gate success' '1:2' "$hook_return:$hook_gates"
 
 group config
-common_path=$(pwd)/kit/common
+common_path=$(pwd)/src/build/host.sh
 mkdir -p "$work/config/artifacts"
 for config_shell in bash dash; do
         command -v "$config_shell" >/dev/null 2>&1 || continue
@@ -6909,233 +7035,6 @@ bench_status=$?
 bench_arguments=$(grep -c -x -F 'BENCH_ARGS:2<128><two words>' "$work/bench-log")
 same 'arguments preserved on all targets' '0:3' "$bench_status:$bench_arguments"
 
-#
-#       Bytes.
-#
-
-bytes()
-{
-        printf '. ./kit/bit.sh\nBIT_QUIET=1\n%s | od -An -tx1 | tr -d " \\n"\n' \
-                "$1" > "$work/bit.sh"
-
-        "$2" "$work/bit.sh"
-}
-
-group bit
-
-for shell in bash dash; do
-        command -v "$shell" > /dev/null 2>&1 || continue
-
-        same "hex $shell"       41       "$(bytes 'bit_8 0x41' "$shell")"
-        same "decimal $shell"   41       "$(bytes 'bit_8 65' "$shell")"
-        same "string $shell"    454c46   "$(bytes 'bit_8 ELF' "$shell")"
-        same "overflow $shell"  2c       "$(bytes 'bit_8 300' "$shell")"
-        same "two bytes $shell" 3412     "$(bytes 'bit_16 0x1234' "$shell")"
-        same "too wide $shell"  5634     "$(bytes 'bit_16 0x123456' "$shell")"
-        same "negative $shell"  ffff     "$(bytes 'bit_16 -1' "$shell")"
-        same "four $shell"      44332211 "$(bytes 'bit_32 0x11223344' "$shell")"
-        same "eight $shell"     0100000000000000 "$(bytes 'bit_64 1' "$shell")"
-        same "sixteen $shell"   01000000000000000000000000000000 \
-                "$(bytes 'bit128 1' "$shell")"
-        same "commas $shell"    48c7c0   "$(bytes 'bit_8 0x48,0xc7,0xc0' "$shell")"
-        same "zero $shell"      00       "$(bytes 'bit_8 0' "$shell")"
-        same "top byte $shell"  ff       "$(bytes 'bit_8 255' "$shell")"
-        same "wraps $shell"     00       "$(bytes 'bit_8 256' "$shell")"
-
-        # The variable length integers a wasm section is measured in. 128 is
-        # the first that needs a second byte, and getting the continuation bit
-        # wrong there produces a module that will not validate.
-        same "leb small $shell" 00   "$(bytes 'wasm_var 0' "$shell")"
-        same "leb 127 $shell"   7f   "$(bytes 'wasm_var 127' "$shell")"
-        same "leb 128 $shell"   8001 "$(bytes 'wasm_var 128' "$shell")"
-        same "leb 300 $shell"   ac02 "$(bytes 'wasm_var 300' "$shell")"
-done
-
-#
-#       An ELF that a loader would accept.
-#
-
-group elf
-
-cat > "$work/elf.sh" <<'SCRIPT'
-. ./kit/bit.sh
-x64() { bit_8 0x48,0xc7,0xc0,0x3c,0x00,0x00,0x00
-        bit_8 0x48,0xc7,0xc7,0x00,0x00,0x00,0x00
-        bit_8 0x0f,0x05; }
-arm() { bit_32 0xd2800ba8; bit_32 0xd2800000; bit_32 0xd4000001; }
-elf "$1/x64" x64
-elf "$1/arm" arm aarch64
-SCRIPT
-
-sh "$work/elf.sh" "$work" > /dev/null 2>&1
-
-if command -v python3 > /dev/null 2>&1; then
-        for machine in x64:62 arm:183; do
-                name=${machine%:*}
-                number=${machine#*:}
-
-                same "$name valid" ok "$(python3 - "$work/$name" "$number" <<'PYTHON'
-import struct, sys
-
-data = open(sys.argv[1], 'rb').read()
-machine = int(sys.argv[2])
-
-head = struct.unpack_from('<HHIQQQIHHHHHH', data, 16)
-segment = struct.unpack_from('<IIQQQQQQ', data, 64)
-
-why = []
-if data[:4] != b'\x7fELF':
-        why.append('not an elf')
-if head[1] != machine:
-        why.append('machine %s' % head[1])
-if segment[1] != 5:
-        why.append('segment flags %s' % segment[1])
-if head[3] != segment[3] + 120:
-        why.append('entry %s' % head[3])
-if segment[5] != len(data):
-        why.append('size %s of %s' % (segment[5], len(data)))
-
-print(', '.join(why) if why else 'ok')
-PYTHON
-)"
-        done
-else
-        printf '  %-10s %s\n' elf 'no python3, skipped'
-fi
-
-#
-#       A wasm module a runtime would accept.
-#
-
-group wasm
-
-cat > "$work/wasm.sh" <<'SCRIPT'
-. ./kit/bit.sh
-type_section()     { wasm_var 1; bit_8 0x60; bit_8 0x00,0x01,0x7F; }
-function_section() { wasm_var 1; wasm_var 0; }
-export_section()   { wasm_var 1; wasm_var 4; bit_8 "main"; bit_8 0x00,0x00; }
-code_body()        { wasm_var 0; bit_8 0x41,0x00,0x0B; }
-code_section()     { wasm_var 1; wasm_body code_body; }
-module()           { wasm_section 1 type_section
-                     wasm_section 3 function_section
-                     wasm_section 7 export_section
-                     wasm_section 10 code_section; }
-wasm "$1/example.wasm" module
-SCRIPT
-
-sh "$work/wasm.sh" "$work" > /dev/null 2>&1
-
-if command -v node > /dev/null 2>&1; then
-        same 'validates and runs' 0 "$(node -e '
-                const b = require("fs").readFileSync(process.argv[1]);
-                if (!WebAssembly.validate(b)) { console.log("does not validate"); process.exit(0); }
-                const i = new WebAssembly.Instance(new WebAssembly.Module(b));
-                console.log(i.exports.main());
-        ' "$work/example.wasm" 2>&1)"
-else
-        printf '  %-10s %s\n' wasm 'no node, skipped'
-fi
-
-#
-#       HTML that carries no script.
-#
-
-group doc
-
-doc_of()
-{
-        printf '%s' "$1" > "$work/in.md"
-        bash -c ". ./kit/doc.sh; doc $work/in.md" > "$work/out.html" 2>/dev/null || true
-}
-
-carries()
-{
-        case $(cat "$work/out.html") in
-        *"$2"*) won ;;
-        *) lost "$1" "no $2 in the output" ;;
-        esac
-}
-
-lacks()
-{
-        case $(cat "$work/out.html") in
-        *"$2"*) lost "$1" "$2 survived" ;;
-        *) won ;;
-        esac
-}
-
-if command -v bash > /dev/null 2>&1; then
-        doc_of 'a & b < c > d
-'
-        carries 'ampersand'     'a &amp; b &lt; c &gt; d'
-
-        doc_of '[x](javascript:alert(1))
-'
-        lacks 'javascript url'  'javascript:'
-
-        doc_of '![i](x" onerror="alert(1))
-'
-        lacks 'attribute out'   ' onerror='
-
-        doc_of 'he said "hi"
-'
-        carries 'quote in text' '<p>he said "hi"</p>'
-
-        doc_of 'a < b
-'
-        carries 'less than'     'a &lt; b'
-
-        doc_of '&amp;
-'
-        carries 'entity twice'  '&amp;amp;'
-
-        doc_of '[x](data:text/html,alert)
-'
-        lacks 'data url'        'data:text/html'
-
-        doc_of '[x](data:image/png,abc)
-'
-        carries 'image data url' 'data:image/png,abc'
-
-        doc_of '[x](https://example.com/a)
-'
-        carries 'plain link'    'href="https://example.com/a"'
-
-        #       Anything that looks like a tag is written straight out. That
-        #       is markdown's own rule and it is what makes a document able to
-        #       carry a table, but it also means the escaping above is a
-        #       promise about text and not about a document from a stranger.
-        #       Recorded rather than left out: tightening it should fail here.
-        doc_of '<script>alert(1)</script>
-'
-        carries 'raw tag kept'  '<script>alert(1)</script>'
-
-        doc_of '<img src=x onerror=alert(1)>
-'
-        carries 'raw attribute' 'onerror=alert(1)'
-
-        doc_of '# a heading
-
-some text
-'
-        carries 'a heading'     '<h1'
-
-        if bash -c '. ./kit/doc.sh; doc /nonexistent.md' > /dev/null 2>&1; then
-                lost 'missing input' 'a missing file was not an error'
-        else
-                won
-        fi
-else
-        printf '  %-10s %s\n' doc 'no bash, skipped'
-fi
-
-#
-#       The library compaction passes are generators too. In particular, the
-#       alias block must survive restructuring byte for byte: if its current
-#       shape is compared with an old template, the second pass renames both
-#       sides and quietly creates aliases from a symbol to itself.
-#
-
 group build
 
 if command -v python3 > /dev/null 2>&1; then
@@ -7149,29 +7048,10 @@ fi
 group compact
 
 if command -v python3 > /dev/null 2>&1; then
-        cp src/library.c "$work/library.c"
-        python3 kit/compact/restructure.py "$work/library.c" > /dev/null 2>&1
-        python3 kit/compact/restructure.py "$work/library.c" > /dev/null 2>&1
-
-        same 'aliases preserved' yes "$(python3 - src/library.c "$work/library.c" <<'PYTHON'
-import re, sys
-
-pattern = (r'/\*\n        The libc names, as second labels rather than as code\..*?'
-           r'^__asm__\(\n.*?^\);\n\n')
-
-blocks = []
-for path in sys.argv[1:]:
-    found = re.search(pattern, open(path).read(), flags=re.S | re.M)
-    blocks.append(found.group(0) if found else None)
-
-print('yes' if blocks[0] is not None and blocks[0] == blocks[1] else 'no')
-PYTHON
-)"
-
         mkdir -p "$work/inventory-tree/platform"
         cp src/library.c "$work/inventory-tree/library.c"
         cp src/platform/*.inc "$work/inventory-tree/platform/"
-        python3 kit/compact/inventory.py "$work/inventory-tree/library.c" \
+        python3 test/assembly/inventory.py "$work/inventory-tree/library.c" \
                 > /dev/null 2>&1
 
         if cmp -s src/library.c "$work/inventory-tree/library.c"; then
@@ -7180,7 +7060,7 @@ PYTHON
                 lost 'inventory current' 'src/library.c differs from its generator'
         fi
 
-        if python3 kit/compact/inventory.py --check --target all src/library.c \
+        if python3 test/assembly/inventory.py --check --target all src/library.c \
                 > /dev/null 2> "$work/inventory-all.err"; then
                 won
         else
@@ -7193,13 +7073,13 @@ PYTHON
                 lost 'inventory audit' "$(tail -8 "$work/inventory-test.out" | tr '\n' ' ')"
         fi
 
-        if python3 kit/performance_coverage.py > "$work/performance.out" 2>&1; then
+        if python3 test/performance_coverage.py > "$work/performance.out" 2>&1; then
                 won
         else
                 lost 'performance map' "$(tail -8 "$work/performance.out" | tr '\n' ' ')"
         fi
 
-        if python3 kit/specialization_coverage.py > "$work/specialization.out" 2>&1; then
+        if python3 test/specialization_coverage.py > "$work/specialization.out" 2>&1; then
                 won
         else
                 lost 'specialization map' "$(tail -8 "$work/specialization.out" | tr '\n' ' ')"
@@ -7258,7 +7138,7 @@ if ! command -v timeout > /dev/null 2>&1; then
         echo "               the boot is wrapped in it, and without it the"
         echo "               transcript comes out empty and every check below"
         echo "               fails naming a feature it never got to ask about."
-        echo "               Run this where there is one: sh kit/onbox"
+        echo "               Run this where there is one: sh test/onbox"
         exit 2
 fi
 
@@ -8749,7 +8629,7 @@ bench_target()
         # shellcheck disable=SC2086
         "$bench_compiler" $bench_arch_flags \
                 -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-                -fno-builtin -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
+                -fno-builtin -T src/build/spark.ld -Wl,-e,_start -Wl,--build-id=none \
                 -Wl,--no-warn-rwx-segments \
                 -o "$bench_binary" "-D$bench_section" test/checks.c || return 1
 

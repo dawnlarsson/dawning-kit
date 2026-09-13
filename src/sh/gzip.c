@@ -1762,10 +1762,6 @@ static bool gzip_deflate_pump(bool finish)
         return !gzip_out_failed;
 }
 
-static bool gzip_deflate_body(bool last_stream)
-{
-        return gzip_deflate_pump(last_stream);
-}
 
 static bool gzip_put32(p32 value)
 {
@@ -2034,11 +2030,6 @@ static b32 gzip_stream(bipolar in, bipolar out, bool decode, p8 level)
         return 0;
 }
 
-static fn gzip_refuse(string_address message)
-{
-        string_format(log_error, "gzip: %s\n", message);
-        gzip_status = 1;
-}
 
 static const file_codec_suffix gzip_suffixes[] = {
     {".gz", ""}, {".Z", ""}, {".tgz", ".tar"}};

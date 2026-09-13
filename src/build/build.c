@@ -12,19 +12,10 @@
         line and then hands over, so `sh build.sh` still works and still means
         the same thing.
 
-        What this replaces: the build half of build.sh, and the five shell
-        scripts under kit/ that were the rest of the build path -- build,
-        spark, asm, config and verify_config. The external programs they drove
-        are still driven: kbuild is GNU make, the kernel arrives through curl
-        and tar, the image is packed by objcopy, and QEMU boots it. What has
-        gone is the shell plumbing between them.
-
-        kit/common is not one of the five and stays. It is a library of shell
-        helpers, and four scripts this fold does not touch still source it --
-        kit/onbox, kernel/patch/apply, kernel/replace/apply and the Raspberry
-        Pi post-build step -- so removing its build-path callers did not make
-        it dead. Its key/key_one are the same two answers `build key` and
-        `build key-one` give.
+        This owns configuration, marked assembly, Spark linking and kernel
+        build orchestration. kbuild and the external compiler tools remain
+        its execution backends. src/build/host.sh contains helpers used by
+        the macOS entry and the remaining kernel/remote shell operations.
 
         Where a utility exists in this tree it is called rather than spawned.
         cp, ln, rm, mkdir, mknod, chmod, find and nproc here are the same
@@ -117,7 +108,7 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
                 The head and tail are separate so the whole-program flags land
                 where they always have. Flag order does not change the output,
                 but a diff of two build logs should not claim it did. */
-        {"link_script", "kit/spark.ld"},
+        {"link_script", "src/build/spark.ld"},
         {"entry", "_start"},
         {"freestanding_source", "src/main.c"},
         {"freestanding_output", "bin"},
@@ -298,10 +289,6 @@ static p8 address_to build_text_take(positive want)
 
 //      Only --watch runs more than one build in one process, and it is the
 //      one caller that has to give the arena back.
-static fn build_text_reset()
-{
-        build_text_used = 0;
-}
 
 /*
         Join, with the pieces named rather than counted.
@@ -373,7 +360,7 @@ static string_address build_in(string_address setting, string_address name)
 
         The colours and the shape of a label are what the shell build printed,
         because a build log people have read for years is an interface too.
-        $'\033[' was a bash extension the old kit/common had to work around;
+        $'\033[' was a bash extension the old src/build/host.sh had to work around;
         here the byte is just a byte.
 */
 #define BUILD_RESET "\033[0m"
@@ -442,7 +429,7 @@ static fn build_size(string_address path)
         Every path this tool writes is relative to the repository root, so
         running it from anywhere else quietly writes into the wrong place.
         Checked by looking for what only a root has rather than by its name,
-        which is the test kit/common settled on after the tree was rearranged
+        which is the test src/build/host.sh settled on after the tree was rearranged
         twice underneath the old one.
 */
 static bool build_is_directory(string_address path)
@@ -473,7 +460,7 @@ static positive build_modified(string_address path)
 
 //      True when the first is newer, and when either is missing -- the caller
 //      is gating "does this need redoing", and a missing file always does.
-//      kit/common's version of this compared file SIZES while being named and
+//      src/build/host.sh's version of this compared file SIZES while being named and
 //      used as an age comparison, so a config edit that did not grow the file
 //      was silently ignored and the previous configuration got built.
 static bool build_is_newer(string_address first, string_address second)
@@ -822,8 +809,8 @@ static bool build_write_file(string_address path, string_address data,
                 return false;
 
         written = system_write_all((positive)handle, data, length);
-        system_close(handle);
-        return written == length;
+        bipolar closed = system_close(handle);
+        return written == length && closed >= 0;
 }
 
 /*
@@ -882,7 +869,7 @@ static bool build_lines_next(build_lines address_to walk)
 
 //      The words of one line, collapsed the way an unquoted shell expansion
 //      collapses them: runs of blanks are one separator and the ends are
-//      trimmed. kit/common's `key` was exactly `echo $(...)`, so anything
+//      trimmed. src/build/host.sh's `key` was exactly `echo $(...)`, so anything
 //      reading a key got this and nothing else. The newline is in the
 //      separator set because the line is a span of a larger buffer and is not
 //      terminated.
@@ -2177,7 +2164,7 @@ static b32 build_asm(string_address arch, string_address input,
         */
         {
                 string_address banner = build_join(
-                        "// Generated by kit/asm from ", input, " for ", arch,
+                        "// Generated by build asm from ", input, " for ", arch,
                         ". Do not edit.\n"
                         "// Edit the .asm and build again; this file is overwritten.\n"
                         "#ifdef __clang__\n"
@@ -2286,7 +2273,17 @@ static string_address build_temporary_directory(string_address tag)
         path = build_join(root, "/", tag, ".XXXXXX", null);
 
         if (!privileged)
-                return mkdtemp(path);
+        {
+                string_address made = mkdtemp(path);
+
+                if (!made)
+                        return null;
+                if (chmod(made, 0700) >= 0)
+                        return made;
+
+                rmdir(made);
+                return null;
+        }
 
         for (positive attempt = 0; attempt < TMP_MAX; attempt++)
         {
@@ -2297,10 +2294,13 @@ static string_address build_temporary_directory(string_address tag)
                 if (!build_random_marks(marks))
                         return null;
 
-                if (mkdir(path, 0700) >= 0)
+                bipolar made = system_make_directory_exact_at(
+                    AT_FDCWD, path, 0700);
+
+                if (made >= 0)
                         return path;
 
-                if (errno != EEXIST)
+                if (made != -EEXIST)
                         return null;
         }
 
@@ -4194,7 +4194,8 @@ static b32 build_userspace()
                         archives. A leftover bootstrap tarball here is packed
                         into the initramfs.
                 */
-                if (build_tool("find", build_join(image, "/bowls", null),
+                if (build_tool("find",
+                               build_join(image, BOWL_ROOT_DIRECTORY, null),
                                "-maxdepth", "1", "(", "-type", "f", "-o",
                                "-type", "l", ")", "-delete", null))
                         return build_die("clearing leftover bowl files");
@@ -5034,31 +5035,114 @@ static bool build_remote_image_valid(string_address image)
         return true;
 }
 
-/* Stream beside the final name, sync and mode the completed bytes, then
-   rename over the name itself.  Parent components are held through no-follow
-   descriptors, so neither an intermediate nor final symlink can redirect the
-   publication outside the configured output tree. */
+#define BUILD_FETCH_STAGE ".moonwater-fetch.XXXXXX"
+
+/* A fetched image remains trustworthy by pathname only while each directory
+   which can replace the next component is controlled by this user or root. */
+static bool build_output_directory_safe(bipolar directory)
+{
+        error_stat status;
+        p32 user = (p32)geteuid();
+
+        return fstat((b32)directory, address_of status) >= 0 &&
+               (status.st_mode & S_IFMT) == S_IFDIR &&
+               !(status.st_mode & 0022) &&
+               (status.st_uid == user || status.st_uid == 0);
+}
+
+/* Claim a mode-0700 directory beside the final image and then hold it by
+   descriptor.  The random exclusive mkdir prevents a co-tenant from naming
+   the object first; the owner/mode check detects replacement between mkdir
+   and open in a writable parent.  Once open, a fixed payload name inside is
+   private and every later operation is descriptor-relative. */
+static bipolar build_remote_fetch_stage(bipolar parent, p8 address_to name,
+                                        positive room)
+{
+        const positive length = sizeof(BUILD_FETCH_STAGE) - 1;
+
+        if (room <= length)
+                return -EINVAL;
+
+        memory_copy_end(name, BUILD_FETCH_STAGE, length);
+
+        for (positive attempt = 0; attempt < TMP_MAX; attempt++)
+        {
+                error_stat status;
+                bipolar made;
+                bipolar stage;
+
+                if (!build_random_marks(name + length - SPOOL_TEMPLATE_MARKS))
+                        return -EIO;
+
+                made = system_make_directory_exact_at(parent, name, 0700);
+                if (made == -EEXIST)
+                        continue;
+                if (made < 0)
+                        return made;
+
+                stage = system_open_at(parent, name,
+                                       O_PATH | O_DIRECTORY | O_NOFOLLOW |
+                                           O_CLOEXEC);
+                if (stage < 0)
+                {
+                        system_remove_at(parent, name, AT_REMOVEDIR);
+                        return stage;
+                }
+
+                if (fstat((b32)stage, address_of status) < 0 ||
+                    (status.st_mode & S_IFMT) != S_IFDIR ||
+                    (status.st_mode & 07777) != 0700 ||
+                    status.st_uid != (p32)geteuid())
+                {
+                        system_close(stage);
+                        system_remove_at(parent, name, AT_REMOVEDIR);
+                        return -EACCES;
+                }
+
+                return stage;
+        }
+
+        return -EEXIST;
+}
+
+/* Stream inside a private directory, sync and mode the completed bytes, then
+   rename over the name itself.  Parent components and the private stage are
+   held through no-follow descriptors, so neither an intermediate, temporary
+   nor final symlink can redirect publication outside the configured tree. */
 static b32 build_remote_fetch(string_address host, string_address remote,
                               string_address image)
 {
         p8 leaf[256];
-        p8 temporary[256];
-        bipolar parent = system_open_parent_nofollow(
-            AT_FDCWD, image, true, 0755, leaf, sizeof(leaf));
+        p8 stage_name[64];
+        bipolar parent = system_open_parent_nofollow_checked(
+            AT_FDCWD, image, true, 0755, leaf, sizeof(leaf),
+            build_output_directory_safe);
+        bipolar stage;
         bipolar handle;
         b32 child;
         bool failed;
+        bool renamed = false;
+        file_facts opened;
+        file_facts named;
         string_address request[3] = {"cat", "--", image};
         string_address words[5];
 
         if (parent < 0)
                 return build_die("could not prepare the local image path");
 
-        handle = file_temporary_open_at(
-            parent, leaf, temporary, sizeof(temporary), ".fetch-", 7,
-            (positive)system_call_1(syscall(getpid), 0), 128, 0600);
+        stage = build_remote_fetch_stage(parent, stage_name,
+                                         sizeof(stage_name));
+        if (stage < 0)
+        {
+                system_close(parent);
+                return build_die("could not create a private image stage");
+        }
+
+        handle = system_open_output_at(stage, "image", false, 0600);
         if (handle < 0)
         {
+                system_close(stage);
+                system_remove_at(parent, stage_name, AT_REMOVEDIR);
                 system_close(parent);
                 return build_die("could not create a temporary image");
         }
@@ -5094,13 +5178,46 @@ static b32 build_remote_fetch(string_address host, string_address remote,
         if (!failed &&
             system_call_1(syscall(fsync), (positive)handle) < 0)
                 failed = true;
-        system_close(handle);
 
+        /* The writer receives the already-open descriptor, but a same-user
+           helper can still unlink the private name and put another inode in
+           its place. Check immediately before the rename, then keep the
+           descriptor through it and bind the published name back to that
+           inode. A substitution at either pathname is therefore a failed
+           fetch rather than an accepted artifact. */
         if (!failed &&
-            system_rename_at(parent, temporary, parent, leaf, 0) < 0)
+            (!file_look(handle, "", AT_EMPTY_PATH, address_of opened) ||
+             !file_look(stage, "image", AT_SYMLINK_NOFOLLOW,
+                        address_of named) ||
+             !file_same_identity(address_of opened, address_of named) ||
+             (named.mode & MODE_FORMAT) != MODE_FILE))
+                failed = true;
+        if (!failed)
+        {
+                if (system_rename_at(stage, "image", parent, leaf, 0) < 0)
+                        failed = true;
+                else
+                        renamed = true;
+        }
+        if (!failed &&
+            (!file_look(parent, leaf, AT_SYMLINK_NOFOLLOW,
+                        address_of named) ||
+             !file_same_identity(address_of opened, address_of named) ||
+             (named.mode & MODE_FORMAT) != MODE_FILE))
+                failed = true;
+        if (system_close(handle) < 0)
                 failed = true;
         if (failed)
-                system_remove_at(parent, temporary, 0);
+        {
+                system_remove_at(stage, "image", 0);
+                if (renamed &&
+                    file_look(parent, leaf, AT_SYMLINK_NOFOLLOW,
+                              address_of named) &&
+                    file_same_identity(address_of opened, address_of named))
+                        system_remove_at(parent, leaf, 0);
+        }
+        system_close(stage);
+        system_remove_at(parent, stage_name, AT_REMOVEDIR);
         system_close(parent);
 
         return failed ? build_die("could not fetch the built image") : 0;
@@ -5512,21 +5629,19 @@ static b32 build_boot(string_address image, bool console)
         Every path in this tool is relative to the repository root, so running
         it from anywhere else quietly writes into the wrong place. Checked by
         looking for what only a root has rather than by its name, which is the
-        test kit/common settled on after the tree was rearranged twice
-        underneath the old one: src is where kbuild wants the module's
-        Makefile, kit is what the published tools live in, and build.sh is
-        this program's own bootstrap.
+        build inputs identify: src and kernel hold the sources and build.sh
+        is the bootstrap entry.
 */
 static fn build_is_safe()
 {
-        if (build_is_directory("src") && build_is_directory("kit") &&
+        if (build_is_directory("src") && build_is_directory("kernel") &&
             build_is_file("build.sh"))
                 return;
 
         string_format(log_error, "ERROR: not in the repository root.\n");
         string_format(log_error,
                       "This tool expects to run from the directory holding\n");
-        string_format(log_error, "build.sh, kit/ and src/.\n");
+        string_format(log_error, "build.sh, kernel/ and src/.\n");
         log_flush();
         exit(1);
 }
@@ -5545,7 +5660,7 @@ static fn build_usage()
                       "    build --clean               remove what a build produced\n"
                       "    build --host box            build on another machine over ssh\n"
                       "\n"
-                      "The pieces, each of which was its own script under kit/:\n"
+                      "Build operations:\n"
                       "\n"
                       "    build config <profile ...>              compose artifacts/.config\n"
                       "    build verify-config <config> [profile ...]  what the profiles did not get\n"

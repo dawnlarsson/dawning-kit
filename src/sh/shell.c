@@ -1102,7 +1102,7 @@ static bipolar shell_spawn_via_device(b32 flags, string_address path,
                 count++;
 
         policy = floodlight_launch_decide(path, arguments, count, tool,
-                                          false, false);
+                                          false, false, null);
 
         /* A tool starts in /shell and installs its own filter before reading
            input. An external Spark child executes no shell code at all, so a

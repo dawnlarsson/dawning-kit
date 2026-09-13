@@ -5,7 +5,7 @@
         download if the marker is missing, land (extract by magic, flatten
         by marker), configure whatever tree that archive actually contains,
         then expose the manager on PATH. Pacman, apt and apk stay guest
-        binaries. Distros differ by URL, floor, marker, decoder and a
+        binaries. Distros differ by URL, floor, marker and a
         small prime step.
 */
 
@@ -29,7 +29,6 @@ struct bowl_distro
         string_address store;
         string_address url;
         string_address marker;
-        string_address decoder;
         string_address next;
         string_address refuse;
         p64 floor;
@@ -310,21 +309,21 @@ static string_address bowl_debian_expose[] = {
     "/usr/bin/apt-get", "/usr/bin/apt", null};
 
 static const struct bowl_distro bowl_distros[] = {
-    {"arch", "Arch", "/bowls/arch",
-     "/bowls/archlinux-bootstrap-x86_64.tar.zst", BOWL_ARCH_URL,
-     "/usr/bin/pacman", null, "pacman -Syu", null, (p64)32 * 1024 * 1024,
+    {"arch", "Arch", BOWL_ROOT_PREFIX "arch",
+     BOWL_ROOT_PREFIX "archlinux-bootstrap-x86_64.tar.zst", BOWL_ARCH_URL,
+     "/usr/bin/pacman", "pacman -Syu", null, (p64)32 * 1024 * 1024,
      BOWL_PRIME_ARCH, bowl_arch_expose},
-    {"alpine", "Alpine", "/bowls/alpine",
-     "/bowls/alpine-minirootfs-x86_64.tar.gz", BOWL_ALPINE_URL, "/sbin/apk",
-     "gzip", "apk update", null, (p64)1024 * 1024, BOWL_PRIME_NONE,
+    {"alpine", "Alpine", BOWL_ROOT_PREFIX "alpine",
+     BOWL_ROOT_PREFIX "alpine-minirootfs-x86_64.tar.gz", BOWL_ALPINE_URL, "/sbin/apk",
+     "apk update", null, (p64)1024 * 1024, BOWL_PRIME_NONE,
      bowl_alpine_expose},
-    {"debian", "Debian", "/bowls/debian", "/bowls/debian-rootfs-amd64.tar.gz",
-     BOWL_DEBIAN_URL, "/usr/bin/apt-get", "gzip", "apt-get update", null,
+    {"debian", "Debian", BOWL_ROOT_PREFIX "debian", BOWL_ROOT_PREFIX "debian-rootfs-amd64.tar.gz",
+     BOWL_DEBIAN_URL, "/usr/bin/apt-get", "apt-get update", null,
      (p64)8 * 1024 * 1024, BOWL_PRIME_NONE, bowl_debian_expose},
-    {"fedora", "Fedora", "/bowls/fedora", null, null, "/usr/bin/dnf", "xz",
+    {"fedora", "Fedora", BOWL_ROOT_PREFIX "fedora", null, null, "/usr/bin/dnf",
      null, "fedora is an OCI image, not a rootfs tarball\n", 0,
      BOWL_PRIME_NONE, null},
-    {"nix", "Nix", "/bowls/nix", null, null, "/bin/nix", "xz", null,
+    {"nix", "Nix", BOWL_ROOT_PREFIX "nix", null, null, "/bin/nix", null,
      "nix is a /nix store, not a distro root\n", 0, BOWL_PRIME_NONE, null},
 };
 
@@ -415,15 +414,6 @@ static b32 bowl_setup(positive count, string_address address_to arguments)
         log_flush();
         return 1;
 #endif
-
-        if (!bowl_has(distro->root, distro->marker) &&
-            !bowl_can_decode(distro->decoder))
-        {
-                string_format(log, bowl_label "%s setup needs %s\n",
-                              distro->label, distro->decoder);
-                log_flush();
-                return 1;
-        }
 
         if (bowl_setup_become_root(distro->name))
                 return 1;

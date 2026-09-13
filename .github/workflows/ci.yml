@@ -34,20 +34,10 @@ jobs:
             | tar -xJ --strip-components=1 -C /usr/local/bin "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           shellcheck --version
 
-      # The sourced kits are bash; the build scripts and the test suites must
-      # stay POSIX because the README tells people to run them with `sh`,
-      # which is dash here.
-      - name: Parse bash scripts
-        run: |
-          for f in kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh; do
-            echo "bash -n $f"
-            bash -n "$f"
-          done
-
       - name: Parse POSIX scripts with dash
         run: |
-          for f in kit/bit.sh kit/emit.sh kit/common \
-                   kit/onbox kit/profile_shell \
+          for f in src/build/host.sh \
+                   test/onbox test/profile_shell \
                    kernel/patch/apply kernel/replace/apply \
                    test/run build.sh; do
             echo "dash -n $f"
@@ -55,7 +45,7 @@ jobs:
           done
 
       # The build path is one C program now. It has to compile with nothing
-      # but a compiler, which is the claim its banner and the README make.
+      # but a compiler.
       - name: Bootstrap the build tool
         run: |
           cc -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
@@ -66,8 +56,7 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck -S warning \
-            kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh \
-            kit/common kit/onbox kit/profile_shell \
+            src/build/host.sh test/onbox test/profile_shell \
             kernel/patch/apply kernel/replace/apply \
             test/run build.sh
 
@@ -79,14 +68,13 @@ jobs:
 
       # dash is what the shell suite compares against, qemu and the two cross
       # compilers are what runs the assembly in library.c on the machines this
-      # one is not, and node is what decides whether a generated wasm module
-      # is a module. Each lane says so and skips itself when its tool is
+      # one is not. Each lane says so and skips itself when its tool is
       # missing, so a forgotten package here is quiet -- which is exactly why
       # they are installed rather than assumed.
       - name: Install what the lanes need
         run: |
           sudo apt-get update
-          sudo apt-get install -y dash nodejs qemu-user \
+          sudo apt-get install -y dash qemu-user \
             gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu
 
       - name: Run it

@@ -2,8 +2,8 @@
         Hashes, AES-GCM, X25519 and the signature checks HTTPS needs.
 
         wget speaks TLS 1.3 with AES-128-GCM and X25519. The chain for that
-        handshake is ECDSA on P-256 and P-384; RSA is here so a leaf that
-        still signs that way is not a second tool. SHA-256 compression is
+        handshake is ECDSA on P-256 and P-384, RSA PKCS#1 and RSA-PSS SHA-256;
+        Alpine and GitHub still present RSA leaves. SHA-256 compression is
         sha256_compress in library.c, on the same hardware floor as the rest
         of the binary. AES-GCM, X25519 and ECDSA stay C for now. None of
         this is a kernel crypto ABI: AF_ALG is off on Moonwater, and a
@@ -1608,6 +1608,150 @@ static bool crypto_rsa_pkcs1_sha256(p8 address_to n_bytes, positive n_length,
         if (memory_compare(em + i, digestinfo, 19))
                 return false;
         return memory_compare(em + i + 19, hash, 32) == 0;
+}
+
+static fn crypto_mgf1_sha256(p8 address_to seed, positive seed_length,
+                             p8 address_to into, positive want)
+{
+        positive offset = 0;
+        p32 counter = 0;
+
+        while (offset < want)
+        {
+                crypto_sha256 hash;
+                p8 block[32];
+                p8 count[4];
+                positive take;
+
+                count[0] = (p8)(counter >> 24);
+                count[1] = (p8)(counter >> 16);
+                count[2] = (p8)(counter >> 8);
+                count[3] = (p8)counter;
+                crypto_sha256_open(address_of hash);
+                crypto_sha256_write(address_of hash, seed, seed_length);
+                crypto_sha256_write(address_of hash, count, 4);
+                crypto_sha256_close(address_of hash, block);
+                take = want - offset;
+                if (take > 32)
+                        take = 32;
+                memory_copy(into + offset, block, take);
+                offset += take;
+                counter++;
+        }
+}
+
+/* TLS 1.3 rsa_pss_rsae_sha256: EMSA-PSS with SHA-256, MGF1-SHA-256, salt 32. */
+static bool crypto_rsa_pss_sha256(p8 address_to n_bytes, positive n_length,
+                                  p64 exponent, p8 address_to sig,
+                                  positive sig_length, p8 address_to message,
+                                  positive message_length)
+{
+        p64 mod[CRYPTO_RSA_LIMBS];
+        p64 base[CRYPTO_RSA_LIMBS];
+        p64 out[CRYPTO_RSA_LIMBS];
+        p8 em[512];
+        p8 mask[512];
+        p8 mhash[32];
+        p8 hcheck[32];
+        p8 prefix[8];
+        crypto_sha256 hash;
+        positive limbs;
+        positive k;
+        positive mod_bits = 0;
+        positive em_bits;
+        positive unused;
+        positive masked;
+        positive at;
+        positive i;
+
+        if (n_length > 512 || sig_length != n_length || n_length < 64)
+                return false;
+
+        for (i = 0; i < n_length; i++)
+                if (n_bytes[i])
+                {
+                        p8 value = n_bytes[i];
+                        positive bits = 0;
+
+                        while (value)
+                        {
+                                bits++;
+                                value >>= 1;
+                        }
+                        mod_bits = (n_length - i - 1) * 8 + bits;
+                        break;
+                }
+
+        if (mod_bits < 8 * 64)
+                return false;
+
+        em_bits = mod_bits - 1;
+        k = (em_bits + 7) / 8;
+        if (k > n_length || k < 32 + 32 + 2)
+                return false;
+
+        limbs = (n_length + 7) / 8;
+        memory_fill(mod, 0, sizeof(mod));
+        memory_fill(base, 0, sizeof(base));
+        {
+                p8 padded[512];
+
+                memory_fill(padded, 0, sizeof(padded));
+                memory_copy(padded + limbs * 8 - n_length, n_bytes, n_length);
+                crypto_fe_load_be(mod, padded, limbs);
+                memory_fill(padded, 0, sizeof(padded));
+                memory_copy(padded + limbs * 8 - sig_length, sig, sig_length);
+                crypto_fe_load_be(base, padded, limbs);
+        }
+
+        crypto_rsa_modexp(out, base, exponent, mod, limbs);
+        {
+                p8 full[512];
+
+                crypto_fe_store_be(full, out, limbs);
+                memory_copy(em, full + limbs * 8 - n_length, n_length);
+        }
+
+        if (n_length != k)
+        {
+                if (n_length < k)
+                        return false;
+                for (i = 0; i < n_length - k; i++)
+                        if (em[i])
+                                return false;
+                memory_copy(em, em + n_length - k, k);
+        }
+
+        unused = 8 * k - em_bits;
+        if (unused && (em[0] >> (8 - unused)))
+                return false;
+        if (em[k - 1] != 0xbc)
+                return false;
+
+        masked = k - 32 - 1;
+        crypto_mgf1_sha256(em + masked, 32, mask, masked);
+        for (i = 0; i < masked; i++)
+                em[i] ^= mask[i];
+        if (unused)
+                em[0] &= (p8)(0xff >> unused);
+
+        at = 0;
+        while (at < masked && em[at] == 0)
+                at++;
+        if (at >= masked || em[at] != 0x01)
+                return false;
+        at++;
+        if (masked - at != 32)
+                return false;
+
+        crypto_sha256_of(message, message_length, mhash);
+        memory_fill(prefix, 0, sizeof(prefix));
+        crypto_sha256_open(address_of hash);
+        crypto_sha256_write(address_of hash, prefix, 8);
+        crypto_sha256_write(address_of hash, mhash, 32);
+        crypto_sha256_write(address_of hash, em + at, 32);
+        crypto_sha256_close(address_of hash, hcheck);
+        return memory_compare(hcheck, em + masked, 32) == 0;
 }
 
 #endif

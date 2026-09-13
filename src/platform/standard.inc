@@ -272,7 +272,7 @@ PURE string_address string_first_of_set(string_address source, string_address ac
         until they are aligned. Aligned reads cannot leave their page, so that
         form needs no page argument in either routine.
 
-        Guest instructions a call, counted with kit/insn.c against the obvious
+        Guest instructions a call, counted with test/insn.c against the obvious
         C at -O2 -fno-builtin, on equal strings that differ in case everywhere:
 
                                  strcasecmp          strncasecmp

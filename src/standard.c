@@ -1094,6 +1094,17 @@ ERROR_ENTRY(read, bipolar, (b32 handle, address_any buffer, positive count),
 ERROR_ENTRY(write, bipolar,
             (b32 handle, const address_any buffer, positive count),
             system_write_once(handle, buffer, count))
+#if defined(MACOS)
+ERROR_ENTRY(pread, bipolar,
+            (b32 handle, address_any buffer, positive count, bipolar offset),
+            system_call_4(syscall(pread), (positive)handle,
+                                      (positive)buffer, count, (positive)offset))
+ERROR_ENTRY(pwrite, bipolar,
+            (b32 handle, const address_any buffer, positive count,
+             bipolar offset),
+            system_call_4(syscall(pwrite), (positive)handle,
+                                      (positive)buffer, count, (positive)offset))
+#else
 ERROR_ENTRY(pread, bipolar,
             (b32 handle, address_any buffer, positive count, bipolar offset),
             system_call_4(syscall(pread64), (positive)handle,
@@ -1103,6 +1114,7 @@ ERROR_ENTRY(pwrite, bipolar,
              bipolar offset),
             system_call_4(syscall(pwrite64), (positive)handle,
                                       (positive)buffer, count, (positive)offset))
+#endif
 ERROR_ENTRY(lseek, bipolar, (b32 handle, bipolar offset, b32 whence),
             system_seek(handle, offset, whence))
 ERROR_ENTRY(dup, b32, (b32 handle),

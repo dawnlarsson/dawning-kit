@@ -1090,21 +1090,6 @@ static bool zstd_put_fill(p8 value, positive n)
         return true;
 }
 
-static bool zstd_put_match(positive offset, positive n)
-{
-        if (!offset || offset > zstd_pos)
-                return zstd_fail("zstd match offset");
-        if (zstd_window_size && offset > zstd_window_size)
-                return zstd_fail("zstd match past the window");
-        if (!zstd_window_room(n))
-                return false;
-        prefetch_read(zstd_window + zstd_pos - offset);
-        memory_copy_match(zstd_window + zstd_pos, offset, n);
-        if (!zstd_hold_emit && !zstd_emit(zstd_window + zstd_pos, n))
-                return false;
-        zstd_pos += n;
-        return true;
-}
 
 static bool zstd_seq_table(zstd_fse address_to table, zstd_fse address_to prev,
                            p8 mode, p8 address_to src, positive src_len,
@@ -1288,41 +1273,6 @@ static bool zstd_literals(p8 address_to src, positive src_len,
         return true;
 }
 
-static bool zstd_repeat_offset(positive of_code, p64 extra, positive lit_len,
-                               positive address_to offset)
-{
-        positive value;
-        positive temp;
-
-        if (of_code >= 2)
-        {
-                value = (positive)(((positive)1 << of_code) + extra);
-                address_to offset = value - 3;
-                zstd_rep[2] = zstd_rep[1];
-                zstd_rep[1] = zstd_rep[0];
-                zstd_rep[0] = (p32)address_to offset;
-                return address_to offset != 0;
-        }
-
-        if (!of_code)
-        {
-                address_to offset = zstd_rep[lit_len == 0];
-                zstd_rep[1] = zstd_rep[lit_len != 0];
-                zstd_rep[0] = (p32)address_to offset;
-                return address_to offset != 0;
-        }
-
-        value = 1 + (lit_len == 0) + (positive)extra;
-        temp = value == 3 ? zstd_rep[0] - 1 : zstd_rep[value];
-        if (!temp)
-                return zstd_fail("zstd repeat offset is zero");
-        if (value != 1)
-                zstd_rep[2] = zstd_rep[1];
-        zstd_rep[1] = zstd_rep[0];
-        zstd_rep[0] = (p32)temp;
-        address_to offset = temp;
-        return true;
-}
 
 static bool zstd_sequences(p8 address_to src, positive src_len, p8 address_to lit,
                            positive lit_len)

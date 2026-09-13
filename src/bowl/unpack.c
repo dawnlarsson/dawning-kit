@@ -13,8 +13,6 @@
         in-process.
 */
 
-#define BOWL_HAVE_GZIP 1
-#define BOWL_HAVE_XZ 1
 
 #define BOWL_KIND_NONE 0
 #define BOWL_KIND_TAR 1
@@ -382,81 +380,6 @@ static p8 bowl_archive_kind(string_address archive)
                 return BOWL_KIND_TAR;
 
         return BOWL_KIND_NONE;
-}
-
-static bool bowl_can_decode(string_address decoder)
-{
-        if (!decoder)
-                return true;
-        if (string_equals(decoder, "gzip"))
-                return BOWL_HAVE_GZIP;
-        if (string_equals(decoder, "xz"))
-                return BOWL_HAVE_XZ;
-        return false;
-}
-
-static b32 bowl_extract_pipe(string_address root,
-                             string_address decoder_name,
-                             string_address address_to decoder_words,
-                             b32 decoder_count, b32 (address_to decode)(void),
-                             string_address pipe_fail, string_address decode_fail)
-{
-        string_address tar_words[] = {
-            "tar", "-x", "-f", "-", "-C", root, null};
-        b32 channel[2];
-        bipolar decoder = -1;
-        bipolar extract = -1;
-        b32 failed;
-
-        if (system_pipe(address_of channel, 0) < 0)
-                return bowl_refuse(pipe_fail);
-
-        decoder = system_fork();
-        if (decoder < 0)
-        {
-                system_close(channel[0]);
-                system_close(channel[1]);
-                return bowl_fail(decoder_name, decoder);
-        }
-
-        if (decoder == 0)
-        {
-                system_close(channel[0]);
-                system_duplicate(channel[1], 1, 0);
-                system_close(channel[1]);
-                program_arguments_use(decoder_words, decoder_count);
-                exit(decode());
-        }
-
-        extract = system_fork();
-        if (extract < 0)
-        {
-                system_close(channel[0]);
-                system_close(channel[1]);
-                bowl_wait_applet(decoder, decode_fail);
-                return bowl_fail("tar", extract);
-        }
-
-        if (extract == 0)
-        {
-                system_close(channel[1]);
-                system_duplicate(channel[0], 0, 0);
-                system_close(channel[0]);
-                program_arguments_use(tar_words, 6);
-                exit(file_tar());
-        }
-
-        system_close(channel[0]);
-        system_close(channel[1]);
-
-        failed = bowl_wait_applet(decoder, decode_fail);
-        if (!failed)
-                failed = bowl_wait_applet(extract,
-                                          "tar could not extract the archive\n");
-        else
-                bowl_wait_applet(extract, "tar could not extract the archive\n");
-
-        return failed;
 }
 
 static b32 bowl_extract(string_address archive, string_address root)

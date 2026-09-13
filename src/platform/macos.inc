@@ -25,8 +25,11 @@
         __start a C function named _start would emit.
 
         The BSD syscall class is 0x02000000. select is call 93 and exit is call
-        1 on both Darwin architectures. x86_64 carries that number in rax and
-        uses syscall; arm64 carries it in x16 and uses svc #0x80.
+        1 on both Darwin architectures; read is call 3. x86_64 carries that
+        number in rax and uses syscall; arm64 carries it in x16 and uses
+        svc #0x80. A failed Darwin syscall returns positive errno with carry
+        set, so system_read_retry must test carry while it is still live and
+        negate non-EINTR errors into the library's raw-result convention.
 
         Dividing nanoseconds by 1000 uses the same reciprocal reduction clang
         selects for the full unsigned 64-bit range: discard the three bits
@@ -80,6 +83,28 @@ __asm__(
     "        movl    $0x0200005d, %eax\n"
     "        syscall\n"
     "        addq    $16, %rsp\n"
+    "        retq\n"
+
+    ".p2align 4\n"
+    ".globl _system_read_retry\n"
+    "_system_read_retry:\n"
+    MACOS_X64_ENDBR
+    "        subq    $24, %rsp\n"
+    "        movq    %rdi, 0(%rsp)\n"
+    "        movq    %rsi, 8(%rsp)\n"
+    "        movq    %rdx, 16(%rsp)\n"
+    "1:\n"
+    "        movq    0(%rsp), %rdi\n"
+    "        movq    8(%rsp), %rsi\n"
+    "        movq    16(%rsp), %rdx\n"
+    "        movl    $0x02000003, %eax\n"
+    "        syscall\n"
+    "        jnc     2f\n"
+    "        cmpl    $4, %eax\n"
+    "        je      1b\n"
+    "        negq    %rax\n"
+    "2:\n"
+    "        addq    $24, %rsp\n"
     "        retq\n"
 
     ".p2align 4\n"
@@ -140,6 +165,27 @@ __asm__(
     "        movk    w16, #0x200, lsl #16\n"
     "        svc     #0x80\n"
     "        add     sp, sp, #16\n"
+    "        ret\n"
+
+    ".p2align 2\n"
+    ".globl _system_read_retry\n"
+    "_system_read_retry:\n"
+    MACOS_ARM64_BTI
+    "        sub     sp, sp, #32\n"
+    "        stp     x0, x1, [sp]\n"
+    "        str     x2, [sp, #16]\n"
+    "1:\n"
+    "        ldp     x0, x1, [sp]\n"
+    "        ldr     x2, [sp, #16]\n"
+    "        mov     w16, #3\n"
+    "        movk    w16, #0x200, lsl #16\n"
+    "        svc     #0x80\n"
+    "        b.lo    2f\n"
+    "        cmp     x0, #4\n"
+    "        b.eq    1b\n"
+    "        neg     x0, x0\n"
+    "2:\n"
+    "        add     sp, sp, #32\n"
     "        ret\n"
 
     ".p2align 2\n"

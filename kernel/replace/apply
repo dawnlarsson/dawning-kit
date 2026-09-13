@@ -31,7 +31,7 @@
 #
 set -e
 
-. kit/common
+. src/build/host.sh
 
 manifest=artifacts/asm.applied
 stamp=artifacts/asm.arch

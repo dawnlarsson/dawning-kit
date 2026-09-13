@@ -72,7 +72,7 @@ fi
 #       Everything below here is the Mac.
 #
 # shellcheck disable=SC1091
-. "$here/kit/common"
+. "$here/src/build/host.sh"
 
 is_safe
 
@@ -137,6 +137,13 @@ done
 #       recurse.
 #
 build_remote() {
+        carriage_return=$(printf '\r')
+        case "$remote" in
+        *'
+'*|*"$carriage_return"*)
+                die "the remote build directory contains a line break" ;;
+        esac
+
         say "Checking $host"
         ssh -n -o BatchMode=yes -o ConnectTimeout=20 "$host" true 2>/dev/null ||
                 die "cannot reach $host over ssh"
@@ -195,12 +202,20 @@ exec "$@"'
         }
 
         say "Copying the tree to $host:$remote"
-        remote_rsync=$(remote_command rsync)
+
+        # Prepare the stage over ssh first. macOS openrsync splits
+        # --rsync-path on spaces and drops the quotes, so a `sh -c` wrapper
+        # cannot be the remote rsync. Its destination is still remote-shell
+        # source: quote the complete path before giving it to rsync, rather
+        # than letting spaces or metacharacters become another command.
+        ssh -n -o BatchMode=yes "$host" "$(remote_command true)" ||
+                die "cannot prepare $host:$remote"
+        remote_target=$(shell_quote "$remote/")
 
         # The kernel source, its artifacts and the built filesystem stay on
         # the build host: they are large, and none of them belong to this
         # checkout. linux/ is the upstream tree, not part of this repository.
-        rsync -az --delete --no-perms --rsync-path="$remote_rsync" \
+        rsync -az --delete --no-perms \
                 --exclude '/.moonwater-stage-v1' \
                 --exclude '.git' \
                 --exclude '.claude' \
@@ -208,7 +223,7 @@ exec "$@"'
                 --exclude 'artifacts' \
                 --exclude 'fs' \
                 --exclude 'dist' \
-                ./ "$host:./" || die "copying the tree failed"
+                ./ "$host:$remote_target" || die "copying the tree failed"
 
         say "Building on $host: $*"
         # -n so the build does not swallow this script's stdin. Without it the
@@ -235,8 +250,7 @@ exec "$@"'
                 die "could not identify the built image"
         case "$image" in
         *'
-'*|*'
-'*) die "remote build reported an invalid image path" ;;
+'*|*"$carriage_return"*) die "remote build reported an invalid image path" ;;
         dist/*) ;;
         *) die "remote build reported an invalid image path: $image" ;;
         esac
@@ -339,9 +353,22 @@ exec "$@"'
                 artifact_same_file "$fetched" /dev/fd/9 ||
                 die "temporary image changed while it was fetched"
         chmod 0644 /dev/fd/9 || die "could not set image permissions"
-        exec 9>&-
-        mv -f -- "$fetched" "$artifact_parent/$artifact_leaf" ||
+        artifact_destination=$artifact_parent/$artifact_leaf
+        # BSD mv -h replaces a destination link itself, including a link to a
+        # directory. Keep the source descriptor open across that atomic
+        # rename and bind the published name back to it afterwards, so a
+        # helper which changes either pathname cannot make different bytes a
+        # successful result.
+        { [ ! -d "$artifact_destination" ] ||
+          [ -L "$artifact_destination" ]; } ||
+                die "the local image destination is a directory"
+        /bin/mv -fh -- "$fetched" "$artifact_destination" ||
                 die "could not publish the built image"
+        [ -f "$artifact_destination" ] &&
+                [ ! -L "$artifact_destination" ] &&
+                artifact_same_file "$artifact_destination" /dev/fd/9 ||
+                die "published image changed during publication"
+        exec 9>&-
         fetched=
         rmdir -- "$fetched_stage" || die "could not remove the image stage"
         fetched_stage=
@@ -556,6 +583,9 @@ size "$image"
 #       seventy percent of that at the panel's refresh; cocoa then sizes
 #       the window in points (pixels / backingScaleFactor) and centres it,
 #       which is seventy percent of the DIP screen on a Retina panel.
+#
+#       virtio-net on QEMU user networking is how the guest reaches the
+#       bowl mirrors. Without a NIC, setup cannot wget.
 gpu_device=virtio-gpu-pci
 screen_px=$(osascript -l JavaScript -e '
 ObjC.import("AppKit");
@@ -585,6 +615,8 @@ set -- \
         -vga none \
         -device "$gpu_device" \
         -device qemu-xhci -device usb-tablet -device usb-kbd \
+        -netdev user,id=net0 \
+        -device virtio-net-pci,netdev=net0 \
         -no-reboot
 
 # Hardware acceleration where this QEMU has it: hvf on macOS, kvm on Linux.

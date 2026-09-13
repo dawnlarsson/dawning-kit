@@ -16,8 +16,7 @@
 #
 #       Linux is GPL-2.0. These edits are modifications of it. Nothing here
 #       changes that and nothing here is meant to: this file exists so the
-#       edge is a directory rather than a judgement made file by file, which
-#       is what kernel/README has said since before it was true.
+#       edge is a directory rather than a judgement made file by file.
 #
 #       WHAT IT DOES, in four kinds:
 #
@@ -39,7 +38,7 @@
 #
 set -u
 
-. kit/common
+. src/build/host.sh
 
 #
 #       Handing a symbol over to src/*.asm means telling the
