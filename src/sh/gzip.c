@@ -121,12 +121,15 @@ static fn gzip_fixed_init(void);
 /* The span kernel contract; test/codec_floor extracts from here to its end.
    Cells are one u32 each:
      literal   GZIP_CELL_LITERAL | byte << 8 | codeword bits
-     length    base << 16 | codeword bits << 8 | (codeword + extra bits)
+     length    length << 16 | (codeword + extra bits)
      distance  base << 16 | codeword bits << 8 | (codeword + extra bits)
      end       EXCEPTIONAL | END | codeword bits
      subtable  start << 16 | EXCEPTIONAL | SUBTABLE | subtable bits << 8 | root
      invalid   EXCEPTIONAL, with SYMBOL | codeword bits for 286, 287, 30, 31
-   Cells inside a subtable count only the bits past the root. */
+   A length code is widened by its extra bits: every extra value is a code of
+   its own, so a length cell holds the final length. Distances keep their
+   extra bits in the stream. Cells inside a subtable count only the bits past
+   the root. */
 #define GZIP_CELL_LITERAL 0x80000000u
 #define GZIP_CELL_EXCEPTIONAL 0x8000u
 #define GZIP_CELL_SUBTABLE 0x4000u
@@ -135,9 +138,11 @@ static fn gzip_fixed_init(void);
 #define GZIP_LITLEN_ROOT 11
 #define GZIP_OFFSET_ROOT 8
 #define GZIP_PRECODE_ROOT 7
-/* The root plus the widest subtable under every prefix an incomplete code
-   can leave: 288 codes 4 bits past the root, or 32 codes 7 bits past it. */
-#define GZIP_LITLEN_CELLS (2048 + 288 * 16)
+/* The root plus the widest subtable any prefix can need, incomplete codes
+   included: a symbol with c code and x extra bits widens to at most 16 << x
+   cells past an 11-bit root (256 literals, end, 286 and 287 at 16 each; the
+   29 lengths sum to 16 * 257), and a distance code to 128 past 8 bits. */
+#define GZIP_LITLEN_CELLS (2048 + 16 * (256 + 1 + 2 + 257))
 #define GZIP_OFFSET_CELLS (256 + 32 * 128)
 /* The kernel runs only with this much input and output room ahead. */
 #define GZIP_SPAN_IN 33
@@ -153,11 +158,20 @@ typedef struct
         p8 address_to window;
         const p32 address_to litlen;
         const p32 address_to offset;
+        const p32 address_to masks;
         positive status;
 } gzip_decode_job;
 
-/* kind 0 is the code-length code, 1 literal/length, 2 distance. */
-static p32 gzip_cell(positive kind, positive symbol, positive bits)
+/* masks[n] is (1 << n) - 1, for distance extra bits and subtable indexes. */
+static const p32 gzip_extra_masks[32] = {
+        0x0, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff,
+        0xfff, 0x1fff, 0x3fff, 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff,
+        0xfffff, 0x1fffff, 0x3fffff, 0x7fffff, 0xffffff, 0x1ffffff, 0x3ffffff,
+        0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff, 0x7fffffff};
+
+/* kind 0 is the code-length code, 1 literal/length, 2 distance; extra is
+   the value of a length's extra bits, which bits already counts. */
+static p32 gzip_cell(positive kind, positive symbol, positive extra, positive bits)
 {
         if (kind == 0)
                 return (p32)(symbol << 16 | bits);
@@ -169,8 +183,7 @@ static p32 gzip_cell(positive kind, positive symbol, positive bits)
                         return GZIP_CELL_EXCEPTIONAL | GZIP_CELL_END | (p32)bits;
                 if (symbol > 285)
                         return GZIP_CELL_EXCEPTIONAL | GZIP_CELL_SYMBOL | (p32)bits;
-                return (p32)gzip_len_base[symbol - 257] << 16 | (p32)(bits << 8) |
-                       (p32)(bits + gzip_len_extra[symbol - 257]);
+                return (p32)(gzip_len_base[symbol - 257] + extra) << 16 | (p32)bits;
         }
         if (symbol >= 30)
                 return GZIP_CELL_EXCEPTIONAL | GZIP_CELL_SYMBOL | (p32)bits;
@@ -191,92 +204,115 @@ static p32 gzip_revnext(p32 rev, positive len)
         return rev | bit;
 }
 
+/* The extra bits a length symbol's codes are widened by. */
+static positive gzip_widen(positive kind, positive symbol)
+{
+        return kind == 1 && symbol - 257 < 29 ? gzip_len_extra[symbol - 257] : 0;
+}
+
+/* Widened codes a table can hold: 256 literals, end, 286, 287 and the 257
+   extra values of the 29 lengths. */
+#define GZIP_WIDE_CODES (256 + 1 + 2 + 257)
+
 /* Canonical cells for length[0..n): a root `root` bits wide and, past it,
-   one subtable per prefix sized for the longest code under that prefix.
-   Incomplete codes are accepted and their unused codes decode to an
-   invalid cell. 0, or gzip_code_space's -1 and -2. */
+   one subtable per prefix sized for the widest code under that prefix.
+   Incomplete codes are accepted and their unused codes decode to an invalid
+   cell. 0, or gzip_code_space's -1 and -2. */
 static bipolar gzip_huffman_cells(p32 address_to table, p8 address_to length,
                                   positive n, positive root, positive kind)
 {
         p16 count[GZIP_MAXBITS + 1];
         p16 offs[GZIP_MAXBITS + 1];
         p16 sorted[GZIP_MAXLIT];
-        p8 deepest[1 << GZIP_LITLEN_ROOT];
+        p16 widths[GZIP_MAXBITS + 6];
+        p16 place[GZIP_MAXBITS + 6];
+        p32 codes[GZIP_WIDE_CODES];
+        p32 names[GZIP_WIDE_CODES];
         positive cells = (positive)1 << root;
         positive spare = cells;
+        positive total = 0;
         positive index = 0;
-        bipolar left = gzip_code_space(length, n, GZIP_MAXBITS, count);
         p32 rev = 0;
+        bipolar left = gzip_code_space(length, n, GZIP_MAXBITS, count);
 
         if (left < 0)
                 return left;
         offs[1] = 0;
         for (positive len = 1; len < GZIP_MAXBITS; len++)
                 offs[len + 1] = offs[len] + count[len];
+        memory_fill(widths, 0, sizeof(widths));
         for (positive at = 0; at < n; at++)
                 if (length[at])
-                        sorted[offs[length[at]]++] = (p16)at;
-        if (left)
-                for (positive at = 0; at < cells; at++)
-                        table[at] = GZIP_CELL_EXCEPTIONAL;
-        for (positive len = root + 1; len <= GZIP_MAXBITS; len++)
-                if (count[len])
                 {
-                        /* Codes are canonical, so the codes under one root
-                           prefix are adjacent and the last is the longest. */
-                        for (positive len2 = 1; len2 <= GZIP_MAXBITS; len2++)
-                                for (positive k = 0; k < count[len2]; k++)
-                                {
-                                        if (len2 > root)
-                                        {
-                                                /* The previous block's table may
-                                                   still hold a pointer here. */
-                                                deepest[rev & (cells - 1)] = (p8)len2;
-                                                table[rev & (cells - 1)] = GZIP_CELL_EXCEPTIONAL;
-                                        }
-                                        rev = gzip_revnext(rev, len2);
-                                }
-                        rev = 0;
-                        break;
+                        positive extra = gzip_widen(kind, at);
+
+                        sorted[offs[length[at]]++] = (p16)at;
+                        widths[length[at] + extra] += (p16)(1 << extra);
                 }
+        for (positive width = 0; width < GZIP_MAXBITS + 6; width++)
+        {
+                place[width] = (p16)total;
+                total += widths[width];
+        }
         for (positive len = 1; len <= GZIP_MAXBITS; len++)
                 for (positive k = 0; k < count[len]; k++, index++)
                 {
                         positive symbol = sorted[index];
+                        positive extra = gzip_widen(kind, symbol);
 
-                        if (len <= root)
+                        for (positive value = 0; value < (positive)1 << extra; value++)
                         {
-                                p32 cell = gzip_cell(kind, symbol, len);
+                                positive at = place[len + extra]++;
 
-                                for (positive at = rev; at < cells; at += (positive)1 << len)
-                                        table[at] = cell;
-                        }
-                        else
-                        {
-                                positive prefix = rev & (cells - 1);
-                                p32 pointer = table[prefix];
-
-                                if (!(pointer & GZIP_CELL_SUBTABLE))
-                                {
-                                        positive bits = deepest[prefix] - root;
-
-                                        pointer = (p32)(spare << 16) | GZIP_CELL_EXCEPTIONAL |
-                                                  GZIP_CELL_SUBTABLE | (p32)(bits << 8) | (p32)root;
-                                        table[prefix] = pointer;
-                                        if (left)
-                                                for (positive at = 0; at < (positive)1 << bits; at++)
-                                                        table[spare + at] = GZIP_CELL_EXCEPTIONAL;
-                                        spare += (positive)1 << bits;
-                                }
-                                positive start = pointer >> 16;
-                                positive bits = (pointer >> 8) & 15;
-                                p32 cell = gzip_cell(kind, symbol, len - root);
-
-                                for (positive at = rev >> root; at < (positive)1 << bits;
-                                     at += (positive)1 << (len - root))
-                                        table[start + at] = cell;
+                                codes[at] = rev | (p32)(value << len);
+                                names[at] = (p32)(symbol | value << 16);
                         }
                         rev = gzip_revnext(rev, len);
+                }
+        /* place[w] now ends the codes exactly w bits wide. The root doubles
+           as it widens: a code up to w bits wide repeats every 2^w cells, so
+           each step copies the filled half and places the codes of width w. */
+        if (left)
+                table[0] = table[1] = GZIP_CELL_EXCEPTIONAL;
+        for (positive width = 1; width <= root; width++)
+        {
+                if (width > 1)
+                        memory_copy_apart(table + ((positive)1 << (width - 1)), table,
+                                          ((positive)1 << (width - 1)) * sizeof(p32));
+                for (positive at = place[width] - widths[width]; at < place[width]; at++)
+                        table[codes[at]] = gzip_cell(kind, names[at] & 0xffff, names[at] >> 16, width);
+        }
+        if (total == place[root])
+                return 0;
+        /* Past the root, widest first, so the first code met under a prefix
+           sizes its subtable. Pointers an earlier table left are cleared. */
+        for (positive at = place[root]; at < total; at++)
+                table[codes[at] & (cells - 1)] = GZIP_CELL_EXCEPTIONAL;
+        for (positive width = GZIP_MAXBITS + 5; width > root; width--)
+                for (positive at = place[width] - widths[width]; at < place[width]; at++)
+                {
+                        positive prefix = codes[at] & (cells - 1);
+                        p32 pointer = table[prefix];
+
+                        if (!(pointer & GZIP_CELL_SUBTABLE))
+                        {
+                                positive bits = width - root;
+
+                                pointer = (p32)(spare << 16) | GZIP_CELL_EXCEPTIONAL |
+                                          GZIP_CELL_SUBTABLE | (p32)(bits << 8) | (p32)root;
+                                table[prefix] = pointer;
+                                if (left)
+                                        for (positive cell = 0; cell < (positive)1 << bits; cell++)
+                                                table[spare + cell] = GZIP_CELL_EXCEPTIONAL;
+                                spare += (positive)1 << bits;
+                        }
+                        positive start = pointer >> 16;
+                        positive bits = (pointer >> 8) & 15;
+                        p32 cell = gzip_cell(kind, names[at] & 0xffff, names[at] >> 16, width - root);
+
+                        for (positive slot = codes[at] >> root; slot < (positive)1 << bits;
+                             slot += (positive)1 << (width - root))
+                                table[start + slot] = cell;
                 }
         return 0;
 }
@@ -603,8 +639,7 @@ static bipolar gzip_inflate_token(gzip_inflater address_to z)
                 z->count -= take;
                 return 1;
         }
-        code = root + ((cell >> 8) & 255);
-        length = (cell >> 16) + ((z->bits >> code) & (((positive)1 << (take - code)) - 1));
+        length = cell >> 16;
         z->bits >>= take;
         z->count -= take;
 
@@ -658,7 +693,7 @@ static bipolar gzip_inflate_codes(gzip_inflater address_to z)
                                 z->input.buf + z->input.at, z->input.buf + z->input.have,
                                 out, z->out + GZIP_DECODE_OUT + GZIP_DECODE_SLACK,
                                 out - (made < GZIP_WINDOW ? made : GZIP_WINDOW),
-                                z->litlen, z->offset, 0};
+                                z->litlen, z->offset, gzip_extra_masks, 0};
 
                         deflate_decode_span(address_of job);
                         z->bits = job.bits;

@@ -71995,9 +71995,9 @@ static fn floor_deflate(void)
         static p8 before[2 * GZIP_SPAN_OUT];
         check("deflate guarded mappings", input && output);
         if (!input || !output) return;
-        check("deflate span ABI", sizeof(gzip_decode_job) == 80 &&
+        check("deflate span ABI", sizeof(gzip_decode_job) == 88 &&
               __builtin_offsetof(gzip_decode_job, window) == 48 &&
-              __builtin_offsetof(gzip_decode_job, status) == 72);
+              __builtin_offsetof(gzip_decode_job, status) == 80);
         p8 address_to stop = input + 2 * FLOOR_PAGE;
         p8 address_to guard = output + 10 * FLOOR_PAGE;
         memory_fill(input + FLOOR_PAGE, 0, FLOOR_PAGE);
@@ -72006,7 +72006,7 @@ static fn floor_deflate(void)
                 for (positive d = 0; d < 30; d++)
                         for (positive residue = 0; residue < 8; residue++)
                         {
-                                floor_deflate_one_bit(lit, gzip_cell(1, 257 + l, 1), dist, gzip_cell(2, d, 1));
+                                floor_deflate_one_bit(lit, gzip_cell(1, 257 + l, 0, 1 + gzip_len_extra[l]), dist, gzip_cell(2, d, 0, 1));
                                 p8 address_to dst = guard - GZIP_SPAN_OUT - residue;
                                 p8 address_to next = stop - GZIP_SPAN_IN - residue;
                                 p8 want[258];
@@ -72014,7 +72014,7 @@ static fn floor_deflate(void)
                                 positive used = 2 + gzip_len_extra[l] + gzip_dist_extra[d];
                                 for (positive i = 0; i < length; i++)
                                         want[i] = i < distance ? dst[(bipolar)i - (bipolar)distance] : want[i - distance];
-                                gzip_decode_job job = {0, 0, next, stop, dst, guard, dst - distance, lit, dist, 5};
+                                gzip_decode_job job = {0, 0, next, stop, dst, guard, dst - distance, lit, dist, gzip_extra_masks, 5};
                                 deflate_decode_span(address_of job);
                                 check("deflate length/distance/alignment at both guards, exact bit handoff",
                                       job.status == 0 && job.out == dst + length &&
@@ -72022,7 +72022,7 @@ static fn floor_deflate(void)
                                       job.count < 64 && !(job.bits >> job.count) &&
                                       (positive)(job.next - next) * 8 - job.count == used);
                                 memory_copy_apart(before, dst, GZIP_SPAN_OUT + residue);
-                                job = (gzip_decode_job){0, 0, next, stop, dst, guard, dst - distance + 1, lit, dist, 0};
+                                job = (gzip_decode_job){0, 0, next, stop, dst, guard, dst - distance + 1, lit, dist, gzip_extra_masks, 0};
                                 deflate_decode_span(address_of job);
                                 check("deflate distance past the window stops before writing",
                                       job.status == 4 && job.out == dst &&
@@ -72031,40 +72031,40 @@ static fn floor_deflate(void)
         p8 address_to dst = guard - GZIP_SPAN_OUT;
         for (positive n = 0; n < GZIP_SPAN_IN; n++)
         {
-                gzip_decode_job job = {0, 0, stop - n, stop, dst, guard, dst, lit, dist, 5};
+                gzip_decode_job job = {0, 0, stop - n, stop, dst, guard, dst, lit, dist, gzip_extra_masks, 5};
                 deflate_decode_span(address_of job);
                 check("deflate short lookahead consumes nothing and never crosses the input guard",
                       job.status == 0 && job.out == dst && job.next == stop - n && job.count == 0);
         }
         for (positive n = 0; n < GZIP_SPAN_OUT; n++)
         {
-                gzip_decode_job job = {0, 0, stop - 64, stop, guard - n, guard, dst, lit, dist, 5};
+                gzip_decode_job job = {0, 0, stop - 64, stop, guard - n, guard, dst, lit, dist, gzip_extra_masks, 5};
                 deflate_decode_span(address_of job);
                 check("deflate short output room writes nothing",
                       job.status == 0 && job.out == guard - n && job.next == stop - 64 && job.count == 0);
         }
-        floor_deflate_one_bit(lit, GZIP_CELL_EXCEPTIONAL, dist, gzip_cell(2, 0, 1));
-        gzip_decode_job bad = {0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, 0};
+        floor_deflate_one_bit(lit, GZIP_CELL_EXCEPTIONAL, dist, gzip_cell(2, 0, 0, 1));
+        gzip_decode_job bad = {0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, gzip_extra_masks, 0};
         deflate_decode_span(address_of bad);
         check("deflate unused literal/length code stops", bad.status == 2 && bad.out == dst);
-        floor_deflate_one_bit(lit, gzip_cell(1, 286, 1), dist, gzip_cell(2, 0, 1));
-        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, 0};
+        floor_deflate_one_bit(lit, gzip_cell(1, 286, 0, 1), dist, gzip_cell(2, 0, 0, 1));
+        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, gzip_extra_masks, 0};
         deflate_decode_span(address_of bad);
         check("deflate length symbol 286 stops", bad.status == 2 && bad.out == dst);
-        floor_deflate_one_bit(lit, gzip_cell(1, 257, 1), dist, gzip_cell(2, 30, 1));
-        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, 0};
+        floor_deflate_one_bit(lit, gzip_cell(1, 257, 0, 1), dist, gzip_cell(2, 30, 0, 1));
+        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, gzip_extra_masks, 0};
         deflate_decode_span(address_of bad);
         check("deflate distance symbol 30 stops", bad.status == 3 && bad.out == dst);
-        floor_deflate_one_bit(lit, gzip_cell(1, 256, 1), dist, gzip_cell(2, 0, 1));
-        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst, lit, dist, 0};
+        floor_deflate_one_bit(lit, gzip_cell(1, 256, 0, 1), dist, gzip_cell(2, 0, 0, 1));
+        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst, lit, dist, gzip_extra_masks, 0};
         deflate_decode_span(address_of bad);
         check("deflate stop of block is consumed",
               bad.status == 1 && bad.out == dst && (positive)(bad.next - (stop - 64)) * 8 - bad.count == 1);
         for (positive residue = 0; residue < 8; residue++)
         {
-                floor_deflate_one_bit(lit, gzip_cell(1, 0x5a, 1), dist, gzip_cell(2, 0, 1));
+                floor_deflate_one_bit(lit, gzip_cell(1, 0x5a, 0, 1), dist, gzip_cell(2, 0, 0, 1));
                 p8 address_to from = guard - GZIP_SPAN_OUT - residue - 4000;
-                gzip_decode_job run = {0, 0, input + FLOOR_PAGE, stop, from, guard, from, lit, dist, 0};
+                gzip_decode_job run = {0, 0, input + FLOOR_PAGE, stop, from, guard, from, lit, dist, gzip_extra_masks, 0};
                 deflate_decode_span(address_of run);
                 bool same = run.status == 0 && run.out >= guard - 300 && run.out <= guard - 298 &&
                             (positive)(run.next - (input + FLOOR_PAGE)) * 8 - run.count == (positive)(run.out - from);
@@ -72176,7 +72176,7 @@ static fn floor_deflate_codes(void)
                 if (held) packed[bytes++] = (p8)acc;
                 p8 address_to next = stop - bytes;
                 memory_copy_apart(next, packed, bytes);
-                gzip_decode_job job = {0, 0, next, stop, dst, guard, dst - 32768, lit, dist, 0};
+                gzip_decode_job job = {0, 0, next, stop, dst, guard, dst - 32768, lit, dist, gzip_extra_masks, 0};
                 deflate_decode_span(address_of job);
                 positive out = (positive)(job.out - dst);
                 positive consumed = (positive)(job.next - next) * 8 - job.count;

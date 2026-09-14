@@ -5,12 +5,12 @@
    which reads bytes the first store has not written yet.
    Entries are the packed u32 cells gzip.c builds:
      literal   0x80000000 | byte << 8 | codeword bits
-     length    base << 16 | codeword bits << 8 | (codeword + extra bits)
+     length    length << 16 | (codeword + extra bits), one cell per extra value
      distance  base << 16 | codeword bits << 8 | (codeword + extra bits)
      end       0x8000 | 0x2000 | codeword bits
      subtable  start << 16 | 0x8000 | 0x4000 | subtable bits << 8 | root bits
      invalid   0x8000
-   Subtable cells count only the bits past the root. */
+   Subtable cells count only the bits past the root; masks[n] is (1 << n) - 1. */
 typedef unsigned char u8;
 typedef unsigned int u32;
 typedef unsigned long long u64;
@@ -19,7 +19,7 @@ typedef struct {
         const u8 *next, *limit;
         u8 *out, *out_limit;
         const u8 *window;
-        const u32 *litlen, *offset;
+        const u32 *litlen, *offset, *masks;
         u64 status;
 } job;
 struct word { u64 v; } __attribute__((packed, may_alias));
@@ -74,7 +74,7 @@ void deflate_decode_span(job *s)
                 if (entry & 0x8000) {
                         if (entry & 0x2000) { status = 1; goto done; }
                         if (!(entry & 0x4000)) { status = 2; goto done; }
-                        entry = lt[(entry >> 16) + (bitbuf & ((1u << ((entry >> 8) & 15)) - 1))];
+                        entry = lt[(entry >> 16) + (bitbuf & s->masks[(entry >> 8) & 15])];
                         saved = bitbuf;
                         bitbuf >>= (u8)entry;
                         bitsleft -= entry;
@@ -89,7 +89,7 @@ void deflate_decode_span(job *s)
                                 goto done;
                         }
                 }
-                length = (entry >> 16) + ((saved & ((1ull << (u8)entry) - 1)) >> ((entry >> 8) & 255));
+                length = entry >> 16;
                 if ((u8)bitsleft < 31)
                         REFILL();
                 entry = ot[bitbuf & 255];
@@ -99,13 +99,13 @@ void deflate_decode_span(job *s)
                                 REFILL();
                         bitbuf >>= 8;
                         bitsleft -= 8;
-                        entry = ot[(entry >> 16) + (bitbuf & ((1u << ((entry >> 8) & 15)) - 1))];
+                        entry = ot[(entry >> 16) + (bitbuf & s->masks[(entry >> 8) & 15])];
                         if (entry & 0x8000) { status = 3; goto done; }
                 }
                 saved = bitbuf;
                 bitbuf >>= (u8)entry;
                 bitsleft -= entry;
-                offset = (entry >> 16) + ((saved & ((1ull << (u8)entry) - 1)) >> ((entry >> 8) & 255));
+                offset = (entry >> 16) + ((saved & s->masks[(u8)entry]) >> ((entry >> 8) & 255));
                 src = out - offset;
                 if (src < s->window) { status = 4; goto done; }
                 dst = out;
