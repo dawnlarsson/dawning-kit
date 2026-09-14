@@ -13371,6 +13371,144 @@ static fn text_set_build(string_address spec, p8 address_to into, p8 address_to 
         }
 }
 
+/*
+        tr over a regular file large enough to be worth threads.
+
+        What is left of the file is cut into TR_CHUNK pieces by offset alone:
+        translating and deleting look at one byte at a time, so a piece needs
+        no aligning to anything and the cut depends on nothing but the file.
+        Each piece is read with pread straight into the span its job reserves
+        in its own output and transformed in place there, so a byte is copied
+        once on its way through; the pool hands that output to the sink on
+        this thread in index order, and the bytes cannot move with the number
+        of threads. Nothing is allocated in a job to be freed in the sink,
+        which would grow the freeing thread's free lists without bound. How
+        many bytes of the span are the answer -- fewer when the file came up
+        short or bytes were deleted -- is kept by index, and the sink writes
+        only those. A read that fails is remembered the same way and reported
+        by the sink when its turn comes, after the bytes before it, which is
+        where the serial loop reports it. Squeezing looks across a piece's
+        edge and stays on the serial loop.
+*/
+#define TR_CHUNK (256u << 10)
+#define TR_PARALLEL_MINIMUM (8u << 20)
+
+typedef struct
+{
+        positive handle;
+        positive start;
+        positive size;
+        bool remove;
+        p8 address_to table;
+        positive address_to kept;
+        p8 address_to failed;
+} tr_parallel_run;
+
+static fn tr_parallel_job(address_any context, positive index,
+                          parallel_output address_to output)
+{
+        tr_parallel_run address_to run = context;
+        positive offset = index * TR_CHUNK;
+        positive want = min(run->size - offset, (positive)TR_CHUNK);
+        p8 address_to into = parallel_reserve(output, want);
+        positive got = 0;
+
+        if (!into)
+                return;
+
+        while (got < want)
+        {
+                bipolar read = system_call_4(syscall(pread64), run->handle,
+                                             (positive)(into + got), want - got,
+                                             run->start + offset + got);
+
+                if (read == CAT_INTERRUPTED)
+                        continue;
+
+                if (read <= 0)
+                {
+                        if (read < 0)
+                                run->failed[index] = 1;
+                        break;
+                }
+
+                got += (positive)read;
+        }
+
+        if (run->remove)
+                got = memory_delete_bytes(into, got, run->table);
+        else
+                memory_translate(into, got, run->table);
+
+        run->kept[index] = got;
+}
+
+static bool tr_parallel_sink(address_any context, positive index,
+                             address_any data, positive length)
+{
+        tr_parallel_run address_to run = context;
+
+        length = min(length, run->kept[index]);
+
+        if (length)
+                text_put(data, length);
+
+        if (run->failed[index])
+        {
+                string_diagnostic(&text_diagnostic, 0, text_input.name, "Read error");
+                text_input.failed = true;
+                text_status = 1;
+                return false;
+        }
+
+        return !text_out_failed;
+}
+
+// True when the input was answered here; false leaves it to the serial loop.
+static bool text_tr_parallel(bool remove, p8 address_to table)
+{
+        positive size = 0;
+
+        if (text_input.position < text_input.filled ||
+            !text_regular_size(text_input.handle, address_of size))
+                return false;
+
+        bipolar at = system_seek(text_input.handle, 0, FILE_SEEK_CUR);
+
+        if (at < 0 || (positive)at >= size ||
+            size - (positive)at < TR_PARALLEL_MINIMUM)
+                return false;
+
+        tr_parallel_run run = {
+            .handle = text_input.handle,
+            .start = (positive)at,
+            .size = size - (positive)at,
+            .remove = remove,
+            .table = table,
+        };
+        positive count = (run.size + TR_CHUNK - 1) / TR_CHUNK;
+        positive ledger = count * (sizeof(positive) + 1);
+        p8 address_to held = memory(ledger);
+
+        if ((bipolar)(positive)held <= 0)
+                return false;
+
+        // One mapping, zeroed by the kernel: the kept lengths, then the
+        // failure bytes.
+        run.kept = (positive address_to)(address_any)held;
+        run.failed = held + count * sizeof(positive);
+
+        parallel_ordered(tr_parallel_job, tr_parallel_sink, address_of run,
+                         count, run.size);
+
+        memory_free(held, ledger);
+
+        // The descriptor ends where reading through would have left it.
+        system_seek(text_input.handle, run.start + run.size, FILE_SEEK_SET);
+        text_input.finished = true;
+        return true;
+}
+
 static const argument_option tr_options[] = {
     {"complement", 'c'},
     {"delete", 'd'},
@@ -13607,6 +13745,9 @@ static b32 text_tr()
 
         if (!text_open(null))
                 return text_done(1);
+
+        if (!squeeze && text_tr_parallel(remove, remove ? in_first : mapped))
+                return text_done(text_status);
 
         b32 last_written = -1;
 

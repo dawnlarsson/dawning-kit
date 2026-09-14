@@ -112,7 +112,7 @@ describe()
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
         stack)    echo "what each function puts on the stack, and what a deep walk costs" ;;
         differential_oracle) echo "the differential engine's own checks: comparison, covering arrays, ledger and shrinking" ;;
-        text)     echo "the text utilities against GNU coreutils, every option combination the grammar reaches" ;;
+        text)     echo "the text utilities against GNU coreutils, every option combination the grammar reaches, and tr's threaded pieces on one processor and on all" ;;
         files)    echo "the file utilities against coreutils, by output and by effect on the directory" ;;
         misc)     echo "the utilities that are neither text nor files -- dd, diff, ps, the checksums, the process wrappers -- against the system's own" ;;
         util_linux) echo "the util-linux programs against util-linux, mount tables and block identities included" ;;
@@ -3934,11 +3934,90 @@ text_sort_widths()
         [ "$width_pass" = "$width_total" ]
 }
 
+#       The pieces tr hands to the pool exist only past its crossover, which
+#       no grammar input comes near: one generated file of about 32 MiB, each
+#       shape the pool takes, on one processor and on every processor the
+#       lane was given, against GNU -- the bytes must not move with the number
+#       of threads. And the descriptor must end where reading through leaves
+#       it, for the command after tr in a group.
+text_parallel_checks()
+{
+        need_shell || return 1
+
+        case $(tr --version 2> /dev/null) in
+        *"GNU coreutils"*) ;;
+        *)
+                note "text-parallel: NOT RUN -- the tr here is not GNU coreutils"
+                return 0
+                ;;
+        esac
+
+        if ! command -v taskset > /dev/null 2>&1; then
+                note "text-parallel: NOT RUN -- no taskset"
+                return 0
+        fi
+
+        parallel_input="$work/text-parallel.in"
+        LC_ALL=C awk 'BEGIN {
+                srand(7)
+                for (i = 0; i < 700000; i++) {
+                        line = ""
+                        n = int(rand() * 90)
+                        for (j = 0; j < n; j++)
+                                line = line sprintf("%c", 32 + int(rand() * 95))
+                        print line
+                }
+        }' > "$parallel_input" || return 1
+
+        parallel_first=$(taskset -cp $$ | sed 's/.*: *//; s/[,-].*//')
+        parallel_pass=0
+        parallel_total=0
+
+        parallel_tr()
+        {
+                parallel_total=$((parallel_total + 1))
+                parallel_want=$(LC_ALL=C tr "$@" < "$parallel_input" | cksum)
+                parallel_one=$(LC_ALL=C taskset -c "$parallel_first" "$farm/tr" "$@" \
+                        < "$parallel_input" | cksum)
+                parallel_all=$(LC_ALL=C "$farm/tr" "$@" < "$parallel_input" | cksum)
+
+                if [ "$parallel_want" = "$parallel_one" ] &&
+                        [ "$parallel_one" = "$parallel_all" ]; then
+                        parallel_pass=$((parallel_pass + 1))
+                else
+                        note "text-parallel: tr $* -- GNU $parallel_want, one processor $parallel_one, all $parallel_all"
+                fi
+        }
+
+        parallel_tr a-z A-Z
+        parallel_tr '\000-\177' '\200-\377'
+        parallel_tr -d ,
+        parallel_tr -d a-z
+        parallel_tr -cd 'a-z\n'
+        parallel_tr -d '\000-\177'
+
+        parallel_total=$((parallel_total + 1))
+        parallel_want=$({ LC_ALL=C tr a b > /dev/null; cat; } < "$parallel_input" | wc -c)
+        parallel_got=$({ LC_ALL=C "$farm/tr" a b > /dev/null; cat; } < "$parallel_input" | wc -c)
+
+        if [ "$parallel_want" = "$parallel_got" ]; then
+                parallel_pass=$((parallel_pass + 1))
+        else
+                note "text-parallel: after tr the descriptor left $parallel_got bytes to read, GNU $parallel_want"
+        fi
+
+        rm -f "$parallel_input"
+        printf '  %-12s %s of %s\n' text-parallel "$parallel_pass" "$parallel_total"
+        tally text-parallel "$parallel_pass" "$parallel_total"
+        [ "$parallel_pass" = "$parallel_total" ]
+}
+
 lane_text()
 {
         differential_domain text
         text_lane_status=$?
         text_sort_widths || [ "$text_lane_status" != 0 ] || text_lane_status=1
+        text_parallel_checks || [ "$text_lane_status" != 0 ] || text_lane_status=1
         [ "$text_lane_status" = 0 ] || return "$text_lane_status"
 
         #       wc's characters, words and widths follow LC_CTYPE. Its pinned
