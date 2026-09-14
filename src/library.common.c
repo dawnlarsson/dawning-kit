@@ -808,9 +808,11 @@ static bipolar system_path_same_opened_at(
 
 /* The fd is authoritative, but the public name may be removed only while a
    parent writer cannot exchange it after the identity check.  The current
-   owner can trust a directory that is read-only to everyone else.  A sticky
-   directory is safe when its owner is the current user or the host root that
-   already has authority over this process. */
+   owner can trust a directory that is not world-writable: group-writable
+   0775 is how a user-private group (and Lima's mapped uid/gid) creates
+   directories under umask 002.  A sticky directory is safe when its owner
+   is the current user or the host root that already has authority over
+   this process. */
 static bool system_path_parent_cleanup_safe(bipolar directory)
 {
         system_path_identity parent;
@@ -825,7 +827,7 @@ static bool system_path_parent_cleanup_safe(bipolar directory)
                 return false;
         if (parent.mode & 01000)
                 return parent.user == user || parent.user == 0;
-        return parent.user == user && !(parent.mode & 0022);
+        return parent.user == user && !(parent.mode & 0002);
 }
 
 static bipolar system_path_private_directory_valid(

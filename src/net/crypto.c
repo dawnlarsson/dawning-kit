@@ -1,7 +1,7 @@
 /*
         Hashes, AES-GCM, X25519 and the signature checks HTTPS needs.
 
-        wget speaks TLS 1.3 with AES-128-GCM and X25519. The chain for that
+        wget speaks TLS 1.3 with AES-128-GCM, X25519, P-256 and P-384. The chain for that
         handshake is ECDSA on P-256 and P-384, RSA PKCS#1 and RSA-PSS SHA-256;
         Alpine and GitHub still present RSA leaves. SHA-256 compression is
         sha256_compress in library.c, on the same hardware floor as the rest
@@ -1731,6 +1731,131 @@ static bool crypto_ecdsa_p384(p8 address_to hash, positive hash_length,
                                    qx, qy, 6, crypto_p384_p, crypto_p384_n,
                                    crypto_p384_gx_be, crypto_p384_gy_be,
                                    crypto_p384_b_be);
+}
+
+static bool crypto_scalar_reduce_be(p8 address_to out, const p8 address_to bytes,
+                                    positive length, const p64 address_to order,
+                                    positive limbs)
+{
+        p64 k[CRYPTO_FE_MAX];
+
+        if (length != limbs * 8)
+                return false;
+
+        crypto_fe_load_be(k, bytes, limbs);
+        if (crypto_fe_cmp(k, order, limbs) >= 0)
+                crypto_fe_sub(k, k, order, order, limbs);
+        if (crypto_fe_is_zero(k, limbs))
+        {
+                crypto_forget(k, sizeof(k));
+                return false;
+        }
+
+        crypto_fe_store_be(out, k, limbs);
+        crypto_forget(k, sizeof(k));
+        return true;
+}
+
+static bool crypto_ecdh_public(p8 address_to out, p8 address_to scalar,
+                               positive limbs, const p64 address_to p,
+                               const p64 address_to n, const p8 address_to gx,
+                               const p8 address_to gy)
+{
+        p64 k[CRYPTO_FE_MAX];
+        p64 gx_f[CRYPTO_FE_MAX];
+        p64 gy_f[CRYPTO_FE_MAX];
+        crypto_point g;
+        crypto_point r;
+        bool ok = false;
+
+        if (!crypto_scalar_from_int_be(k, scalar, limbs * 8, n, limbs))
+                goto done;
+
+        crypto_fe_load_be(gx_f, gx, limbs);
+        crypto_fe_load_be(gy_f, gy, limbs);
+        crypto_point_set_xy(address_of g, gx_f, gy_f, p, limbs);
+        crypto_point_scalar(address_of r, address_of g, k);
+        if (crypto_fe_is_zero(r.z, limbs))
+                goto done;
+
+        crypto_point_affine(address_of r);
+        out[0] = 4;
+        crypto_fe_store_be(out + 1, r.x, limbs);
+        crypto_fe_store_be(out + 1 + limbs * 8, r.y, limbs);
+        ok = true;
+
+done:
+        crypto_forget(k, sizeof(k));
+        crypto_forget(gx_f, sizeof(gx_f));
+        crypto_forget(gy_f, sizeof(gy_f));
+        crypto_forget(address_of g, sizeof(g));
+        crypto_forget(address_of r, sizeof(r));
+        return ok;
+}
+
+static bool crypto_ecdh_shared(p8 address_to out, p8 address_to scalar,
+                               p8 address_to peer, positive peer_length,
+                               positive limbs, const p64 address_to p,
+                               const p64 address_to n, const p8 address_to b)
+{
+        p64 k[CRYPTO_FE_MAX];
+        p64 qx[CRYPTO_FE_MAX];
+        p64 qy[CRYPTO_FE_MAX];
+        crypto_point q;
+        crypto_point r;
+        positive coord = limbs * 8;
+        bool ok = false;
+
+        if (peer_length != 1 + 2 * coord || peer[0] != 4 ||
+            !crypto_point_is_on_curve(peer + 1, peer + 1 + coord, limbs, p,
+                                      b) ||
+            !crypto_scalar_from_int_be(k, scalar, coord, n, limbs))
+                goto done;
+
+        crypto_fe_load_be(qx, peer + 1, limbs);
+        crypto_fe_load_be(qy, peer + 1 + coord, limbs);
+        crypto_point_set_xy(address_of q, qx, qy, p, limbs);
+        crypto_point_scalar(address_of r, address_of q, k);
+        if (crypto_fe_is_zero(r.z, limbs))
+                goto done;
+
+        crypto_point_affine(address_of r);
+        crypto_fe_store_be(out, r.x, limbs);
+        ok = true;
+
+done:
+        crypto_forget(k, sizeof(k));
+        crypto_forget(qx, sizeof(qx));
+        crypto_forget(qy, sizeof(qy));
+        crypto_forget(address_of q, sizeof(q));
+        crypto_forget(address_of r, sizeof(r));
+        return ok;
+}
+
+static bool crypto_ecdh_p256_public(p8 address_to out, p8 address_to scalar)
+{
+        return crypto_ecdh_public(out, scalar, 4, crypto_p256_p, crypto_p256_n,
+                                  crypto_p256_gx_be, crypto_p256_gy_be);
+}
+
+static bool crypto_ecdh_p256_shared(p8 address_to out, p8 address_to scalar,
+                                    p8 address_to peer)
+{
+        return crypto_ecdh_shared(out, scalar, peer, 65, 4, crypto_p256_p,
+                                  crypto_p256_n, crypto_p256_b_be);
+}
+
+static bool crypto_ecdh_p384_public(p8 address_to out, p8 address_to scalar)
+{
+        return crypto_ecdh_public(out, scalar, 6, crypto_p384_p, crypto_p384_n,
+                                  crypto_p384_gx_be, crypto_p384_gy_be);
+}
+
+static bool crypto_ecdh_p384_shared(p8 address_to out, p8 address_to scalar,
+                                    p8 address_to peer)
+{
+        return crypto_ecdh_shared(out, scalar, peer, 97, 6, crypto_p384_p,
+                                  crypto_p384_n, crypto_p384_b_be);
 }
 
 #define CRYPTO_RSA_LIMBS 64

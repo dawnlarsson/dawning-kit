@@ -4131,7 +4131,7 @@ static bool file_name_stable(bipolar directory,
             (parent.owner != effective && parent.owner != 0))
                 return false;
 
-        if (!(parent.mode & 0022))
+        if (!(parent.mode & 0002))
                 return true;
 
         return (parent.mode & MODE_STICKY) && entry &&

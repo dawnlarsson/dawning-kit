@@ -23212,7 +23212,8 @@ def harness_compression(argv):
 
                         replacement = b'forced replacement remains valid\n'
                         source.write_bytes(replacement)
-                        named.chmod(0o640)
+                        if named.is_file():
+                                named.chmod(0o640)
                         replaced = call(runner + [str(farms[label] / codec),
                                                   '-fk', '-o', str(named),
                                                   str(source)])
@@ -23631,12 +23632,7 @@ def harness_compression(argv):
             err = (ours.stderr + reference.stderr).decode(errors='replace')
             named = codec in refuse and any(token in ours.stderr.lower()
                                             for token in refuse[codec])
-            sparse_refused = (cell.startswith('type-S/') and
-                              ours.returncode != 0 and
-                              b"unknown file type 's'" in ours.stderr.lower())
-            if sparse_refused:
-                check(label + '/tar-grammar/' + cell, True, err)
-            elif codec in refuse and not matched:
+            if codec in refuse and not matched:
                 check(label + '/tar-grammar/' + cell,
                       ours.returncode != 0 and named, err)
             else:

@@ -268,8 +268,7 @@ static bool bowl_section_is(string_address line, string_address name)
 
 static bool bowl_isolation_keyword(string_address line)
 {
-        return bowl_keyword(line, "DisableHook") ||
-               bowl_keyword(line, "DisableSandbox") ||
+        return bowl_keyword(line, "DisableSandbox") ||
                bowl_keyword(line, "DisableSandboxFilesystem") ||
                bowl_keyword(line, "DisableSandboxSyscalls");
 }
@@ -279,10 +278,7 @@ static bool bowl_put_isolation(p8 address_to into, positive room,
 {
         string_address text =
             "DisableSandboxFilesystem\n"
-            "DisableSandboxSyscalls\n"
-            "DisableHook = *systemd*\n"
-            "DisableHook = dbus*.hook\n"
-            "DisableHook = 90-mkinitcpio-*\n";
+            "DisableSandboxSyscalls\n";
 
         return bowl_put(into, room, used, text, string_length(text));
 }
@@ -762,8 +758,8 @@ static b32 bowl_write_pacman(string_address root)
                 Pacman only reads these from [options]. Appending them after
                 [extra] is a no-op and prints "directive not recognized".
         */
-        if (bowl_options_keyword(text, "DisableHook") &&
-            bowl_options_keyword(text, "DisableSandboxFilesystem"))
+        if (bowl_options_keyword(text, "DisableSandboxFilesystem") &&
+            bowl_options_keyword(text, "DisableSandboxSyscalls"))
                 return 0;
 
         while (at < (positive)got)

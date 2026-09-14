@@ -40347,7 +40347,7 @@ static fn tls_certificate_identity_rules(void)
 static fn tls_client_hello_bounds(void)
 {
         tls_conn client = {.host = "example.com"};
-        p8 hello[160];
+        p8 hello[320];
         positive used = 99;
 
         memory_fill(hello, 0xa5, sizeof hello);
@@ -40366,16 +40366,16 @@ static fn tls_client_hello_bounds(void)
 
         used = 0;
         check("a ClientHello fits its exact named-host bound",
-              tls_client_hello(address_of client, hello, 136,
+              tls_client_hello(address_of client, hello, 310,
                                address_of used) == TLS_OK &&
-                  used == 136);
+                  used == 310);
 
         client.host = "127.0.0.1";
         used = 0;
         check("a numeric-host ClientHello omits SNI at its exact bound",
-              tls_client_hello(address_of client, hello, 116,
+              tls_client_hello(address_of client, hello, 290,
                                address_of used) == TLS_OK &&
-                  used == 116);
+                  used == 290);
 }
 
 static bool tls_hello_offers_group(p8 address_to hello, positive length,
@@ -40455,6 +40455,91 @@ static bool tls_hello_offers_group(p8 address_to hello, positive length,
         return false;
 }
 
+static bool tls_hello_offers_share(p8 address_to hello, positive length,
+                                   positive group, positive key_length)
+{
+        positive at;
+        positive ext_end;
+        positive session;
+        positive cipher_len;
+        positive comp_len;
+
+        if (length < 44 || hello[0] != TLS_HS_CLIENT_HELLO)
+                return false;
+        {
+                positive hs = ((positive)hello[1] << 16) | ((positive)hello[2] << 8) |
+                              hello[3];
+                if (hs + 4 != length)
+                        return false;
+        }
+
+        at = 4 + 2 + 32;
+        session = hello[at++];
+        at += session;
+        if (at + 2 > length)
+                return false;
+        cipher_len = ((positive)hello[at] << 8) | hello[at + 1];
+        at += 2 + cipher_len;
+        if (at + 1 > length)
+                return false;
+        comp_len = hello[at++];
+        at += comp_len;
+        if (at + 2 > length)
+                return false;
+        {
+                positive ext_length = ((positive)hello[at] << 8) | hello[at + 1];
+                at += 2;
+                ext_end = at + ext_length;
+                if (ext_end != length)
+                        return false;
+        }
+
+        while (at < ext_end)
+        {
+                positive id;
+                positive elen;
+
+                if (at + 4 > ext_end)
+                        return false;
+                id = ((positive)hello[at] << 8) | hello[at + 1];
+                elen = ((positive)hello[at + 2] << 8) | hello[at + 3];
+                at += 4;
+                if (at + elen > ext_end)
+                        return false;
+                if (id == 0x0033)
+                {
+                        positive list;
+                        positive item;
+
+                        if (elen < 2)
+                                return false;
+                        list = ((positive)hello[at] << 8) | hello[at + 1];
+                        if (list + 2 != elen)
+                                return false;
+                        item = 2;
+                        while (item + 4 <= 2 + list)
+                        {
+                                positive offered =
+                                    ((positive)hello[at + item] << 8) |
+                                    hello[at + item + 1];
+                                positive klen =
+                                    ((positive)hello[at + item + 2] << 8) |
+                                    hello[at + item + 3];
+
+                                if (item + 4 + klen > 2 + list)
+                                        return false;
+                                if (offered == group)
+                                        return klen == key_length;
+                                item += 4 + klen;
+                        }
+                        return false;
+                }
+                at += elen;
+        }
+
+        return false;
+}
+
 static bool tls_hello_offers_cipher(p8 address_to hello, positive length,
                                     positive cipher)
 {
@@ -40491,7 +40576,7 @@ static fn tls_client_hello_groups(void)
             "dl-cdn.alpinelinux.org", "127.0.0.1", "192.0.2.1"};
         static const positive ciphers[] = {0x1301};
         tls_conn client = {0};
-        p8 hello[256];
+        p8 hello[512];
         positive host;
         positive at;
 
@@ -40506,10 +40591,16 @@ static fn tls_client_hello_groups(void)
                           used);
                 check("ClientHello advertises its implemented X25519 group",
                       tls_hello_offers_group(hello, used, 0x001d));
-                check("ClientHello does not advertise unsupported P-256 key exchange",
-                      !tls_hello_offers_group(hello, used, 0x0017));
-                check("ClientHello does not advertise unsupported P-384 key exchange",
-                      !tls_hello_offers_group(hello, used, 0x0018));
+                check("ClientHello advertises P-256 key exchange",
+                      tls_hello_offers_group(hello, used, 0x0017));
+                check("ClientHello advertises P-384 key exchange",
+                      tls_hello_offers_group(hello, used, 0x0018));
+                check("ClientHello includes an X25519 key share",
+                      tls_hello_offers_share(hello, used, 0x001d, 32));
+                check("ClientHello includes a P-256 key share",
+                      tls_hello_offers_share(hello, used, 0x0017, 65));
+                check("ClientHello includes a P-384 key share",
+                      tls_hello_offers_share(hello, used, 0x0018, 97));
                 for (at = 0; at < array_count(ciphers); at++)
                         check("ClientHello offers the TLS 1.3 ciphers it implements",
                               tls_hello_offers_cipher(hello, used, ciphers[at]));
@@ -41200,6 +41291,98 @@ static fn crypto_floor_aes(void)
                   crypto_bytes_are(
                       ab, 32,
                       "0000000000000000000000000000000000000000000000000000000000000000"));
+
+        {
+                p8 one256[32];
+                p8 two256[32];
+                p8 three256[32];
+                p8 one384[48];
+                p8 two384[48];
+                p8 three384[48];
+                p8 g256[65];
+                p8 g384[97];
+                p8 pub_two[65];
+                p8 pub_three[65];
+                p8 pub_two_384[97];
+                p8 pub_three_384[97];
+                p8 ab256[32];
+                p8 ba256[32];
+                p8 ab384[48];
+                p8 ba384[48];
+                p8 shared256[32];
+                p8 shared384[48];
+
+                memory_fill(one256, 0, sizeof one256);
+                memory_fill(two256, 0, sizeof two256);
+                memory_fill(three256, 0, sizeof three256);
+                memory_fill(one384, 0, sizeof one384);
+                memory_fill(two384, 0, sizeof two384);
+                memory_fill(three384, 0, sizeof three384);
+                one256[31] = 1;
+                two256[31] = 2;
+                three256[31] = 3;
+                one384[47] = 1;
+                two384[47] = 2;
+                three384[47] = 3;
+
+                g256[0] = 4;
+                memory_copy(g256 + 1, crypto_p256_gx_be, 32);
+                memory_copy(g256 + 33, crypto_p256_gy_be, 32);
+                g384[0] = 4;
+                memory_copy(g384 + 1, crypto_p384_gx_be, 48);
+                memory_copy(g384 + 49, crypto_p384_gy_be, 48);
+
+                check("P-256 ECDH of 1 is the base point",
+                      crypto_ecdh_p256_public(pub_two, one256) &&
+                          !memory_compare(pub_two, g256, 65) &&
+                          crypto_ecdh_p256_shared(shared256, one256, g256) &&
+                          !memory_compare(shared256, crypto_p256_gx_be, 32));
+                check("P-256 ECDH is symmetric",
+                      crypto_ecdh_p256_public(pub_two, two256) &&
+                          crypto_ecdh_p256_public(pub_three, three256) &&
+                          crypto_ecdh_p256_shared(ab256, two256, pub_three) &&
+                          crypto_ecdh_p256_shared(ba256, three256, pub_two) &&
+                          !memory_compare(ab256, ba256, 32));
+                check("P-384 ECDH of 1 is the base point",
+                      crypto_ecdh_p384_public(pub_two_384, one384) &&
+                          !memory_compare(pub_two_384, g384, 97) &&
+                          crypto_ecdh_p384_shared(shared384, one384, g384) &&
+                          !memory_compare(shared384, crypto_p384_gx_be, 48));
+                check("P-384 ECDH is symmetric",
+                      crypto_ecdh_p384_public(pub_two_384, two384) &&
+                          crypto_ecdh_p384_public(pub_three_384, three384) &&
+                          crypto_ecdh_p384_shared(ab384, two384, pub_three_384) &&
+                          crypto_ecdh_p384_shared(ba384, three384, pub_two_384) &&
+                          !memory_compare(ab384, ba384, 48));
+                {
+                        static const p8 rfc5903_i[32] = {
+                            0xc8, 0x8f, 0x01, 0xf5, 0x10, 0xd9, 0xac, 0x3f,
+                            0x70, 0xa2, 0x92, 0xda, 0xa2, 0x31, 0x6d, 0xe5,
+                            0x44, 0xe9, 0xaa, 0xb8, 0xaf, 0xe8, 0x40, 0x49,
+                            0xc6, 0x2a, 0x9c, 0x57, 0x86, 0x2d, 0x14, 0x33};
+                        static const p8 rfc5903_r[32] = {
+                            0xc6, 0xef, 0x9c, 0x5d, 0x78, 0xae, 0x01, 0x2a,
+                            0x01, 0x11, 0x64, 0xac, 0xb3, 0x97, 0xce, 0x20,
+                            0x88, 0x68, 0x5d, 0x8f, 0x06, 0xbf, 0x9b, 0xe0,
+                            0xb2, 0x83, 0xab, 0x46, 0x47, 0x6b, 0xee, 0x53};
+                        p8 pub_i[65];
+                        p8 pub_r[65];
+                        p8 secret[32];
+
+                        check("P-256 ECDH RFC 5903 public",
+                              crypto_ecdh_p256_public(pub_i, (p8 address_to)rfc5903_i) &&
+                                  crypto_bytes_are(
+                                      pub_i, 65,
+                                      "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c37725811805271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3"));
+                        check("P-256 ECDH RFC 5903 shared",
+                              crypto_ecdh_p256_public(pub_r, (p8 address_to)rfc5903_r) &&
+                                  crypto_ecdh_p256_shared(
+                                      secret, (p8 address_to)rfc5903_i, pub_r) &&
+                                  crypto_bytes_are(
+                                      secret, 32,
+                                      "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de"));
+                }
+        }
 }
 
 static fn redirect_urls(void)

@@ -8,7 +8,8 @@
         setuid only for -p or root, the same rule GNU uses. gzip, xz and
         zstd run in-process: -z, -J, --zstd, -a, and extract looks at the
         magic so a .tar.gz needs no extra flag. A packed stream is not
-        seekable. bzip2 and compress stay refused.
+        seekable. bzip2 and compress are named-refused. GNU sparse type S
+        is reconstructed from the old GNU map; holes become zeros.
 */
 
 #define TAR_BLOCK 512
@@ -290,7 +291,8 @@ static bool tar_safe_path(string_address path, positive strip, bool absolute,
 #define TAR_PACK_XZ 2
 #define TAR_PACK_ZSTD 3
 #define TAR_PACK_AUTO 4
-#define TAR_PACK_UNSUPPORTED 5
+#define TAR_PACK_BZIP2 5
+#define TAR_PACK_COMPRESS 6
 
 typedef struct
 {
@@ -421,9 +423,10 @@ static p8 tar_pack_from_name(string_address name)
                 return TAR_PACK_ZSTD;
         if ((n >= 4 && !memory_compare(name + n - 4, ".bz2", 4)) ||
             (n >= 5 && !memory_compare(name + n - 5, ".tbz2", 5)) ||
-            (n >= 4 && !memory_compare(name + n - 4, ".tbz", 4)) ||
-            (n >= 2 && !memory_compare(name + n - 2, ".Z", 2)))
-                return TAR_PACK_UNSUPPORTED;
+            (n >= 4 && !memory_compare(name + n - 4, ".tbz", 4)))
+                return TAR_PACK_BZIP2;
+        if (n >= 2 && !memory_compare(name + n - 2, ".Z", 2))
+                return TAR_PACK_COMPRESS;
         return TAR_PACK_NONE;
 }
 
@@ -437,9 +440,10 @@ static p8 tar_pack_from_magic(p8 address_to magic, positive n)
         if (n >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f &&
             magic[3] == 0xfd)
                 return TAR_PACK_ZSTD;
-        if ((n >= 3 && magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h') ||
-            (n >= 2 && magic[0] == 0x1f && magic[1] == 0x9d))
-                return TAR_PACK_UNSUPPORTED;
+        if (n >= 3 && magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h')
+                return TAR_PACK_BZIP2;
+        if (n >= 2 && magic[0] == 0x1f && magic[1] == 0x9d)
+                return TAR_PACK_COMPRESS;
         return TAR_PACK_NONE;
 }
 
@@ -597,6 +601,23 @@ static fn tar_refuse(string_address message)
 {
         string_format(log_error, "tar: %s\n", message);
         tar_status = 2;
+}
+
+static bool tar_refuse_pack(p8 pack)
+{
+        if (pack == TAR_PACK_BZIP2)
+        {
+                tar_refuse("bzip2 is not this tar");
+                return true;
+        }
+
+        if (pack == TAR_PACK_COMPRESS)
+        {
+                tar_refuse("compress is not this tar");
+                return true;
+        }
+
+        return false;
 }
 
 /* Keep this table below one-half full.  Stored indexes survive growth of both
@@ -1080,7 +1101,7 @@ static bool tar_rewind_unread(bipolar handle)
         return true;
 }
 
-static bool tar_deliver(bipolar archive, bipolar out, p64 size, bool seekable)
+static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
 {
         p64 left = size;
 
@@ -1098,8 +1119,7 @@ static bool tar_deliver(bipolar archive, bipolar out, p64 size, bool seekable)
                         if (out < 0 && !tar_skip(archive, left, seekable))
                                 return false;
 
-                        left = 0;
-                        break;
+                        return true;
                 }
 
                 if (tar_at >= tar_have && !tar_fill(archive))
@@ -1125,7 +1145,165 @@ static bool tar_deliver(bipolar archive, bipolar out, p64 size, bool seekable)
                 left -= take;
         }
 
-        return tar_skip(archive, tar_padded(size) - size, seekable);
+        return true;
+}
+
+static bool tar_deliver(bipolar archive, bipolar out, p64 size, bool seekable)
+{
+        return tar_copy_n(archive, out, size, seekable) &&
+               tar_skip(archive, tar_padded(size) - size, seekable);
+}
+
+static bool tar_write_zeros(bipolar out, p64 size)
+{
+        p8 zero[TAR_BLOCK];
+
+        if (out < 0)
+                return true;
+
+        memory_fill(zero, 0, sizeof(zero));
+        while (size)
+        {
+                positive take = size > sizeof(zero) ? sizeof(zero)
+                                                    : (positive)size;
+
+                if (system_write_all((positive)out, zero, take) != take)
+                        return false;
+
+                size -= take;
+        }
+
+        return true;
+}
+
+#define TAR_SPARSE_HEADER 4
+#define TAR_SPARSE_EXTRA 21
+#define TAR_SPARSE_MAX 256
+
+typedef struct
+{
+        p64 offset;
+        p64 bytes;
+} tar_sparse_span;
+
+static tar_sparse_span tar_sparse[TAR_SPARSE_MAX];
+static positive tar_sparse_used;
+static p64 tar_sparse_real;
+static bool tar_sparse_active;
+
+static fn tar_sparse_clear(void)
+{
+        tar_sparse_used = 0;
+        tar_sparse_real = 0;
+        tar_sparse_active = false;
+}
+
+static bool tar_sparse_add(p64 offset, p64 bytes)
+{
+        if (!bytes)
+                return true;
+
+        if (bytes && offset > (p64)-1 - bytes)
+                return false;
+
+        if (tar_sparse_used >= TAR_SPARSE_MAX)
+                return false;
+
+        if (tar_sparse_used &&
+            offset < tar_sparse[tar_sparse_used - 1].offset +
+                         tar_sparse[tar_sparse_used - 1].bytes)
+                return false;
+
+        tar_sparse[tar_sparse_used].offset = offset;
+        tar_sparse[tar_sparse_used].bytes = bytes;
+        tar_sparse_used++;
+        return true;
+}
+
+static bool tar_sparse_entry(p8 address_to field)
+{
+        p64 offset;
+        p64 bytes;
+
+        if (!tar_field_value(field, 12, address_of offset) ||
+            !tar_field_value(field + 12, 12, address_of bytes))
+                return false;
+
+        return tar_sparse_add(offset, bytes);
+}
+
+static bool tar_sparse_load(bipolar archive, p8 address_to header)
+{
+        positive at;
+        bool extended;
+
+        tar_sparse_clear();
+        for (at = 0; at < TAR_SPARSE_HEADER; at++)
+                if (!tar_sparse_entry(header + 386 + at * 24))
+                        return false;
+
+        extended = header[482] != 0;
+        if (!tar_field_value(header + 483, 12, address_of tar_sparse_real))
+                return false;
+
+        while (extended)
+        {
+                p8 address_to extra = tar_next_block(archive);
+
+                if (!extra)
+                        return false;
+
+                for (at = 0; at < TAR_SPARSE_EXTRA; at++)
+                        if (!tar_sparse_entry(extra + at * 24))
+                                return false;
+
+                extended = extra[504] != 0;
+        }
+
+        for (at = 0; at < tar_sparse_used; at++)
+                if (tar_sparse[at].offset + tar_sparse[at].bytes >
+                    tar_sparse_real)
+                        return false;
+
+        tar_sparse_active = true;
+        return true;
+}
+
+static p64 tar_sparse_payload(void)
+{
+        p64 held = 0;
+        positive at;
+
+        for (at = 0; at < tar_sparse_used; at++)
+                held += tar_sparse[at].bytes;
+
+        return held;
+}
+
+static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
+                               bool seekable)
+{
+        p64 cursor = 0;
+        positive at;
+
+        if (!tar_sparse_active || tar_sparse_payload() != size)
+        {
+                tar_refuse("invalid sparse archive");
+                return false;
+        }
+
+        for (at = 0; at < tar_sparse_used; at++)
+        {
+                if (tar_sparse[at].offset < cursor ||
+                    !tar_write_zeros(out, tar_sparse[at].offset - cursor) ||
+                    !tar_copy_n(archive, out, tar_sparse[at].bytes, seekable))
+                        return false;
+
+                cursor = tar_sparse[at].offset + tar_sparse[at].bytes;
+        }
+
+        return tar_write_zeros(out, tar_sparse_real - cursor) &&
+               tar_skip(archive, tar_padded(size) - size, seekable);
 }
 
 static bool tar_flush(bipolar handle)
@@ -1331,7 +1509,7 @@ static bool tar_extract_directory_trusted(bipolar handle)
         return looked >= 0 && (facts.mask & STATX_BASIC) == STATX_BASIC &&
                (facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
                (facts.owner == effective || facts.owner == 0) &&
-               (!(facts.mode & 0022) || (facts.mode & MODE_STICKY));
+               (!(facts.mode & 0002) || (facts.mode & MODE_STICKY));
 }
 
 /* -C establishes the root for every later AT_FDCWD member operation.  Open
@@ -1399,7 +1577,10 @@ static bool tar_extract_regular(bipolar archive, bipolar directory,
                 return tar_skip(archive, tar_padded(size), seekable);
         }
 
-        if (!tar_deliver(archive, made, size, seekable))
+        if ((tar_sparse_active &&
+             !tar_deliver_sparse(archive, made, size, seekable)) ||
+            (!tar_sparse_active &&
+             !tar_deliver(archive, made, size, seekable)))
         {
                 (void)file_stage_publish_protected_at(
                     address_of protected, directory, leaf, made,
@@ -1445,7 +1626,8 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         p8 leaf[TAR_PATH];
         string_address slash = string_last_of(path, '/');
         bool directory = type == '5' || (slash && !slash[1]);
-        bool regular = !directory && (!type || type == '0' || type == '7');
+        bool regular = !directory &&
+                       (!type || type == '0' || type == '7' || type == 'S');
 
         if (!tar_preserve && (directory || regular ||
                               type == '3' || type == '4' || type == '6'))
@@ -1666,6 +1848,12 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         tar_skip(archive, tar_padded(size), seekable);
 }
 
+static bool tar_header_gnu_old(p8 address_to block)
+{
+        return !memory_compare(block + 257, "ustar ", 6) &&
+               block[263] == ' ' && !block[264];
+}
+
 static bool tar_member_name(p8 address_to block, p8 address_to into)
 {
         tar_pax_state address_to state =
@@ -1674,6 +1862,13 @@ static bool tar_member_name(p8 address_to block, p8 address_to into)
         if (state->has_path)
         {
                 string_copy_max_end(into, state->path, TAR_PATH - 1);
+                return into[0] != end;
+        }
+
+        /* GNU old format stores atime/sparse maps where ustar keeps prefix. */
+        if (tar_header_gnu_old(block))
+        {
+                tar_field_text(block, TAR_NAME, into, TAR_PATH);
                 return into[0] != end;
         }
 
@@ -1709,6 +1904,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
         tar_pax_clear(address_of tar_pax_global);
         tar_pax_clear(address_of tar_pax_local);
+        tar_sparse_clear();
         tar_reset();
         long_name[0] = end;
         long_link[0] = end;
@@ -1747,9 +1943,8 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
                         tar_pack = sniffed;
                 }
-                if (tar_pack == TAR_PACK_UNSUPPORTED)
+                if (tar_refuse_pack(tar_pack))
                 {
-                        tar_refuse("archive compression is not supported");
                         if (handle > 0)
                                 system_close(handle);
                         return tar_status;
@@ -1836,6 +2031,18 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 if (!tar_size_fits(size))
                 {
                         tar_refuse("member size is too large");
+                        break;
+                }
+
+                tar_sparse_clear();
+                if (type == 'S' && !tar_sparse_load(handle, block))
+                {
+                        tar_refuse("invalid sparse archive");
+                        break;
+                }
+                if (tar_sparse_active && tar_sparse_payload() != size)
+                {
+                        tar_refuse("invalid sparse archive");
                         break;
                 }
 
@@ -2299,11 +2506,8 @@ static b32 tar_write_archive(struct tar_options address_to options)
         tar_pack = options->pack;
         if (tar_pack == TAR_PACK_AUTO)
                 tar_pack = tar_pack_from_name(options->archive);
-        if (tar_pack == TAR_PACK_UNSUPPORTED)
-        {
-                tar_refuse("archive compression is not supported");
+        if (tar_refuse_pack(tar_pack))
                 return tar_status;
-        }
 
         tar_reset();
         output_stage.directory = -1;

@@ -2761,6 +2761,10 @@ lane_compression_floor() { freestanding_checks_lane compression_floor compressio
 lane_compression()
 {
         need_shell || return 1
+        # Ubuntu's default umask 002 makes 0775 directories. The codec
+        # staging path already accepts user-private group-writable parents;
+        # pin 022 anyway so this lane does not depend on the caller's mask.
+        umask 022
         python3 test/differential.py --harness compression --binary "ours=$shell_binary"
 }
 
