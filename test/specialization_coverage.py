@@ -596,6 +596,7 @@ _start moonwater_cpu_detect program_initial_identity get_cpu_time term_size work
 working_directory_set program_argument_count program_argument_list program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
 string_hash_33_length hash_xxh64_finish sha256_compress ghash_blocks ghash_key ghash_integer aes128_ctr_blocks
+md5_blocks sha1_blocks sha256_blocks sha512_blocks blake2b_blocks cpu_hash_detect
 p256_multiply p256_square p256_add p256_subtract p384_multiply p384_square p384_add p384_subtract memory_get64 zstd_bits_reload zstd_sequences_run
 ''', 'no argument, or an argument that is a pointer into memory the caller '
      'owns; nothing the compiler could know shortens the body')

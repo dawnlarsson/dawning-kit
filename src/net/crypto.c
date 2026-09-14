@@ -5,7 +5,8 @@
         handshake is ECDSA on P-256 and P-384, RSA PKCS#1 and RSA-PSS SHA-256;
         Alpine and GitHub still present RSA leaves. SHA-256 compression is
         sha256_compress in library.c, on the same hardware floor as the rest
-        of the binary. AES-GCM, X25519 and ECDSA stay C for now. None of
+        of the binary, and SHA-384 is sha512_blocks through the same streaming
+        digests the checksum utilities use. X25519 and ECDSA stay C for now. None of
         this is a kernel crypto ABI: AF_ALG is off on Moonwater, and a
         downloader cannot wait on it.
 */
@@ -40,122 +41,29 @@ static fn crypto_put_be64(p8 address_to bytes, p64 value)
         crypto_put_be32(bytes + 4, (p32)value);
 }
 
-static p64 crypto_rotr64(p64 value, positive bits)
-{
-        return (value >> bits) | (value << (64 - bits));
-}
-
-static const p64 crypto_sha512_k[80] = {
-    0x428a2f98d728ae22ull, 0x7137449123ef65cdull, 0xb5c0fbcfec4d3b2full,
-    0xe9b5dba58189dbbcull, 0x3956c25bf348b538ull, 0x59f111f1b605d019ull,
-    0x923f82a4af194f9bull, 0xab1c5ed5da6d8118ull, 0xd807aa98a3030242ull,
-    0x12835b0145706fbeull, 0x243185be4ee4b28cull, 0x550c7dc3d5ffb4e2ull,
-    0x72be5d74f27b896full, 0x80deb1fe3b1696b1ull, 0x9bdc06a725c71235ull,
-    0xc19bf174cf692694ull, 0xe49b69c19ef14ad2ull, 0xefbe4786384f25e3ull,
-    0x0fc19dc68b8cd5b5ull, 0x240ca1cc77ac9c65ull, 0x2de92c6f592b0275ull,
-    0x4a7484aa6ea6e483ull, 0x5cb0a9dcbd41fbd4ull, 0x76f988da831153b5ull,
-    0x983e5152ee66dfabull, 0xa831c66d2db43210ull, 0xb00327c898fb213full,
-    0xbf597fc7beef0ee4ull, 0xc6e00bf33da88fc2ull, 0xd5a79147930aa725ull,
-    0x06ca6351e003826full, 0x142929670a0e6e70ull, 0x27b70a8546d22ffcull,
-    0x2e1b21385c26c926ull, 0x4d2c6dfc5ac42aedull, 0x53380d139d95b3dfull,
-    0x650a73548baf63deull, 0x766a0abb3c77b2a8ull, 0x81c2c92e47edaee6ull,
-    0x92722c851482353bull, 0xa2bfe8a14cf10364ull, 0xa81a664bbc423001ull,
-    0xc24b8b70d0f89791ull, 0xc76c51a30654be30ull, 0xd192e819d6ef5218ull,
-    0xd69906245565a910ull, 0xf40e35855771202aull, 0x106aa07032bbd1b8ull,
-    0x19a4c116b8d2d0c8ull, 0x1e376c085141ab53ull, 0x2748774cdf8eeb99ull,
-    0x34b0bcb5e19b48a8ull, 0x391c0cb3c5c95a63ull, 0x4ed8aa4ae3418acbull,
-    0x5b9cca4f7763e373ull, 0x682e6ff3d6b2b8a3ull, 0x748f82ee5defb2fcull,
-    0x78a5636f43172f60ull, 0x84c87814a1f0ab72ull, 0x8cc702081a6439ecull,
-    0x90befffa23631e28ull, 0xa4506cebde82bde9ull, 0xbef9a3f7b2c67915ull,
-    0xc67178f2e372532bull, 0xca273eceea26619cull, 0xd186b8c721c0c207ull,
-    0xeada7dd6cde0eb1eull, 0xf57d4f7fee6ed178ull, 0x06f067aa72176fbaull,
-    0x0a637dc5a2c898a6ull, 0x113f9804bef90daeull, 0x1b710b35131c471bull,
-    0x28db77f523047d84ull, 0x32caab7b40c72493ull, 0x3c9ebe0a15c9bebcull,
-    0x431d67c49c100d4cull, 0x4cc5d4becb3e42b6ull, 0x597f299cfc657e2aull,
-    0x5fcb6fab3ad6faecull, 0x6c44198c4a475817ull};
-
-typedef struct
-{
-        p32 state[8];
-        p64 bits;
-        p8 block[64];
-        positive used;
-} crypto_sha256;
-
-typedef struct
-{
-        p64 state[8];
-        p64 bits_hi;
-        p64 bits_lo;
-        p8 block[128];
-        positive used;
-} crypto_sha512;
+/*
+        SHA-256 for the transcript, HKDF and the signature hashes, SHA-384 for
+        the P-384 and RSA-SHA384 chains: the library's streaming digests over
+        sha256_blocks and sha512_blocks, under the names this file has always
+        used. A transcript copy is a digest_state copy.
+*/
+typedef digest_state crypto_sha256;
+typedef digest_state crypto_sha512;
 
 static fn crypto_sha256_open(crypto_sha256 address_to hash)
 {
-        hash->state[0] = 0x6a09e667;
-        hash->state[1] = 0xbb67ae85;
-        hash->state[2] = 0x3c6ef372;
-        hash->state[3] = 0xa54ff53a;
-        hash->state[4] = 0x510e527f;
-        hash->state[5] = 0x9b05688c;
-        hash->state[6] = 0x1f83d9ab;
-        hash->state[7] = 0x5be0cd19;
-        hash->bits = 0;
-        hash->used = 0;
-}
-
-static fn crypto_sha256_block(crypto_sha256 address_to hash, p8 address_to block)
-{
-        sha256_compress(hash->state, block);
+        digest_open(hash, DIGEST_SHA256, 32);
 }
 
 static fn crypto_sha256_write(crypto_sha256 address_to hash, p8 address_to data,
                               positive length)
 {
-        hash->bits += (p64)length * 8;
-
-        while (length)
-        {
-                positive take = 64 - hash->used;
-
-                if (take > length)
-                        take = length;
-
-                memory_copy(hash->block + hash->used, data, take);
-                hash->used += take;
-                data += take;
-                length -= take;
-
-                if (hash->used == 64)
-                {
-                        crypto_sha256_block(hash, hash->block);
-                        hash->used = 0;
-                }
-        }
+        digest_write(hash, data, length);
 }
 
 static fn crypto_sha256_close(crypto_sha256 address_to hash, p8 address_to out)
 {
-        positive i;
-
-        hash->block[hash->used++] = 0x80;
-        if (hash->used > 56)
-        {
-                while (hash->used < 64)
-                        hash->block[hash->used++] = 0;
-                crypto_sha256_block(hash, hash->block);
-                hash->used = 0;
-        }
-
-        while (hash->used < 56)
-                hash->block[hash->used++] = 0;
-
-        crypto_put_be64(hash->block + 56, hash->bits);
-        crypto_sha256_block(hash, hash->block);
-
-        for (i = 0; i < 8; i++)
-                crypto_put_be32(out + i * 4, hash->state[i]);
+        digest_close(hash, out);
 }
 
 static fn crypto_sha256_of(p8 address_to data, positive length, p8 address_to out)
@@ -167,137 +75,20 @@ static fn crypto_sha256_of(p8 address_to data, positive length, p8 address_to ou
         crypto_sha256_close(address_of hash, out);
 }
 
-static fn crypto_sha512_open_iv(crypto_sha512 address_to hash, const p64 address_to iv)
-{
-        positive i;
-
-        for (i = 0; i < 8; i++)
-                hash->state[i] = iv[i];
-        hash->bits_hi = 0;
-        hash->bits_lo = 0;
-        hash->used = 0;
-}
-
 static fn crypto_sha384_open(crypto_sha512 address_to hash)
 {
-        static const p64 iv[8] = {
-            0xcbbb9d5dc1059ed8ull, 0x629a292a367cd507ull,
-            0x9159015a3070dd17ull, 0x152fecd8f70e5939ull,
-            0x67332667ffc00b31ull, 0x8eb44a8768581511ull,
-            0xdb0c2e0d64f98fa7ull, 0x47b5481dbefa4fa4ull};
-
-        crypto_sha512_open_iv(hash, iv);
-}
-
-static fn crypto_sha512_block(crypto_sha512 address_to hash, p8 address_to block)
-{
-        p64 w[80];
-        p64 a, b, c, d, e, f, g, h;
-        positive i;
-
-        for (i = 0; i < 16; i++)
-                w[i] = crypto_be64(block + i * 8);
-
-        for (i = 16; i < 80; i++)
-        {
-                p64 s0 = crypto_rotr64(w[i - 15], 1) ^ crypto_rotr64(w[i - 15], 8) ^
-                         (w[i - 15] >> 7);
-                p64 s1 = crypto_rotr64(w[i - 2], 19) ^ crypto_rotr64(w[i - 2], 61) ^
-                         (w[i - 2] >> 6);
-                w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-        }
-
-        a = hash->state[0];
-        b = hash->state[1];
-        c = hash->state[2];
-        d = hash->state[3];
-        e = hash->state[4];
-        f = hash->state[5];
-        g = hash->state[6];
-        h = hash->state[7];
-
-        for (i = 0; i < 80; i++)
-        {
-                p64 s1 = crypto_rotr64(e, 14) ^ crypto_rotr64(e, 18) ^
-                         crypto_rotr64(e, 41);
-                p64 ch = (e & f) ^ ((~e) & g);
-                p64 t1 = h + s1 + ch + crypto_sha512_k[i] + w[i];
-                p64 s0 = crypto_rotr64(a, 28) ^ crypto_rotr64(a, 34) ^
-                         crypto_rotr64(a, 39);
-                p64 maj = (a & b) ^ (a & c) ^ (b & c);
-                p64 t2 = s0 + maj;
-
-                h = g;
-                g = f;
-                f = e;
-                e = d + t1;
-                d = c;
-                c = b;
-                b = a;
-                a = t1 + t2;
-        }
-
-        hash->state[0] += a;
-        hash->state[1] += b;
-        hash->state[2] += c;
-        hash->state[3] += d;
-        hash->state[4] += e;
-        hash->state[5] += f;
-        hash->state[6] += g;
-        hash->state[7] += h;
+        digest_open(hash, DIGEST_SHA384, 48);
 }
 
 static fn crypto_sha512_write(crypto_sha512 address_to hash, p8 address_to data,
                               positive length)
 {
-        p64 add = (p64)length * 8;
-
-        hash->bits_lo += add;
-        if (hash->bits_lo < add)
-                hash->bits_hi++;
-
-        while (length)
-        {
-                positive take = 128 - hash->used;
-
-                if (take > length)
-                        take = length;
-
-                memory_copy(hash->block + hash->used, data, take);
-                hash->used += take;
-                data += take;
-                length -= take;
-
-                if (hash->used == 128)
-                {
-                        crypto_sha512_block(hash, hash->block);
-                        hash->used = 0;
-                }
-        }
+        digest_write(hash, data, length);
 }
 
 static fn crypto_sha384_close(crypto_sha512 address_to hash, p8 address_to out)
 {
-        positive i;
-
-        hash->block[hash->used++] = 0x80;
-        if (hash->used > 112)
-        {
-                while (hash->used < 128)
-                        hash->block[hash->used++] = 0;
-                crypto_sha512_block(hash, hash->block);
-                hash->used = 0;
-        }
-
-        while (hash->used < 112)
-                hash->block[hash->used++] = 0;
-
-        crypto_put_be64(hash->block + 112, hash->bits_hi);
-        crypto_put_be64(hash->block + 120, hash->bits_lo);
-        crypto_sha512_block(hash, hash->block);
-
-        for (i = 0; i < 6; i++)
-                crypto_put_be64(out + i * 8, hash->state[i]);
+        digest_close(hash, out);
 }
 
 static fn crypto_sha384(p8 address_to data, positive length, p8 address_to out)
@@ -309,7 +100,6 @@ static fn crypto_sha384(p8 address_to data, positive length, p8 address_to out)
         crypto_sha384_close(address_of hash, out);
 }
 
-/* Volatile stores keep secret erasure observable to the compiler. */
 static fn crypto_forget(address_any secret, positive length);
 
 static fn crypto_hmac_sha256(p8 address_to key, positive key_length,

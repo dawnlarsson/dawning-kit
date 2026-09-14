@@ -3169,6 +3169,208 @@ static COLD b32 argument_exclusive_refuse(
 }
 #endif // KERNEL_MODE
 
+#if !defined(KERNEL_MODE)
+/*
+        Streaming digests over the hash block cores.
+
+        One state serves every algorithm: the chaining words, the message
+        length, and the partial block. A write that starts on a block
+        boundary hands its whole blocks to the core where they lie and keeps
+        only the tail; nothing is copied twice. BLAKE2b differs in one place
+        only: its last block is compressed with the final flag, so a write
+        that ends exactly on a boundary holds that block back until it knows
+        whether more follows.
+
+        size is the digest length in bytes. Every algorithm but BLAKE2b has
+        one, and BLAKE2b takes 1 to 64, the output length its parameter block
+        is keyed by -- a shorter BLAKE2b is a different hash, not a prefix.
+*/
+#define DIGEST_MD5 0
+#define DIGEST_SHA1 1
+#define DIGEST_SHA224 2
+#define DIGEST_SHA256 3
+#define DIGEST_SHA384 4
+#define DIGEST_SHA512 5
+#define DIGEST_BLAKE2B 6
+
+typedef struct
+{
+        union
+        {
+                p32 narrow[16];
+                p64 wide[11];
+        } state;
+        p64 bytes;
+        p8 block[128];
+        p8 used;
+        p8 algorithm;
+        p8 size;
+} digest_state;
+
+static inline positive digest_block_size(const digest_state address_to digest)
+{
+        return digest->algorithm >= DIGEST_SHA384 ? 128 : 64;
+}
+
+static inline fn digest_open(digest_state address_to digest, positive algorithm,
+                             positive size)
+{
+        static const p32 narrow[4][8] = {
+            {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476},
+            {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0},
+            {0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939,
+             0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4},
+            {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+             0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19},
+        };
+        static const p64 wide[2][8] = {
+            {0xcbbb9d5dc1059ed8ull, 0x629a292a367cd507ull,
+             0x9159015a3070dd17ull, 0x152fecd8f70e5939ull,
+             0x67332667ffc00b31ull, 0x8eb44a8768581511ull,
+             0xdb0c2e0d64f98fa7ull, 0x47b5481dbefa4fa4ull},
+            {0x6a09e667f3bcc908ull, 0xbb67ae8584caa73bull,
+             0x3c6ef372fe94f82bull, 0xa54ff53a5f1d36f1ull,
+             0x510e527fade682d1ull, 0x9b05688c2b3e6c1full,
+             0x1f83d9abfb41bd6bull, 0x5be0cd19137e2179ull},
+        };
+
+        memory_fill(digest, 0, sizeof(address_to digest));
+        digest->algorithm = (p8)algorithm;
+        digest->size = (p8)size;
+
+        if (algorithm <= DIGEST_SHA256)
+                memory_copy(digest->state.narrow, narrow[algorithm], sizeof(narrow[0]));
+        else if (algorithm <= DIGEST_SHA512)
+                memory_copy(digest->state.wide, wide[algorithm - DIGEST_SHA384],
+                            sizeof(wide[0]));
+        else
+        {
+                // The parameter block: output length, no key, fanout and depth 1.
+                memory_copy(digest->state.wide, wide[1], sizeof(wide[0]));
+                digest->state.wide[0] ^= 0x01010000u ^ (p64)size;
+        }
+}
+
+static inline fn digest_run(digest_state address_to digest, const p8 address_to data,
+                            positive blocks)
+{
+        switch (digest->algorithm)
+        {
+        case DIGEST_MD5:
+                md5_blocks(digest->state.narrow, data, blocks);
+                break;
+        case DIGEST_SHA1:
+                sha1_blocks(digest->state.narrow, data, blocks);
+                break;
+        case DIGEST_SHA224:
+        case DIGEST_SHA256:
+                sha256_blocks(digest->state.narrow, data, blocks);
+                break;
+        case DIGEST_SHA384:
+        case DIGEST_SHA512:
+                sha512_blocks(digest->state.wide, data, blocks);
+                break;
+        default:
+                blake2b_blocks(digest->state.wide, data, blocks, 128);
+        }
+}
+
+static inline fn digest_write(digest_state address_to digest, address_any bytes,
+                              positive length)
+{
+        const p8 address_to data = bytes;
+        positive size = digest_block_size(digest);
+        bool held = digest->algorithm == DIGEST_BLAKE2B;
+
+        if (!length)
+                return;
+
+        digest->bytes += length;
+
+        if (digest->used)
+        {
+                positive take = size - digest->used;
+
+                if (take > length)
+                        take = length;
+
+                memory_copy(digest->block + digest->used, data, take);
+                digest->used += (p8)take;
+                data += take;
+                length -= take;
+
+                if (digest->used < size || (held && !length))
+                        return;
+
+                digest_run(digest, digest->block, 1);
+                digest->used = 0;
+        }
+
+        positive whole = length / size;
+
+        if (held && whole && whole * size == length)
+                whole--;
+
+        if (whole)
+        {
+                digest_run(digest, data, whole);
+                data += whole * size;
+                length -= whole * size;
+        }
+
+        memory_copy(digest->block, data, length);
+        digest->used = (p8)length;
+}
+
+static inline fn digest_close(digest_state address_to digest, p8 address_to out)
+{
+        positive size = digest_block_size(digest);
+        positive used = digest->used;
+
+        if (digest->algorithm == DIGEST_BLAKE2B)
+        {
+                memory_fill(digest->block + used, 0, 128 - used);
+                digest->state.wide[10] = ~(p64)0;
+                blake2b_blocks(digest->state.wide, digest->block, 1, used);
+
+                for (positive i = 0; i < digest->size; i++)
+                        out[i] = (p8)(digest->state.wide[i / 8] >> (8 * (i % 8)));
+                return;
+        }
+
+        p64 bits = digest->bytes << 3;
+
+        digest->block[used++] = 0x80;
+        if (used > size - (size == 128 ? 16 : 8))
+        {
+                memory_fill(digest->block + used, 0, size - used);
+                digest_run(digest, digest->block, 1);
+                used = 0;
+        }
+        memory_fill(digest->block + used, 0, size - used);
+
+        for (positive i = 0; i < 8; i++)
+                if (digest->algorithm == DIGEST_MD5)
+                        digest->block[56 + i] = (p8)(bits >> (8 * i));
+                else
+                        digest->block[size - 1 - i] = (p8)(bits >> (8 * i));
+        if (size == 128)
+                digest->block[119] = (p8)(digest->bytes >> 61);
+
+        digest_run(digest, digest->block, 1);
+
+        for (positive i = 0; i < digest->size; i++)
+        {
+                if (digest->algorithm == DIGEST_MD5)
+                        out[i] = (p8)(digest->state.narrow[i / 4] >> (8 * (i % 4)));
+                else if (digest->algorithm <= DIGEST_SHA256)
+                        out[i] = (p8)(digest->state.narrow[i / 4] >> (24 - 8 * (i % 4)));
+                else
+                        out[i] = (p8)(digest->state.wide[i / 8] >> (56 - 8 * (i % 8)));
+        }
+}
+#endif // !KERNEL_MODE
+
 #endif
 
 /*

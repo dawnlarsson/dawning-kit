@@ -355,6 +355,14 @@ cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'deflate_deco
       'timing is available, but there is no isolated token-loop timing row',
       anchors={'deflate_decode_span': 'floor_deflate'})
 
+cover('correctness_only', 'test/checks.c#CHECK_checksum_crc', '''
+md5_blocks sha1_blocks sha256_blocks sha512_blocks blake2b_blocks cpu_hash_detect
+''', 'differential against the textbook rounds over every run length to 40 '
+      'blocks under every feature-byte subset the machine has, protected-page '
+      'tails, blake2b counter carries, and streaming known answers; the lazy '
+      'detector runs on the first dispatching call; timed against the same '
+      'rounds compiled from C in test/hardware_floor.c, which test/run bench '
+      'does not dispatch')
 cover('correctness_only', 'test/hardware_floor.c', 'sha256_compress',
       'one 64-byte compression; timed in the hardware-floor harness, not the '
       'test/run bench catalogue')

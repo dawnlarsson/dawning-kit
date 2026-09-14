@@ -50418,6 +50418,500 @@ static p32 crc_model(p8 address_to bytes, positive length, p32 crc)
         return crc;
 }
 
+/*
+        The hash block cores against the rounds they replaced, and the
+        streaming digests against known answers.
+
+        The references are the textbook rounds and have nothing in common
+        with the assembly: no renamed registers, no carried terms, no
+        schedule ring, no extension instructions. Every pass runs each body
+        this machine has by writing the feature bytes down, one subset at a
+        time, and putting them back. Runs end against a protected page, the
+        data must come back untouched, zero blocks must change nothing, and
+        the BLAKE2b counter carries out of its low word.
+
+        The known answers are Python hashlib's: "abc", a million "a" written
+        a thousand bytes at a time, and one SHA-256 over the digests of every
+        prefix of 0 to 300 bytes of the CRC pattern, which walks every length
+        a padding branch cares about in both block sizes.
+*/
+static p32 hash_reference_rol(p32 x, positive s)
+{
+        return (x << s) | (x >> ((32 - s) & 31));
+}
+
+static p64 hash_reference_ror(p64 x, positive s)
+{
+        return (x >> s) | (x << ((64 - s) & 63));
+}
+
+static p32 hash_reference_le32(const p8 address_to p)
+{
+        return (p32)p[0] | (p32)p[1] << 8 | (p32)p[2] << 16 | (p32)p[3] << 24;
+}
+
+static p32 hash_reference_be32(const p8 address_to p)
+{
+        return (p32)p[0] << 24 | (p32)p[1] << 16 | (p32)p[2] << 8 | (p32)p[3];
+}
+
+static fn hash_reference_md5(p32 address_to st, const p8 address_to d, positive n)
+{
+        static const p8 shift[4][4] = {{7, 12, 17, 22}, {5, 9, 14, 20},
+                                       {4, 11, 16, 23}, {6, 10, 15, 21}};
+        static const p32 k[64] = {
+            0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+            0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+            0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+            0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+            0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+            0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+            0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+            0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+        };
+
+        for (; n; n--, d += 64)
+        {
+                p32 x[16];
+                for (positive i = 0; i < 16; i++)
+                        x[i] = hash_reference_le32(d + 4 * i);
+                p32 a = st[0], b = st[1], c = st[2], e = st[3];
+                for (positive i = 0; i < 64; i++)
+                {
+                        p32 f;
+                        positive g;
+                        if (i < 16) { f = (b & c) | (~b & e); g = i; }
+                        else if (i < 32) { f = (e & b) | (~e & c); g = (5 * i + 1) & 15; }
+                        else if (i < 48) { f = b ^ c ^ e; g = (3 * i + 5) & 15; }
+                        else { f = c ^ (b | ~e); g = (7 * i) & 15; }
+                        p32 t = e;
+                        e = c;
+                        c = b;
+                        b = b + hash_reference_rol(a + f + k[i] + x[g], shift[i / 16][i % 4]);
+                        a = t;
+                }
+                st[0] += a; st[1] += b; st[2] += c; st[3] += e;
+        }
+}
+
+static fn hash_reference_sha1(p32 address_to st, const p8 address_to d, positive n)
+{
+        for (; n; n--, d += 64)
+        {
+                p32 w[80];
+                for (positive i = 0; i < 16; i++)
+                        w[i] = hash_reference_be32(d + 4 * i);
+                for (positive i = 16; i < 80; i++)
+                        w[i] = hash_reference_rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+                p32 a = st[0], b = st[1], c = st[2], e = st[3], h = st[4];
+                for (positive i = 0; i < 80; i++)
+                {
+                        p32 f, k;
+                        if (i < 20) { f = (b & c) | (~b & e); k = 0x5a827999; }
+                        else if (i < 40) { f = b ^ c ^ e; k = 0x6ed9eba1; }
+                        else if (i < 60) { f = (b & c) | (b & e) | (c & e); k = 0x8f1bbcdc; }
+                        else { f = b ^ c ^ e; k = 0xca62c1d6; }
+                        p32 t = hash_reference_rol(a, 5) + f + h + k + w[i];
+                        h = e;
+                        e = c;
+                        c = hash_reference_rol(b, 30);
+                        b = a;
+                        a = t;
+                }
+                st[0] += a; st[1] += b; st[2] += c; st[3] += e; st[4] += h;
+        }
+}
+
+static fn hash_reference_sha256(p32 address_to st, const p8 address_to d, positive n)
+{
+        static const p32 k[64] = {
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        };
+
+        for (; n; n--, d += 64)
+        {
+                p32 w[64];
+                for (positive i = 0; i < 16; i++)
+                        w[i] = hash_reference_be32(d + 4 * i);
+                for (positive i = 16; i < 64; i++)
+                        w[i] = w[i - 16] + w[i - 7] +
+                               (hash_reference_rol(w[i - 15], 25) ^ hash_reference_rol(w[i - 15], 14) ^ (w[i - 15] >> 3)) +
+                               (hash_reference_rol(w[i - 2], 15) ^ hash_reference_rol(w[i - 2], 13) ^ (w[i - 2] >> 10));
+                p32 v[8];
+                for (positive i = 0; i < 8; i++)
+                        v[i] = st[i];
+                for (positive i = 0; i < 64; i++)
+                {
+                        p32 t1 = v[7] + (hash_reference_rol(v[4], 26) ^ hash_reference_rol(v[4], 21) ^
+                                         hash_reference_rol(v[4], 7)) +
+                                 ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
+                        p32 t2 = (hash_reference_rol(v[0], 30) ^ hash_reference_rol(v[0], 19) ^
+                                  hash_reference_rol(v[0], 10)) +
+                                 ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+                        v[7] = v[6]; v[6] = v[5]; v[5] = v[4]; v[4] = v[3] + t1;
+                        v[3] = v[2]; v[2] = v[1]; v[1] = v[0]; v[0] = t1 + t2;
+                }
+                for (positive i = 0; i < 8; i++)
+                        st[i] += v[i];
+        }
+}
+
+static const p64 hash_reference_iv512[8] = {
+    0x6a09e667f3bcc908ull, 0xbb67ae8584caa73bull, 0x3c6ef372fe94f82bull, 0xa54ff53a5f1d36f1ull,
+    0x510e527fade682d1ull, 0x9b05688c2b3e6c1full, 0x1f83d9abfb41bd6bull, 0x5be0cd19137e2179ull,
+};
+
+static fn hash_reference_sha512(p64 address_to st, const p8 address_to d, positive n)
+{
+        static const p64 k[80] = {
+            0x428a2f98d728ae22ull, 0x7137449123ef65cdull, 0xb5c0fbcfec4d3b2full, 0xe9b5dba58189dbbcull,
+            0x3956c25bf348b538ull, 0x59f111f1b605d019ull, 0x923f82a4af194f9bull, 0xab1c5ed5da6d8118ull,
+            0xd807aa98a3030242ull, 0x12835b0145706fbeull, 0x243185be4ee4b28cull, 0x550c7dc3d5ffb4e2ull,
+            0x72be5d74f27b896full, 0x80deb1fe3b1696b1ull, 0x9bdc06a725c71235ull, 0xc19bf174cf692694ull,
+            0xe49b69c19ef14ad2ull, 0xefbe4786384f25e3ull, 0x0fc19dc68b8cd5b5ull, 0x240ca1cc77ac9c65ull,
+            0x2de92c6f592b0275ull, 0x4a7484aa6ea6e483ull, 0x5cb0a9dcbd41fbd4ull, 0x76f988da831153b5ull,
+            0x983e5152ee66dfabull, 0xa831c66d2db43210ull, 0xb00327c898fb213full, 0xbf597fc7beef0ee4ull,
+            0xc6e00bf33da88fc2ull, 0xd5a79147930aa725ull, 0x06ca6351e003826full, 0x142929670a0e6e70ull,
+            0x27b70a8546d22ffcull, 0x2e1b21385c26c926ull, 0x4d2c6dfc5ac42aedull, 0x53380d139d95b3dfull,
+            0x650a73548baf63deull, 0x766a0abb3c77b2a8ull, 0x81c2c92e47edaee6ull, 0x92722c851482353bull,
+            0xa2bfe8a14cf10364ull, 0xa81a664bbc423001ull, 0xc24b8b70d0f89791ull, 0xc76c51a30654be30ull,
+            0xd192e819d6ef5218ull, 0xd69906245565a910ull, 0xf40e35855771202aull, 0x106aa07032bbd1b8ull,
+            0x19a4c116b8d2d0c8ull, 0x1e376c085141ab53ull, 0x2748774cdf8eeb99ull, 0x34b0bcb5e19b48a8ull,
+            0x391c0cb3c5c95a63ull, 0x4ed8aa4ae3418acbull, 0x5b9cca4f7763e373ull, 0x682e6ff3d6b2b8a3ull,
+            0x748f82ee5defb2fcull, 0x78a5636f43172f60ull, 0x84c87814a1f0ab72ull, 0x8cc702081a6439ecull,
+            0x90befffa23631e28ull, 0xa4506cebde82bde9ull, 0xbef9a3f7b2c67915ull, 0xc67178f2e372532bull,
+            0xca273eceea26619cull, 0xd186b8c721c0c207ull, 0xeada7dd6cde0eb1eull, 0xf57d4f7fee6ed178ull,
+            0x06f067aa72176fbaull, 0x0a637dc5a2c898a6ull, 0x113f9804bef90daeull, 0x1b710b35131c471bull,
+            0x28db77f523047d84ull, 0x32caab7b40c72493ull, 0x3c9ebe0a15c9bebcull, 0x431d67c49c100d4cull,
+            0x4cc5d4becb3e42b6ull, 0x597f299cfc657e2aull, 0x5fcb6fab3ad6faecull, 0x6c44198c4a475817ull,
+        };
+
+        for (; n; n--, d += 128)
+        {
+                p64 w[80];
+                for (positive i = 0; i < 16; i++)
+                        w[i] = (p64)hash_reference_be32(d + 8 * i) << 32 | hash_reference_be32(d + 8 * i + 4);
+                for (positive i = 16; i < 80; i++)
+                        w[i] = w[i - 16] + w[i - 7] +
+                               (hash_reference_ror(w[i - 15], 1) ^ hash_reference_ror(w[i - 15], 8) ^ (w[i - 15] >> 7)) +
+                               (hash_reference_ror(w[i - 2], 19) ^ hash_reference_ror(w[i - 2], 61) ^ (w[i - 2] >> 6));
+                p64 v[8];
+                for (positive i = 0; i < 8; i++)
+                        v[i] = st[i];
+                for (positive i = 0; i < 80; i++)
+                {
+                        p64 t1 = v[7] + (hash_reference_ror(v[4], 14) ^ hash_reference_ror(v[4], 18) ^
+                                         hash_reference_ror(v[4], 41)) +
+                                 ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
+                        p64 t2 = (hash_reference_ror(v[0], 28) ^ hash_reference_ror(v[0], 34) ^
+                                  hash_reference_ror(v[0], 39)) +
+                                 ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+                        v[7] = v[6]; v[6] = v[5]; v[5] = v[4]; v[4] = v[3] + t1;
+                        v[3] = v[2]; v[2] = v[1]; v[1] = v[0]; v[0] = t1 + t2;
+                }
+                for (positive i = 0; i < 8; i++)
+                        st[i] += v[i];
+        }
+}
+
+static fn hash_reference_blake2b(p64 address_to st, const p8 address_to d, positive n,
+                                 positive tail)
+{
+        static const p8 sigma[12][16] = {
+            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+            {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+            {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
+            {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
+            {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
+            {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
+            {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
+            {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
+            {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
+            {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
+            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+            {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+        };
+        static const p8 lanes[8][4] = {{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15},
+                                       {0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}};
+
+        for (; n; n--, d += 128)
+        {
+                p64 add = n == 1 ? tail : 128;
+                p64 m[16], v[16];
+
+                st[8] += add;
+                if (st[8] < add)
+                        st[9]++;
+                for (positive i = 0; i < 16; i++)
+                        m[i] = (p64)hash_reference_le32(d + 8 * i) |
+                               (p64)hash_reference_le32(d + 8 * i + 4) << 32;
+                for (positive i = 0; i < 8; i++)
+                {
+                        v[i] = st[i];
+                        v[i + 8] = hash_reference_iv512[i];
+                }
+                v[12] ^= st[8];
+                v[13] ^= st[9];
+                v[14] ^= n == 1 ? st[10] : 0;
+                for (positive r = 0; r < 12; r++)
+                        for (positive g = 0; g < 8; g++)
+                        {
+                                const p8 address_to l = lanes[g];
+                                v[l[0]] += v[l[1]] + m[sigma[r][2 * g]];
+                                v[l[3]] = hash_reference_ror(v[l[3]] ^ v[l[0]], 32);
+                                v[l[2]] += v[l[3]];
+                                v[l[1]] = hash_reference_ror(v[l[1]] ^ v[l[2]], 24);
+                                v[l[0]] += v[l[1]] + m[sigma[r][2 * g + 1]];
+                                v[l[3]] = hash_reference_ror(v[l[3]] ^ v[l[0]], 16);
+                                v[l[2]] += v[l[3]];
+                                v[l[1]] = hash_reference_ror(v[l[1]] ^ v[l[2]], 63);
+                        }
+                for (positive i = 0; i < 8; i++)
+                        st[i] ^= v[i] ^ v[i + 8];
+        }
+}
+
+static p64 hash_check_seed = 0x9e3779b97f4a7c15ull;
+
+static p8 hash_check_byte(void)
+{
+        hash_check_seed ^= hash_check_seed << 13;
+        hash_check_seed ^= hash_check_seed >> 7;
+        hash_check_seed ^= hash_check_seed << 17;
+        return (p8)(hash_check_seed >> 29);
+}
+
+static bool hash_check_hex(const p8 address_to bytes, positive length,
+                           string_address hex)
+{
+        p8 text[130];
+
+        return string_length(hex) == 2 * length &&
+               memory_into_hex(text, (p8 address_to)bytes, length) == 2 * length &&
+               !memory_compare(text, hex, 2 * length);
+}
+
+/* Every block core, every run length to 40 blocks, against its reference. */
+static positive hash_check_cores(p8 address_to limit)
+{
+        positive wrong = 0;
+        p8 kept[128 * 40];
+
+        for (positive round = 0; round < 700; round++)
+        {
+                positive blocks = round < 300 ? round % 41 : hash_check_byte() % 41;
+                p8 address_to wide = limit - 128 * blocks;
+                p8 address_to narrow = limit - 64 * blocks;
+
+                for (p8 address_to at = limit - sizeof(kept); at < limit; at++)
+                        *at = round % 53 == 7 ? 0xff : hash_check_byte();
+                memory_copy(kept, limit - sizeof(kept), sizeof(kept));
+
+                p32 n0[8], n1[8], n2[8];
+                p64 w0[11], w1[11], w2[11];
+
+                for (positive i = 0; i < 8; i++)
+                        n0[i] = (p32)hash_check_byte() << 24 | (p32)hash_check_byte() << 13 |
+                                hash_check_byte();
+                for (positive i = 0; i < 11; i++)
+                        w0[i] = (p64)n0[i % 8] << 29 ^ hash_check_byte() ^ (p64)hash_check_byte() << 56;
+                if (round % 5 == 1)
+                        w0[8] = ~(p64)0 - hash_check_byte();
+                if (round % 7 == 0)
+                        w0[10] = 0;
+                positive tail = hash_check_byte() % 129;
+
+                memory_copy(n1, n0, sizeof n0); memory_copy(n2, n0, sizeof n0);
+                hash_reference_md5(n1, narrow, blocks);
+                md5_blocks(n2, narrow, blocks);
+                wrong += memory_compare(n1, n2, sizeof n1) != 0;
+
+                memory_copy(n1, n0, sizeof n0); memory_copy(n2, n0, sizeof n0);
+                hash_reference_sha1(n1, narrow, blocks);
+                sha1_blocks(n2, narrow, blocks);
+                wrong += memory_compare(n1, n2, sizeof n1) != 0;
+
+                memory_copy(n1, n0, sizeof n0); memory_copy(n2, n0, sizeof n0);
+                hash_reference_sha256(n1, narrow, blocks);
+                sha256_blocks(n2, narrow, blocks);
+                wrong += memory_compare(n1, n2, sizeof n1) != 0;
+
+                memory_copy(w1, w0, sizeof w0); memory_copy(w2, w0, sizeof w0);
+                hash_reference_sha512(w1, wide, blocks);
+                sha512_blocks(w2, wide, blocks);
+                wrong += memory_compare(w1, w2, sizeof w1) != 0;
+
+                memory_copy(w1, w0, sizeof w0); memory_copy(w2, w0, sizeof w0);
+                hash_reference_blake2b(w1, wide, blocks, tail);
+                blake2b_blocks(w2, wide, blocks, tail);
+                wrong += memory_compare(w1, w2, sizeof w1) != 0;
+
+                if (blocks == 1)
+                {
+                        memory_copy(n1, n0, sizeof n0); memory_copy(n2, n0, sizeof n0);
+                        hash_reference_sha256(n1, narrow, 1);
+                        sha256_compress(n2, narrow);
+                        wrong += memory_compare(n1, n2, sizeof n1) != 0;
+                }
+
+                wrong += memory_compare(kept, limit - sizeof(kept), sizeof(kept)) != 0;
+        }
+
+        return wrong;
+}
+
+typedef struct
+{
+        p8 algorithm;
+        p8 size;
+        string_address abc;
+        string_address million;
+        string_address prefixes;
+} hash_known;
+
+static const hash_known hash_known_answers[] = {
+    {DIGEST_MD5, 16, "900150983cd24fb0d6963f7d28e17f72", "7707d6ae4e027c70eea2a935c2296f21",
+     "c57122937f1e88fbfb78519972fbc1947787867aa9246d518d8b25e8f153ad69"},
+    {DIGEST_SHA1, 20, "a9993e364706816aba3e25717850c26c9cd0d89d", "34aa973cd4c4daa4f61eeb2bdbad27316534016f",
+     "5161c9d0714b463562f96b93f01769cb63f8e8b6ffa3396eebf0340a327d0392"},
+    {DIGEST_SHA224, 28, "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7",
+     "20794655980c91d8bbb4c1ea97618a4bf03f42581948b2ee4ee7ad67",
+     "22a7c48d9df4a71b924b6cb73ed3540beccfffbb3ef68ee26649093988e660f8"},
+    {DIGEST_SHA256, 32, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+     "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+     "aff524ac6cb4167a937f9cc6db4a070a7732401a07a57ea02099d4695421890d"},
+    {DIGEST_SHA384, 48,
+     "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7",
+     "9d0e1809716474cb086e834e310a4a1ced149e9c00f248527972cec5704c2a5b07b8b3dc38ecc4ebae97ddd87f3d8985",
+     "aee147e9c3a93089dfeec0abaeb3930da8d88e27454dd647a89f50efcfdfb4ac"},
+    {DIGEST_SHA512, 64,
+     "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+     "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b",
+     "a87e61ec127593fe7a1a3c29358d5caad988dc34e4c2b7cc4043ca8295fdcbca"},
+    {DIGEST_BLAKE2B, 64,
+     "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923",
+     "98fb3efb7206fd19ebf69b6f312cf7b64e3b94dbe1a17107913975a793f177e1d077609d7fba363cbba00d05f7aa4e4fa8715d6428104c0a75643b0ff3fd3eaf",
+     "f9ec4eaca209a007f292a85842515342d655b1dcf3a9324afb97b3ee82b8a31a"},
+    {DIGEST_BLAKE2B, 32, "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319",
+     "0741850f36cba4259628355d1073e24ddb9ca0e1bfac36fd39ae5dc2101e23a4",
+     "13bb7fffa1e6d7874a8020b625c7c9796ef7169cc4d9122be842c20a1a750c46"},
+    {DIGEST_BLAKE2B, 1, "6b", "ef", "83d73b617f64886dee62baec67f7ee51d7517627aa57c4083c487df4916dbf44"},
+};
+
+/* The streaming digests: known answers, and every prefix split three ways. */
+static positive hash_check_streams(const p8 address_to pattern)
+{
+        positive wrong = 0;
+        p8 thousand[1000];
+
+        memory_fill(thousand, 'a', sizeof thousand);
+
+        for (positive which = 0; which < array_count(hash_known_answers); which++)
+        {
+                const hash_known address_to known = hash_known_answers + which;
+                digest_state digest;
+                digest_state outer;
+                p8 out[64];
+                p8 again[64];
+
+                digest_open(address_of digest, known->algorithm, known->size);
+                digest_write(address_of digest, "abc", 3);
+                digest_close(address_of digest, out);
+                wrong += !hash_check_hex(out, known->size, known->abc);
+
+                digest_open(address_of digest, known->algorithm, known->size);
+                for (positive i = 0; i < 1000; i++)
+                        digest_write(address_of digest, thousand, sizeof thousand);
+                digest_close(address_of digest, out);
+                wrong += !hash_check_hex(out, known->size, known->million);
+
+                digest_open(address_of outer, DIGEST_SHA256, 32);
+                for (positive length = 0; length <= 300; length++)
+                {
+                        digest_open(address_of digest, known->algorithm, known->size);
+                        digest_write(address_of digest, pattern, length);
+                        digest_close(address_of digest, out);
+                        digest_write(address_of outer, out, known->size);
+
+                        positive first = hash_check_byte() % (length + 1);
+                        positive second = hash_check_byte() % (length - first + 1);
+
+                        digest_open(address_of digest, known->algorithm, known->size);
+                        digest_write(address_of digest, pattern, first);
+                        digest_write(address_of digest, pattern + first, second);
+                        digest_write(address_of digest, pattern + first + second,
+                                     length - first - second);
+                        digest_close(address_of digest, again);
+                        wrong += memory_compare(out, again, known->size) != 0;
+                }
+                digest_close(address_of outer, out);
+                wrong += !hash_check_hex(out, 32, known->prefixes);
+        }
+
+        return wrong;
+}
+
+static fn hash_check_all(p8 address_to limit)
+{
+        positive cores = 0;
+        positive streams = 0;
+        positive bodies = 1;
+
+#ifndef KERNEL_MODE
+        //      One call through a dispatching core runs cpu_hash_detect and
+        //      writes the bytes this machine has; each pass after the first
+        //      takes a subset away.
+        {
+                p32 scratch[8] = {0};
+                p8 block[64] = {0};
+                sha256_blocks(scratch, block, 1);
+        }
+        p8 sha = cpu_has_sha;
+        p8 sha512 = cpu_has_sha512;
+#if X64
+        p8 avx2 = cpu_has_avx2;
+        p8 avx512 = cpu_has_avx512;
+#endif
+        for (positive pass = 1; pass < 16; pass++)
+        {
+                cpu_has_sha = (pass & 1) ? 0 : sha;
+                cpu_has_sha512 = (pass & 2) ? 0 : sha512;
+#if X64
+                cpu_has_avx512 = (pass & 4) ? 0 : avx512;
+                cpu_has_avx2 = (pass & 8) ? 0 : avx2;
+                if (((pass & 1) && !sha) || ((pass & 2) && !sha512) ||
+                    ((pass & 4) && !avx512) || ((pass & 8) && !avx2))
+                        continue;
+#else
+                if ((pass & 12) || ((pass & 1) && !sha) || ((pass & 2) && !sha512))
+                        continue;
+#endif
+                bodies++;
+                cores += hash_check_cores(limit);
+                streams += hash_check_streams(limit - 8192);
+        }
+        cpu_has_sha = sha;
+        cpu_has_sha512 = sha512;
+#if X64
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+#endif
+#endif
+        cores += hash_check_cores(limit);
+        streams += hash_check_streams(limit - 8192);
+
+        check("hash cores ran under at least the floor's feature bytes", bodies >= 1);
+        check("hash block cores agree with the textbook rounds", cores == 0);
+        check("streaming digests give the known answers at every split", streams == 0);
+}
+
 b32 main(void)
 {
         positive page = system_page_size();
@@ -50429,6 +50923,7 @@ b32 main(void)
         bytes += room - 8192;
         for (positive at = 0; at < 8192; at++)
                 bytes[at] = (p8)((at * 73) ^ (at >> 3));
+        hash_check_all(bytes + 8192);
         cksum_crc_prepare();
         positive modes = 1;
 #if X64

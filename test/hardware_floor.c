@@ -230,6 +230,12 @@ unsigned long long hash_xxh64(const void *, unsigned long, unsigned long long);
 unsigned memory_checksum_bsd16(const void *, unsigned long, unsigned);
 #ifndef SKIP_SHA256
 void sha256_compress(unsigned int *, unsigned char *);
+void md5_blocks(unsigned int *, const unsigned char *, unsigned long);
+void sha1_blocks(unsigned int *, const unsigned char *, unsigned long);
+void sha256_blocks(unsigned int *, const unsigned char *, unsigned long);
+void sha512_blocks(unsigned long *, const unsigned char *, unsigned long);
+void blake2b_blocks(unsigned long *, const unsigned char *, unsigned long,
+                    unsigned long);
 #endif
 #ifndef SKIP_AES
 void aes128_ctr_blocks(const unsigned char *, unsigned char *,
@@ -619,6 +625,250 @@ static void sha_w(unsigned long size, unsigned long rounds)
                 sink += sha_state[0];
         }
 }
+
+/*
+        The hash block cores over 64 KiB against the textbook rounds compiled
+        from C here: no renamed registers, no carried terms, no extension
+        instructions -- what every body has to beat, not a traffic bound.
+        The cores ask for their extension bodies themselves on the first
+        call, so these rows time what the machine has: SHA-NI for sha1 and
+        sha256 on a processor with it, the floor for the rest.
+*/
+#define HASH_BYTES 65536
+static unsigned char hash_data[HASH_BYTES] __attribute__((aligned(64)));
+static unsigned int hash_narrow[8];
+static unsigned long hash_wide[11];
+
+static unsigned int hash_rol(unsigned int x, int s) { return (x << s) | (x >> ((32 - s) & 31)); }
+static unsigned long hash_ror(unsigned long x, int s) { return (x >> s) | (x << ((64 - s) & 63)); }
+static unsigned int hash_le(const unsigned char *p)
+{
+        return (unsigned int)p[0] | (unsigned int)p[1] << 8 | (unsigned int)p[2] << 16 | (unsigned int)p[3] << 24;
+}
+static unsigned int hash_be(const unsigned char *p)
+{
+        return (unsigned int)p[0] << 24 | (unsigned int)p[1] << 16 | (unsigned int)p[2] << 8 | (unsigned int)p[3];
+}
+
+static const unsigned int hash_c_md5_k[64] = {
+    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+};
+
+static void hash_c_md5(unsigned int *st, const unsigned char *d, unsigned long n)
+{
+        static const unsigned char s[4][4] = {{7, 12, 17, 22}, {5, 9, 14, 20}, {4, 11, 16, 23}, {6, 10, 15, 21}};
+        for (; n; n--, d += 64) {
+                unsigned int x[16], a = st[0], b = st[1], c = st[2], e = st[3];
+                int i;
+                for (i = 0; i < 16; i++)
+                        x[i] = hash_le(d + 4 * i);
+                for (i = 0; i < 64; i++) {
+                        unsigned int f, t;
+                        int g;
+                        if (i < 16) { f = (b & c) | (~b & e); g = i; }
+                        else if (i < 32) { f = (e & b) | (~e & c); g = (5 * i + 1) & 15; }
+                        else if (i < 48) { f = b ^ c ^ e; g = (3 * i + 5) & 15; }
+                        else { f = c ^ (b | ~e); g = (7 * i) & 15; }
+                        t = e; e = c; c = b;
+                        b = b + hash_rol(a + f + hash_c_md5_k[i] + x[g], s[i / 16][i % 4]);
+                        a = t;
+                }
+                st[0] += a; st[1] += b; st[2] += c; st[3] += e;
+        }
+}
+
+static void hash_c_sha1(unsigned int *st, const unsigned char *d, unsigned long n)
+{
+        for (; n; n--, d += 64) {
+                unsigned int w[80], a = st[0], b = st[1], c = st[2], e = st[3], h = st[4];
+                int i;
+                for (i = 0; i < 16; i++)
+                        w[i] = hash_be(d + 4 * i);
+                for (i = 16; i < 80; i++)
+                        w[i] = hash_rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+                for (i = 0; i < 80; i++) {
+                        unsigned int f, k, t;
+                        if (i < 20) { f = (b & c) | (~b & e); k = 0x5a827999; }
+                        else if (i < 40) { f = b ^ c ^ e; k = 0x6ed9eba1; }
+                        else if (i < 60) { f = (b & c) | (b & e) | (c & e); k = 0x8f1bbcdc; }
+                        else { f = b ^ c ^ e; k = 0xca62c1d6; }
+                        t = hash_rol(a, 5) + f + h + k + w[i];
+                        h = e; e = c; c = hash_rol(b, 30); b = a; a = t;
+                }
+                st[0] += a; st[1] += b; st[2] += c; st[3] += e; st[4] += h;
+        }
+}
+
+static void hash_c_sha256(unsigned int *st, const unsigned char *d, unsigned long n)
+{
+        static const unsigned int k[64] = {
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        };
+        for (; n; n--, d += 64) {
+                unsigned int w[64], v[8];
+                int i;
+                for (i = 0; i < 16; i++)
+                        w[i] = hash_be(d + 4 * i);
+                for (i = 16; i < 64; i++)
+                        w[i] = w[i - 16] + w[i - 7] +
+                               (hash_rol(w[i - 15], 25) ^ hash_rol(w[i - 15], 14) ^ (w[i - 15] >> 3)) +
+                               (hash_rol(w[i - 2], 15) ^ hash_rol(w[i - 2], 13) ^ (w[i - 2] >> 10));
+                for (i = 0; i < 8; i++)
+                        v[i] = st[i];
+                for (i = 0; i < 64; i++) {
+                        unsigned int t1 = v[7] + (hash_rol(v[4], 26) ^ hash_rol(v[4], 21) ^ hash_rol(v[4], 7)) +
+                                          ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
+                        unsigned int t2 = (hash_rol(v[0], 30) ^ hash_rol(v[0], 19) ^ hash_rol(v[0], 10)) +
+                                          ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+                        v[7] = v[6]; v[6] = v[5]; v[5] = v[4]; v[4] = v[3] + t1;
+                        v[3] = v[2]; v[2] = v[1]; v[1] = v[0]; v[0] = t1 + t2;
+                }
+                for (i = 0; i < 8; i++)
+                        st[i] += v[i];
+        }
+}
+
+static const unsigned long hash_c_iv[8] = {
+    0x6a09e667f3bcc908ul, 0xbb67ae8584caa73bul, 0x3c6ef372fe94f82bul, 0xa54ff53a5f1d36f1ul,
+    0x510e527fade682d1ul, 0x9b05688c2b3e6c1ful, 0x1f83d9abfb41bd6bul, 0x5be0cd19137e2179ul,
+};
+
+static void hash_c_sha512(unsigned long *st, const unsigned char *d, unsigned long n)
+{
+        static const unsigned long k[80] = {
+            0x428a2f98d728ae22ul, 0x7137449123ef65cdul, 0xb5c0fbcfec4d3b2ful, 0xe9b5dba58189dbbcul,
+            0x3956c25bf348b538ul, 0x59f111f1b605d019ul, 0x923f82a4af194f9bul, 0xab1c5ed5da6d8118ul,
+            0xd807aa98a3030242ul, 0x12835b0145706fbeul, 0x243185be4ee4b28cul, 0x550c7dc3d5ffb4e2ul,
+            0x72be5d74f27b896ful, 0x80deb1fe3b1696b1ul, 0x9bdc06a725c71235ul, 0xc19bf174cf692694ul,
+            0xe49b69c19ef14ad2ul, 0xefbe4786384f25e3ul, 0x0fc19dc68b8cd5b5ul, 0x240ca1cc77ac9c65ul,
+            0x2de92c6f592b0275ul, 0x4a7484aa6ea6e483ul, 0x5cb0a9dcbd41fbd4ul, 0x76f988da831153b5ul,
+            0x983e5152ee66dfabul, 0xa831c66d2db43210ul, 0xb00327c898fb213ful, 0xbf597fc7beef0ee4ul,
+            0xc6e00bf33da88fc2ul, 0xd5a79147930aa725ul, 0x06ca6351e003826ful, 0x142929670a0e6e70ul,
+            0x27b70a8546d22ffcul, 0x2e1b21385c26c926ul, 0x4d2c6dfc5ac42aedul, 0x53380d139d95b3dful,
+            0x650a73548baf63deul, 0x766a0abb3c77b2a8ul, 0x81c2c92e47edaee6ul, 0x92722c851482353bul,
+            0xa2bfe8a14cf10364ul, 0xa81a664bbc423001ul, 0xc24b8b70d0f89791ul, 0xc76c51a30654be30ul,
+            0xd192e819d6ef5218ul, 0xd69906245565a910ul, 0xf40e35855771202aul, 0x106aa07032bbd1b8ul,
+            0x19a4c116b8d2d0c8ul, 0x1e376c085141ab53ul, 0x2748774cdf8eeb99ul, 0x34b0bcb5e19b48a8ul,
+            0x391c0cb3c5c95a63ul, 0x4ed8aa4ae3418acbul, 0x5b9cca4f7763e373ul, 0x682e6ff3d6b2b8a3ul,
+            0x748f82ee5defb2fcul, 0x78a5636f43172f60ul, 0x84c87814a1f0ab72ul, 0x8cc702081a6439ecul,
+            0x90befffa23631e28ul, 0xa4506cebde82bde9ul, 0xbef9a3f7b2c67915ul, 0xc67178f2e372532bul,
+            0xca273eceea26619cul, 0xd186b8c721c0c207ul, 0xeada7dd6cde0eb1eul, 0xf57d4f7fee6ed178ul,
+            0x06f067aa72176fbaul, 0x0a637dc5a2c898a6ul, 0x113f9804bef90daeul, 0x1b710b35131c471bul,
+            0x28db77f523047d84ul, 0x32caab7b40c72493ul, 0x3c9ebe0a15c9bebcul, 0x431d67c49c100d4cul,
+            0x4cc5d4becb3e42b6ul, 0x597f299cfc657e2aul, 0x5fcb6fab3ad6faecul, 0x6c44198c4a475817ul,
+        };
+        for (; n; n--, d += 128) {
+                unsigned long w[80], v[8];
+                int i;
+                for (i = 0; i < 16; i++)
+                        w[i] = (unsigned long)hash_be(d + 8 * i) << 32 | hash_be(d + 8 * i + 4);
+                for (i = 16; i < 80; i++)
+                        w[i] = w[i - 16] + w[i - 7] +
+                               (hash_ror(w[i - 15], 1) ^ hash_ror(w[i - 15], 8) ^ (w[i - 15] >> 7)) +
+                               (hash_ror(w[i - 2], 19) ^ hash_ror(w[i - 2], 61) ^ (w[i - 2] >> 6));
+                for (i = 0; i < 8; i++)
+                        v[i] = st[i];
+                for (i = 0; i < 80; i++) {
+                        unsigned long t1 = v[7] + (hash_ror(v[4], 14) ^ hash_ror(v[4], 18) ^ hash_ror(v[4], 41)) +
+                                           ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
+                        unsigned long t2 = (hash_ror(v[0], 28) ^ hash_ror(v[0], 34) ^ hash_ror(v[0], 39)) +
+                                           ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+                        v[7] = v[6]; v[6] = v[5]; v[5] = v[4]; v[4] = v[3] + t1;
+                        v[3] = v[2]; v[2] = v[1]; v[1] = v[0]; v[0] = t1 + t2;
+                }
+                for (i = 0; i < 8; i++)
+                        st[i] += v[i];
+        }
+}
+
+static void hash_c_blake2b(unsigned long *st, const unsigned char *d, unsigned long n, unsigned long tail)
+{
+        static const unsigned char sigma[12][16] = {
+            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}, {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+            {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4}, {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
+            {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13}, {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
+            {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11}, {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
+            {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5}, {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
+            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}, {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+        };
+        static const unsigned char lane[8][4] = {{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15},
+                                                 {0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}};
+        for (; n; n--, d += 128) {
+                unsigned long add = n == 1 ? tail : 128, m[16], v[16];
+                int i, r, g;
+                st[8] += add;
+                if (st[8] < add)
+                        st[9]++;
+                for (i = 0; i < 16; i++)
+                        m[i] = (unsigned long)hash_le(d + 8 * i) | (unsigned long)hash_le(d + 8 * i + 4) << 32;
+                for (i = 0; i < 8; i++) {
+                        v[i] = st[i];
+                        v[i + 8] = hash_c_iv[i];
+                }
+                v[12] ^= st[8];
+                v[13] ^= st[9];
+                v[14] ^= n == 1 ? st[10] : 0;
+                for (r = 0; r < 12; r++)
+                        for (g = 0; g < 8; g++) {
+                                const unsigned char *l = lane[g];
+                                v[l[0]] += v[l[1]] + m[sigma[r][2 * g]];
+                                v[l[3]] = hash_ror(v[l[3]] ^ v[l[0]], 32);
+                                v[l[2]] += v[l[3]];
+                                v[l[1]] = hash_ror(v[l[1]] ^ v[l[2]], 24);
+                                v[l[0]] += v[l[1]] + m[sigma[r][2 * g + 1]];
+                                v[l[3]] = hash_ror(v[l[3]] ^ v[l[0]], 16);
+                                v[l[2]] += v[l[3]];
+                                v[l[1]] = hash_ror(v[l[1]] ^ v[l[2]], 63);
+                        }
+                for (i = 0; i < 8; i++)
+                        st[i] ^= v[i] ^ v[i + 8];
+        }
+}
+
+#define HASH_WORKERS(core, call_ours, call_c, sum)                            \
+        static void core##_w(unsigned long size, unsigned long rounds)        \
+        {                                                                     \
+                unsigned long i;                                              \
+                for (i = 0; i < rounds; i++) {                                \
+                        call_ours;                                            \
+                        sink += sum;                                          \
+                }                                                             \
+                (void)size;                                                   \
+        }                                                                     \
+        static void core##_c_w(unsigned long size, unsigned long rounds)      \
+        {                                                                     \
+                unsigned long i;                                              \
+                for (i = 0; i < rounds; i++) {                                \
+                        call_c;                                               \
+                        sink += sum;                                          \
+                }                                                             \
+                (void)size;                                                   \
+        }
+
+HASH_WORKERS(md5, md5_blocks(hash_narrow, hash_data, HASH_BYTES / 64),
+             hash_c_md5(hash_narrow, hash_data, HASH_BYTES / 64), hash_narrow[0])
+HASH_WORKERS(sha1, sha1_blocks(hash_narrow, hash_data, HASH_BYTES / 64),
+             hash_c_sha1(hash_narrow, hash_data, HASH_BYTES / 64), hash_narrow[0])
+HASH_WORKERS(sha256, sha256_blocks(hash_narrow, hash_data, HASH_BYTES / 64),
+             hash_c_sha256(hash_narrow, hash_data, HASH_BYTES / 64), hash_narrow[0])
+HASH_WORKERS(sha512, sha512_blocks(hash_wide, hash_data, HASH_BYTES / 128),
+             hash_c_sha512(hash_wide, hash_data, HASH_BYTES / 128), hash_wide[0])
+HASH_WORKERS(blake2b, blake2b_blocks(hash_wide, hash_data, HASH_BYTES / 128, 128),
+             hash_c_blake2b(hash_wide, hash_data, HASH_BYTES / 128, 128), hash_wide[0])
 #endif
 
 #ifndef SKIP_FIELD
@@ -1254,6 +1504,13 @@ int main(void)
 
 #ifndef SKIP_SHA256
         row("sha256_compress", "block", "compute", 64, sha_w, floor_one_w, 20);
+        for (i = 0; i < HASH_BYTES; i++)
+                hash_data[i] = (unsigned char)(i * 131 ^ i >> 7);
+        row("md5_blocks", "64KiB", "compute", HASH_BYTES, md5_w, md5_c_w, 60000000);
+        row("sha1_blocks", "64KiB", "compute", HASH_BYTES, sha1_w, sha1_c_w, 60000000);
+        row("sha256_blocks", "64KiB", "compute", HASH_BYTES, sha256_w, sha256_c_w, 60000000);
+        row("sha512_blocks", "64KiB", "compute", HASH_BYTES, sha512_w, sha512_c_w, 60000000);
+        row("blake2b_blocks", "64KiB", "compute", HASH_BYTES, blake2b_w, blake2b_c_w, 60000000);
 #endif
 #if defined(USE_OURS) && !defined(SKIP_LOCK)
         /* Alone: the threads_live elision against the two stores it makes.
