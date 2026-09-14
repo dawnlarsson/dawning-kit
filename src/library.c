@@ -10951,7 +10951,11 @@ __asm__(
     "mov $64, %eax\n   sub %r15d, %eax\n   cmp %eax, %r10d\n"
     "jbe .Lzstd_huff_x64_look\n"
     "jmp .Lzstd_huff_x64_loop\n"
+    /* Every bit of the stream is read: 64 consumed from a container at
+       the start, eight more for each byte the container sits above it. */
     ".Lzstd_huff_x64_done_ok:\n"
+    "mov %r11, %rax\n   sub %rbp, %rax\n   lea 64(,%rax,8), %rax\n"
+    "cmp %rax, %r10\n   jne .Lzstd_huff_x64_fail\n"
     "xor %eax, %eax\n"
     ".Lzstd_huff_x64_done:\n"
     "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
@@ -10983,9 +10987,8 @@ __asm__(
     "movzbl 7(%" ip "), %eax\n   test %al, %al\n   jz .Lzstd_huff4_x64_ffail\n" \
     "bsr %eax, %ecx\n   mov $8, %eax\n   sub %ecx, %eax\n" \
     "mov (%" ip "), %" bits "\n   or $1, %" bits "\n   push %rcx\n   mov %rax, %rcx\n   shl %cl, %" bits "\n   pop %rcx\n"
-#define ZSTD_HUF4_TAIL(tag, opoff, eoff, ipoff, boff, startoff, lastoff) \
+#define ZSTD_HUF4_TAIL(tag, opoff, eoff, ipoff, boff, startoff, lastoff, empty) \
     "mov " opoff "(%rsp), %rdi\n   mov " eoff "(%rsp), %rsi\n" \
-    "cmp %rsi, %rdi\n   je .Lzstd_huff4_x64_" tag "e\n" \
     "mov " boff "(%rsp), %rcx\n   bsf %rcx, %rax\n   mov %eax, %r10d\n" \
     "mov " ipoff "(%rsp), %r11\n   mov (%r11), %rbx\n" \
     "mov " startoff "(%rsp), %rbp\n   mov " lastoff "(%rsp), %r9\n" \
@@ -11020,7 +11023,11 @@ __asm__(
     "movzwl (%r14,%rax,2), %eax\n   test %al, %al\n   jz .Lzstd_huff4_x64_ffail\n" \
     "movb %ah, (%rdi)\n   inc %rdi\n   movzbl %al, %ecx\n   add %ecx, %r10d\n" \
     "jmp .Lzstd_huff4_x64_" tag "l\n" \
-    ".Lzstd_huff4_x64_" tag "e:\n"
+    ".Lzstd_huff4_x64_" tag "e:\n" \
+    empty \
+    "mov %r11, %rax\n   sub %rbp, %rax\n   lea 64(,%rax,8), %rax\n" \
+    "cmp %rax, %r10\n   jne .Lzstd_huff4_x64_ffail\n" \
+    ".Lzstd_huff4_x64_" tag "z:\n"
     ASM_FUNC(zstd_huffman_4x)
     "test %rsi, %rsi\n   jz .Lzstd_huff4_x64_ok0\n"
     "cmp $10, %rcx\n   jb .Lzstd_huff4_x64_bad0\n"
@@ -11114,10 +11121,13 @@ __asm__(
     "mov %rbp, 144(%rsp)\n   mov %rdx, 152(%rsp)\n"
     "mov %r12, 160(%rsp)\n   mov %r13, 168(%rsp)\n"
     "mov %r8, 176(%rsp)\n"
-    ZSTD_HUF4_TAIL("a", "112", "48", "176", "144", "192", "200")
-    ZSTD_HUF4_TAIL("b", "120", "56", "88", "152", "200", "208")
-    ZSTD_HUF4_TAIL("c", "128", "64", "96", "160", "208", "216")
-    ZSTD_HUF4_TAIL("d", "136", "72", "104", "168", "216", "224")
+    /* Each stream ends on its last bit; a fourth stream with no symbols
+       is not read, as the one-stream routine does not read it. */
+    ZSTD_HUF4_TAIL("a", "112", "48", "176", "144", "192", "200", "")
+    ZSTD_HUF4_TAIL("b", "120", "56", "88", "152", "200", "208", "")
+    ZSTD_HUF4_TAIL("c", "128", "64", "96", "160", "208", "216", "")
+    ZSTD_HUF4_TAIL("d", "136", "72", "104", "168", "216", "224",
+                   "mov 64(%rsp), %rax\n   cmp 72(%rsp), %rax\n   je .Lzstd_huff4_x64_dz\n")
     "xor %eax, %eax\n"
     ".Lzstd_huff4_x64_fdone:\n"
     "add $240, %rsp\n"
@@ -11434,6 +11444,9 @@ __asm__(
 
     ".Lzstd_seq_x64_rest:\n"
     "cmp $64, %esi\n   ja .Lzstd_seq_x64_fail\n"
+    /* The last sequence ends on the stream's last bit (start at 96). */
+    "mov %rdi, %rax\n   sub 96(%rsp), %rax\n   lea 64(,%rax,8), %rax\n"
+    "mov %esi, %ecx\n   cmp %rax, %rcx\n   jne .Lzstd_seq_x64_fail\n"
     "mov 16(%rsp), %rdx\n   sub %r13, %rdx\n"
     "jz .Lzstd_seq_x64_ok\n"
     "jb .Lzstd_seq_x64_fail\n"
@@ -19287,6 +19300,8 @@ __asm__(
     "ldrh w0, [x21, x0, lsl #1]\n   and w1, w0, #255\n   cbz w1, .Lzstd_huff_arm64_fail\n"
     "lsr w0, w0, #8\n   strb w0, [x19], #1\n   add w24, w24, w1\n"
     "subs x20, x20, #1\n   b.ne .Lzstd_huff_arm64_loop\n"
+    "sub x9, x25, x26\n   add x9, x9, #8\n   lsl x9, x9, #3\n"
+    "cmp x9, w24, uxtw\n   b.ne .Lzstd_huff_arm64_fail\n"
     "mov x0, xzr\n"
     ".Lzstd_huff_arm64_done:\n"
     "ldp x27, x28, [sp, #64]\n   ldp x25, x26, [sp, #48]\n"
@@ -19329,11 +19344,12 @@ __asm__(
 #define ZSTD_HUF4_ARM64_ROUND \
     ZSTD_HUF4_ARM64_SYM("x19", "x0") ZSTD_HUF4_ARM64_SYM("x20", "x1") \
     ZSTD_HUF4_ARM64_SYM("x21", "x2") ZSTD_HUF4_ARM64_SYM("x22", "x3")
-#define ZSTD_HUF4_ARM64_TAIL(base) \
+#define ZSTD_HUF4_ARM64_TAIL(base, check) \
     "ldr x19, [sp, #" base "]\n" \
     "ldr x20, [sp, #" base "+8]\n   sub x20, x20, x19\n" \
     "ldp x23, x24, [sp, #" base "+16]\n   ldr x25, [sp, #" base "+32]\n" \
     "ldp x26, x27, [sp, #" base "+40]\n   add x28, x26, #8\n" \
+    check \
     "bl .Lzstd_huff4_arm64_tail\n   cbnz x0, .Lzstd_huff4_arm64_fail\n"
 #define ZSTD_HUF4_ARM64_STREAM(base) \
     "bl .Lzstd_huff4_arm64_init\n   cbnz x0, .Lzstd_huff4_arm64_fail\n" \
@@ -19430,10 +19446,12 @@ __asm__(
     "str x3, [sp, #280]\n   stp x10, x9, [sp, #296]\n   str x26, [sp, #312]\n"
     ".Lzstd_huff4_arm64_tails:\n"
     "ldp x21, x22, [sp, #96]\n"
-    ZSTD_HUF4_ARM64_TAIL("112")
-    ZSTD_HUF4_ARM64_TAIL("168")
-    ZSTD_HUF4_ARM64_TAIL("224")
-    ZSTD_HUF4_ARM64_TAIL("280")
+    /* x14 nonzero: the stream must end on its last bit.  A fourth stream
+       with no symbols (output end 288 at the third's end 232) is not. */
+    ZSTD_HUF4_ARM64_TAIL("112", "mov x14, #1\n")
+    ZSTD_HUF4_ARM64_TAIL("168", "mov x14, #1\n")
+    ZSTD_HUF4_ARM64_TAIL("224", "mov x14, #1\n")
+    ZSTD_HUF4_ARM64_TAIL("280", "ldr x14, [sp, #232]\n   ldr x15, [sp, #288]\n   sub x14, x15, x14\n")
     "mov x0, xzr\n"
     ".Lzstd_huff4_arm64_done:\n"
     "ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
@@ -19501,7 +19519,11 @@ __asm__(
     "cbz w1, .Lzstd_huff4_arm64_tailbad\n"
     "lsr w0, w0, #8\n   strb w0, [x19], #1\n   add w24, w24, w1\n"
     "subs x20, x20, #1\n   b.ne .Lzstd_huff4_arm64_tailloop\n"
-    ".Lzstd_huff4_arm64_tailok:\n   mov x0, xzr\n   ret\n"
+    ".Lzstd_huff4_arm64_tailok:\n"
+    "cbz x14, .Lzstd_huff4_arm64_tailz\n"
+    "sub x9, x25, x26\n   add x9, x9, #8\n   lsl x9, x9, #3\n"
+    "cmp x9, w24, uxtw\n   b.ne .Lzstd_huff4_arm64_tailbad\n"
+    ".Lzstd_huff4_arm64_tailz:\n   mov x0, xzr\n   ret\n"
     ".Lzstd_huff4_arm64_tailbad:\n   mov x0, #-1\n   ret\n"
     ASM_END(zstd_huffman_4x)
 
@@ -19720,6 +19742,9 @@ __asm__(
 
     ".Lzstd_seq_arm64_rest:\n"
     "cmp w20, #64\n   b.hi .Lzstd_seq_arm64_fail\n"
+    /* The last sequence ends on the stream's last bit (start at 120). */
+    "ldr x0, [sp, #120]\n   sub x0, x21, x0\n   add x0, x0, #8\n   lsl x0, x0, #3\n"
+    "cmp x0, w20, uxtw\n   b.ne .Lzstd_seq_arm64_fail\n"
     "ldr x0, [x27, #80]\n   stp w10, w11, [x0]\n   str w12, [x0, #8]\n"
     "subs x2, x4, x26\n   b.eq .Lzstd_seq_arm64_ok\n"
     "b.lo .Lzstd_seq_arm64_fail\n"
@@ -27092,6 +27117,8 @@ __asm__(
     "andi t1, t0, 255\n   beqz t1, .Lzstd_huff_rv_fail\n"
     "srli t0, t0, 8\n   sb t0, 0(s0)\n   addi s0, s0, 1\n   add s5, s5, t1\n"
     "addi s1, s1, -1\n   bnez s1, .Lzstd_huff_rv_loop\n"
+    "sub t0, s6, s7\n   addi t0, t0, 8\n   slli t0, t0, 3\n"
+    "bne t0, s5, .Lzstd_huff_rv_fail\n"
     "li a0, 0\n"
     ".Lzstd_huff_rv_done:\n"
     "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
@@ -27333,6 +27360,9 @@ __asm__(
 
     ".Lzstd_seq_rv_rest:\n"
     "li t0, 64\n   bltu t0, s1, .Lzstd_seq_rv_fail\n"
+    /* The last sequence ends on the stream's last bit (s11 is start + 8). */
+    "sub t0, s2, s11\n   addi t0, t0, 16\n   slli t0, t0, 3\n"
+    "bne t0, s1, .Lzstd_seq_rv_fail\n"
     "ld t0, 80(s8)\n   sw t4, 0(t0)\n   sw t5, 4(t0)\n   sw t6, 8(t0)\n"
     "sub t2, a3, s7\n   beqz t2, .Lzstd_seq_rv_ok\n"
     "bltu a3, s7, .Lzstd_seq_rv_fail\n"

@@ -23918,6 +23918,103 @@ def harness_compression(argv):
                         report['measurements'].append(row)
                         print('%-10s %-4s tar-src %-6s %8.1f MiB/s %9d bytes' %
                               (label, suffix, operation, row['MiB_per_second'], compressed_bytes), flush=True)
+        if not opts.bench:
+            # zstd corrupt frames: seeded mutants of reference frames written
+            # without a content checksum, so only the decoder's own checks can
+            # refuse them.  Kinds: a jump-table boundary moved, two stream
+            # sizes swapped, a bit flipped inside the Huffman streams or in a
+            # block's last two bytes (the sequence stream's marker), and one
+            # byte put in front of a Huffman stream, which leaves every symbol
+            # intact and adds only bits no symbol reads.  Whatever the reference
+            # refuses ours refuses; whatever both accept decodes to the same
+            # bytes; the added byte is refused outright, since a stream ends on
+            # its last bit (libzstd's fast Huffman loop does not look).
+            def zstd_blocks(frame):
+                at = 5 + (0 if frame[4] & 0x20 else 1)
+                at += (0, 1, 2, 4)[frame[4] & 3]
+                at += ((1 if frame[4] & 0x20 else 0), 2, 4, 8)[frame[4] >> 6]
+                while at + 3 <= len(frame):
+                    header = int.from_bytes(frame[at:at + 3], 'little')
+                    kind, size = (header >> 1) & 3, header >> 3
+                    yield at, kind, size
+                    at += 3 + (1 if kind == 1 else size)
+                    if header & 1:
+                        return
+
+            def four_streams(frame, block):
+                body = block + 3
+                form = (frame[body] >> 2) & 3
+                if frame[body] & 3 != 2 or not form:
+                    return None
+                width, bits = {1: (3, 10), 2: (4, 14), 3: (5, 18)}[form]
+                compressed = int.from_bytes(frame[body:body + width], 'little') >> (4 + bits)
+                weights = frame[body + width]
+                tree = 1 + ((weights - 126) // 2 if weights >= 128 else weights)
+                return dict(block=block, header=body, width=width, bits=bits,
+                            streams=body + width + tree, size=compressed - tree)
+
+            kinds = ('boundary', 'swap', 'flip', 'tail', 'extra')
+            mutant_rng = random.Random(0x2C0FFEE)
+            text = b''.join(p.read_bytes() for p in sorted((HARNESS_ROOT / 'src').rglob('*.c')))[:600000]
+            for level in ('3', '19'):
+                frame = call([refs['zstd'], '-q', '--no-check', '-' + level, '-c'], text).stdout
+                blocks = [b for b in zstd_blocks(frame) if b[1] == 2]
+                sections = [s for s in (four_streams(frame, b[0]) for b in blocks) if s and s['size'] > 6]
+                check('zstd/corrupt-level-%s/four-stream sections' % level, bool(sections))
+                if not sections:
+                    continue
+                mutants = []
+                for index in range(200):
+                    kind = kinds[index % len(kinds)]
+                    section = mutant_rng.choice(sections)
+                    s = section['streams']
+                    mutated = bytearray(frame)
+                    if kind == 'boundary':
+                        k = mutant_rng.randrange(3)
+                        value = int.from_bytes(frame[s + 2 * k:s + 2 * k + 2], 'little') + mutant_rng.choice((-3, -2, -1, 1, 2, 3))
+                        if not 0 < value < 65536:
+                            continue
+                        mutated[s + 2 * k:s + 2 * k + 2] = value.to_bytes(2, 'little')
+                    elif kind == 'swap':
+                        k = mutant_rng.randrange(2)
+                        mutated[s + 2 * k], mutated[s + 2 * k + 2] = frame[s + 2 * k + 2], frame[s + 2 * k]
+                    elif kind == 'flip':
+                        mutated[s + 6 + mutant_rng.randrange(section['size'] - 6)] ^= 1 << mutant_rng.randrange(8)
+                    elif kind == 'tail':
+                        at, _, size = mutant_rng.choice(blocks)
+                        mutated[at + 2 + size - mutant_rng.randrange(2)] ^= 1 << mutant_rng.randrange(8)
+                    else:
+                        k = mutant_rng.randrange(4)
+                        start = s + 6 + sum(int.from_bytes(frame[s + 2 * j:s + 2 * j + 2], 'little') for j in range(k))
+                        h, width, bits = section['header'], section['width'], section['bits']
+                        field = int.from_bytes(frame[h:h + width], 'little')
+                        compressed = (field >> (4 + bits)) + 1
+                        size = int.from_bytes(frame[section['block']:section['block'] + 3], 'little') >> 3
+                        grown = int.from_bytes(frame[s + 2 * k:s + 2 * k + 2], 'little') + 1 if k < 3 else 0
+                        if compressed >> bits or size + 1 > 131072 or grown >= 65536:
+                            continue
+                        mutated = bytearray(frame[:start]) + b'\xa5' + frame[start:]
+                        field = (field & ((1 << (4 + bits)) - 1)) | (compressed << (4 + bits))
+                        mutated[h:h + width] = field.to_bytes(width, 'little')
+                        if k < 3:
+                            mutated[s + 2 * k:s + 2 * k + 2] = grown.to_bytes(2, 'little')
+                        header = int.from_bytes(frame[section['block']:section['block'] + 3], 'little') + 8
+                        mutated[section['block']:section['block'] + 3] = header.to_bytes(3, 'little')
+                    mutated = bytes(mutated)
+                    mutants.append((kind, mutated, call([refs['zstd'], '-q', '-dc'], mutated)))
+                for label, _ in binaries:
+                    missed = {}
+                    for kind, mutated, reference in mutants:
+                        ours = call(runner + [str(farms[label] / 'zstd'), '-dc'], mutated)
+                        if kind == 'extra' and ours.returncode == 0:
+                            missed.setdefault(kind, 'accepted a stream with bits no symbol reads')
+                        elif reference.returncode and not ours.returncode:
+                            missed.setdefault(kind, 'the reference refused it and ours decoded it')
+                        elif not reference.returncode and not ours.returncode and reference.stdout != ours.stdout:
+                            missed.setdefault(kind, 'both decoded it to different bytes')
+                    for kind in kinds:
+                        check(label + '/zstd/corrupt-level-' + level + '/' + kind,
+                              kind not in missed, missed.get(kind, ''))
         print('compression: %d checks, %d failures' % (report['checks'], len(report['failures'])), flush=True)
     if opts.output:
         opts.output.parent.mkdir(parents=True, exist_ok=True)

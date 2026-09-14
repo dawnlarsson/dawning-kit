@@ -44956,7 +44956,8 @@ static fn sequence_capacity(void)
         zstd_fse of = {0};
         zstd_fse ml = {0};
         zstd_seq_job job = {0};
-        p8 sequence[8] = {0x80};
+        /* One marker bit and nothing else: every bit is read. */
+        p8 sequence[8] = {0x01};
         p8 literals[1] = {0};
         p8 window[32];
         p32 rep[3] = {1, 1, 1};
@@ -45000,6 +45001,85 @@ static fn sequence_capacity(void)
               zstd_sequences_run(address_of job) == 0 && job.pos == 6 &&
                   !memory_compare(window, "AAAAAA", 6) &&
                   window[6] == 0x5a);
+
+        /* 0x80 puts the marker seven bits up: seven bits no field reads. */
+        sequence[0] = 0x80;
+        rep[0] = rep[1] = rep[2] = 1;
+        job.pos = 1;
+        check("a sequence stream with bits no field reads is refused",
+              zstd_sequences_run(address_of job) != 0 && job.pos == 1);
+}
+
+/* Every Huffman stream ends on its last bit.  A byte put in front of a
+   stream's start adds bits no symbol reads while every symbol decodes as
+   before, so the only thing wrong with the section is the unread bits. */
+static fn huffman_exact_end(void)
+{
+        static p8 src[65536];
+        static p8 section[65536 + 1024];
+        static p8 back[65536 + 64];
+        p8 header[5];
+        p32 random = 0x2545f491u;
+
+        for (positive i = 0; i < sizeof(src); i++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                src[i] = (random & 3) ? (p8)('a' + (random >> 8) % 16)
+                                      : (p8)(random >> 16);
+        }
+        positive hn = 0;
+        positive cn = zstd_pack_literals(src, sizeof(src), header, address_of hn);
+        positive tree = 0;
+        zstd_huff huff;
+        check("the exactness section packs and its tree reads",
+              cn && zstd_huff_read(zstd_packed_lits, cn, address_of tree,
+                                   address_of huff));
+        if (!cn || tree >= cn)
+                return;
+        p8 address_to streams = zstd_packed_lits + tree;
+        positive size = cn - tree;
+        check("four streams that end on their last bits decode",
+              zstd_huffman_4x(back, sizeof(src), streams, size, huff.cell,
+                              huff.max_bits) == 0 &&
+                  !memory_compare(back, src, sizeof(src)));
+        for (positive k = 0; k < 4; k++)
+        {
+                positive start = 6;
+
+                for (positive j = 0; j < k; j++)
+                        start += memory_load_unaligned(p16, streams + 2 * j);
+                memory_copy_apart(section, streams, start);
+                section[start] = 0xa5;
+                memory_copy_apart(section + start + 1, streams + start,
+                                  size - start);
+                if (k < 3)
+                        memory_store_unaligned(
+                            p16, section + 2 * k,
+                            (p16)(memory_load_unaligned(p16, streams + 2 * k) + 1));
+                check("a four-stream section with bits no symbol reads is refused",
+                      zstd_huffman_4x(back, sizeof(src), section, size + 1,
+                                      huff.cell, huff.max_bits) != 0);
+        }
+
+        /* One-bit codes: 0 is 'a', 1 is 'b'; 0x05 is the marker over "ab". */
+        p16 cells[2] = {(p16)('a' << 8 | 1), (p16)('b' << 8 | 1)};
+        p8 ab[1] = {0x05};
+        p8 padded[2] = {0x00, 0x05};
+        p8 out[16];
+        check("one stream read to its last bit decodes",
+              zstd_huffman_stream(out, 2, ab, 1, cells, 1) == 0 &&
+                  out[0] == 'a' && out[1] == 'b');
+        check("one stream with an unread bit is refused",
+              zstd_huffman_stream(out, 1, ab, 1, cells, 1) != 0);
+        check("one stream asked past its last bit is refused",
+              zstd_huffman_stream(out, 3, ab, 1, cells, 1) != 0);
+        check("one stream with an unread byte is refused",
+              zstd_huffman_stream(out, 2, padded, 2, cells, 1) != 0);
+        check("the same byte read as eight more symbols decodes",
+              zstd_huffman_stream(out, 10, padded, 2, cells, 1) == 0 &&
+                  out[1] == 'b' && out[9] == 'a');
 }
 
 static fn roundtrip(void)
@@ -45155,6 +45235,7 @@ b32 main(void)
         frames();
         bits();
         sequence_capacity();
+        huffman_exact_end();
         roundtrip();
         return test_report(null);
 }
