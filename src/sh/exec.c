@@ -171,24 +171,6 @@ fn exec_child_began()
         exec_coproc_child();
 }
 
-/*
-        A here-document or here-string expander is a helper, not a subshell.
-
-        Host bash keeps $BASH_SUBSHELL at 0 in the body, and ${x?} at the top
-        of -c still leaves 127 rather than a nested-shell 1. The helper still
-        marks itself forked so an interactive expansion error leaves this
-        process instead of aborting the parent's input line.
-*/
-static fn exec_helper_began()
-{
-        exec_forked = true;
-        exec_floodlight_child_began();
-        trap_child_began();
-        shell_substitutions_forget();
-        shell_background_child();
-        exec_coproc_child();
-}
-
 static DEAD_END fn exec_child_leave(b32 status)
 {
         shell_status = status;
@@ -451,14 +433,7 @@ static fn exec_errexit(b32 status)
         if (!(shell_options & SHELL_ERREXIT))
                 return;
 
-        shell_status = status;
-
-        if (exec_forked)
-                exec_child_leave(status);
-
-        shell_trap_exit();
-        log_flush();
-        exit(status);
+        exec_child_leave(status);
 }
 
 
@@ -672,7 +647,6 @@ static bool exec_inplace_ready(bool restricted)
         floodlight_inplace_descendants_checked = true;
         return true;
 }
-static positive job_numbered;
 static positive job_current;
 static positive job_previous;
 
@@ -945,7 +919,6 @@ static fn job_drop_at(positive at)
         // makes the first job of the next command [1] rather than [57].
         if (!job_count)
         {
-                job_numbered = 0;
                 job_current = 0;
                 job_previous = 0;
         }
@@ -959,7 +932,6 @@ fn job_forget()
                 job_drop_at(job_count - 1);
 
         exec_disowned_children_count = 0;
-        job_numbered = 0;
         job_current = 0;
         job_previous = 0;
 }
@@ -1155,8 +1127,6 @@ static positive job_started(bipolar address_to children, positive count,
                 if (taken == job_count - 1)
                         entry->number = candidate;
         }
-        if (entry->number > job_numbered)
-                job_numbered = entry->number;
         entry->last = children[count - 1];
         entry->group = group;
         entry->state = JOB_RUNNING;
@@ -1264,27 +1234,16 @@ static bool job_retain(bipolar address_to children, positive count,
 
 // Whether the wait table still owes an answer for this job at all, and how
 // many of its children the kernel has yet to speak about.
-static positive job_rows(bipolar last)
+static positive job_children(bipolar last, bool running)
 {
         positive rows = 0;
 
         for (positive at = 0; at < shell_wait_count; at++)
-                if (shell_wait_table[at].job == last)
-                        rows++;
+                rows += shell_wait_table[at].job == last &&
+                        !(running &&
+                          (shell_wait_table[at].flags & SHELL_WAIT_DONE));
 
         return rows;
-}
-
-static positive job_running_children(bipolar last)
-{
-        positive left = 0;
-
-        for (positive at = 0; at < shell_wait_count; at++)
-                if (shell_wait_table[at].job == last &&
-                    !(shell_wait_table[at].flags & SHELL_WAIT_DONE))
-                        left++;
-
-        return left;
 }
 
 /*
@@ -1388,8 +1347,8 @@ static fn job_child_changed(bipolar pid, positive status)
         {
                 job_entry address_to entry = job_table + at;
 
-                if (entry->state == JOB_FINISHED || !job_rows(entry->last) ||
-                    job_running_children(entry->last))
+                if (entry->state == JOB_FINISHED || !job_children(entry->last, false) ||
+                    job_children(entry->last, true))
                 {
                         at++;
                         continue;
@@ -1800,7 +1759,7 @@ static fn job_status_text(job_entry address_to entry, bool detailed,
                 return;
         }
 
-        code = (entry->status >> 8) & 0xff;
+        code = wait_status_code(entry->status);
 
         if (!code)
         {
@@ -1851,21 +1810,6 @@ static string_address job_mark_of(job_entry address_to entry)
         return (string_address) " ";
 }
 
-/* How wide a number is written, so a line can be padded to a column
-   without being built in a buffer first. */
-static CONST positive job_number_width(positive value)
-{
-        positive width = 1;
-
-        while (value >= 10)
-        {
-                value /= 10;
-                width++;
-        }
-
-        return width;
-}
-
 /*
         One job, on one line, in the columns of whichever shell this is.
 
@@ -1901,7 +1845,7 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
 
         if (shell_dash_columns())
         {
-                positive column = job_number_width(entry->number) + 5;
+                positive column = positive_digits(entry->number) + 5;
 
                 string_format(write, "[%p] %s ", entry->number,
                               job_mark_of(entry));
@@ -1911,7 +1855,7 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
                         positive child = job_first_child(entry);
 
                         string_format(write, "%b ", child);
-                        column += job_number_width(child) + 1;
+                        column += positive_digits((positive)child) + 1;
                 }
 
                 job_status_text(entry, detailed, status);
@@ -1946,13 +1890,9 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
         */
         if (detailed)
         {
-                positive processes = 0;
+                positive processes = job_children(entry->last, false);
                 positive stages = 1;
                 string_address bar = text;
-
-                for (positive at = 0; at < shell_wait_count; at++)
-                        if (shell_wait_table[at].job == entry->last)
-                                processes++;
 
                 while ((bar = string_search(bar, " | ")))
                 {
@@ -2711,7 +2651,7 @@ static b32 job_wait_foreground(positive number)
                 at = job_find(number, false);
 
                 if (at >= job_count || job_table[at].state != JOB_RUNNING ||
-                    !job_running_children(last))
+                    !job_children(last, true))
                         break;
 
                 trap_wait_restarting(false);
@@ -3129,7 +3069,7 @@ fn shell_kill(writer write, string_address input)
 static fn job_prune()
 {
         for (positive at = 0; at < job_count;)
-                if (!job_rows(job_table[at].last))
+                if (!job_children(job_table[at].last, false))
                 {
                         /* Dash wait forgets the wait-table row and still
                            owes `jobs` a Done line, so an unreported finish
@@ -3753,8 +3693,7 @@ static bool history_event_at(string_address bang,
                 index = history_used - 1;
                 at++;
         }
-        else if (string_is(at, '-') && string_get(at + 1) >= '0' &&
-                 string_get(at + 1) <= '9')
+        else if (string_is(at, '-') && byte_is_digit(string_get(at + 1)))
         {
                 at++;
                 if (!string_digits_checked(address_of at, 10,
@@ -3765,7 +3704,7 @@ static bool history_event_at(string_address bang,
                         goto missing;
                 index = history_used - number;
         }
-        else if (string_get(at) >= '0' && string_get(at) <= '9')
+        else if (byte_is_digit(string_get(at)))
         {
                 if (!string_digits_checked(address_of at, 10,
                                            address_of number))
@@ -4235,8 +4174,7 @@ static bool history_word_designator(string_address address_to at,
         positive number = 0;
 
         if (value != '^' && value != '$' && value != '*' && value != '%' &&
-            value != '-' &&
-            !(value >= '0' && value <= '9'))
+            value != '-' && !byte_is_digit(value))
                 return true;
 
         step += colon;
@@ -4267,7 +4205,7 @@ static bool history_word_designator(string_address address_to at,
                 address_to first = 0;
                 step++;
 
-                if (string_get(step) >= '0' && string_get(step) <= '9')
+                if (byte_is_digit(string_get(step)))
                 {
                         positive end_word = 0;
 
@@ -4602,13 +4540,13 @@ static bool history_wanted(string_address text, positive length)
                 string_address stop = string_first_of_or_end(at, ':');
                 positive span = (positive)(stop - at);
 
-                if (span == 11 && !memory_compare(at, "ignorespace", 11))
+                if (memory_is_word(at, span, "ignorespace"))
                         space = true;
-                else if (span == 10 && !memory_compare(at, "ignoredups", 10))
+                else if (memory_is_word(at, span, "ignoredups"))
                         dedupe = true;
-                else if (span == 9 && !memory_compare(at, "erasedups", 9))
+                else if (memory_is_word(at, span, "erasedups"))
                         erase = true;
-                else if (span == 10 && !memory_compare(at, "ignoreboth", 10))
+                else if (memory_is_word(at, span, "ignoreboth"))
                 {
                         space = true;
                         dedupe = true;
@@ -5870,12 +5808,23 @@ static COLD bipolar exec_internal_duplicate(b32 internal,
         }
 }
 
+// The script reader now lives at moved, if it could be moved at all.
+static COLD bool exec_script_moved(bipolar moved)
+{
+        if (moved < 0)
+                return false;
+
+        shell_parser_source_relocated(exec_script_fd, moved);
+        system_close(exec_script_fd);
+        exec_script_fd = (b32)moved;
+        return true;
+}
+
 static COLD bool exec_script_preserve(parse_node address_to node)
 {
         ul_limit_pair limits;
         b32 floor = 255;
         bipolar moved;
-        b32 previous = exec_script_fd;
 
         if (ul_prlimit(0, 7, null, address_of limits) >= 0 && limits.soft <= 255)
                 floor = limits.soft > 3 ? (b32)limits.soft - 1 : 3;
@@ -5885,13 +5834,7 @@ static COLD bool exec_script_preserve(parse_node address_to node)
                 moved = exec_internal_duplicate(exec_script_fd, node, 10, -1);
         if (moved < 0 && floor > 3)
                 moved = exec_internal_duplicate(exec_script_fd, node, 3, -1);
-        if (moved < 0)
-                return false;
-
-        shell_parser_source_relocated(previous, moved);
-        system_close(previous);
-        exec_script_fd = (b32)moved;
-        return true;
+        return exec_script_moved(moved);
 }
 
 /* Keep the Spark cache outside a user redirection.  If descriptor pressure
@@ -5932,21 +5875,9 @@ static COLD bool exec_internal_source_release(
                 spawn_device_opened = false;
         }
 
-        if (source == exec_script_fd)
-        {
-                b32 previous = exec_script_fd;
-                bipolar moved = exec_internal_duplicate(
-                    exec_script_fd, node, 3, source);
-
-                if (moved < 0)
-                        return false;
-
-                shell_parser_source_relocated(previous, moved);
-                system_close(previous);
-                exec_script_fd = (b32)moved;
-        }
-
-        return true;
+        return source != exec_script_fd ||
+               exec_script_moved(exec_internal_duplicate(exec_script_fd, node,
+                                                         3, source));
 }
 
 static bool exec_save_fd(b32 fd, parse_node address_to node)
@@ -6173,17 +6104,19 @@ static bool exec_helper_collect(bipolar child, b32 reading, positive start,
 }
 
 /*
-        Expand a here-document outside the shell process.
+        Expand a here-document or a here-string outside the shell process.
 
-        Parameter assignment in a here body belongs to the helper, not to the
+        Parameter assignment in the body belongs to the helper, not to the
         parent: bash leaves ${x:=made} unset after the redirect, and that is
-        the personality this isolation matches. An expansion error ends the
+        the personality this isolation matches. Host bash treats ${x?} as a
+        command status, not a process exit, so an expansion error ends the
         helper rather than the script, and because the helper is not a
-        subshell the status is still 127 at the top of bash -c.
+        subshell the status is still 127 at the top of bash -c. A here-string
+        is one word, written with the newline that ends it.
 */
-static bool exec_here_expand_isolated(string_address body, positive length,
-                                      string_address address_to out,
-                                      positive address_to out_length)
+static bool exec_helper_expand(string_address body, positive length,
+                               bool here_string, string_address address_to out,
+                               positive address_to out_length)
 {
         positive start = token_used;
         b32 ends[2];
@@ -6201,71 +6134,31 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 positive made;
 
                 system_close(ends[0]);
-                exec_helper_began();
+                //      Forked, so an interactive expansion error leaves this
+                //      process and not the parent's input line, but no
+                //      subshell: host bash keeps $BASH_SUBSHELL at 0 here.
+                exec_child_began();
+                shell_subshell_depth--;
                 trap_default_all();
                 token_overflow = false;
 
-                made = exec_here_expand(body, length, address_of expanded);
+                if (here_string)
+                {
+                        expanded = shell_expand_word(body);
+                        made = string_length(expanded);
+                }
+                else
+                        made = exec_here_expand(body, length, address_of expanded);
 
-                if (token_overflow)
+                if (token_overflow && !here_string)
                 {
                         log_error(str("Here-document too long\n"));
                         log_flush();
                         system_call_1(syscall(exit_group), 2);
                 }
 
-                if (system_write_all(ends[1], expanded, made) != made)
-                        system_call_1(syscall(exit_group), 1);
-
-                system_call_1(syscall(exit_group), 0);
-        }
-
-        system_close(ends[1]);
-
-        if (child < 0)
-        {
-                system_close(ends[0]);
-                return false;
-        }
-
-        return exec_helper_collect(child, ends[0], start, out, out_length);
-}
-
-/*
-        Expand a here-string the same way: in a helper that is not a subshell.
-
-        Host bash treats ${x?} here as a command status, not a process exit,
-        and ${x:=} does not stick. Expanding in the parent did both of those
-        the other way round.
-*/
-static bool exec_here_string_expand_isolated(string_address word,
-                                             string_address address_to out,
-                                             positive address_to out_length)
-{
-        positive start = token_used;
-        b32 ends[2];
-        bipolar child;
-
-        if (system_pipe(ends, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
-                return false;
-
-        log_flush();
-        child = shell_clone();
-
-        if (child == 0)
-        {
-                string_address expanded;
-                positive made;
-
-                system_close(ends[0]);
-                exec_helper_began();
-                trap_default_all();
-
-                expanded = shell_expand_word(word);
-                made = string_length(expanded);
-
                 if (system_write_all(ends[1], expanded, made) != made ||
-                    system_write_all(ends[1], "\n", 1) != 1)
+                    (here_string && system_write_all(ends[1], "\n", 1) != 1))
                         system_call_1(syscall(exit_group), 1);
 
                 system_call_1(syscall(exit_group), 0);
@@ -6409,29 +6302,39 @@ static COLD b32 exec_redirect_refused(p8 op, string_address target,
                              writer_terminal_name, target, why);
 }
 
-/* `{name}` / `{name[index]}` names the descriptor stored in that variable. */
-static bipolar exec_redirect_var_fd(string_address name, positive length)
+/* `{name[index]}`: true, with the expanded index in key (null when it would
+   not expand). A plain `{name}` is false. */
+static bool exec_redirect_var_key(string_address name, positive length,
+                                  positive address_to base,
+                                  string_address address_to key,
+                                  positive address_to key_length)
 {
-        string_address value = null;
-        positive fd;
-        positive base;
         const_string subscript;
         positive subscript_length;
 
-        if (env_reference_element_span(name, length, address_of base,
-                                       address_of subscript,
-                                       address_of subscript_length) &&
-            subscript_length)
-        {
-                positive key_length;
-                string_address key = shell_expand_subscript(
-                    name, base, (string_address)subscript, subscript_length,
-                    address_of key_length);
+        if (!env_reference_element_span(name, length, base, address_of subscript,
+                                        address_of subscript_length) ||
+            !subscript_length)
+                return false;
 
-                if (key)
-                        value = shell_array_get(name, base, key, key_length,
-                                                null);
-        }
+        address_to key = shell_expand_subscript(name, address_to base,
+            (string_address)subscript, subscript_length, key_length);
+        return true;
+}
+
+/* `{name}` / `{name[index]}` names the descriptor stored in that variable. */
+static bipolar exec_redirect_var_fd(string_address name, positive length)
+{
+        string_address value;
+        string_address key;
+        positive fd;
+        positive base;
+        positive key_length;
+
+        if (exec_redirect_var_key(name, length, address_of base, address_of key,
+                                  address_of key_length))
+                value = key ? shell_array_get(name, base, key, key_length, null)
+                            : null;
         else
                 value = env_get_hashed_span(name, length,
                                             env_name_hash(name, length),
@@ -6459,24 +6362,15 @@ static bool exec_redirect_var_store(string_address name, positive length,
 {
         p8 digits[24];
         positive base;
-        const_string subscript;
-        positive subscript_length;
+        string_address key;
+        positive key_length;
 
         digits[positive_into_string(digits, (positive)fd)] = end;
 
-        if (env_reference_element_span(name, length, address_of base,
-                                       address_of subscript,
-                                       address_of subscript_length) &&
-            subscript_length)
-        {
-                positive key_length;
-                string_address key = shell_expand_subscript(
-                    name, base, (string_address)subscript, subscript_length,
-                    address_of key_length);
-
+        if (exec_redirect_var_key(name, length, address_of base, address_of key,
+                                  address_of key_length))
                 return key && shell_array_set(name, base, key, key_length,
                                               digits, false);
-        }
 
         return env_assign_hashed_span(name, length,
                                       env_name_hash(name, length), digits);
@@ -6584,8 +6478,7 @@ static bool exec_redirect_apply(b32 index)
                 {
                         p8 first = string_get(target);
 
-                        if (!(first >= '0' && first <= '9' &&
-                              !string_get(target + 1)))
+                        if (!byte_is_digit(first) || string_get(target + 1))
                         {
                                 /* lima dash 0.5.x has already consumed this
                                    line's newline, so the diagnostic names
@@ -6666,8 +6559,9 @@ static bool exec_redirect_apply(b32 index)
                         {
                                 if (shell_bash_compat)
                                 {
-                                        if (!exec_here_expand_isolated(
-                                                body, length, address_of body,
+                                        if (!exec_helper_expand(
+                                                body, length, false,
+                                                address_of body,
                                                 address_of length))
                                                 return false;
                                 }
@@ -6710,9 +6604,9 @@ static bool exec_redirect_apply(b32 index)
                         string_address body;
                         positive length;
 
-                        if (!exec_here_string_expand_isolated(want->text,
-                                                              address_of body,
-                                                              address_of length))
+                        if (!exec_helper_expand(want->text, 0, true,
+                                                address_of body,
+                                                address_of length))
                                 return false;
 
                         opened = exec_here_open(body, length);
@@ -6832,26 +6726,17 @@ static bool exec_redirect_apply(b32 index)
                 // dup3 onto the descriptor it was handed is an error rather
                 // than the no-op dup2 makes of it, and open answers with
                 // exactly that descriptor when it was the lowest one free.
-                if (opened != fd)
-                {
-                        if (system_duplicate(opened, fd, 0) < 0)
-                        {
-                                system_close(opened);
-                                exec_redirect_diagnostic_restore(redirect_mark);
-                                return string_report(log_error, false, "Cannot redirect descriptor: %p\n",
-                                              (positive)fd);
-                        }
-
-                        system_close(opened);
-                }
-                else if (system_descriptor_install(opened, fd) < 0)
+                if (opened != fd ? system_duplicate(opened, fd, 0) < 0
+                                 : system_descriptor_install(opened, fd) < 0)
                 {
                         system_close(opened);
                         exec_redirect_diagnostic_restore(redirect_mark);
                         return string_report(log_error, false,
-                                              "Cannot redirect descriptor: %p\n",
-                                              (positive)fd);
+                                             "Cannot redirect descriptor: %p\n",
+                                             (positive)fd);
                 }
+                if (opened != fd)
+                        system_close(opened);
         }
 
         return true;
@@ -8102,10 +7987,9 @@ COLD bool shell_frames_wanted(const_string name, positive length)
         if (exec_frames_published || !exec_frame_count)
                 return false;
 
-        if ((length != 8 || memory_compare((address_any)name, "FUNCNAME", 8)) &&
-            (length != 11 ||
-             (memory_compare((address_any)name, "BASH_SOURCE", 11) &&
-              memory_compare((address_any)name, "BASH_LINENO", 11))))
+        if (!memory_is_word((address_any)name, length, "FUNCNAME") &&
+            !memory_is_word((address_any)name, length, "BASH_SOURCE") &&
+            !memory_is_word((address_any)name, length, "BASH_LINENO"))
                 return false;
 
         exec_frames_publish();
@@ -9504,11 +9388,7 @@ static COLD fn exec_return_bash()
                         shell_status = 1;
                         if (!shell_is_interactive || exec_forked ||
                             string_is(shell_option_flags, 'c'))
-                        {
-                                shell_trap_exit();
-                                log_flush();
-                                exit(1);
-                        }
+                                exec_child_leave(1);
                         exec_abort_line(shell_status);
                         return;
                 }
@@ -9528,11 +9408,7 @@ static COLD fn exec_return_bash()
                 shell_status = 2;
 
                 if (shell_posix_on() && !exec_tested)
-                {
-                        shell_trap_exit();
-                        log_flush();
-                        exit(2);
-                }
+                        exec_child_leave(2);
 
                 return;
         }
@@ -9666,11 +9542,7 @@ bool exec_control_builtin(string_address name, bool run)
         //      script ends there with the status it was handed, the way
         //      exit would have ended it.
         if (!exec_function_depth && !shell_source_depth)
-        {
-                shell_trap_exit();
-                log_flush();
-                exit(shell_status);
-        }
+                exec_child_leave(shell_status);
 
         exec_signal = EXEC_SIGNAL_RETURN;
         return true;
@@ -9691,35 +9563,17 @@ static b32 exec_dispatch(b32 command_word)
         positive slot;
         bool disabled = shell_builtin_disabled(name);
         bool colon = initial == ':' && !string_get(name + 1);
+        // What `:`, true and false answer, or -1 for every other name.
+        b32 fixed = disabled ? -1
+                    : colon || (initial == 't' && word_is(name, "true")) ? 0
+                    : initial == 'f' && word_is(name, "false") ? 1 : -1;
 
         /* `:` is a special builtin, so POSIX finds it before a function.
            true and false are ordinary: a function of that name still wins.
            With no function at all, none of the three needs a name hash. */
-        if (!disabled)
-        {
-                if (colon && (!shell_bash_compat || shell_posix_on() ||
-                              !exec_function_count))
-                {
-                        shell_status = 0;
-                        return 0;
-                }
-                if (!exec_function_count)
-                {
-                        if (initial == 't' && name[1] == 'r' &&
-                            name[2] == 'u' && name[3] == 'e' && !name[4])
-                        {
-                                shell_status = 0;
-                                return 0;
-                        }
-                        if (initial == 'f' && name[1] == 'a' &&
-                            name[2] == 'l' && name[3] == 's' && name[4] == 'e' &&
-                            !name[5])
-                        {
-                                shell_status = 1;
-                                return 1;
-                        }
-                }
-        }
+        if (fixed >= 0 && (!exec_function_count ||
+                           (colon && (!shell_bash_compat || shell_posix_on()))))
+                return shell_status = fixed;
 
         shell_command_name_stable =
             parse_words[command_word] == name &&
@@ -9772,23 +9626,8 @@ static b32 exec_dispatch(b32 command_word)
                 return exec_call(slot);
         }
 
-        if (!disabled)
-        {
-                if (colon ||
-                    (named.y == 4 && name[0] == 't' && name[1] == 'r' &&
-                     name[2] == 'u' && name[3] == 'e') ||
-                    (named.y == 1 && name[0] == ':'))
-                {
-                        shell_status = 0;
-                        return 0;
-                }
-                if (named.y == 5 && name[0] == 'f' && name[1] == 'a' &&
-                    name[2] == 'l' && name[3] == 's' && name[4] == 'e')
-                {
-                        shell_status = 1;
-                        return 1;
-                }
-        }
+        if (fixed >= 0)
+                return shell_status = fixed;
 
         if (!disabled && exec_control_builtin(name, true))
                 return shell_status;
@@ -11670,6 +11509,17 @@ static PURE bool conditional_unary_operand(string_address word)
                !word_is(word, "(") && !word_is(word, ")");
 }
 
+// [[ == ]] and case read extended groups whether or not extglob is on, and
+// fold case under nocasematch.
+static bool shell_match_case(string_address pattern, string_address subject)
+{
+        bool fold = shell_shopt_on(NOCASEMATCH);
+
+        return glob_extended_anywhere(pattern)
+                   ? shell_match_extended(pattern, subject, fold)
+                   : shell_match_folded(pattern, subject, fold);
+}
+
 static bool conditional_primary(bool invert)
 {
         string_address raw;
@@ -11860,13 +11710,7 @@ static bool conditional_primary(bool invert)
                                         nocasematch. Both modes travel through
                                         the shared matcher, including groups.
                                 */
-                                value = glob_extended_anywhere(right)
-                                            ? shell_match_extended(
-                                                  right, left,
-                                                  shell_shopt_on(NOCASEMATCH))
-                                            : shell_match_folded(
-                                                  right, left,
-                                                  shell_shopt_on(NOCASEMATCH));
+                                value = shell_match_case(right, left);
                                 return word_is(op, "!=") ? !value : value;
                         }
 
@@ -12068,13 +11912,7 @@ static b32 exec_case(b32 index)
                         // matched is taken, and ;;& goes on testing. The
                         // match is [[ ]]'s, for the same reason case reads
                         // extended groups and folds case.
-                        taken = glob_extended_anywhere(pattern)
-                                    ? shell_match_extended(
-                                          pattern, subject,
-                                          shell_shopt_on(NOCASEMATCH))
-                                    : shell_match_folded(
-                                          pattern, subject,
-                                          shell_shopt_on(NOCASEMATCH));
+                        taken = shell_match_case(pattern, subject);
                 }
 
                 if (!taken)
@@ -12221,7 +12059,6 @@ static bool exec_literal_tool(b32 index, string_address address_to name,
 
         word = node->word + at;
         if (!(parse_word_flags[word] & PARSE_WORD_LITERAL) ||
-            string_first_of_set(parse_words[word], "*?[~") ||
             string_first_of(parse_words[word], '/'))
                 return false;
 
@@ -12393,12 +12230,6 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
 
                 if (!(parse_word_flags[word] & PARSE_WORD_LITERAL) ||
                     (parse_word_flags[word] & PARSE_WORD_ASSIGNMENT))
-                        return -1;
-
-                // A literal word still expands if it is a pattern, and a
-                // leading tilde is a home directory. Neither may be answered
-                // here, where the answer would be the word itself.
-                if (string_first_of_set(text, "*?[~"))
                         return -1;
 
                 words[at] = text;
@@ -13494,7 +13325,7 @@ static bool time_formatted(string_address format, positive real,
                         break;
                 }
 
-                if (string_get(at) >= '0' && string_get(at) <= '9')
+                if (byte_is_digit(string_get(at)))
                 {
                         places = (positive)(string_get(at) - '0');
                         given = true;
