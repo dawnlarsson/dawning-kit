@@ -148,20 +148,9 @@ static zstd_fse zstd_of_def;
 static zstd_fse zstd_ml_def;
 static positive zstd_block_limit;
 
-static p16 zstd_get16(p8 address_to p)
-{
-        return (p16)p[0] | ((p16)p[1] << 8);
-}
-
 static p32 zstd_get24(p8 address_to p)
 {
         return (p32)p[0] | ((p32)p[1] << 8) | ((p32)p[2] << 16);
-}
-
-static p32 zstd_get32(p8 address_to p)
-{
-        return (p32)p[0] | ((p32)p[1] << 8) | ((p32)p[2] << 16) |
-               ((p32)p[3] << 24);
 }
 
 /* The highest set bit's index; zero for zero, which FSE's empty weights use.
@@ -556,7 +545,7 @@ static bool zstd_fse_read(p8 address_to src, positive src_len,
 
         ip = pad;
         iend = pad + src_len + 8;
-        bit_stream = zstd_get32(ip);
+        bit_stream = memory_load_unaligned(p32, ip);
         bit_count = 0;
 
         table_log = (p8)((bit_stream & 15) + 5);
@@ -583,7 +572,7 @@ static bool zstd_fse_read(p8 address_to src, positive src_len,
                                 {
                                         ip += bit_count >> 3;
                                         bit_count &= 7;
-                                        bit_stream = zstd_get32(ip) >> bit_count;
+                                        bit_stream = memory_load_unaligned(p32, ip) >> bit_count;
                                 }
                         }
                         while ((bit_stream & 3) == 3)
@@ -604,7 +593,7 @@ static bool zstd_fse_read(p8 address_to src, positive src_len,
                         {
                                 ip += bit_count >> 3;
                                 bit_count &= 7;
-                                bit_stream = zstd_get32(ip) >> bit_count;
+                                bit_stream = memory_load_unaligned(p32, ip) >> bit_count;
                         }
                         continue;
                 }
@@ -650,7 +639,7 @@ static bool zstd_fse_read(p8 address_to src, positive src_len,
                         {
                                 ip += bit_count >> 3;
                                 bit_count &= 7;
-                                bit_stream = zstd_get32(ip) >> bit_count;
+                                bit_stream = memory_load_unaligned(p32, ip) >> bit_count;
                         }
                 }
         }
@@ -1065,7 +1054,7 @@ static bool zstd_literals(p8 address_to src, positive src_len,
                         if (src_len < 2)
                                 return zstd_fail("zstd truncated literals size");
                         header = 2;
-                        regen = zstd_get16(src) >> 4;
+                        regen = memory_load_unaligned(p16, src) >> 4;
                 }
                 else
                 {
@@ -1111,7 +1100,7 @@ static bool zstd_literals(p8 address_to src, positive src_len,
                 {
                         if (src_len < 4)
                                 return zstd_fail("zstd truncated literals header");
-                        pack = zstd_get32(src);
+                        pack = memory_load_unaligned(p32, src);
                         header = 4;
                         regen = (pack >> 4) & 0x3fff;
                         compressed = pack >> 18;
@@ -1120,7 +1109,7 @@ static bool zstd_literals(p8 address_to src, positive src_len,
                 {
                         if (src_len < 5)
                                 return zstd_fail("zstd truncated literals header");
-                        pack = zstd_get32(src);
+                        pack = memory_load_unaligned(p32, src);
                         header = 5;
                         regen = (pack >> 4) & 0x3ffff;
                         compressed = (pack >> 22) + ((positive)src[4] << 10);
@@ -1196,7 +1185,7 @@ static bool zstd_sequences(p8 address_to src, positive src_len, p8 address_to li
         {
                 if (p + 3 > stop)
                         return zstd_fail("zstd truncated sequence count");
-                nseq = 0x7f00u + zstd_get16(p + 1);
+                nseq = 0x7f00u + memory_load_unaligned(p16, p + 1);
                 p += 3;
         }
 
@@ -1315,7 +1304,7 @@ static bool zstd_frame(void)
 
         if (!zstd_in_take(scratch, 4))
                 return false;
-        if (zstd_get32(scratch) != ZSTD_MAGIC)
+        if (memory_load_unaligned(p32, scratch) != ZSTD_MAGIC)
                 return zstd_fail("zstd bad magic");
         if (!zstd_in_take(desc, 1))
                 return false;
@@ -1354,13 +1343,13 @@ static bool zstd_frame(void)
         {
                 if (!zstd_in_take(scratch, 2))
                         return false;
-                dict = zstd_get16(scratch);
+                dict = memory_load_unaligned(p16, scratch);
         }
         else if (dict_flag == 3)
         {
                 if (!zstd_in_take(scratch, 4))
                         return false;
-                dict = zstd_get32(scratch);
+                dict = memory_load_unaligned(p32, scratch);
         }
         if (dict)
                 return zstd_fail("zstd dictionaries are refused");
@@ -1381,14 +1370,14 @@ static bool zstd_frame(void)
         {
                 if (!zstd_in_take(scratch, 2))
                         return false;
-                zstd_fcs = (p64)zstd_get16(scratch) + 256;
+                zstd_fcs = (p64)memory_load_unaligned(p16, scratch) + 256;
                 zstd_have_fcs = true;
         }
         else if (fcs_flag == 2)
         {
                 if (!zstd_in_take(scratch, 4))
                         return false;
-                zstd_fcs = zstd_get32(scratch);
+                zstd_fcs = memory_load_unaligned(p32, scratch);
                 zstd_have_fcs = true;
         }
         else
@@ -1546,7 +1535,7 @@ zstd_frame_trailer:
 
                 if (!zstd_in_take(scratch, 4))
                         return false;
-                want = zstd_get32(scratch);
+                want = memory_load_unaligned(p32, scratch);
                 got = (p32)hash_xxh64_finish(address_of zstd_hash);
                 if (got != want)
                         return zstd_fail("zstd content checksum mismatch");
@@ -1565,7 +1554,7 @@ static bool zstd_skippable(void)
 
         if (!zstd_in_take(sizeb, 4))
                 return false;
-        size = zstd_get32(sizeb);
+        size = memory_load_unaligned(p32, sizeb);
         return zstd_in_skip_bytes(size);
 }
 
@@ -1624,7 +1613,7 @@ static bool zstd_stream(void)
                         return false;
                 }
                 memory_copy(peek, zstd_in_at(), 4);
-                magic = zstd_get32(peek);
+                magic = memory_load_unaligned(p32, peek);
                 if (magic == ZSTD_MAGIC)
                 {
                         if (!zstd_frame())
@@ -2348,7 +2337,7 @@ static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
                 positive repeated = rep[pos == lit_at];
                 if (pos - lit_at < 64 && repeated &&
                     repeated <= zstd_enc_abs + pos && repeated <= ZSTD_ENC_WINDOW &&
-                    zstd_get32(src + pos) == zstd_get32(src + pos - repeated))
+                    memory_load_unaligned(p32, src + pos) == memory_load_unaligned(p32, src + pos - repeated))
                 {
                         match = 4 + memory_common_prefix(src + pos + 4,
                                       src + pos + 4 - repeated, n - pos - 4);
@@ -2365,7 +2354,7 @@ static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
                         if (!d || d > ZSTD_ENC_WINDOW || old > zstd_enc_abs + pos)
                                 continue;
                         p8 address_to there = src + pos - d;
-                        if (zstd_get32(src + pos) != zstd_get32(there) ||
+                        if (memory_load_unaligned(p32, src + pos) != memory_load_unaligned(p32, there) ||
                             (match && src[pos + match] != there[match]))
                                 continue;
                         positive k = 4 + memory_common_prefix(src + pos + 4,
@@ -2386,7 +2375,7 @@ static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
                         positive d = zstd_enc_abs + pos + 2 - old;
                         if (old && d && d <= ZSTD_ENC_WINDOW &&
                             old <= zstd_enc_abs + pos + 1 &&
-                            zstd_get32(src + pos + 1) == zstd_get32(src + pos + 1 - d))
+                            memory_load_unaligned(p32, src + pos + 1) == memory_load_unaligned(p32, src + pos + 1 - d))
                         {
                                 positive k = 4 + memory_common_prefix(src + pos + 5,
                                                         src + pos + 5 - d, n - pos - 5);
