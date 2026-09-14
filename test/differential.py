@@ -23654,7 +23654,7 @@ def harness_compression(argv):
         # GNU.sparse.* (those belong to type S; junk values only make GNU tar
         # refuse the archive).
         pax_fields = (
-            ('comment', (b'', b'z', bytes([1, 0, 0, 2]), b'a=b')),
+            ('comment', (b'', b'z', bytes([1, 0, 0, 2]), b'a=b', b'c' * 5000, b'c' * 70000)),
             ('SCHILY.xattr.security.capability',
              (b'', bytes([1, 0, 0, 2]), b'cap')),
             ('path', (b'from-g.txt', b'a.txt')),
@@ -23832,6 +23832,66 @@ def harness_compression(argv):
                           sorted(name.rstrip(b'/') for name in listed[1].split()) ==
                           sorted(name.rstrip(b'/') for name in known[1].split()),
                           (listed[2] + known[2]).decode(errors='replace'))
+
+        # A seekable archive cut short fails the way the reference fails it.
+        # A seek past the end of a file succeeds, so a member skipped while
+        # listing, cut inside its data, would otherwise list as whole.
+        whole = made.stdout
+        cuts = sorted({700, 1024, 1300, 2048, 4000, 70000, 140000, 200000,
+                       len(whole) // 2, len(whole) - 1536, len(whole) - 1024,
+                       len(whole) - 513, len(whole) - 1})
+        for label, _ in binaries:
+            our_tar = runner + [str(farms[label] / 'tar')]
+            for cut in cuts:
+                if not 0 < cut < len(whole):
+                    continue
+                cut_archive = root / ('cut-%s-%d.tar' % (label, cut))
+                cut_archive.write_bytes(whole[:cut])
+                for mode in ('-tf', '-xf'):
+                    ours_dir = root / ('cut-ours-%s-%d%s' % (label, cut, mode))
+                    refs_dir = root / ('cut-ref-%s-%d%s' % (label, cut, mode))
+                    ours_dir.mkdir()
+                    refs_dir.mkdir()
+                    ours = call(our_tar + [mode, str(cut_archive), '-C', str(ours_dir)])
+                    reference = call([refs['tar'], mode, str(cut_archive), '-C', str(refs_dir)])
+                    same = (ours.returncode == 0) == (reference.returncode == 0)
+                    if same and mode == '-xf' and reference.returncode == 0:
+                        same = tree_state(ours_dir) == tree_state(refs_dir)
+                    check(label + '/tar-truncated/%d%s' % (cut, mode), same,
+                          'ours %d reference %d: ' % (ours.returncode, reference.returncode) +
+                          (ours.stderr + reference.stderr).decode(errors='replace'))
+
+        # Names and link targets ustar cannot hold travel as GNU ././@LongLink
+        # members.  Each tar must read the other's archive back to the tree
+        # the reference makes of its own.
+        long_source = root / 'long-source'
+        deep = long_source / 'tree' / ('d' * 60) / ('e' * 60)
+        deep.mkdir(parents=True)
+        (deep / ('f' * 99)).write_bytes(b'long path\n')
+        (long_source / 'tree' / ('g' * 120)).write_bytes(b'long leaf\n')
+        for length in (98, 99, 100, 101, 150, 300):
+            os.symlink('t' * length, long_source / 'tree' / ('link-%d' % length))
+        own = root / 'long-reference'
+        own.mkdir()
+        own_archive = root / 'long-reference.tar'
+        made_long = call([refs['tar'], '-cf', str(own_archive), '-C', str(long_source), 'tree'])
+        taken = call([refs['tar'], '-xf', str(own_archive), '-C', str(own)])
+        check('tar-longlink/reference', made_long.returncode == taken.returncode == 0,
+              (made_long.stderr + taken.stderr).decode(errors='replace'))
+        for label, _ in binaries:
+            our_tar = runner + [str(farms[label] / 'tar')]
+            for direction in ('encode', 'decode'):
+                archive = root / ('long-%s-%s.tar' % (label, direction))
+                destination = root / ('long-%s-%s' % (label, direction))
+                destination.mkdir()
+                encoder = our_tar if direction == 'encode' else [refs['tar']]
+                decoder = [refs['tar']] if direction == 'encode' else our_tar
+                packed = call(encoder + ['-cf', str(archive), '-C', str(long_source), 'tree'])
+                unpacked = call(decoder + ['-xf', str(archive), '-C', str(destination)])
+                check(label + '/tar-longlink/' + direction,
+                      packed.returncode == unpacked.returncode == 0 and
+                      tree_state(destination) == tree_state(own),
+                      (packed.stderr + unpacked.stderr).decode(errors='replace'))
         if opts.bench:
             # Include filesystem work and the streaming adapters in tar timings.
             # All decoders consume the same reference archive for each mode.
