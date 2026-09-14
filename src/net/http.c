@@ -613,12 +613,6 @@ static bipolar http_link_read_until(
         return HTTP_OK;
 }
 
-static bipolar http_link_read(http_link address_to link, p8 address_to into,
-                              positive room, positive address_to got)
-{
-        return http_link_read_until(link, into, room, got, null);
-}
-
 static bipolar http_response_head(
     http_link address_to link, p8 address_to head, positive room,
     positive address_to used, positive address_to header,
@@ -657,6 +651,29 @@ static bool http_response_has_no_body(b32 code)
 {
         return code == 204 || code == 205 || code == 304;
 }
+
+typedef struct
+{
+        http_link address_to link;
+        p8 address_to stash;
+        positive stash_used;
+        // Streaming reuses the consumed header buffer for split lines and I/O.
+        p8 address_to scratch;
+        // A memory body compacts payload behind its read cursor.
+        p8 address_to output;
+        // Buffered fetch appends decoded payload without first slurping framing.
+        http_buffer address_to store;
+        positive store_limit;
+        // Tests can shorten one logical progress wait; zero selects HTTP's idle limit.
+        positive read_seconds;
+        positive read_nanoseconds;
+} http_body;
+
+static bipolar http_body_read(http_body address_to body, p8 address_to into,
+                              positive room, positive address_to got);
+static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
+                         bool exact);
+static bipolar http_copy_chunked(http_body address_to body, bipolar dest);
 
 static bipolar http_get(p32 host, p16 port, string_address name,
                         string_address path, http_buffer address_to body,
@@ -703,44 +720,47 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                 goto publish;
 
         {
-                positive stashed = used - header;
-                bipolar read = file_store_read_limit(
-                    (positive)link.handle, address_of whole,
-                    HTTP_FETCH_MAX - used);
+                http_body source = {
+                    .link = address_of link,
+                    .stash = head + header,
+                    .stash_used = used - header,
+                    .scratch = head,
+                    .store = address_of whole,
+                    .store_limit = HTTP_FETCH_MAX,
+                };
 
-                status = read == -27 ? HTTP_MALFORMED
-                                     : read < 0 ? HTTP_NO_REPLY : HTTP_OK;
+                if (response.body_kind == HTTP_BODY_CHUNKED)
+                        status = http_copy_chunked(address_of source, -1);
+                else if (response.body_kind == HTTP_BODY_LENGTH)
+                {
+                        if (response.body_length > HTTP_FETCH_MAX)
+                                status = HTTP_MALFORMED;
+                        else
+                                status = http_copy(address_of source, -1,
+                                                   response.body_length, true);
+                }
+                else
+                {
+                        p8 extra;
+                        positive got = 0;
+
+                        status = http_copy(address_of source, -1,
+                                           HTTP_FETCH_MAX, false);
+                        /* A close-delimited body ends only at EOF.  When the
+                           store fills exactly, one bounded probe distinguishes
+                           that valid edge from an oversized response. */
+                        if (!status && whole.used == HTTP_FETCH_MAX)
+                        {
+                                status = http_body_read(address_of source,
+                                                        address_of extra, 1,
+                                                        address_of got);
+                                if (!status && got)
+                                        status = HTTP_MALFORMED;
+                        }
+                }
                 if (status)
                         goto done;
-                if (stashed > positive_max - whole.used - 1 ||
-                    !byte_store_reserve(address_of whole,
-                                        stashed + whole.used + 1, 4096))
-                {
-                        status = HTTP_NO_REPLY;
-                        goto done;
-                }
-                memory_copy(whole.bytes + stashed, whole.bytes,
-                            whole.used);
-                memory_copy(whole.bytes, head + header, stashed);
-                whole.used += stashed;
-                whole.bytes[whole.used] = end;
-        }
-
-        status = HTTP_MALFORMED;
-        length = whole.used;
-
-        if (response.body_kind == HTTP_BODY_CHUNKED)
-        {
-                bipolar plain = http_unchunk(whole.bytes, length);
-                if (plain < 0)
-                        goto done;
-                length = (positive)plain;
-        }
-        else if (response.body_kind == HTTP_BODY_LENGTH)
-        {
-                if (response.body_length > length)
-                        goto done;
-                length = response.body_length;
+                length = whole.used;
         }
 
 publish:
@@ -763,17 +783,6 @@ done:
         return status;
 }
 
-typedef struct
-{
-        http_link address_to link;
-        p8 address_to stash;
-        positive stash_used;
-        // Streaming reuses the consumed header buffer for split lines and I/O.
-        p8 address_to scratch;
-        // A memory body compacts payload behind its read cursor.
-        p8 address_to output;
-} http_body;
-
 static bipolar http_body_read(http_body address_to body, p8 address_to into,
                               positive room, positive address_to got)
 {
@@ -790,7 +799,19 @@ static bipolar http_body_read(http_body address_to body, p8 address_to into,
         }
 
         if (body->link)
-                return http_link_read(body->link, into, room, got);
+        {
+                network_deadline deadline;
+                positive seconds = body->read_seconds;
+                positive nanoseconds = body->read_nanoseconds;
+
+                if (!seconds && !nanoseconds)
+                        seconds = HTTP_IDLE_SECONDS;
+                if (!network_deadline_begin(address_of deadline, seconds,
+                                            nanoseconds))
+                        return HTTP_NO_REPLY;
+                return http_link_read_until(body->link, into, room, got,
+                                            address_of deadline);
+        }
         *got = 0;
         return HTTP_OK;
 }
@@ -818,11 +839,25 @@ static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
                 else if (http_body_read(body, data, take, address_of got))
                         return HTTP_NO_REPLY;
                 if (!got)
-                        return exact ? HTTP_NO_REPLY : HTTP_OK;
-                if (!body->link)
+                        return exact ? HTTP_MALFORMED : HTTP_OK;
+                if (body->output)
                 {
                         memory_copy(body->output, data, got);
                         body->output += got;
+                }
+                else if (body->store)
+                {
+                        if (body->store->used > body->store_limit ||
+                            got > body->store_limit - body->store->used)
+                                return HTTP_MALFORMED;
+                        if (!byte_store_reserve(
+                                body->store, body->store->used + got + 1,
+                                4096))
+                                return HTTP_NO_REPLY;
+                        memory_copy(body->store->bytes + body->store->used,
+                                    data, got);
+                        body->store->used += got;
+                        body->store->bytes[body->store->used] = end;
                 }
                 else if (system_write_all((positive)dest, data, got) != got)
                         return HTTP_NO_REPLY;
@@ -857,8 +892,8 @@ static bipolar http_line(http_body address_to body, positive limit,
         while (used < limit)
         {
                 positive got = 0;
-                if (http_link_read(body->link, scratch + used, limit - used,
-                                    address_of got))
+                if (http_body_read(body, scratch + used, limit - used,
+                                   address_of got))
                         return HTTP_NO_REPLY;
                 if (!got)
                         return HTTP_MALFORMED;
@@ -926,8 +961,12 @@ static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
                         return HTTP_MALFORMED;
                 if (!size)
                         return http_copy_trailers(body);
-                if (http_copy(body, dest, size, true))
-                        return HTTP_NO_REPLY;
+                {
+                        bipolar copied = http_copy(body, dest, size, true);
+
+                        if (copied)
+                                return copied;
+                }
                 if (http_body_byte(body, address_of delimiter))
                         return HTTP_MALFORMED;
                 if (delimiter == '\n')
@@ -1227,7 +1266,7 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 bool tls = false;
                 p32 ip;
                 http_link link;
-                http_body body;
+                http_body body = {0};
                 http_response response;
                 positive header = 0;
                 bipolar status;

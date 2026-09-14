@@ -12116,19 +12116,22 @@ static b32 exec_child_status(bipolar child)
         return code;
 }
 
-/* Async commands inherit the interactive shell's ignored INT/QUIT state and,
-   without job control, read /dev/null unless the command later supplies its
-   own redirection. fd 0 is already the desired result from openat and must not
-   be closed. A foreground child gets the default back only where the shell's
-   own deafness was the reason for the ignore: not over a trap '' in the
-   script, and not over an ignore this shell was started with. */
-static fn exec_child_signals(bool background, bool null_input)
+/* An asynchronous command outside job control inherits the interactive
+   shell's ignored INT/QUIT state and reads /dev/null unless the command later
+   supplies its own redirection. A monitored job gets the foreground defaults
+   here; its separate process group, rather than ignored signals, protects it
+   from terminal input intended for the shell. fd 0 is already the desired
+   result from openat and must not be closed. A foreground child gets the
+   default back only where the shell's own deafness was the reason for the
+   ignore: not over a trap '' in the script, and not over an ignore this shell
+   was started with. */
+static bool exec_child_signals(bool detached, bool null_input)
 {
-        if (!background)
+        if (!detached)
         {
                 shell_child_default(SIGNAL_INTERRUPT);
                 shell_child_default(SIGNAL_QUIT);
-                return;
+                return true;
         }
 
         shell_ignore(SIGNAL_INTERRUPT);
@@ -12136,16 +12139,28 @@ static fn exec_child_signals(bool background, bool null_input)
 
         if (null_input)
         {
-                bipolar null_handle = system_open_at(AT_FDCWD,
-                                                    "/dev/null",
-                                                    0);
+                bipolar null_handle;
 
-                if (null_handle > 0)
+                /* Make descriptor zero itself the room for /dev/null.  Opening
+                   first fails under a full descriptor table and used to leave
+                   the asynchronous command sharing the shell's parser input.
+                   A failed replacement must end this child rather than let it
+                   consume commands meant for its parent. */
+                (void)system_close(standard_input_descriptor);
+                do
+                        null_handle = system_open_at(AT_FDCWD,
+                                                     "/dev/null", 0);
+                while (null_handle == -4);
+
+                if (null_handle != standard_input_descriptor)
                 {
-                        system_duplicate(null_handle, 0, 0);
-                        system_close(null_handle);
+                        if (null_handle >= 0)
+                                system_close(null_handle);
+                        return false;
                 }
         }
+
+        return true;
 }
 
 /* Recognize only the command name whose bytes are already fixed in the
@@ -12224,7 +12239,9 @@ static bipolar exec_spawn_node(b32 index, bool background)
 
                 exec_asynchronous = background;
                 trap_default_all();
-                exec_child_signals(background, background);
+                if (!exec_child_signals(background && !monitor,
+                                        background && !monitor))
+                        system_call_1(syscall(exit_group), 126);
 
                 /* Raced from both sides, because either side alone loses:
                    the parent may reach setpgid after the child has exec'd,
@@ -12615,11 +12632,12 @@ static b32 exec_coproc(b32 index)
         b32 from[2];
         bipolar pair[2];
         bipolar child;
+        bool monitor = job_monitor();
 
         if (name_length > EXEC_COPROC_NAME)
                 return string_report(log_error, 1, "coproc: %s: name too long\n", name);
 
-        if (!shell_background_reserve(1))
+        if (!job_reserve(1, false))
                 return string_report(log_error, 2,
                                      "No room to retain coprocess\n");
 
@@ -12645,7 +12663,13 @@ static b32 exec_coproc(b32 index)
 
         job_child_watch();
         exec_node_parent_policy_prepare(node->left);
-        child = exec_stage_spawn(node->left, into[0], from[1]);
+        /* A monitored coprocess needs the same two-sided setpgid race as a
+           monitored pipeline stage. The Spark request has no child-side race
+           and may already have exec'd before the parent can move it. */
+        if (monitor)
+                child = -1;
+        else
+                child = exec_stage_spawn(node->left, into[0], from[1]);
 
         if (child < 0)
                 child = shell_clone();
@@ -12654,7 +12678,17 @@ static b32 exec_coproc(b32 index)
         {
                 trap_default_all();
                 exec_asynchronous = true;
-                exec_child_signals(true, false);
+
+                if (monitor)
+                {
+                        job_group_set(0, 0);
+                        shell_default(JOB_SIGNAL_STOP_KEY);
+                        shell_default(JOB_SIGNAL_TTY_INPUT);
+                        shell_default(JOB_SIGNAL_TTY_OUTPUT);
+                }
+
+                if (!exec_child_signals(!monitor, false))
+                        system_call_1(syscall(exit_group), 126);
                 exec_child_began();
 
                 if (parse_nodes[node->left].kind == NODE_SUBSHELL)
@@ -12670,6 +12704,9 @@ static b32 exec_coproc(b32 index)
 
                 exec_child_leave(status);
         }
+
+        if (monitor && child > 0)
+                job_group_set(child, child);
 
         system_close(into[0]);
         system_close(from[1]);
@@ -12699,6 +12736,9 @@ static b32 exec_coproc(b32 index)
         // wait can be told what it answered.
         if (!shell_background_started(address_of child, 1, false, false))
                 log_error(str("No room to retain coprocess\n"));
+
+        job_started(address_of child, 1, monitor ? child : 0, index,
+                    false, true);
 
         exec_coproc_remember(name, name_length, child);
 
@@ -12912,8 +12952,10 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         if (!trap_ignored(SIGNAL_PIPE))
                                 shell_default(SIGNAL_PIPE);
                         exec_asynchronous = background;
-                        exec_child_signals(background,
-                                           background && upstream < 0);
+                        if (!exec_child_signals(
+                                background && !monitor,
+                                background && !monitor && upstream < 0))
+                                system_call_1(syscall(exit_group), 126);
                         exec_child_began();
                         /* A pipeline stage is a child, and dash's jobs
                            listing is this shell's table, not the parent's.

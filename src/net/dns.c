@@ -72,6 +72,10 @@
 #define DNS_REFUSED (-6)
 #define DNS_NO_RANDOM (-7)
 
+/* Internal result: a validated UDP response asks for the same transaction to
+   continue over TCP.  It is never returned to a caller. */
+#define DNS_TRY_TCP (-8)
+
 /*
         The name, as labels.
 
@@ -353,6 +357,141 @@ static bipolar dns_answer_address(p8 address_to message, positive size,
         return DNS_MALFORMED;
 }
 
+/* The transaction id and exact echoed question are the reply identity.  UDP
+   uses this predicate to discard raced junk within the original deadline;
+   TCP has one framed reply and treats an identity mismatch as malformed. */
+static bool dns_reply_identity(
+    p8 address_to reply, positive size, p16 id,
+    p8 address_to request, positive question_length)
+{
+        return size >= DNS_HEADER && network_load_16(reply) == id &&
+               network_load_16(reply + 4) == 1 &&
+               size >= DNS_HEADER + question_length &&
+               !memory_compare(reply + DNS_HEADER,
+                               request + DNS_HEADER, question_length);
+}
+
+/* UDP and TCP answers pass through the same response, rcode and record
+   validation.  Only a validated truncation indication has a distinct internal
+   result so the transport can retry it over TCP. */
+static bipolar dns_reply_result(
+    p8 address_to reply, positive size, p16 id,
+    p8 address_to request, positive question_length,
+    p32 address_to found)
+{
+        p16 flags;
+        p16 answers;
+        positive at;
+
+        positive available = size > DNS_MAX_MESSAGE ? DNS_MAX_MESSAGE : size;
+
+        if (!dns_reply_identity(reply, available, id, request,
+                                question_length))
+                return DNS_MALFORMED;
+
+        flags = network_load_16(reply + 2);
+        if (!(flags & DNS_FLAG_RESPONSE))
+                return DNS_MALFORMED;
+        if (flags & DNS_FLAG_TRUNCATED)
+                return DNS_TRY_TCP;
+        /* MSG_TRUNC reports the datagram's true length.  A matching TC reply
+           needs only its complete header and question to authorize TCP; any
+           oversized response that claims to be complete remains malformed. */
+        if (size > DNS_MAX_MESSAGE)
+                return DNS_MALFORMED;
+
+        switch (flags & DNS_CODE_MASK)
+        {
+        case 0:
+                break;
+        case 3:
+                return DNS_NO_SUCH_NAME;
+        default:
+                return DNS_REFUSED;
+        }
+
+        answers = network_load_16(reply + 6);
+        at = DNS_HEADER + question_length;
+        return dns_answer_address(reply, size, at, answers, DNS_HEADER, found);
+}
+
+static bipolar dns_stream_connect_until(
+    const socket_address_internet address_to where,
+    const network_deadline address_to deadline)
+{
+        bipolar handle = socket_new(
+            AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+        bipolar status;
+
+        if (handle < 0)
+                return -1;
+
+        status = socket_connect((b32)handle, where, sizeof *where);
+        if (status < 0 && status != -EINPROGRESS && status != -EALREADY &&
+            status != NETWORK_INTERRUPTED)
+                goto failed;
+
+        if (status < 0)
+        {
+                b32 error = 0;
+                p32 error_size = sizeof error;
+
+                if (network_wait_writable_until(handle, deadline) <= 0 ||
+                    socket_option_get((b32)handle, SOL_SOCKET, SO_ERROR,
+                                      address_of error, address_of error_size) < 0 ||
+                    error_size != sizeof error || error)
+                        goto failed;
+        }
+
+        return handle;
+
+failed:
+        socket_close((b32)handle);
+        return -1;
+}
+
+static bipolar dns_retry_tcp(
+    const socket_address_internet address_to where,
+    p8 address_to request, positive request_length, p16 id,
+    positive question_length, p32 address_to found,
+    const network_deadline address_to deadline)
+{
+        p8 reply[DNS_MAX_MESSAGE];
+        p8 frame[2];
+        bipolar handle = dns_stream_connect_until(where, deadline);
+        p16 length;
+        bipolar result = DNS_NO_REPLY;
+
+        if (handle < 0)
+                return DNS_NO_REPLY;
+
+        network_store_16(frame, (p16)request_length);
+        if (!network_stream_send_all_until(handle, frame, sizeof frame,
+                                           deadline) ||
+            !network_stream_send_all_until(handle, request, request_length,
+                                           deadline) ||
+            !network_stream_read_all(handle, frame, sizeof frame, deadline))
+                goto done;
+
+        length = network_load_16(frame);
+        if (length > sizeof reply)
+        {
+                result = DNS_MALFORMED;
+                goto done;
+        }
+        if (!network_stream_read_all(handle, reply, length, deadline))
+                goto done;
+
+        result = dns_reply_result(reply, length, id, request,
+                                  question_length, found);
+        if (result == DNS_TRY_TCP)
+                result = DNS_MALFORMED;
+
+done:
+        socket_close((b32)handle);
+        return result;
+}
+
 /*
         The nameserver, out of resolv.conf.
 
@@ -428,8 +567,8 @@ static bipolar dns_server_at(string_address path, positive wanted)
         gives up and says so. The wait is a poll on the socket rather than a
         receive timeout, which keeps a timeval out of the assembly graph.
 */
-static bipolar dns_resolve(p32 server, string_address name, p32 address_to found,
-                           positive seconds)
+static bipolar dns_resolve_at(p32 server, p16 port, string_address name,
+                              p32 address_to found, positive seconds)
 {
         p8 request[DNS_MAX_MESSAGE];
         p8 reply[DNS_MAX_MESSAGE];
@@ -438,9 +577,6 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         bipolar written;
         bipolar got;
         bipolar failure = DNS_NO_REPLY;
-        p16 flags;
-        positive at;
-        positive answers;
         positive question_length;
         network_deadline deadline;
 
@@ -465,13 +601,18 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 
         question_length = (positive)written + 4;
 
+        /* TCP fallback spends only what the original UDP transaction leaves.
+           Start the one monotonic budget before any socket operation. */
+        if (!network_deadline_begin(address_of deadline, seconds, 0))
+                return DNS_NO_REPLY;
+
         handle = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 
         if (handle < 0)
                 return DNS_NO_SERVER;
 
         socket_address_internet where = {
-            .family = AF_INET, .port = network_order_16(DNS_PORT),
+            .family = AF_INET, .port = network_order_16(port),
             .host = network_order_32(server)};
 
         if (socket_connect((b32)handle, address_of where, sizeof where) < 0)
@@ -481,8 +622,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         }
 
         if (socket_send((b32)handle, request, DNS_HEADER + question_length,
-                        0, 0, 0) < 0 ||
-            !network_deadline_begin(address_of deadline, seconds, 0))
+                        0, 0, 0) < 0)
                 goto failed;
 
         /* A connected UDP socket authenticates the source address, not the
@@ -492,6 +632,8 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
            original total deadline. */
         for (;;)
         {
+                positive available;
+
                 got = network_wait_readable_until(handle, address_of deadline);
 
                 if (got <= 0)
@@ -500,11 +642,12 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
                 got = socket_receive((b32)handle, reply, sizeof reply,
                                      MSG_TRUNC, 0, 0);
 
-                if (got < DNS_HEADER || network_load_16(reply) != id ||
-                    network_load_16(reply + 4) != 1 ||
-                    (positive)got < DNS_HEADER + question_length ||
-                    memory_compare(reply + DNS_HEADER,
-                                   request + DNS_HEADER, question_length))
+                if (got < 0)
+                        continue;
+                available = (positive)got > sizeof reply
+                    ? sizeof reply : (positive)got;
+                if (!dns_reply_identity(reply, available, id, request,
+                                        question_length))
                         continue;
 
                 break;
@@ -512,35 +655,24 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 
         socket_close((b32)handle);
 
-        //      MSG_TRUNC answers with the true length, so a reply that did
-        //      not fit is refused rather than parsed as far as it got.
-        if ((positive)got > sizeof(reply))
-                return DNS_MALFORMED;
-
-        flags = network_load_16(reply + 2);
-
-        if (!(flags & DNS_FLAG_RESPONSE) || (flags & DNS_FLAG_TRUNCATED))
-                return DNS_MALFORMED;
-
-        switch (flags & DNS_CODE_MASK)
-        {
-        case 0:
-                break;
-        case 3:
-                return DNS_NO_SUCH_NAME;
-        default:
-                return DNS_REFUSED;
-        }
-
-        answers = network_load_16(reply + 6);
-        at = DNS_HEADER + question_length;
-
-        return dns_answer_address(reply, (positive)got, at, (p16)answers,
-                                  DNS_HEADER, found);
+        failure = dns_reply_result(reply, (positive)got, id, request,
+                                   question_length, found);
+        if (failure == DNS_TRY_TCP)
+                return dns_retry_tcp(address_of where, request,
+                                     DNS_HEADER + question_length, id,
+                                     question_length, found,
+                                     address_of deadline);
+        return failure;
 
 failed:
         socket_close((b32)handle);
         return failure;
+}
+
+static bipolar dns_resolve(p32 server, string_address name, p32 address_to found,
+                           positive seconds)
+{
+        return dns_resolve_at(server, DNS_PORT, name, found, seconds);
 }
 
 /*

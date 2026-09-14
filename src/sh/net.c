@@ -973,9 +973,10 @@ static bipolar net_write_resolv(p32 nameserver)
 /*
         What this machine is holding, and since when.
 
-        A lease has a time on it and half of that is when a client should ask
-        to keep what it has. Nothing else here needs a clock, so this is the
-        only place one is read.
+        A lease has a renewal boundary (T1), a rebinding boundary (T2), and an
+        expiry.  Failed requests are retried within the remaining interval;
+        the address is kept until a server rejects it or expiry is reached.
+        Nothing else here needs a clock, so this is the only place one is read.
 */
 typedef struct
 {
@@ -984,6 +985,9 @@ typedef struct
         p8 hardware[6];
         dhcp_lease lease;
         positive taken;
+        p32 retry;
+        bool address_owned;
+        bool route_owned;
         bool lost;
 } net_holding;
 
@@ -994,8 +998,7 @@ static positive net_seconds(void)
         timespec now = {0, 0};
 
         //      A clock that will not answer leaves every lease looking
-        //      infinitely old, which renews immediately and often rather than
-        //      never -- the safe way round.
+        //      expired, so an address is never kept beyond an unknown deadline.
         if (system_call_2(syscall(clock_gettime), NET_CLOCK_MONOTONIC,
                           (positive)address_of now))
                 return 0;
@@ -1030,6 +1033,26 @@ static bool net_holds_route(const net_holding address_to held, p32 index,
                (!lease->router || held->index == index);
 }
 
+/* Kernel objects are removed only when an exclusive create, or a transition
+   from an object already owned here, established that right.  A matching
+   address or route discovered at process start remains somebody else's. */
+static bool net_owns_address(const net_holding address_to held)
+{
+        return held && held->index && held->lease.address &&
+               held->address_owned;
+}
+
+static bool net_owns_route(const net_holding address_to held)
+{
+        return held && held->index && held->lease.router && held->route_owned;
+}
+
+static bool net_ownership_next(bool owned, bool changed, bool installed,
+                               bool exists)
+{
+        return exists && (changed ? installed : owned);
+}
+
 /* Unsigned subtraction deliberately treats a clock failure or regression as
    an expired lease: keeping an address past the server's deadline can create
    an address collision, while releasing it merely requires reacquisition. */
@@ -1046,17 +1069,82 @@ static bool net_lease_expired_at(const net_holding address_to held,
 static positive net_lease_due_in(const net_holding address_to held,
                                  positive now)
 {
-        positive half;
         positive gone;
+        positive retry;
 
         if (!held || !held->index || !held->lease.seconds)
                 return 0;
+        if (held->lost)
+                return 1;
         if (net_lease_expired_at(held, now))
                 return 1;
 
-        half = held->lease.seconds / 2;
         gone = now - held->taken;
-        return gone >= half ? 1 : half - gone;
+        retry = held->retry ? held->retry : held->lease.renewal;
+        if (!retry || retry > held->lease.seconds)
+                retry = held->lease.seconds;
+        return gone >= retry ? 1 : retry - gone;
+}
+
+static bool net_lease_rebinding_at(const net_holding address_to held,
+                                   positive now)
+{
+        return held && held->index && held->taken && held->lease.rebinding &&
+               now >= held->taken &&
+               now - held->taken >= held->lease.rebinding;
+}
+
+/* A request never waits beyond the next state boundary.  This is observable
+   for very short but legal leases: a four-second socket deadline must not keep
+   using an address after T2 or expiry. */
+static positive net_lease_attempt_time(const net_holding address_to held,
+                                       positive now, bool rebinding)
+{
+        positive gone;
+        positive boundary;
+        positive remaining;
+
+        if (!held || net_lease_expired_at(held, now))
+                return 0;
+        gone = now - held->taken;
+        boundary = rebinding ? held->lease.seconds : held->lease.rebinding;
+        if (!boundary || gone >= boundary)
+                return 0;
+        remaining = boundary - gone;
+        return remaining < 4 ? remaining : 4;
+}
+
+/* RFC 2131 retries half way to the next state boundary, with sixty seconds as
+   the normal floor.  A short remaining lease clamps that floor at the boundary
+   so RENEWING cannot run past T2 and REBINDING cannot run past expiry. */
+static fn net_lease_retry_after(net_holding address_to held, positive now,
+                                bool attempted_rebinding)
+{
+        positive gone;
+        positive boundary;
+        positive remaining;
+        positive delay;
+
+        if (!held || net_lease_expired_at(held, now))
+                return;
+
+        gone = now - held->taken;
+        if (!attempted_rebinding &&
+            (!held->lease.rebinding || gone >= held->lease.rebinding))
+        {
+                held->retry = (p32)gone;
+                return;
+        }
+
+        boundary = attempted_rebinding ? held->lease.seconds
+                                       : held->lease.rebinding;
+        remaining = boundary - gone;
+        delay = remaining / 2;
+        if (delay < 60)
+                delay = 60;
+        if (delay > remaining)
+                delay = remaining;
+        held->retry = (p32)(gone + delay);
 }
 
 static bipolar net_holding_release(b32 handle, net_holding address_to held)
@@ -1066,7 +1154,7 @@ static bipolar net_holding_release(b32 handle, net_holding address_to held)
         if (!held || !held->index)
                 return 0;
 
-        if (held->lease.router)
+        if (net_owns_route(held))
         {
                 bipolar status = netlink_route_delete(handle, 0, 0,
                                                        held->lease.router,
@@ -1075,7 +1163,7 @@ static bipolar net_holding_release(b32 handle, net_holding address_to held)
                         failed = status;
         }
 
-        if (held->lease.address)
+        if (net_owns_address(held))
         {
                 bipolar status = netlink_address_delete(
                     handle, held->index, held->lease.address,
@@ -1118,7 +1206,7 @@ static bipolar net_lease_rollback(
 {
         bipolar failed = 0;
 
-        if (address_changed && previous)
+        if (address_changed && net_owns_address(previous))
         {
                 bipolar status = netlink_address_add(
                     handle, previous->index, previous->lease.address,
@@ -1129,7 +1217,7 @@ static bipolar net_lease_rollback(
 
         if (route_changed)
         {
-                if (previous && previous->lease.router)
+                if (net_owns_route(previous))
                 {
                         bipolar status = netlink_route_add(
                             handle, 0, 0, previous->lease.router,
@@ -1188,8 +1276,13 @@ static b32 net_apply_lease(b32 handle, p32 index, string_address name,
 
         if (address_changed)
         {
-                status = netlink_address_add(handle, index, lease->address,
-                                             dhcp_prefix_of(lease->mask));
+                status = net_owns_address(previous)
+                             ? netlink_address_add(
+                                   handle, index, lease->address,
+                                   dhcp_prefix_of(lease->mask))
+                             : netlink_address_acquire(
+                                   handle, index, lease->address,
+                                   dhcp_prefix_of(lease->mask));
                 if (status < 0)
                 {
                         doing = (string_address) "addr add";
@@ -1200,7 +1293,11 @@ static b32 net_apply_lease(b32 handle, p32 index, string_address name,
 
         if (route_changed && lease->router)
         {
-                status = netlink_route_add(handle, 0, 0, lease->router, index);
+                status = net_owns_route(previous)
+                             ? netlink_route_add(handle, 0, 0, lease->router,
+                                                 index)
+                             : netlink_route_acquire(handle, 0, 0,
+                                                     lease->router, index);
                 if (status < 0)
                 {
                         doing = (string_address) "route add";
@@ -1209,7 +1306,7 @@ static b32 net_apply_lease(b32 handle, p32 index, string_address name,
                 route_applied = true;
         }
 
-        if (route_changed && previous && previous->lease.router)
+        if (route_changed && net_owns_route(previous))
         {
                 status = netlink_route_delete(handle, 0, 0,
                                               previous->lease.router,
@@ -1226,7 +1323,7 @@ static b32 net_apply_lease(b32 handle, p32 index, string_address name,
            address_changed compares index, host and prefix, every previous
            object in this branch must be removed, including an otherwise
            identical address whose mask changed. */
-        if (address_changed && previous)
+        if (address_changed && net_owns_address(previous))
         {
                 status = netlink_address_delete(
                     handle, previous->index, previous->lease.address,
@@ -1267,8 +1364,18 @@ static b32 net_apply_lease(b32 handle, p32 index, string_address name,
 
         if (held)
         {
-                net_holding next = {.index = index, .lease = *lease,
-                                    .taken = net_seconds()};
+                net_holding next = {
+                    .index = index,
+                    .lease = *lease,
+                    .taken = net_seconds(),
+                    .retry = lease->renewal,
+                    .address_owned = net_ownership_next(
+                        net_owns_address(previous), address_changed,
+                        address_applied, lease->address != 0),
+                    .route_owned = net_ownership_next(
+                        net_owns_route(previous), route_changed,
+                        route_applied, lease->router != 0),
+                };
                 string_copy_max_end(next.name, name, IFNAME_SIZE - 1);
                 memory_copy(next.hardware, hardware, 6);
                 *held = next;
@@ -1571,11 +1678,11 @@ static b32 net_watch(void)
 
                         if (!ready)
                         {
-                                //      Nothing arrived, so this is the lease
-                                //      falling due. Ask to keep what we have;
-                                //      if the server will not say yes, start
-                                //      over, which is what a client does when
-                                //      the lease finally runs out anyway.
+                                /* Nothing arrived, so the current lease state
+                                   is due.  Unicast the renewal before T2,
+                                   broadcast the rebind after T2, and keep the
+                                   address across ordinary timeouts.  Only a
+                                   NAK or expiry starts discovery again. */
                                 if (!held.index || !held.lease.seconds)
                                         continue;
 
@@ -1599,13 +1706,22 @@ static b32 net_watch(void)
                                         continue;
                                 }
 
+                                positive now = net_seconds();
+                                bool rebinding = net_lease_rebinding_at(
+                                    address_of held, now);
+                                positive attempt = net_lease_attempt_time(
+                                    address_of held, now, rebinding);
                                 dhcp_lease renewed = held.lease;
-                                bipolar renewal = dhcp_renew(
-                                    held.name, held.hardware,
-                                    address_of renewed);
+                                bipolar renewal = rebinding
+                                    ? dhcp_rebind(held.name, held.hardware,
+                                                  address_of renewed, attempt)
+                                    : dhcp_renew(held.name, held.hardware,
+                                                 address_of renewed, attempt);
 
                                 if (renewal == DHCP_OK)
                                 {
+                                        bool applied = false;
+
                                         handle = netlink_open_groups(0);
 
                                         if (handle >= 0)
@@ -1618,20 +1734,34 @@ static b32 net_watch(void)
                                                         address_of held,
                                                         false))
                                                 {
-                                                        string_format(net_out, "ip: lease renewed on %w\n",
+                                                        applied = true;
+                                                        string_format(net_out, "ip: lease %s on %w\n",
+                                                                      rebinding ? (string_address)"rebound"
+                                                                                : (string_address)"renewed",
                                                                       writer_terminal_quoted_name,
                                                                       held.name);
                                                         net_flush();
                                                 }
                                                 socket_close((b32)handle);
                                         }
-                                        continue;
+                                        if (applied)
+                                                continue;
                                 }
 
-                                if (renewal == DHCP_REFUSED ||
-                                    net_lease_expired_at(address_of held,
-                                                         net_seconds()))
+                                {
+                                        positive now = net_seconds();
+
+                                        if (renewal != DHCP_REFUSED &&
+                                            !net_lease_expired_at(
+                                                address_of held, now))
+                                        {
+                                                net_lease_retry_after(
+                                                    address_of held, now,
+                                                    rebinding);
+                                                continue;
+                                        }
                                         held.lost = true;
+                                }
 
                                 handle = netlink_open_groups(0);
 

@@ -85,23 +85,44 @@ static bipolar network_wait_readable(bipolar handle, positive seconds,
         return descriptor_wait_readable(handle, address_of limit, null);
 }
 
-static bipolar network_wait_readable_until(
-    bipolar handle, const network_deadline address_to deadline)
+static bipolar network_wait_until(
+    bipolar handle, b16 events,
+    const network_deadline address_to deadline)
 {
-        positive seconds;
-        positive nanoseconds;
-        bipolar ready;
-
-        do
+        for (;;)
         {
+                positive seconds;
+                positive nanoseconds;
+                timespec limit;
+                system_poll_descriptor waited = {(b32)handle, events, 0};
+                bipolar ready;
+
                 if (!network_deadline_left(deadline, address_of seconds,
                                            address_of nanoseconds))
                         return 0;
+                limit.tv_sec = (b64)seconds;
+                limit.tv_nsec = (b64)nanoseconds;
+                ready = system_poll_wait(address_of waited, 1,
+                                         address_of limit, null);
+                if (ready == NETWORK_INTERRUPTED)
+                        continue;
+                if (ready > 0 &&
+                    (waited.returned & SYSTEM_POLL_INVALID))
+                        return -9;
+                return ready;
+        }
+}
 
-                ready = network_wait_readable(handle, seconds, nanoseconds);
-        } while (ready == NETWORK_INTERRUPTED);
+static bipolar network_wait_readable_until(
+    bipolar handle, const network_deadline address_to deadline)
+{
+        return network_wait_until(handle, SYSTEM_POLL_READ, deadline);
+}
 
-        return ready;
+static bipolar network_wait_writable_until(
+    bipolar handle, const network_deadline address_to deadline)
+{
+        return network_wait_until(handle, SYSTEM_POLL_WRITE, deadline);
 }
 
 /* Deadline-bound stream reads must not enter a blocking read merely because
@@ -166,6 +187,42 @@ static bool network_stream_send_all(bipolar handle, p8 address_to data,
 
                 if (wrote == NETWORK_INTERRUPTED)
                         continue;
+                if (wrote <= 0 || (positive)wrote > length - sent)
+                        return false;
+                sent += (positive)wrote;
+        }
+
+        return true;
+}
+
+/* A nonblocking stream write consumes one absolute budget across partial
+   progress, interruption and backpressure.  This is the write-side companion
+   to network_stream_read_all(..., deadline). */
+static bool network_stream_send_all_until(
+    bipolar handle, p8 address_to data, positive length,
+    const network_deadline address_to deadline)
+{
+        positive sent = 0;
+
+        while (sent < length)
+        {
+                positive seconds;
+                positive nanoseconds;
+                bipolar wrote;
+
+                if (!network_deadline_left(deadline, address_of seconds,
+                                           address_of nanoseconds))
+                        return false;
+                wrote = socket_send((b32)handle, data + sent, length - sent,
+                                    MSG_DONTWAIT | MSG_NOSIGNAL, null, 0);
+                if (wrote == NETWORK_INTERRUPTED)
+                        continue;
+                if (wrote == NETWORK_TRY_AGAIN)
+                {
+                        if (network_wait_writable_until(handle, deadline) <= 0)
+                                return false;
+                        continue;
+                }
                 if (wrote <= 0 || (positive)wrote > length - sent)
                         return false;
                 sent += (positive)wrote;

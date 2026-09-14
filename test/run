@@ -3971,6 +3971,70 @@ lane_shell()
                 shell_failed=1
         fi
 
+        # POSIX disconnects an asynchronous command from the shell's input
+        # only while job control is off.  Make fd 0 itself available before
+        # opening /dev/null: opening first under a full descriptor table used
+        # to fail silently and let the child consume the parent's input.
+        async_null_result=$(
+                printf X | "$farm/bash" -c '
+                        ulimit -n 10
+                        exec 3</dev/null; exec 4</dev/null
+                        exec 5</dev/null; exec 6</dev/null
+                        exec 7</dev/null; exec 8</dev/null; exec 9</dev/null
+                        { IFS= read -r -N1 x; printf "%s:%s\n" "$?" "$x"; } &
+                        wait'
+        )
+        monitor_input_result=$(
+                printf X | "$farm/bash" -c '
+                        set -m
+                        { IFS= read -r -N1 x; printf "%s:%s\n" "$?" "$x"; } &
+                        wait' 2>/dev/null
+        )
+        monitor_signal_result=$(
+                "$farm/bash" -c '
+                        set -m
+                        sleep 5 & p=$!
+                        /bin/sleep 0.1
+                        kill -INT "$p"
+                        wait "$p"
+                        printf "%s\n" "$?"' 2>/dev/null
+        )
+        coproc_signal_result=$(
+                "$farm/bash" -c '
+                        set -m
+                        coproc C { sleep 5; }
+                        p=$C_PID
+                        /bin/sleep 0.1
+                        kill -INT "$p"
+                        wait "$p"
+                        printf "%s\n" "$?"' 2>/dev/null
+        )
+        coproc_job_result=$(
+                "$farm/bash" -c '
+                        set -m
+                        coproc C { sleep 5; }
+                        p=$C_PID
+                        listed=$(jobs -p)
+                        set -- $(/bin/ps -o pgid= -p "$p")
+                        pg=$1
+                        ok=1
+                        [ "$listed" = "$p" ] && [ "$pg" = "$p" ] && ok=0
+                        kill -TERM "$p"
+                        wait "$p"
+                        printf "%s\n" "$ok"' 2>/dev/null
+        )
+        if [ "$async_null_result" = 1: ] &&
+                [ "$monitor_input_result" = 0:X ] &&
+                [ "$monitor_signal_result" = 130 ] &&
+                [ "$coproc_signal_result" = 130 ] &&
+                [ "$coproc_job_result" = 0 ]; then
+                tally shell-background-input-policy 5 5
+        else
+                tally shell-background-input-policy 0 5
+                note "background input policy answered [$async_null_result][$monitor_input_result][$monitor_signal_result][$coproc_signal_result][$coproc_job_result]"
+                shell_failed=1
+        fi
+
         # A named script remains open while its commands run. Before the
         # parser-source gate, confined awk could append a command that this
         # unrestricted shell then read and executed. Keep an unrestricted

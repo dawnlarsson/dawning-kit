@@ -1276,115 +1276,157 @@ static bipolar crypto_fe_cmp(const p64 address_to a, const p64 address_to b,
         return 0;
 }
 
+/* Return the final borrow from a-b.  Unlike crypto_fe_cmp, this always walks
+   every limb and is suitable for decisions derived from private points. */
+static p64 crypto_fe_subtract_raw(p64 address_to d,
+                                  const p64 address_to a,
+                                  const p64 address_to b, positive n)
+{
+        crypto_wide borrow = 0;
+
+        for (positive i = 0; i < n; i++)
+        {
+                crypto_wide value = (crypto_wide)a[i] - b[i] - borrow;
+
+                d[i] = (p64)value;
+                borrow = (value >> 64) & 1;
+        }
+
+        return (p64)borrow;
+}
+
+static p64 crypto_fe_zero_bit(const p64 address_to a, positive n)
+{
+        p64 combined = 0;
+
+        for (positive i = 0; i < n; i++)
+                combined |= a[i];
+
+        return ((combined | (0 - combined)) >> 63) ^ 1;
+}
+
+static fn crypto_fe_select(p64 address_to d, const p64 address_to a,
+                           const p64 address_to b, positive n, p64 choose_b)
+{
+        p64 mask = 0 - choose_b;
+
+        for (positive i = 0; i < n; i++)
+                d[i] = (a[i] & ~mask) | (b[i] & mask);
+
+        crypto_forget(address_of mask, sizeof mask);
+}
+
 static bool crypto_fe_is_zero(const p64 address_to a, positive n)
 {
-        positive i;
-
-        for (i = 0; i < n; i++)
-                if (a[i])
-                        return false;
-        return true;
+        return crypto_fe_zero_bit(a, n) != 0;
 }
 
 static fn crypto_fe_add(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const p64 address_to p, positive n)
 {
+        p64 sum[CRYPTO_FE_MAX];
+        p64 reduced[CRYPTO_FE_MAX];
         crypto_wide carry = 0;
-        positive i;
+        p64 borrow;
+        p64 reduce;
 
-        for (i = 0; i < n; i++)
+        for (positive i = 0; i < n; i++)
         {
                 carry += (crypto_wide)a[i] + b[i];
-                d[i] = (p64)carry;
+                sum[i] = (p64)carry;
                 carry >>= 64;
         }
 
-        if (carry || crypto_fe_cmp(d, p, n) >= 0)
-        {
-                crypto_wide borrow = 0;
-                for (i = 0; i < n; i++)
-                {
-                        crypto_wide t = (crypto_wide)d[i] - p[i] - borrow;
-                        d[i] = (p64)t;
-                        borrow = (t >> 64) & 1;
-                }
-        }
+        borrow = crypto_fe_subtract_raw(reduced, sum, p, n);
+        reduce = (p64)carry | (borrow ^ 1);
+        crypto_fe_select(d, sum, reduced, n, reduce);
+        crypto_forget(sum, sizeof sum);
+        crypto_forget(reduced, sizeof reduced);
+        crypto_forget(address_of carry, sizeof carry);
+        crypto_forget(address_of borrow, sizeof borrow);
+        crypto_forget(address_of reduce, sizeof reduce);
 }
 
 static fn crypto_fe_sub(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const p64 address_to p, positive n)
 {
-        crypto_wide borrow = 0;
-        positive i;
+        p64 difference[CRYPTO_FE_MAX];
+        p64 restored[CRYPTO_FE_MAX];
+        p64 borrow = crypto_fe_subtract_raw(difference, a, b, n);
+        crypto_wide carry = 0;
 
-        for (i = 0; i < n; i++)
+        for (positive i = 0; i < n; i++)
         {
-                crypto_wide t = (crypto_wide)a[i] - b[i] - borrow;
-                d[i] = (p64)t;
-                borrow = (t >> 64) & 1;
+                carry += (crypto_wide)difference[i] + p[i];
+                restored[i] = (p64)carry;
+                carry >>= 64;
         }
 
-        if (borrow)
-        {
-                crypto_wide carry = 0;
-                for (i = 0; i < n; i++)
-                {
-                        carry += (crypto_wide)d[i] + p[i];
-                        d[i] = (p64)carry;
-                        carry >>= 64;
-                }
-        }
+        crypto_fe_select(d, difference, restored, n, borrow);
+        crypto_forget(difference, sizeof difference);
+        crypto_forget(restored, sizeof restored);
+        crypto_forget(address_of borrow, sizeof borrow);
+        crypto_forget(address_of carry, sizeof carry);
 }
 
 static fn crypto_fe_mul(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const p64 address_to p, positive n)
 {
-        p64 t[128];
-        p64 rem[65];
+        p64 product[CRYPTO_FE_MAX * 2];
+        p64 remainder[CRYPTO_FE_MAX + 1];
+        p64 reduced[CRYPTO_FE_MAX + 1];
         positive i;
         positive j;
         positive bit;
 
-        memory_fill(t, 0, sizeof(t));
+        memory_fill(product, 0, sizeof product);
         for (i = 0; i < n; i++)
         {
                 crypto_wide carry = 0;
                 for (j = 0; j < n; j++)
                 {
-                        carry += (crypto_wide)t[i + j] + (crypto_wide)a[i] * b[j];
-                        t[i + j] = (p64)carry;
+                        carry += (crypto_wide)product[i + j] +
+                                 (crypto_wide)a[i] * b[j];
+                        product[i + j] = (p64)carry;
                         carry >>= 64;
                 }
-                t[i + n] = (p64)carry;
+                product[i + n] = (p64)carry;
         }
 
-        memory_fill(rem, 0, sizeof(rem));
+        memory_fill(remainder, 0, sizeof remainder);
         bit = n * 2 * 64;
         while (bit)
         {
                 crypto_wide carry = 0;
+                p64 borrow;
+                p64 reduce;
+                p64 mask;
+
                 bit--;
                 for (i = 0; i <= n; i++)
                 {
-                        crypto_wide u = ((crypto_wide)rem[i] << 1) | carry;
-                        rem[i] = (p64)u;
+                        crypto_wide u =
+                            ((crypto_wide)remainder[i] << 1) | carry;
+                        remainder[i] = (p64)u;
                         carry = u >> 64;
                 }
-                rem[0] |= (t[bit / 64] >> (bit % 64)) & 1;
-                if (rem[n] || crypto_fe_cmp(rem, p, n) >= 0)
-                {
-                        crypto_wide borrow = 0;
-                        for (i = 0; i < n; i++)
-                        {
-                                crypto_wide u = (crypto_wide)rem[i] - p[i] - borrow;
-                                rem[i] = (p64)u;
-                                borrow = (u >> 64) & 1;
-                        }
-                        rem[n] -= (p64)borrow;
-                }
+                remainder[0] |=
+                    (product[bit / 64] >> (bit % 64)) & 1;
+
+                borrow = crypto_fe_subtract_raw(
+                    reduced, remainder, p, n);
+                reduced[n] = remainder[n] - borrow;
+                reduce = remainder[n] | (borrow ^ 1);
+                mask = 0 - reduce;
+                for (i = 0; i <= n; i++)
+                        remainder[i] = (remainder[i] & ~mask) |
+                                       (reduced[i] & mask);
         }
 
-        memory_copy(d, rem, n * 8);
+        memory_copy(d, remainder, n * 8);
+        crypto_forget(product, sizeof product);
+        crypto_forget(remainder, sizeof remainder);
+        crypto_forget(reduced, sizeof reduced);
 }
 
 static fn crypto_fe_sqr(p64 address_to d, const p64 address_to a,
@@ -1401,6 +1443,7 @@ static fn crypto_fe_inv(p64 address_to d, const p64 address_to a,
         p64 base[CRYPTO_FE_MAX];
         p64 result[CRYPTO_FE_MAX];
         p64 two[CRYPTO_FE_MAX];
+        p64 tmp[CRYPTO_FE_MAX];
         positive i;
         positive bit;
         positive bits = n * 64;
@@ -1416,18 +1459,21 @@ static fn crypto_fe_inv(p64 address_to d, const p64 address_to a,
         {
                 if ((exp[i / 64] >> (i % 64)) & 1)
                 {
-                        p64 tmp[CRYPTO_FE_MAX];
                         crypto_fe_mul(tmp, result, base, p, n);
                         memory_copy(result, tmp, n * 8);
                 }
                 {
-                        p64 tmp[CRYPTO_FE_MAX];
                         crypto_fe_sqr(tmp, base, p, n);
                         memory_copy(base, tmp, n * 8);
                 }
         }
 
         memory_copy(d, result, n * 8);
+        crypto_forget(exp, sizeof exp);
+        crypto_forget(base, sizeof base);
+        crypto_forget(result, sizeof result);
+        crypto_forget(two, sizeof two);
+        crypto_forget(tmp, sizeof tmp);
         (void)bit;
 }
 
@@ -1573,6 +1619,230 @@ static fn crypto_point_add(crypto_point address_to r, crypto_point address_to p,
         r->p = mod;
 }
 
+/* The ECDH multiplier cannot use the public-signature helpers above: their
+   exceptional-point branches and bit-conditional addition reveal a private
+   scalar to a branch or cache observer.  These helpers keep the ladder's
+   adjacent-point invariant and select its infinity cases with masks.  Field
+   reduction is likewise branchless, so each scalar bit follows the same
+   operations and addresses. */
+static fn crypto_point_select(crypto_point address_to d,
+                              const crypto_point address_to a,
+                              const crypto_point address_to b, p64 choose_b)
+{
+        p64 mask = 0 - choose_b;
+
+        for (positive i = 0; i < CRYPTO_FE_MAX; i++)
+        {
+                d->x[i] = (a->x[i] & ~mask) | (b->x[i] & mask);
+                d->y[i] = (a->y[i] & ~mask) | (b->y[i] & mask);
+                d->z[i] = (a->z[i] & ~mask) | (b->z[i] & mask);
+        }
+        d->n = a->n;
+        d->p = a->p;
+        crypto_forget(address_of mask, sizeof mask);
+}
+
+static fn crypto_point_cswap(crypto_point address_to a,
+                             crypto_point address_to b, p64 swap)
+{
+        p64 mask = 0 - swap;
+
+        for (positive i = 0; i < CRYPTO_FE_MAX; i++)
+        {
+                p64 x = mask & (a->x[i] ^ b->x[i]);
+                p64 y = mask & (a->y[i] ^ b->y[i]);
+                p64 z = mask & (a->z[i] ^ b->z[i]);
+
+                a->x[i] ^= x;
+                b->x[i] ^= x;
+                a->y[i] ^= y;
+                b->y[i] ^= y;
+                a->z[i] ^= z;
+                b->z[i] ^= z;
+        }
+        crypto_forget(address_of mask, sizeof mask);
+}
+
+static fn crypto_point_double_private(crypto_point address_to r,
+                                      const crypto_point address_to p)
+{
+        p64 xx[CRYPTO_FE_MAX], zz[CRYPTO_FE_MAX], yy[CRYPTO_FE_MAX];
+        p64 yyyy[CRYPTO_FE_MAX], s[CRYPTO_FE_MAX], m[CRYPTO_FE_MAX];
+        p64 tmp[CRYPTO_FE_MAX], tmp2[CRYPTO_FE_MAX];
+        positive n = p->n;
+        const p64 address_to mod = p->p;
+        crypto_point result;
+
+        crypto_point_zero(address_of result, mod, n);
+        crypto_fe_sqr(xx, p->x, mod, n);
+        crypto_fe_sqr(zz, p->z, mod, n);
+        crypto_fe_sqr(zz, zz, mod, n);
+        crypto_fe_sqr(yy, p->y, mod, n);
+        crypto_fe_sqr(yyyy, yy, mod, n);
+
+        crypto_fe_add(tmp, p->x, yy, mod, n);
+        crypto_fe_sqr(tmp2, tmp, mod, n);
+        crypto_fe_sub(tmp, tmp2, xx, mod, n);
+        crypto_fe_sub(tmp, tmp, yyyy, mod, n);
+        crypto_fe_add(s, tmp, tmp, mod, n);
+
+        crypto_fe_sub(tmp, xx, zz, mod, n);
+        crypto_fe_add(m, tmp, tmp, mod, n);
+        crypto_fe_add(m, m, tmp, mod, n);
+
+        crypto_fe_sqr(tmp, m, mod, n);
+        crypto_fe_add(tmp2, s, s, mod, n);
+        crypto_fe_sub(result.x, tmp, tmp2, mod, n);
+
+        crypto_fe_sub(tmp, s, result.x, mod, n);
+        crypto_fe_mul(tmp2, m, tmp, mod, n);
+        crypto_fe_add(tmp, yyyy, yyyy, mod, n);
+        crypto_fe_add(tmp, tmp, tmp, mod, n);
+        crypto_fe_add(tmp, tmp, tmp, mod, n);
+        crypto_fe_sub(result.y, tmp2, tmp, mod, n);
+
+        crypto_fe_add(tmp, p->y, p->y, mod, n);
+        crypto_fe_mul(result.z, tmp, p->z, mod, n);
+        *r = result;
+
+        crypto_forget(xx, sizeof xx);
+        crypto_forget(zz, sizeof zz);
+        crypto_forget(yy, sizeof yy);
+        crypto_forget(yyyy, sizeof yyyy);
+        crypto_forget(s, sizeof s);
+        crypto_forget(m, sizeof m);
+        crypto_forget(tmp, sizeof tmp);
+        crypto_forget(tmp2, sizeof tmp2);
+        crypto_forget(address_of result, sizeof result);
+}
+
+static fn crypto_point_add_private(crypto_point address_to r,
+                                   const crypto_point address_to p,
+                                   const crypto_point address_to q)
+{
+        p64 z1z1[CRYPTO_FE_MAX], z2z2[CRYPTO_FE_MAX];
+        p64 u1[CRYPTO_FE_MAX], u2[CRYPTO_FE_MAX];
+        p64 s1[CRYPTO_FE_MAX], s2[CRYPTO_FE_MAX];
+        p64 h[CRYPTO_FE_MAX], rr[CRYPTO_FE_MAX], hh[CRYPTO_FE_MAX];
+        p64 hhh[CRYPTO_FE_MAX], v[CRYPTO_FE_MAX];
+        p64 tmp[CRYPTO_FE_MAX], tmp2[CRYPTO_FE_MAX];
+        positive n = p->n;
+        const p64 address_to mod = p->p;
+        crypto_point sum;
+        p64 p_infinity;
+        p64 q_infinity;
+
+        crypto_point_zero(address_of sum, mod, n);
+        crypto_fe_sqr(z1z1, p->z, mod, n);
+        crypto_fe_sqr(z2z2, q->z, mod, n);
+        crypto_fe_mul(u1, p->x, z2z2, mod, n);
+        crypto_fe_mul(u2, q->x, z1z1, mod, n);
+        crypto_fe_mul(tmp, q->z, z2z2, mod, n);
+        crypto_fe_mul(s1, p->y, tmp, mod, n);
+        crypto_fe_mul(tmp, p->z, z1z1, mod, n);
+        crypto_fe_mul(s2, q->y, tmp, mod, n);
+
+        crypto_fe_sub(h, u2, u1, mod, n);
+        crypto_fe_sub(rr, s2, s1, mod, n);
+        crypto_fe_sqr(hh, h, mod, n);
+        crypto_fe_mul(hhh, h, hh, mod, n);
+        crypto_fe_mul(v, u1, hh, mod, n);
+
+        crypto_fe_sqr(tmp, rr, mod, n);
+        crypto_fe_sub(tmp, tmp, hhh, mod, n);
+        crypto_fe_add(tmp2, v, v, mod, n);
+        crypto_fe_sub(sum.x, tmp, tmp2, mod, n);
+
+        crypto_fe_sub(tmp, v, sum.x, mod, n);
+        crypto_fe_mul(tmp2, rr, tmp, mod, n);
+        crypto_fe_mul(tmp, s1, hhh, mod, n);
+        crypto_fe_sub(sum.y, tmp2, tmp, mod, n);
+
+        crypto_fe_mul(tmp, p->z, q->z, mod, n);
+        crypto_fe_mul(sum.z, tmp, h, mod, n);
+
+        /* Ladder operands differ by the fixed non-infinite input point.  The
+           generic formula therefore cannot see the equal-point exception;
+           opposite points already produce z=0.  Only the two fixed startup
+           infinity cases need masked selection. */
+        p_infinity = crypto_fe_zero_bit(p->z, n);
+        q_infinity = crypto_fe_zero_bit(q->z, n);
+        crypto_point_select(address_of sum, address_of sum, p, q_infinity);
+        crypto_point_select(address_of sum, address_of sum, q, p_infinity);
+        *r = sum;
+
+        crypto_forget(z1z1, sizeof z1z1);
+        crypto_forget(z2z2, sizeof z2z2);
+        crypto_forget(u1, sizeof u1);
+        crypto_forget(u2, sizeof u2);
+        crypto_forget(s1, sizeof s1);
+        crypto_forget(s2, sizeof s2);
+        crypto_forget(h, sizeof h);
+        crypto_forget(rr, sizeof rr);
+        crypto_forget(hh, sizeof hh);
+        crypto_forget(hhh, sizeof hhh);
+        crypto_forget(v, sizeof v);
+        crypto_forget(tmp, sizeof tmp);
+        crypto_forget(tmp2, sizeof tmp2);
+        crypto_forget(address_of sum, sizeof sum);
+        crypto_forget(address_of p_infinity, sizeof p_infinity);
+        crypto_forget(address_of q_infinity, sizeof q_infinity);
+}
+
+typedef struct
+{
+        positive bits;
+        positive point_adds;
+        positive point_doubles;
+        positive conditional_swaps;
+        positive conditional_selects;
+} crypto_scalar_schedule;
+
+static fn crypto_point_scalar_private(
+    crypto_point address_to r, const crypto_point address_to p,
+    const p64 address_to k, crypto_scalar_schedule address_to schedule)
+{
+        crypto_point left;
+        crypto_point right = *p;
+        crypto_point sum;
+        crypto_point doubled;
+        positive bits = p->n * 64;
+        p64 bit = 0;
+
+        crypto_point_zero(address_of left, p->p, p->n);
+        if (schedule)
+                memory_fill(schedule, 0, sizeof(*schedule));
+
+        for (positive at = bits; at; at--)
+        {
+                bit = (k[(at - 1) / 64] >> ((at - 1) % 64)) & 1;
+                crypto_point_cswap(address_of left, address_of right, bit);
+                crypto_point_add_private(address_of sum, address_of left,
+                                         address_of right);
+                crypto_point_double_private(address_of doubled,
+                                             address_of left);
+                left = doubled;
+                right = sum;
+                crypto_point_cswap(address_of left, address_of right, bit);
+
+                if (schedule)
+                {
+                        schedule->bits++;
+                        schedule->point_adds++;
+                        schedule->point_doubles++;
+                        schedule->conditional_swaps += 2;
+                        schedule->conditional_selects += 2;
+                }
+        }
+
+        *r = left;
+        crypto_forget(address_of left, sizeof left);
+        crypto_forget(address_of right, sizeof right);
+        crypto_forget(address_of sum, sizeof sum);
+        crypto_forget(address_of doubled, sizeof doubled);
+        crypto_forget(address_of bit, sizeof bit);
+}
+
 static fn crypto_point_scalar(crypto_point address_to r, crypto_point address_to p,
                               p64 address_to k)
 {
@@ -1604,7 +1874,7 @@ static fn crypto_point_affine(crypto_point address_to p)
         p64 zinv[CRYPTO_FE_MAX], z2[CRYPTO_FE_MAX], z3[CRYPTO_FE_MAX];
 
         if (crypto_fe_is_zero(p->z, p->n))
-                return;
+                goto done;
 
         crypto_fe_inv(zinv, p->z, p->p, p->n);
         crypto_fe_sqr(z2, zinv, p->p, p->n);
@@ -1613,6 +1883,11 @@ static fn crypto_point_affine(crypto_point address_to p)
         crypto_fe_mul(p->y, p->y, z3, p->p, p->n);
         memory_fill(p->z, 0, p->n * 8);
         p->z[0] = 1;
+
+done:
+        crypto_forget(zinv, sizeof zinv);
+        crypto_forget(z2, sizeof z2);
+        crypto_forget(z3, sizeof z3);
 }
 
 static bool crypto_scalar_from_int_be(p64 address_to out,
@@ -1621,6 +1896,9 @@ static bool crypto_scalar_from_int_be(p64 address_to out,
                                       positive limbs)
 {
         p8 padded[48];
+        p64 difference[CRYPTO_FE_MAX];
+        p64 less;
+        bool valid;
 
         if (!length || length > limbs * 8)
                 return false;
@@ -1628,8 +1906,12 @@ static bool crypto_scalar_from_int_be(p64 address_to out,
         memory_fill(padded, 0, sizeof(padded));
         memory_copy(padded + limbs * 8 - length, bytes, length);
         crypto_fe_load_be(out, padded, limbs);
-        return !crypto_fe_is_zero(out, limbs) &&
-               crypto_fe_cmp(out, n, limbs) < 0;
+        less = crypto_fe_subtract_raw(difference, out, n, limbs);
+        valid = !crypto_fe_is_zero(out, limbs) && less;
+        crypto_forget(padded, sizeof padded);
+        crypto_forget(difference, sizeof difference);
+        crypto_forget(address_of less, sizeof less);
+        return valid;
 }
 
 static bool crypto_point_is_on_curve(const p8 address_to x_bytes,
@@ -1738,21 +2020,27 @@ static bool crypto_scalar_reduce_be(p8 address_to out, const p8 address_to bytes
                                     positive limbs)
 {
         p64 k[CRYPTO_FE_MAX];
+        p64 reduced[CRYPTO_FE_MAX];
+        p64 less;
 
         if (length != limbs * 8)
                 return false;
 
         crypto_fe_load_be(k, bytes, limbs);
-        if (crypto_fe_cmp(k, order, limbs) >= 0)
-                crypto_fe_sub(k, k, order, order, limbs);
+        less = crypto_fe_subtract_raw(reduced, k, order, limbs);
+        crypto_fe_select(k, reduced, k, limbs, less);
         if (crypto_fe_is_zero(k, limbs))
         {
                 crypto_forget(k, sizeof(k));
+                crypto_forget(reduced, sizeof reduced);
+                crypto_forget(address_of less, sizeof less);
                 return false;
         }
 
         crypto_fe_store_be(out, k, limbs);
         crypto_forget(k, sizeof(k));
+        crypto_forget(reduced, sizeof reduced);
+        crypto_forget(address_of less, sizeof less);
         return true;
 }
 
@@ -1774,7 +2062,7 @@ static bool crypto_ecdh_public(p8 address_to out, p8 address_to scalar,
         crypto_fe_load_be(gx_f, gx, limbs);
         crypto_fe_load_be(gy_f, gy, limbs);
         crypto_point_set_xy(address_of g, gx_f, gy_f, p, limbs);
-        crypto_point_scalar(address_of r, address_of g, k);
+        crypto_point_scalar_private(address_of r, address_of g, k, null);
         if (crypto_fe_is_zero(r.z, limbs))
                 goto done;
 
@@ -1815,7 +2103,7 @@ static bool crypto_ecdh_shared(p8 address_to out, p8 address_to scalar,
         crypto_fe_load_be(qx, peer + 1, limbs);
         crypto_fe_load_be(qy, peer + 1 + coord, limbs);
         crypto_point_set_xy(address_of q, qx, qy, p, limbs);
-        crypto_point_scalar(address_of r, address_of q, k);
+        crypto_point_scalar_private(address_of r, address_of q, k, null);
         if (crypto_fe_is_zero(r.z, limbs))
                 goto done;
 

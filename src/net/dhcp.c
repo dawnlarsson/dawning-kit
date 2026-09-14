@@ -65,6 +65,8 @@
 #define DHCP_OPTION_TYPE 53
 #define DHCP_OPTION_SERVER 54
 #define DHCP_OPTION_ASK 55
+#define DHCP_OPTION_RENEWAL 58
+#define DHCP_OPTION_REBINDING 59
 #define DHCP_OPTION_END 255
 
 #define DHCP_FLAG_BROADCAST 0x8000
@@ -83,6 +85,8 @@ typedef struct
         p32 nameserver;
         p32 server;
         p32 seconds;
+        p32 renewal;
+        p32 rebinding;
 } dhcp_lease;
 
 /* A transaction id is visible beside the client's public hardware address and
@@ -116,7 +120,52 @@ static const struct { p8 option, offset; bool multiple; } dhcp_fields[] = {
     {DHCP_OPTION_DNS, __builtin_offsetof(dhcp_lease, nameserver), true},
     {DHCP_OPTION_SERVER, __builtin_offsetof(dhcp_lease, server), false},
     {DHCP_OPTION_LEASE, __builtin_offsetof(dhcp_lease, seconds), false},
+    {DHCP_OPTION_RENEWAL, __builtin_offsetof(dhcp_lease, renewal), false},
+    {DHCP_OPTION_REBINDING, __builtin_offsetof(dhcp_lease, rebinding), false},
 };
+
+/* RFC 2131 requires T1 < T2 < expiry.  Each omitted timer gets its standard
+   default (one half and seven eighths of the lease); a supplied pair which
+   breaks the ordering is discarded as a pair rather than creating a state
+   machine which can skip RENEWING or outlive the lease. */
+static bool dhcp_lease_timers(dhcp_lease address_to lease)
+{
+        p32 default_renewal;
+        p32 default_rebinding;
+        p32 renewal;
+        p32 rebinding;
+
+        if (!lease || !lease->seconds)
+                return false;
+
+        /* A one- or two-second lease is legal, but there are not enough whole
+           seconds to encode both strict state boundaries.  Keep the lease and
+           let the watcher wake only for its immediate expiry. */
+        if (lease->seconds < 3)
+        {
+                lease->renewal = 0;
+                lease->rebinding = 0;
+                return true;
+        }
+
+        default_renewal = lease->seconds / 2;
+        default_rebinding = lease->seconds -
+                            (lease->seconds / 8 +
+                             (lease->seconds % 8 != 0));
+        renewal = lease->renewal ? lease->renewal : default_renewal;
+        rebinding = lease->rebinding ? lease->rebinding : default_rebinding;
+
+        if (!renewal || renewal >= rebinding ||
+            rebinding >= lease->seconds)
+        {
+                renewal = default_renewal;
+                rebinding = default_rebinding;
+        }
+
+        lease->renewal = renewal;
+        lease->rebinding = rebinding;
+        return renewal && renewal < rebinding && rebinding < lease->seconds;
+}
 
 /*
         One packet, built.
@@ -125,8 +174,9 @@ static const struct { p8 option, offset; bool multiple; } dhcp_fields[] = {
         then the magic cookie that says the options which follow are DHCP's
         rather than BOOTP's, then the options themselves ending in 255.
 */
-static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 transaction,
-                           p8 address_to hardware, p32 wanted, p32 server, p32 holding)
+static positive dhcp_build(p8 address_to into, positive room, p8 kind,
+                           p32 transaction, p8 address_to hardware, p32 wanted,
+                           p32 server, p32 holding, bool broadcast)
 {
         positive at;
 
@@ -146,7 +196,7 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 trans
         //      client that already holds an address can be replied to
         //      directly, and asking for a broadcast then is noise on every
         //      other machine's wire.
-        if (!holding)
+        if (broadcast)
         {
                 into[10] = (p8)(DHCP_FLAG_BROADCAST >> 8);
                 into[11] = 0;
@@ -304,6 +354,18 @@ static bool dhcp_lease_usable(const dhcp_lease address_to lease)
                dhcp_mask_valid(lease->mask);
 }
 
+/* Every ACK starts a new lease interval.  Timer values from the OFFER or the
+   preceding lease are relative to that older interval and cannot be inherited
+   when the ACK omits options 58/59, especially when option 51 changed. */
+static bool dhcp_lease_acknowledge(dhcp_lease address_to lease,
+                                   const dhcp_lease address_to answer)
+{
+        lease->renewal = 0;
+        lease->rebinding = 0;
+        dhcp_lease_merge(lease, answer);
+        return dhcp_lease_usable(lease) && dhcp_lease_timers(lease);
+}
+
 /* OFFER, ACK and NAK all carry a mandatory server identifier.  Once an
    OFFER has been selected, only that server may complete or refuse the
    exchange; xid and chaddr identify the client, not the selected server. */
@@ -322,6 +384,21 @@ static bool dhcp_acquisition_answer_matches(
 {
         return dhcp_answer_matches(kind, answer, offer->server) &&
                (kind != DHCP_ACK || answer->address == offer->address);
+}
+
+/* RENEWING remains bound to the original server.  REBINDING deliberately
+   accepts an authoritative answer from any server, but an ACK must still name
+   the address already in use and every ACK/NAK must identify its server. */
+static bool dhcp_reacquisition_answer_matches(
+    p8 kind, const dhcp_lease address_to answer,
+    const dhcp_lease address_to lease, bool rebinding)
+{
+        if (!answer || !lease || !answer->server ||
+            (kind != DHCP_ACK && kind != DHCP_NAK))
+                return false;
+        if (!rebinding && answer->server != lease->server)
+                return false;
+        return kind != DHCP_ACK || answer->address == lease->address;
 }
 
 static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
@@ -486,8 +563,8 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         on it, which should not be broadcast at forever.
                 */
                 wait = attempt < 12 ? 1 : (attempt - 11) * 8;
-                length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, transaction,
-                                    hardware, 0, 0, 0);
+                length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER,
+                                    transaction, hardware, 0, 0, 0, true);
 
                 if (socket_send((b32)handle, packet, length, 0, address_of where,
                                 sizeof where) < 0)
@@ -517,7 +594,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         //      other server that offered knows it lost.
                         length = dhcp_build(packet, sizeof packet, DHCP_REQUEST,
                                             transaction, hardware, lease->address,
-                                            lease->server, 0);
+                                            lease->server, 0, true);
 
                         if (socket_send(
                                 (b32)handle, packet, length, 0,
@@ -546,9 +623,9 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                                 {
                                         if (kind == DHCP_ACK)
                                         {
-                                            dhcp_lease_merge(lease,
-                                                             address_of answer);
-                                            if (!dhcp_lease_usable(lease))
+                                            if (!dhcp_lease_acknowledge(
+                                                    lease,
+                                                    address_of answer))
                                                     continue;
                                         }
                                         socket_close((b32)handle);
@@ -583,12 +660,14 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         DISCOVER may come back with a different address, and every connection
         open at the time dies with it.
 
-        A failure here is not fatal and not reported as one. The caller falls
-        back to asking from scratch, which is what a client does when the
-        lease finally expires anyway.
+        A timeout here is not fatal and does not discard the address. The
+        caller retries within the current state, switches from unicast renewal
+        to broadcast rebinding at T2, and starts discovery only after a NAK or
+        the lease's actual expiry.
 */
-static bipolar dhcp_renew(string_address device, p8 address_to hardware,
-                          dhcp_lease address_to lease)
+static bipolar dhcp_reacquire(string_address device, p8 address_to hardware,
+                              dhcp_lease address_to lease, bool rebinding,
+                              positive wait)
 {
         p8 packet[1024];
         p32 transaction;
@@ -599,22 +678,26 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         network_deadline deadline;
         p8 kind = 0;
 
-        if (!dhcp_lease_usable(lease))
+        if (!dhcp_lease_usable(lease) || !wait)
                 return DHCP_NO_OFFER;
 
         if (!dhcp_transaction_early(address_of transaction))
                 return DHCP_NO_RANDOM;
-        handle = dhcp_open(device, lease->address, false);
+        handle = dhcp_open(device, lease->address, rebinding);
 
         if (handle < 0)
                 return DHCP_NO_SOCKET;
 
         socket_address_internet where = {
             .family = AF_INET, .port = network_order_16(DHCP_SERVER_PORT),
+            .host = network_order_32(rebinding ? HOST_BROADCAST
+                                               : lease->server)};
+        socket_address_internet expected = {
+            .family = AF_INET, .port = network_order_16(DHCP_SERVER_PORT),
             .host = network_order_32(lease->server)};
 
         length = dhcp_build(packet, sizeof packet, DHCP_REQUEST, transaction,
-                            hardware, 0, 0, lease->address);
+                            hardware, 0, 0, lease->address, rebinding);
 
         if (socket_send((b32)handle, packet, length, 0, address_of where,
                         sizeof where) < 0)
@@ -623,7 +706,7 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
                 goto done;
         }
 
-        if (!network_deadline_begin(address_of deadline, 4, 0))
+        if (!network_deadline_begin(address_of deadline, wait, 0))
                 goto done;
 
         while (true)
@@ -632,19 +715,19 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
 
                 if (!dhcp_receive(handle, packet, sizeof packet, transaction,
                                   hardware, address_of fresh, address_of kind,
-                                  address_of where, false, null,
+                                  address_of expected, rebinding, null,
                                   address_of deadline))
                         break;
 
-                if (kind == DHCP_ACK && fresh.address == lease->address &&
-                    dhcp_answer_matches(kind, address_of fresh, lease->server))
+                if (kind == DHCP_ACK &&
+                    dhcp_reacquisition_answer_matches(
+                        kind, address_of fresh, lease, rebinding))
                 {
                         //      Keep what the renewal said, including the new
                         //      lease time, but do not lose what it left out:
                         //      an ACK need not repeat every option.
-                        dhcp_lease_merge(lease, address_of fresh);
-
-                        if (!dhcp_lease_usable(lease))
+                        if (!dhcp_lease_acknowledge(
+                                lease, address_of fresh))
                                 continue;
 
                         status = DHCP_OK;
@@ -652,7 +735,8 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
                 }
 
                 if (kind == DHCP_NAK &&
-                    dhcp_answer_matches(kind, address_of fresh, lease->server))
+                    dhcp_reacquisition_answer_matches(
+                        kind, address_of fresh, lease, rebinding))
                 {
                         status = DHCP_REFUSED;
                         break;
@@ -662,6 +746,18 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
 done:
         socket_close((b32)handle);
         return status;
+}
+
+static bipolar dhcp_renew(string_address device, p8 address_to hardware,
+                          dhcp_lease address_to lease, positive wait)
+{
+        return dhcp_reacquire(device, hardware, lease, false, wait);
+}
+
+static bipolar dhcp_rebind(string_address device, p8 address_to hardware,
+                           dhcp_lease address_to lease, positive wait)
+{
+        return dhcp_reacquire(device, hardware, lease, true, wait);
 }
 
 #endif // STANDARD_MODERN_C_NET_DHCP

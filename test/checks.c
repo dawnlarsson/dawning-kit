@@ -21817,7 +21817,7 @@ b32 main(void)
         One file, built twice.
 
         Built the ordinary way it is the freestanding test: it includes
-        compiler_memory.c and calls the allocator in src/standard/allocator.c,
+        compiler_memory.c and calls the allocator in library.common.c,
         and it runs on x86_64, arm64 and riscv64. Built with
         ALLOCATOR_REFERENCE defined it links glibc instead and the same lines
         run through glibc's malloc.
@@ -38869,6 +38869,8 @@ static fn talking(void)
                 //      is what REPLACE is for: a retried boot must not fail.
                 check("adding it again is not an error",
                       netlink_address_add((b32)handle, 1, mine, 24) == 0);
+                check("exclusive acquisition refuses an address already present",
+                      netlink_address_acquire((b32)handle, 1, mine, 24) == -17);
 
                 probe = socket_new(AF_INET, SOCK_DGRAM, 0);
                 check("a probe socket opens", probe >= 0);
@@ -38893,6 +38895,14 @@ static fn talking(void)
                     (b32)handle, 0, 0, 0x0a090801, 1);
                 check("a route is added", route_added == 0);
 
+                /* A DHCP acquisition used to REPLACE this default and its
+                   rollback then deleted the replacement, losing both routes.
+                   EXCLUSIVE must leave the first route installed. */
+                check("exclusive acquisition refuses a pre-existing default route",
+                      route_added == 0 &&
+                          netlink_route_acquire((b32)handle, 0, 0,
+                                                0x0a090802, 1) == -17);
+
                 //      And one through a gateway no configured address can
                 //      reach, which the kernel refuses -- "Nexthop has invalid
                 //      gateway" -- rather than accepting and never using it.
@@ -38905,6 +38915,9 @@ static fn talking(void)
                       route_added == 0 &&
                           netlink_route_delete((b32)handle, 0, 0,
                                                0x0a090801, 1) == 0);
+                check("a refused replacement default route was never installed",
+                      netlink_route_delete((b32)handle, 0, 0,
+                                           0x0a090802, 1) < 0);
                 check("the configured address can be removed",
                       address_added == 0 &&
                           netlink_address_delete((b32)handle, 1, mine, 24) == 0);
@@ -39131,6 +39144,232 @@ static fn resolving_edges(void)
                                          0, address_of found) == DNS_OK &&
                           found == 0xc0000201);
         }
+}
+
+enum
+{
+        DNS_TCP_SPLIT,
+        DNS_TCP_OVERSIZED,
+        DNS_TCP_SHORT,
+        DNS_TCP_WRONG_ID,
+        DNS_TCP_WRONG_QUESTION,
+        DNS_UDP_OVERSIZED_COMPLETE,
+        DNS_TCP_DEADLINE,
+};
+
+static fn dns_tcp_test_server(bipolar datagram, bipolar listening,
+                              positive which)
+{
+        p8 request[DNS_MAX_MESSAGE];
+        p8 reply[DNS_MAX_MESSAGE + 1];
+        p8 frame[2];
+        socket_address_internet client;
+        p32 client_size = sizeof client;
+        network_deadline fixture_deadline;
+        bipolar got;
+
+        if (!network_deadline_begin(address_of fixture_deadline, 5, 0) ||
+            network_wait_readable_until(datagram,
+                                        address_of fixture_deadline) <= 0)
+                system_call_1(syscall(exit_group), 1);
+        got = socket_receive((b32)datagram, request, sizeof request, 0,
+                             address_of client, address_of client_size);
+
+        if (got < DNS_HEADER || client_size != sizeof client)
+                system_call_1(syscall(exit_group), 1);
+
+        memory_fill(reply, 0, sizeof reply);
+        memory_copy(reply, request, (positive)got);
+        network_store_16(reply + 2,
+                         network_load_16(request + 2) |
+                             DNS_FLAG_RESPONSE | DNS_FLAG_TRUNCATED);
+        network_store_16(reply + 6, 0);
+
+        if (which == DNS_UDP_OVERSIZED_COMPLETE)
+                network_store_16(reply + 2,
+                                 network_load_16(request + 2) |
+                                     DNS_FLAG_RESPONSE);
+
+        if (which == DNS_TCP_DEADLINE)
+        {
+                timespec pause = {0, 700000000};
+                system_call_2(syscall(nanosleep),
+                              (positive)address_of pause, 0);
+        }
+
+        positive datagram_length =
+            (which == DNS_TCP_SPLIT || which == DNS_UDP_OVERSIZED_COMPLETE)
+            ? sizeof reply : (positive)got;
+        if (socket_send((b32)datagram, reply, datagram_length, 0,
+                        address_of client, sizeof client) !=
+            (bipolar)datagram_length)
+                system_call_1(syscall(exit_group), 1);
+
+        if (which == DNS_UDP_OVERSIZED_COMPLETE)
+        {
+                socket_close((b32)datagram);
+                socket_close((b32)listening);
+                system_call_1(syscall(exit_group), 0);
+        }
+
+        if (network_wait_readable_until(listening,
+                                        address_of fixture_deadline) <= 0)
+                system_call_1(syscall(exit_group), 1);
+        bipolar stream = socket_accept((b32)listening, null, null, SOCK_CLOEXEC);
+        if (stream < 0 ||
+            !network_stream_read_all(stream, frame, sizeof frame,
+                                     address_of fixture_deadline))
+                system_call_1(syscall(exit_group), 1);
+
+        p16 request_length = network_load_16(frame);
+        if (request_length > sizeof request ||
+            !network_stream_read_all(stream, request, request_length,
+                                     address_of fixture_deadline))
+                system_call_1(syscall(exit_group), 1);
+
+        memory_copy(reply, request, request_length);
+        network_store_16(reply + 2,
+                         (network_load_16(request + 2) |
+                          DNS_FLAG_RESPONSE) & ~DNS_FLAG_TRUNCATED);
+        network_store_16(reply + 6, 1);
+        positive length = request_length;
+        reply[length++] = 0xc0;
+        reply[length++] = DNS_HEADER;
+        network_store_16(reply + length, DNS_TYPE_A);
+        network_store_16(reply + length + 2, DNS_CLASS_IN);
+        network_store_32(reply + length + 4, 0);
+        network_store_16(reply + length + 8, 4);
+        network_store_32(reply + length + 10, 0xc0000207);
+        length += 14;
+
+        if (which == DNS_TCP_WRONG_ID)
+                network_store_16(reply, network_load_16(reply) + 1);
+        if (which == DNS_TCP_WRONG_QUESTION)
+                reply[DNS_HEADER + 1] ^= 1;
+
+        if (which == DNS_TCP_OVERSIZED)
+        {
+                network_store_16(frame, DNS_MAX_MESSAGE + 1);
+                network_stream_send_all(stream, frame, sizeof frame);
+        }
+        else
+        {
+                network_store_16(frame, (p16)length);
+
+                if (which == DNS_TCP_SPLIT)
+                {
+                        network_stream_send_all(stream, frame, 1);
+                        network_stream_send_all(stream, frame + 1, 1);
+                        network_stream_send_all(stream, reply, 3);
+                        network_stream_send_all(stream, reply + 3, length - 3);
+                }
+                else if (which == DNS_TCP_SHORT)
+                {
+                        network_stream_send_all(stream, frame, sizeof frame);
+                        network_stream_send_all(stream, reply, length / 2);
+                }
+                else if (which == DNS_TCP_DEADLINE)
+                {
+                        timespec pause = {0, 700000000};
+
+                        network_stream_send_all(stream, frame, 1);
+                        system_call_2(syscall(nanosleep),
+                                      (positive)address_of pause, 0);
+                        network_stream_send_all(stream, frame + 1, 1);
+                        network_stream_send_all(stream, reply, length);
+                }
+                else
+                {
+                        network_stream_send_all(stream, frame, sizeof frame);
+                        network_stream_send_all(stream, reply, length);
+                }
+        }
+
+        if (stream >= 0)
+                socket_close((b32)stream);
+        socket_close((b32)datagram);
+        socket_close((b32)listening);
+        system_call_1(syscall(exit_group), 0);
+}
+
+static bipolar dns_tcp_loopback_case(positive which, p32 address_to found,
+                                     positive address_to elapsed)
+{
+        socket_address_internet where = {
+            .family = AF_INET, .host = network_order_32(HOST_LOOPBACK)};
+        p32 size = sizeof where;
+        bipolar listening = socket_new(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        bipolar datagram = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        bipolar child;
+        bipolar result;
+        positive began;
+        positive raw = 0;
+
+        if (listening < 0 || datagram < 0 ||
+            socket_bind((b32)listening, address_of where, sizeof where) < 0 ||
+            socket_listen((b32)listening, 1) < 0)
+                goto setup_failed;
+
+        memory_fill(address_of where, 0, sizeof where);
+        if (socket_name((b32)listening, address_of where, address_of size) < 0 ||
+            size != sizeof where || !where.port ||
+            socket_bind((b32)datagram, address_of where, sizeof where) < 0)
+                goto setup_failed;
+
+        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        if (child < 0)
+                goto setup_failed;
+        if (!child)
+                dns_tcp_test_server(datagram, listening, which);
+
+        socket_close((b32)datagram);
+        socket_close((b32)listening);
+        began = clock_monotonic_nanoseconds();
+        result = dns_resolve_at(HOST_LOOPBACK, network_order_16(where.port),
+                                (string_address)"split.example", found, 1);
+        if (elapsed)
+                address_to elapsed = clock_monotonic_nanoseconds() - began;
+        if (system_wait4_retry((b32)child, address_of raw, 0, null) != child ||
+            wait_status_code(raw) != 0)
+                return DNS_NO_SERVER;
+        return result;
+
+setup_failed:
+        if (datagram >= 0)
+                socket_close((b32)datagram);
+        if (listening >= 0)
+                socket_close((b32)listening);
+        return DNS_NO_SERVER;
+}
+
+static fn resolving_truncated(void)
+{
+        p32 found = 0;
+        positive elapsed = 0;
+
+        check("an oversized truncated UDP reply completes through split TCP framing",
+              dns_tcp_loopback_case(DNS_TCP_SPLIT, address_of found, null) ==
+                      DNS_OK &&
+                  found == 0xc0000207);
+        check("an oversized TCP DNS frame is refused",
+              dns_tcp_loopback_case(DNS_TCP_OVERSIZED, null, null) ==
+                  DNS_MALFORMED);
+        check("EOF inside a TCP DNS frame is not an answer",
+              dns_tcp_loopback_case(DNS_TCP_SHORT, null, null) ==
+                  DNS_NO_REPLY);
+        check("a TCP DNS reply with another transaction id is refused",
+              dns_tcp_loopback_case(DNS_TCP_WRONG_ID, null, null) ==
+                  DNS_MALFORMED);
+        check("a TCP DNS reply with another question is refused",
+              dns_tcp_loopback_case(DNS_TCP_WRONG_QUESTION, null, null) ==
+                  DNS_MALFORMED);
+        check("an oversized complete UDP DNS reply remains malformed",
+              dns_tcp_loopback_case(DNS_UDP_OVERSIZED_COMPLETE, null, null) ==
+                  DNS_MALFORMED);
+        check("UDP and TCP DNS fallback share one absolute deadline",
+              dns_tcp_loopback_case(DNS_TCP_DEADLINE, null,
+                                     address_of elapsed) == DNS_NO_REPLY &&
+                  elapsed < NETWORK_NANOSECONDS + NETWORK_NANOSECONDS / 2);
 }
 
 //      The URL, the headers and the chunk framing -- all of it pure.
@@ -40838,6 +41077,55 @@ static fn tls_post_handshake_framing(void)
         check("an empty authenticated handshake record is refused",
               !tls_post_handshake_valid(ticket, 0));
 
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+
+                check("post-handshake progress socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        tls_conn sender = {.handle = pair[1]};
+                        http_link link = {
+                            .handle = pair[0],
+                            .tls = true,
+                            .session = {
+                                .handle = pair[0],
+                                .encrypted = true,
+                                .application = true,
+                            },
+                        };
+                        http_body body = {
+                            .link = address_of link,
+                            .read_nanoseconds = 100000000,
+                        };
+                        p8 byte = 0;
+                        positive got = 99;
+                        positive began;
+                        positive elapsed;
+                        bool queued = true;
+
+                        for (positive at = 0; at < 32; at++)
+                                queued &= tls_send_enc(
+                                              address_of sender,
+                                              TLS_CT_HANDSHAKE, ticket,
+                                              sizeof ticket) == TLS_OK;
+                        check("a stream of valid post-handshake tickets queues",
+                              queued);
+                        began = clock_monotonic_nanoseconds();
+                        check("post-handshake tickets cannot renew an application read deadline",
+                              http_body_read(address_of body, address_of byte,
+                                             1, address_of got) ==
+                                  HTTP_NO_REPLY);
+                        elapsed = clock_monotonic_nanoseconds() - began;
+                        check("the post-handshake progress deadline is bounded",
+                              elapsed < NETWORK_NANOSECONDS);
+                        socket_close(pair[1]);
+                        http_link_close(address_of link);
+                }
+        }
+
         ticket[14] = 0;
         check("a zero-length TLS session ticket is refused",
               !tls_post_handshake_valid(ticket, sizeof ticket));
@@ -41016,6 +41304,89 @@ static bool crypto_bytes_are(p8 address_to got, positive length, string_address 
                 expect[i] = value;
         }
         return memory_compare(got, expect, length) == 0;
+}
+
+static fn crypto_private_scalar_probe(
+    positive limbs, const p64 address_to modulus,
+    const p8 address_to gx, const p8 address_to gy,
+    bool address_to differential, bool address_to fixed_schedule)
+{
+        p64 x[CRYPTO_FE_MAX];
+        p64 y[CRYPTO_FE_MAX];
+        p64 scalar[CRYPTO_FE_MAX];
+        p64 complement[CRYPTO_FE_MAX];
+        p64 random = 0x243f6a8885a308d3ull;
+        crypto_point base;
+        crypto_point public_result;
+        crypto_point private_result;
+        crypto_scalar_schedule first;
+        crypto_scalar_schedule second;
+        bool same = true;
+
+        memory_fill(x, 0, sizeof x);
+        memory_fill(y, 0, sizeof y);
+        memory_fill(scalar, 0, sizeof scalar);
+        memory_fill(complement, 0, sizeof complement);
+        crypto_fe_load_be(x, gx, limbs);
+        crypto_fe_load_be(y, gy, limbs);
+        crypto_point_set_xy(address_of base, x, y, modulus, limbs);
+
+        for (positive i = 0; i < limbs; i++)
+        {
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                scalar[i] = random;
+                complement[i] = ~random;
+        }
+
+        crypto_point_scalar(address_of public_result, address_of base, scalar);
+        crypto_point_scalar_private(address_of private_result,
+                                    address_of base, scalar,
+                                    address_of first);
+        crypto_point_affine(address_of public_result);
+        crypto_point_affine(address_of private_result);
+        same &= !memory_compare(public_result.x, private_result.x,
+                                limbs * sizeof(p64)) &&
+                !memory_compare(public_result.y, private_result.y,
+                                limbs * sizeof(p64)) &&
+                !memory_compare(public_result.z, private_result.z,
+                                limbs * sizeof(p64));
+
+        crypto_point_scalar(address_of public_result, address_of base,
+                            complement);
+        crypto_point_scalar_private(address_of private_result,
+                                    address_of base, complement,
+                                    address_of second);
+        crypto_point_affine(address_of public_result);
+        crypto_point_affine(address_of private_result);
+        same &= !memory_compare(public_result.x, private_result.x,
+                                limbs * sizeof(p64)) &&
+                !memory_compare(public_result.y, private_result.y,
+                                limbs * sizeof(p64)) &&
+                !memory_compare(public_result.z, private_result.z,
+                                limbs * sizeof(p64));
+
+        address_to differential = same;
+        address_to fixed_schedule =
+            !memory_compare(address_of first, address_of second,
+            sizeof first) &&
+            first.bits == limbs * 64 &&
+            first.point_adds == first.bits &&
+            first.point_doubles == first.bits &&
+            first.conditional_swaps == first.bits * 2 &&
+            first.conditional_selects == first.bits * 2;
+
+        crypto_forget(x, sizeof x);
+        crypto_forget(y, sizeof y);
+        crypto_forget(scalar, sizeof scalar);
+        crypto_forget(complement, sizeof complement);
+        crypto_forget(address_of random, sizeof random);
+        crypto_forget(address_of base, sizeof base);
+        crypto_forget(address_of public_result, sizeof public_result);
+        crypto_forget(address_of private_result, sizeof private_result);
+        crypto_forget(address_of first, sizeof first);
+        crypto_forget(address_of second, sizeof second);
 }
 
 static fn crypto_floor(void)
@@ -41311,6 +41682,10 @@ static fn crypto_floor_aes(void)
                 p8 ba384[48];
                 p8 shared256[32];
                 p8 shared384[48];
+                bool differential256 = false;
+                bool differential384 = false;
+                bool schedule256 = false;
+                bool schedule384 = false;
 
                 memory_fill(one256, 0, sizeof one256);
                 memory_fill(two256, 0, sizeof two256);
@@ -41331,6 +41706,23 @@ static fn crypto_floor_aes(void)
                 g384[0] = 4;
                 memory_copy(g384 + 1, crypto_p384_gx_be, 48);
                 memory_copy(g384 + 49, crypto_p384_gy_be, 48);
+
+                crypto_private_scalar_probe(
+                    4, crypto_p256_p, crypto_p256_gx_be,
+                    crypto_p256_gy_be, address_of differential256,
+                    address_of schedule256);
+                check("private P-256 multiplication matches the public reference",
+                      differential256);
+                check("complementary P-256 scalars have one fixed operation schedule",
+                      schedule256);
+                crypto_private_scalar_probe(
+                    6, crypto_p384_p, crypto_p384_gx_be,
+                    crypto_p384_gy_be, address_of differential384,
+                    address_of schedule384);
+                check("private P-384 multiplication matches the public reference",
+                      differential384);
+                check("complementary P-384 scalars have one fixed operation schedule",
+                      schedule384);
 
                 check("P-256 ECDH of 1 is the base point",
                       crypto_ecdh_p256_public(pub_two, one256) &&
@@ -41491,6 +41883,13 @@ static fn fetching_for_real(void)
                                     "Content-Length: 13\r\n"
                                     "\r\n"
                                     "split-payload";
+                p8 answer_chunked[] = "HTTP/1.1 200 OK\r\n"
+                                      "Transfer-Encoding: chunked\r\n"
+                                      "\r\n"
+                                      "5\r\nhello\r\n0\r\nX-Test: yes\r\n\r\n";
+                p8 answer_close[] = "HTTP/1.0 200 OK\r\n"
+                                    "\r\n"
+                                    "until-close";
                 p8 answer_short[] = "HTTP/1.0 200 OK\r\n"
                                     "Content-Length: 12\r\n"
                                     "\r\n"
@@ -41543,6 +41942,8 @@ static fn fetching_for_real(void)
                 string_address answers[] = {
                     (string_address)answer_good,
                     (string_address)answer_split,
+                    (string_address)answer_chunked,
+                    (string_address)answer_close,
                     (string_address)answer_short,
                     (string_address)answer_repeated,
                     (string_address)answer_conflicting,
@@ -41558,6 +41959,8 @@ static fn fetching_for_real(void)
                 positive sizes[] = {
                     sizeof(answer_good) - 1,
                     sizeof(answer_split) - 1,
+                    sizeof(answer_chunked) - 1,
+                    sizeof(answer_close) - 1,
                     sizeof(answer_short) - 1,
                     sizeof(answer_repeated) - 1,
                     sizeof(answer_conflicting) - 1,
@@ -41602,7 +42005,17 @@ static fn fetching_for_real(void)
                         if (taken >= 0)
                         {
                                 socket_receive((b32)taken, said, sizeof said, 0, 0, 0);
-                                if (at == 1)
+                                if (!at)
+                                {
+                                        timespec pause = {1, 0};
+
+                                        system_write_all((positive)taken,
+                                                         answer, length);
+                                        system_call_2(
+                                            syscall(nanosleep),
+                                            (positive)address_of pause, 0);
+                                }
+                                else if (at == 1)
                                 {
                                         positive split =
                                             sizeof("HTTP/1.0 200 OK\r\n"
@@ -41636,17 +42049,23 @@ static fn fetching_for_real(void)
                 b32 code = 0;
                 bipolar status;
                 p8 address_to prior;
+                positive began;
+                positive elapsed;
 
                 check("the caller buffer can be primed",
                       byte_store_reserve(address_of body, 16, 16));
                 prior = body.bytes;
 
+                began = clock_monotonic_nanoseconds();
                 status = http_get(HOST_LOOPBACK, port,
                                   (string_address) "127.0.0.1",
                                   (string_address) "/", address_of body,
                                   address_of code);
+                elapsed = clock_monotonic_nanoseconds() - began;
 
                 check("the fetch succeeds", status == HTTP_OK);
+                check("a framed buffered fetch does not wait for connection close",
+                      elapsed < NETWORK_NANOSECONDS / 2);
                 check("the status line is read", code == 200);
                 check("the body is its stated length", body.used == 11);
                 check("and is what was sent",
@@ -41662,6 +42081,24 @@ static fn fetching_for_real(void)
                       status == HTTP_OK && code == 200 && body.used == 13 &&
                           body.bytes &&
                           !memory_compare(body.bytes, "split-payload", 13));
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a buffered chunked body is decoded through its trailers",
+                      status == HTTP_OK && code == 200 && body.used == 5 &&
+                          body.bytes &&
+                          !memory_compare(body.bytes, "hello", 5));
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a buffered close-delimited body ends at EOF",
+                      status == HTTP_OK && code == 200 && body.used == 11 &&
+                          body.bytes &&
+                          !memory_compare(body.bytes, "until-close", 11));
 
                 status = http_get(HOST_LOOPBACK, port,
                                   (string_address) "127.0.0.1",
@@ -41698,8 +42135,8 @@ static fn fetching_for_real(void)
                 check("an overflowing Content-Length is refused",
                       status == HTTP_MALFORMED);
                 check("a rejected response leaves the prior body owned",
-                      body.used == 13 && body.bytes &&
-                      !memory_compare(body.bytes, "split-payload", 13));
+                      body.used == 11 && body.bytes &&
+                      !memory_compare(body.bytes, "until-close", 11));
 
                 status = http_get(HOST_LOOPBACK, port,
                                   (string_address) "127.0.0.1",
@@ -41861,10 +42298,37 @@ static fn leasing(void)
                 check("a truncated DHCP source address is refused",
                       !dhcp_peer_matches(address_of peer, sizeof peer - 1,
                                          address_of expected, true));
+
+                answer.address = offer.address;
+                answer.server = offer.server;
+                check("a renewal ACK stays bound to its current server and address",
+                      dhcp_reacquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer,
+                          false));
+                answer.server++;
+                check("a renewal ACK from another server is refused",
+                      !dhcp_reacquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer,
+                          false));
+                check("a rebinding ACK may come from a new server",
+                      dhcp_reacquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer, true));
+                answer.address++;
+                check("a rebinding ACK cannot replace the address still held",
+                      !dhcp_reacquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer, true));
+                answer.address = 0;
+                check("a rebinding NAK may come from any identified server",
+                      dhcp_reacquisition_answer_matches(
+                          DHCP_NAK, address_of answer, address_of offer, true));
+                answer.server = 0;
+                check("a rebinding answer without a server id is refused",
+                      !dhcp_reacquisition_answer_matches(
+                          DHCP_NAK, address_of answer, address_of offer, true));
         }
 
         length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 0xdeadbeef,
-                            hardware, 0, 0, 0);
+                            hardware, 0, 0, 0, true);
 
         check("a discover is padded to the length everything accepts", length == 300);
         check("it is a request", packet[0] == 1);
@@ -41889,7 +42353,7 @@ static fn leasing(void)
         //      A request names the address offered and the server that
         //      offered it, so a second server knows it was not chosen.
         length = dhcp_build(packet, sizeof packet, DHCP_REQUEST, 1, hardware,
-                            0x0a00020f, 0x0a000202, 0);
+                            0x0a00020f, 0x0a000202, 0, true);
         check("a request carries what was offered",
               packet[243] == DHCP_OPTION_REQUESTED && packet[244] == 4 &&
               network_load_32(packet + 245) == 0x0a00020f);
@@ -41927,6 +42391,10 @@ static fn leasing(void)
                 network_store_32(packet + at, 0x0a000203); at += 4;
                 packet[at++] = DHCP_OPTION_LEASE; packet[at++] = 4;
                 network_store_32(packet + at, 86400); at += 4;
+                packet[at++] = DHCP_OPTION_RENEWAL; packet[at++] = 4;
+                network_store_32(packet + at, 43200); at += 4;
+                packet[at++] = DHCP_OPTION_REBINDING; packet[at++] = 4;
+                network_store_32(packet + at, 75600); at += 4;
                 packet[at++] = DHCP_OPTION_END;
 
                 memory_fill(address_of lease, 0, sizeof lease);
@@ -41941,6 +42409,8 @@ static fn leasing(void)
                 check("the nameserver is read", lease.nameserver == 0x0a000203);
                 check("the server is read", lease.server == 0x0a000202);
                 check("the lease time is read", lease.seconds == 86400);
+                check("the renewal time is read", lease.renewal == 43200);
+                check("the rebinding time is read", lease.rebinding == 75600);
 
                 {
                         /* The first fixed option sequence places the mask at
@@ -41961,7 +42431,8 @@ static fn leasing(void)
                 }
 
                 const p8 options[] = {DHCP_OPTION_MASK, DHCP_OPTION_ROUTER,
-                    DHCP_OPTION_DNS, DHCP_OPTION_SERVER, DHCP_OPTION_LEASE, 99};
+                    DHCP_OPTION_DNS, DHCP_OPTION_SERVER, DHCP_OPTION_LEASE,
+                    DHCP_OPTION_RENEWAL, DHCP_OPTION_REBINDING, 99};
                 for (positive i = 0; i < array_count(options); i++)
                 for (positive size = 0; size < 256; size++)
                 {
@@ -41973,7 +42444,9 @@ static fn leasing(void)
                             take && i == 1 ? value : 0x0a000202,
                             take && i == 2 ? value : 0x0a000203,
                             take && i == 3 ? value : 0x0a000202,
-                            take && i == 4 ? value : 86400};
+                            take && i == 4 ? value : 86400,
+                            take && i == 5 ? value : 43200,
+                            take && i == 6 ? value : 75600};
                         packet[at - 1] = option; packet[at] = size;
                         network_store_32(packet + at + 1, value);
                         packet[at + 1 + size] = DHCP_OPTION_END;
@@ -42045,7 +42518,8 @@ static fn leasing(void)
                         check("a sparse offer cannot inherit prior options",
                               lease.address == 0x0a00020f && !lease.mask &&
                               !lease.router && !lease.nameserver &&
-                              !lease.server && !lease.seconds);
+                              !lease.server && !lease.seconds &&
+                              !lease.renewal && !lease.rebinding);
 
                         lease.mask = 0xffffff00;
                         lease.router = 0x0a000202;
@@ -42080,8 +42554,9 @@ static fn leasing(void)
                 this" rather than "may I have one".
         */
         {
-                positive renewal = dhcp_build(packet, sizeof packet, DHCP_REQUEST,
-                                              0x0badcafe, hardware, 0, 0, 0x0a00020f);
+                positive renewal = dhcp_build(
+                    packet, sizeof packet, DHCP_REQUEST, 0x0badcafe,
+                    hardware, 0, 0, 0x0a00020f, false);
 
                 check("a renewal is still a request", packet[0] == 1);
                 check("it says which address it holds",
@@ -42098,11 +42573,25 @@ static fn leasing(void)
                 check("it names no server",
                       packet[243] != DHCP_OPTION_SERVER);
                 check("it is padded like any other", renewal == 300);
+
+                positive rebinding = dhcp_build(
+                    packet, sizeof packet, DHCP_REQUEST, 0x0badcafe,
+                    hardware, 0, 0, 0x0a00020f, true);
+                check("a rebinding request still names the address held",
+                      network_load_32(packet + 12) == 0x0a00020f);
+                check("a rebinding request asks for a broadcast reply",
+                      (packet[10] & 0x80) != 0);
+                check("a rebinding request names neither address nor server options",
+                      packet[243] != DHCP_OPTION_REQUESTED &&
+                          packet[243] != DHCP_OPTION_SERVER);
+                check("a rebinding request is padded like any other",
+                      rebinding == 300);
         }
 
         //      And the asking form still says the opposite of all of that.
         {
-                dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 1, hardware, 0, 0, 0);
+                dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 1, hardware,
+                           0, 0, 0, true);
 
                 check("a discover holds no address",
                       network_load_32(packet + 12) == 0);
@@ -42124,19 +42613,72 @@ static fn leasing(void)
 
                 check("a timed DHCP lease is usable",
                       dhcp_lease_usable(address_of usable));
+                usable.seconds = 1;
+                check("a one-second DHCP lease remains legal",
+                      dhcp_lease_usable(address_of usable) &&
+                          dhcp_lease_timers(address_of usable) &&
+                          !usable.renewal && !usable.rebinding);
+                usable.seconds = 2;
+                usable.renewal = usable.rebinding = 99;
+                check("a two-second DHCP lease expires without impossible timers",
+                      dhcp_lease_usable(address_of usable) &&
+                          dhcp_lease_timers(address_of usable) &&
+                          !usable.renewal && !usable.rebinding);
                 usable.seconds = 0;
                 check("a zero-lifetime DHCP lease is refused",
                       !dhcp_lease_usable(address_of usable));
         }
-        for (positive bits = 0; bits < 64; bits++)
         {
-                dhcp_lease held = {1, 2, 3, 4, 5, 6};
+                dhcp_lease timed = {.seconds = 3600};
+
+                check("omitted DHCP timers use RFC defaults",
+                      dhcp_lease_timers(address_of timed) &&
+                          timed.renewal == 1800 && timed.rebinding == 3150);
+                timed.renewal = 1200;
+                timed.rebinding = 3000;
+                check("ordered explicit DHCP timers are preserved",
+                      dhcp_lease_timers(address_of timed) &&
+                          timed.renewal == 1200 && timed.rebinding == 3000);
+                timed.renewal = 3200;
+                timed.rebinding = 3000;
+                check("reversed DHCP timers fall back as a pair",
+                      dhcp_lease_timers(address_of timed) &&
+                          timed.renewal == 1800 && timed.rebinding == 3150);
+                timed.seconds = 0xffffffff;
+                timed.renewal = timed.rebinding = 0;
+                check("maximum DHCP lease defaults do not overflow",
+                      dhcp_lease_timers(address_of timed) &&
+                          timed.renewal == 2147483647 &&
+                          timed.rebinding == 3758096383);
+        }
+        {
+                dhcp_lease held = {
+                    .address = 0x0a00020f,
+                    .mask = 0xffffff00,
+                    .server = 0x0a000202,
+                    .seconds = 3600,
+                    .renewal = 1800,
+                    .rebinding = 3150,
+                };
+                dhcp_lease answer = {.seconds = 60};
+
+                check("a shorter ACK cannot inherit stale absolute timers",
+                      dhcp_lease_acknowledge(address_of held,
+                                             address_of answer) &&
+                          held.seconds == 60 && held.renewal == 30 &&
+                          held.rebinding == 52);
+        }
+        for (positive bits = 0; bits < 256; bits++)
+        {
+                dhcp_lease held = {1, 2, 3, 4, 5, 6, 7, 8};
                 dhcp_lease fresh = {bits & 1 ? 7 : 0, bits & 2 ? 8 : 0,
                     bits & 4 ? 9 : 0, bits & 8 ? 10 : 0,
-                    bits & 16 ? 11 : 0, bits & 32 ? 12 : 0};
+                    bits & 16 ? 11 : 0, bits & 32 ? 12 : 0,
+                    bits & 64 ? 13 : 0, bits & 128 ? 14 : 0};
                 dhcp_lease expected = {bits & 1 ? 7 : 1, bits & 2 ? 8 : 2,
                     bits & 4 ? 9 : 3, bits & 8 ? 10 : 4,
-                    bits & 16 ? 11 : 5, bits & 32 ? 12 : 6};
+                    bits & 16 ? 11 : 5, bits & 32 ? 12 : 6,
+                    bits & 64 ? 13 : 7, bits & 128 ? 14 : 8};
                 dhcp_lease_merge(&held, &fresh);
                 check("DHCP acknowledgement merges each nonzero field independently",
                       !memory_compare(&held, &expected, sizeof held));
@@ -42202,7 +42744,8 @@ static fn leasing_datagrams(void)
         any_sender = sender_at;
         any_sender.host = 0;
 
-        dhcp_build(packet, sizeof packet, DHCP_OFFER, 123, hardware, 0, 0, 0);
+        dhcp_build(packet, sizeof packet, DHCP_OFFER, 123, hardware,
+                   0, 0, 0, true);
         packet[0] = 2;
         packet[300] = 0;
         for (positive length = 300; length <= 301; length++)
@@ -42330,7 +42873,9 @@ static fn dhcp_test_random_child(positive which)
                 ok &= dhcp_ask((string_address)"moonwater-no-interface",
                                hardware, address_of empty) == DHCP_NO_RANDOM;
                 ok &= dhcp_renew((string_address)"moonwater-no-interface",
-                                 hardware, address_of lease) == DHCP_NO_RANDOM;
+                                 hardware, address_of lease, 4) == DHCP_NO_RANDOM;
+                ok &= dhcp_rebind((string_address)"moonwater-no-interface",
+                                  hardware, address_of lease, 4) == DHCP_NO_RANDOM;
         }
 
         system_call_1(syscall(exit_group), ok ? 0 : 1);
@@ -42370,6 +42915,7 @@ b32 main(void)
         talking();
         resolving();
         resolving_edges();
+        resolving_truncated();
         fetching();
         streaming_chunk_boundaries();
         http_bounded_store();
@@ -46699,6 +47245,22 @@ static fn storage_test_link_state(void)
         held.lease.address = 0x0a000102;
         held.lease.mask = 0xffffff00;
         held.lease.router = 0x0a000101;
+        check("matching lease state does not imply kernel-object ownership",
+              net_holds_address(address_of held, 11, address_of held.lease) &&
+                  net_holds_route(address_of held, 11, address_of held.lease) &&
+                  !net_owns_address(address_of held) &&
+                  !net_owns_route(address_of held));
+        held.address_owned = true;
+        held.route_owned = true;
+        check("exclusive installation records address and route ownership",
+              net_owns_address(address_of held) &&
+                  net_owns_route(address_of held));
+        check("unchanged lease objects retain ownership",
+              net_ownership_next(true, false, false, true));
+        check("failed replacement cannot acquire ownership",
+              !net_ownership_next(false, true, false, true));
+        check("a lease without a route drops route ownership",
+              !net_ownership_next(true, true, true, false));
         check("unchanged carrier keeps lease", !net_link_news(11, IFF_RUNNING, address_of held));
         check("second live interface keeps lease", !net_link_news(12, IFF_RUNNING, address_of held));
         check("carrier loss retains state until kernel cleanup",
@@ -46736,10 +47298,39 @@ static fn storage_test_link_state(void)
                 net_holding timed = {.index = 7, .taken = 100};
 
                 timed.lease.seconds = 60;
+                timed.lease.renewal = 30;
+                timed.lease.rebinding = 52;
+                timed.retry = 30;
                 check("a DHCP lease remains valid before its deadline",
                       !net_lease_expired_at(address_of timed, 159));
                 check("a DHCP renewal wait reaches the half-life",
                       net_lease_due_in(address_of timed, 120) == 10);
+                check("a lease stays in renewal before T2",
+                      !net_lease_rebinding_at(address_of timed, 151));
+                check("a lease enters rebinding exactly at T2",
+                      net_lease_rebinding_at(address_of timed, 152));
+                check("a renewal request uses the ordinary bounded wait",
+                      net_lease_attempt_time(address_of timed, 129, false) == 4);
+                check("a renewal request cannot wait past T2",
+                      net_lease_attempt_time(address_of timed, 151, false) == 1);
+                check("a rebinding request cannot wait past expiry",
+                      net_lease_attempt_time(address_of timed, 159, true) == 1);
+
+                net_lease_retry_after(address_of timed, 140, false);
+                check("a renewal timeout retries halfway to T2 without discovery",
+                      timed.retry == 52 &&
+                          net_lease_due_in(address_of timed, 140) == 12 &&
+                          !timed.lost);
+                net_lease_retry_after(address_of timed, 153, false);
+                check("a renewal timeout crossing T2 wakes rebinding immediately",
+                      timed.retry == 53 &&
+                          net_lease_due_in(address_of timed, 153) == 1 &&
+                          net_lease_rebinding_at(address_of timed, 153));
+                net_lease_retry_after(address_of timed, 154, true);
+                check("a rebinding timeout retries at expiry for a short remainder",
+                      timed.retry == 60 &&
+                          net_lease_due_in(address_of timed, 154) == 6 &&
+                          !timed.lost);
                 check("a DHCP lease expires at its exact deadline",
                       net_lease_expired_at(address_of timed, 160) &&
                           net_lease_due_in(address_of timed, 160) == 1);
@@ -46749,6 +47340,26 @@ static fn storage_test_link_state(void)
                 check("an unavailable lease clock fails closed",
                       net_lease_expired_at(address_of timed, 0) &&
                           net_lease_due_in(address_of timed, 0) == 1);
+
+                timed.taken = 100;
+                timed.lease.seconds = 3600;
+                timed.lease.renewal = 1800;
+                timed.lease.rebinding = 3150;
+                timed.retry = 1800;
+                net_lease_retry_after(address_of timed, 1904, false);
+                check("a long renewal interval retries halfway to T2",
+                      timed.retry == 2477 &&
+                          net_lease_due_in(address_of timed, 1904) == 673);
+
+                timed.taken = 100;
+                timed.lease.seconds = 2;
+                timed.lease.renewal = 0;
+                timed.lease.rebinding = 0;
+                timed.retry = 0;
+                check("an unrepresentably short lease waits for expiry",
+                      net_lease_due_in(address_of timed, 100) == 2 &&
+                          net_lease_due_in(address_of timed, 101) == 1 &&
+                          !net_lease_rebinding_at(address_of timed, 101));
                 timed.lease.seconds = 0;
                 check("an unbounded DHCP lease has no local deadline",
                       !net_lease_expired_at(address_of timed, 1000));

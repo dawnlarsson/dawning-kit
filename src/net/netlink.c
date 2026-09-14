@@ -854,6 +854,19 @@ static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
             index, host, prefix);
 }
 
+/* Automatic configuration must acquire a kernel object before it can later
+   claim the right to remove it.  EXCLUSIVE distinguishes a newly installed
+   address from an identical address which was already owned by an operator or
+   another network manager; REPLACE cannot make that distinction. */
+static bipolar netlink_address_acquire(b32 handle, p32 index, p32 host,
+                                       p8 prefix)
+{
+        return netlink_address_change(
+            handle, RTM_NEWADDR,
+            NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_EXCLUSIVE,
+            index, host, prefix);
+}
+
 static bipolar netlink_address_delete(b32 handle, p32 index, p32 host,
                                       p8 prefix)
 {
@@ -918,6 +931,18 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits,
         return netlink_route_change(
             handle, RTM_NEWROUTE,
             NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
+            destination, bits, gateway, index);
+}
+
+/* An existing route is state, not spare capacity.  Initial DHCP acquisition
+   uses EXCLUSIVE so a pre-existing default route is reported as a conflict
+   and remains byte-for-byte kernel state owned by whoever installed it. */
+static bipolar netlink_route_acquire(b32 handle, p32 destination, p8 bits,
+                                     p32 gateway, p32 index)
+{
+        return netlink_route_change(
+            handle, RTM_NEWROUTE,
+            NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_EXCLUSIVE,
             destination, bits, gateway, index);
 }
 
