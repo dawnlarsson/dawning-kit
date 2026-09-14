@@ -2322,6 +2322,12 @@ lane_format()
 #       again on both sides with one line per case so the cases themselves are
 #       shown.
 #
+#       Each target is built twice: as it ships, and with
+#       FORMAT_ESTIMATE_ALWAYS, which sends every scaling through the 128 bit
+#       estimate that otherwise only the extremes of the range reach, so the
+#       estimate is compared against glibc at every magnitude and its refusals
+#       against the exact road they fall back to.
+#
 #       FORMAT_DIFFERENTIAL_BLOCKS is how many blocks run natively (default
 #       64, which is 4194304 cases) and FORMAT_DIFFERENTIAL_EMULATED_BLOCKS
 #       how many run under qemu (default 8). A change to the float digits
@@ -2356,7 +2362,17 @@ format_differential()
                 return 2
         fi
 
-        target_lane format_differential_one
+        fd_outcome=0
+
+        for fd_variant in shipped estimate; do
+                target_lane format_differential_one "$fd_variant" && continue
+                case $? in
+                2) [ "$fd_outcome" != 0 ] || fd_outcome=2 ;;
+                *) fd_outcome=1 ;;
+                esac
+        done
+
+        return "$fd_outcome"
 }
 
 format_differential_one()
@@ -2364,41 +2380,46 @@ format_differential_one()
         fd_name=$target
         fd_runner=$target_runner
         fd_count=$fd_blocks
+        fd_suite=format_differential
+        fd_flags=
         [ -z "$fd_runner" ] || fd_count=$fd_emulated
 
-        target_build freestanding_check format_differential \
-                "$work/format_differential.$fd_name" "$fd_name" || return 1
+        if [ "$1" = estimate ]; then
+                fd_suite=format_differential_estimate
+                fd_flags=-DFORMAT_ESTIMATE_ALWAYS
+        fi
 
-        $fd_runner "$work/format_differential.$fd_name" 0 $((fd_count * 65536)) \
-                > "$work/format_differential.$fd_name.out" 2>&1
+        fd_binary=$work/$fd_suite.$fd_name
+
+        # shellcheck disable=SC2086 # an empty flag is no argument at all
+        target_build freestanding_check format_differential "$fd_binary" \
+                "$fd_name" $fd_flags || return 1
+
+        $fd_runner "$fd_binary" 0 $((fd_count * 65536)) > "$fd_binary.out" 2>&1
         fd_status=$?
 
-        head -n "$fd_count" "$work/format_reference.out" \
-                > "$work/format_reference.$fd_name.out"
+        head -n "$fd_count" "$work/format_reference.out" > "$fd_binary.want"
 
         fd_agreed=$(awk 'NR == FNR { want[FNR] = $0; next }
                 $0 == want[FNR] { same++ } END { print same + 0 }' \
-                "$work/format_reference.$fd_name.out" \
-                "$work/format_differential.$fd_name.out")
+                "$fd_binary.want" "$fd_binary.out")
 
-        tally "format_differential-$fd_name" "$((fd_agreed * 65536))" \
+        tally "$fd_suite-$fd_name" "$((fd_agreed * 65536))" \
                 "$((fd_count * 65536))"
 
         [ "$fd_status" = 0 ] && [ "$fd_agreed" = "$fd_count" ] && return 0
 
-        fd_line=$(diff "$work/format_reference.$fd_name.out" \
-                "$work/format_differential.$fd_name.out" |
+        fd_line=$(diff "$fd_binary.want" "$fd_binary.out" |
                 sed -n 's/^\([0-9][0-9]*\)[acd,].*/\1/p' | head -1)
         fd_line=${fd_line:-1}
         fd_first=$(((fd_line - 1) * 65536))
 
-        note "format_differential-$fd_name: status $fd_status, block $((fd_line - 1)) differs from glibc:"
+        note "$fd_suite-$fd_name: status $fd_status, block $((fd_line - 1)) differs from glibc:"
         "$work/format_reference" "$fd_first" 65536 detail \
-                > "$work/format_reference.$fd_name.detail"
-        $fd_runner "$work/format_differential.$fd_name" "$fd_first" 65536 detail \
-                > "$work/format_differential.$fd_name.detail" 2>&1
-        diff "$work/format_reference.$fd_name.detail" \
-                "$work/format_differential.$fd_name.detail" | head -20 |
+                > "$fd_binary.want.detail"
+        $fd_runner "$fd_binary" "$fd_first" 65536 detail \
+                > "$fd_binary.detail" 2>&1
+        diff "$fd_binary.want.detail" "$fd_binary.detail" | head -20 |
                 sed 's/^/    /'
         return 1
 }

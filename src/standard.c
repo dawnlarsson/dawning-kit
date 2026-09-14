@@ -15678,12 +15678,20 @@ static fn format_text_field(format_sink address_to sink, address_any data,
         real glibc agrees digit for digit, because there is exactly one right
         answer and both of us are computing it rather than estimating it.
 
-        The cost is a big integer, but a small and one-directional one. The
-        widest value that ever appears is 5^1074 times a fifty-three bit
-        mantissa, which is 767 decimal digits. Holding it in limbs of 10^9
-        rather than 2^64 means every operation needed is a multiply by
-        something below 10^9, whose product is below 10^18 and fits a register
-        without help, and the digits fall straight out of the limbs at the end.
+        That is the definition, and computing it that way means all of 5^k --
+        767 digits for a subnormal -- before a single digit is known. So the
+        two halves are made apart. An integer, m shifted up, is a big integer
+        in limbs of 10^9, where every step is a multiply below 10^9 whose
+        product fits a register and the digits fall straight out of the limbs.
+        A fraction, m_low over 2^k, is held in limbs of 2^64 with the point at
+        the top, and multiplying it by 10^19 carries the next nineteen digits
+        out of the top limb and leaves the rest of the fraction behind, still
+        exact. That runs from the first digit down, so it can stop: once the
+        digits rounding reads are out, the one thing left to know is whether
+        the fraction still holds anything, and that is whether a limb is left.
+        Each step moves the fraction's trailing zeros up nineteen bits and a
+        tiny value's leading zeros are whole steps that write nothing, so the
+        work follows the digits asked for rather than the digits there are.
         Nothing here divides by anything but a compile time constant and
         nothing calls libgcc, which matters because a -nostdlib link does not
         have libgcc to call.
@@ -15739,59 +15747,6 @@ static fn format_bignum_scale(format_bignum address_to number, positive factor)
         }
 }
 
-static fn format_bignum_add(format_bignum address_to into,
-                            format_bignum address_to from)
-{
-        positive carry = 0;
-        positive index;
-        positive reach = into->count > from->count ? into->count : from->count;
-
-        for (index = 0; (index < reach || carry) && index < FORMAT_LIMBS; index++)
-        {
-                positive total = carry;
-
-                if (index < into->count)
-                        total += into->limb[index];
-
-                if (index < from->count)
-                        total += from->limb[index];
-
-                into->limb[index] = total % FORMAT_LIMB_BASE;
-                carry = total / FORMAT_LIMB_BASE;
-
-                if (index >= into->count)
-                        into->count = index + 1;
-        }
-}
-
-/*
-        Multiply by a mantissa, which is too wide for one scale.
-
-        Splitting at bit twenty-six leaves two halves each below 2^27, both of
-        them under the limb base, and the shift that puts the high half back is
-        itself a multiply by 2^26 which is also under the base. Three scales
-        and one add, and no operation anywhere widens past sixty-four bits.
-*/
-static fn format_bignum_multiply(format_bignum address_to number,
-                                 positive factor)
-{
-        format_bignum low;
-
-        if (factor < FORMAT_LIMB_BASE)
-        {
-                format_bignum_scale(number, factor);
-                return;
-        }
-
-        low.count = number->count;
-        memory_copy(low.limb, number->limb, number->count * sizeof(positive));
-
-        format_bignum_scale(number, factor >> 26);
-        format_bignum_scale(number, (positive)1 << 26);
-        format_bignum_scale(address_of low, factor & (((positive)1 << 26) - 1));
-        format_bignum_add(number, address_of low);
-}
-
 /*
         The digits of the big integer, most significant first.
 
@@ -15840,15 +15795,29 @@ static positive format_bignum_digits(format_bignum address_to number,
         e-01 and %f writes a bare 0. A digit read past either end of the run
         reads as zero, which is true of the value and is what lets every emit
         loop below run without a bound.
+
+        Except when inexact is set. Then the run is only as long as rounding
+        asked for, at least one digit past the last one kept, and some digit
+        after it is not zero. Rounding is the one reader that looks past the
+        digits it keeps, and it is the one that reads the flag.
 */
 typedef struct
 {
         p8 digit[FORMAT_DIGITS];
         positive count;
         bipolar exponent;
+        bool inexact;
 } format_number;
 
-static fn format_expand(decimal value, format_number address_to number)
+#define FORMAT_CHUNK ((positive)10000000000000000000ull)
+#define FORMAT_CHUNK_DIGITS 19
+#define FORMAT_FRACTION_LIMBS 17
+
+//      significant and places say how far rounding will read: digits from the
+//      first one that is not zero, and digits after the point. The expansion
+//      stops at whichever it reaches first and says whether anything was left.
+static fn format_expand(decimal value, format_number address_to number,
+                        positive significant, positive places)
 {
         union
         {
@@ -15859,15 +15828,13 @@ static fn format_expand(decimal value, format_number address_to number)
         positive mantissa;
         bipolar raw;
         bipolar power;
-        p8 whole[400];
-        positive whole_length = 0;
-        positive first;
 
         view.value = value;
         bits = view.bits;
 
         number->count = 0;
         number->exponent = 1;
+        number->inexact = false;
 
         mantissa = (positive)(bits & (((p64)1 << 52) - 1));
         raw = (bipolar)((bits >> 52) & 0x7ff);
@@ -15899,110 +15866,106 @@ static fn format_expand(decimal value, format_number address_to number)
 
                 format_bignum_scale(address_of big, (positive)1 << power);
 
-                whole_length = format_bignum_digits(address_of big, whole);
-
-                memory_copy(number->digit, whole, whole_length);
-
-                number->count = whole_length;
-                number->exponent = (bipolar)whole_length;
+                number->count = format_bignum_digits(address_of big,
+                                                     number->digit);
+                number->exponent = (bipolar)number->count;
         }
         else
         {
-                static const positive powers_of_five[12] = {
-                    1,      5,       25,      125,     625,      3125,
-                    15625,  78125,   390625,  1953125, 9765625,  48828125};
                 positive shift = (positive)(-power);
-                positive above = shift >= 64 ? 0 : mantissa >> shift;
-                positive below =
-                    shift >= 64 ? mantissa
-                                : mantissa & ((((positive)1) << shift) - 1);
-                positive left = shift;
-                format_bignum big;
-                p8 fraction[FORMAT_DIGITS];
-                positive fraction_length;
-                positive pad;
-                positive room;
-                positive take;
+                positive limbs = (shift + 63) / 64;
+                positive limb[FORMAT_FRACTION_LIMBS];
+                positive lowest = 0;
+                positive highest = limbs > 1 ? 2 : 1;
+                positive made = 0;
                 positive count = 0;
+                bipolar exponent = 0;
+                positive gap;
 
-                if (above)
-                        whole_length = positive_into(whole, above);
-
-                format_bignum_set(address_of big, 1);
-
-                //      Five to the shift, twelve powers at a time, because
-                //      5^12 is the largest power of five below the limb base.
-                while (left >= 12)
+                //      The integer part is below 2^53 and is its own digits;
+                //      the digit run then needs no leading zero stripped.
+                if (shift < 64 && (mantissa >> shift))
                 {
-                        format_bignum_scale(address_of big, 244140625);
-                        left -= 12;
+                        count = positive_into(number->digit, mantissa >> shift);
+                        exponent = (bipolar)count;
+                        mantissa &= ((positive)1 << shift) - 1;
                 }
 
-                if (left)
-                        format_bignum_scale(address_of big, powers_of_five[left]);
+                //      The fraction below 2^shift, moved up so its point is
+                //      the top of limb limbs - 1. It is at most 116 bits and
+                //      the limbs above the second are zero, so only the span
+                //      [lowest, highest) is ever touched.
+                gap = limbs * 64 - shift;
+                limb[0] = mantissa << gap;
+                limb[1] = gap ? mantissa >> (64 - gap) : 0;
 
-                format_bignum_multiply(address_of big, below);
+                while (lowest < highest && limb[lowest] == 0)
+                        lowest++;
 
-                fraction_length = format_bignum_digits(address_of big, fraction);
+                while (lowest < highest)
+                {
+                        positive carry = 0;
+                        positive chunk = 0;
+                        positive index;
 
-                //      The fraction is exactly shift places wide. Whatever the
-                //      big integer is short by is its leading zero run.
-                pad = difference_or_zero(shift, fraction_length);
+                        if (count >= significant || made >= places)
+                        {
+                                number->inexact = true;
+                                break;
+                        }
 
-                //      Three runs, each clipped to what is left of the digit
-                //      array exactly as the byte loops that were here clipped
-                //      it: the integer part, the fraction's leading zeros,
-                //      and the fraction's own digits. The pad alone reaches a
-                //      thousand places on a subnormal, which is a thousand
-                //      loop iterations where memory_fill is one call.
-                room = FORMAT_DIGITS - count;
-                take = min(whole_length, room);
-                memory_copy(number->digit + count, whole, take);
-                count += take;
+                        for (index = lowest; index < highest; index++)
+                        {
+                                p128 product =
+                                    (p128)limb[index] * FORMAT_CHUNK + carry;
 
-                room = FORMAT_DIGITS - count;
-                take = min(pad, room);
-                memory_fill(number->digit + count, '0', take);
-                count += take;
+                                limb[index] = (positive)product;
+                                carry = (positive)(product >> 64);
+                        }
 
-                room = FORMAT_DIGITS - count;
-                take = min(fraction_length, room);
-                memory_copy(number->digit + count, fraction, take);
-                count += take;
+                        //      Out of the top limb is nineteen digits; out of
+                        //      a lower one is the span growing by a limb and
+                        //      nineteen leading zeros.
+                        if (highest < limbs)
+                        {
+                                if (carry)
+                                        limb[highest++] = carry;
+                        }
+                        else
+                        {
+                                chunk = carry;
+                        }
+
+                        while (lowest < highest && limb[lowest] == 0)
+                                lowest++;
+
+                        made += FORMAT_CHUNK_DIGITS;
+
+                        if (count)
+                        {
+                                count += positive_into_padded(
+                                    number->digit + count, chunk,
+                                    FORMAT_CHUNK_DIGITS, '0');
+                        }
+                        else if (chunk)
+                        {
+                                count = positive_into(number->digit, chunk);
+                                exponent -= (bipolar)(FORMAT_CHUNK_DIGITS - count);
+                        }
+                        else
+                        {
+                                exponent -= FORMAT_CHUNK_DIGITS;
+                        }
+                }
 
                 number->count = count;
-                number->exponent = (bipolar)whole_length;
-        }
-
-        //      Leading zeros are not digits of the value. They are a statement
-        //      about where the point is, so they move into the exponent.
-        //      The run of leading zeros is a span of one byte value, which
-        //      is what memory_span_byte answers. On a small number it is a
-        //      few bytes; on 1e-300 it is three hundred.
-        first = memory_span_byte(number->digit, '0', number->count);
-
-        if (first == number->count)
-        {
-                number->count = 0;
-                number->exponent = 1;
-                return;
-        }
-
-        if (first)
-        {
-                //      The regions overlap and memory_copy is the overlap
-                //      aware one, which is what its contract in library.c
-                //      says and is why memory_copy_apart is not named here.
-                memory_copy(number->digit, number->digit + first,
-                            number->count - first);
-
-                number->count -= first;
-                number->exponent -= (bipolar)first;
+                number->exponent = count ? exponent : 1;
         }
 
         //      Trailing zeros are real digits but nothing ever asks for them:
-        //      a read past the end already answers zero. Dropping them makes
-        //      every later loop shorter and changes no answer.
+        //      a read past the end already answers zero, and a cut run keeps
+        //      its flag. Dropping them makes every later loop shorter and
+        //      changes no answer.
         while (number->count && number->digit[number->count - 1] == '0')
                 number->count--;
 }
@@ -16050,9 +16013,9 @@ static fn format_round(format_number address_to number, bipolar keep)
                 // mixed decimal/hex workload; retain the local sticky policy.
                 positive after = index + 1;
 
-                up = false;
+                up = number->inexact;
 
-                while (after < number->count)
+                while (!up && after < number->count)
                 {
                         if (number->digit[after] != '0')
                         {
@@ -16136,10 +16099,11 @@ static fn format_round(format_number address_to number, bipolar keep)
         D is that or one more, so the scaled floor has P or P + 1 digits. When
         it has P + 1 the last digit folds into the class and D goes up by one.
 
-        Outside those budgets -- more than eighteen significant digits, more
-        than twenty seven places, or a floor too wide for a register -- the
-        answer is false and the conversion takes the long road, which is exact
-        as well.
+        Past twenty seven places, and for a double at or past 2^64 divided by a
+        power of ten that does not divide it, the estimate below takes over.
+        Past both -- more than eighteen significant digits, a floor too wide
+        for a register, or an estimate too close to call -- the answer is
+        false and the conversion takes the long road, which is exact as well.
 */
 
 #define FORMAT_TAIL_ZERO 0
@@ -16201,6 +16165,197 @@ static const positive format_ten_powers[20] = {
     1000000000000000000ull,
     10000000000000000000ull};
 
+/*
+        FIVE TO A POWER, NEARLY, FOR THE MAGNITUDES THE SHORT ROAD CANNOT REACH
+
+        Past twenty seven places, or dividing a double at or above 2^64 by a
+        power of ten that does not divide it, the exact integers stop fitting.
+        There the same floor and class come from an estimate that knows how
+        wrong it can be.
+
+        Ten to the s is five to the s times a power of two, and the power of
+        two is free. Five to the s is a 128 bit significand with an exponent:
+        a table entry for 5^(27j) or 5^-(27j), times the exact 5^r below 2^63
+        that makes up the difference, cut back to 128 bits. Every entry is
+        rounded down and so is the cut, so the estimate is never above five to
+        the s and short of it by less than two parts in 2^127. Times the 53
+        bit mantissa that is 181 exact bits of v * 10^s, still never above the
+        truth, and with a floor below 2^64 the whole shortfall is less than
+        2^-61.9 of one unit, and 2^-64 more for the fraction bits not kept.
+
+        So the true fraction lies within six units of 2^-64 above the estimated
+        one. When a window of FORMAT_ESTIMATE_WINDOW units -- ten times that --
+        clears zero, a half and one, the floor is the estimated floor and the
+        class is under or over a half. When it does not, the answer is false
+        and the exact long road decides; a random double lands there about
+        once in 2^56. An exact zero or an exact half always lands there, so
+        nothing about which values can be exact is taken on trust.
+
+        The table is checked in CHECK_format by multiplying it back out.
+        FORMAT_ESTIMATE_ALWAYS sends every scaling here instead, which is how
+        the format lane tests this against glibc at every magnitude rather
+        than only at the extremes that need it.
+*/
+
+#ifndef FORMAT_ESTIMATE_WINDOW
+#define FORMAT_ESTIMATE_WINDOW 64
+#endif
+
+/*
+        Shifts of a 128 bit number by a count known only at run time are
+        spelled on its two halves. GCC is free to lower a p128 shifted by a
+        variable to a libgcc call, and on arm64 and riscv64 it did, for the
+        one such shift the fraction expansion had: __ashlti3, which a
+        -nostdlib link does not have. Products of two registers and shifts
+        by a constant are open coded on all three and stay as they are.
+*/
+
+//      The low sixty four bits of (high, low) shifted down by at, below 128.
+static inline INLINE positive format_bits_from(positive high, positive low,
+                                               positive at)
+{
+        if (at >= 64)
+                return high >> (at - 64);
+
+        if (at == 0)
+                return low;
+
+        return (low >> at) | (high << (64 - at));
+}
+
+//      Whether (high, low) has a bit set below bit at, at most 128.
+static inline INLINE bool format_bits_below(positive high, positive low,
+                                            positive at)
+{
+        if (at > 64)
+                return low != 0 || (high << (128 - at)) != 0;
+
+        if (at == 0)
+                return false;
+
+        return (low << (64 - at)) != 0;
+}
+
+//      5^(27j) = (high * 2^64 + low) * 2^exponent, rounded down, j to 12.
+static const positive format_five_high[13] = {
+    0x8000000000000000ull, 0xcecb8f27f4200f3aull, 0xa70c3c40a64e6c51ull,
+    0x86f0ac99b4e8dafdull, 0xda01ee641a708de9ull, 0xb01ae745b101e9e4ull,
+    0x8e41ade9fbebc27dull, 0xe5d3ef282a242e81ull, 0xb9a74a0637ce2ee1ull,
+    0x95f83d0a1fb69cd9ull, 0xf24a01a73cf2dccfull, 0xc3b8358109e84f07ull,
+    0x9e19db92b4e31ba9ull};
+static const positive format_five_low[13] = {
+    0x0000000000000000ull, 0x0000000000000000ull, 0x999090b65f67d924ull,
+    0x69a028bb3ded71a3ull, 0xe80e6f4820cc9495ull, 0x5ec05dcff72e7f8full,
+    0x14588f13be847307ull, 0x8f1668c8a86da5faull, 0x6d953e2bd7173692ull,
+    0x4abdaf101564f98eull, 0xbc633b39673c8cecull, 0x0a862f80ec4700c8ull,
+    0x6c07a2c26a8346d1ull};
+static const b32 format_five_exponent[13] = {
+    -127, -65, -2, 61, 123, 186, 249, 311, 374, 437, 499, 562, 625};
+
+//      5^-(27j) the same way, j to 13.
+static const positive format_fifth_high[14] = {
+    0x8000000000000000ull, 0x9e74d1b791e07e48ull, 0xc428d05aa4751e4cull,
+    0xf2d56790ab41c2a2ull, 0x964e858c91ba2655ull, 0xba121a4650e4ddebull,
+    0xe65829b3046b0afaull, 0x8e938662882af53eull, 0xb080392cc4349decull,
+    0xda7f5bf590966848ull, 0x873e4f75e2224e68ull, 0xa76c582338ed2621ull,
+    0xcf42894a5dce35eaull, 0x8049a4ac0c5811aeull};
+static const positive format_fifth_low[14] = {
+    0x0000000000000000ull, 0x775ea264cf55347dull, 0xaa97e14c3c26b886ull,
+    0xfae27299423fb9c3ull, 0x3a6a07f8d510f86full, 0x92f34d62616ce413ull,
+    0x0cb4a5a3112a5112ull, 0x547eb47b7282ee9cull, 0xbd8d794d96aacfb3ull,
+    0xaf39a475506a899eull, 0x5a7744a6e804a291ull, 0xaf2af2b80af6f24eull,
+    0x52064cac828675b9ull, 0x205b896d777d6278ull};
+static const b32 format_fifth_exponent[14] = {
+    -127, -190, -253, -316, -378, -441, -504,
+    -566, -629, -692, -754, -817, -880, -942};
+
+static bool format_estimated(positive mantissa, bipolar power, bipolar scale,
+                             positive address_to whole, p32 address_to tail)
+{
+        positive high;
+        positive low;
+        positive five;
+        positive fraction;
+        positive top;
+        positive middle;
+        positive bottom;
+        bipolar exponent;
+        bipolar index;
+        bipolar rest;
+        bipolar length;
+        bipolar normal;
+        bipolar shift;
+        p128 product;
+
+        if (scale >= 0)
+        {
+                index = scale / 27;
+                rest = scale % 27;
+
+                if (index > 12)
+                        return false;
+
+                high = format_five_high[index];
+                low = format_five_low[index];
+                exponent = format_five_exponent[index];
+        }
+        else
+        {
+                index = (26 - scale) / 27;
+                rest = index * 27 + scale;
+
+                if (index > 13)
+                        return false;
+
+                high = format_fifth_high[index];
+                low = format_fifth_low[index];
+                exponent = format_fifth_exponent[index];
+        }
+
+        //      The entry times 5^rest is below 2^(128 + length) and at least
+        //      2^(126 + length), so its top bit is one of two places.
+        five = format_five_powers[rest];
+        length = ((rest * 1217359) >> 19) + 1;
+        product = (p128)low * five;
+        bottom = (positive)product;
+        product = (p128)high * five + (positive)(product >> 64);
+        top = (positive)(product >> 64);
+        middle = (positive)product;
+        normal = format_bits_from(top, middle, (positive)(63 + length))
+                     ? length
+                     : length - 1;
+        high = format_bits_from(top, middle, (positive)normal);
+        low = format_bits_from(middle, bottom, (positive)normal);
+        exponent += normal;
+
+        //      Times the mantissa: 181 bits, with the point shift bits up.
+        product = (p128)mantissa * low;
+        bottom = (positive)product;
+        product = (p128)mantissa * high + (positive)(product >> 64);
+        top = (positive)(product >> 64);
+        middle = (positive)product;
+        shift = -(power + exponent + scale);
+
+        if (shift < 117 || shift > 191)
+                return false;
+
+        address_to whole = format_bits_from(top, middle, (positive)(shift - 64));
+        fraction = shift >= 128
+                       ? format_bits_from(top, middle, (positive)(shift - 128))
+                       : format_bits_from(middle, bottom, (positive)(shift - 64));
+
+        if (address_to whole >= FORMAT_SHORT_LIMIT ||
+            fraction < FORMAT_ESTIMATE_WINDOW ||
+            fraction > (positive)-1 - FORMAT_ESTIMATE_WINDOW ||
+            (fraction > ((positive)1 << 63) - FORMAT_ESTIMATE_WINDOW &&
+             fraction < ((positive)1 << 63) + FORMAT_ESTIMATE_WINDOW))
+                return false;
+
+        address_to tail =
+            fraction >> 63 ? FORMAT_TAIL_ABOVE : FORMAT_TAIL_BELOW;
+        return true;
+}
+
 static inline INLINE positive format_tail_up(p32 tail, positive whole)
 {
         return tail == FORMAT_TAIL_ABOVE ||
@@ -16213,25 +16368,34 @@ static inline INLINE positive format_tail_up(p32 tail, positive whole)
 static bool format_scaled(positive mantissa, bipolar power, bipolar scale,
                           positive address_to whole, p32 address_to tail)
 {
+#ifdef FORMAT_ESTIMATE_ALWAYS
+        return format_estimated(mantissa, power, scale, whole, tail);
+#endif
+
         if (scale >= 0)
         {
                 bipolar shift = -(power + scale);
                 p128 product;
-                p128 floor;
-                p128 half;
-                p128 rest;
+                positive high;
+                positive low;
+                bool half;
+                bool sticky;
 
                 if (scale > 27)
-                        return false;
+                        return format_estimated(mantissa, power, scale, whole,
+                                                tail);
 
                 product = (p128)mantissa * format_five_powers[scale];
+                high = (positive)(product >> 64);
+                low = (positive)product;
 
                 if (shift <= 0)
                 {
-                        if (shift < -63 || (product >> (64 + shift)) != 0)
+                        if (shift < -63 || high != 0 ||
+                            (shift < 0 && (low >> (64 + shift)) != 0))
                                 return false;
 
-                        address_to whole = (positive)product << -shift;
+                        address_to whole = low << -shift;
                         address_to tail = FORMAT_TAIL_ZERO;
 
                         return address_to whole < FORMAT_SHORT_LIMIT;
@@ -16242,24 +16406,28 @@ static bool format_scaled(positive mantissa, bipolar power, bipolar scale,
                 if (shift > 127)
                 {
                         address_to whole = 0;
-                        address_to tail =
-                            product ? FORMAT_TAIL_BELOW : FORMAT_TAIL_ZERO;
+                        address_to tail = (high | low) ? FORMAT_TAIL_BELOW
+                                                       : FORMAT_TAIL_ZERO;
                         return true;
                 }
 
-                floor = product >> shift;
-
-                if (floor >= FORMAT_SHORT_LIMIT)
+                if (shift < 64 && (high >> shift) != 0)
                         return false;
 
-                half = (p128)1 << (shift - 1);
-                rest = product & ((half << 1) - 1);
+                address_to whole = format_bits_from(high, low, (positive)shift);
 
-                address_to whole = (positive)floor;
-                address_to tail = rest == 0     ? FORMAT_TAIL_ZERO
-                                  : rest < half ? FORMAT_TAIL_BELOW
-                                  : rest == half ? FORMAT_TAIL_HALF
-                                                 : FORMAT_TAIL_ABOVE;
+                if (address_to whole >= FORMAT_SHORT_LIMIT)
+                        return false;
+
+                //      The first bit dropped is the half; the rest is whether
+                //      it was exactly the half.
+                half = format_bits_from(high, low, (positive)shift - 1) & 1;
+                sticky = format_bits_below(high, low, (positive)shift - 1);
+
+                address_to tail = half ? (sticky ? FORMAT_TAIL_ABOVE
+                                                 : FORMAT_TAIL_HALF)
+                                       : (sticky ? FORMAT_TAIL_BELOW
+                                                 : FORMAT_TAIL_ZERO);
                 return true;
         }
 
@@ -16270,7 +16438,45 @@ static bool format_scaled(positive mantissa, bipolar power, bipolar scale,
                 positive divisor;
                 positive remainder;
 
-                if (places > 19 || power > 11 || power < -63)
+                //      At 2^64 and past it. When 5^places divides the
+                //      mantissa the quotient is an integer times a power of
+                //      two and exact again; when it does not the quotient is
+                //      no dyadic rational at all, and the estimate decides.
+                if (power > 11)
+                {
+                        positive odd;
+                        bipolar move = power - (bipolar)places;
+
+                        if (places > 22 ||
+                            mantissa % format_five_powers[places] != 0)
+                                return format_estimated(mantissa, power, scale,
+                                                        whole, tail);
+
+                        odd = mantissa / format_five_powers[places];
+
+                        if (move >= 0)
+                        {
+                                if (move > 63 ||
+                                    (move && (odd >> (64 - move)) != 0))
+                                        return false;
+
+                                address_to whole = odd << move;
+                                address_to tail = FORMAT_TAIL_ZERO;
+                                return address_to whole < FORMAT_SHORT_LIMIT;
+                        }
+
+                        //      move is no lower than twelve less twenty two.
+                        divisor = (positive)1 << (-move - 1);
+                        below = odd & ((divisor << 1) - 1);
+                        address_to whole = odd >> -move;
+                        address_to tail = below == 0       ? FORMAT_TAIL_ZERO
+                                          : below < divisor ? FORMAT_TAIL_BELOW
+                                          : below == divisor ? FORMAT_TAIL_HALF
+                                                             : FORMAT_TAIL_ABOVE;
+                        return true;
+                }
+
+                if (places > 19 || power < -63)
                         return false;
 
                 if (power >= 0)
@@ -16545,7 +16751,21 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
                                address_of number);
 
         if (!rounded)
-                format_expand(value, address_of number);
+        {
+                positive significant = (positive)-1;
+                positive places = (positive)-1;
+
+                //      One digit past the last one kept, which is where
+                //      rounding looks.
+                if (style == 'g' || style == 'G')
+                        significant = (positive)(precision == 0 ? 1 : precision) + 1;
+                else if (style == 'e' || style == 'E')
+                        significant = (positive)precision + 2;
+                else
+                        places = (positive)precision + 1;
+
+                format_expand(value, address_of number, significant, places);
+        }
 
         if (style == 'g' || style == 'G')
         {

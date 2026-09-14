@@ -37750,10 +37750,171 @@ static fn lexical_fields(void)
         }
 }
 
+/*
+        The estimate tables in src/standard.c, multiplied back out.
+
+        Each entry for 5^(27j) has to be the top 128 bits of that power with
+        the exponent that puts them back, and each entry c for 5^-(27j) with
+        exponent -K has to be the floor of 2^K over the power, which is
+        c * 5^(27j) <= 2^K < (c + 1) * 5^(27j). Nothing but multiplication.
+*/
+static positive table_limbs[16];
+static positive table_count;
+
+static fn table_power(positive power)
+{
+        table_limbs[0] = 1;
+        table_count = 1;
+
+        while (power)
+        {
+                positive step = power < 27 ? power : 27;
+                positive factor = 1;
+                positive carry = 0;
+                positive i;
+
+                for (i = 0; i < step; i++)
+                        factor *= 5;
+
+                for (i = 0; i < table_count; i++)
+                {
+                        p128 product = (p128)table_limbs[i] * factor + carry;
+
+                        table_limbs[i] = (positive)product;
+                        carry = (positive)(product >> 64);
+                }
+
+                if (carry)
+                        table_limbs[table_count++] = carry;
+
+                power -= step;
+        }
+}
+
+static positive table_bits(positive address_to limbs, positive count)
+{
+        positive bits = 0;
+        positive i;
+
+        for (i = 0; i < count * 64; i++)
+                if ((limbs[i / 64] >> (i % 64)) & 1)
+                        bits = i + 1;
+
+        return bits;
+}
+
+//      Sixty four bits of the limbs from bit from up, zeros past either end.
+static positive table_window(positive address_to limbs, positive count,
+                             bipolar from)
+{
+        positive word = 0;
+        bipolar bit;
+
+        for (bit = 63; bit >= 0; bit--)
+        {
+                bipolar at = from + bit;
+                positive value = 0;
+
+                if (at >= 0 && (positive)at < count * 64)
+                        value = (limbs[at / 64] >> (at % 64)) & 1;
+
+                word = (word << 1) | value;
+        }
+
+        return word;
+}
+
+//      The limbs against 2^bit: below, equal or above.
+static b32 table_against(positive address_to limbs, positive count,
+                         positive bit)
+{
+        positive bits = table_bits(limbs, count);
+        positive i;
+
+        if (bits != bit + 1)
+                return bits > bit + 1 ? 1 : -1;
+
+        for (i = 0; i < bit; i++)
+                if ((limbs[i / 64] >> (i % 64)) & 1)
+                        return 1;
+
+        return 0;
+}
+
+static fn estimate_tables(void)
+{
+        positive j;
+
+        for (j = 0; j < array_count(format_five_high); j++)
+        {
+                positive bits;
+
+                table_power(27 * j);
+                bits = table_bits(table_limbs, table_count);
+
+                check("an estimate table entry is its power of five, rounded down",
+                      format_five_exponent[j] == (bipolar)bits - 128 &&
+                          format_five_high[j] ==
+                              table_window(table_limbs, table_count,
+                                           (bipolar)bits - 64) &&
+                          format_five_low[j] ==
+                              table_window(table_limbs, table_count,
+                                           (bipolar)bits - 128));
+        }
+
+        for (j = 0; j < array_count(format_fifth_high); j++)
+        {
+                positive factor[2] = {format_fifth_low[j], format_fifth_high[j]};
+                positive product[20] = {0};
+                positive carry = 0;
+                positive count;
+                positive bit = (positive)-format_fifth_exponent[j];
+                positive i;
+                positive k;
+
+                table_power(27 * j);
+                count = table_count + 2;
+
+                for (k = 0; k < 2; k++)
+                {
+                        carry = 0;
+
+                        for (i = 0; i < table_count; i++)
+                        {
+                                p128 sum = (p128)table_limbs[i] * factor[k] +
+                                           product[i + k] + carry;
+
+                                product[i + k] = (positive)sum;
+                                carry = (positive)(sum >> 64);
+                        }
+
+                        product[table_count + k] += carry;
+                }
+
+                check("a reciprocal table entry times its power is at most the power of two",
+                      (factor[1] >> 63) && table_against(product, count, bit) <= 0);
+
+                carry = 0;
+
+                for (i = 0; i < count; i++)
+                {
+                        p128 sum = (p128)product[i] +
+                                   (i < table_count ? table_limbs[i] : 0) + carry;
+
+                        product[i] = (positive)sum;
+                        carry = (positive)(sum >> 64);
+                }
+
+                check("a reciprocal table entry plus one times its power is past the power of two",
+                      !carry && table_against(product, count, bit) > 0);
+        }
+}
+
 b32 main(void)
 {
         lexical_fields();
         shared_sticky_tails();
+        estimate_tables();
         conversions();
         rules();
         floats();
