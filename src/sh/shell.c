@@ -2006,13 +2006,10 @@ fn run_lines(string_address text)
                         lex_physical_newline(false);
 
                 {
-                        string_address rest = stop;
+                        positive left = (positive)(copy + length - stop);
 
-                        shell_line_has_more = false;
-                        while (string_get(rest) == '\n')
-                                rest++;
-                        if (string_get(rest))
-                                shell_line_has_more = true;
+                        shell_line_has_more =
+                            memory_span_byte(stop, '\n', left) < left;
                 }
 
                 // An empty line is a line: it is a body line of a

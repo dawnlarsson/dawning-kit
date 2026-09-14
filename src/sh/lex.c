@@ -392,7 +392,10 @@ static __attribute__((noinline)) string_address
 lex_nesting(string_address at);
 static string_address lex_nesting_at(string_address at, positive nesting,
                                      bool posix_double);
-static string_address lex_quote_end(string_address at, p8 quote);
+static string_address lex_quote_end_kind(string_address at, p8 quote,
+                                         bool address_to command_open,
+                                         positive nesting);
+#define lex_quote_end(at, quote) lex_quote_end_kind(at, quote, null, 0)
 static string_address parse_here_skip_bodies(string_address line,
                                               string_address newline);
 
@@ -467,17 +470,9 @@ static PURE string_address lex_escaped_end(string_address at, p8 quote)
         return at;
 }
 
-/*
-        Where a POSIX dollar-single-quoted run closes.
-
-        The escape is interpreted immediately before expansion; the lexer
-        only has to keep the quoted bytes together and keep delimiters inside
-        them out of the grammar.
-*/
-static PURE string_address lex_dollar_quote_end(string_address at)
-{
-        return lex_escaped_end(at, '\'');
-}
+/* Where a POSIX dollar-single-quoted run closes. The escape is interpreted
+   just before expansion; the lexer only keeps the quoted bytes together. */
+#define lex_dollar_quote_end(at) lex_escaped_end(at, '\'')
 
 /*
         Step over whatever begins here that a scanner is not allowed to look
@@ -709,11 +704,6 @@ static string_address lex_quote_end_kind(string_address at, p8 quote,
         }
 
         return step;
-}
-
-static string_address lex_quote_end(string_address at, p8 quote)
-{
-        return lex_quote_end_kind(at, quote, null, 0);
 }
 
 /*
