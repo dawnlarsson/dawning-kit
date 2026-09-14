@@ -14,11 +14,6 @@
 */
 
 
-#define BOWL_KIND_NONE 0
-#define BOWL_KIND_TAR 1
-#define BOWL_KIND_ZSTD 2
-#define BOWL_KIND_GZIP 3
-#define BOWL_KIND_XZ 4
 
 #define BOWL_TEXT 131072
 #define BOWL_GEO_MIRROR \
@@ -55,21 +50,6 @@ static bool bowl_root_busy(string_address root)
 }
 
 #define BOWL_RESET_DEPTH 48
-#define BOWL_FROM_SUFFIX ".bowl-from"
-
-static bool bowl_from_path(p8 address_to into, positive room,
-                           string_address root)
-{
-        positive length = string_length(root);
-        positive suffix = sizeof(BOWL_FROM_SUFFIX) - 1;
-
-        if (!room || length >= room || suffix >= room - length)
-                return false;
-
-        memory_copy(into, root, length);
-        memory_copy(into + length, BOWL_FROM_SUFFIX, suffix + 1);
-        return true;
-}
 
 static bipolar bowl_reset_walk_at(bipolar directory, string_address name,
                                    positive depth)
@@ -159,7 +139,7 @@ static b32 bowl_recover_from(string_address root, string_address marker)
 {
         p8 from[BOWL_PATH_LIMIT];
 
-        if (!bowl_from_path(from, sizeof(from), root))
+        if (!bowl_root_path(from, sizeof(from), root, ".bowl-from"))
                 return bowl_refuse("bowl path is too long\n");
 
         if (system_access_at(AT_FDCWD, from, 0) < 0)
@@ -215,32 +195,13 @@ static b32 bowl_write_bytes(string_address path, string_address text,
         return failed < 0 ? bowl_fail(path, failed) : 0;
 }
 
-static bool bowl_put(p8 address_to into, positive room,
-                     positive address_to used, const_string text,
-                     positive length)
-{
-        if (address_to used + length > room)
-                return false;
-
-        memory_copy(into + address_to used, text, length);
-        address_to used += length;
-        return true;
-}
-
 static string_address bowl_line_word(string_address line,
                                      bool address_to commented)
 {
-        while (*line == ' ' || *line == '\t')
-                line++;
-
+        line += string_span(line, string_set_blanks);
         address_to commented = *line == '#';
         if (address_to commented)
-        {
-                line++;
-                while (*line == ' ' || *line == '\t')
-                        line++;
-        }
-
+                line += 1 + string_span(line + 1, string_set_blanks);
         return line;
 }
 
@@ -273,14 +234,13 @@ static bool bowl_isolation_keyword(string_address line)
                bowl_keyword(line, "DisableSandboxSyscalls");
 }
 
-static bool bowl_put_isolation(p8 address_to into, positive room,
-                               positive address_to used)
+static bool bowl_put_isolation(byte_store address_to out)
 {
         string_address text =
             "DisableSandboxFilesystem\n"
             "DisableSandboxSyscalls\n";
 
-        return bowl_put(into, room, used, text, string_length(text));
+        return byte_store_append_exact(out, text, string_length(text));
 }
 
 static bool bowl_options_keyword(string_address text, string_address word)
@@ -292,11 +252,9 @@ static bool bowl_options_keyword(string_address text, string_address word)
         while (at < length)
         {
                 bool commented = false;
-                positive stop = at;
+                positive stop = at + memory_span_without_byte(text + at, '\n',
+                                                              length - at);
                 string_address token;
-
-                while (stop < length && text[stop] != '\n')
-                        stop++;
 
                 token = bowl_line_word(text + at, address_of commented);
                 if (!commented && token[0] == '[')
@@ -313,17 +271,15 @@ static bool bowl_options_keyword(string_address text, string_address word)
 
 static bool bowl_nameserver_ok(string_address line, positive length)
 {
-        positive at = 0;
-
-        while (at < length && (line[at] == ' ' || line[at] == '\t'))
-                at++;
+        /* Blanks stop at the line's newline or terminator, so they stay
+           inside length. */
+        positive at = string_span(line, string_set_blanks);
 
         if (length - at < 11 || string_compare_max(line + at, "nameserver ", 11))
                 return false;
 
         at += 11;
-        while (at < length && (line[at] == ' ' || line[at] == '\t'))
-                at++;
+        at += string_span(line + at, string_set_blanks);
 
         if (at >= length || line[at] == '\n' || line[at] == '#')
                 return false;
@@ -349,33 +305,25 @@ static b32 bowl_wait_applet(bipolar child, string_address what)
         return 0;
 }
 
-static p8 bowl_archive_kind(string_address archive)
+/* A bootstrap is a ustar archive or one packed by a codec tar reads. */
+static bool bowl_archive_known(string_address archive)
 {
         p8 head[512];
-        p32 magic = 0;
         bipolar handle = system_open_at(AT_FDCWD, archive, FILE_READ | O_CLOEXEC);
         bipolar got;
 
         if (handle < 0)
-                return BOWL_KIND_NONE;
+                return false;
 
         got = system_read_retry((positive)handle, head, sizeof(head));
         system_close(handle);
         if (got < 6)
-                return BOWL_KIND_NONE;
+                return false;
 
-        memory_copy(address_of magic, head, 4);
-        if (magic == ZSTD_MAGIC)
-                return BOWL_KIND_ZSTD;
-        if (head[0] == 0x1f && head[1] == 0x8b)
-                return BOWL_KIND_GZIP;
-        if (head[0] == 0xfd && head[1] == 0x37 && head[2] == 0x7a &&
-            head[3] == 0x58 && head[4] == 0x5a && head[5] == 0)
-                return BOWL_KIND_XZ;
-        if (got >= 262 && !string_compare_max(head + 257, "ustar", 5))
-                return BOWL_KIND_TAR;
-
-        return BOWL_KIND_NONE;
+        p8 pack = tar_pack_from_magic(head, (positive)got);
+        return pack == TAR_PACK_GZIP || pack == TAR_PACK_XZ ||
+               pack == TAR_PACK_ZSTD ||
+               (got >= 262 && !string_compare_max(head + 257, "ustar", 5));
 }
 
 static b32 bowl_extract(string_address archive, string_address root)
@@ -383,13 +331,9 @@ static b32 bowl_extract(string_address archive, string_address root)
         string_address tar_file[] = {
             "tar", "-x", "-f", archive, "-C", root, null};
         bipolar extract;
-        p8 kind;
 
         log_flush();
-        kind = bowl_archive_kind(archive);
-
-        if (kind == BOWL_KIND_TAR || kind == BOWL_KIND_ZSTD ||
-            kind == BOWL_KIND_GZIP || kind == BOWL_KIND_XZ)
+        if (bowl_archive_known(archive))
         {
                 extract = system_fork();
                 if (extract == 0)
@@ -479,7 +423,7 @@ static b32 bowl_flatten(string_address root, string_address marker)
         if (!found)
                 return bowl_refuse("archive is not a bowl bootstrap\n");
 
-        if (!bowl_from_path(sibling, sizeof(sibling), root))
+        if (!bowl_root_path(sibling, sizeof(sibling), root, ".bowl-from"))
                 return bowl_refuse("bowl path is too long\n");
 
         if (system_access_at(AT_FDCWD, sibling, 0) >= 0)
@@ -511,12 +455,12 @@ static b32 bowl_write_resolv(string_address root)
 {
         p8 path[BOWL_PATH_LIMIT];
         p8 host[4096];
-        p8 out[4096];
-        positive used = 0;
+        p8 buffer[4096];
+        byte_store out = {buffer, sizeof(buffer), 0};
         bipolar got;
         bipolar failed;
         positive at = 0;
-        const_string fallback = "nameserver 1.1.1.1\n";
+        string_address fallback = "nameserver 1.1.1.1\n";
 
         if (!bowl_root_path(path, sizeof(path), root, "/etc/resolv.conf"))
                 return bowl_refuse("bowl path is too long\n");
@@ -531,8 +475,8 @@ static b32 bowl_write_resolv(string_address root)
                         return bowl_fail(etc, failed);
         }
 
-        if (!bowl_put(out, sizeof(out), address_of used, fallback,
-                      string_length(fallback)))
+        if (!byte_store_append_exact(address_of out, fallback,
+                                     string_length(fallback)))
                 return bowl_refuse("resolv.conf is too long\n");
 
         got = file_slurp("/etc/resolv.conf", host, sizeof(host));
@@ -543,35 +487,32 @@ static b32 bowl_write_resolv(string_address root)
         while (got > 0 && at < (positive)got)
         {
                 positive start = at;
-                positive stop = start;
-
-                while (stop < (positive)got && host[stop] != '\n')
-                        stop++;
+                positive stop = start + memory_span_without_byte(
+                                            host + start, '\n', (positive)got - start);
 
                 if (bowl_nameserver_ok(host + start, stop - start) &&
                     string_compare_max(host + start, fallback,
                                        string_length(fallback) - 1))
                 {
-                        if (!bowl_put(out, sizeof(out), address_of used,
-                                      host + start, stop - start) ||
-                            !bowl_put(out, sizeof(out), address_of used, "\n",
-                                      1))
+                        if (!byte_store_append_exact(address_of out, host + start,
+                                                     stop - start) ||
+                            !byte_store_append_exact(address_of out, "\n", 1))
                                 return bowl_refuse("resolv.conf is too long\n");
                 }
 
                 at = stop + (stop < (positive)got);
         }
 
-        return bowl_write_bytes(path, out, used);
+        return bowl_write_bytes(path, out.bytes, out.used);
 }
 
 static b32 bowl_write_mirror(string_address root)
 {
         p8 path[BOWL_PATH_LIMIT];
         p8 text[BOWL_TEXT];
-        p8 out[BOWL_TEXT];
+        p8 buffer[BOWL_TEXT];
+        byte_store out = {buffer, sizeof(buffer), 0};
         bipolar got;
-        positive used = 0;
         positive at = 0;
         bool live = false;
 
@@ -591,8 +532,7 @@ static b32 bowl_write_mirror(string_address root)
                 bool commented = false;
                 positive start = at;
 
-                while (at < (positive)got && text[at] != '\n')
-                        at++;
+                at += memory_span_without_byte(text + at, '\n', (positive)got - at);
 
                 if (bowl_keyword(bowl_line_word(text + start, address_of commented),
                                  "Server") &&
@@ -602,15 +542,13 @@ static b32 bowl_write_mirror(string_address root)
                 at = at + (at < (positive)got);
         }
 
-        if (!live &&
-            !bowl_put(out, sizeof(out), address_of used, BOWL_GEO_MIRROR,
-                      string_length(BOWL_GEO_MIRROR)))
+        if ((!live &&
+             !byte_store_append_exact(address_of out, BOWL_GEO_MIRROR,
+                                      string_length(BOWL_GEO_MIRROR))) ||
+            !byte_store_append_exact(address_of out, text, (positive)got))
                 return bowl_refuse("mirrorlist is too long\n");
 
-        if (!bowl_put(out, sizeof(out), address_of used, text, (positive)got))
-                return bowl_refuse("mirrorlist is too long\n");
-
-        return bowl_write_bytes(path, out, used);
+        return bowl_write_bytes(path, out.bytes, out.used);
 }
 
 static fn bowl_clear_lock(string_address root, string_address rel)
@@ -633,14 +571,9 @@ static fn bowl_clear_lock(string_address root, string_address rel)
 static bool bowl_archive_usable(string_address path, p64 floor)
 {
         file_facts facts;
-        p8 kind;
 
-        if (!file_look_at(path, address_of facts) || facts.size < floor)
-                return false;
-
-        kind = bowl_archive_kind(path);
-        return kind == BOWL_KIND_ZSTD || kind == BOWL_KIND_GZIP ||
-               kind == BOWL_KIND_XZ || kind == BOWL_KIND_TAR;
+        return file_look_at(path, address_of facts) && facts.size >= floor &&
+               bowl_archive_known(path);
 }
 
 static b32 bowl_write_pacman(string_address root);
@@ -703,8 +636,8 @@ static b32 bowl_write_apk(string_address root)
                 if (!commented && !string_compare_max(word, "https://", 8))
                         return 0;
 
-                while (at < (positive)got && existing[at] != '\n')
-                        at++;
+                at += memory_span_without_byte(existing + at, '\n',
+                                               (positive)got - at);
                 at = at + (at < (positive)got);
         }
 
@@ -736,9 +669,9 @@ static b32 bowl_write_pacman(string_address root)
 {
         p8 path[BOWL_PATH_LIMIT];
         p8 text[BOWL_TEXT];
-        p8 out[BOWL_TEXT];
+        p8 buffer[BOWL_TEXT];
+        byte_store out = {buffer, sizeof(buffer), 0};
         bipolar got;
-        positive used = 0;
         positive at = 0;
         bool seen_options = false;
         bool injected = false;
@@ -766,11 +699,9 @@ static b32 bowl_write_pacman(string_address root)
         {
                 bool commented = false;
                 positive start = at;
-                positive stop = start;
+                positive stop = start + memory_span_without_byte(
+                                            text + start, '\n', (positive)got - start);
                 string_address word;
-
-                while (stop < (positive)got && text[stop] != '\n')
-                        stop++;
 
                 word = bowl_line_word(text + start, address_of commented);
 
@@ -780,14 +711,10 @@ static b32 bowl_write_pacman(string_address root)
                                 seen_options = true;
                         else if (!injected)
                         {
-                                if (!seen_options &&
-                                    !bowl_put(out, sizeof(out),
-                                              address_of used, "[options]\n",
-                                              10))
-                                        return bowl_refuse(
-                                            "pacman.conf is too long\n");
-                                if (!bowl_put_isolation(out, sizeof(out),
-                                                        address_of used))
+                                if ((!seen_options &&
+                                     !byte_store_append_exact(address_of out,
+                                                              "[options]\n", 10)) ||
+                                    !bowl_put_isolation(address_of out))
                                         return bowl_refuse(
                                             "pacman.conf is too long\n");
                                 injected = true;
@@ -804,12 +731,12 @@ static b32 bowl_write_pacman(string_address root)
                     bowl_keyword(word, "CheckSpace"))
                 {
                         if (!commented &&
-                            !bowl_put(out, sizeof(out), address_of used, "#", 1))
+                            !byte_store_append_exact(address_of out, "#", 1))
                                 return bowl_refuse("pacman.conf is too long\n");
                 }
 
-                if (!bowl_put(out, sizeof(out), address_of used, text + start,
-                              stop - start + (stop < (positive)got)))
+                if (!byte_store_append_exact(address_of out, text + start,
+                                             stop - start + (stop < (positive)got)))
                         return bowl_refuse("pacman.conf is too long\n");
 
                 at = stop + (stop < (positive)got);
@@ -817,15 +744,13 @@ static b32 bowl_write_pacman(string_address root)
 
         if (!injected)
         {
-                if (!seen_options &&
-                    !bowl_put(out, sizeof(out), address_of used, "[options]\n",
-                              10))
-                        return bowl_refuse("pacman.conf is too long\n");
-                if (!bowl_put_isolation(out, sizeof(out), address_of used))
+                if ((!seen_options &&
+                     !byte_store_append_exact(address_of out, "[options]\n", 10)) ||
+                    !bowl_put_isolation(address_of out))
                         return bowl_refuse("pacman.conf is too long\n");
         }
 
-        return bowl_write_bytes(path, out, used);
+        return bowl_write_bytes(path, out.bytes, out.used);
 }
 
 static b32 bowl_land(string_address archive, string_address root,

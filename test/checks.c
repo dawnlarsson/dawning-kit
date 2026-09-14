@@ -43313,14 +43313,16 @@ static fn isolation(void)
             "ILoveCandy", "Disable", "Architecture"};
         p8 text[512];
         p8 line[80];
-        positive used = 0;
+        byte_store isolation = {text, sizeof(text), 0};
+        positive used;
         positive at = 0;
         positive word;
         positive form;
 
         check("bowl isolation text fits",
-              bowl_put_isolation(text, sizeof(text), address_of used) && used &&
-                  used < sizeof(text));
+              bowl_put_isolation(address_of isolation) && isolation.used &&
+                  isolation.used < sizeof(text));
+        used = isolation.used;
         text[used] = 0;
 
         while (at < used)

@@ -79,16 +79,12 @@ static b32 bowl_setup_download(string_address dest, string_address url,
         p8 self[BOWL_PATH_LIMIT];
         p8 part[BOWL_PATH_LIMIT];
         string_address argv[6];
-        positive dest_length = string_length(dest);
 
         string_format(log, bowl_label "downloading %s\n", url);
         log_flush();
 
-        if (dest_length + 5 >= sizeof(part))
+        if (!bowl_root_path(part, sizeof(part), dest, ".part"))
                 return bowl_refuse("bowl path is too long\n");
-
-        memory_copy(part, dest, dest_length);
-        memory_copy(part + dest_length, ".part", 5);
 
         if (bowl_setup_self(self, sizeof(self)))
                 return 1;
