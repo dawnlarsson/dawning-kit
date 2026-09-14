@@ -1643,9 +1643,6 @@ static b32 ul_chrt_one(b32 pid, address_any context)
         return 0;
 }
 
-static p8 ul_chrt_policy;
-
-
 static const argument_option ul_chrt_options[] = {
     {"batch", 'b', 0, 1}, {"deadline", 'd', 0, 1}, {"ext", 'e', 0, 1}, {"fifo", 'f', 0, 1},
     {"idle", 'i', 0, 1}, {"other", 'o', 0, 1}, {"rr", 'r', 0, 1}, {"reset-on-fork", 'R'},
@@ -1674,14 +1671,14 @@ static b32 ul_chrt_max()
 
 static b32 util_linux_chrt()
 {
+        p8 chosen = 0;
         file_taking taking = {
             .program = (string_address)"chrt",
             .options = ul_chrt_options,
-            .selection = address_of ul_chrt_policy,
+            .selection = address_of chosen,
         };
         b32 answer;
 
-        ul_chrt_policy = 0;
         if (ul_options_done(address_of taking,
                     "[options] [priority] command | -p [priority] PID",
                     address_of answer))
@@ -1693,7 +1690,7 @@ static b32 util_linux_chrt()
         bool by_pid = (taking.flags & FILE_FLAG('p')) != 0;
         bool all = (taking.flags & FILE_FLAG('a')) != 0;
         ul_policy const address_to policy =
-            ul_policy_find(ul_chrt_policy ? ul_chrt_policy : 'r', true);
+            ul_policy_find(chosen ? chosen : 'r', true);
         positive priority = 0;
         positive first = taking.first;
         bool priority_given = false;
@@ -1718,7 +1715,7 @@ static b32 util_linux_chrt()
                               address_of pid))
                 return 1;
 
-        bool scheduling_option = ul_chrt_policy || priority_given ||
+        bool scheduling_option = chosen || priority_given ||
             file_option_value(address_of taking, 'T') ||
             file_option_value(address_of taking, 'P') ||
             file_option_value(address_of taking, 'D');
@@ -2141,9 +2138,6 @@ static b32 ul_flock_exec(string_address address_to words)
         return answer == 126 || answer == 127 ? 69 : answer;
 }
 
-static p8 ul_flock_kind;
-
-
 static const argument_option ul_flock_options[] = {
     {"shared", 's', 0, 1}, {"exclusive", 'x', 0, 1}, {"unlock", 'u', 0, 1}, {"nb", 'n'},
     {"nonblocking", 'n'}, {"timeout", 'w', ARGUMENT_REQUIRED}, {"wait", 'w', ARGUMENT_REQUIRED},
@@ -2209,15 +2203,15 @@ static bool ul_flock_seen(p8 letter, string_address value)
 
 static b32 util_linux_flock()
 {
+        p8 kind = 0;
         file_taking taking = {
             .program = (string_address)"flock",
             .options = ul_flock_options,
-            .selection = address_of ul_flock_kind,
+            .selection = address_of kind,
             .seen = ul_flock_seen,
         };
         b32 answer;
 
-        ul_flock_kind = 0;
         if (!file_take(address_of taking))
                 return 64;
         if (ul_meta(address_of taking,
@@ -2237,16 +2231,12 @@ static b32 util_linux_flock()
         if (taking.first >= count)
                 return ul_flock_usage();
 
-        b32 conflict = 1;
-        positive parsed;
+        /* ul_flock_seen refused every malformed -E, -w, -S and -N already;
+           what survives here parses. */
+        positive conflict = 1;
         if (file_option_value(address_of taking, 'E'))
-        {
-                if (!ul_unsigned(file_option_value(address_of taking, 'E'), 255,
-                                 address_of parsed))
-                        return string_report(log_error, 64, "%s: %s\n", "flock",
-                                             "exit code out of range (expected 0 to 255)");
-                conflict = (b32)parsed;
-        }
+                ul_unsigned(file_option_value(address_of taking, 'E'), 255,
+                            address_of conflict);
 
         bool timed = file_option_value(address_of taking, 'w') != null;
         positive timeout = 0;
@@ -2263,26 +2253,18 @@ static b32 util_linux_flock()
                                       "cannot set up timer: Invalid argument");
                         return 71;
                 }
-                if (!file_duration_read(text, false, address_of timeout))
-                {
-                        string_report(log_error, 1, "%s: %s\n", "flock", "invalid timeout");
-                        return 64;
-                }
+                file_duration_read(text, false, address_of timeout);
         }
 
-        bool fcntl = (taking.flags & FILE_FLAG('L')) ||
-                     file_option_value(address_of taking, 'S') ||
-                     file_option_value(address_of taking, 'N');
+        string_address start_text = file_option_value(address_of taking, 'S');
+        string_address length_text = file_option_value(address_of taking, 'N');
+        bool fcntl = (taking.flags & FILE_FLAG('L')) || start_text || length_text;
         positive start = 0;
         positive length = 0;
-        if ((file_option_value(address_of taking, 'S') &&
-             !ul_size(file_option_value(address_of taking, 'S'), address_of start)) ||
-            (file_option_value(address_of taking, 'N') &&
-             !ul_size(file_option_value(address_of taking, 'N'), address_of length)))
-        {
-                string_report(log_error, 1, "%s: %s\n", "flock", "invalid lock range");
-                return 64;
-        }
+        if (start_text)
+                ul_size(start_text, address_of start);
+        if (length_text)
+                ul_size(length_text, address_of length);
 
         string_address target = program_argument((b32)taking.first);
         string_address command_text = null;
@@ -2325,8 +2307,7 @@ static b32 util_linux_flock()
                                              FILE_READ_WRITE | FILE_CREATE,
                                              0666);
                 if (handle < 0 &&
-                    (!fcntl || ul_flock_kind == 's' ||
-                     ul_flock_kind == 'u'))
+                    (!fcntl || kind == 's' || kind == 'u'))
                         handle = (b32)system_open_at(AT_FDCWD,
                                                      target,
                                                      FILE_READ);
@@ -2341,7 +2322,7 @@ static b32 util_linux_flock()
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
         bool blocked = false;
         positive began = verbose ? clock_monotonic_nanoseconds() : 0;
-        answer = ul_flock_acquire(handle, ul_flock_kind ? ul_flock_kind : 'x',
+        answer = ul_flock_acquire(handle, kind ? kind : 'x',
                                   (taking.flags & FILE_FLAG('n')) != 0,
                                   timed, timeout, fcntl, start, length,
                                   conflict, verbose, address_of blocked);
@@ -5017,8 +4998,7 @@ static fn ul_lsfd_fdinfo(ul_lsfd_entry address_to descriptor)
 
 static PURE string_address ul_lsfd_type(p16 mode, string_address name)
 {
-        if (name && string_length(name) >= 11 &&
-            !memory_compare(name, "anon_inode:", 11))
+        if (name && string_has_prefix(name, "anon_inode:"))
                 return (string_address)"anon_inode";
 
         switch (mode & MODE_FORMAT)
@@ -5051,8 +5031,7 @@ static bipolar ul_lsfd_copy_name(ul_lsfd_entry address_to descriptor,
                 return 0;
         memory_copy_apart_end(copy, path, (positive)length);
         descriptor->name = copy;
-        descriptor->deleted = length >= 10 &&
-            !memory_compare(copy + length - 10, " (deleted)", 10);
+        descriptor->deleted = memory_has_suffix(copy, length, " (deleted)");
         return 1;
 }
 
@@ -5449,7 +5428,7 @@ static b32 ul_namespace_wait(bipolar child, bool job_control)
                                       system_call(syscall(getpid)), signal);
                         return 128 + signal;
                 }
-                return (b32)((status >> 8) & 0xff);
+                return wait_status_code(status);
         }
         return 1;
 }
@@ -9580,7 +9559,8 @@ static fn ul_lscpu_cache_read(ul_lscpu_cpu address_to cpu)
                 p8 type[32];
                 positive level;
                 ul_lscpu_cache_path(path, cpu->id, index, "level");
-                if (!ul_lscpu_file_number(path, address_of level))
+                /* The kind's name is "L", two digits and a letter. */
+                if (!ul_lscpu_file_number(path, address_of level) || level > 99)
                         continue;
                 ul_lscpu_cache_path(path, cpu->id, index, "type");
                 if (ul_slurp_word(path, type, sizeof(type)) <= 0)
@@ -10622,13 +10602,8 @@ static bipolar ul_lsmem_node(positive id)
         return answer;
 }
 
-static PURE bipolar ul_lsmem_order(ul_lsmem_block left,
-                                    ul_lsmem_block right)
-{
-        if (left.id == right.id)
-                return 0;
-        return left.id < right.id ? -1 : 1;
-}
+/* Blocks and switches alike are listed in id order. */
+#define ul_id_order(left, right) (((left).id > (right).id) - ((left).id < (right).id))
 
 static bool ul_lsmem_block_size(positive address_to value)
 {
@@ -10725,7 +10700,7 @@ static bool ul_lsmem_take()
                 return false;
 
         ul_lsmem.blocks = array_merge_sort(
-            ul_lsmem.blocks, spare, ul_lsmem.block_count, ul_lsmem_order);
+            ul_lsmem.blocks, spare, ul_lsmem.block_count, ul_id_order);
         for (positive i = 0; i < ul_lsmem.block_count; i++)
         {
                 if (string_equals(ul_lsmem.blocks[i].state, "online"))
@@ -13401,14 +13376,6 @@ static ul_rfkill_row ul_rfkill_rows[UL_RFKILL_MAX];
 static ul_rfkill_row ul_rfkill_spare[UL_RFKILL_MAX];
 static ul_rfkill_view ul_rfkill_views[UL_RFKILL_MAX * UL_RFKILL_FILTER_MAX];
 
-static PURE bipolar ul_rfkill_order(ul_rfkill_row left,
-                                    ul_rfkill_row right)
-{
-        if (left.id == right.id)
-                return 0;
-        return left.id < right.id ? -1 : 1;
-}
-
 static bipolar ul_rfkill_type_index(string_address name)
 {
         for (positive i = 0; i < array_count(ul_rfkill_types); i++)
@@ -13514,7 +13481,7 @@ static bool ul_rfkill_take(ul_rfkill_row address_to address_to rows,
         if (!failed && address_to count > 1)
                 address_to rows = array_merge_sort(
                     ul_rfkill_rows, ul_rfkill_spare, address_to count,
-                    ul_rfkill_order);
+                    ul_id_order);
         return !failed;
 }
 

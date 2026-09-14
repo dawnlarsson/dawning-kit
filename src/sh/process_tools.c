@@ -2931,10 +2931,6 @@ static bool process_replay_number(p8 letter, string_address value)
         return true;
 }
 
-//      -t and -T name the same file, so the last of them written wins.
-static p8 process_replay_timing_letter;
-
-
 static const argument_option process_scriptreplay_options[] = {
     {"timing", 't', ARGUMENT_REQUIRED, 1},
     {"log-timing", 'T', ARGUMENT_REQUIRED, 1},
@@ -2954,23 +2950,24 @@ static const argument_option process_scriptreplay_options[] = {
 
 static b32 process_scriptreplay()
 {
+        //      -t and -T name the same file, so the last of them written wins.
+        p8 timing_letter = 0;
         file_taking taking = {
             .program = (string_address)"scriptreplay",
             .options = process_scriptreplay_options,
-            .selection = address_of process_replay_timing_letter,
+            .selection = address_of timing_letter,
             .seen = process_replay_number,
         };
         positive argument_count = (positive)program_argument_count();
         b32 answer;
-        process_replay_timing_letter = 0;
         if (ul_options_done(address_of taking,
                 "[options] timingfile [typescript [divisor]]", address_of answer))
                 return answer;
         if (taking.flags & FILE_FLAG('S'))
                 return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "summary mode is not supported");
 
-        string_address timing_path = process_replay_timing_letter
-            ? file_option_value(address_of taking, process_replay_timing_letter)
+        string_address timing_path = timing_letter
+            ? file_option_value(address_of taking, timing_letter)
             : null;
         positive operand = taking.first;
         if (!timing_path)
