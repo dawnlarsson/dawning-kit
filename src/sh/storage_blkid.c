@@ -193,9 +193,11 @@ static positive storage_hex_padded(p8 address_to into, positive value,
 {
         p8 digits[2 * sizeof(positive)];
         positive count = positive_into_base(digits, value, 16, upper);
-        positive padding = width > count ? width - count : 0;
+        positive padding = 0;
 
-        memory_fill(into, '0', padding);
+        // At most fifteen zeros, one at a time where the bound is visible.
+        while (padding + count < width)
+                into[padding++] = '0';
         memory_copy(into + padding, digits, count);
         into[padding + count] = end;
         return padding + count;

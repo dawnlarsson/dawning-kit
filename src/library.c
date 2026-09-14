@@ -10851,6 +10851,7 @@ ASM_FUNC(positive_to_string)
     // Reporting shares the formatter and preserves the caller's result across
     // every writer call. Its third fixed argument uses one integer slot;
     // floating arguments and overflow arguments keep their ordinary ABI.
+#ifndef KERNEL_MODE // no kernel caller; its jump into string_format reads to objtool as a fall-through
     ASM_FUNC(string_diagnostic)
     "sub $40, %rsp\n   mov %rdi, 0(%rsp)\n   mov %esi, 8(%rsp)\n"
     "mov %rdx, 16(%rsp)\n   mov %rcx, 24(%rsp)\n   mov 8(%rdi), %rax\n"
@@ -10869,6 +10870,7 @@ ASM_FUNC(positive_to_string)
     "mov %esi, %r10d\n   mov %rdx, %rsi\n   mov $-24, %r11\n"
     "jmp .Lstring_format_enter\n"
     ASM_END(string_report)
+#endif // KERNEL_MODE
     ASM_FUNC(string_format)
     "xor %r10d, %r10d\n   mov $-32, %r11\n"
     ".Lstring_format_enter:\n"
@@ -17446,6 +17448,7 @@ ASM_FUNC(positive_to_string)
     //       trailing write, and a specifier nobody knows is dropped along with
     //       its percent. Both are what the C did.
     //
+#ifndef KERNEL_MODE // no kernel caller; its jump into string_format reads to objtool as a fall-through
     ASM_FUNC(string_diagnostic)
     "stp x29, x30, [sp, -48]!\n   mov x29, sp\n"
     "stp x0, x1, [sp, 16]\n   stp x2, x3, [sp, 32]\n"
@@ -17464,6 +17467,7 @@ ASM_FUNC(positive_to_string)
     "mov w10, w1\n   mov x1, x2\n   mov x11, #216\n"
     "b .Lstring_format_enter\n"
     ASM_END(string_report)
+#endif // KERNEL_MODE
     ASM_FUNC(string_format)
     "mov w10, wzr\n   mov x11, #208\n"
     ".Lstring_format_enter:\n"
@@ -23910,6 +23914,7 @@ ASM_FUNC(positive_to_string)
     //       trailing write, and a specifier nobody knows is dropped along with
     //       its percent. Both are what the C did.
     //
+#ifndef KERNEL_MODE // no kernel caller; its jump into string_format reads to objtool as a fall-through
     ASM_FUNC(string_diagnostic)
     "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd a0, 0(sp)\n"
     "sw a1, 8(sp)\n   sd a2, 16(sp)\n   sd a3, 24(sp)\n"
@@ -23926,6 +23931,7 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(string_report)
     "mv t2, a1\n   mv a1, a2\n   li t1, 56\n   j .Lstring_format_enter\n"
     ASM_END(string_report)
+#endif // KERNEL_MODE
     ASM_FUNC(string_format)
     "li t2, 0\n   li t1, 48\n"
     ".Lstring_format_enter:\n"
@@ -25805,7 +25811,7 @@ PURE string_address string_search(string_address haystack, string_address needle
         assembly is the plain names and these are not defined; the table above
         says which of the two an architecture got.
 */
-PURE positive string_length(string_address source);
+PURE positive string_length(const_string source);
 PURE b32 string_compare(string_address source, string_address input);
 PURE string_address string_first_of(string_address source, p8 character);
 
@@ -25964,14 +25970,15 @@ address_any memory_translate(address_any block, positive size,
 READS_WRITES(1, 3) READS_WRITES(2, 3)
 fn memory_exchange_apart(address_any left, address_any right, positive size);
 WRITES(1, 3) READS(2, 3)
-address_any memory_copy_apart(address_any destination, address_any source, positive size);
+address_any memory_copy_apart(address_any destination, const address_any source,
+                              positive size);
 WRITES(1, 3) READS(2, 3)
-p8 address_to memory_copy_apart_end(p8 address_to destination, address_any source,
+p8 address_to memory_copy_apart_end(p8 address_to destination, const address_any source,
                                    positive size);
 READS_WRITES(1, 3) READS(2, 3)
-address_any memory_copy(address_any destination, address_any source, positive size);
+address_any memory_copy(address_any destination, const address_any source, positive size);
 READS_WRITES(1, 3) READS(2, 3)
-p8 address_to memory_copy_end(p8 address_to destination, address_any source,
+p8 address_to memory_copy_end(p8 address_to destination, const address_any source,
                               positive size);
 
 
@@ -26039,7 +26046,7 @@ PURE address_any memory_first_of(address_any block, b8 value, positive size);
         routine anybody can use.
 */
 PURE positive string_length_max(string_address source, positive bound);
-PURE b32 string_compare_max(string_address source, string_address input, positive bound);
+PURE b32 string_compare_max(const_string source, const_string input, positive bound);
 PURE string_address string_first_of_or_end(string_address source, p8 character);
 PURE string_address string_first_of_max(string_address source, positive bound,
                                         p8 character);

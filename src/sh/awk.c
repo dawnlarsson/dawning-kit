@@ -242,6 +242,9 @@ static positive awk_write_decimal(decimal value, b32 precision, p8 address_to ou
 }
 
 // The reference spells these with a sign, always, wherever they are written.
+/* Every spelling is a sign and three letters. */
+#define AWK_NOT_FINITE_LENGTH 4
+
 static string_address awk_not_finite_name(decimal value)
 {
         if (decimal_is_nan(value))
@@ -2094,10 +2097,10 @@ static b32 awk_integer_digits(decimal value, p8 address_to out, positive room,
         if (!decimal_is_finite(value))
         {
                 string_address name = awk_not_finite_name(value);
-                b32 at = (b32)string_length(name);
+                b32 at = AWK_NOT_FINITE_LENGTH;
 
                 address_to negative = false;
-                memory_copy(out, name, (positive)at + 1);
+                memory_copy(out, name, AWK_NOT_FINITE_LENGTH + 1);
                 return at;
         }
 
@@ -2274,8 +2277,8 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                 {
                                         string_address name = awk_not_finite_name(exact);
 
-                                        body = string_length(name);
-                                        memory_copy(room, name, (positive)body);
+                                        body = AWK_NOT_FINITE_LENGTH;
+                                        memory_copy(room, name, AWK_NOT_FINITE_LENGTH);
                                         zero = false;
                                         precision = -1;
                                         break;
@@ -2395,8 +2398,8 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         {
                                 string_address name = awk_not_finite_name(value);
 
-                                body = string_length(name);
-                                memory_copy(room, name, (positive)body);
+                                body = AWK_NOT_FINITE_LENGTH;
+                                memory_copy(room, name, AWK_NOT_FINITE_LENGTH);
                                 zero = false;
                                 break;
                         }

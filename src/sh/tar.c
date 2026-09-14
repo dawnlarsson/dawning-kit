@@ -1764,7 +1764,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
                                 return tar_status;
                         }
                 }
-                else if (got > 0)
+                else if (got > 0 && (positive)got <= sizeof(magic))
                 {
                         memory_copy(tar_record, magic, (positive)got);
                         tar_have = (positive)got;

@@ -385,7 +385,7 @@ static fn expand_push(p8 value, p8 mark)
 }
 
 // A run that all comes out the same way, which is a copy and a fill.
-static fn expand_push_run(string_address text, positive length, p8 mark)
+static fn expand_push_run(const_string text, positive length, p8 mark)
 {
         if (!expand_room(expand_length + length + 2))
         {
@@ -5522,7 +5522,8 @@ static fn expand_case_span(positive start, bool upper, bool every,
                 positive width = (positive)(past - (expand_text + at));
                 bool matched = default_pattern;
 
-                if (!width)
+                // A scalar is at most four bytes: one holds it and its end.
+                if (!width || width >= sizeof(one))
                         break;
 
                 if (!matched)

@@ -281,7 +281,7 @@
         Each returns the destination, which is what the routines return.
 */
 static inline INLINE address_any copy_known(address_any destination,
-                                            address_any source, positive size)
+                                            const address_any source, positive size)
 {
 #if KNOWN_WIDE && KNOWN_SIZE_MAX > 32
         if (size > 32 && cpu_has_avx2) {
@@ -417,7 +417,7 @@ static inline INLINE address_any copy_known(address_any destination,
 }
 
 static inline INLINE address_any copy_apart_known(address_any destination,
-                                                 address_any source, positive size)
+                                                 const address_any source, positive size)
 {
 #if KNOWN_WIDE
         if (size > 32 && cpu_has_avx2)
@@ -459,7 +459,7 @@ static inline INLINE address_any copy_apart_known(address_any destination,
         body and differ only in which routine takes the long runs.
 */
 static inline INLINE address_any copy_running_small(address_any destination,
-                                                    address_any source,
+                                                    const address_any source,
                                                     positive size)
 {
         p8 address_to to = (p8 address_to)destination;
@@ -499,7 +499,7 @@ static inline INLINE address_any copy_running_small(address_any destination,
 
 #if LIBRARY_INLINE_COPY && LIBRARY_RUNNING_MAX > 16
 static inline INLINE address_any copy_running_windows(address_any destination,
-                                                      address_any source,
+                                                      const address_any source,
                                                       positive size)
 {
 #if ARM64 && !defined(KERNEL_MODE)
@@ -616,7 +616,7 @@ static inline INLINE address_any copy_running_windows(address_any destination,
 #endif
 
 static inline INLINE address_any copy_running(address_any destination,
-                                              address_any source, positive size)
+                                              const address_any source, positive size)
 {
 #if !LIBRARY_INLINE_COPY
         return memory_copy(destination, source, size);
@@ -715,7 +715,7 @@ static inline INLINE bool decimal_short_placed(string_address input,
 #endif
 
 static inline INLINE address_any copy_apart_running(address_any destination,
-                                                    address_any source,
+                                                    const address_any source,
                                                     positive size)
 {
 #if !LIBRARY_INLINE_COPY
@@ -1461,17 +1461,17 @@ SEARCH_KNOWN(search_case_known, memory_first_of_ascii_case)
         Only x86_64 and arm64 get here, so the count of trailing zeros is one
         instruction and there is no libgcc call hiding in it.
 */
-static inline INLINE p64 bound_word_at(string_address where)
+static inline INLINE p64 bound_word_at(const_string where)
 {
         return memory_load_unaligned(p64, where);
 }
 
-static inline INLINE p32 bound_narrow_at(string_address where)
+static inline INLINE p32 bound_narrow_at(const_string where)
 {
         return memory_load_unaligned(p32, where);
 }
 
-static inline INLINE bool bound_load_fits_page(string_address where,
+static inline INLINE bool bound_load_fits_page(const_string where,
                                                 positive width)
 {
         return ((positive)where & 4095) <= 4096 - width;
@@ -1577,7 +1577,7 @@ length_max_bytes:
         differed, because a difference behind it would otherwise be answered
         as equality.
 */
-static inline INLINE b32 compare_max_known(string_address source, string_address input,
+static inline INLINE b32 compare_max_known(const_string source, const_string input,
                                            positive bound)
 {
         positive walked = 0;
@@ -1605,8 +1605,8 @@ static inline INLINE b32 compare_max_known(string_address source, string_address
         }
 
         if (!differed && bound >= 8 && walked < bound) {
-                string_address left_tail = source + bound - 8;
-                string_address right_tail = input + bound - 8;
+                const_string left_tail = source + bound - 8;
+                const_string right_tail = input + bound - 8;
 
                 if (!bound_load_fits_page(left_tail, 8) ||
                     !bound_load_fits_page(right_tail, 8))
@@ -2958,7 +2958,7 @@ static inline INLINE p8 address_to copy_end_known(string_address destination,
 
 /* Copy a known non-overlapping count and append its terminator. */
 static inline INLINE p8 address_to copy_apart_count_end_known(
-    p8 address_to destination, address_any source, positive size)
+    p8 address_to destination, const address_any source, positive size)
 {
         copy_apart_known(destination, source, size);
         destination[size] = 0;

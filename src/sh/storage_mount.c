@@ -63,9 +63,9 @@
 typedef byte_store storage_mount_word;
 
 static bool storage_mount_tag(storage_mount_word address_to word,
-                              string_address tag, string_address value)
+                              string_address tag, positive tag_length,
+                              string_address value)
 {
-        positive tag_length = string_length(tag);
         positive value_length = string_length(value);
         positive wanted;
 
@@ -753,6 +753,8 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                 address_of tag_source,
                                 option == 'L' ? (string_address)"LABEL" :
                                                 (string_address)"UUID",
+                                option == 'L' ? sizeof("LABEL") - 1 :
+                                                sizeof("UUID") - 1,
                                 value))
                                 goto no_memory;
                         named_source = tag_source.bytes;

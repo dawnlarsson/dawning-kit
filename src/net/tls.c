@@ -538,8 +538,8 @@ static bipolar tls_asn1_skip(p8 address_to bytes, positive size, positive addres
         return TLS_OK;
 }
 
-static bool tls_oid_is(p8 address_to bytes, positive length, p8 address_to oid,
-                       positive oid_length)
+static bool tls_oid_is(const p8 address_to bytes, positive length,
+                       const p8 address_to oid, positive oid_length)
 {
         return length == oid_length && !memory_compare(bytes, oid, oid_length);
 }

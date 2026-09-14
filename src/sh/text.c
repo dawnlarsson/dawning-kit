@@ -1072,7 +1072,10 @@ static b32 encoding_encode(const encoding_codec address_to codec,
                         positive need = codec->input - held;
                         positive take = left < need ? left : need;
 
-                        memory_copy_apart(pending + held, at, take);
+                        /* Fewer than five bytes: a loop the compiler can bound
+                           against pending, where the word-wide copy it cannot. */
+                        for (positive i = 0; i < take; i++)
+                                pending[held + i] = at[i];
                         held += take;
                         at += take;
                         left -= take;
@@ -1104,7 +1107,8 @@ static b32 encoding_encode(const encoding_codec address_to codec,
 
                 if (writing && left)
                 {
-                        memory_copy_apart(pending, at, left);
+                        for (positive i = 0; i < left; i++)
+                                pending[i] = at[i];
                         held = left;
                         at += left;
                         left = 0;

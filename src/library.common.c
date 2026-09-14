@@ -398,7 +398,7 @@ bipolar system_read_retry(positive handle, address_any into, positive length);
 #define system_pipe(pair, flags)                                             \
         system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
 
-#if defined(LINUX)
+#if defined(LINUX) && !defined(KERNEL_MODE)
 /* Linux exposes pollfd as an eight-byte kernel record on every supported
    architecture.  Keep its effective type, event spelling and ppoll's
    eight-byte kernel signal-set ABI in one floor shared by networking,
@@ -1137,9 +1137,48 @@ static bipolar system_path_stage_discard(
         return removed;
 }
 
+/* A removal is judged by the parent that holds the name.  Given a path of
+   more than one component that parent is the prefix resolved under
+   `directory`, not `directory` itself: judging the latter refused root's
+   cleanup of its own 0700 directory in sticky /tmp whenever the working
+   directory belonged to someone else, and could accept a parent it never
+   looked at.  The prefix is opened and the leaf removed through it, so both
+   checks below see the directory that actually holds the name. */
 static bipolar system_path_remove_opened_at(
     bipolar directory, string_address name, bipolar handle, positive flags)
 {
+        positive length = name ? string_length(name) : 0;
+        positive cut = 0;
+
+        while (length > 1 && name[length - 1] == '/')
+                length--;
+        for (positive at = length; at > 0 && !cut; at--)
+                if (name[at - 1] == '/')
+                        cut = at;
+
+        if (cut && cut < length)
+        {
+                p8 path[4096];
+
+                if (length >= sizeof(path))
+                        return -36;
+
+                memory_copy(path, name, length);
+                path[length] = end;
+                path[cut - 1] = end;
+
+                bipolar parent = system_open_at(
+                    directory, cut == 1 ? (string_address)"/" : path,
+                    O_PATH | O_DIRECTORY | O_CLOEXEC);
+                if (parent < 0)
+                        return parent;
+
+                bipolar removed = system_path_remove_opened_at(
+                    parent, path + cut, handle, flags);
+                system_close(parent);
+                return removed;
+        }
+
         /* A directory removal may fail after a concurrent child appears.
            Detaching its name first would turn ENOTEMPTY into data loss when
            the old name is claimed before restoration.  Stable parents can
@@ -2099,6 +2138,7 @@ static inline INLINE fn writer_hex_escaped(writer output, address_any data,
         writer_escaped_bulk(output, data, length, policy);
 }
 
+#ifndef KERNEL_MODE // pathname diagnostics are for utilities
 /* A pathname supplied by an archive or a directory entry may contain bytes
    that a terminal interprets as cursor movement, erased output, or a forged
    line.  Ordinary names retain their byte-for-byte output.  Once a control
@@ -2152,6 +2192,7 @@ static fn writer_terminal_quoted_name(writer output, string_address value)
 {
         writer_terminal_quoted_name_span(output, value, string_length(value));
 }
+#endif // KERNEL_MODE
 
 typedef struct { p8 address_to bytes; positive length; } byte_span;
 
@@ -2216,10 +2257,12 @@ static fn writer_json_span(writer output, byte_span value, bool lower, bool shor
         output("\"", 1);
 }
 
+#ifndef KERNEL_MODE // the kernel writes no JSON
 static fn writer_json_string(writer output, string_address value)
 {
         writer_json_span(output, (byte_span){value, string_length(value)}, false, false);
 }
+#endif // KERNEL_MODE
 
 /* Borrowed byte fields keep their bounds through projection and presentation. */
 
@@ -2479,6 +2522,7 @@ static inline INLINE fn table_json(const table_view address_to view, byte_span n
         view->output("\n   ]\n}\n", 8);
 }
 
+#ifndef KERNEL_MODE // column lists are utility arguments
 /* Select byte indexes from a comma-separated list of named records.  Every
    schema keeps its name pointer first; stride lets tables retain the rest of
    their private shape.  The caller may seed a default prefix before an
@@ -2582,6 +2626,7 @@ static COLD b32 name_list_columns(
         }
         return NAME_LIST_UNKNOWN;
 }
+#endif // KERNEL_MODE
 
 /* Regex, glob and tr share the [:name:] submachine.  A null limit means the
    surrounding string's terminator is the bound. */
@@ -2773,6 +2818,7 @@ static inline CONST string_address system_error_message(bipolar code)
         return (positive)code < array_count(messages) ? (string_address)messages[code] : null;
 }
 
+#ifndef KERNEL_MODE // the kernel has no argv, and bits_first_set is not declared there
 /* argv token mechanics shared by utility policy adapters. Short options
    return one byte at a time; long names remain slices for each caller's
    exact/prefix lookup. The cursor borrows argv and never changes its bytes. */
@@ -3056,5 +3102,6 @@ static COLD b32 argument_exclusive_refuse(
                       "%s: options --%s and --%s cannot be combined\n",
                       program, one, two);
 }
+#endif // KERNEL_MODE
 
 #endif

@@ -15,13 +15,13 @@
 
 typedef unsigned __int128 crypto_wide;
 
-static p32 crypto_be32(p8 address_to bytes)
+static p32 crypto_be32(const p8 address_to bytes)
 {
         return ((p32)bytes[0] << 24) | ((p32)bytes[1] << 16) |
                ((p32)bytes[2] << 8) | (p32)bytes[3];
 }
 
-static p64 crypto_be64(p8 address_to bytes)
+static p64 crypto_be64(const p8 address_to bytes)
 {
         return ((p64)crypto_be32(bytes) << 32) | crypto_be32(bytes + 4);
 }
@@ -167,7 +167,7 @@ static fn crypto_sha256_of(p8 address_to data, positive length, p8 address_to ou
         crypto_sha256_close(address_of hash, out);
 }
 
-static fn crypto_sha512_open_iv(crypto_sha512 address_to hash, p64 address_to iv)
+static fn crypto_sha512_open_iv(crypto_sha512 address_to hash, const p64 address_to iv)
 {
         positive i;
 
@@ -1243,7 +1243,7 @@ static const p64 crypto_p384_n[6] = {
     0xecec196accc52973ull, 0x581a0db248b0a77aull, 0xc7634d81f4372ddfull,
     0xffffffffffffffffull, 0xffffffffffffffffull, 0xffffffffffffffffull};
 
-static fn crypto_fe_load_be(p64 address_to out, p8 address_to bytes, positive n)
+static fn crypto_fe_load_be(p64 address_to out, const p8 address_to bytes, positive n)
 {
         positive i;
 
@@ -1251,7 +1251,7 @@ static fn crypto_fe_load_be(p64 address_to out, p8 address_to bytes, positive n)
                 out[n - 1 - i] = crypto_be64(bytes + i * 8);
 }
 
-static fn crypto_fe_store_be(p8 address_to bytes, p64 address_to in, positive n)
+static fn crypto_fe_store_be(p8 address_to bytes, const p64 address_to in, positive n)
 {
         positive i;
 
@@ -1259,7 +1259,8 @@ static fn crypto_fe_store_be(p8 address_to bytes, p64 address_to in, positive n)
                 crypto_put_be64(bytes + i * 8, in[n - 1 - i]);
 }
 
-static bipolar crypto_fe_cmp(p64 address_to a, p64 address_to b, positive n)
+static bipolar crypto_fe_cmp(const p64 address_to a, const p64 address_to b,
+                             positive n)
 {
         positive i = n;
 
@@ -1275,7 +1276,7 @@ static bipolar crypto_fe_cmp(p64 address_to a, p64 address_to b, positive n)
         return 0;
 }
 
-static bool crypto_fe_is_zero(p64 address_to a, positive n)
+static bool crypto_fe_is_zero(const p64 address_to a, positive n)
 {
         positive i;
 
@@ -1285,8 +1286,8 @@ static bool crypto_fe_is_zero(p64 address_to a, positive n)
         return true;
 }
 
-static fn crypto_fe_add(p64 address_to d, p64 address_to a, p64 address_to b,
-                        p64 address_to p, positive n)
+static fn crypto_fe_add(p64 address_to d, const p64 address_to a,
+                        const p64 address_to b, const p64 address_to p, positive n)
 {
         crypto_wide carry = 0;
         positive i;
@@ -1310,8 +1311,8 @@ static fn crypto_fe_add(p64 address_to d, p64 address_to a, p64 address_to b,
         }
 }
 
-static fn crypto_fe_sub(p64 address_to d, p64 address_to a, p64 address_to b,
-                        p64 address_to p, positive n)
+static fn crypto_fe_sub(p64 address_to d, const p64 address_to a,
+                        const p64 address_to b, const p64 address_to p, positive n)
 {
         crypto_wide borrow = 0;
         positive i;
@@ -1335,8 +1336,8 @@ static fn crypto_fe_sub(p64 address_to d, p64 address_to a, p64 address_to b,
         }
 }
 
-static fn crypto_fe_mul(p64 address_to d, p64 address_to a, p64 address_to b,
-                        p64 address_to p, positive n)
+static fn crypto_fe_mul(p64 address_to d, const p64 address_to a,
+                        const p64 address_to b, const p64 address_to p, positive n)
 {
         p64 t[128];
         p64 rem[65];
@@ -1386,14 +1387,14 @@ static fn crypto_fe_mul(p64 address_to d, p64 address_to a, p64 address_to b,
         memory_copy(d, rem, n * 8);
 }
 
-static fn crypto_fe_sqr(p64 address_to d, p64 address_to a, p64 address_to p,
-                        positive n)
+static fn crypto_fe_sqr(p64 address_to d, const p64 address_to a,
+                        const p64 address_to p, positive n)
 {
         crypto_fe_mul(d, a, a, p, n);
 }
 
-static fn crypto_fe_inv(p64 address_to d, p64 address_to a, p64 address_to p,
-                        positive n)
+static fn crypto_fe_inv(p64 address_to d, const p64 address_to a,
+                        const p64 address_to p, positive n)
 {
         /* Fermat: a^(p-2) */
         p64 exp[CRYPTO_FE_MAX];
@@ -1436,10 +1437,11 @@ typedef struct
         p64 y[CRYPTO_FE_MAX];
         p64 z[CRYPTO_FE_MAX];
         positive n;
-        p64 address_to p;
+        const p64 address_to p;
 } crypto_point;
 
-static fn crypto_point_zero(crypto_point address_to q, p64 address_to p, positive n)
+static fn crypto_point_zero(crypto_point address_to q, const p64 address_to p,
+                              positive n)
 {
         memory_fill(q, 0, sizeof(*q));
         q->n = n;
@@ -1447,8 +1449,9 @@ static fn crypto_point_zero(crypto_point address_to q, p64 address_to p, positiv
         q->z[0] = 0;
 }
 
-static fn crypto_point_set_xy(crypto_point address_to q, p64 address_to x,
-                              p64 address_to y, p64 address_to p, positive n)
+static fn crypto_point_set_xy(crypto_point address_to q, const p64 address_to x,
+                              const p64 address_to y, const p64 address_to p,
+                              positive n)
 {
         memory_fill(q, 0, sizeof(*q));
         q->n = n;
@@ -1465,7 +1468,7 @@ static fn crypto_point_double(crypto_point address_to r, crypto_point address_to
         p64 yyyy[CRYPTO_FE_MAX], s[CRYPTO_FE_MAX], m[CRYPTO_FE_MAX];
         p64 tmp[CRYPTO_FE_MAX], tmp2[CRYPTO_FE_MAX];
         positive n = p->n;
-        p64 address_to mod = p->p;
+        const p64 address_to mod = p->p;
 
         if (crypto_fe_is_zero(p->z, n))
         {
@@ -1514,7 +1517,7 @@ static fn crypto_point_add(crypto_point address_to r, crypto_point address_to p,
         p64 h[CRYPTO_FE_MAX], rr[CRYPTO_FE_MAX], hh[CRYPTO_FE_MAX], hhh[CRYPTO_FE_MAX];
         p64 v[CRYPTO_FE_MAX], tmp[CRYPTO_FE_MAX], tmp2[CRYPTO_FE_MAX];
         positive n = p->n;
-        p64 address_to mod = p->p;
+        const p64 address_to mod = p->p;
 
         if (crypto_fe_is_zero(p->z, n))
         {
@@ -1613,8 +1616,8 @@ static fn crypto_point_affine(crypto_point address_to p)
 }
 
 static bool crypto_scalar_from_int_be(p64 address_to out,
-                                      p8 address_to bytes,
-                                      positive length, p64 address_to n,
+                                      const p8 address_to bytes,
+                                      positive length, const p64 address_to n,
                                       positive limbs)
 {
         p8 padded[48];
@@ -1629,10 +1632,10 @@ static bool crypto_scalar_from_int_be(p64 address_to out,
                crypto_fe_cmp(out, n, limbs) < 0;
 }
 
-static bool crypto_point_is_on_curve(p8 address_to x_bytes,
-                                     p8 address_to y_bytes,
-                                     positive limbs, p64 address_to p,
-                                     p8 address_to b_bytes)
+static bool crypto_point_is_on_curve(const p8 address_to x_bytes,
+                                     const p8 address_to y_bytes,
+                                     positive limbs, const p64 address_to p,
+                                     const p8 address_to b_bytes)
 {
         p64 x[CRYPTO_FE_MAX], y[CRYPTO_FE_MAX], b[CRYPTO_FE_MAX];
         p64 left[CRYPTO_FE_MAX], right[CRYPTO_FE_MAX];
@@ -1662,9 +1665,9 @@ static bool crypto_ecdsa_verify(p8 address_to hash, positive hash_length,
                                 p8 address_to r_bytes, positive r_length,
                                 p8 address_to s_bytes, positive s_length,
                                 p8 address_to qx, p8 address_to qy, positive limbs,
-                                p64 address_to p, p64 address_to n,
-                                p8 address_to gx, p8 address_to gy,
-                                p8 address_to b)
+                                const p64 address_to p, const p64 address_to n,
+                                const p8 address_to gx, const p8 address_to gy,
+                                const p8 address_to b)
 {
         p64 r[CRYPTO_FE_MAX], s[CRYPTO_FE_MAX], e[CRYPTO_FE_MAX];
         p64 w[CRYPTO_FE_MAX], u1[CRYPTO_FE_MAX], u2[CRYPTO_FE_MAX];
