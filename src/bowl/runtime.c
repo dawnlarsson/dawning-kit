@@ -638,7 +638,16 @@ static bipolar bowl_isolated_enter(string_address root)
         if (failed)
                 return failed;
 
-        return bowl_isolated_populate();
+        failed = bowl_isolated_populate();
+        if (failed)
+                return failed;
+
+        /* Populate puts a fresh tmpfs on /run, so the host copy installed
+           before pivot is gone. Write the compiled database into this /run
+           or $TERMINFO points at an empty directory and ncurses refuses to
+           open the terminal. */
+        terminal_terminfo_install();
+        return 0;
 }
 
 /* Bind only the loader search paths a guest binary still spells in ELF. */
@@ -727,15 +736,74 @@ static DEAD_END fn bowl_inside(string_address root,
         exit(127);
 }
 
+static b32 bowl_env_named(string_address entry, string_address name)
+{
+        positive i = 0;
+
+        if (!entry)
+                return false;
+
+        while (name[i] && entry[i] == name[i])
+                i++;
+
+        return name[i] == 0 && entry[i] == '=';
+}
+
+/*
+        A guest ncurses still looks at $TERMINFO, and the compiled database
+        lives under /run/moonwater/terminfo. An inherited environment that
+        already names both is left alone; one that names neither — bowl from
+        a kernel console, or from a script that cleared the block — gets the
+        pair, or the open fails with "Error opening terminal".
+*/
+static string_address address_to bowl_environment(
+    string_address address_to inherited)
+{
+        static string_address mixed[512];
+        positive n = 0;
+        b32 have_term = false;
+        b32 have_terminfo = false;
+
+        if (inherited)
+        {
+                for (; inherited[n]; n++)
+                {
+                        if (bowl_env_named(inherited[n], "TERM"))
+                                have_term = true;
+                        if (bowl_env_named(inherited[n], "TERMINFO"))
+                                have_terminfo = true;
+                }
+
+                if (have_term && have_terminfo)
+                        return inherited;
+
+                if (n > 509)
+                        return inherited;
+
+                for (positive i = 0; i < n; i++)
+                        mixed[i] = inherited[i];
+        }
+
+        if (!have_term)
+                mixed[n++] = "TERM=" TERM_NAME;
+        if (!have_terminfo)
+                mixed[n++] = "TERMINFO=" TERM_INFO_DIRECTORY;
+        mixed[n] = null;
+        return mixed;
+}
+
 static b32 bowl_launch(string_address root, string_address program,
                        string_address address_to arguments,
                        bool isolated)
 {
         string_address native_arguments[] = {BOWL_NATIVE_SHELL, null};
-        string_address fallback_environment[] = {"TERM=ansi",
-                                                   "PATH=" BOWL_DEFAULT_PATH,
-                                                   "HOME=/root",
-                                                   "LANG=C.UTF-8", null};
+        string_address fallback_environment[] = {
+            "TERM=" TERM_NAME,
+            "TERMINFO=" TERM_INFO_DIRECTORY,
+            "PATH=" BOWL_DEFAULT_PATH,
+            "HOME=/root",
+            "LANG=C.UTF-8",
+            null};
         string_address address_to environment = file_environment_all();
         bipolar native_shell = -1;
         bipolar failed;
@@ -745,8 +813,10 @@ static b32 bowl_launch(string_address root, string_address program,
         if (!root || root[0] != '/')
                 return bowl_usage();
 
-        if (!environment)
-                environment = fallback_environment;
+        terminal_terminfo_install();
+
+        environment = environment ? bowl_environment(environment)
+                                  : fallback_environment;
 
         if (!program)
         {

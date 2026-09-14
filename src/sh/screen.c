@@ -143,6 +143,8 @@ static b32 screen_term()
 
         system_control(master, TIOCSWINSZ, address_of size);
 
+        terminal_terminfo_install();
+
         bipolar child = system_fork();
 
         if (child < 0)
@@ -157,9 +159,13 @@ static b32 screen_term()
         if (child == 0)
         {
                 string_address argv[] = {SHELL, null};
-                string_address envp[] = {"TERM=ansi", "HOME=/root",
-                                         "PATH=" BOWL_DEFAULT_PATH,
-                                         "LANG=C.UTF-8", null};
+                string_address envp[] = {
+                    "TERM=" TERM_NAME,
+                    "TERMINFO=" TERM_INFO_DIRECTORY,
+                    "HOME=/root",
+                    "PATH=" BOWL_DEFAULT_PATH,
+                    "LANG=C.UTF-8",
+                    null};
 
                 if (process_pty_child_setup(master, slave, -1, -1) < 0)
                         system_call_1(syscall(exit), 126);
@@ -183,6 +189,7 @@ static b32 screen_term()
         timespec nap = {0, 4000000};
         unsigned int synchronized_wait = 0;
         b32 hung_up = false;
+        unsigned int focused = window->state & WINDOW_FOCUSED;
 
         cursor_show();
         window_damage(window, 0, ROWS);
@@ -225,6 +232,23 @@ static b32 screen_term()
                         cursor_hide();
 
                 for (unsigned int i = 0; i < keys; i++)
+                {
+                        if (typed[i].flags & WINDOW_KEY_POINTER)
+                        {
+                                term_pointer(typed[i].reserved & 0xffff,
+                                             typed[i].reserved >> 16,
+                                             typed[i].character,
+                                             typed[i].flags);
+
+                                if (!term_send(master))
+                                {
+                                        gone = true;
+                                        break;
+                                }
+
+                                continue;
+                        }
+
                         if (typed[i].flags & WINDOW_KEY_DOWN)
                         {
                                 term_key_modified(typed[i].character,
@@ -237,6 +261,19 @@ static b32 screen_term()
                                         break;
                                 }
                         }
+                }
+
+                {
+                        unsigned int now = window->state & WINDOW_FOCUSED;
+
+                        if (now != focused)
+                        {
+                                focused = now;
+                                term_focus(now != 0);
+                                if (!term_send(master))
+                                        gone = true;
+                        }
+                }
 
                 for (;;)
                 {

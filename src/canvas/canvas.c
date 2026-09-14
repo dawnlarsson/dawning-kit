@@ -366,6 +366,9 @@ static struct desktop
         atomic_t button_changed;
         atomic_t button_x;
         atomic_t button_y;
+        atomic_t client_button;
+        atomic_t client_down;
+        atomic_t client_changed;
 } desktop = {
     .lock = __MUTEX_INITIALIZER(desktop.lock),
     .input_lock = __SPIN_LOCK_UNLOCKED(desktop.input_lock),

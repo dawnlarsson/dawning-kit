@@ -414,6 +414,8 @@ static void pane_restore_for_drag(struct pane *pane, int x, int y)
 // to say two separate things.
 #define PRESS_AGAIN_NS 400000000ull
 
+static _Bool pointer_client_down;
+
 static void drag_press(int x, int y)
 {
         unsigned int edges;
@@ -556,6 +558,11 @@ static void drag_press(int x, int y)
                 desktop.grab_x = x - pane->x;
                 desktop.grab_y = y - pane->y;
         }
+        else
+        {
+                pointer_client_down = true;
+                pointer_report(pane, x, y, 0, WINDOW_KEY_DOWN);
+        }
 
 redraw:
         // The titlebar that lost focus and the window that came to the front.
@@ -608,6 +615,15 @@ static void drag_release(int x, int y)
         desktop.resizing = NULL;
         desktop.barring = NULL;
 
+        if (pointer_client_down)
+        {
+                struct pane *pane = desktop.focused;
+
+                pointer_client_down = false;
+                if (pane)
+                        pointer_report(pane, x, y, 0, 0);
+        }
+
         /*
                 Only a window that was being moved. A resize is the hand saying
                 what size it wants, and answering that by snapping would throw
@@ -634,10 +650,10 @@ static void drag_release(int x, int y)
 
         Every window of cells answers, its own or a program's, because the
         lines a program wrote are in a ring the compositor allocated and the
-        view onto that ring is the compositor's. The turn never reaches the
-        program: there is nothing for it to do about one.
-*/
-/*
+        view onto that ring is the compositor's. A program that has asked for
+        the pointer -- mouse tracking -- is owed the wheel as button 64 and 65
+        instead, which is how btop and ncurses read it.
+
         Linux calls one legacy REL_WHEEL unit a physical detent and calls 120
         REL_WHEEL_HI_RES units the same distance. Three text lines per detent
         is the conventional desktop step.
@@ -678,6 +694,14 @@ static void wheel_deliver(void)
         lines = wheel_lines(v120, &desktop.wheel_remainder);
         if (!lines)
                 return;
+
+        if (pane->shared &&
+            (READ_ONCE(pane->shared->want) & WINDOW_WANT_POINTER))
+        {
+                pointer_report(pane, desktop.cursor_x, desktop.cursor_y,
+                               lines < 0 ? 65u : 64u, WINDOW_KEY_DOWN);
+                return;
+        }
 
         // The same way a console write asks for a frame. Damaging and
         // repainting from here draws before the cells are looked at again,

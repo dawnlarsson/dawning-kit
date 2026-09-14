@@ -169,11 +169,12 @@ static void pointer_latency_record(u64 started)
 static void pointer_apply(void)
 {
         _Bool button = atomic_xchg(&desktop.button_changed, 0);
+        _Bool client = atomic_xchg(&desktop.client_changed, 0);
         _Bool motion = atomic_xchg(&desktop.motion_pending, 0);
         int x, y;
         u64 started;
 
-        if (!button && !motion)
+        if (!button && !client && !motion)
                 return;
 
         started = motion ? desktop.motion_stamp : 0;
@@ -195,6 +196,22 @@ static void pointer_apply(void)
                         else
                                 drag_release(atomic_read(&desktop.button_x),
                                              atomic_read(&desktop.button_y));
+                }
+
+                if (client)
+                {
+                        struct pane *pane = desktop.focused;
+                        unsigned int flags = atomic_read(&desktop.client_down)
+                                                 ? WINDOW_KEY_DOWN
+                                                 : 0;
+
+                        if (pane)
+                                pointer_report(pane,
+                                               atomic_read(&desktop.button_x),
+                                               atomic_read(&desktop.button_y),
+                                               (unsigned int)atomic_read(
+                                                   &desktop.client_button),
+                                               flags);
                 }
 
                 if (motion)
@@ -261,6 +278,15 @@ static void pointer_apply(void)
                         else
                         {
                                 cursor_move(x, y);
+                                if (desktop.focused)
+                                {
+                                        unsigned int flags = WINDOW_KEY_POINTER_MOVE;
+
+                                        if (atomic_read(&desktop.button_down))
+                                                flags |= WINDOW_KEY_DOWN;
+                                        pointer_report(desktop.focused, x, y, 0,
+                                                       flags);
+                                }
                         }
 
                         // cursor_move/reshape has painted the software
@@ -438,7 +464,15 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
 
         if (type == EV_KEY)
         {
-                if (code != BTN_LEFT && code != BTN_TOUCH)
+                unsigned int which;
+
+                if (code == BTN_LEFT || code == BTN_TOUCH)
+                        which = 0;
+                else if (code == BTN_MIDDLE)
+                        which = 1;
+                else if (code == BTN_RIGHT)
+                        which = 2;
+                else
                 {
                         keyboard_event(handle, code, value);
                         return;
@@ -446,8 +480,18 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
 
                 atomic_set(&desktop.button_x, atomic_read(&desktop.pending_x));
                 atomic_set(&desktop.button_y, atomic_read(&desktop.pending_y));
-                atomic_set(&desktop.button_down, !!value);
-                atomic_set(&desktop.button_changed, 1);
+
+                if (which == 0)
+                {
+                        atomic_set(&desktop.button_down, !!value);
+                        atomic_set(&desktop.button_changed, 1);
+                }
+                else
+                {
+                        atomic_set(&desktop.client_button, (int)which);
+                        atomic_set(&desktop.client_down, !!value);
+                        atomic_set(&desktop.client_changed, 1);
+                }
 
                 canvas_thread_wake();
                 return;
@@ -723,6 +767,7 @@ static int canvas_loop(void *unused)
 
                 if (!atomic_read(&desktop.motion_pending) &&
                     !atomic_read(&desktop.button_changed) &&
+                    !atomic_read(&desktop.client_changed) &&
                     !atomic_read(&desktop.frame_pending) &&
                     !atomic_read(&desktop.wheel) &&
                     !atomic_read(&desktop.focus_steps) &&

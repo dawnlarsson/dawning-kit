@@ -4826,12 +4826,21 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
 #include "src/sh/pty.c"
-// The terminal fixture does not execute the desktop launcher, so what its
-// child would call has only to be declared.
+// The terminal fixture does not execute the desktop launcher.
 #define BOWL_DEFAULT_PATH "/fixture/bin"
-fn host_terminal_opening(void);
-bipolar shell_exec_file(string_address path, string_address address_to arguments,
-                        positive count, string_address address_to environment);
+#include "src/sh/terminfo.c"
+static fn host_terminal_opening() {}
+static bipolar shell_exec_file(string_address path,
+                               string_address address_to arguments,
+                               positive count,
+                               string_address address_to environment)
+{
+        (void)path;
+        (void)arguments;
+        (void)count;
+        (void)environment;
+        return -1;
+}
 #include "src/sh/screen.c"
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
@@ -4954,6 +4963,31 @@ b32 main()
                         while ((c = next_byte(argument, &at)) >= 0)
                                 consume((unsigned int)c);
 
+                        i++;
+                }
+                else if (string_compare(verb, (string_address) "click") == 0 ||
+                         string_compare(verb, (string_address) "release") == 0)
+                {
+                        unsigned int col = number(argument);
+                        unsigned int row_at = 1;
+                        unsigned int button = 0;
+                        unsigned int flags =
+                            verb[0] == 'c' ? WINDOW_KEY_DOWN : 0;
+                        positive at = 0;
+
+                        while (argument[at] && argument[at] != ',')
+                                at++;
+                        if (argument[at] == ',')
+                        {
+                                row_at = number(argument + at + 1);
+                                at++;
+                                while (argument[at] && argument[at] != ',')
+                                        at++;
+                                if (argument[at] == ',')
+                                        button = number(argument + at + 1);
+                        }
+
+                        term_pointer(col, row_at, button, flags);
                         i++;
                 }
                 else if (string_compare(verb, (string_address) "keys") == 0)
@@ -5185,6 +5219,11 @@ b32 main()
                         say_number(synchronized_output != 0);
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "mouse") == 0)
+                {
+                        say_number(mouse_mode);
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "tab_reset") == 0)
                 {
                         positive wrong = 0;
@@ -5333,7 +5372,8 @@ group report
 same 'cursor position' '[\e[3;4R]'               20 5 in '\e[3;4H\e[6n' sent
 same 'cursor position three digits' '[\e[3;160R]' 200 5 in '\e[3;160H\e[6n' sent
 same 'device status'   '[\e[0n]'                 20 5 in '\e[5n' sent
-same 'device attributes' '[\e[?6c]'              20 5 in '\e[c' sent
+same 'device attributes' '[\e[?1;2c]'            20 5 in '\e[c' sent
+same 'secondary attributes' '[\e[>0;115;0c]'     20 5 in '\e[>c' sent
 
 #
 #       Erasing.
@@ -5433,17 +5473,16 @@ same 'off'           '3,0'                       8 2 in '\e[33;7m\e[27mx' attr 0
 same 'with colours'  '4,1'                       8 2 in '\e[31;44;7mx' attr 0,0
 
 group extended
-#       The cell carries one of sixteen, so 38;5;n has to land on one of them
-#       rather than be ignored -- and ignored is what it was: the number after
-#       it fell through to the plain range and painted the text a colour
-#       nobody asked for.
+#       The cell carries one of two hundred and fifty six, so 38;5;n lands on
+#       n itself -- and the cube and a true-colour triple land on the nearest
+#       of those, rather than being folded into the first sixteen.
 same 'first sixteen' '9,0'                       8 2 in '\e[38;5;9mx' attr 0,0
-same 'not the plain range' '4,0'                 8 2 in '\e[38;5;31mx' attr 0,0
-same 'the cube'      '11,0'                      8 2 in '\e[38;5;226mx' attr 0,0
-same 'the greys'     '15,0'                      8 2 in '\e[38;5;255mx' attr 0,0
+same 'not the plain range' '31,0'                8 2 in '\e[38;5;31mx' attr 0,0
+same 'the cube'      '226,0'                     8 2 in '\e[38;5;226mx' attr 0,0
+same 'the greys'     '255,0'                     8 2 in '\e[38;5;255mx' attr 0,0
 same 'paper too'     '7,1'                       8 2 in '\e[48;5;1mx' attr 0,0
-same 'true colour'   '9,0'                       8 2 in '\e[38;2;250;10;10mx' attr 0,0
-same 'and what follows it' '9,4'                 8 2 in '\e[38;2;250;10;10;44mx' attr 0,0
+same 'true colour'   '196,0'                     8 2 in '\e[38;2;250;10;10mx' attr 0,0
+same 'and what follows it' '196,4'               8 2 in '\e[38;2;250;10;10;44mx' attr 0,0
 same 'sub parameters' '9,0'                      8 2 in '\e[38:5:9mx' attr 0,0
 
 #
@@ -5477,6 +5516,16 @@ same 'must be private' '0'                       20 3 in '\e[2026h' sync
 same 'reset ends it' '0'                         20 3 in '\e[?2026h\ec' sync
 same 'resize ends it' '0'                        20 3 in '\e[?2026h' resize '30x4' sync
 
+group mouse
+#       DECSET 1000 is mouse tracking. The compositor delivers clicks; this
+#       is only whether the emulator will turn them into CSI.
+same 'tracking'      '1000'                      20 3 in '\e[?1000h' mouse
+same 'off again'     '0'                         20 3 in '\e[?1000h\e[?1000l' mouse
+same 'sgr press'     '[\e[<0;2;3M]'              20 5 in '\e[?1000h\e[?1006h' click '2,3,0' sent
+same 'sgr release'   '[\e[<0;2;3m]'              20 5 in '\e[?1000h\e[?1006h' release '2,3,0' sent
+same 'middle'        '[\e[<1;1;1M]'              20 5 in '\e[?1000h\e[?1006h' click '1,1,1' sent
+same 'wheel'         '[\e[<64;1;1M]'             20 5 in '\e[?1000h\e[?1006h' click '1,1,64' sent
+
 group alternate
 #       A program is given a screen, scribbles on it and hands it back with
 #       what was underneath still there. The ring already holds what was
@@ -5495,6 +5544,9 @@ group reset
 same 'ris'           'wrap=1 insert=0 alternate=0 cursor=1 region=0,4' \
                                                  20 4 in '\e[?7l\e[?25l\e[4h\e[2;3r\ec' mode
 same 'ris clears'    '[]|[]|[]|[]'               20 4 in 'abc\r\ndef\ec' dump
+same 'decstr keeps'  '[ab]|[]|[]|[]'             20 4 in 'ab\e[4h\e[!p' dump
+same 'decstr modes'  'wrap=1 insert=0 alternate=0 cursor=1 region=0,4' \
+                                                 20 4 in '\e[4h\e[?25l\e[!p' mode
 
 #
 #       Sequences nobody here answers.
@@ -5516,6 +5568,7 @@ group private
 same 'bracketed paste' '[AB]'                    20 3 in '\e[?2004hA\e[?2004lB' row 0
 same 'a private final nobody has' '[AB]'         20 3 in 'A\e[?1000hB' row 0
 same 'modifier options'  '[AB]'                  20 3 in 'A\e[>4;2mB' row 0
+same 'window ops'        '[AB]'                  20 3 in 'A\e[22;0;0tB' row 0
 #       A private marker is not a parameter: ESC[?25l is the cursor and
 #       ESC[25l is a mode number nobody uses. Reading the first as the second
 #       would put the cursor out at the wrong time.
@@ -5527,6 +5580,9 @@ group escape
 #       the final belongs to that sequence: ESC # 8 is one thing and not a
 #       DECRC hiding behind a hash.
 same 'character set'  '[XY]'                     20 3 in '\e(BXY' row 0
+same 'line drawing'   '[<2500>]'                 8 2 in '\e(0q\e(B' row 0
+same 'shift in'       '[<2500>x]'                8 2 in '\e)0\x0eq\x0fx' row 0
+same 'repeat'         '[aaaa]'                   8 2 in 'a\e[3b' row 0
 same 'screen alignment' '[XY]'                   20 3 in '\e#8XY' row 0
 same 'not a restore'  '[abXY]'                   20 3 in 'ab\e#8XY' row 0
 same 'nothing at all' '[XY]'                     20 3 in '\e\x7fXY' row 0
@@ -5587,7 +5643,7 @@ section keys
 
 group raw
 #       With no line editor running a key is its byte and a key that means no
-#       character is the sequence ANSI names for it, which is what TERM=ansi
+#       character is the sequence ANSI names for it, which is what TERM=xterm-256color
 #       claims and this is what makes the claim true.
 same 'a character'   '[abc]'                     20 3 edit off keys 'abc' sent
 same 'arrows'        '[\e[A\e[B\e[C\e[D]'         20 3 edit off keys '<up><down><right><left>' sent

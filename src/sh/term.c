@@ -51,7 +51,9 @@ static struct window *window;
 static unsigned int COLUMNS, ROWS;
 static unsigned int row, column;
 static unsigned char ink = 7, paper = 0;
+static unsigned short style;
 static b32 reverse;
+static unsigned int last_character;
 static unsigned int touched_top, touched_bottom;
 
 /*
@@ -72,6 +74,18 @@ static b32 application_keys;
    compositor presenting the intermediate rows. The cells are still written
    immediately; only publication is held by screen.c until the mode ends. */
 static b32 synchronized_output;
+static unsigned int mouse_mode;
+static b32 mouse_sgr;
+static b32 focus_events;
+static b32 origin_mode;
+
+#define CHARSET_ASCII 0
+#define CHARSET_ACS 1
+static unsigned char charset_g0;
+static unsigned char charset_g1;
+static unsigned char charset_gl;
+static p8 escape_kind;
+static p8 csi_intermediate;
 
 // Where the block cursor was put, so it can be taken back off.
 static unsigned int shown_row, shown_column;
@@ -79,6 +93,7 @@ static b32 shown;
 
 static unsigned int saved_row, saved_column;
 static unsigned char saved_ink = 7, saved_paper = 0;
+static unsigned short saved_style;
 static b32 saved_reverse;
 
 // Tab stops, one byte a column, which is what makes HTS and TBC mean
@@ -309,6 +324,8 @@ static fn put(unsigned int character)
         cell->character = character;
         cell->ink = reverse ? paper : ink;
         cell->paper = reverse ? ink : paper;
+        cell->flags = style;
+        last_character = character;
 
         touch(row);
         column++;
@@ -432,6 +449,45 @@ static b32 in_escape, in_csi, in_string, escape_intermediate;
 
 // A string sequence ends at ST, and ST is two bytes with an ESC in front.
 static b32 string_escape;
+static p8 osc_bytes[WINDOW_TITLE_MAX];
+static unsigned int osc_length;
+
+static CONST unsigned int acs_character(unsigned int c)
+{
+        static const unsigned int map[] = {
+            0x25c6, 0x2592, 0x2409, 0x240c, 0x240d, 0x240a, 0x00b0, 0x00b1,
+            0x2592, 0x2603, 0x2518, 0x2510, 0x250c, 0x2514, 0x253c, 0x23ba,
+            0x23bb, 0x2500, 0x23bc, 0x23bd, 0x251c, 0x2524, 0x2534, 0x252c,
+            0x2502, 0x2264, 0x2265, 0x03c0, 0x2260, 0x00a3, 0x00b7,
+        };
+
+        if (c < 0x60 || c > 0x7e)
+                return c;
+
+        return map[c - 0x60];
+}
+
+static fn osc_finish()
+{
+        unsigned int i = 0;
+        unsigned int command = 0;
+        unsigned int n;
+
+        while (i < osc_length && osc_bytes[i] >= '0' && osc_bytes[i] <= '9')
+                command = command * 10 + (unsigned int)(osc_bytes[i++] - '0');
+
+        if (i < osc_length && osc_bytes[i] == ';')
+                i++;
+
+        if ((command == 0 || command == 2) && window)
+        {
+                n = osc_length - i;
+                if (n >= WINDOW_TITLE_MAX)
+                        n = WINDOW_TITLE_MAX - 1;
+                memory_copy(window->title, osc_bytes + i, n);
+                window->title[n] = 0;
+        }
+}
 
 static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int to_row, unsigned int to_column)
@@ -477,44 +533,73 @@ static fn tab_forward()
         column = c < COLUMNS ? c : COLUMNS - 1;
 }
 
-/*
-        Two hundred and fifty six colours said in sixteen.
+static fn tab_backward()
+{
+        unsigned int c = column;
 
-        A cell carries an index into the sixteen a terminal has always had, so
-        the cube and the greys have to land on one of those rather than be
-        dropped -- and dropped is what they were: the number after 38;5 fell
-        through to the plain foreground range and 38;5;31m painted the text
-        red for no reason anyone asked for.
+        if (!c)
+                return;
+
+        while (c)
+        {
+                c--;
+                if (c < TAB_STOPS && tab_stop[c])
+                        break;
+        }
+
+        column = c;
+}
+
+/*
+        A cell carries an index into the two hundred and fifty six an xterm
+        has, so the cube, the greys and a true-colour triple all land on one
+        of those rather than being folded into the first sixteen. Folding
+        them was what made 38;5;31m paint the text red: the number after 38;5
+        fell through into the plain foreground range.
 */
 static CONST unsigned char colour_256(unsigned int n)
 {
-        unsigned int r, g, b;
+        return (unsigned char)(n < 256 ? n : 15);
+}
 
-        if (n < 16)
-                return (unsigned char)n;
-
-        if (n >= 232)
-        {
-                unsigned int grey = n < 256 ? n - 232 : 23;
-
-                return grey < 4 ? 0 : grey < 12 ? 8 : grey < 20 ? 7 : 15;
-        }
-
-        n -= 16;
-        b = n % 6;
-        n /= 6;
-        g = n % 6;
-        r = n / 6;
-
-        return (unsigned char)((r > 3 || g > 3 || b > 3 ? 8 : 0) |
-                               (r > 2 ? 1 : 0) | (g > 2 ? 2 : 0) | (b > 2 ? 4 : 0));
+static CONST unsigned char colour_cube_level(unsigned int v)
+{
+        if (v < 48)
+                return 0;
+        if (v < 115)
+                return 1;
+        v = (v - 35) / 40;
+        return (unsigned char)(v > 5 ? 5 : v);
 }
 
 static CONST unsigned char colour_rgb(unsigned int r, unsigned int g,
                                       unsigned int b)
 {
-        return (unsigned char)((r > 192 || g > 192 || b > 192 ? 8 : 0) |
-                               (r > 96 ? 1 : 0) | (g > 96 ? 2 : 0) | (b > 96 ? 4 : 0));
+        unsigned int qr, qg, qb, grey, cube, cr, cg, cb, gr, dcube, dgrey;
+
+        if (r > 255)
+                r = 255;
+        if (g > 255)
+                g = 255;
+        if (b > 255)
+                b = 255;
+
+        qr = colour_cube_level(r);
+        qg = colour_cube_level(g);
+        qb = colour_cube_level(b);
+        cube = 16 + 36 * qr + 6 * qg + qb;
+        cr = qr ? qr * 40 + 55 : 0;
+        cg = qg ? qg * 40 + 55 : 0;
+        cb = qb ? qb * 40 + 55 : 0;
+        dcube = (r > cr ? r - cr : cr - r) + (g > cg ? g - cg : cg - g) +
+                (b > cb ? b - cb : cb - b);
+
+        grey = r < 8 ? 0 : (r > 238 ? 23 : (r - 8) / 10);
+        gr = 8 + grey * 10;
+        dgrey = (r > gr ? r - gr : gr - r) + (g > gr ? g - gr : gr - g) +
+                (b > gr ? b - gr : gr - b);
+
+        return (unsigned char)(dgrey < dcube ? 232 + grey : cube);
 }
 
 // Returns how many parameters past this one it took, so the caller can step
@@ -548,6 +633,7 @@ static fn sgr()
                 ink = 7;
                 paper = 0;
                 reverse = false;
+                style = 0;
                 return;
         }
 
@@ -560,21 +646,53 @@ static fn sgr()
                         ink = 7;
                         paper = 0;
                         reverse = false;
+                        style = 0;
                 }
                 else if (p == 1)
-                        ink |= 8;
-                else if (p == 2 || p == 21 || p == 22)
-                        ink &= 7;
+                {
+                        style |= WINDOW_CELL_BOLD;
+                        if (ink < 8)
+                                ink |= 8;
+                }
+                else if (p == 2)
+                        style |= WINDOW_CELL_DIM;
+                else if (p == 3)
+                        style |= WINDOW_CELL_ITALIC;
+                else if (p == 4)
+                        style |= WINDOW_CELL_UNDERLINE;
+                else if (p == 5 || p == 6)
+                        style |= WINDOW_CELL_BLINK;
                 else if (p == 7)
                         reverse = true;
+                else if (p == 8)
+                        style |= WINDOW_CELL_HIDDEN;
+                else if (p == 9)
+                        style |= WINDOW_CELL_STRIKE;
+                else if (p == 21 || p == 22)
+                {
+                        style &= (unsigned short)~(WINDOW_CELL_BOLD | WINDOW_CELL_DIM);
+                        if (ink >= 8 && ink < 16)
+                                ink &= 7;
+                }
+                else if (p == 23)
+                        style &= (unsigned short)~WINDOW_CELL_ITALIC;
+                else if (p == 24)
+                        style &= (unsigned short)~WINDOW_CELL_UNDERLINE;
+                else if (p == 25)
+                        style &= (unsigned short)~WINDOW_CELL_BLINK;
                 else if (p == 27)
                         reverse = false;
+                else if (p == 28)
+                        style &= (unsigned short)~WINDOW_CELL_HIDDEN;
+                else if (p == 29)
+                        style &= (unsigned short)~WINDOW_CELL_STRIKE;
                 else if (p >= 30 && p <= 37)
-                        ink = (unsigned char)((ink & 8) | (p - 30));
+                        ink = (unsigned char)(((style & WINDOW_CELL_BOLD) ? 8 : 0) |
+                                              (p - 30));
                 else if (p == 38)
                         i += sgr_extended(i, address_of ink);
                 else if (p == 39)
-                        ink = (unsigned char)((ink & 8) | 7);
+                        ink = (unsigned char)((style & WINDOW_CELL_BOLD) ? 15 : 7);
                 else if (p >= 40 && p <= 47)
                         paper = (unsigned char)(p - 40);
                 else if (p == 48)
@@ -606,6 +724,7 @@ static fn cursor_save()
         saved_column = column;
         saved_ink = ink;
         saved_paper = paper;
+        saved_style = style;
         saved_reverse = reverse;
 }
 
@@ -615,6 +734,7 @@ static fn cursor_restore()
         column = saved_column < COLUMNS ? saved_column : COLUMNS - 1;
         ink = saved_ink;
         paper = saved_paper;
+        style = saved_style;
         reverse = saved_reverse;
 }
 
@@ -672,6 +792,11 @@ static fn mode_set(b32 on)
                 case 25:
                         cursor_visible = on;
                         break;
+                case 6:
+                        origin_mode = on;
+                        row = on ? region_top : 0;
+                        column = 0;
+                        break;
                 case 47:
                 case 1047:
                 case 1049:
@@ -680,6 +805,19 @@ static fn mode_set(b32 on)
                         else
                                 alternate_leave();
                         break;
+                case 1000:
+                case 1002:
+                case 1003:
+                        mouse_mode = on ? p : 0;
+                        if (window)
+                                window->want = mouse_mode ? WINDOW_WANT_POINTER : 0;
+                        break;
+                case 1004:
+                        focus_events = on;
+                        break;
+                case 1006:
+                        mouse_sgr = on;
+                        break;
                 case 2026:
                         synchronized_output = on;
                         break;
@@ -687,20 +825,57 @@ static fn mode_set(b32 on)
         }
 }
 
-static fn full_reset()
+static fn attributes_reset()
 {
         ink = 7;
         paper = 0;
         reverse = false;
-        row = 0;
-        column = 0;
-        region_top = 0;
-        region_bottom = ROWS;
+        style = 0;
         autowrap = true;
         insert_mode = false;
         cursor_visible = true;
         application_keys = false;
         synchronized_output = false;
+        mouse_mode = 0;
+        mouse_sgr = false;
+        focus_events = false;
+        origin_mode = false;
+        charset_g0 = CHARSET_ASCII;
+        charset_g1 = CHARSET_ASCII;
+        charset_gl = 0;
+        if (window)
+                window->want = 0;
+}
+
+/*
+        DECSTR, which is what is2 sends. The screen stays; the modes do not.
+        RIS is the one that blanks the page, and folding the two together
+        made every ncurses init wipe a dashboard that had just drawn.
+*/
+static fn soft_reset()
+{
+        attributes_reset();
+        last_character = 0;
+        region_top = 0;
+        region_bottom = ROWS;
+        row = 0;
+        column = 0;
+        saved_row = 0;
+        saved_column = 0;
+        saved_ink = 7;
+        saved_paper = 0;
+        saved_style = 0;
+        saved_reverse = false;
+}
+
+static fn full_reset()
+{
+        attributes_reset();
+        last_character = 0;
+        row = 0;
+        column = 0;
+        region_top = 0;
+        region_bottom = ROWS;
         alternate_leave();
         tabs_reset();
         erase(0, 0, ROWS - 1, COLUMNS - 1);
@@ -717,9 +892,15 @@ static fn csi_final(unsigned int final)
         {
         case 'H':
         case 'f':
-                row = a - 1 < ROWS ? a - 1 : ROWS - 1;
+        {
+                unsigned int top = origin_mode ? region_top : 0;
+                unsigned int bottom = origin_mode ? region_bottom : ROWS;
+                unsigned int r = top + a - 1;
+
+                row = r < bottom ? r : (bottom ? bottom - 1 : 0);
                 column = b - 1 < COLUMNS ? b - 1 : COLUMNS - 1;
                 break;
+        }
         case 'A':
                 row = row > a ? row - a : 0;
                 break;
@@ -746,8 +927,14 @@ static fn csi_final(unsigned int final)
                 column = a - 1 < COLUMNS ? a - 1 : COLUMNS - 1;
                 break;
         case 'd':
-                row = a - 1 < ROWS ? a - 1 : ROWS - 1;
+        {
+                unsigned int top = origin_mode ? region_top : 0;
+                unsigned int bottom = origin_mode ? region_bottom : ROWS;
+                unsigned int r = top + a - 1;
+
+                row = r < bottom ? r : (bottom ? bottom - 1 : 0);
                 break;
+        }
         case 'J':
                 if (terminal_csi.count && terminal_csi.value[0] == 1)
                         erase(0, 0, row, column);
@@ -850,8 +1037,34 @@ static fn csi_final(unsigned int final)
                         emit_literal("\x1b[0n");
                 break;
         case 'c':
-                // A VT102, which is what the sequences above add up to.
-                emit_literal("\x1b[?6c");
+                // Primary DA names a VT100 with AVO, which is what xterm
+                // answers and what ncurses's u8 reads for. Secondary DA is
+                // the xterm version report.
+                if (terminal_csi.marker == '>')
+                        emit_literal("\x1b[>0;115;0c");
+                else
+                        emit_literal("\x1b[?1;2c");
+                break;
+        case 'Z':
+                while (a--)
+                        tab_backward();
+                break;
+        case 'b':
+                if (last_character)
+                {
+                        unsigned int n;
+
+                        for (n = 0; n < a; n++)
+                                put(last_character);
+                }
+                break;
+        case 'q':
+                break;
+        case 'p':
+                if (csi_intermediate == '!')
+                        soft_reset();
+                break;
+        case 't':
                 break;
         case 'r':
         {
@@ -876,10 +1089,9 @@ static fn csi_final(unsigned int final)
                         region_top = top;
                         region_bottom = bottom;
 
-                        // Home is the top of the page and not the top of the
-                        // region, origin mode being what changes that and
-                        // origin mode being off.
-                        row = 0;
+                        // Home is the top of the region when origin mode is
+                        // on, and the top of the page otherwise.
+                        row = origin_mode ? region_top : 0;
                         column = 0;
                 }
                 break;
@@ -973,7 +1185,12 @@ static fn consume(unsigned int c)
                         if (c == 27)
                                 string_escape = true;
                         else if (c == 7)
+                        {
+                                osc_finish();
                                 in_string = in_escape = false;
+                        }
+                        else if (osc_length < WINDOW_TITLE_MAX)
+                                osc_bytes[osc_length++] = (p8)c;
 
                         return;
                 }
@@ -991,10 +1208,12 @@ static fn consume(unsigned int c)
 
                 if (c == '\\')
                 {
+                        osc_finish();
                         in_escape = false;
                         return;
                 }
 
+                osc_finish();
                 in_escape = true;
                 escape_intermediate = false;
         }
@@ -1010,11 +1229,18 @@ static fn consume(unsigned int c)
 
         if (in_csi)
         {
+                if (c >= 0x20 && c <= 0x2f)
+                {
+                        csi_intermediate = (p8)c;
+                        return;
+                }
+
                 if (!terminal_parameters_take(address_of terminal_csi, c))
                         return;
 
                 csi_final(c);
                 in_csi = in_escape = false;
+                csi_intermediate = 0;
 
                 return;
         }
@@ -1024,6 +1250,7 @@ static fn consume(unsigned int c)
                 if (c == '[')
                 {
                         in_csi = true;
+                        csi_intermediate = 0;
                         terminal_parameters_reset(address_of terminal_csi);
                         return;
                 }
@@ -1032,6 +1259,7 @@ static fn consume(unsigned int c)
                 {
                         in_string = true;
                         string_escape = false;
+                        osc_length = 0;
                         return;
                 }
 
@@ -1041,6 +1269,7 @@ static fn consume(unsigned int c)
                 if (c >= ' ' && c <= '/')
                 {
                         escape_intermediate = true;
+                        escape_kind = (p8)c;
                         return;
                 }
 
@@ -1050,6 +1279,10 @@ static fn consume(unsigned int c)
                 // ESC # 8 is one thing and not a DECRC hiding behind a hash.
                 if (escape_intermediate)
                 {
+                        if (escape_kind == '(')
+                                charset_g0 = c == '0' ? CHARSET_ACS : CHARSET_ASCII;
+                        else if (escape_kind == ')')
+                                charset_g1 = c == '0' ? CHARSET_ACS : CHARSET_ASCII;
                         escape_intermediate = false;
                         return;
                 }
@@ -1082,6 +1315,12 @@ static fn consume(unsigned int c)
                 case 'c':
                         full_reset();
                         break;
+                case '=':
+                        application_keys = true;
+                        break;
+                case '>':
+                        application_keys = false;
+                        break;
                 }
 
                 return;
@@ -1106,8 +1345,12 @@ static fn consume(unsigned int c)
                 tab_forward();
                 return;
         case 7:
+                return;
         case 14:
+                charset_gl = 1;
+                return;
         case 15:
+                charset_gl = 0;
                 return;
         }
 
@@ -1117,7 +1360,9 @@ static fn consume(unsigned int c)
         if (c < 128)
         {
                 utf8_flush();
-                put(c);
+                put((charset_gl ? charset_g1 : charset_g0) == CHARSET_ACS
+                        ? acs_character(c)
+                        : c);
                 return;
         }
 
@@ -1132,6 +1377,7 @@ static fn term_record_begin()
 {
         in_escape = in_csi = in_string = false;
         escape_intermediate = string_escape = false;
+        osc_length = 0;
         terminal_parameters_reset(address_of terminal_csi);
         terminal_utf8.left = 0;
 }
@@ -1779,8 +2025,8 @@ static b32 line_key(unsigned int character, unsigned int code)
 
         Arrows, Home, the function keys: a program is handed the code and
         nothing else, and a terminal owes its shell the sequence ANSI names
-        for each of them. TERM=ansi is exported below, and this is what makes
-        that true rather than a claim.
+        for each of them. TERM=xterm-256color is exported below, and this is
+        what makes that true rather than a claim.
 */
 static const struct
 {
@@ -1912,6 +2158,62 @@ static fn SPARE term_line_editing(b32 on)
 
         line_editing = on;
         line_reset();
+}
+
+static fn term_pointer(unsigned int col, unsigned int row,
+                       unsigned int button, unsigned int flags)
+{
+        unsigned int code;
+        b32 down = (flags & WINDOW_KEY_DOWN) != 0;
+        b32 move = (flags & WINDOW_KEY_POINTER_MOVE) != 0;
+
+        if (!mouse_mode)
+                return;
+        if (move && mouse_mode == 1000)
+                return;
+        if (move && mouse_mode == 1002 && !down)
+                return;
+        if (!col)
+                col = 1;
+        if (!row)
+                row = 1;
+
+        code = button;
+        if (move)
+                code += 32;
+
+        if (mouse_sgr)
+        {
+                emit_literal("\x1b[<");
+                positive_to_string(emit_bytes, code);
+                emit(';');
+                positive_to_string(emit_bytes, col);
+                emit(';');
+                positive_to_string(emit_bytes, row);
+                emit((down || move) ? 'M' : 'm');
+                return;
+        }
+
+        if (col > 223)
+                col = 223;
+        if (row > 223)
+                row = 223;
+        if (!down && !move)
+                code = 3;
+        emit(27);
+        emit('[');
+        emit('M');
+        emit((p8)(32 + code));
+        emit((p8)(32 + col));
+        emit((p8)(32 + row));
+}
+
+static fn term_focus(b32 in)
+{
+        if (!focus_events)
+                return;
+
+        emit_literal(in ? "\x1b[I" : "\x1b[O");
 }
 
 #endif
