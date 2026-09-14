@@ -4971,9 +4971,33 @@ static bipolar file_make_directories_open(
                         {
                                 /* The last component preserves mkdir's
                                    EEXIST answer for every non-directory
-                                   entry, including a symbolic link. */
-                                next = last ? -ERROR_EXISTS
-                                            : -ERROR_NOT_DIRECTORY;
+                                   entry, including a symbolic link.
+                                   Before it, the open's own errno is the
+                                   reason: ENOENT through a dangling link
+                                   and ELOOP through a loop when the open
+                                   followed it.  -p never follows a link,
+                                   so its reason comes from a look through
+                                   it, as GNU's walk reports it: EEXIST
+                                   when it dangles, the look's errno when
+                                   that fails otherwise, and not a
+                                   directory even when it reaches one. */
+                                if (last)
+                                        next = -ERROR_EXISTS;
+                                else if (parents &&
+                                         (entry.mode & MODE_FORMAT) ==
+                                             MODE_LINK)
+                                {
+                                        file_facts through;
+                                        bipolar resolved = file_look_code(
+                                            held, component, 0,
+                                            address_of through);
+
+                                        next = resolved == -ERROR_NO_ENTRY
+                                                   ? -ERROR_EXISTS
+                                               : resolved < 0
+                                                   ? resolved
+                                                   : -ERROR_NOT_DIRECTORY;
+                                }
                         }
                         else if (found != -ERROR_NO_ENTRY)
                                 next = found;
