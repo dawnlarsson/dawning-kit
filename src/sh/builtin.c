@@ -2131,7 +2131,7 @@ static fn env_mark_restore(string_address name, bool enabled, bool export_mark)
 #define env_declare_restore(name, enabled)                                  \
         env_mark_restore((name), (enabled), false)
 
-static bool env_export_mark_span_mode(const_string name, positive length,
+static bool env_export_mark_span(const_string name, positive length,
                                       bool direct)
 {
         const_string target = name;
@@ -2158,14 +2158,10 @@ static bool env_export_mark_span_mode(const_string name, positive length,
         return true;
 }
 
-static bool env_export_mark_span(const_string name, positive length)
-{
-        return env_export_mark_span_mode(name, length, false);
-}
 
 static bool env_export_mark(string_address name)
 {
-        return env_export_mark_span(name, string_length(name));
+        return env_export_mark_span(name, string_length(name), false);
 }
 
 static bool env_export_unmark(string_address name)
@@ -2247,15 +2243,12 @@ static bool env_write_hashed_span(const_string name, positive name_len,
                                   bool assignment);
 static bool env_write_destination(const_string name, positive name_len,
     positive hash, positive idx, const_string value, bool assignment,
-    env_variable address_to destination);
-static bool env_write_destination_mode(const_string name, positive name_len,
-    positive hash, positive idx, const_string value, bool assignment,
     env_variable address_to destination, bool protect);
 #define env_write_found_span(name, length, hash, index, value, assignment) \
-        env_write_destination(name, length, hash, index, value, assignment, null)
+        env_write_destination(name, length, hash, index, value, assignment, null, true)
 static bool shell_array_set_destination(const_string name, positive length,
     const_string key, positive key_length, const_string value, bool append,
-    env_variable address_to destination);
+    env_variable address_to destination, bool protect);
 static bool env_assign_hashed_span(const_string name, positive name_len,
                                    positive hash, const_string value);
 static bool env_write(const_string name, const_string value, bool assignment);
@@ -2617,7 +2610,7 @@ static COLD bool shell_reference_assign_destination(env_reference resolved,
         string_address key = shell_expand_subscript(name, resolved.length, subscript,
             resolved.subscript_length, address_of key_length);
         return key && shell_array_set_destination(name, resolved.length, key, key_length,
-                                                  value, append, destination);
+                                                  value, append, destination, true);
 }
 
 #define shell_reference_assign(resolved, value, append) \
@@ -2892,7 +2885,7 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
         }
 
         if (attributes & SHELL_ARRAY_ASSOCIATIVE)
-                return shell_array_set_destination(name, name_len, "0", 1, value, false, destination)
+                return shell_array_set_destination(name, name_len, "0", 1, value, false, destination, true)
                            ? 1 : 2;
 
         if (attributes & ENV_ATTRIBUTE_VALUE)
@@ -2908,7 +2901,7 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
         return 0;
 }
 
-static bool env_write_destination_mode(const_string name, positive name_len,
+static bool env_write_destination(const_string name, positive name_len,
     positive hash, positive idx, const_string value, bool assignment,
     env_variable address_to destination, bool protect)
 {
@@ -2991,13 +2984,6 @@ static bool env_write_destination_mode(const_string name, positive name_len,
 /* Every command-facing scalar writer enters through the protected wrapper.
    Startup's publication of Bash's own readonly identity cells uses the mode
    entry once, before setting their readonly attributes. */
-static bool env_write_destination(const_string name, positive name_len,
-    positive hash, positive idx, const_string value, bool assignment,
-    env_variable address_to destination)
-{
-        return env_write_destination_mode(name, name_len, hash, idx, value,
-                                          assignment, destination, true);
-}
 
 static bool env_write_hashed_span(const_string name, positive name_len,
                                   positive hash, const_string value,
@@ -3373,7 +3359,7 @@ static bool readonly_add_mode(string_address name, positive length,
                                           SHELL_ARRAY_READONLY, 0))
                 return false;
         if (exec_assignment_promote(name, length))
-                return env_export_mark_span(name, length);
+                return env_export_mark_span(name, length, false);
         return true;
 }
 
@@ -3552,7 +3538,7 @@ static bool shell_declare_binding(const_string name, positive length,
         }
         if (variable)
                 variable->attributes &= (p8)~SHELL_ARRAY_NAMEREF;
-        answer = env_write_destination(name, length, hash, found, value, true, destination);
+        answer = env_write_destination(name, length, hash, found, value, true, destination, true);
         found = env_find_hashed_span(name, length, hash);
         variable = destination ? destination : found < shell_var_count ? shell_vars + found : null;
         if (variable)
@@ -3594,7 +3580,7 @@ static COLD string_address env_append_value(string_address old, const_string val
         return made;
 }
 
-static bool shell_scalar_assign_destination_mode(
+static bool shell_scalar_assign_destination(
     const_string name, positive length, positive hash, const_string value,
     bool append, bool bind_reference, env_variable address_to destination,
     bool protect)
@@ -3655,7 +3641,7 @@ write_value:
         answer = bind_reference
                      ? shell_declare_binding(name, length, hash, value,
                                               (attributes & SHELL_ARRAY_INTEGER) != 0, destination)
-                     : env_write_destination_mode(
+                     : env_write_destination(
                            name, length, hash,
                            env_find_hashed_span(name, length, hash), value,
                            true, destination, protect);
@@ -3666,19 +3652,11 @@ write_value:
         return answer;
 }
 
-static bool shell_scalar_assign_destination(
-    const_string name, positive length, positive hash, const_string value,
-    bool append, bool bind_reference, env_variable address_to destination)
-{
-        return shell_scalar_assign_destination_mode(
-            name, length, hash, value, append, bind_reference, destination,
-            true);
-}
 
 #define shell_scalar_assign(name, length, hash, value, append, binding) \
-        shell_scalar_assign_destination(name, length, hash, value, append, binding, null)
+        shell_scalar_assign_destination(name, length, hash, value, append, binding, null, true)
 
-static bool shell_array_set_destination_mode(
+static bool shell_array_set_destination(
     const_string name, positive length, const_string key,
     positive key_length, const_string value, bool append,
     env_variable address_to destination, bool protect)
@@ -3716,7 +3694,7 @@ static bool shell_array_set_destination_mode(
                     SHELL_ARRAY_INDEXED | SHELL_ARRAY_ASSIGNED;
                 variable->declared = true;
                 if (!located.key)
-                        return shell_scalar_assign_destination_mode(
+                        return shell_scalar_assign_destination(
                             name, length, hash, value, append, false,
                             destination, protect);
         }
@@ -3763,19 +3741,11 @@ static bool shell_array_set_destination_mode(
             value, string_length(env_reading(value)));
 }
 
-static bool shell_array_set_destination(
-    const_string name, positive length, const_string key,
-    positive key_length, const_string value, bool append,
-    env_variable address_to destination)
-{
-        return shell_array_set_destination_mode(
-            name, length, key, key_length, value, append, destination, true);
-}
 
 COLD bool shell_array_set(const_string name, positive length, const_string key,
                      positive key_length, const_string value, bool append)
 {
-        return shell_array_set_destination(name, length, key, key_length, value, append, null);
+        return shell_array_set_destination(name, length, key, key_length, value, append, null, true);
 }
 
 /*
@@ -3839,7 +3809,7 @@ COLD bool shell_array_clear(const_string name, positive length)
         merging into it -- which is what an array the shell owns has to do,
         since a script may have left anything in it.
 */
-static COLD bool shell_array_replace_mode(
+static COLD bool shell_array_replace(
     const_string name, positive length, address_any items, positive count,
     bool numbers, bool protect)
 {
@@ -3874,7 +3844,7 @@ static COLD bool shell_array_replace_mode(
                 else
                         value = ((string_address address_to)items)[at];
 
-                if (!shell_array_set_destination_mode(
+                if (!shell_array_set_destination(
                         name, length, written,
                         bipolar_into_string(written, (bipolar)at), value,
                         false, null, protect))
@@ -3884,24 +3854,17 @@ static COLD bool shell_array_replace_mode(
         return true;
 }
 
-static COLD bool shell_array_replace(const_string name, positive length,
-                                     address_any items, positive count,
-                                     bool numbers)
-{
-        return shell_array_replace_mode(name, length, items, count, numbers,
-                                        true);
-}
 
 COLD bool shell_array_words(const_string name, positive length,
                              string_address address_to words, positive count)
 {
-        return shell_array_replace(name, length, words, count, false);
+        return shell_array_replace(name, length, words, count, false, true);
 }
 
 COLD bool shell_array_numbers(const_string name, positive length,
                                bipolar address_to values, positive count)
 {
-        return shell_array_replace(name, length, values, count, true);
+        return shell_array_replace(name, length, values, count, true, true);
 }
 
 /* Bash's PIPESTATUS keeps a sole explicitly selected nonzero subscript as
@@ -4205,7 +4168,7 @@ static COLD fn shell_dynamic_versinfo()
                                          "15",      "1",
                                          "release", MOONWATER_MACHTYPE};
 
-        shell_array_replace_mode("BASH_VERSINFO", 13, parts,
+        shell_array_replace("BASH_VERSINFO", 13, parts,
                                  array_count(parts), false, false);
         shell_variable_attribute_set("BASH_VERSINFO", 13, SHELL_ARRAY_READONLY, 0);
 }
@@ -4533,7 +4496,7 @@ static COLD fn shell_publish_readonly_id(const_string name, positive length,
         positive found = env_find_hashed_span(name, length, hash);
 
         written[positive_into_string(written, value)] = end;
-        if (!env_write_destination_mode(name, length, hash, found, written,
+        if (!env_write_destination(name, length, hash, found, written,
                                         false, null, false))
                 return;
         shell_variable_attribute_set(name, length,
@@ -6500,7 +6463,7 @@ static bool env_value_restore(string_address name, positive length,
         }
         p8 current = variable->attributes;
         variable->attributes = 0;
-        bool written = env_write_destination_mode(
+        bool written = env_write_destination(
             name, length, hash, (positive)(variable - shell_vars),
             value ? value : (string_address)"", false, null, false);
         variable->attributes = current;
@@ -8948,7 +8911,7 @@ static b32 shell_declare_value(string_address name, positive length,
                         return true;
         }
         return shell_scalar_assign_destination(name, length, env_name_hash(name, length),
-                                    mark + 1, append, bind_reference, destination);
+                                    mark + 1, append, bind_reference, destination, true);
 }
 
 /* `declare -F` is metadata, not body serialization. Named queries retain the
@@ -9375,7 +9338,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                         bool exported = destination->permanent;
                         destination->attributes = 0;
                         stored = !mark || shell_scalar_assign_destination(word, length,
-                            destination->hash, mark + 1, append, false, destination);
+                            destination->hash, mark + 1, append, false, destination, true);
                         destination->attributes = attributes;
                         destination->permanent = exported;
                         if (stored)
@@ -9456,7 +9419,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                 if (state->clear & DECLARE_EXPORT)
                         env_export_restore(word, false);
                 if ((state->set & DECLARE_EXPORT) &&
-                    !env_export_mark_span_mode(word, length,
+                    !env_export_mark_span(word, length,
                         scoped || (state->attributes_set & SHELL_ARRAY_NAMEREF)))
                 {
                         if (local_mode)
