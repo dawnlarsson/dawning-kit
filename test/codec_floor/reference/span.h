@@ -28,13 +28,10 @@ typedef struct {
 typedef struct
 {
         u32 range, code;
-        u8 * next;
-        u8 * limit;
-        models * model;
-        u8 * dict;
-        u64 size, pos, full;
-        u64 unpacked, stop;
-        u64 room;
+        const u8 *next, *in_stop;
+        models *model;
+        u8 *base, *out, *out_stop, *out_end, *copy_end, *lo, *bottom;
+        u64 wrap, dmax;
         u32 state, lc, lp, pb;
         u64 rep[4];
         u64 error;

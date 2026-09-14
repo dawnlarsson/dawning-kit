@@ -72019,47 +72019,314 @@ static fn floor_deflate(void)
         memory_free(input,3*4096);memory_free(output,11*4096);
 }
 
+#ifndef FLOOR_PAGE
+#define FLOOR_PAGE 4096
+#endif
+
+/* The scalar LZMA decoder the span kernel is held to: one packet and one bit
+   at a time over a plain ring, reading nothing past its input limit. */
+typedef struct
+{
+        p32 range, code;
+        p8 address_to next;
+        p8 address_to limit;
+        xz_probability_state m;
+        p8 ring[4096];
+        positive pos, full, unpacked;
+        positive rep[4];
+        p32 state, lc, lp, pb;
+        bool short_input;
+} floor_lzma_oracle;
+
+static p32 floor_lzma_bit(floor_lzma_oracle address_to o, p16 address_to prob)
+{
+        if (o->range < 0x1000000u)
+        {
+                if (o->next >= o->limit)
+                {
+                        o->short_input = true;
+                        return 0;
+                }
+                o->range <<= 8;
+                o->code = (o->code << 8) | address_to o->next++;
+        }
+
+        p32 bound = (o->range >> 11) * address_to prob;
+
+        if (o->code < bound)
+        {
+                o->range = bound;
+                address_to prob += (2048 - address_to prob) >> 5;
+                return 0;
+        }
+        o->range -= bound;
+        o->code -= bound;
+        address_to prob -= address_to prob >> 5;
+        return 1;
+}
+
+static p32 floor_lzma_tree(floor_lzma_oracle address_to o, p16 address_to probs, p32 bits)
+{
+        p32 symbol = 1;
+
+        while (symbol < (1u << bits))
+                symbol = (symbol << 1) | floor_lzma_bit(o, probs + symbol);
+        return symbol - (1u << bits);
+}
+
+/* Reverse trees index by the low bits already decoded, as the kernel does. */
+static p32 floor_lzma_reverse(floor_lzma_oracle address_to o, p16 address_to probs, p32 bits)
+{
+        p32 value = 0;
+
+        for (p32 i = 0; i < bits; i++)
+                value |= floor_lzma_bit(o, probs + ((1u << i) | value)) << i;
+        return value;
+}
+
+static p8 floor_lzma_back(floor_lzma_oracle address_to o, positive dist)
+{
+        return o->ring[(o->pos + sizeof(o->ring) - dist) % sizeof(o->ring)];
+}
+
+static fn floor_lzma_put(floor_lzma_oracle address_to o, p8 byte, p8 address_to address_to out)
+{
+        o->ring[o->pos] = byte;
+        o->pos = (o->pos + 1) % sizeof(o->ring);
+        if (o->full < sizeof(o->ring))
+                o->full++;
+        o->unpacked++;
+        *(*out)++ = byte;
+}
+
+static p32 floor_lzma_length(floor_lzma_oracle address_to o, bool repeat, positive ps)
+{
+        xz_probability_state address_to m = address_of o->m;
+
+        if (!floor_lzma_bit(o, repeat ? address_of m->rep_choice : address_of m->match_choice))
+                return 2 + floor_lzma_tree(o, repeat ? m->rep_low[ps] : m->match_low[ps], 3);
+        if (!floor_lzma_bit(o, repeat ? address_of m->rep_choice2 : address_of m->match_choice2))
+                return 10 + floor_lzma_tree(o, repeat ? m->rep_mid[ps] : m->match_mid[ps], 3);
+        return 18 + floor_lzma_tree(o, repeat ? m->rep_high : m->match_high, 8);
+}
+
+/* One packet of at most room bytes; false for a malformed packet. */
+static bool floor_lzma_packet(floor_lzma_oracle address_to o, p8 address_to address_to out,
+                              positive room)
+{
+        xz_probability_state address_to m = address_of o->m;
+        positive ps = o->unpacked & ((1u << o->pb) - 1);
+        positive len;
+
+        if (!floor_lzma_bit(o, address_of m->is_match[o->state][ps]))
+        {
+                p8 prev = o->full ? floor_lzma_back(o, 1) : 0;
+                p16 address_to probs = m->lit + 0x300 *
+                        (((o->unpacked & ((1u << o->lp) - 1)) << o->lc) + (prev >> (8 - o->lc)));
+                p32 symbol = 1;
+
+                if (o->state >= 7)
+                {
+                        if (o->rep[0] > o->full)
+                                return false;
+
+                        p32 match = floor_lzma_back(o, o->rep[0]);
+
+                        do
+                        {
+                                p32 predicted = (match >> 7) & 1;
+
+                                match <<= 1;
+
+                                p32 bit = floor_lzma_bit(o, probs + ((1 + predicted) << 8) + symbol);
+
+                                symbol = (symbol << 1) | bit;
+                                if (bit != predicted)
+                                        break;
+                        } while (symbol < 0x100);
+                }
+                while (symbol < 0x100)
+                        symbol = (symbol << 1) | floor_lzma_bit(o, probs + symbol);
+                floor_lzma_put(o, (p8)symbol, out);
+                o->state = o->state < 4 ? 0 : o->state < 10 ? o->state - 3 : o->state - 6;
+                return true;
+        }
+        if (!floor_lzma_bit(o, address_of m->is_rep[o->state]))
+        {
+                o->rep[3] = o->rep[2];
+                o->rep[2] = o->rep[1];
+                o->rep[1] = o->rep[0];
+                len = floor_lzma_length(o, false, ps);
+
+                p32 slot = floor_lzma_tree(o, m->dist_slot[len < 6 ? len - 2 : 3], 6);
+                positive dist = slot;
+
+                if (slot >= 4)
+                {
+                        p32 bits = (slot >> 1) - 1;
+
+                        dist = (positive)(2 | (slot & 1)) << bits;
+                        if (slot < 14)
+                                dist += floor_lzma_reverse(o, m->dist_special + dist - slot - 1, bits);
+                        else
+                        {
+                                positive direct = 0;
+
+                                for (p32 i = 0; i < bits - 4; i++)
+                                {
+                                        if (o->range < 0x1000000u)
+                                        {
+                                                if (o->next >= o->limit)
+                                                {
+                                                        o->short_input = true;
+                                                        return true;
+                                                }
+                                                o->range <<= 8;
+                                                o->code = (o->code << 8) | address_to o->next++;
+                                        }
+                                        o->range >>= 1;
+
+                                        p32 one = o->code >= o->range;
+
+                                        if (one)
+                                                o->code -= o->range;
+                                        direct = (direct << 1) | one;
+                                }
+                                dist += (direct << 4) + floor_lzma_reverse(o, m->dist_align, 4);
+                        }
+                }
+                o->rep[0] = dist + 1;
+                o->state = o->state < 7 ? 7 : 10;
+        }
+        else
+        {
+                if (!floor_lzma_bit(o, address_of m->is_rep0[o->state]))
+                {
+                        if (!floor_lzma_bit(o, address_of m->is_rep0_long[o->state][ps]))
+                        {
+                                o->state = o->state < 7 ? 9 : 11;
+                                if (o->rep[0] > o->full)
+                                        return false;
+                                floor_lzma_put(o, floor_lzma_back(o, o->rep[0]), out);
+                                return true;
+                        }
+                }
+                else
+                {
+                        positive dist;
+
+                        if (!floor_lzma_bit(o, address_of m->is_rep1[o->state]))
+                                dist = o->rep[1];
+                        else
+                        {
+                                if (!floor_lzma_bit(o, address_of m->is_rep2[o->state]))
+                                        dist = o->rep[2];
+                                else
+                                {
+                                        dist = o->rep[3];
+                                        o->rep[3] = o->rep[2];
+                                }
+                                o->rep[2] = o->rep[1];
+                        }
+                        o->rep[1] = o->rep[0];
+                        o->rep[0] = dist;
+                }
+                len = floor_lzma_length(o, true, ps);
+                o->state = o->state < 7 ? 8 : 11;
+        }
+        if (o->rep[0] > o->full || len > room)
+                return false;
+        for (positive i = 0; i < len; i++)
+                floor_lzma_put(o, floor_lzma_back(o, o->rep[0]), out);
+        return true;
+}
+
+/* The span kernel against the oracle: a 4096-byte dictionary that wraps
+   several times, spans stopped at random packet boundaries, the input's last
+   bytes run through a zero-padded tail, the dictionary buffer ending at a
+   guard page, and two malformed streams. */
 static fn floor_lzma_span(void)
 {
         static p8 plain_storage[1 + 16384];
         p8 address_to plain = plain_storage + 1;
         const positive plain_n = 16384;
+        static p8 expect[16384];
+        static p8 tail[128];
+        static floor_lzma_oracle oracle;
         static xz_probability_state model;
+        const positive limit = 4096;
+        const positive size = limit + XZ_DICT_START;
+        const positive cap = size + XZ_DICT_SLACK;
         p8 address_to input = floor_pages(6);
-        p8 address_to output = floor_pages(3);
+        p8 address_to output = floor_pages(4);
+
         check("LZMA span guard mappings", input && output);
-        if (!input || !output) return;
-        check("LZMA span ABI", sizeof(xz_decode_job) == 144 &&
-              __builtin_offsetof(xz_decode_job, error) == 136 &&
-              __builtin_offsetof(xz_decode_job, rep) == 104);
-        for (positive trial = 0; trial < 12; trial++)
+        if (!input || !output)
+                return;
+        check("LZMA span ABI",
+              sizeof(xz_decode_job) == 160 &&
+              __builtin_offsetof(xz_decode_job, in_stop) == 16 &&
+              __builtin_offsetof(xz_decode_job, base) == 32 &&
+              __builtin_offsetof(xz_decode_job, copy_end) == 64 &&
+              __builtin_offsetof(xz_decode_job, lo) == 72 &&
+              __builtin_offsetof(xz_decode_job, dmax) == 96 &&
+              __builtin_offsetof(xz_decode_job, state) == 104 &&
+              __builtin_offsetof(xz_decode_job, rep) == 120 &&
+              __builtin_offsetof(xz_decode_job, error) == 152);
+
+        p8 address_to dict = output + 3 * FLOOR_PAGE - cap;
+
+        for (positive trial = 0; trial < 16; trial++)
         {
                 p32 random = 0x57139021u + (p32)trial;
-                xz_dict_open(4096);
-                memory_fill(xz_dict, 0, 4096);
-                xz_unpacked = 0;
-                xz_lc = (p8)(trial % 5);
-                xz_lp = (p8)(trial % (5 - xz_lc));
-                xz_pb = (p8)(trial % 5);
-                xz_probs_reset();
+                bool far = trial == 14;
+                bool overrun = trial == 15;
+                positive first_match_end = 0;
+                positive at = 0;
+                p32 lc = trial % 5;
+                p32 lp = trial % (5 - lc);
+                p32 pb = trial % 5;
+
                 /* The block encoder codes each chosen packet; the position
                    before plain reads as the zero a fresh dictionary holds. */
                 xz_encoder address_to e = xz_encoder_open(0);
+
                 check("LZMA fixture encoder", e != null);
-                if (!e) break;
-                e->lc = xz_lc; e->lp = xz_lp; e->pb = xz_pb;
-                e->lp_mask = ((p32)1 << xz_lp) - 1;
-                e->pos_mask = ((p32)1 << xz_pb) - 1;
+                if (!e)
+                        break;
+                e->lc = (p8)lc;
+                e->lp = (p8)lp;
+                e->pb = (p8)pb;
+                e->lp_mask = ((p32)1 << lp) - 1;
+                e->pos_mask = ((p32)1 << pb) - 1;
                 xz_lzma_reset(e);
                 e->input = plain;
                 e->input_n = (p32)plain_n;
                 e->rc = (xz_range_state){0xffffffffu, 0, 0, 1, e->chunk,
                                          e->chunk + sizeof(e->chunk), 0};
-                positive at = 0;
                 while (at < plain_n)
                 {
                         random ^= random << 13; random ^= random >> 17; random ^= random << 5;
                         positive n = 1;
+
+                        if (far && at >= 20)
+                        {
+                                /* A distance past everything decoded so far. */
+                                for (positive k = 0; k < 5; k++) plain[at + k] = 0;
+                                e->read_pos = (p32)(at + 5); e->read_ahead = 5; e->position = at;
+                                xz_code_symbol(e, 3999 + 4, 5);
+                                at += 5;
+                                break;
+                        }
+                        if (at > 8 && (random & 31) == 1)
+                        {
+                                /* A short repeat, which the parsers rarely pick here. */
+                                plain[at] = plain[at - e->reps[0] - 1];
+                                e->read_pos = (p32)(at + 1); e->read_ahead = 1; e->position = at;
+                                xz_code_symbol(e, 0, 1);
+                                at++;
+                                continue;
+                        }
                         if (at > 8 && (random & 3))
                         {
                                 positive dist = (random >> 8) % (at < 4096 ? at : 4096) + 1;
@@ -72074,6 +72341,8 @@ static fn floor_lzma_span(void)
                                         for (positive k = 0; k < n; k++) plain[at + k] = plain[at + k - dist];
                                         e->read_pos = (p32)(at + n); e->read_ahead = (p32)n; e->position = at;
                                         xz_code_symbol(e, repeat ? (p32)which : (p32)(dist - 1 + 4), (p32)n);
+                                        if (!first_match_end)
+                                                first_match_end = at + n;
                                 }
                         }
                         if (n == 1)
@@ -72084,79 +72353,156 @@ static fn floor_lzma_span(void)
                         }
                         at += n;
                 }
-                for (positive i = 0; i < 5; i++) lzma_range_shift(address_of e->rc);
+                for (positive i = 0; i < 5; i++)
+                        lzma_range_shift(address_of e->rc);
+
                 positive packed = (positive)(e->rc.next - e->chunk);
-                bool fits = !e->rc.full && packed <= XZ_IN && packed > 64;
+                positive total = at;
+                positive goal = overrun ? first_match_end - 1 : total;
+                bool fits = !e->rc.full && packed <= 4 * FLOOR_PAGE && packed > 5;
+                p8 address_to bytes = input + 5 * FLOOR_PAGE - packed;
+
                 check("LZMA differential fixture fits", fits);
-                p8 address_to bytes = input + 5 * 4096 - packed;
-                if (fits) memory_copy_apart(bytes, e->chunk, packed);
+                if (fits)
+                        memory_copy_apart(bytes, e->chunk, packed);
                 xz_encoder_close(e);
-                if (!fits) break;
-                memory_copy_apart(xz_in_buf, bytes, packed);
-                xz_input.at = 0; xz_input.have = packed; xz_input.eof = true;
-                xz_input.mem = null; xz_input.fd = -1; xz_in_abs = 0;
-                xz_unpacked = 0; xz_dict_pos = 0; xz_dict_full = 0;
-                memory_fill(xz_dict, 0, 4096);
-                memory_fill(output + 4096, 0, 4096);
-                xz_probs_reset();
-                memory_copy_apart(address_of model, address_of xz_models, sizeof(model));
-                xz_why = null; xz_pull = true; xz_paused = false;
-                xz_check = XZ_CHECK_NONE;
-                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-                check("LZMA differential range init", xz_rc_init());
-                xz_decode_job job = {xz_range, xz_code, bytes + 5, bytes + packed,
-                    address_of model, output + 4096, 4096, 0, 0, 0, plain_n,
-                    4096, 0, xz_lc, xz_lp, xz_pb, {1,1,1,1}, 0};
+                if (!fits)
+                        break;
+
+                p32 code = 0;
+                p16 address_to cells = (p16 address_to)address_of oracle.m;
+
+                for (positive i = 1; i < 5; i++)
+                        code = (code << 8) | bytes[i];
+                memory_fill(address_of oracle, 0, sizeof(oracle));
+                oracle.range = 0xffffffffu;
+                oracle.code = code;
+                oracle.next = bytes + 5;
+                oracle.limit = bytes + packed;
+                oracle.lc = lc;
+                oracle.lp = lp;
+                oracle.pb = pb;
+                oracle.rep[0] = oracle.rep[1] = oracle.rep[2] = oracle.rep[3] = 1;
+                for (positive i = 0; i < sizeof(oracle.m) / sizeof(p16); i++)
+                        cells[i] = 1024;
+                memory_copy_apart(address_of model, address_of oracle.m, sizeof(model));
+
+                xz_decode_job job = {0};
+
+                job.range = 0xffffffffu;
+                job.code = code;
+                job.next = bytes + 5;
+                job.model = address_of model;
+                job.base = dict;
+                job.out = dict + XZ_DICT_START;
+                dict[XZ_DICT_START - 1] = 0;
+                job.lc = lc;
+                job.lp = lp;
+                job.pb = pb;
+                job.rep[0] = job.rep[1] = job.rep[2] = job.rep[3] = 1;
+
+                p8 address_to oracle_out = expect;
+                positive produced = 0;
                 positive spans = 0;
-                while (xz_unpacked < plain_n)
+                bool wrapped = false;
+                bool same = true;
+                bool rejected = false;
+
+                while (produced < goal && same)
                 {
-                        job.room = 4096 - job.pos;
-                        if (trial & 1 && job.room > 273) job.room = 273;
-                        p64 before = job.unpacked;
-                        lzma_decode_span(address_of job);
-                        if (job.pos == 4096) job.pos = 0;
-                        check("LZMA valid packet span", !job.error && job.next <= job.limit);
-                        if (job.error) break;
-                        if (job.unpacked > before)
+                        p8 address_to top = dict + size;
+
+                        if (job.out >= top)
                         {
-                                spans++;
-                                while (xz_unpacked < job.unpacked)
-                                {
-                                        xz_out_fill = 0;
-                                        if (!xz_lzma_packet()) break;
-                                }
-                                bool same = !xz_why && xz_unpacked == job.unpacked &&
-                                    xz_range == job.range && xz_code == job.code &&
-                                    xz_input.at == (positive)(job.next - bytes) &&
-                                    xz_dict_pos == job.pos && xz_dict_full == job.full &&
-                                    xz_state == job.state &&
-                                    !memory_compare(xz_rep, job.rep, sizeof(xz_rep)) &&
-                                    !memory_compare(address_of xz_models, address_of model, sizeof(model)) &&
-                                    !memory_compare(xz_dict, output + 4096, 4096);
-                                check("LZMA span equals scalar packets, range, models, repeats and dictionary", same);
-                                if (!same) break;
+                                positive shift = size - XZ_MIRROR;
+                                positive keep = (positive)(job.out - dict) - shift;
+
+                                memory_copy_apart(dict, dict + shift, keep);
+                                job.out -= shift;
+                                wrapped = true;
+                        }
+
+                        positive left = (positive)(bytes + packed - job.next);
+                        p8 address_to from = job.next;
+                        bool padded = left < XZ_PACKET_IN;
+
+                        if (padded)
+                        {
+                                memory_fill(tail, 0, sizeof(tail));
+                                memory_copy_apart(tail, job.next, left);
+                                job.next = tail;
+                                job.in_stop = tail + left + XZ_IN_PAD - (XZ_PACKET_IN - 1);
                         }
                         else
+                                job.in_stop = bytes + packed - (XZ_PACKET_IN - 1);
+                        job.out_end = job.out + (goal - produced);
+                        job.out_stop = top < job.out_end ? top : job.out_end;
+                        random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+                        if ((trial & 1) && job.out_stop > job.out + 1 + random % 300)
+                                job.out_stop = job.out + 1 + random % 300;
+                        job.copy_end = dict + cap - XZ_COPY_SLACK;
+                        if (job.copy_end > job.out_end)
+                                job.copy_end = job.out_end;
+                        job.dmax = limit;
+                        job.wrap = wrapped ? size - XZ_MIRROR : 0;
+                        job.bottom = wrapped ? dict : dict + XZ_DICT_START;
+                        job.lo = job.bottom;
+                        if (wrapped && (positive)(job.out_stop - dict) > limit)
+                                job.lo = job.out_stop - limit;
+                        job.error = 0;
+
+                        p8 address_to before = job.out;
+
+                        lzma_decode_span(address_of job);
+                        if (padded)
                         {
-                                check("LZMA short span consumes no input", job.next == bytes + xz_input.at);
-                                xz_out_fill = 0;
-                                bool ok = xz_lzma_packet();
-                                check("LZMA scalar refill/wrap tail", ok);
-                                if (!ok) break;
-                                job.range = xz_range; job.code = xz_code;
-                                job.next = bytes + xz_input.at; job.pos = xz_dict_pos;
-                                job.full = xz_dict_full; job.unpacked = xz_unpacked;
-                                job.state = xz_state;
-                                memory_copy_apart(job.rep, xz_rep, sizeof(xz_rep));
-                                memory_copy_apart(address_of model, address_of xz_models, sizeof(model));
-                                memory_copy_apart(output + 4096, xz_dict, 4096);
+                                positive used = (positive)(job.next - tail);
+
+                                check("LZMA span reads no padding from a whole stream",
+                                      used <= left || job.error);
+                                job.next = from + used;
                         }
+
+                        positive made = (positive)(job.out - before);
+                        positive want = produced + made;
+
+                        while (oracle.unpacked < want &&
+                               floor_lzma_packet(address_of oracle, address_of oracle_out,
+                                                 goal - oracle.unpacked))
+                                ;
+                        if (job.error)
+                        {
+                                bool agrees = oracle.unpacked == want &&
+                                        !floor_lzma_packet(address_of oracle, address_of oracle_out,
+                                                           goal - oracle.unpacked);
+
+                                check("LZMA span and oracle reject the same packet",
+                                      (far || overrun) && agrees &&
+                                      !memory_compare(before, expect + produced, made));
+                                rejected = true;
+                                break;
+                        }
+                        if (made)
+                                spans++;
+                        same = oracle.unpacked == want && !oracle.short_input &&
+                               oracle.range == job.range && oracle.code == job.code &&
+                               oracle.next == job.next && oracle.state == job.state &&
+                               !memory_compare(oracle.rep, job.rep, sizeof(job.rep)) &&
+                               !memory_compare(address_of oracle.m, address_of model, sizeof(model)) &&
+                               !memory_compare(before, expect + produced, made);
+                        check("LZMA span equals the scalar oracle: range, input, state, repeats, models and output",
+                              same);
+                        produced = want;
                 }
-                check("LZMA span exercised to completion", spans && xz_unpacked == plain_n);
+                if (far || overrun)
+                        check("LZMA malformed fixture is rejected", rejected);
+                else
+                        check("LZMA span decodes the whole fixture",
+                              same && produced == total && spans &&
+                              !memory_compare(expect, plain, total));
         }
-        xz_dict_close();
-        memory_free(input, 6 * 4096);
-        memory_free(output, 3 * 4096);
+        memory_free(input, 6 * FLOOR_PAGE);
+        memory_free(output, 4 * FLOOR_PAGE);
 }
 
 static fn floor_codebook(void)

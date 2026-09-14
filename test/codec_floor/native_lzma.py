@@ -48,25 +48,73 @@ void *floor_fill(void *d,p8 v,positive n) __asm__("_memory_fill");
 void *floor_fill(void *d,p8 v,positive n) { return memset(d,v,n); }
 
 typedef const char *string_address;
+#define INLINE __attribute__((always_inline))
+#define min(value, input) ((value) > (input) ? (input) : (value))
+#define max(value, input) ((value) < (input) ? (input) : (value))
+#define address_any void *
+#define bits_leading_zeros(x) __builtin_clzll(x)
+#define bits_trailing_zeros(x) __builtin_ctzll(x)
+/* The parallel runtime, serial: native checks run on one thread. */
+#define PARALLEL_SPREAD ((positive)-1)
+typedef struct { p8 *bytes; positive room; positive used; } parallel_output;
+typedef void (*parallel_emit_job)(void *context, positive index, parallel_output *output);
+typedef bool (*parallel_sink)(void *context, positive index, void *data, positive length);
+static positive parallel_width(void) { return 1; }
+static positive parallel_slot(void) { return 0; }
+static bool parallel_write(parallel_output *o, void *data, positive length)
+{
+        if (!length) return true;
+        if (o->room - o->used < length)
+        {
+                positive room = o->room ? o->room : 65536;
+                while (room - o->used < length) room *= 2;
+                p8 *bytes = realloc(o->bytes, room);
+                if (!bytes) return false;
+                o->bytes = bytes; o->room = room;
+        }
+        memcpy(o->bytes + o->used, data, length);
+        o->used += length;
+        return true;
+}
+static bool parallel_ordered(parallel_emit_job job, parallel_sink sink, void *context,
+                             positive count, positive bytes)
+{
+        parallel_output o = {0};
+        bool ok = true;
+        (void)bytes;
+        for (positive i = 0; i < count && ok; i++)
+        {
+                o.used = 0;
+                job(context, i, &o);
+                ok = sink(context, i, o.bytes, o.used);
+        }
+        free(o.bytes);
+        return ok;
+}
 static bipolar system_read_retry(positive fd,void *p,positive n) { return read((int)fd,p,n); }
 static bipolar system_write_all(positive fd,void *p,positive n) { return write((int)fd,p,n); }
 
 '''
+common=Path('src/library.common.c').read_text()
+def lift(start, end):
+    a=common.index(start); b=common.index(end, a)
+    return common[a:b]+'\n'
+head+=lift('#define memory_load_unaligned(type, source)', '#define memory_cast(type, value)')
+head+=lift('typedef struct\n{\n        p8 address_to bytes;\n        positive room;\n        positive used;\n} byte_store;', '/* Stable storage owns')
+head+=lift('typedef struct\n{\n        bipolar fd;', '/* Read no more than maximum bytes')
 for name,source in [('gzip_len_base',gz),('gzip_dist_base',gz)]:
  head+=re.search(r'static const p16 '+name+r'\[.*?};',source,re.S).group(0)+'\n'
 a=gz.index('static const p32 gzip_length_info');b=gz.index('} gzip_decode_job;',a)+len('} gzip_decode_job;');head+=gz[a:b]+'\n'
-head+='#define XZ_CORE_ONLY\n'+xz+'\n'+Path('src/sh/compression_huffman.c').read_text()+'\n'
+head+='#define XZ_CORE_ONLY\n'+xz+'\n'
+a=lib.index('#define ASM_CRC_BASIS(bit)');b=lib.index('__asm__(',a);head+=lib[a:b]
 for name in ('hash_crc32_tab','hash_crc64_tab'):
  a=lib.index('ASM_RODATA_OBJECT_BEGIN('+name);a=lib.index('\n',a)+1;b=lib.index('    ASM_OBJECT_END('+name,a)
  head+='__asm__(".section __TEXT,__const\\n.globl _'+name+'\\n.p2align 4\\n_'+name+':\\n"\n'+lib[a:b]+'".text\\n");\n'
 head+=subprocess.check_output(['python3','test/differential.py','--harness','native_extract','src/library.c','hash_crc32','hash_crc64','lzma_range_shift','lzma_range_encode','lzma_range_decode','huffman_encode_back','deflate_decode_span','lzma_decode_span','memory_common_prefix','memory_copy_match'],text=True)
 a=checks.index('static p64 floor_crc(');b=checks.index('#endif\n#ifdef BENCH_compression_floor',a)
 body=checks[a:b].replace('#ifdef CHECK_compression_floor','')
-# Actual Darwin pages are 16 KiB. Keep the LZMA dictionary 4096 bytes,
-# ending exactly at its output guard; only mapping geometry changes.
-a=body.index('static fn floor_lzma_span(');b=body.index('static fn floor_codebook(',a)
-span=body[a:b].replace('input + 5 * 4096','input + 5 * (positive)getpagesize()').replace('output + 4096','output + 2 * (positive)getpagesize() - 4096').replace('6 * 4096','6 * (positive)getpagesize()').replace('3 * 4096','3 * (positive)getpagesize()')
-body=body[:a]+'/* SPAN_PLACEHOLDER */\n'+body[b:]
+# Darwin pages are 16 KiB; the LZMA span check sizes its guards by FLOOR_PAGE.
+head+='#define FLOOR_PAGE ((positive)getpagesize())\n'
 a=body.index('static p8 address_to floor_pages(');b=body.index('static fn floor_checksums',a)
 body=body[:a]+body[a:b].replace('4096','(positive)getpagesize()')+body[b:]
 body=body.replace('[8192]', '[8 * 1024]')
@@ -76,7 +124,6 @@ body=body.replace('input + 4096, 0, 4096','input + getpagesize(), 0, getpagesize
 body=body.replace('positive i = 4096; i < 10 * 4096','positive i = getpagesize(); i < 10 * (positive)getpagesize()')
 body=body.replace('10 * 4096','10 * (positive)getpagesize()').replace('3 * 4096','3 * (positive)getpagesize()').replace('3*4096','3*(positive)getpagesize()').replace('11*4096','11*(positive)getpagesize()')
 body=body.replace('for (positive i = 0; i < 4096; i++) p[getpagesize() + i]', 'for (positive i = 0; i < (positive)getpagesize(); i++) p[getpagesize() + i]')
-body=body.replace('/* SPAN_PLACEHOLDER */',span)
 (root/'native-arm64.c').write_text(head+body)
-subprocess.run(['clang','-O2',str(root/'native-arm64.c'),'-o',str(root/'native-arm64')],check=True)
+subprocess.run(['clang','-O2','-Isrc/sh',str(root/'native-arm64.c'),'-o',str(root/'native-arm64')],check=True)
 subprocess.run([str(root/'native-arm64')],check=True)

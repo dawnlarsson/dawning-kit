@@ -1,12 +1,11 @@
 /*
         xz -- LZMA2 inside the .xz stream (check none, CRC32 or CRC64).
 
-        Decode is a range coder plus the twelve-state LZMA machine, then
-        LZMA2 chunks and the stream wrapper. Encode follows xz's presets:
+        Decode runs every LZMA packet in the lzma_decode_span kernel over a
+        liblzma-layout dictionary, then LZMA2 chunks and the stream wrapper. Encode follows xz's presets:
         hash-chain match finders and the fast parser at -0 to -3, a binary
         tree and the price-driven parser at -4 to -9, in blocks of three
-        dictionaries that each start fresh (see the encoder below). Range
-        trees use shared assembly kernels with a scalar refill tail.
+        dictionaries that each start fresh (see the encoder below).
         Checksums are hash_crc32/hash_crc64. Concatenated streams are
         accepted the way xz -d accepts them. There is no SHA-256 check and
         no BCJ.
@@ -16,7 +15,6 @@
 
 #define XZ_MAGIC0 0xfd
 #define XZ_IN 16384
-#define XZ_OUT 16384
 #define XZ_MATCH_MAX 273
 #define XZ_MATCH_MIN 2
 #define XZ_DICT_MAX (1u << 26)
@@ -37,33 +35,12 @@
 static p8 xz_in_buf[XZ_IN];
 static byte_input xz_input = {.buf = xz_in_buf, .room = XZ_IN};
 
-static p8 xz_out_buf[XZ_OUT + XZ_MATCH_MAX];
-static positive xz_out_fill;
-static positive xz_out_taken;
-static positive xz_out_hashed;
 static bipolar xz_out_fd;
 static byte_store xz_output;
-static bool xz_out_failed;
 static string_address xz_why;
 static b32 xz_status;
 
-static bool xz_pull;
-static bool xz_paused;
-static bool xz_finished;
-static bool xz_hdr_done;
-static bool xz_block_live;
-static p8 xz_lz2_kind;
-static positive xz_lz2_raw_left;
-static p64 xz_lz2_want;
-static p64 xz_lz2_pack_from;
-static p64 xz_lz2_pack_want;
-static p64 xz_lz2_chunk_from;
-static p64 xz_in_abs;
-static p64 xz_block_body_abs;
-static positive xz_block_hdr_size;
-static p8 xz_check;
-
-/* Shared range-encoder ABI; the decoder also uses range. */
+/* Shared range-encoder ABI. */
 typedef struct
 {
         p32 range;
@@ -74,14 +51,6 @@ typedef struct
         p8 address_to limit;
         positive full;
 } xz_range_state;
-static xz_range_state xz_rc;
-#define xz_range xz_rc.range
-#define xz_cache xz_rc.cache
-#define xz_low xz_rc.low
-#define xz_cache_size xz_rc.pending
-#define xz_rc_full xz_rc.full
-static p32 xz_code;
-static bool xz_encoding;
 
 typedef struct
 {
@@ -107,42 +76,6 @@ typedef struct
         p16 lit[XZ_PROB_LIT];
 
 } xz_probability_state;
-static xz_probability_state xz_models;
-#define xz_is_match xz_models.is_match
-#define xz_is_rep xz_models.is_rep
-#define xz_is_rep0 xz_models.is_rep0
-#define xz_is_rep1 xz_models.is_rep1
-#define xz_is_rep2 xz_models.is_rep2
-#define xz_is_rep0_long xz_models.is_rep0_long
-#define xz_dist_slot xz_models.dist_slot
-#define xz_dist_special xz_models.dist_special
-#define xz_dist_align xz_models.dist_align
-#define xz_match_choice xz_models.match_choice
-#define xz_match_choice2 xz_models.match_choice2
-#define xz_match_low xz_models.match_low
-#define xz_match_mid xz_models.match_mid
-#define xz_match_high xz_models.match_high
-#define xz_rep_choice xz_models.rep_choice
-#define xz_rep_choice2 xz_models.rep_choice2
-#define xz_rep_low xz_models.rep_low
-#define xz_rep_mid xz_models.rep_mid
-#define xz_rep_high xz_models.rep_high
-#define xz_lit xz_models.lit
-
-static p8 address_to xz_dict;
-static positive xz_dict_cap;
-static positive xz_dict_size;
-static positive xz_dict_pos;
-static positive xz_dict_full;
-static p8 xz_lc;
-static p8 xz_lp;
-static p8 xz_pb;
-static p8 xz_state;
-static positive xz_rep[4];
-static p64 xz_unpacked;
-static p32 xz_crc32;
-static p64 xz_crc64;
-
 
 static bool xz_fail(string_address why)
 {
@@ -150,271 +83,7 @@ static bool xz_fail(string_address why)
         return false;
 }
 
-static bool xz_in_need(void)
-{
-        bipolar got = byte_input_need(address_of xz_input, 1);
-        return got < 0 ? xz_fail("xz read failed") : got != 0;
-}
-
-static bipolar xz_in_byte(void)
-{
-        if (xz_input.at >= xz_input.have && !xz_in_need())
-                return -1;
-        xz_in_abs++;
-        return xz_in_buf[xz_input.at++];
-}
-
-/* A little-endian field, read a byte at a time across refills. */
-static bool xz_in_le(p64 address_to value, p8 bytes)
-{
-        address_to value = 0;
-        for (p8 at = 0; at < bytes; at++)
-        {
-                bipolar byte = xz_in_byte();
-
-                if (byte < 0)
-                        return false;
-                address_to value |= (p64)byte << (8 * at);
-        }
-        return true;
-}
-
-/* Hash completed output spans once, before a drain or block check. A
-   watermark separates blocks even when both share the same output slab. */
-static fn xz_output_check(void)
-{
-        if (xz_encoding || xz_out_hashed == xz_out_fill)
-                return;
-        positive n = xz_out_fill - xz_out_hashed;
-        p8 address_to p = xz_out_buf + xz_out_hashed;
-        if (xz_check == XZ_CHECK_CRC32)
-                xz_crc32 = hash_crc32(xz_crc32, p, n);
-        else if (xz_check == XZ_CHECK_CRC64)
-                xz_crc64 = hash_crc64(xz_crc64, p, n);
-        xz_out_hashed = xz_out_fill;
-}
-
-static bool xz_out_flush(void)
-{
-        if (xz_out_failed)
-                return false;
-        if (!xz_out_fill)
-                return true;
-        xz_output_check();
-        if (xz_output.bytes)
-        {
-                if (!byte_store_append_exact(address_of xz_output,
-                                              xz_out_buf, xz_out_fill))
-                {
-                        xz_out_failed = true;
-                        return xz_fail("xz output is too small");
-                }
-        }
-        else if (xz_out_fd >= 0 &&
-                 system_write_all((positive)xz_out_fd, xz_out_buf,
-                                  xz_out_fill) != xz_out_fill)
-        {
-                xz_out_failed = true;
-                return xz_fail("xz write failed");
-        }
-        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-        return true;
-}
-
-/* Append a span no longer than the dictionary to its ring. */
-static fn xz_dict_append(p8 address_to bytes, positive n)
-{
-        positive first = min(n, xz_dict_size - xz_dict_pos);
-
-        memory_copy_apart(xz_dict + xz_dict_pos, bytes, first);
-        if (n > first)
-                memory_copy_apart(xz_dict, bytes + first, n - first);
-        xz_dict_pos += n;
-        if (xz_dict_pos >= xz_dict_size)
-                xz_dict_pos -= xz_dict_size;
-        xz_dict_full = min(xz_dict_full + n, xz_dict_size);
-}
-
-static bool xz_emit(p8 byte)
-{
-        if (xz_dict && xz_dict_size)
-        {
-                xz_dict[xz_dict_pos] = byte;
-                xz_dict_pos++;
-                if (xz_dict_pos == xz_dict_size)
-                        xz_dict_pos = 0;
-                if (xz_dict_full < xz_dict_size)
-                        xz_dict_full++;
-        }
-        xz_unpacked++;
-        xz_out_buf[xz_out_fill++] = byte;
-        if (!xz_pull && xz_out_fill >= XZ_OUT)
-                return xz_out_flush();
-        return true;
-}
-
-static p8 xz_dict_get(positive dist)
-{
-        positive at;
-
-        if (!dist || dist > xz_dict_full)
-                return 0;
-        at = xz_dict_pos;
-        if (at >= dist)
-                at -= dist;
-        else
-                at += xz_dict_size - dist;
-        return xz_dict[at];
-}
-
-static bool xz_emit_match(positive dist, positive length)
-{
-        p8 address_to into = xz_out_buf + xz_out_fill;
-        positive seed = length < dist ? length : dist;
-        positive at = xz_dict_pos >= dist ? xz_dict_pos - dist
-                                          : xz_dict_pos + xz_dict_size - dist;
-        positive first = xz_dict_size - at;
-
-        if (first > seed)
-                first = seed;
-        memory_copy_apart(into, xz_dict + at, first);
-        if (seed > first)
-                memory_copy_apart(into + first, xz_dict, seed - first);
-        if (length > seed)
-                memory_copy_match(into + seed, dist, length - seed);
-        xz_dict_append(into, length);
-        xz_unpacked += length;
-        xz_out_fill += length;
-        if (!xz_pull && xz_out_fill >= XZ_OUT)
-                return xz_out_flush();
-        return true;
-}
-
-static fn xz_probs_reset(void)
-{
-        positive at;
-        positive i;
-
-        for (at = 0; at < XZ_STATES; at++)
-        {
-                xz_is_rep[at] = 1024;
-                xz_is_rep0[at] = 1024;
-                xz_is_rep1[at] = 1024;
-                xz_is_rep2[at] = 1024;
-                for (i = 0; i < XZ_POS; i++)
-                {
-                        xz_is_match[at][i] = 1024;
-                        xz_is_rep0_long[at][i] = 1024;
-                }
-        }
-        for (at = 0; at < 4; at++)
-                for (i = 0; i < XZ_DIST_SLOTS; i++)
-                        xz_dist_slot[at][i] = 1024;
-        for (at = 0; at < XZ_FULL_DIST - 14; at++)
-                xz_dist_special[at] = 1024;
-        for (at = 0; at < XZ_ALIGN; at++)
-                xz_dist_align[at] = 1024;
-        xz_match_choice = 1024;
-        xz_match_choice2 = 1024;
-        xz_rep_choice = 1024;
-        xz_rep_choice2 = 1024;
-        for (at = 0; at < XZ_POS; at++)
-        {
-                for (i = 0; i < XZ_LEN_LOW; i++)
-                {
-                        xz_match_low[at][i] = 1024;
-                        xz_rep_low[at][i] = 1024;
-                }
-                for (i = 0; i < XZ_LEN_MID; i++)
-                {
-                        xz_match_mid[at][i] = 1024;
-                        xz_rep_mid[at][i] = 1024;
-                }
-        }
-        for (at = 0; at < XZ_LEN_HIGH; at++)
-        {
-                xz_match_high[at] = 1024;
-                xz_rep_high[at] = 1024;
-        }
-        for (at = 0; at < XZ_PROB_LIT; at++)
-                xz_lit[at] = 1024;
-        xz_state = 0;
-        xz_rep[0] = xz_rep[1] = xz_rep[2] = xz_rep[3] = 1;
-}
-
-static bool xz_dict_open(positive size)
-{
-        if (size > XZ_DICT_MAX || !size)
-                return xz_fail("xz dictionary");
-        if (xz_dict && xz_dict_cap >= size)
-        {
-                xz_dict_size = size;
-                xz_dict_pos = 0;
-                xz_dict_full = 0;
-                return true;
-        }
-        if (xz_dict)
-        {
-                memory_free(xz_dict, xz_dict_cap);
-                xz_dict = null;
-        }
-        xz_dict = (p8 address_to)memory(size);
-        if (!xz_dict || system_failed(xz_dict))
-        {
-                xz_dict = null;
-                return xz_fail("xz cannot map the dictionary");
-        }
-        xz_dict_cap = size;
-        xz_dict_size = size;
-        xz_dict_pos = 0;
-        xz_dict_full = 0;
-        return true;
-}
-
-static fn xz_dict_close(void)
-{
-        if (xz_dict)
-        {
-                memory_free(xz_dict, xz_dict_cap);
-                xz_dict = null;
-                xz_dict_cap = 0;
-        }
-}
-
-static bool xz_rc_norm(void)
-{
-        if (xz_range >= 0x1000000u)
-                return true;
-        {
-                bipolar byte = xz_in_byte();
-
-                if (byte < 0)
-                        return xz_fail("xz truncated range");
-                xz_range <<= 8;
-                xz_code = (xz_code << 8) | (p8)byte;
-        }
-        return true;
-}
-
-static bipolar xz_rc_bit(p16 address_to prob)
-{
-        p32 bound;
-
-        if (!xz_rc_norm())
-                return -1;
-        bound = (xz_range >> 11) * address_to prob;
-        if (xz_code < bound)
-        {
-                xz_range = bound;
-                address_to prob = (p16)(address_to prob + ((2048 - address_to prob) >> 5));
-                return 0;
-        }
-        xz_range -= bound;
-        xz_code -= bound;
-        address_to prob = (p16)(address_to prob - (address_to prob >> 5));
-        return 1;
-}
-
+/* lzma_range_decode state (24 bytes): range, code, next, limit. */
 typedef struct
 {
         p32 range;
@@ -422,313 +91,6 @@ typedef struct
         p8 address_to next;
         p8 address_to limit;
 } xz_range_input;
-
-static bipolar xz_rc_tree_fast(p16 address_to probs, positive mode)
-{
-        xz_range_input state = {xz_range, xz_code, xz_in_buf + xz_input.at,
-                               xz_in_buf + xz_input.have};
-        p8 address_to start = state.next;
-        bipolar result = lzma_range_decode(address_of state, probs, mode);
-        xz_range = state.range;
-        xz_code = state.code;
-        xz_input.at += (positive)(state.next - start);
-        xz_in_abs += (positive)(state.next - start);
-        return result;
-}
-
-static bipolar xz_rc_bittree(p16 address_to probs, p8 bits)
-{
-        if (!bits)
-                return 0;
-        if (xz_input.have - xz_input.at >= 24)
-                return xz_rc_tree_fast(probs, bits);
-        positive sym = 1;
-        p8 n;
-
-        for (n = 0; n < bits; n++)
-        {
-                bipolar bit = xz_rc_bit(probs + sym);
-
-                if (bit < 0)
-                        return -1;
-                sym = (sym << 1) + (positive)bit;
-        }
-        return (bipolar)(sym - ((positive)1 << bits));
-}
-
-static bipolar xz_rc_bittree_rev(p16 address_to probs, p8 bits)
-{
-        if (!bits)
-                return 0;
-        if (xz_input.have - xz_input.at >= 24)
-                return xz_rc_tree_fast(probs, 0x100 | bits);
-        positive sym = 0;
-        p8 n;
-
-        for (n = 0; n < bits; n++)
-        {
-                bipolar bit = xz_rc_bit(probs + (sym | ((positive)1 << n)));
-
-                if (bit < 0)
-                        return -1;
-                if (bit)
-                        sym |= (positive)1 << n;
-        }
-        return (bipolar)sym;
-}
-
-static bipolar xz_rc_direct_ok(p8 bits)
-{
-        positive v = 0;
-
-        while (bits--)
-        {
-                p32 t;
-
-                if (!xz_rc_norm())
-                        return -1;
-                xz_range >>= 1;
-                t = xz_code - xz_range;
-                v <<= 1;
-                if (t < xz_code)
-                {
-                        xz_code = t;
-                        v |= 1;
-                }
-        }
-        return (bipolar)v;
-}
-
-static bipolar xz_len(p16 address_to choice, p16 address_to choice2,
-                      p16 address_to low, p16 address_to mid, p16 address_to high,
-                      positive pos_state)
-{
-        bipolar bit;
-        bipolar v;
-
-        bit = xz_rc_bit(choice);
-        if (bit < 0)
-                return -1;
-        if (!bit)
-        {
-                v = xz_rc_bittree(low + pos_state * XZ_LEN_LOW, 3);
-                return v < 0 ? -1 : v + 2;
-        }
-        bit = xz_rc_bit(choice2);
-        if (bit < 0)
-                return -1;
-        if (!bit)
-        {
-                v = xz_rc_bittree(mid + pos_state * XZ_LEN_MID, 3);
-                return v < 0 ? -1 : v + 2 + 8;
-        }
-        v = xz_rc_bittree(high, 8);
-        return v < 0 ? -1 : v + 2 + 8 + 8;
-}
-
-static bool xz_literal(positive pos_state)
-{
-        p16 address_to probs;
-        positive symbol = 1;
-        p8 prev;
-        p8 match;
-        p8 lit_pos;
-        (void)pos_state;
-
-        prev = xz_dict_full ? xz_dict_get(1) : 0;
-        lit_pos = (p8)(xz_unpacked & ((((positive)1 << xz_lp) - 1)));
-        probs = xz_lit +
-                (((((positive)lit_pos << xz_lc) + (prev >> (8 - xz_lc))) * 0x300));
-        if (xz_input.have - xz_input.at >= 24)
-        {
-                positive mode = 8;
-                if (xz_state >= 7)
-                        mode |= 0x200 | ((positive)xz_dict_get(xz_rep[0]) << 16);
-                bipolar value = xz_rc_tree_fast(probs, mode);
-                if (value < 0)
-                        return xz_fail("xz truncated literal");
-                symbol = (positive)value;
-                goto emit;
-        }
-        if (xz_state >= 7)
-        {
-                match = xz_dict_get(xz_rep[0]);
-                do
-                {
-                        positive match_bit = (match >> 7) & 1;
-                        bipolar bit;
-
-                        match <<= 1;
-                        bit = xz_rc_bit(probs + ((1 + match_bit) << 8) + symbol);
-                        if (bit < 0)
-                                return false;
-                        symbol = (symbol << 1) | (positive)bit;
-                        if ((positive)bit != match_bit)
-                                break;
-                } while (symbol < 0x100);
-        }
-        while (symbol < 0x100)
-        {
-                bipolar bit = xz_rc_bit(probs + symbol);
-
-                if (bit < 0)
-                        return false;
-                symbol = (symbol << 1) | (positive)bit;
-        }
-emit:
-        if (!xz_emit((p8)symbol))
-                return false;
-        xz_state = xz_state < 4 ? 0 : xz_state < 10 ? xz_state - 3 : xz_state - 6;
-        return true;
-}
-
-static bool xz_distance(positive len_state, positive address_to dist)
-{
-        bipolar slot;
-        bipolar extra;
-        p8 bits;
-
-        slot = xz_rc_bittree(xz_dist_slot[len_state], 6);
-        if (slot < 0)
-                return false;
-        if (slot < 4)
-        {
-                address_to dist = (positive)slot;
-                return true;
-        }
-        bits = (p8)((slot >> 1) - 1);
-        address_to dist = (2 | (slot & 1)) << bits;
-        if (slot < 14)
-        {
-                extra = xz_rc_bittree_rev(xz_dist_special + address_to dist - slot - 1,
-                                          bits);
-                if (extra < 0)
-                        return false;
-                address_to dist += (positive)extra;
-                return true;
-        }
-        extra = xz_rc_direct_ok((p8)(bits - 4));
-        if (extra < 0)
-                return false;
-        address_to dist += (positive)extra << 4;
-        extra = xz_rc_bittree_rev(xz_dist_align, 4);
-        if (extra < 0)
-                return false;
-        address_to dist += (positive)extra;
-        return true;
-}
-
-static bool xz_lzma_packet(void)
-{
-        positive pos_state = (positive)xz_unpacked & ((((positive)1 << xz_pb) - 1));
-        bipolar bit;
-        bipolar len;
-        positive dist;
-
-        if (xz_pull && xz_out_fill >= XZ_OUT)
-        {
-                xz_paused = true;
-                return true;
-        }
-
-        bit = xz_rc_bit(address_of xz_is_match[xz_state][pos_state]);
-        if (bit < 0)
-                return false;
-        if (!bit)
-                return xz_literal(pos_state);
-
-        bit = xz_rc_bit(address_of xz_is_rep[xz_state]);
-        if (bit < 0)
-                return false;
-        if (!bit)
-        {
-                xz_rep[3] = xz_rep[2];
-                xz_rep[2] = xz_rep[1];
-                xz_rep[1] = xz_rep[0];
-                len = xz_len(address_of xz_match_choice, address_of xz_match_choice2,
-                             (p16 address_to)xz_match_low, (p16 address_to)xz_match_mid,
-                             xz_match_high, pos_state);
-                if (len < 0)
-                        return false;
-                if (!xz_distance(len < 6 ? (positive)len - 2 : 3, address_of dist))
-                        return false;
-                xz_rep[0] = dist + 1;
-                xz_state = xz_state < 7 ? 7 : 10;
-                if (!xz_rep[0] || xz_rep[0] > xz_dict_full)
-                        return xz_fail("xz distance");
-                return xz_emit_match(xz_rep[0], (positive)len);
-        }
-
-        bit = xz_rc_bit(address_of xz_is_rep0[xz_state]);
-        if (bit < 0)
-                return false;
-        if (!bit)
-        {
-                bit = xz_rc_bit(address_of xz_is_rep0_long[xz_state][pos_state]);
-                if (bit < 0)
-                        return false;
-                if (!bit)
-                {
-                        xz_state = xz_state < 7 ? 9 : 11;
-                        if (!xz_rep[0] || xz_rep[0] > xz_dict_full)
-                                return xz_fail("xz distance");
-                        return xz_emit_match(xz_rep[0], 1);
-                }
-        }
-        else
-        {
-                bit = xz_rc_bit(address_of xz_is_rep1[xz_state]);
-                if (bit < 0)
-                        return false;
-                if (!bit)
-                        dist = xz_rep[1];
-                else
-                {
-                        bit = xz_rc_bit(address_of xz_is_rep2[xz_state]);
-                        if (bit < 0)
-                                return false;
-                        if (!bit)
-                                dist = xz_rep[2];
-                        else
-                                dist = xz_rep[3], xz_rep[3] = xz_rep[2];
-                        xz_rep[2] = xz_rep[1];
-                }
-                xz_rep[1] = xz_rep[0];
-                xz_rep[0] = dist;
-        }
-        len = xz_len(address_of xz_rep_choice, address_of xz_rep_choice2,
-                     (p16 address_to)xz_rep_low, (p16 address_to)xz_rep_mid,
-                     xz_rep_high, pos_state);
-        if (len < 0)
-                return false;
-        xz_state = xz_state < 7 ? 8 : 11;
-        if (!xz_rep[0] || xz_rep[0] > xz_dict_full)
-                return xz_fail("xz distance");
-        return xz_emit_match(xz_rep[0], (positive)len);
-}
-
-static bool xz_rc_init(void)
-{
-        bipolar first;
-        positive at;
-
-        xz_range = 0xffffffffu;
-        xz_code = 0;
-        first = xz_in_byte();
-        if (first < 0)
-                return xz_fail("xz truncated LZMA");
-        if (first)
-                return xz_fail("xz LZMA range init");
-        for (at = 0; at < 4; at++)
-        {
-                bipolar byte = xz_in_byte();
-
-                if (byte < 0)
-                        return xz_fail("xz truncated LZMA");
-                xz_code = (xz_code << 8) | (p8)byte;
-        }
-        return true;
-}
 
 static positive xz_dict_from_prop(p8 prop)
 {
@@ -739,332 +101,583 @@ static positive xz_dict_from_prop(p8 prop)
         return (2u | (prop & 1)) << (prop / 2 + 11);
 }
 
-static bool xz_props(p8 packed)
-{
-        p8 lc;
-        p8 rest;
+/*
+        Decoding. A stream's whole state is one xz_decoder: the span kernel's
+        job, the models, the input window, the dictionary, and the LZMA2,
+        block and index framing between spans.
 
-        if (packed > (4 * 5 + 4) * 9 + 8)
-                return xz_fail("xz LZMA properties");
-        lc = packed % 9;
-        rest = packed / 9;
-        xz_lp = rest % 5;
-        xz_pb = rest / 5;
-        xz_lc = lc;
-        if ((positive)xz_lc + xz_lp > 4)
-                return xz_fail("xz lc+lp");
-        return true;
-}
+        The dictionary has liblzma's layout. The buffer holds the rounded
+        dictionary plus two 288-byte margins; decoding starts at 576, and when
+        the cursor passes the end, the last 288 bytes and any overshoot move
+        to the front. A match source is then one contiguous run (a source
+        below the buffer maps into the tail), buffer offsets keep the position
+        modulo 16 for pos_state and the literal position, and out[-1] is
+        always the previous byte. Output leaves in spans straight from the
+        buffer and is checksummed there.
 
-static bool xz_lzma2_raw(void)
-{
-        while (xz_lz2_raw_left)
-        {
-                if (xz_pull && xz_out_fill >= XZ_OUT)
-                {
-                        xz_paused = true;
-                        return true;
-                }
-                if (xz_input.at == xz_input.have && !xz_in_need())
-                        return xz_fail("xz truncated uncompressed");
-                positive take = xz_input.have - xz_input.at;
-                if (take > xz_lz2_raw_left)
-                        take = xz_lz2_raw_left;
-                if (take > XZ_OUT - xz_out_fill)
-                        take = XZ_OUT - xz_out_fill;
-                if (take > xz_dict_size - xz_dict_pos)
-                        take = xz_dict_size - xz_dict_pos;
-                if (!take)
-                        return xz_fail("xz truncated uncompressed");
-                p8 address_to bytes = xz_in_buf + xz_input.at;
-                memory_copy_apart(xz_out_buf + xz_out_fill, bytes, take);
-                xz_dict_append(bytes, take);
-                xz_out_fill += take;
-                xz_input.at += take;
-                xz_in_abs += take;
-                xz_unpacked += take;
-                xz_lz2_raw_left -= take;
-                if (!xz_pull && xz_out_fill >= XZ_OUT && !xz_out_flush())
-                        return false;
-        }
+        The kernel runs every packet. Before the input ends the window keeps
+        48 bytes of lookahead; at the end, 64 zero bytes follow the data and a
+        kernel read into them is a truncated stream.
+*/
 
-        xz_lz2_kind = 0;
-        return true;
-}
+#define XZ_DEC_IN 65536
+#define XZ_IN_PAD 64
+#define XZ_PACKET_IN 48
+#define XZ_MIRROR 288
+#define XZ_DICT_START (2 * XZ_MIRROR)
+#define XZ_DICT_SLACK (XZ_MATCH_MAX + 64)
+#define XZ_COPY_SLACK 32
+#define XZ_SPAN (1u << 20)
 
-/* Span ABI: fixed-width fields followed by the probability and dictionary
-   pointers. The kernel emits into a contiguous part of the dictionary; the
-   framing layer transfers that span once and owns checksums and refills. */
+/* Span ABI, documented above lzma_decode_span in src/library.c. */
 typedef struct
 {
         p32 range, code;
         p8 address_to next;
-        p8 address_to limit;
+        p8 address_to in_stop;
         xz_probability_state address_to model;
-        p8 address_to dict;
-        positive size, pos, full;
-        p64 unpacked, stop;
-        positive room;
+        p8 address_to base;
+        p8 address_to out;
+        p8 address_to out_stop;
+        p8 address_to out_end;
+        p8 address_to copy_end;
+        p8 address_to lo;
+        p8 address_to bottom;
+        positive wrap;
+        positive dmax;
         p32 state, lc, lp, pb;
         positive rep[4];
         positive error;
 } xz_decode_job;
 
-static bool xz_decode_fast(void)
+typedef struct
 {
-        positive have = xz_input.have - xz_input.at;
-        p64 packed = xz_in_abs - xz_lz2_pack_from;
-        if (packed >= xz_lz2_pack_want)
-                return true;
-        if (have > xz_lz2_pack_want - packed)
-                have = (positive)(xz_lz2_pack_want - packed);
-        positive room = XZ_OUT > xz_out_fill ? XZ_OUT - xz_out_fill : 0;
-        if (room > xz_dict_size - xz_dict_pos)
-                room = xz_dict_size - xz_dict_pos;
-        if (have < 64 || room < XZ_MATCH_MAX)
-                return true;
-        xz_decode_job job = {xz_range, xz_code, xz_in_buf + xz_input.at,
-                xz_in_buf + xz_input.at + have, address_of xz_models, xz_dict,
-                xz_dict_size, xz_dict_pos, xz_dict_full, xz_unpacked,
-                xz_lz2_chunk_from + xz_lz2_want, room,
-                xz_state, xz_lc, xz_lp, xz_pb,
-                {xz_rep[0], xz_rep[1], xz_rep[2], xz_rep[3]}, 0};
-        lzma_decode_span(address_of job);
-        positive produced = job.pos - xz_dict_pos;
-        positive consumed = (positive)(job.next - (xz_in_buf + xz_input.at));
-        xz_range = job.range;
-        xz_code = job.code;
-        xz_input.at += consumed;
-        xz_in_abs += consumed;
-        xz_state = (p8)job.state;
-        for (positive i = 0; i < 4; i++) xz_rep[i] = job.rep[i];
-        memory_copy_apart(xz_out_buf + xz_out_fill, xz_dict + xz_dict_pos, produced);
-        xz_out_fill += produced;
-        xz_dict_pos = job.pos;
-        if (xz_dict_pos == xz_dict_size) xz_dict_pos = 0;
-        xz_dict_full = job.full;
-        xz_unpacked = job.unpacked;
-        if (job.error) return xz_fail("xz distance or chunk length");
-        if (!xz_pull && xz_out_fill >= XZ_OUT)
-                return xz_out_flush();
-        return true;
+        xz_decode_job job;
+        xz_probability_state models;
+        byte_input input;
+        p64 in_abs;
+        p8 address_to dict;
+        positive dict_cap;
+        positive dict_size;
+        positive dict_limit;
+        bool wrapped;
+        p8 address_to emitted;
+        p8 address_to hashed;
+        bipolar out_fd;
+        byte_store address_to store;
+        bool pull;
+        bool paused;
+        bool finished;
+        bool hdr_done;
+        bool block_live;
+        bool need_reset;
+        bool need_props;
+        p8 lz2_kind;
+        positive raw_left;
+        p64 chunk_left;
+        p64 pack_from;
+        p64 pack_want;
+        p64 block_body_abs;
+        positive block_hdr_size;
+        p8 check;
+        p32 crc32;
+        p64 crc64;
+        string_address why;
+        p8 in_buf[XZ_DEC_IN + XZ_IN_PAD];
+} xz_decoder;
+
+static xz_decoder xz_dec;
+
+static bool xz_dec_fail(xz_decoder address_to d, string_address why)
+{
+        if (!d->why)
+                d->why = why;
+        return false;
 }
 
-static bool xz_lzma2_lzma(void)
+/* True when at least one input byte is buffered. */
+static bool xz_dec_more(xz_decoder address_to d)
 {
-        while (xz_unpacked - xz_lz2_chunk_from < xz_lz2_want)
+        bipolar got = byte_input_need(address_of d->input, 1);
+
+        if (got < 0)
+                return xz_dec_fail(d, "xz read failed");
+        return got != 0;
+}
+
+static bipolar xz_dec_byte(xz_decoder address_to d)
+{
+        if (d->input.at >= d->input.have && !xz_dec_more(d))
+                return -1;
+        d->in_abs++;
+        return d->in_buf[d->input.at++];
+}
+
+/* A little-endian field, read a byte at a time across refills. */
+static bool xz_dec_le(xz_decoder address_to d, p64 address_to value, p8 bytes)
+{
+        address_to value = 0;
+        for (p8 at = 0; at < bytes; at++)
         {
-                if (xz_pull && xz_out_fill >= XZ_OUT)
-                {
-                        xz_paused = true;
-                        return true;
-                }
-                p64 before = xz_unpacked;
-                if (!xz_decode_fast()) return false;
-                if (xz_unpacked != before) continue;
-                if (!xz_lzma_packet())
+                bipolar byte = xz_dec_byte(d);
+
+                if (byte < 0)
                         return false;
-                if (xz_paused)
-                        return true;
+                address_to value |= (p64)byte << (8 * at);
         }
-        xz_lz2_kind = 0;
         return true;
 }
 
-static bool xz_lzma2_finish_packed(void)
+/* Checksum what the dictionary gained since the last call. */
+static fn xz_dec_hash(xz_decoder address_to d)
 {
-        p64 used = xz_in_abs - xz_lz2_pack_from;
+        positive n = (positive)(d->job.out - d->hashed);
 
-        if (used > xz_lz2_pack_want)
-                return xz_fail("xz LZMA2 compressed size");
-        while (used < xz_lz2_pack_want)
+        if (!n)
+                return;
+        if (d->check == XZ_CHECK_CRC32)
+                d->crc32 = hash_crc32(d->crc32, d->hashed, n);
+        else if (d->check == XZ_CHECK_CRC64)
+                d->crc64 = hash_crc64(d->crc64, d->hashed, n);
+        d->hashed = d->job.out;
+}
+
+/* Hand the undelivered window on. A descriptor or store takes it whole; a
+   reader takes it through xz_decode_read, and until it has the stream
+   pauses. */
+static bool xz_dec_drain(xz_decoder address_to d)
+{
+        xz_dec_hash(d);
+        positive n = (positive)(d->job.out - d->emitted);
+
+        if (!n)
+                return true;
+        if (d->pull)
         {
-                if (xz_in_byte() < 0)
-                        return xz_fail("xz truncated LZMA2");
+                d->paused = true;
+                return true;
+        }
+        if (d->store)
+        {
+                if (!byte_store_append_exact(d->store, d->emitted, n))
+                        return xz_dec_fail(d, "xz output is too small");
+        }
+        else if (d->out_fd >= 0 &&
+                 system_write_all((positive)d->out_fd, d->emitted, n) !=
+                         (bipolar)n)
+                return xz_dec_fail(d, "xz write failed");
+        d->emitted = d->job.out;
+        return true;
+}
+
+/* An LZMA2 dictionary reset; the window must already be drained. */
+static fn xz_dec_dict_reset(xz_decoder address_to d)
+{
+        d->job.base = d->dict;
+        d->job.out = d->emitted = d->hashed = d->dict + XZ_DICT_START;
+        d->dict[XZ_DICT_START - 1] = 0;
+        d->wrapped = false;
+}
+
+static bool xz_dec_dict_open(xz_decoder address_to d, positive size)
+{
+        if (!size || size > XZ_DICT_MAX)
+                return xz_dec_fail(d, "xz dictionary");
+
+        positive limit = (size + 15) & ~(positive)15;
+        positive cap = limit + XZ_DICT_START + XZ_DICT_SLACK;
+
+        if (!d->dict || d->dict_cap < cap)
+        {
+                if (d->dict)
+                        memory_free(d->dict, d->dict_cap);
+                d->dict = (p8 address_to)memory(cap);
+                if (!d->dict || system_failed(d->dict))
+                {
+                        d->dict = null;
+                        d->dict_cap = 0;
+                        return xz_dec_fail(d, "xz cannot map the dictionary");
+                }
+                d->dict_cap = cap;
+        }
+        d->dict_limit = limit;
+        d->dict_size = limit + XZ_DICT_START;
+        xz_dec_dict_reset(d);
+        return true;
+}
+
+static fn xz_dec_dict_close(xz_decoder address_to d)
+{
+        if (d->dict)
+                memory_free(d->dict, d->dict_cap);
+        d->dict = null;
+        d->dict_cap = 0;
+        d->dict_size = 0;
+        d->job.base = d->job.out = d->emitted = d->hashed = null;
+}
+
+/* The cursor is past the buffer end and the window is drained: the last
+   288 bytes and the overshoot move to the front. */
+static fn xz_dec_wrap(xz_decoder address_to d)
+{
+        positive shift = d->dict_size - XZ_MIRROR;
+        positive keep = (positive)(d->job.out - d->dict) - shift;
+
+        memory_copy_apart(d->dict, d->dict + shift, keep);
+        d->job.out -= shift;
+        d->emitted = d->hashed = d->job.out;
+        d->wrapped = true;
+}
+
+/* Room to decode into: a full span is delivered and a full buffer wrapped.
+   A reader that still has to take the window pauses the stream. */
+static bool xz_dec_room(xz_decoder address_to d)
+{
+        p8 address_to top = d->dict + d->dict_size;
+
+        if (d->job.out < top && (positive)(d->job.out - d->emitted) < XZ_SPAN)
+                return true;
+        if (!xz_dec_drain(d))
+                return false;
+        if (d->paused)
+                return true;
+        if (d->job.out >= top)
+                xz_dec_wrap(d);
+        return true;
+}
+
+static fn xz_dec_models_reset(xz_decoder address_to d)
+{
+        p16 address_to cell = (p16 address_to)address_of d->models;
+
+        for (positive i = 0; i < sizeof(d->models) / sizeof(p16); i++)
+                cell[i] = 1024;
+        d->job.state = 0;
+        d->job.rep[0] = d->job.rep[1] = d->job.rep[2] = d->job.rep[3] = 1;
+}
+
+static bool xz_dec_props(xz_decoder address_to d, p8 packed)
+{
+        if (packed > (4 * 5 + 4) * 9 + 8)
+                return xz_dec_fail(d, "xz LZMA properties");
+
+        p32 lc = packed % 9;
+        p32 lp = (packed / 9) % 5;
+        p32 pb = packed / 45;
+
+        if (lc + lp > 4)
+                return xz_dec_fail(d, "xz lc+lp");
+        d->job.lc = lc;
+        d->job.lp = lp;
+        d->job.pb = pb;
+        return true;
+}
+
+static bool xz_dec_rc_init(xz_decoder address_to d)
+{
+        bipolar first = xz_dec_byte(d);
+
+        if (first < 0)
+                return xz_dec_fail(d, "xz truncated LZMA");
+        if (first)
+                return xz_dec_fail(d, "xz LZMA range init");
+        d->job.range = 0xffffffffu;
+        d->job.code = 0;
+        for (positive at = 0; at < 4; at++)
+        {
+                bipolar byte = xz_dec_byte(d);
+
+                if (byte < 0)
+                        return xz_dec_fail(d, "xz truncated LZMA");
+                d->job.code = (d->job.code << 8) | (p8)byte;
+        }
+        return true;
+}
+
+static bool xz_dec_raw(xz_decoder address_to d)
+{
+        while (d->raw_left)
+        {
+                if (!xz_dec_room(d))
+                        return false;
+                if (d->paused)
+                        return true;
+                if (d->input.at >= d->input.have && !xz_dec_more(d))
+                        return xz_dec_fail(d, "xz truncated uncompressed");
+
+                p8 address_to top = d->dict + d->dict_size;
+                positive take = d->input.have - d->input.at;
+
+                if (take > d->raw_left)
+                        take = d->raw_left;
+                if (take > (positive)(top - d->job.out))
+                        take = (positive)(top - d->job.out);
+                if (take > (positive)(d->emitted + XZ_SPAN - d->job.out))
+                        take = (positive)(d->emitted + XZ_SPAN - d->job.out);
+                memory_copy_apart(d->job.out, d->in_buf + d->input.at, take);
+                d->job.out += take;
+                d->input.at += take;
+                d->in_abs += take;
+                d->raw_left -= take;
+        }
+        d->lz2_kind = 0;
+        return true;
+}
+
+/* One LZMA2 chunk's packets, a kernel span at a time. */
+static bool xz_dec_lzma(xz_decoder address_to d)
+{
+        xz_decode_job address_to job = address_of d->job;
+
+        while (d->chunk_left)
+        {
+                if (!xz_dec_room(d))
+                        return false;
+                if (d->paused)
+                        return true;
+
+                positive have = d->input.have - d->input.at;
+
+                if (have < XZ_IN_PAD && !d->input.eof)
+                {
+                        if (byte_input_need(address_of d->input, XZ_IN_PAD) < 0)
+                                return xz_dec_fail(d, "xz read failed");
+                        have = d->input.have - d->input.at;
+                }
+
+                p8 address_to at = d->in_buf + d->input.at;
+                p8 address_to top = d->dict + d->dict_size;
+
+                job->next = at;
+                job->in_stop = at + have - (XZ_PACKET_IN - 1);
+                if (d->input.eof)
+                {
+                        memory_fill(at + have, 0, XZ_IN_PAD);
+                        job->in_stop = at + have + XZ_IN_PAD - (XZ_PACKET_IN - 1);
+                }
+                job->out_end = job->out + d->chunk_left;
+                job->out_stop = top < job->out_end ? top : job->out_end;
+                if (job->out_stop > d->emitted + XZ_SPAN)
+                        job->out_stop = d->emitted + XZ_SPAN;
+                job->copy_end = d->dict + d->dict_cap - XZ_COPY_SLACK;
+                if (job->copy_end > job->out_end)
+                        job->copy_end = job->out_end;
+                job->dmax = d->dict_limit;
+                job->wrap = d->wrapped ? d->dict_size - XZ_MIRROR : 0;
+                job->bottom = d->wrapped ? d->dict : d->dict + XZ_DICT_START;
+                job->lo = job->bottom;
+                if (d->wrapped &&
+                    (positive)(job->out_stop - d->dict) > d->dict_limit)
+                        job->lo = job->out_stop - d->dict_limit;
+                job->error = 0;
+
+                p8 address_to before = job->out;
+
+                lzma_decode_span(job);
+
+                positive used = (positive)(job->next - at);
+
+                d->chunk_left -= (positive)(job->out - before);
+                if (job->error)
+                        return xz_dec_fail(d, "xz distance or chunk length");
+                if (used > have)
+                        return xz_dec_fail(d, "xz truncated LZMA");
+                d->input.at += used;
+                d->in_abs += used;
+                if (d->in_abs - d->pack_from > d->pack_want)
+                        return xz_dec_fail(d, "xz LZMA2 compressed size");
+        }
+        d->lz2_kind = 0;
+        return true;
+}
+
+static bool xz_dec_lzma_finish(xz_decoder address_to d)
+{
+        p64 used = d->in_abs - d->pack_from;
+
+        if (used > d->pack_want)
+                return xz_dec_fail(d, "xz LZMA2 compressed size");
+        while (used < d->pack_want)
+        {
+                if (xz_dec_byte(d) < 0)
+                        return xz_dec_fail(d, "xz truncated LZMA2");
                 used++;
         }
         return true;
 }
 
-static bool xz_lzma2(void)
+static bool xz_dec_lzma2(xz_decoder address_to d)
 {
-        if (xz_lz2_kind == 1)
+        if (d->lz2_kind == 1)
         {
-                if (!xz_lzma2_raw())
+                if (!xz_dec_raw(d))
                         return false;
-                if (xz_paused)
+                if (d->paused)
                         return true;
         }
-        else if (xz_lz2_kind == 2)
+        else if (d->lz2_kind == 2)
         {
-                if (!xz_lzma2_lzma())
+                if (!xz_dec_lzma(d))
                         return false;
-                if (xz_paused)
+                if (d->paused)
                         return true;
-                if (!xz_lzma2_finish_packed())
+                if (!xz_dec_lzma_finish(d))
                         return false;
         }
 
         for (;;)
         {
-                bipolar control = xz_in_byte();
-                bipolar hi;
-                bipolar lo;
-                p64 want_packed;
+                if (d->input.at >= d->input.have && !xz_dec_more(d))
+                        return xz_dec_fail(d, "xz truncated LZMA2");
 
-                if (control < 0)
-                        return xz_fail("xz truncated LZMA2");
+                p8 control = d->in_buf[d->input.at];
+                bool reset = control == 1 || control >= 0xe0;
+
+                /* A dictionary reset rewinds the cursor: deliver first. */
+                if (reset && d->job.out != d->emitted)
+                {
+                        if (!xz_dec_drain(d))
+                                return false;
+                        if (d->paused)
+                                return true;
+                }
+                d->input.at++;
+                d->in_abs++;
                 if (!control)
                 {
-                        xz_lz2_kind = 0;
+                        d->lz2_kind = 0;
                         return true;
                 }
-                if (control == 1 || control == 2)
+                if (control > 2 && control < 0x80)
+                        return xz_dec_fail(d, "xz LZMA2 control");
+                if (reset)
                 {
-                        hi = xz_in_byte();
-                        lo = xz_in_byte();
-                        if (hi < 0 || lo < 0)
-                                return xz_fail("xz truncated uncompressed");
-                        xz_lz2_raw_left = ((positive)(p8)hi << 8) + (p8)lo + 1;
-                        if (control == 1)
-                        {
-                                xz_dict_pos = 0;
-                                xz_dict_full = 0;
-                        }
-                        xz_lz2_kind = 1;
-                        if (!xz_lzma2_raw())
+                        xz_dec_hash(d);
+                        xz_dec_dict_reset(d);
+                        d->need_reset = false;
+                        d->need_props = true;
+                }
+                else if (d->need_reset)
+                        return xz_dec_fail(d, "xz LZMA2 dictionary reset");
+
+                bipolar hi = xz_dec_byte(d);
+                bipolar lo = xz_dec_byte(d);
+
+                if (hi < 0 || lo < 0)
+                        return xz_dec_fail(d, "xz truncated LZMA2 sizes");
+                if (control < 0x80)
+                {
+                        d->raw_left = ((positive)hi << 8) + (positive)lo + 1;
+                        d->lz2_kind = 1;
+                        if (!xz_dec_raw(d))
                                 return false;
-                        if (xz_paused)
+                        if (d->paused)
                                 return true;
                         continue;
                 }
-                if (control < 0x80)
-                        return xz_fail("xz LZMA2 control");
 
-                xz_lz2_want = (control & 0x1f);
-                hi = xz_in_byte();
-                lo = xz_in_byte();
-                if (hi < 0 || lo < 0)
-                        return xz_fail("xz truncated LZMA2 sizes");
-                xz_lz2_want = (xz_lz2_want << 16) +
-                              ((positive)(p8)hi << 8) + (p8)lo + 1;
-                hi = xz_in_byte();
-                lo = xz_in_byte();
-                if (hi < 0 || lo < 0)
-                        return xz_fail("xz truncated LZMA2 sizes");
-                want_packed = ((positive)(p8)hi << 8) + (p8)lo + 1;
+                p64 want = ((p64)(control & 0x1f) << 16) +
+                           ((p64)hi << 8) + (p64)lo + 1;
 
+                hi = xz_dec_byte(d);
+                lo = xz_dec_byte(d);
+                if (hi < 0 || lo < 0)
+                        return xz_dec_fail(d, "xz truncated LZMA2 sizes");
+                d->pack_want = ((p64)hi << 8) + (p64)lo + 1;
+                if (control >= 0xc0)
                 {
-                        p8 reset = (p8)((control >> 5) & 3);
+                        bipolar prop = xz_dec_byte(d);
 
-                        if (reset >= 2)
-                        {
-                                bipolar prop = xz_in_byte();
-
-                                if (prop < 0)
-                                        return xz_fail("xz truncated properties");
-                                if (!xz_props((p8)prop))
-                                        return false;
-                        }
-                        xz_lz2_pack_from = xz_in_abs;
-                        xz_lz2_pack_want = want_packed;
-                        if (reset >= 1)
-                                xz_probs_reset();
-                        if (reset == 3)
-                        {
-                                xz_dict_pos = 0;
-                                xz_dict_full = 0;
-                        }
-                        if (!xz_rc_init())
+                        if (prop < 0)
+                                return xz_dec_fail(d, "xz truncated properties");
+                        if (!xz_dec_props(d, (p8)prop))
                                 return false;
+                        d->need_props = false;
                 }
-
-                xz_lz2_chunk_from = xz_unpacked;
-                xz_lz2_kind = 2;
-                if (!xz_lzma2_lzma())
+                else if (d->need_props)
+                        return xz_dec_fail(d, "xz LZMA2 properties");
+                if (control >= 0xa0)
+                        xz_dec_models_reset(d);
+                d->pack_from = d->in_abs;
+                if (!xz_dec_rc_init(d))
                         return false;
-                if (xz_paused)
+                d->chunk_left = want;
+                d->lz2_kind = 2;
+                if (!xz_dec_lzma(d))
+                        return false;
+                if (d->paused)
                         return true;
-                if (!xz_lzma2_finish_packed())
+                if (!xz_dec_lzma_finish(d))
                         return false;
         }
 }
 
-static bool xz_pad4(positive n)
+static bool xz_dec_pad4(xz_decoder address_to d, positive n)
 {
         while (n & 3)
         {
-                bipolar byte = xz_in_byte();
+                bipolar byte = xz_dec_byte(d);
 
                 if (byte < 0)
-                        return xz_fail("xz truncated padding");
+                        return xz_dec_fail(d, "xz truncated padding");
                 if (byte)
-                        return xz_fail("xz padding");
+                        return xz_dec_fail(d, "xz padding");
                 n++;
         }
         return true;
 }
 
-static bool xz_check_read(p64 want32, p64 want64)
+static bool xz_dec_check(xz_decoder address_to d)
 {
-        if (xz_check == XZ_CHECK_NONE)
+        if (d->check == XZ_CHECK_NONE)
                 return true;
-        if (xz_check != XZ_CHECK_CRC32 && xz_check != XZ_CHECK_CRC64)
-                return xz_fail("xz check type");
 
-        bool wide = xz_check == XZ_CHECK_CRC64;
+        bool wide = d->check == XZ_CHECK_CRC64;
         p64 got;
 
-        if (!xz_in_le(address_of got, wide ? 8 : 4))
-                return xz_fail("xz truncated check");
-        if (got != (wide ? want64 : (p32)want32))
-                return xz_fail(wide ? "xz CRC64 mismatch" : "xz CRC32 mismatch");
+        if (!xz_dec_le(d, address_of got, wide ? 8 : 4))
+                return xz_dec_fail(d, "xz truncated check");
+        if (got != (wide ? ~d->crc64 : (p32)~d->crc32))
+                return xz_dec_fail(d, wide ? "xz CRC64 mismatch" : "xz CRC32 mismatch");
         return true;
 }
 
-static bool xz_block(void)
+static bool xz_dec_block(xz_decoder address_to d)
 {
-        bipolar hdr0;
-        positive header_size;
-        p8 flags;
-        p8 header[1024];
-        positive at;
-        p32 got;
-        p32 expect;
-        p8 filters;
-        p8 prop;
-        positive dict;
-
-        if (!xz_block_live)
+        if (!d->block_live)
         {
-                hdr0 = xz_in_byte();
-                if (hdr0 < 0)
-                        return xz_fail("xz truncated block");
-                if (!hdr0)
-                {
-                        xz_input.at--;
-                        xz_in_abs--;
+                p8 header[1024];
+
+                /* A block brings its own dictionary: deliver the last one. */
+                if (!xz_dec_drain(d))
                         return false;
-                }
-                header_size = ((positive)(p8)hdr0 + 1) * 4;
-                if (header_size > sizeof(header))
-                        return xz_fail("xz block header");
+                if (d->paused)
+                        return true;
+
+                bipolar hdr0 = xz_dec_byte(d);
+
+                if (hdr0 < 0)
+                        return xz_dec_fail(d, "xz truncated block");
+
+                positive header_size = ((positive)hdr0 + 1) * 4;
+
                 header[0] = (p8)hdr0;
-                for (at = 1; at < header_size; at++)
+                for (positive at = 1; at < header_size; at++)
                 {
-                        bipolar byte = xz_in_byte();
+                        bipolar byte = xz_dec_byte(d);
 
                         if (byte < 0)
-                                return xz_fail("xz truncated block header");
+                                return xz_dec_fail(d, "xz truncated block header");
                         header[at] = (p8)byte;
                 }
-                flags = header[1];
+
+                p8 flags = header[1];
+                positive at = 2;
+
                 if (flags & 0x3c)
-                        return xz_fail("xz reserved block flags");
-                filters = (flags & 3) + 1;
-                if (filters != 1)
-                        return xz_fail("xz filter chain");
-                at = 2;
+                        return xz_dec_fail(d, "xz reserved block flags");
+                if ((flags & 3) != 0)
+                        return xz_dec_fail(d, "xz filter chain");
                 if (flags & 0x40)
                 {
                         while (at < header_size - 4 && (header[at] & 0x80))
@@ -1078,263 +691,245 @@ static bool xz_block(void)
                         at++;
                 }
                 if (at + 2 >= header_size - 4)
-                        return xz_fail("xz filter flags");
+                        return xz_dec_fail(d, "xz filter flags");
                 if (header[at] != 0x21)
-                        return xz_fail("xz filter is not LZMA2");
+                        return xz_dec_fail(d, "xz filter is not LZMA2");
                 if (header[at + 1] != 1)
-                        return xz_fail("xz LZMA2 properties size");
-                prop = header[at + 2];
-                dict = xz_dict_from_prop(prop);
-                if (!dict || !xz_dict_open(dict))
-                        return false;
-                expect = ~hash_crc32(0xffffffffu, header, header_size - 4);
-                got = 0;
+                        return xz_dec_fail(d, "xz LZMA2 properties size");
+
+                positive dict = xz_dict_from_prop(header[at + 2]);
+                p32 got = 0;
+
+                if (!dict || !xz_dec_dict_open(d, dict))
+                        return xz_dec_fail(d, "xz dictionary");
                 for (at = 0; at < 4; at++)
                         got |= (p32)header[header_size - 4 + at] << (8 * at);
-                if (got != expect)
-                        return xz_fail("xz block header CRC");
+                if (got != ~hash_crc32(0xffffffffu, header, header_size - 4))
+                        return xz_dec_fail(d, "xz block header CRC");
 
-                xz_block_hdr_size = header_size;
-                xz_block_body_abs = xz_in_abs;
-                xz_crc32 = 0xffffffffu;
-                xz_crc64 = 0xffffffffffffffffull;
-                xz_probs_reset();
-                xz_lz2_kind = 0;
-                xz_block_live = true;
+                d->block_hdr_size = header_size;
+                d->block_body_abs = d->in_abs;
+                d->crc32 = 0xffffffffu;
+                d->crc64 = 0xffffffffffffffffull;
+                d->hashed = d->job.out;
+                d->need_reset = true;
+                d->need_props = true;
+                d->lz2_kind = 0;
+                d->block_live = true;
         }
-        if (!xz_lzma2())
+        if (!xz_dec_lzma2(d))
                 return false;
-        if (xz_paused)
+        if (d->paused)
                 return true;
-        {
-                positive packed = (positive)(xz_in_abs - xz_block_body_abs);
-
-                if (!xz_pad4(xz_block_hdr_size + packed))
-                        return false;
-        }
-        xz_output_check();
-        if (!xz_check_read(~xz_crc32, ~xz_crc64))
+        if (!xz_dec_pad4(d, d->block_hdr_size +
+                                (positive)(d->in_abs - d->block_body_abs)))
                 return false;
-        xz_block_live = false;
-        xz_lz2_kind = 0;
+        xz_dec_hash(d);
+        if (!xz_dec_check(d))
+                return false;
+        d->block_live = false;
         return true;
 }
 
-static bipolar xz_vli_crc(p32 address_to crc, positive address_to hashed)
+static bipolar xz_dec_vli(xz_decoder address_to d, p32 address_to crc,
+                          positive address_to hashed)
 {
         p64 v = 0;
         p8 shift = 0;
 
         for (;;)
         {
-                bipolar byte = xz_in_byte();
+                bipolar byte = xz_dec_byte(d);
 
                 if (byte < 0)
                         return -1;
+
                 p8 read = (p8)byte;
 
                 address_to crc = hash_crc32(address_to crc, address_of read, 1);
                 address_to hashed += 1;
-                v |= (p64)((p8)byte & 0x7f) << shift;
-                if (!((p8)byte & 0x80))
+                v |= (p64)(read & 0x7f) << shift;
+                if (!(read & 0x80))
                         return (bipolar)v;
                 shift += 7;
                 if (shift >= 63)
-                        return xz_fail("xz VLI"), -1;
+                        return xz_dec_fail(d, "xz VLI"), -1;
         }
 }
 
-static bool xz_index_and_footer(void)
+static bool xz_dec_index_and_footer(xz_decoder address_to d)
 {
         p8 zero = 0;
-        bipolar indicator;
-        bipolar records;
-        p32 crc;
-        p64 got;
-        p64 back;
         p8 body[6];
         positive hashed = 1;
-        bipolar fb0;
-        bipolar fb1;
-        bipolar y;
-        bipolar z;
+        p64 got;
+        p64 back;
 
-        indicator = xz_in_byte();
-        if (indicator != 0)
-                return xz_fail("xz index indicator");
-        crc = hash_crc32(0xffffffffu, address_of zero, 1);
-        records = xz_vli_crc(address_of crc, address_of hashed);
+        if (xz_dec_byte(d) != 0)
+                return xz_dec_fail(d, "xz index indicator");
+
+        p32 crc = hash_crc32(0xffffffffu, address_of zero, 1);
+        bipolar records = xz_dec_vli(d, address_of crc, address_of hashed);
+
         if (records < 0)
-                return false;
+                return xz_dec_fail(d, "xz truncated index");
         while (records--)
         {
-                if (xz_vli_crc(address_of crc, address_of hashed) < 0 ||
-                    xz_vli_crc(address_of crc, address_of hashed) < 0)
-                        return xz_fail("xz truncated index");
+                if (xz_dec_vli(d, address_of crc, address_of hashed) < 0 ||
+                    xz_dec_vli(d, address_of crc, address_of hashed) < 0)
+                        return xz_dec_fail(d, "xz truncated index");
         }
         while (hashed & 3)
         {
-                bipolar byte = xz_in_byte();
+                bipolar byte = xz_dec_byte(d);
 
                 if (byte < 0)
-                        return xz_fail("xz truncated index padding");
+                        return xz_dec_fail(d, "xz truncated index padding");
                 if (byte)
-                        return xz_fail("xz index padding");
+                        return xz_dec_fail(d, "xz index padding");
                 crc = hash_crc32(crc, address_of zero, 1);
                 hashed++;
         }
-        if (!xz_in_le(address_of got, 4))
-                return xz_fail("xz truncated index CRC");
+        if (!xz_dec_le(d, address_of got, 4))
+                return xz_dec_fail(d, "xz truncated index CRC");
         if (got != (p32)~crc)
-                return xz_fail("xz index CRC");
+                return xz_dec_fail(d, "xz index CRC");
+        if (!xz_dec_le(d, address_of got, 4) || !xz_dec_le(d, address_of back, 4))
+                return xz_dec_fail(d, "xz truncated footer");
 
-        if (!xz_in_le(address_of got, 4) || !xz_in_le(address_of back, 4))
-                return xz_fail("xz truncated footer");
-        fb0 = xz_in_byte();
-        fb1 = xz_in_byte();
+        bipolar fb0 = xz_dec_byte(d);
+        bipolar fb1 = xz_dec_byte(d);
+
         if (fb0 < 0 || fb1 < 0)
-                return xz_fail("xz truncated footer");
-        if (fb0 || (fb1 & 0xf0) || (fb1 & 0xf) != xz_check)
-                return xz_fail("xz footer flags");
-        y = xz_in_byte();
-        z = xz_in_byte();
-        if (y != 'Y' || z != 'Z')
-                return xz_fail("xz footer magic");
+                return xz_dec_fail(d, "xz truncated footer");
+        if (fb0 || (fb1 & 0xf0) || (fb1 & 0xf) != d->check)
+                return xz_dec_fail(d, "xz footer flags");
+        if (xz_dec_byte(d) != 'Y' || xz_dec_byte(d) != 'Z')
+                return xz_dec_fail(d, "xz footer magic");
         memory_store_unaligned(p32, body, (p32)back);
         body[4] = (p8)fb0;
         body[5] = (p8)fb1;
         if (got != (p32)~hash_crc32(0xffffffffu, body, 6))
-                return xz_fail("xz footer CRC");
+                return xz_dec_fail(d, "xz footer CRC");
         return true;
 }
 
-static bool xz_stream(void)
+/* One stream, or as far as a reader lets it run. */
+static bool xz_dec_stream(xz_decoder address_to d)
 {
-        p64 magic;
-        p8 flags[2];
-        p64 got;
-
         /* Stream Padding: after a stream, NUL bytes in fours may precede the
            next one or the end of the file. */
-        if (!xz_hdr_done && xz_in_abs)
+        if (!d->hdr_done && d->in_abs)
         {
-                p64 from = xz_in_abs;
+                p64 from = d->in_abs;
 
-                while ((xz_input.at < xz_input.have || xz_in_need()) &&
-                       !xz_in_buf[xz_input.at])
+                while (xz_dec_more(d) && !d->in_buf[d->input.at])
                 {
-                        xz_input.at++;
-                        xz_in_abs++;
+                        d->input.at++;
+                        d->in_abs++;
                 }
-                if (xz_why)
+                if (d->why)
                         return false;
-                if ((xz_in_abs - from) & 3)
-                        return xz_fail("xz stream padding");
-                if (xz_input.at >= xz_input.have)
+                if ((d->in_abs - from) & 3)
+                        return xz_dec_fail(d, "xz stream padding");
+                if (d->input.at >= d->input.have)
                         return true;
         }
-
-        if (!xz_hdr_done)
+        if (!d->hdr_done)
         {
-                if (!xz_in_le(address_of magic, 6))
-                        return xz_fail("xz truncated header");
-                if (magic != 0x005a587a37fdull)
-                        return xz_fail("xz bad magic");
-                flags[0] = (p8)xz_in_byte();
-                flags[1] = (p8)xz_in_byte();
-                if (flags[0] || (flags[1] & 0xf0))
-                        return xz_fail("xz reserved stream flags");
-                xz_check = flags[1] & 0xf;
-                if (xz_check != XZ_CHECK_NONE && xz_check != XZ_CHECK_CRC32 &&
-                    xz_check != XZ_CHECK_CRC64)
-                        return xz_fail("xz check type");
-                if (!xz_in_le(address_of got, 4))
-                        return xz_fail("xz truncated header CRC");
-                if (got != (p32)~hash_crc32(0xffffffffu, flags, 2))
-                        return xz_fail("xz header CRC");
-                xz_hdr_done = true;
-        }
+                p64 magic;
+                p64 got;
+                p8 flags[2];
 
+                if (!xz_dec_le(d, address_of magic, 6))
+                        return xz_dec_fail(d, "xz truncated header");
+                if (magic != 0x005a587a37fdull)
+                        return xz_dec_fail(d, "xz bad magic");
+                flags[0] = (p8)xz_dec_byte(d);
+                flags[1] = (p8)xz_dec_byte(d);
+                if (flags[0] || (flags[1] & 0xf0))
+                        return xz_dec_fail(d, "xz reserved stream flags");
+                d->check = flags[1] & 0xf;
+                if (d->check != XZ_CHECK_NONE && d->check != XZ_CHECK_CRC32 &&
+                    d->check != XZ_CHECK_CRC64)
+                        return xz_dec_fail(d, "xz check type");
+                if (!xz_dec_le(d, address_of got, 4))
+                        return xz_dec_fail(d, "xz truncated header CRC");
+                if (got != (p32)~hash_crc32(0xffffffffu, flags, 2))
+                        return xz_dec_fail(d, "xz header CRC");
+                d->hdr_done = true;
+        }
         for (;;)
         {
-                if (xz_block_live)
+                if (!d->block_live)
                 {
-                        if (!xz_block())
-                                return false;
-                        if (xz_paused)
-                                return true;
-                        continue;
-                }
-                if (!xz_in_need())
-                        return xz_fail("xz truncated stream");
-                if (xz_input.at < xz_input.have && xz_in_buf[xz_input.at] == 0)
-                        break;
-                if (!xz_block())
-                {
-                        if (xz_input.at < xz_input.have && xz_in_buf[xz_input.at] == 0)
+                        if (!xz_dec_more(d))
+                                return xz_dec_fail(d, "xz truncated stream");
+                        if (!d->in_buf[d->input.at])
                                 break;
-                        return false;
                 }
-                if (xz_paused)
+                if (!xz_dec_block(d))
+                        return false;
+                if (d->paused)
                         return true;
         }
-        if (!xz_index_and_footer())
+        if (!xz_dec_index_and_footer(d))
                 return false;
-        xz_hdr_done = false;
-        xz_block_live = false;
+        d->hdr_done = false;
         return true;
 }
 
-static bool xz_stream_decode(void)
+static fn xz_dec_open(xz_decoder address_to d)
 {
-        xz_encoding = false;
+        xz_dec_dict_close(d);
+        d->job.model = address_of d->models;
+        d->why = null;
+        d->store = null;
+        d->out_fd = -1;
+        d->pull = false;
+        d->paused = false;
+        d->finished = false;
+        d->hdr_done = false;
+        d->block_live = false;
+        d->lz2_kind = 0;
+        d->in_abs = 0;
+}
+
+/* Every stream on the input, delivered to the descriptor or store. */
+static bool xz_dec_run(xz_decoder address_to d)
+{
         bool any = false;
 
-        xz_why = null;
-        xz_out_failed = false;
-        xz_input.at = 0;
-        xz_input.have = 0;
-        xz_input.eof = false;
-        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-        xz_pull = false;
-        xz_paused = false;
-        xz_finished = false;
-        xz_hdr_done = false;
-        xz_block_live = false;
-        xz_lz2_kind = 0;
-        xz_in_abs = 0;
-        xz_unpacked = 0;
-
-        for (;;)
+        while (xz_dec_more(d))
         {
-                if (!xz_in_need())
-                        break;
-                if (xz_input.at >= xz_input.have)
-                        break;
-                if (!xz_stream())
+                if (!xz_dec_stream(d))
                         return false;
                 any = true;
         }
-        xz_dict_close();
+        if (d->why)
+                return false;
         if (!any)
-                return xz_fail("xz empty input");
-        return xz_out_flush();
+                return xz_dec_fail(d, "xz empty input");
+        return xz_dec_drain(d);
 }
 
 static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
                               p8 address_to dst, positive dst_cap)
 {
-        bool ok;
+        xz_decoder address_to d = address_of xz_dec;
+        byte_store store = {dst, dst_cap, 0};
 
-        byte_input_open_memory(address_of xz_input, src, src_len, xz_in_buf, XZ_IN);
-        xz_out_fd = -1;
-        xz_output.bytes = dst;
-        xz_output.room = dst_cap;
-        xz_output.used = 0;
-        ok = xz_stream_decode();
-        xz_input.mem = null;
-        xz_output.bytes = null;
-        return ok ? (bipolar)xz_output.used : -1;
+        xz_dec_open(d);
+        byte_input_open_memory(address_of d->input, src, src_len, d->in_buf,
+                               XZ_DEC_IN);
+        d->store = address_of store;
+
+        bool ok = xz_dec_run(d);
+
+        xz_dec_dict_close(d);
+        d->store = null;
+        d->input.mem = null;
+        return ok ? (bipolar)store.used : -1;
 }
 
 static positive xz_vli_put(p8 address_to into, p64 value)
@@ -3511,79 +3106,73 @@ static bipolar xz_deflate_mem(p8 address_to src, positive src_len,
 
 static bool xz_decode_begin(bipolar in)
 {
-        xz_encoding = false;
+        xz_decoder address_to d = address_of xz_dec;
+
+        xz_dec_open(d);
+        byte_input_open_fd(address_of d->input, in, d->in_buf, XZ_DEC_IN);
+        d->pull = true;
         xz_why = null;
-        xz_out_failed = false;
-        byte_input_open_fd(address_of xz_input, in, xz_in_buf, XZ_IN);
-        xz_out_fd = -1;
-        xz_output.bytes = null;
-        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-        xz_pull = true;
-        xz_paused = false;
-        xz_finished = false;
-        xz_hdr_done = false;
-        xz_block_live = false;
-        xz_lz2_kind = 0;
-        xz_in_abs = 0;
-        xz_unpacked = 0;
         return true;
 }
 
 static bool xz_decode_begin_prefix(bipolar in, p8 address_to prefix, positive n)
 {
         xz_decode_begin(in);
-        if (n > XZ_IN)
+        if (n > XZ_DEC_IN)
                 return xz_fail("xz prefix");
-        memory_copy(xz_in_buf, prefix, n);
-        xz_input.have = n;
-        xz_input.at = 0;
+        memory_copy(xz_dec.in_buf, prefix, n);
+        xz_dec.input.have = n;
+        xz_dec.input.at = 0;
         return true;
 }
 
+/* Copy decoded bytes out of the window, decoding more as it empties. */
 static bipolar xz_decode_read(p8 address_to dst, positive n)
 {
+        xz_decoder address_to d = address_of xz_dec;
         positive copied = 0;
 
         while (copied < n)
         {
-                positive take;
+                positive left = (positive)(d->job.out - d->emitted);
 
-                if (xz_out_fill)
+                if (left)
                 {
-                        xz_output_check();
-                        positive left = xz_out_fill - xz_out_taken;
-                        take = left > n - copied ? n - copied : left;
-                        memory_copy_apart(dst + copied, xz_out_buf + xz_out_taken, take);
-                        xz_out_taken += take;
-                        if (xz_out_taken == xz_out_fill)
-                                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
+                        positive take = left > n - copied ? n - copied : left;
+
+                        memory_copy_apart(dst + copied, d->emitted, take);
+                        d->emitted += take;
                         copied += take;
                         continue;
                 }
-                if (xz_finished)
+                if (d->finished)
                         break;
-                if (!xz_in_need() && !xz_hdr_done && !xz_block_live)
+                if (!d->hdr_done && !d->block_live && !xz_dec_more(d))
                 {
-                        xz_finished = true;
+                        if (d->why)
+                                break;
+                        d->finished = true;
                         break;
                 }
-                xz_paused = false;
-                if (!xz_stream())
-                        return -1;
-                if (xz_paused)
-                        continue;
-                if (!xz_out_fill && !xz_hdr_done && !xz_block_live &&
-                    !xz_in_need())
-                        xz_finished = true;
+                d->paused = false;
+                if (!xz_dec_stream(d))
+                        break;
+        }
+        if (d->why)
+        {
+                xz_why = d->why;
+                return -1;
         }
         return (bipolar)copied;
 }
 
 static bool xz_decode_end(void)
 {
-        xz_pull = false;
-        xz_finished = true;
-        xz_dict_close();
+        xz_dec.pull = false;
+        xz_dec.finished = true;
+        xz_dec_dict_close(address_of xz_dec);
+        if (xz_dec.why)
+                xz_why = xz_dec.why;
         return xz_why == null;
 }
 
@@ -3601,16 +3190,27 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
 {
         bool ok;
 
-        byte_input_open_fd(address_of xz_input, in, xz_in_buf, XZ_IN);
-        xz_out_fd = out;
-        xz_output.bytes = null;
         xz_status = 0;
-        xz_serial = file_codec_threads == 1;
         if (decode)
-                ok = xz_stream_decode();
+        {
+                xz_decoder address_to d = address_of xz_dec;
+
+                xz_dec_open(d);
+                byte_input_open_fd(address_of d->input, in, d->in_buf, XZ_DEC_IN);
+                d->out_fd = out;
+                ok = xz_dec_run(d);
+                xz_dec_dict_close(d);
+                if (!ok)
+                        xz_why = d->why;
+        }
         else
+        {
+                byte_input_open_fd(address_of xz_input, in, xz_in_buf, XZ_IN);
+                xz_out_fd = out;
+                xz_output.bytes = null;
+                xz_serial = file_codec_threads == 1;
                 ok = xz_stream_encode(level);
-        xz_dict_close();
+        }
         if (!ok)
         {
                 if (xz_why)
