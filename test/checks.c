@@ -48945,7 +48945,7 @@ __asm__(
     ASM_SECTION
     ASM_FUNC(spark_entry_probe)
     "mov 16(%rsp), %rax\n   movzbl (%rax), %eax\n   sub $48, %eax\n"
-    "cmp $8, %eax\n   ja 1f\n"
+    "cmp $9, %eax\n   ja 1f\n"
     "lea spark_entry_words(%rip), %rcx\n   mov (%rcx,%rax,8), %r13\n"
     "movabs $" SPARK_TEST_TEXT(SPARK_START_MAGIC) ", %r12\n"
     "mov $123456789, %r14\n   cmp $7, %eax\n   jne 2f\n"
@@ -48953,23 +48953,36 @@ __asm__(
     "2: jmp _start\n"
     ASM_END(spark_entry_probe)
     ASM_RODATA_OBJECT_BEGIN(spark_entry_words, 8)
-    ".quad 0, 1, 257, 16777216, 16777217, 16777473, 16843009, 0, 0xabcdef1201010101\n"
+    ".quad 0, 1, 257, 16777216, 16777217, 16777473, 16843009, 0\n"
+    ".quad 0x0101010101010101, 0x0101010100000000\n"
     ASM_OBJECT_END(spark_entry_words)
 );
+
+static positive spark_entry_published(void)
+{
+        return cpu_has_avx2 | ((positive)cpu_has_avx512 << 8) |
+               ((positive)cpu_has_avx512_vbmi << 16) |
+               ((positive)cpu_has_fma << 24) |
+               ((positive)cpu_has_pclmul << 32) |
+               ((positive)cpu_has_aes << 40) |
+               ((positive)cpu_has_vpclmul << 48) |
+               ((positive)cpu_has_vaes << 56);
+}
 
 b32 main(void)
 {
         static positive words[] = {0, 1, 257, 16777216, 16777217,
-                                    16777473, 16843009, 0, 16843009};
+                                    16777473, 16843009, 0,
+                                    0x0101010101010101ull,
+                                    0x0101010100000000ull};
         positive mode = program_argument(1)[0] - '0';
-        positive got = cpu_has_avx2 | ((positive)cpu_has_avx512 << 8) |
-            ((positive)cpu_has_avx512_vbmi << 16) | ((positive)cpu_has_fma << 24);
+        positive got = spark_entry_published();
         if (mode == 7)
         {
                 cpu_has_avx2 = cpu_has_avx512 = cpu_has_avx512_vbmi = cpu_has_fma = 0;
+                cpu_has_pclmul = cpu_has_aes = cpu_has_vpclmul = cpu_has_vaes = 0;
                 moonwater_cpu_detect();
-                positive detected = cpu_has_avx2 | ((positive)cpu_has_avx512 << 8) |
-                    ((positive)cpu_has_avx512_vbmi << 16) | ((positive)cpu_has_fma << 24);
+                positive detected = spark_entry_published();
                 return got != detected || program_initial_identity() !=
                     (positive)system_call_1(syscall(getpid), 0);
         }

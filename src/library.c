@@ -3742,13 +3742,22 @@ __asm__(
 #else
     "push %rbx\n   mov $1, %eax\n   xor %ecx, %ecx\n   cpuid\n"
     "bt $1, %ecx\n   setc cpu_has_pclmul(%rip)\n"
+    "bt $25, %ecx\n   setc cpu_has_aes(%rip)\n"
     "bt $27, %ecx\n   jnc 9f  # OSXSAVE: nobody is managing the state\n"
     "bt $28, %ecx\n   jnc 9f  # no AVX register instructions\n"
     "mov %ecx, %r9d\n"
     "xor %ecx, %ecx\n   xgetbv\n   mov %eax, %r8d\n   and $6, %eax\n   cmp $6, %eax\n"
     "jne 9f  # the kernel does not save both halves of ymm\n"
     "bt $12, %r9d\n   setc cpu_has_fma(%rip)\n"
-    "mov $7, %eax\n   xor %ecx, %ecx\n   cpuid\n   bt $5, %ebx\n"
+    "mov $7, %eax\n   xor %ecx, %ecx\n   cpuid\n"
+    //
+    //       VAES and VPCLMULQDQ are the ymm and zmm forms of the two SSE
+    //       instructions above, so they want the ymm state and nothing more;
+    //       a body that uses them in zmm asks cpu_has_avx512 as well.
+    //
+    "bt $9, %ecx\n   setc cpu_has_vaes(%rip)\n"
+    "bt $10, %ecx\n   setc cpu_has_vpclmul(%rip)\n"
+    "bt $5, %ebx\n"
     "jnc 9f  # no AVX2\n"
     "movb $1, cpu_has_avx2(%rip)\n"
     //
@@ -26434,9 +26443,17 @@ p8 address_to memory_copy_end(p8 address_to destination, const address_any sourc
         have two bodies. A byte rather than a bit field: the routines test it
         with one compare against memory and the branch predicts perfectly
         after the first call, so there is nothing to win by packing it.
+
+        cpu_has_pclmul and cpu_has_aes name the instruction, not the vendor:
+        PCLMULQDQ and AES-NI on x86_64, PMULL and the AES extension on arm64,
+        Zbc and Zvkned (with V usable) on RISC-V. cpu_has_vpclmul and
+        cpu_has_vaes are x86_64's ymm/zmm forms of the same two.
 */
 #ifndef KERNEL_MODE
 extern p8 cpu_has_pclmul;
+extern p8 cpu_has_aes;
+extern p8 cpu_has_vpclmul;
+extern p8 cpu_has_vaes;
 extern p8 cpu_has_avx2;
 extern p8 cpu_has_avx512;
 extern p8 cpu_has_avx512_vbmi;
@@ -26446,6 +26463,15 @@ __asm__(
     ASM_BSS_OBJECT_BEGIN(cpu_has_pclmul, 1)
     ".zero 1\n"
     ASM_OBJECT_END(cpu_has_pclmul)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_aes, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_aes)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_vpclmul, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_vpclmul)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_vaes, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_vaes)
     ASM_BSS_OBJECT_BEGIN(cpu_has_avx2, 1)
     ".zero 1\n"
     ASM_OBJECT_END(cpu_has_avx2)

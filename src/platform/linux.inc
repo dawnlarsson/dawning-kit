@@ -206,7 +206,11 @@ __asm__(
     "mov %r13b, cpu_has_avx2(%rip)\n   shr $8, %r13\n"
     "mov %r13b, cpu_has_avx512(%rip)\n   shr $8, %r13\n"
     "mov %r13b, cpu_has_avx512_vbmi(%rip)\n   shr $8, %r13\n"
-    "mov %r13b, cpu_has_fma(%rip)\n"
+    "mov %r13b, cpu_has_fma(%rip)\n   shr $8, %r13\n"
+    "mov %r13b, cpu_has_pclmul(%rip)\n   shr $8, %r13\n"
+    "mov %r13b, cpu_has_aes(%rip)\n   shr $8, %r13\n"
+    "mov %r13b, cpu_has_vpclmul(%rip)\n   shr $8, %r13\n"
+    "mov %r13b, cpu_has_vaes(%rip)\n"
     ".Lstart_x64_ready:\n   call main\n"
     "mov %eax, %edi\n   call exit\n   hlt\n"
     /* Put the compatibility detector behind the non-returning exit path.

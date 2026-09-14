@@ -168,6 +168,11 @@ static unsigned long __ro_after_init spark_cpu_features;
    xgetbv touches only general registers and runs after the OSXSAVE gate. */
 static void __init spark_cpu_features_start(void)
 {
+        /* xmm state is always saved, so these two need no state gate. */
+        if (cpu_feature_enabled(X86_FEATURE_PCLMULQDQ))
+                spark_cpu_features |= SPARK_CPU_PCLMUL;
+        if (cpu_feature_enabled(X86_FEATURE_AES))
+                spark_cpu_features |= SPARK_CPU_AES;
         if (!cpu_feature_enabled(X86_FEATURE_OSXSAVE) ||
             !cpu_feature_enabled(X86_FEATURE_AVX))
                 return;
@@ -175,6 +180,10 @@ static void __init spark_cpu_features_start(void)
         u64 state = xgetbv(XCR_XFEATURE_ENABLED_MASK);
         if ((state & 6) != 6)
                 return;
+        if (cpu_feature_enabled(X86_FEATURE_VPCLMULQDQ))
+                spark_cpu_features |= SPARK_CPU_VPCLMUL;
+        if (cpu_feature_enabled(X86_FEATURE_VAES))
+                spark_cpu_features |= SPARK_CPU_VAES;
         if (cpu_feature_enabled(X86_FEATURE_FMA))
                 spark_cpu_features |= SPARK_CPU_FMA;
         if (!cpu_feature_enabled(X86_FEATURE_AVX2))

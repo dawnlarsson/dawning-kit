@@ -17378,7 +17378,8 @@ typedef uint64_t u64;
 #define XCR_XFEATURE_ENABLED_MASK 0
 enum { X86_FEATURE_OSXSAVE, X86_FEATURE_AVX, X86_FEATURE_AVX2,
        X86_FEATURE_AVX512F, X86_FEATURE_AVX512BW, X86_FEATURE_AVX512VL,
-       X86_FEATURE_AVX512VBMI, X86_FEATURE_FMA };
+       X86_FEATURE_AVX512VBMI, X86_FEATURE_FMA, X86_FEATURE_PCLMULQDQ,
+       X86_FEATURE_AES, X86_FEATURE_VPCLMULQDQ, X86_FEATURE_VAES };
 static unsigned capabilities, reads;
 static u64 enabled;
 #define cpu_feature_enabled(feature) ((capabilities >> (feature)) & 1)
@@ -17389,13 +17390,17 @@ static u64 xgetbv(unsigned index) { reads++; return enabled; }
     source += r'''
 int main(void) {
     unsigned count=0;
-    for (capabilities=0; capabilities<256; capabilities++)
+    for (capabilities=0; capabilities<4096; capabilities++)
     for (enabled=0; enabled<256; enabled++) {
         unsigned long expected=0;
         reads=0;
         spark_cpu_features=0;
         spark_cpu_features_start();
+        if (capabilities & 256) expected |= 0x100000000UL;
+        if (capabilities & 512) expected |= 0x10000000000UL;
         if ((capabilities & 3) == 3 && (enabled & 6) == 6) {
+            if (capabilities & 1024) expected |= 0x1000000000000UL;
+            if (capabilities & 2048) expected |= 0x100000000000000UL;
             if (capabilities & 128) expected |= 0x1000000;
             if (capabilities & 4) {
                 expected |= 1;
@@ -17423,7 +17428,7 @@ int main(void) {
         subprocess.run([str(work / "kernel")], check=True)
         if os.environ.get("TEST_TALLY"):
             with open(os.environ["TEST_TALLY"], "a") as tally:
-                tally.write("spark-kernel-features 65536 65536\n")
+                tally.write("spark-kernel-features 1048576 1048576\n")
         if platform.system() == "Linux" and platform.machine() in ("x86_64", "amd64"):
             binary = work / "entry"
             subprocess.run([compiler, "-O2", "-static", "-nostdlib", "-nostartfiles",
@@ -17432,12 +17437,12 @@ int main(void) {
                             "-Wl,--build-id=none", "-Wl,--no-warn-rwx-segments",
                             "-DCHECK_spark_entry", str(root / "test/checks.c"),
                             "-o", str(binary)], check=True)
-            for mode in range(9):
+            for mode in range(10):
                 subprocess.run([str(binary), str(mode)], check=True)
-            print("spark old/new/fallback entry: 9 of 9")
+            print("spark old/new/fallback entry: 10 of 10")
             if os.environ.get("TEST_TALLY"):
                 with open(os.environ["TEST_TALLY"], "a") as tally:
-                    tally.write("spark-entry 9 9\n")
+                    tally.write("spark-entry 10 10\n")
         else:
             print("spark x86 entry: not run (requires native Linux x86-64)")
     return 0
