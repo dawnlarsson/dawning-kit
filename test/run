@@ -8965,6 +8965,11 @@ stick="$stick -device usb-storage,bus=xhci.0,drive=stick,removable=on"
 #       has settled the disks, a USB stick included, so the commands go through
 #       a FIFO and are written once the prompt is on the line.
 #
+#       And no display. With one the compositor starts its terminal, which
+#       takes boot's question and waits for an answer at a window nothing
+#       here can type into, and the serial shell's moonwater ask then has
+#       nothing to ask.
+#
 install_boot()
 {
         name=$1
@@ -8973,7 +8978,7 @@ install_boot()
         mkfifo "$work/serial.in" || exit 1
         # shellcheck disable=SC2086
         timeout 240 qemu-system-x86_64 -m 2G -smp 2 $cpu \
-                -kernel "$image" -no-reboot -display none -serial stdio \
+                -kernel "$image" -no-reboot -display none -vga none -serial stdio \
                 -append "console=ttyS0 drm_client_lib.active=" \
                 -device qemu-xhci,id=xhci \
                 -drive if=none,id=disk,format=raw,file="$work/disk.img" \
