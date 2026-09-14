@@ -339,12 +339,22 @@ __asm__(
     "adrp x1, program_stack_base\n   str x0, [x1, :lo12:program_stack_base]\n"
     "movz x1, #0x4152\n   movk x1, #0x5354, lsl #16\n"
     "movk x1, #0x524b, lsl #32\n   movk x1, #0x5350, lsl #48\n"
-    "cmp x19, x1\n   b.ne .Lstart_arm64_ready\n"
+    "cmp x19, x1\n   b.ne .Lstart_arm64_detect\n"
     "adrp x1, program_entry_identity\n"
     "str x21, [x1, :lo12:program_entry_identity]\n"
+    /* The Spark feature word: the carry-less multiply in the low byte, AES
+       in the next, published as they come. */
+    "adrp x1, cpu_has_pclmul\n   strb w20, [x1, :lo12:cpu_has_pclmul]\n"
+    "lsr x20, x20, #8\n"
+    "adrp x1, cpu_has_aes\n   strb w20, [x1, :lo12:cpu_has_aes]\n"
     ".Lstart_arm64_ready:\n"
     "and sp, x0, #-16\n   bl main\n"
     "bl exit\n   brk #0\n"
+    /* An ordinary ELF asks the auxiliary vector, from the stack base kept
+       above; the call spends x0, which is reloaded. */
+    ".Lstart_arm64_detect:\n   bl moonwater_cpu_detect\n"
+    "adrp x1, program_stack_base\n   ldr x0, [x1, :lo12:program_stack_base]\n"
+    "b .Lstart_arm64_ready\n"
     ASM_END(_start)
 );
 #elif RISCV64
@@ -467,11 +477,18 @@ __asm__(
     "li s0, 0\n   li ra, 0\n   mv a0, sp\n"
     "lla t0, program_stack_base\n   sd a0, 0(t0)\n"
     "li t1, " LINUX_RUNTIME_TEXT(SPARK_START_MAGIC) "\n"
-    "bne s2, t1, .Lstart_riscv64_ready\n"
+    "bne s2, t1, .Lstart_riscv64_detect\n"
     "lla t0, program_entry_identity\n   sd s4, 0(t0)\n"
+    /* The Spark feature word: Zbc in the low byte, Zvkned with usable V in
+       the next, published as they come. */
+    "lla t0, cpu_has_pclmul\n   sb s3, 0(t0)\n   srli s3, s3, 8\n"
+    "lla t0, cpu_has_aes\n   sb s3, 0(t0)\n"
     ".Lstart_riscv64_ready:\n"
     "andi sp, sp, -16\n   call main\n"
     "call exit\n   ebreak\n"
+    /* An ordinary ELF asks riscv_hwprobe. */
+    ".Lstart_riscv64_detect:\n   call moonwater_cpu_detect\n"
+    "j .Lstart_riscv64_ready\n"
     ASM_END(_start)
 );
 #else
