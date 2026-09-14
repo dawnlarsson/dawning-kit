@@ -19834,7 +19834,30 @@ enum
         SORT_FANIN = 128,
         // GNU's floor for -S: sixteen merge inputs of two bytes and a record.
         SORT_BUDGET_MINIMUM = 544,
+        // Items one job loads, orders or writes, and the size past which a
+        // radix bucket is split again on the caller before the jobs start.
+        // Both are fixed, so where work is cut follows the data and never the
+        // number of threads, and a stable order is unique for its input: the
+        // bytes cannot move with the width.
+        SORT_BLOCK = 1 << 16,
+        SORT_TASK = 1 << 17,
 };
+
+// --parallel=1: every pool call runs on the caller.
+static bool sort_alone;
+
+static inline INLINE positive sort_blocks(positive count)
+{
+        return (count + SORT_BLOCK - 1) / SORT_BLOCK;
+}
+
+typedef struct
+{
+        positive from;
+        positive to;
+        positive depth;
+        b32 stage;
+} sort_range_work;
 
 static p8 sort_stage_kind[SORT_KEYS_MAX + 1];
 static bool sort_stage_reverse[SORT_KEYS_MAX + 1];
@@ -20131,7 +20154,8 @@ static inline INLINE fn sort_item_window(sort_item address_to item,
         item->window = sort_stage_reverse[stage] ? ~window : window;
 }
 
-static fn sort_items_load(positive from, positive to, b32 stage, positive depth)
+static fn sort_items_load_range(positive from, positive to, b32 stage,
+                                positive depth)
 {
         for (positive at = from; at < to; at++)
         {
@@ -20140,6 +20164,31 @@ static fn sort_items_load(positive from, positive to, b32 stage, positive depth)
 
                 sort_item_window(item, address_of view, stage, depth);
         }
+}
+
+static fn sort_items_load_job(address_any context, positive index)
+{
+        sort_range_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+
+        sort_items_load_range(from, min(from + SORT_BLOCK, work->to), work->stage,
+                              work->depth);
+}
+
+// Windows for a range, a block a job when the range is large. Inside a job
+// the pool runs this on the caller, so a bucket's own reload stays serial.
+static fn sort_items_load(positive from, positive to, b32 stage, positive depth)
+{
+        sort_range_work work = {from, to, depth, stage};
+
+        if (to - from <= SORT_BLOCK || sort_alone)
+        {
+                sort_items_load_range(from, to, stage, depth);
+                return;
+        }
+
+        parallel_for(sort_items_load_job, address_of work, sort_blocks(to - from),
+                     (to - from) * sizeof(sort_item));
 }
 
 /*
@@ -20395,18 +20444,444 @@ static fn sort_group(positive from, positive to, b32 stage)
         sort_radix(from, to, stage, 0);
 }
 
+static fn sort_spans_job(address_any context, positive index)
+{
+        positive from = index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, sort_lines_count);
+
+        (void)context;
+
+        for (positive at = from; at < to; at++)
+        {
+                sort_line address_to line = sort_lines + at;
+
+                sort_key_span(sort_keys, sort_text + line->at, line->length,
+                              address_of sort_spans[at].from,
+                              address_of sort_spans[at].to);
+        }
+}
+
+/*
+        The work list a large chunk is cut into before the jobs start.
+
+        The caller splits any task past SORT_TASK items one radix level at a
+        time -- counting and scattering a block a job -- until every task is
+        small or cannot be split, which is a comparator stage or a number
+        whose eight bytes are spent. Then each task is one job, and a task
+        touches only its own items.
+*/
+typedef struct
+{
+        positive from;
+        positive to;
+        positive depth;
+        b32 stage;
+        // The stage's windows are not loaded yet: the job starts the stage.
+        bool fresh;
+        // Split once already and could not be: run it whole.
+        bool whole;
+} sort_task;
+
+typedef struct
+{
+        positive from;
+        positive to;
+        positive column;
+        positive base;
+        positive ended;
+} sort_split_work;
+
+static sort_task address_to sort_tasks;
+static positive sort_tasks_room;
+static positive sort_tasks_count;
+static positive address_to sort_counts;
+static positive sort_counts_room;
+
+static inline INLINE positive sort_bucket(sort_item address_to item,
+                                          sort_split_work address_to work)
+{
+        return item->left > work->column
+                   ? ((item->window >> (56 - 8 * work->column)) & 0xff) + work->base
+                   : work->ended;
+}
+
+static fn sort_split_count_job(address_any context, positive index)
+{
+        sort_split_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, work->to);
+        positive address_to counts = sort_counts + index * 257;
+
+        memory_fill(counts, 0, 257 * sizeof(positive));
+
+        for (positive at = from; at < to; at++)
+                counts[sort_bucket(sort_items + at, work)]++;
+}
+
+static fn sort_split_scatter_job(address_any context, positive index)
+{
+        sort_split_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, work->to);
+        positive address_to next = sort_counts + index * 257;
+
+        for (positive at = from; at < to; at++)
+                sort_spare[next[sort_bucket(sort_items + at, work)]++] = sort_items[at];
+}
+
+static fn sort_split_copy_job(address_any context, positive index)
+{
+        sort_split_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, work->to);
+
+        memory_copy_apart(sort_items + from, sort_spare + from,
+                          (to - from) * sizeof(sort_item));
+}
+
+static bool sort_task_push(positive from, positive to, b32 stage, positive depth,
+                           bool fresh)
+{
+        if (to - from < 2 || stage > sort_key_count ||
+            (stage == sort_key_count && (sort_unique || sort_stable)))
+                return true;
+
+        if (!array_store_reserve(sort_tasks, sort_tasks_room, sort_tasks_count,
+                                 sort_tasks_count + 1, 512))
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+
+        sort_tasks[sort_tasks_count++] =
+            (sort_task){.from = from, .to = to, .depth = depth, .stage = stage,
+                        .fresh = fresh};
+        return true;
+}
+
+// One radix level of a large task on the caller, its buckets pushed as tasks
+// in their place. The same buckets, in the same order, sort_radix makes.
+static bool sort_task_split(sort_task task, bool address_to split)
+{
+        b32 stage = task.stage;
+        positive count = task.to - task.from;
+        positive blocks = sort_blocks(count);
+        positive column = task.depth & 7;
+
+        address_to split = false;
+
+        if (sort_stage_kind[stage] == SORT_STAGE_COMPARE)
+                return true;
+
+        if (task.fresh)
+                sort_items_load(task.from, task.to, stage, 0);
+        else if (!column && task.depth)
+        {
+                if (sort_stage_kind[stage] == SORT_STAGE_WINDOW)
+                        return true;
+
+                sort_items_load(task.from, task.to, stage, task.depth);
+        }
+
+        sort_split_work work = {
+            .from = task.from,
+            .to = task.to,
+            .column = column,
+            .base = sort_stage_reverse[stage] ? 0 : 1,
+            .ended = sort_stage_reverse[stage] ? 256 : 0,
+        };
+
+        if (!array_store_reserve(sort_counts, sort_counts_room, 0, blocks * 257, 257 * 64))
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+
+        parallel_for(sort_split_count_job, address_of work, blocks,
+                     count * sizeof(sort_item));
+
+        positive start[258];
+        positive occupied = 0;
+        positive only = 0;
+
+        memory_fill(start, 0, sizeof(start));
+
+        for (positive block = 0; block < blocks; block++)
+                for (positive bucket = 0; bucket < 257; bucket++)
+                        start[bucket + 1] += sort_counts[block * 257 + bucket];
+
+        for (positive bucket = 0; bucket < 257; bucket++)
+                if (start[bucket + 1])
+                {
+                        occupied++;
+                        only = bucket;
+                }
+
+        address_to split = true;
+
+        if (occupied == 1)
+                return only == work.ended
+                           ? sort_task_push(task.from, task.to, stage + 1, 0, true)
+                           : sort_task_push(task.from, task.to, stage,
+                                            task.depth + 1, false);
+
+        start[0] = task.from;
+
+        for (positive bucket = 0; bucket < 257; bucket++)
+                start[bucket + 1] += start[bucket];
+
+        // Each block's first slot in every bucket: the buckets' starts plus
+        // what the blocks before it put there. Input order is kept.
+        for (positive bucket = 0; bucket < 257; bucket++)
+        {
+                positive running = start[bucket];
+
+                for (positive block = 0; block < blocks; block++)
+                {
+                        positive here = sort_counts[block * 257 + bucket];
+
+                        sort_counts[block * 257 + bucket] = running;
+                        running += here;
+                }
+        }
+
+        parallel_for(sort_split_scatter_job, address_of work, blocks,
+                     count * sizeof(sort_item));
+        parallel_for(sort_split_copy_job, address_of work, blocks,
+                     count * sizeof(sort_item));
+
+        for (positive bucket = 0; bucket < 257; bucket++)
+        {
+                bool fine = bucket == work.ended
+                                ? sort_task_push(start[bucket], start[bucket + 1],
+                                                 stage + 1, 0, true)
+                                : sort_task_push(start[bucket], start[bucket + 1],
+                                                 stage, task.depth + 1, false);
+
+                if (!fine)
+                        return false;
+        }
+
+        return true;
+}
+
+static fn sort_task_job(address_any context, positive index)
+{
+        sort_task address_to task = sort_tasks + index;
+
+        (void)context;
+
+        if (task->fresh)
+                sort_group(task->from, task->to, task->stage);
+        else
+                sort_radix(task->from, task->to, task->stage, task->depth);
+}
+
+/*
+        A comparator stage has no windows to split on, so a large chunk of
+        one is a stable merge sort in levels: every block sorted by a job,
+        then each level's merges cut at fixed output positions by merge
+        path, so that the last levels, with one or two merges left, are as
+        wide as the first.
+*/
+typedef struct
+{
+        positive left;
+        positive left_stop;
+        positive right;
+        positive right_stop;
+        positive out;
+} sort_merge_part;
+
+typedef struct
+{
+        sort_item address_to from;
+        sort_item address_to into;
+        b32 stage;
+} sort_merge_level;
+
+static sort_merge_part address_to sort_parts;
+static positive sort_parts_room;
+static positive sort_parts_count;
+
+static fn sort_block_job(address_any context, positive index)
+{
+        positive from = index * SORT_BLOCK;
+
+        (void)context;
+        sort_items_merge(from, min(from + SORT_BLOCK, sort_lines_count), 0);
+}
+
+static fn sort_part_job(address_any context, positive index)
+{
+        sort_merge_level address_to level = context;
+        sort_merge_part address_to part = sort_parts + index;
+        sort_item address_to from = level->from;
+        sort_item address_to into = level->into;
+        positive left = part->left;
+        positive right = part->right;
+        positive out = part->out;
+        b32 stage = level->stage;
+
+        while (left < part->left_stop && right < part->right_stop)
+                into[out++] = sort_compare_lines(from[left].line, from[right].line,
+                                                 stage) <= 0
+                                  ? from[left++]
+                                  : from[right++];
+
+        memory_copy_apart(into + out, from + left,
+                          (part->left_stop - left) * sizeof(sort_item));
+        out += part->left_stop - left;
+        memory_copy_apart(into + out, from + right,
+                          (part->right_stop - right) * sizeof(sort_item));
+}
+
+// How many of the first `diagonal` outputs of a stable merge come from the
+// left run: a left item goes first when it does not order after the right.
+static positive sort_merge_path(sort_item address_to from, positive left,
+                                positive left_count, positive right,
+                                positive right_count, positive diagonal,
+                                b32 stage)
+{
+        positive low = diagonal > right_count ? diagonal - right_count : 0;
+        positive high = diagonal < left_count ? diagonal : left_count;
+
+        while (low < high)
+        {
+                positive middle = low + (high - low) / 2;
+
+                if (sort_compare_lines(from[left + middle].line,
+                                       from[right + diagonal - middle - 1].line,
+                                       stage) <= 0)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        return low;
+}
+
+static bool sort_merge_levels(positive count, b32 stage)
+{
+        sort_merge_level level = {sort_items, sort_spare, stage};
+
+        parallel_for(sort_block_job, null, sort_blocks(count),
+                     count * sizeof(sort_item));
+
+        for (positive width = SORT_BLOCK; width < count; width *= 2)
+        {
+                sort_parts_count = 0;
+
+                for (positive base = 0; base < count; base += 2 * width)
+                {
+                        positive middle = min(base + width, count);
+                        positive stop = min(base + 2 * width, count);
+                        positive left_count = middle - base;
+                        positive right_count = stop - middle;
+                        positive before_left = 0;
+
+                        for (positive diagonal = 0; diagonal < stop - base;
+                             diagonal += SORT_BLOCK)
+                        {
+                                positive next = min(diagonal + SORT_BLOCK, stop - base);
+                                positive after_left = sort_merge_path(
+                                    level.from, base, left_count, middle, right_count,
+                                    next, stage);
+
+                                if (!array_store_reserve(sort_parts, sort_parts_room,
+                                                         sort_parts_count,
+                                                         sort_parts_count + 1, 256))
+                                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                                 "out of memory");
+
+                                sort_parts[sort_parts_count++] = (sort_merge_part){
+                                    .left = base + before_left,
+                                    .left_stop = base + after_left,
+                                    .right = middle + (diagonal - before_left),
+                                    .right_stop = middle + (next - after_left),
+                                    .out = base + diagonal,
+                                };
+                                before_left = after_left;
+                        }
+                }
+
+                parallel_for(sort_part_job, address_of level, sort_parts_count,
+                             count * sizeof(sort_item));
+
+                sort_item address_to swap = level.from;
+
+                level.from = level.into;
+                level.into = swap;
+        }
+
+        if (level.from != sort_items)
+        {
+                // sort_split_copy_job reads spare into items by block.
+                sort_split_work copy = {.from = 0, .to = count};
+
+                parallel_for(sort_split_copy_job, address_of copy, sort_blocks(count),
+                             count * sizeof(sort_item));
+        }
+
+        return true;
+}
+
 static bool sort_chunk()
 {
         positive count = sort_lines_count;
 
         if (!array_store_reserve(sort_items, sort_items_room, 0, count + 1, 4096) ||
-            !array_store_reserve(sort_spare, sort_spare_room, 0, count + 1, 4096))
+            !array_store_reserve(sort_spare, sort_spare_room, 0, count + 1, 4096) ||
+            (!sort_keys[0].whole &&
+             !array_store_reserve(sort_spans, sort_spans_room, 0, count + 1, 4096)))
                 return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
 
         for (positive at = 0; at < count; at++)
                 sort_items[at].line = (p32)at;
 
-        sort_group(0, count, 0);
+        if (!sort_keys[0].whole)
+                parallel_for(sort_spans_job, null, sort_blocks(count),
+                             sort_alone ? 0 : sort_text_used);
+
+        if (count <= 2 * SORT_BLOCK || sort_alone)
+        {
+                sort_group(0, count, 0);
+                return true;
+        }
+
+        if (sort_stage_kind[0] == SORT_STAGE_COMPARE)
+                return sort_merge_levels(count, 0);
+
+        sort_tasks_count = 0;
+
+        if (!sort_task_push(0, count, 0, 0, true))
+                return false;
+
+        for (;;)
+        {
+                positive largest = positive_max;
+
+                for (positive at = 0; at < sort_tasks_count; at++)
+                        if (!sort_tasks[at].whole &&
+                            sort_tasks[at].to - sort_tasks[at].from > SORT_TASK &&
+                            (largest == positive_max ||
+                             sort_tasks[at].to - sort_tasks[at].from >
+                                 sort_tasks[largest].to - sort_tasks[largest].from))
+                                largest = at;
+
+                if (largest == positive_max)
+                        break;
+
+                sort_task task = sort_tasks[largest];
+                bool split;
+
+                sort_tasks[largest] = sort_tasks[--sort_tasks_count];
+
+                if (!sort_task_split(task, address_of split))
+                        return false;
+
+                if (!split)
+                {
+                        task.whole = true;
+                        sort_tasks[sort_tasks_count++] = task;
+                }
+        }
+
+        parallel_for(sort_task_job, null, sort_tasks_count, count * sizeof(sort_item));
         return true;
 }
 
@@ -20478,7 +20953,7 @@ static inline INLINE fn sort_writer_line(sort_writer address_to out,
         sort_out_used += length + 1;
 }
 
-static fn sort_emit(sort_writer address_to out)
+static fn sort_emit_serial(sort_writer address_to out)
 {
         sort_view last;
         bool have_last = false;
@@ -20509,6 +20984,108 @@ static fn sort_emit(sort_writer address_to out)
 
                 sort_writer_line(out, view.at, view.length);
         }
+}
+
+/*
+        The answer a block of items a job, each job's lines copied into its
+        own output and handed to the writer in order on the caller. -u asks
+        of every item whether the item before it in sorted order has the same
+        keys, which the first item of a block can ask as well as any.
+*/
+static fn sort_emit_job(address_any context, positive index,
+                        parallel_output address_to output)
+{
+        positive from = index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, sort_lines_count);
+        positive bytes = 0;
+        p8 kept[SORT_BLOCK / 8];
+
+        (void)context;
+        memory_fill(kept, 0, (to - from + 7) / 8);
+
+        for (positive at = from; at < to; at++)
+        {
+                bool keep = !sort_unique || !at;
+
+                if (!keep)
+                {
+                        sort_view before = sort_view_of(sort_items[at - 1].line);
+                        sort_view view = sort_view_of(sort_items[at].line);
+
+                        keep = sort_compare_views_keys(address_of before,
+                                                       address_of view, 0) != 0;
+                }
+
+                if (at + 16 < to)
+                        __builtin_prefetch(sort_lines + sort_items[at + 16].line);
+
+                kept[(at - from) >> 3] |= (p8)(keep << ((at - from) & 7));
+
+                if (keep)
+                        bytes += sort_lines[sort_items[at].line].length + 1;
+        }
+
+        // A block -u emptied has nothing to hand over, and an empty span is
+        // not worth asking the pool for.
+        if (!bytes)
+                return;
+
+        p8 address_to into = parallel_reserve(output, bytes);
+        p8 address_to limit = into + bytes;
+
+        if (!into)
+                return;
+
+        for (positive at = from; at < to; at++)
+        {
+                if (!(kept[(at - from) >> 3] & (1 << ((at - from) & 7))))
+                        continue;
+
+                if (at + 8 < to)
+                        __builtin_prefetch(sort_text +
+                                           sort_lines[sort_items[at + 8].line].at);
+
+                sort_line address_to line = sort_lines + sort_items[at].line;
+                p8 address_to text = sort_text + line->at;
+
+                if (line->length <= 64 && limit - into >= (bipolar)(line->length + 16))
+                        for (positive copied = 0; copied < line->length; copied += 16)
+                                __builtin_memcpy(into + copied, text + copied, 16);
+                else
+                        memory_copy_apart(into, text, line->length);
+
+                into[line->length] = text_delimiter;
+                into += line->length + 1;
+        }
+}
+
+static bool sort_emit_sink(address_any context, positive index, address_any data,
+                           positive length)
+{
+        sort_writer address_to out = context;
+
+        (void)index;
+
+        if (length && system_write_all(out->handle, data, length) != length)
+        {
+                out->failed = true;
+                return false;
+        }
+
+        return true;
+}
+
+static fn sort_emit(sort_writer address_to out)
+{
+        if (sort_lines_count <= 2 * SORT_BLOCK || sort_alone)
+        {
+                sort_emit_serial(out);
+                return;
+        }
+
+        sort_writer_flush(out);
+        parallel_ordered(sort_emit_job, sort_emit_sink, out,
+                         sort_blocks(sort_lines_count), sort_text_used);
 }
 
 /*
@@ -21071,10 +21648,7 @@ static bool sort_spill()
 static bool sort_line_record(positive stop)
 {
         if (!array_store_reserve(sort_lines, sort_lines_room, sort_lines_count,
-                                 sort_lines_count + 1, 65536) ||
-            (!sort_keys[0].whole &&
-             !array_store_reserve(sort_spans, sort_spans_room, sort_lines_count,
-                                  sort_lines_count + 1, 65536)))
+                                 sort_lines_count + 1, 65536))
         {
                 sort_failed = true;
                 return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
@@ -21084,12 +21658,6 @@ static bool sort_line_record(positive stop)
 
         line->at = sort_line_start;
         line->length = stop - sort_line_start;
-
-        if (sort_spans)
-                sort_key_span(sort_keys, sort_text + line->at, line->length,
-                              address_of sort_spans[sort_lines_count].from,
-                              address_of sort_spans[sort_lines_count].to);
-
         sort_lines_count++;
         return true;
 }
@@ -21611,6 +22179,10 @@ static bool sort_key_seen(p8 letter, string_address value)
                 if (!number)
                         return string_diagnostic(&text_diagnostic, 0, null,
                                                  "number in parallel must be nonzero");
+
+                // One worker is the caller alone. A larger number cannot
+                // change a byte, and the pool is as wide as the affinity.
+                sort_alone = number == 1;
         }
 
         if (letter == 'W' && !string_equals(value, "numeric") &&
@@ -21917,6 +22489,7 @@ static b32 text_sort()
         sort_have_separator = false;
         sort_size = 0;
         sort_batch = 16;
+        sort_alone = false;
         sort_directories_count = 0;
         sort_directory_next = 0;
 
