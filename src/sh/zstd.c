@@ -1869,8 +1869,8 @@ static zstd_xxh zstd_enc_hash;
 /*
         Encoder.  A level names a strategy and its sizes the way libzstd's
         table does: fast (one hash), dfast (a long and a short hash), and
-        greedy, lazy and lazy2 over a hash chain; the binary-tree levels run
-        lazy2 over the same chain for now.  A parser fills one block's
+        greedy, lazy and lazy2 over rows of tagged hash slots, and the
+        binary-tree finder and optimal parser at the top levels.  A parser fills one block's
         sequences and literals, and the entropy stage writes the block, or a
         raw or RLE block when that is no larger.  Everything an encoder keeps
         between blocks is one zstd_encoder.
@@ -1949,6 +1949,25 @@ static fn zstd_level_params(b32 level, p8 long_log, p64 size,
                 if (cycle > p->window_log)
                         p->chain_log = (p8)(p->chain_log - (cycle - p->window_log));
         }
+}
+
+/* The row finder's slots a row: the search log held to 4-6, as libzstd. */
+static p8 zstd_row_log(const zstd_params address_to p)
+{
+        return p->search_log < 4 ? 4 : p->search_log > 6 ? 6 : p->search_log;
+}
+
+/* What chain holds: nothing for fast, a row finder's tags and row heads
+   for greedy to lazy2, and 2^chain_log indices (dfast's short hash, the
+   binary tree's links) otherwise. */
+static positive zstd_chain_bytes(const zstd_params address_to p)
+{
+        if (p->strategy == ZSTD_FAST)
+                return 0;
+        if (p->strategy >= ZSTD_GREEDY && p->strategy <= ZSTD_LAZY2)
+                return ((positive)1 << p->hash_log) +
+                       ((positive)1 << (p->hash_log - zstd_row_log(p)));
+        return (positive)4 << p->chain_log;
 }
 
 typedef struct
@@ -3149,43 +3168,117 @@ static p8 address_to zstd_parse_dfast(zstd_encoder address_to e, p32 from,
 }
 
 /*
-        Hash chain: hash holds the latest index of each hash, chain the one
-        before each index.  Indices from e->next up to ip go in first; then
-        up to 2^search_log candidates, newest first, keep the longest match.
-        A candidate a chain cycle old has been overwritten, and ends the walk.
+        The row finder of greedy, lazy and lazy2, as libzstd's.  The hash
+        table is rows of 2^row_log indices chosen by the hash's top bits; a
+        byte tag from the next eight bits sits beside each index in chain,
+        and a head per row (after the tags) wraps downward, so a row keeps
+        its latest positions with the newest at the head.  A search compares
+        the row's tags a word at a time and walks, newest first, only the
+        slots whose tag matched; the first one older than the window ends it.
 */
-static __attribute__((always_inline)) inline positive
-zstd_chain_find(zstd_encoder address_to e, p8 address_to ip, p8 address_to iend,
-                p32 low, positive address_to distance)
+static __attribute__((always_inline)) inline positive zstd_lowbit64(p64 value)
 {
-        p8 address_to const base = e->base;
-        p32 address_to const hash = e->hash;
-        p32 address_to const chain = e->chain;
-        p8 const hlog = e->p.hash_log;
-        p8 const mls = e->p.min_match < 4 ? 4 : e->p.min_match > 6 ? 6 : e->p.min_match;
-        p32 const mask = ((p32)1 << e->p.chain_log) - 1;
-        p32 const cur = (p32)(ip - base);
-        p32 const floor = cur > mask ? cur - mask : 0;
-        positive const room = (positive)(iend - ip);
-        positive attempts = (positive)1 << e->p.search_log;
-        positive best = 3;
-        p32 at = e->next < low ? low : e->next;
-        p32 candidate;
+#if X64 || ARM64
+        return (positive)__builtin_ctzll(value);
+#else
+        return (positive)bits_trailing_zeros(value);
+#endif
+}
 
-        for (; at < cur; at++)
+/* One bit a slot whose tag is tag: the exact zero-byte test on the row
+   xor the tag, and a multiply that gathers a word's eight flags. */
+static __attribute__((always_inline)) inline p64
+zstd_row_mask(p8 address_to tags, p8 tag, positive entries)
+{
+        p64 const lows = 0x7f7f7f7f7f7f7f7full;
+        p64 const pattern = 0x0101010101010101ull * tag;
+        p64 mask = 0;
+
+        for (positive at = 0; at < entries; at += 8)
         {
-                positive const h = zstd_hash_bytes(base + at, hlog, mls);
+                p64 const x = memory_load_unaligned(p64, tags + at) ^ pattern;
+                p64 const zero = ~(((x & lows) + lows) | x | lows);
 
-                chain[at & mask] = hash[h];
-                hash[h] = at;
+                mask |= (((zero >> 7) * 0x0102040810204080ull) >> 56) << at;
         }
-        if (e->next < cur)
-                e->next = cur;
-        candidate = hash[zstd_hash_bytes(ip, hlog, mls)];
-        while (candidate >= low && candidate < cur && attempts--)
-        {
-                p8 address_to const there = base + candidate;
+        return mask;
+}
 
+static __attribute__((always_inline)) inline fn
+zstd_row_insert(zstd_encoder address_to e, p32 at, p8 row_log, p8 mls)
+{
+        positive const h = zstd_hash_bytes(e->base + at,
+                                           (p8)(e->p.hash_log - row_log + 8), mls);
+        positive const row = h >> 8;
+        p8 address_to const tags = (p8 address_to)e->chain;
+        p8 address_to const heads = tags + ((positive)1 << e->p.hash_log);
+        positive const head = (positive)(heads[row] - 1) & (((positive)1 << row_log) - 1);
+        positive const slot = (row << row_log) + head;
+
+        heads[row] = (p8)head;
+        tags[slot] = (p8)h;
+        e->hash[slot] = at;
+}
+
+/* The positions from e->next to target go in; after a long match only its
+   first 96 and last 32 do, as libzstd skips them. */
+static __attribute__((always_inline)) inline fn
+zstd_row_update(zstd_encoder address_to e, p32 target, p32 low, p8 row_log, p8 mls)
+{
+        p32 at = e->next < low ? low : e->next;
+
+        if (target > at && target - at > 384)
+        {
+                p32 const bound = at + 96;
+
+                for (; at < bound; at++)
+                        zstd_row_insert(e, at, row_log, mls);
+                at = target - 32;
+        }
+        for (; at < target; at++)
+                zstd_row_insert(e, at, row_log, mls);
+        if (e->next < target)
+                e->next = target;
+}
+
+static __attribute__((always_inline)) inline positive
+zstd_row_find(zstd_encoder address_to e, p8 address_to ip, p8 address_to iend,
+              p32 low, positive address_to distance)
+{
+        p8 const row_log = zstd_row_log(address_of e->p);
+        p8 const mls = e->p.min_match < 4 ? 4 : e->p.min_match > 6 ? 6 : e->p.min_match;
+        positive const entries = (positive)1 << row_log;
+        p8 address_to const base = e->base;
+        p32 const cur = (p32)(ip - base);
+        positive const room = (positive)(iend - ip);
+        positive attempts = (positive)1 << (e->p.search_log < row_log ? e->p.search_log : row_log);
+        positive best = 3;
+        positive h;
+        positive row;
+        positive head;
+        p64 mask;
+
+        zstd_row_update(e, cur, low, row_log, mls);
+        h = zstd_hash_bytes(ip, (p8)(e->p.hash_log - row_log + 8), mls);
+        row = h >> 8;
+        head = ((p8 address_to)e->chain + ((positive)1 << e->p.hash_log))[row];
+        mask = zstd_row_mask((p8 address_to)e->chain + (row << row_log), (p8)h, entries);
+        if (head)
+                mask = (mask >> head) | (mask << (entries - head));
+        if (entries < 64)
+                mask &= ((p64)1 << entries) - 1;
+        while (mask && attempts--)
+        {
+                p32 const candidate =
+                    e->hash[(row << row_log) + ((zstd_lowbit64(mask) + head) & (entries - 1))];
+                p8 address_to there;
+
+                mask &= mask - 1;
+                if (candidate < low)
+                        break;
+                if (candidate >= cur)
+                        continue;
+                there = base + candidate;
                 if (there[best] == ip[best])
                 {
                         positive const length = memory_common_prefix(ip, there, room);
@@ -3198,9 +3291,6 @@ zstd_chain_find(zstd_encoder address_to e, p8 address_to ip, p8 address_to iend,
                                         break;
                         }
                 }
-                if (candidate <= floor)
-                        break;
-                candidate = chain[candidate & mask];
         }
         return best > 3 ? best : 0;
 }
@@ -3949,7 +4039,7 @@ static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
                                 goto store;
                 }
                 found = tree ? zstd_bt_best(e, ip, iend, address_of found_distance)
-                             : zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                             : zstd_row_find(e, ip, iend, low, address_of found_distance);
                 if (found > match)
                 {
                         match = found;
@@ -3982,7 +4072,7 @@ static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
                                 }
                         }
                         found = tree ? zstd_bt_best(e, ip, iend, address_of found_distance)
-                             : zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                             : zstd_row_find(e, ip, iend, low, address_of found_distance);
                         if (found >= 4 &&
                             (bipolar)found * 4 - (bipolar)zstd_highbit32((p32)found_distance + 3) >
                                 (bipolar)match * 4 - zstd_offset_cost(e, distance) + 4)
@@ -4011,7 +4101,7 @@ static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
                                         }
                                 }
                                 found = tree ? zstd_bt_best(e, ip, iend, address_of found_distance)
-                             : zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                             : zstd_row_find(e, ip, iend, low, address_of found_distance);
                                 if (found >= 4 &&
                                     (bipolar)found * 4 - (bipolar)zstd_highbit32((p32)found_distance + 3) >
                                         (bipolar)match * 4 - zstd_offset_cost(e, distance) + 7)
@@ -4075,8 +4165,7 @@ static bool zstd_encoder_open(zstd_encoder address_to e,
         positive const window = (positive)1 << p->window_log;
         positive const room = 2 * window + 2 * ZSTD_BLOCK_MAX + 64;
         positive const hash_bytes = (positive)4 << p->hash_log;
-        positive const chain_bytes =
-            p->strategy == ZSTD_FAST ? 0 : (positive)4 << p->chain_log;
+        positive const chain_bytes = zstd_chain_bytes(p);
         p8 const hash3_log = p->window_log < 17 ? p->window_log : 17;
         positive const hash3_bytes = p->strategy >= ZSTD_BTOPT && p->min_match == 3
                                          ? (positive)4 << hash3_log
@@ -4172,8 +4261,9 @@ static fn zstd_encoder_reduce(zstd_encoder address_to e)
                 return;
         for (positive i = 0; i < e->hash_bytes / 4; i++)
                 e->hash[i] = e->hash[i] > shift ? e->hash[i] - shift : 0;
-        for (positive i = 0; i < e->chain_bytes / 4; i++)
-                e->chain[i] = e->chain[i] > shift ? e->chain[i] - shift : 0;
+        if (e->p.strategy < ZSTD_GREEDY || e->p.strategy > ZSTD_LAZY2)
+                for (positive i = 0; i < e->chain_bytes / 4; i++)
+                        e->chain[i] = e->chain[i] > shift ? e->chain[i] - shift : 0;
         for (positive i = 0; i < e->hash3_bytes / 4; i++)
                 e->hash3[i] = e->hash3[i] > shift ? e->hash3[i] - shift : 0;
         e->start = e->start > shift ? e->start - shift : 1;
@@ -4337,8 +4427,7 @@ static bool zstd_encoder_job_tables(zstd_encoder address_to e,
                                     const zstd_params address_to p)
 {
         positive const hash_bytes = (positive)4 << p->hash_log;
-        positive const chain_bytes =
-            p->strategy == ZSTD_FAST ? 0 : (positive)4 << p->chain_log;
+        positive const chain_bytes = zstd_chain_bytes(p);
         p8 const hash3_log = p->window_log < 17 ? p->window_log : 17;
         positive const hash3_bytes = p->strategy >= ZSTD_BTOPT && p->min_match == 3
                                          ? (positive)4 << hash3_log
