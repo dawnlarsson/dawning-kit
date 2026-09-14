@@ -6655,11 +6655,10 @@ static fn clock_format_byte(clock_format_state address_to state, p8 byte)
                 and every literal byte of a format string -- the colons in
                 %H:%M:%S, the spaces, every character that is not a directive
                 -- paid a call into the general routine to move one byte. The
-                bounds test below is exactly raw's, written out because after
-                folding the length to one there is nothing else left of it:
-                `1 > room || used > room - 1` is `used >= room` for every room,
-                including zero. Measured on a pure-literal format, 158 cycles
-                to 122.
+                bounds test below is byte_store_append_exact's with the length
+                folded to one: `1 > room - used` is `used >= room` for every
+                room, including zero. Measured on a pure-literal format, 158
+                cycles to 122.
         */
         if (state->failed)
                 return;
