@@ -41307,7 +41307,7 @@ static bool crypto_bytes_are(p8 address_to got, positive length, string_address 
 }
 
 static fn crypto_private_scalar_probe(
-    positive limbs, const p64 address_to modulus,
+    positive limbs, const crypto_field address_to field,
     const p8 address_to gx, const p8 address_to gy,
     bool address_to differential, bool address_to fixed_schedule)
 {
@@ -41329,7 +41329,7 @@ static fn crypto_private_scalar_probe(
         memory_fill(complement, 0, sizeof complement);
         crypto_fe_load_be(x, gx, limbs);
         crypto_fe_load_be(y, gy, limbs);
-        crypto_point_set_xy(address_of base, x, y, modulus, limbs);
+        crypto_point_set_xy(address_of base, x, y, field);
 
         for (positive i = 0; i < limbs; i++)
         {
@@ -41688,8 +41688,9 @@ static fn crypto_floor_aes(void)
                                         (p8 address_to)qy));
                 check("the P-256 public point is on its selected curve",
                       crypto_point_is_on_curve(
-                          (p8 address_to)qx, (p8 address_to)qy, 4,
-                          crypto_p256_p, (p8 address_to)crypto_p256_b_be));
+                          (p8 address_to)qx, (p8 address_to)qy,
+                          address_of crypto_p256_field,
+                          (p8 address_to)crypto_p256_b_be));
                 {
                         p8 order[32];
                         p8 wrong_y[32];
@@ -41704,8 +41705,8 @@ static fn crypto_floor_aes(void)
                         wrong_y[sizeof wrong_y - 1] ^= 1;
                         check("ECDSA refuses a public point off the selected curve",
                               !crypto_point_is_on_curve(
-                                  (p8 address_to)qx, wrong_y, 4,
-                                  crypto_p256_p,
+                                  (p8 address_to)qx, wrong_y,
+                                  address_of crypto_p256_field,
                                   (p8 address_to)crypto_p256_b_be) &&
                                   !crypto_ecdsa_p256(
                                       digest, 32, (p8 address_to)r, sizeof r,
@@ -41717,7 +41718,8 @@ static fn crypto_floor_aes(void)
         check("the standard P-384 base point is on its curve",
               crypto_point_is_on_curve(
                   (p8 address_to)crypto_p384_gx_be,
-                  (p8 address_to)crypto_p384_gy_be, 6, crypto_p384_p,
+                  (p8 address_to)crypto_p384_gy_be,
+                  address_of crypto_p384_field,
                   (p8 address_to)crypto_p384_b_be));
 
         {
@@ -41827,7 +41829,7 @@ static fn crypto_floor_aes(void)
                 memory_copy(g384 + 49, crypto_p384_gy_be, 48);
 
                 crypto_private_scalar_probe(
-                    4, crypto_p256_p, crypto_p256_gx_be,
+                    4, address_of crypto_p256_field, crypto_p256_gx_be,
                     crypto_p256_gy_be, address_of differential256,
                     address_of schedule256);
                 check("private P-256 multiplication matches the public reference",
@@ -41835,7 +41837,7 @@ static fn crypto_floor_aes(void)
                 check("complementary P-256 scalars have one fixed operation schedule",
                       schedule256);
                 crypto_private_scalar_probe(
-                    6, crypto_p384_p, crypto_p384_gx_be,
+                    6, address_of crypto_p384_field, crypto_p384_gx_be,
                     crypto_p384_gy_be, address_of differential384,
                     address_of schedule384);
                 check("private P-384 multiplication matches the public reference",
