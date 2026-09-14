@@ -61,7 +61,6 @@
 #define HOST_SYSTEM_BYTES ((p64)512 << 20)
 #define HOST_ALIGN_BYTES ((p64)1 << 20)
 #define HOST_SMALLEST ((p64)2 << 30)
-#define HOST_COPY_CHUNK ((positive)1 << 20)
 #define HOST_READ_ONLY (MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC)
 #define HOST_WRITABLE (MS_NOSUID | MS_NODEV | MS_NOEXEC)
 
@@ -81,7 +80,6 @@
 
 #define HOST_CLOCK_REALTIME 0
 #define HOST_CLOCK_BOOTTIME 7
-#define HOST_BUSY 16
 #define HOST_BLKRRPART 0x125f
 #define HOST_BLKSSZGET 0x1268
 #define HOST_BLKGETSIZE64 0x80081272u
@@ -127,59 +125,37 @@ static b32 host_fail(string_address what, bipolar error)
         return 1;
 }
 
+/* Both halves must fit, or into is truncated and the answer says so. */
 static bool host_join(p8 address_to into, positive room, string_address left,
                       string_address right)
 {
-        positive left_length = string_length(left);
-        positive right_length = string_length(right);
-
-        if (left_length + right_length >= room)
-                return false;
-
-        memory_copy(into, left, left_length);
-        memory_copy(into + left_length, right, right_length + 1);
-        return true;
+        return string_copy_bounded(into, left, room) < room &&
+               string_append_bounded(into, right, room) < room;
 }
 
 static bool host_starts(string_address text, string_address prefix)
 {
-        while (*prefix)
-                if (*text++ != *prefix++)
-                        return false;
-
-        return true;
-}
-
-static p64 host_clock(positive clock)
-{
-        positive now[2] = {0, 0};
-
-        system_call_2(syscall(clock_gettime), clock, (positive)now);
-        return (p64)now[0] * 1000000000 + now[1];
+        return !string_compare_max(text, prefix, string_length(prefix));
 }
 
 static fn host_pause(p64 nanoseconds)
 {
-        positive span[2] = {nanoseconds / 1000000000, nanoseconds % 1000000000};
+        timespec span = {nanoseconds / 1000000000, nanoseconds % 1000000000};
 
-        system_call_2(syscall(nanosleep), (positive)span, 0);
+        sleep(address_of span);
 }
 
 /* A small sysfs or state file, without its trailing newline. */
 static bipolar host_read_text(string_address path, p8 address_to into,
                               positive room)
 {
-        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
-        bipolar got;
+        bipolar got = file_slurp_once_at(AT_FDCWD, path, into, room);
 
-        into[0] = end;
-        if (handle < 0)
-                return handle;
-
-        got = system_read_once(handle, into, room - 1);
-        system_close(handle);
         if (got < 0)
+        {
+                into[0] = end;
                 return got;
+        }
 
         while (got > 0 && (into[got - 1] == '\n' || into[got - 1] == ' '))
                 got--;
@@ -240,42 +216,18 @@ typedef bool (*host_entry_visitor)(string_address directory,
 static fn host_each_entry(string_address path, host_entry_visitor visit,
                           address_any context)
 {
-        p8 block[2048];
-        bipolar directory = system_open_at(AT_FDCWD, path,
-                                           FILE_READ | O_DIRECTORY | O_CLOEXEC);
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
 
-        if (directory < 0)
+        if (!file_walk_open(address_of walk, AT_FDCWD, path))
                 return;
 
-        for (;;)
-        {
-                bipolar got = system_read_directory(directory, block, sizeof(block));
-                positive at = 0;
-
-                if (got <= 0)
+        while ((entry = file_walk_next(address_of walk)))
+                if (entry->d_name[0] != '.' &&
+                    !visit(path, entry->d_name, context))
                         break;
 
-                while (at + 19 < (positive)got)
-                {
-                        struct linux_dirent64 address_to entry =
-                            (struct linux_dirent64 address_to)(block + at);
-
-                        if (entry->d_reclen < 20 || entry->d_reclen > (positive)got - at)
-                                break;
-
-                        at += entry->d_reclen;
-                        if (entry->d_name[0] == '.')
-                                continue;
-
-                        if (!visit(path, entry->d_name, context))
-                        {
-                                system_close(directory);
-                                return;
-                        }
-                }
-        }
-
-        system_close(directory);
+        file_walk_close(address_of walk);
 }
 
 static fn host_state_ready(void)
@@ -592,7 +544,7 @@ static bipolar host_mount(string_address name, string_address target,
         bipolar made;
 
         if (!host_join(device, sizeof(device), "/dev/", name))
-                return -STORAGE_FORMAT_INVALID;
+                return -ERROR_INVALID;
 
         host_state_ready();
         made = system_make_directory_at(AT_FDCWD, target, 0700);
@@ -684,7 +636,7 @@ static bool host_medium_find(host_medium_search address_to search,
                 search->skip = skip;
                 storage_each_device(host_medium_visit, search);
 
-                uptime = host_clock(HOST_CLOCK_BOOTTIME);
+                uptime = system_clock_ns(HOST_CLOCK_BOOTTIME);
                 if (search->found || uptime >= HOST_SETTLE_MOST_NS ||
                     (uptime >= HOST_MEDIUM_FLOOR_NS && !host_storage_arriving()))
                         return search->found;
@@ -699,9 +651,8 @@ static b32 host_copy_file(string_address from, string_address to)
 {
         bipolar source = system_open_at(AT_FDCWD, from, FILE_READ | O_CLOEXEC);
         bipolar target;
-        p8 address_to buffer;
-        p64 offset = 0;
-        bipolar failed = 0;
+        bool copied;
+        bipolar synced = 0;
 
         if (source < 0)
                 return host_fail(from, source);
@@ -713,35 +664,16 @@ static b32 host_copy_file(string_address from, string_address to)
                 return host_fail(to, target);
         }
 
-        buffer = memory(HOST_COPY_CHUNK);
-        if (!buffer)
-                failed = -STORAGE_FORMAT_NO_MEMORY;
-
-        while (!failed)
-        {
-                bipolar got = system_read_once(source, buffer, HOST_COPY_CHUNK);
-
-                if (got == -4)
-                        continue;
-                if (got <= 0)
-                {
-                        failed = got;
-                        break;
-                }
-
-                failed = storage_format_write(target, buffer, (positive)got, offset);
-                offset += (p64)got;
-        }
-
-        if (!failed)
-                failed = system_call_1(syscall(fsync), (positive)target);
-
-        if (buffer)
-                memory_free(buffer, HOST_COPY_CHUNK);
+        copied = file_copy_handles(source, target);
+        if (copied)
+                synced = system_call_1(syscall(fsync), (positive)target);
 
         system_close(source);
         system_close(target);
-        return failed < 0 ? host_fail(to, failed) : 0;
+        if (!copied)
+                return host_refuse("%s could not be copied whole\n", from);
+
+        return synced < 0 ? host_fail(to, synced) : 0;
 }
 
 /*
@@ -967,7 +899,7 @@ static b32 host_boot(void)
 
         for (;;)
         {
-                p64 uptime = host_clock(HOST_CLOCK_BOOTTIME);
+                p64 uptime = system_clock_ns(HOST_CLOCK_BOOTTIME);
 
                 host_census_take(address_of census);
                 if (census.count || uptime >= HOST_SETTLE_MOST_NS ||
@@ -1091,7 +1023,7 @@ fn host_terminal_opening(void)
 
         while (host_read_text(HOST_VERDICT, verdict, sizeof(verdict)) < 0)
         {
-                p64 uptime = host_clock(HOST_CLOCK_BOOTTIME);
+                p64 uptime = system_clock_ns(HOST_CLOCK_BOOTTIME);
 
                 if (uptime >= HOST_VERDICT_WAIT_NS)
                         return;
@@ -1255,19 +1187,22 @@ static b32 host_install_disk(string_address asked, bool removable)
 
         host_join(device, sizeof(device), "/dev/", name);
         handle = system_open_at(AT_FDCWD, device, FILE_READ | O_CLOEXEC);
+        failed = handle;
         if (handle >= 0)
         {
-                system_control(handle, HOST_BLKGETSIZE64, address_of bytes);
-                system_control(handle, HOST_BLKSSZGET, address_of sector);
+                failed = system_control(handle, HOST_BLKGETSIZE64, address_of bytes);
+                if (failed >= 0)
+                        failed = system_control(handle, HOST_BLKSSZGET,
+                                                address_of sector);
                 system_close(handle);
         }
 
-        if (handle < 0 || bytes < HOST_SMALLEST || sector < 512 ||
+        if (failed < 0 || bytes < HOST_SMALLEST || sector < 512 ||
             !storage_gpt_span(bytes / (p64)sector, (p32)sector, address_of first,
                               address_of last))
         {
                 host_unmount(HOST_MEDIUM);
-                return handle < 0 ? host_fail(device, handle)
+                return failed < 0 ? host_fail(device, failed)
                                   : host_refuse("%s is smaller than the 2 GiB an "
                                                 "install needs\n", name);
         }
@@ -1295,7 +1230,7 @@ static b32 host_install_disk(string_address asked, bool removable)
         if (handle < 0)
         {
                 host_unmount(HOST_MEDIUM);
-                return handle == -HOST_BUSY
+                return handle == -ERROR_BUSY
                            ? host_refuse("%s is in use: something on it is mounted\n",
                                          name)
                            : host_fail(device, handle);
@@ -1313,7 +1248,7 @@ static b32 host_install_disk(string_address asked, bool removable)
         memory_copy(parts[1].unique, random + 64, 16);
         host_version_four(parts[0].unique, 7);
         host_version_four(parts[1].unique, 7);
-        identity.time = (p32)(host_clock(HOST_CLOCK_REALTIME) / 1000000000);
+        identity.time = (p32)(system_clock_ns(HOST_CLOCK_REALTIME) / 1000000000);
         identity.label = "moonwater";
 
         //      A 512 MiB system partition at 1 MiB, then the rest, to 16 TiB.
@@ -1364,7 +1299,7 @@ static b32 host_install_disk(string_address asked, bool removable)
         for (positive tries = 0; !failed && tries < 20; tries++)
         {
                 failed = system_control(handle, HOST_BLKRRPART, 0);
-                if (failed != -HOST_BUSY)
+                if (failed != -ERROR_BUSY)
                         break;
 
                 host_pause(HOST_POLL_NS);
@@ -1452,77 +1387,35 @@ static b32 host_install_disk(string_address asked, bool removable)
 */
 fn host_quiesce(void)
 {
-        positive room = (positive)1 << 16;
-        positive starts[512];
-        positive lines = 0;
-        positive used = 0;
-        p8 address_to table = memory(room);
-        bipolar handle;
-
-        if (!table)
-                return;
-
-        handle = system_open_at(AT_FDCWD, "/proc/self/mounts", FILE_READ | O_CLOEXEC);
-        if (handle >= 0)
-        {
-                bipolar got;
-
-                while (used + 1 < room &&
-                       (got = system_read_once(handle, table + used,
-                                               room - 1 - used)) > 0)
-                        used += (positive)got;
-
-                system_close(handle);
-        }
-
-        for (positive at = 0; at < used && lines < array_count(starts);)
-        {
-                starts[lines++] = at;
-                while (at < used && table[at] != '\n')
-                        at++;
-                if (at < used)
-                        table[at++] = end;
-        }
-        table[used] = end;
-
-        //      A device bound in several places is one superblock: once is all.
-        p8 address_to done[32];
+        storage_mount_table table;
+        string_address done[32];
         positive done_count = 0;
 
-        while (lines--)
+        if (!storage_mount_table_load(address_of table, null))
+                return;
+
+        //      A device bound in several places is one superblock: once is all.
+        for (positive at = table.count; at-- > 0;)
         {
-                p8 address_to source = table + starts[lines];
-                p8 address_to target = source;
-                p8 address_to space;
+                storage_mount address_to mount = table.entry + at;
                 bool seen = false;
 
-                if (!host_starts(source, "/dev/"))
+                if (!host_starts(mount->source, "/dev/"))
                         continue;
 
-                while (*target && *target != ' ')
-                        target++;
-                if (!*target)
-                        continue;
-
-                *target++ = end;
-                space = target;
-                while (*space && *space != ' ')
-                        space++;
-                *space = end;
-
-                for (positive at = 0; at < done_count; at++)
-                        if (string_equals(done[at], source))
+                for (positive look = 0; look < done_count; look++)
+                        if (string_equals(done[look], mount->device))
                                 seen = true;
                 if (seen)
                         continue;
 
                 if (done_count < array_count(done))
-                        done[done_count++] = source;
+                        done[done_count++] = mount->device;
 
-                system_mount(0, target, 0, MS_REMOUNT | MS_RDONLY, 0);
+                system_mount(0, mount->target, 0, MS_REMOUNT | MS_RDONLY, 0);
         }
 
-        memory_free(table, room);
+        storage_mount_table_release(address_of table);
 }
 
 // The command ---------------------------------------------------
