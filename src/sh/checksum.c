@@ -124,31 +124,37 @@ static b32 checksum_usage_error(string_address command, string_address message)
                                        command, message, command));
 }
 
-static fn checksum_base64_put(p8 address_to digest, positive length)
+/* coreutils' refusals of options that belong to the other mode, in its order
+   and words; zero when none applies. */
+static b32 checksum_refuse_modes(string_address command, bool checking,
+                                 bool tagged, positive flags)
 {
-        static const p8 alphabet[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        string_address verifying = (flags & FILE_FLAG('i')) ? "ignore-missing"
+            : checksum_selected.verify == 's' ? "status"
+            : checksum_selected.verify == 'w' ? "warn"
+            : checksum_selected.verify == 'q' ? "quiet"
+            : (flags & FILE_FLAG('S')) ? "strict" : null;
 
-        for (positive at = 0; at < length; at += 3)
-        {
-                positive have = min(length - at, (positive)3);
-                positive word = (positive)digest[at] << 16 |
-                                (have > 1 ? (positive)digest[at + 1] << 8 : 0) |
-                                (have > 2 ? (positive)digest[at + 2] : 0);
-
-                text_put_character(alphabet[(word >> 18) & 63]);
-                text_put_character(alphabet[(word >> 12) & 63]);
-                text_put_character(have > 1 ? alphabet[(word >> 6) & 63] : '=');
-                text_put_character(have > 2 ? alphabet[word & 63] : '=');
-        }
+        if (checksum_zero && checking)
+                return checksum_usage_error(command, "the --zero option is not supported when verifying checksums");
+        if (tagged && checking)
+                return checksum_usage_error(command, "the --tag option is meaningless when verifying checksums");
+        if (checking && checksum_selected.mode)
+                return checksum_usage_error(command, "the --binary and --text options are meaningless when verifying checksums");
+        if (checking || !verifying)
+                return 0;
+        text_flush();
+        return text_done(string_report(writer_stderr, 1,
+            "%s: the --%s option is meaningful only when verifying checksums\n"
+            "Try '%s --help' for more information.\n", command, verifying, command));
 }
 
-static string_address checksum_called()
+static fn checksum_base64_put(p8 address_to digest, positive length)
 {
-        string_address called = program_argument(0);
-        string_address slash = called ? string_last_of(called, '/') : null;
+        encoding_output output = {0};
 
-        return slash ? slash + 1 : called;
+        encoding_groups(encoding_codecs + ENCODING_BASE64, address_of output,
+                        digest, length);
 }
 
 static const checksum_algorithm address_to checksum_algorithm_find(
@@ -406,26 +412,28 @@ done:
         return moved;
 }
 
+/* A missing name and "-" are standard input; an interrupted open is retried. */
+static bipolar checksum_open(string_address path, bool address_to standard)
+{
+        bipolar input = 0;
+
+        address_to standard = !path || (string_is(path, '-') && !string_get(path + 1));
+        if (!address_to standard)
+                do
+                        input = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+                while (input == CHECKSUM_ERROR_INTERRUPTED);
+        return input;
+}
+
 static bipolar checksum_hash_path(bipolar transform, string_address path,
                                    p8 address_to digest,
                                    positive digest_length)
 {
-        bool standard = !path ||
-                        (string_is(path, '-') && !string_get(path + 1));
-        bipolar input;
+        bool standard;
+        bipolar input = checksum_open(path, address_of standard);
 
-        if (standard)
-                input = 0;
-        else
-        {
-                do
-                        input = system_open_at(AT_FDCWD, path,
-                                               FILE_READ | O_CLOEXEC);
-                while (input == CHECKSUM_ERROR_INTERRUPTED);
-
-                if (input < 0)
-                        return input;
-        }
+        if (input < 0)
+                return input;
 
         bipolar answer = checksum_hash_descriptor(transform, input, digest,
                                                    digest_length, !standard);
@@ -434,32 +442,6 @@ static bipolar checksum_hash_path(bipolar transform, string_address path,
                 system_close((positive)input);
 
         return answer;
-}
-
-static bool checksum_filename_escaped(string_address name)
-{
-        positive length = string_length(name);
-
-        return memory_first_of(name, '\\', length) ||
-               memory_first_of(name, '\n', length) ||
-               memory_first_of(name, '\r', length);
-}
-
-/* GNU shell-quotes a name in a verification report when a shell would not
-   take it whole: blanks, controls, the metacharacters, and a leading # or ~. */
-static bool checksum_filename_special(string_address name)
-{
-        for (string_address at = name; string_get(at); at++)
-        {
-                p8 byte = string_get(at);
-
-                if (byte <= ' ' || byte >= 127 ||
-                    string_first_of("!\"$&'()*;<>?[\\]^`{|}", byte))
-                        return true;
-                if ((byte == '#' || byte == '~') && at == name)
-                        return true;
-        }
-        return false;
 }
 
 static fn checksum_filename_put(string_address name, bool escaped)
@@ -489,55 +471,6 @@ static fn checksum_filename_put(string_address name, bool escaped)
         }
 }
 
-/* The check result is a human-facing shell word in coreutils 9.11, not the
-   portable backslash record used when a manifest is written.  Keep the shell
-   quoting policy in its existing writer and add only the control-byte islands
-   that quotearg spells as $'...'.  The decoded name lives in text_line, so a
-   temporary terminator can expose each printable span without allocating or
-   building a second output buffer. */
-fn shell_quoted(writer write, string_address value);
-
-static fn checksum_check_filename_put(string_address name)
-{
-        if (!checksum_filename_special(name))
-        {
-                text_put_string(name);
-                return;
-        }
-
-        p8 address_to step = (p8 address_to)name;
-
-        while (*step)
-        {
-                p8 address_to stop = step;
-                while (*stop && *stop >= ' ' && *stop != 127)
-                        stop++;
-
-                if (stop > step)
-                {
-                        p8 held = *stop;
-                        *stop = end;
-                        shell_quoted(text_put, step);
-                        *stop = held;
-                        step = stop;
-                }
-
-                if (!*step)
-                        break;
-
-                text_put_string("$'");
-                do
-                {
-                        p8 escaped[4];
-                        positive length = ls_escape_byte(*step++, escaped,
-                                                         false);
-                        text_put(escaped, length);
-                }
-                while (*step && (*step < ' ' || *step == 127));
-                text_put_character('\'');
-        }
-}
-
 static fn checksum_hex_put(p8 address_to digest, positive length)
 {
         p8 text[128];
@@ -563,7 +496,7 @@ static fn checksum_line_put(const checksum_algorithm address_to algorithm,
         }
 
         // --zero disables the escaping that exists for newline records.
-        bool escaped = !checksum_zero && checksum_filename_escaped(name);
+        bool escaped = !checksum_zero && string_first_of_set(name, "\\\n\r");
 
         if (escaped)
                 text_put_character('\\');
@@ -620,64 +553,17 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
         return answer;
 }
 
-/* The manifest's name as GNU writes it in a diagnostic: quoted when a
-   shell would not take it whole, into a bounded buffer the callers hand to
-   the shared formatter. */
-static string_address checksum_quoted_name(string_address name, p8 address_to into,
-                                           positive room)
+/* A name in a verification report or diagnostic, quoted as coreutils'
+   shell-escape style quotes it; ls owns that style. */
+static fn checksum_name_put(writer write, string_address name)
 {
-        if (!checksum_filename_special(name))
-                return name;
-
-        positive made = 0;
-        string_address at = name;
-
-        while (string_get(at) && made + 8 < room)
-        {
-                string_address stop = at;
-
-                while (string_get(stop) && string_get(stop) >= ' ' &&
-                       string_get(stop) != 127)
-                        stop++;
-
-                if (stop > at)
-                {
-                        // An ordinary run is one quoted word.
-                        positive span = (positive)(stop - at);
-
-                        if (made + span + 3 >= room)
-                                break;
-                        into[made++] = '\'';
-                        memory_copy_apart(into + made, at, span);
-                        made += span;
-                        into[made++] = '\'';
-                        at = stop;
-                }
-
-                while (string_get(at) && (string_get(at) < ' ' || string_get(at) == 127) &&
-                       made + 8 < room)
-                {
-                        // A control byte is a $'..' word of its own.
-                        p8 byte = string_get(at++);
-                        p8 escaped[4];
-                        positive length = ls_escape_byte(byte, escaped, false);
-
-                        into[made++] = '$';
-                        into[made++] = '\'';
-                        memory_copy_apart(into + made, escaped, length);
-                        made += length;
-                        into[made++] = '\'';
-                }
-        }
-
-        into[made] = end;
-        return (string_address)into;
+        ls_quote_shell(write, name, string_length(name), false, true);
 }
 
 static fn checksum_check_result_put(string_address name,
                                     string_address result)
 {
-        checksum_check_filename_put(name);
+        checksum_name_put(text_put, name);
         text_put_string(": ");
         text_put_string(result);
         text_put_character('\n');
@@ -878,14 +764,11 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                               address_of kind) &&
                     (kind.mode & MODE_FORMAT) == MODE_DIRECTORY)
                 {
-                        p8 quoted[FILE_PATH_MAX + 64];
-
                         text_flush();
-                        string_format(log_error, "%s: %s: read error\n",
-                                      checksum_program,
-                                      checksum_quoted_name(manifest ? manifest
-                                          : (string_address)"standard input",
-                                          quoted, sizeof(quoted)));
+                        string_format(log_error, "%s: %w: read error\n",
+                                      checksum_program, checksum_name_put,
+                                      manifest ? manifest
+                                          : (string_address)"standard input");
                         text_close();
                         failed = true;
                         continue;
@@ -928,14 +811,9 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                 if (checksum_selected.verify == 'w')
                                 {
                                         text_flush();
-                                     {
-                                        p8 quoted[FILE_PATH_MAX + 64];
-
-                                        string_format(log_error, "%s: %s: %p: improperly formatted %s checksum line\n",
-                                                      checksum_program,
-                                                      checksum_quoted_name(manifest, quoted, sizeof(quoted)),
-                                                      line, checksum_check_label);
-                                }
+                                        string_format(log_error, "%s: %w: %p: improperly formatted %s checksum line\n",
+                                                      checksum_program, checksum_name_put,
+                                                      manifest, line, checksum_check_label);
                                 }
                                 continue;
                         }
@@ -1008,15 +886,16 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
 
                 if (!verified && !unreadable && !read_failed)
                 {
-                        p8 quoted[FILE_PATH_MAX + 64];
-
                         failed = true;
                         if (!status || !formatted)
-                                string_diagnostic(address_of text_diagnostic, 0,
-                                    checksum_quoted_name(manifest, quoted, sizeof(quoted)),
+                        {
+                                text_flush();
+                                string_format(writer_stderr, "%s: %w: %s\n",
+                                    text_name, checksum_name_put, manifest,
                                     ignore_missing && formatted
                                         ? (string_address) "no file was verified"
                                         : (string_address) "no properly formatted checksum lines found");
+                        }
                 }
 
                 if (strict && malformed)
@@ -1032,7 +911,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
 
 static b32 checksum_main()
 {
-        string_address command = checksum_called();
+        string_address command = file_called_name(null);
         const checksum_algorithm address_to algorithm =
             checksum_algorithm_find(command, false);
 
@@ -1058,26 +937,9 @@ static b32 checksum_main()
         bool tagged = (taking.flags & FILE_FLAG('T')) != 0;
         checksum_zero = (taking.flags & FILE_FLAG('z')) != 0;
 
-        // coreutils' own refusals, in its order and words.
-        if (checksum_zero && checking)
-                return checksum_usage_error(command, "the --zero option is not supported when verifying checksums");
-        if (tagged && checking)
-                return checksum_usage_error(command, "the --tag option is meaningless when verifying checksums");
-        if (checking && checksum_selected.mode)
-                return checksum_usage_error(command, "the --binary and --text options are meaningless when verifying checksums");
-        if (!checking)
-        {
-                if (taking.flags & FILE_FLAG('i'))
-                        return checksum_usage_error(command, "the --ignore-missing option is meaningful only when verifying checksums");
-                if (checksum_selected.verify == 's')
-                        return checksum_usage_error(command, "the --status option is meaningful only when verifying checksums");
-                if (checksum_selected.verify == 'w')
-                        return checksum_usage_error(command, "the --warn option is meaningful only when verifying checksums");
-                if (checksum_selected.verify == 'q')
-                        return checksum_usage_error(command, "the --quiet option is meaningful only when verifying checksums");
-                if (taking.flags & FILE_FLAG('S'))
-                        return checksum_usage_error(command, "the --strict option is meaningful only when verifying checksums");
-        }
+        b32 refused = checksum_refuse_modes(command, checking, tagged, taking.flags);
+        if (refused)
+                return refused;
         if (tagged && checksum_selected.mode == 't')
                 return checksum_usage_error(command, "--tag does not support --text mode");
 

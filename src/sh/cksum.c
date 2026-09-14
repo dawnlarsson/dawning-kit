@@ -13,7 +13,6 @@
 */
 
 #define CKSUM_POLYNOMIAL 0x04c11db7u
-#define CKSUM_ERROR_INTERRUPTED (-4)
 #define CKSUM_SLICES 8
 
 static p32 cksum_crc_table[CKSUM_SLICES][256];
@@ -347,20 +346,11 @@ static HOT __attribute__((noinline)) p32 cksum_crc_block(
 static bool cksum_crc_path(string_address path, p32 address_to result,
                            p64 address_to size)
 {
-        bool standard = !path ||
-                        (string_is(path, '-') && !string_get(path + 1));
-        bipolar input = 0;
+        bool standard;
+        bipolar input = checksum_open(path, address_of standard);
 
-        if (!standard)
-        {
-                do
-                        input = system_open_at(AT_FDCWD, path,
-                                               FILE_READ | O_CLOEXEC);
-                while (input == CKSUM_ERROR_INTERRUPTED);
-
-                if (input < 0)
-                        return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(input));
-        }
+        if (input < 0)
+                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(input));
 
         p32 crc = 0;
         p64 bytes = 0;
@@ -442,14 +432,6 @@ static const argument_option cksum_options[] = {
     {null},
 };
 
-/* cksum's usage complaint: the sentence, then where to look. */
-static b32 cksum_usage_error(string_address message)
-{
-        text_flush();
-        return text_done(string_report(writer_stderr, 1,
-            "cksum: %s\nTry 'cksum --help' for more information.\n", message));
-}
-
 /* Each algorithm is checked as it is read, so an unknown one is refused
    even when a later --algorithm would supersede it. */
 static bool cksum_option_seen(p8 letter, string_address value)
@@ -527,24 +509,10 @@ static b32 cksum_main()
                     "cksum: --check is not supported with --algorithm={bsd,sysv,crc,crc32b}\n"));
         }
         if (raw && (taking.flags & FILE_FLAG('B')))
-                return cksum_usage_error("--base64 and --raw are mutually exclusive");
-        if (checksum_zero && checking)
-                return cksum_usage_error("the --zero option is not supported when verifying checksums");
-        if (tagged && checking)
-                return cksum_usage_error("the --tag option is meaningless when verifying checksums");
-        if (!checking)
-        {
-                if (taking.flags & FILE_FLAG('i'))
-                        return cksum_usage_error("the --ignore-missing option is meaningful only when verifying checksums");
-                if (checksum_selected.verify == 's')
-                        return cksum_usage_error("the --status option is meaningful only when verifying checksums");
-                if (checksum_selected.verify == 'w')
-                        return cksum_usage_error("the --warn option is meaningful only when verifying checksums");
-                if (checksum_selected.verify == 'q')
-                        return cksum_usage_error("the --quiet option is meaningful only when verifying checksums");
-                if (taking.flags & FILE_FLAG('S'))
-                        return cksum_usage_error("the --strict option is meaningful only when verifying checksums");
-        }
+                return checksum_usage_error("cksum", "--base64 and --raw are mutually exclusive");
+        b32 refused = checksum_refuse_modes("cksum", checking, tagged, taking.flags);
+        if (refused)
+                return refused;
 
         if (raw && text_files_count > 1)
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "the --raw option is not supported with multiple files"));
@@ -636,8 +604,9 @@ static b32 cksum_main()
                 // --raw is the CRC's four bytes, most significant first.
                 if (raw)
                 {
-                        p8 wire[4] = {(p8)(crc >> 24), (p8)(crc >> 16),
-                                      (p8)(crc >> 8), (p8)crc};
+                        p8 wire[4];
+
+                        network_store_32(wire, crc);
                         text_put(wire, 4);
                 }
                 else
