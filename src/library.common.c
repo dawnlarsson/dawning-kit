@@ -774,11 +774,11 @@ _Static_assert(sizeof(system_path_identity) == 256,
 #define SYSTEM_PATH_STATX_IDENTITY                                      \
         (SYSTEM_PATH_STATX_TYPE | SYSTEM_PATH_STATX_MODE |              \
          SYSTEM_PATH_STATX_INO)
-#define SYSTEM_PATH_AT_SYMLINK_NOFOLLOW 0x100
-#define SYSTEM_PATH_AT_NO_AUTOMOUNT     0x800
-#define SYSTEM_PATH_AT_EMPTY_PATH       0x1000
+#define SYSTEM_PATH_AT_SYMLINK_NOFOLLOW AT_SYMLINK_NOFOLLOW
+#define SYSTEM_PATH_AT_NO_AUTOMOUNT     AT_NO_AUTOMOUNT
+#define SYSTEM_PATH_AT_EMPTY_PATH       AT_EMPTY_PATH
 #define SYSTEM_PATH_RENAME_NOREPLACE    1
-#define SYSTEM_PATH_AT_REMOVEDIR         0x200
+#define SYSTEM_PATH_AT_REMOVEDIR        AT_REMOVEDIR
 
 static bipolar system_path_identity_at(
     bipolar directory, string_address name, positive flags, positive required,

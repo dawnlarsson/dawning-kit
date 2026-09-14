@@ -20,7 +20,9 @@
 // it is not a crash loop and the backoff starts over.
 #define SHELL_SETTLED_NS 2000000000
 
+#ifndef CLOCK_MONOTONIC
 #define CLOCK_MONOTONIC 1
+#endif
 
 // Raw kernel return values: there is no errno here, a failed call comes back
 // as the negated error itself.

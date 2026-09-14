@@ -23,8 +23,12 @@
 #define ROWS_WANTED 24
 #define SHELL "/shell"
 
+#ifndef EINTR
 #define EINTR 4
+#endif
+#ifndef EAGAIN
 #define EAGAIN 11
+#endif
 
 // Three below are the shell's, and the kernel's console has no use for them.
 // Not the attribute that keeps a symbol: this one lets the compiler drop what

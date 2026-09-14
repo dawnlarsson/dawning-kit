@@ -27119,6 +27119,24 @@ typedef b64 ptrdiff_t;
 #define O_NOFOLLOW 0400000
 #endif
 #define AT_FDCWD -100
+#ifndef AT_SYMLINK_NOFOLLOW
+#define AT_SYMLINK_NOFOLLOW 0x100
+#endif
+#ifndef AT_REMOVEDIR
+#define AT_REMOVEDIR 0x200
+#endif
+#ifndef AT_EACCESS
+#define AT_EACCESS AT_REMOVEDIR
+#endif
+#ifndef AT_SYMLINK_FOLLOW
+#define AT_SYMLINK_FOLLOW 0x400
+#endif
+#ifndef AT_NO_AUTOMOUNT
+#define AT_NO_AUTOMOUNT 0x800
+#endif
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
 #define O_TRUNC 01000
 #define O_CLOEXEC 02000000
 #define O_PATH 010000000
@@ -27133,6 +27151,27 @@ typedef b64 ptrdiff_t;
 // O_TRUNC. FILE_WRITE already carries it; 0200 was O_EXCL, which
 // refused to open any file that already existed.
 #define FILE_TRUNCATE 01000
+
+// POSIX spellings of the same bits. FILE_WRITE and FILE_APPEND are
+// combinations; fopen still needs the individual O_WRONLY and O_APPEND.
+#ifndef O_RDONLY
+#define O_RDONLY FILE_READ
+#endif
+#ifndef O_WRONLY
+#define O_WRONLY 01
+#endif
+#ifndef O_RDWR
+#define O_RDWR FILE_READ_WRITE
+#endif
+#ifndef O_CREAT
+#define O_CREAT FILE_CREATE
+#endif
+#ifndef O_EXCL
+#define O_EXCL FILE_EXCLUSIVE
+#endif
+#ifndef O_APPEND
+#define O_APPEND 02000
+#endif
 
 /*
         mmap's own numbers, which these were not.
@@ -27159,6 +27198,11 @@ typedef b64 ptrdiff_t;
 #define FILE_SEEK_SET 0
 #define FILE_SEEK_CUR 1
 #define FILE_SEEK_END 2
+#ifndef SEEK_SET
+#define SEEK_SET FILE_SEEK_SET
+#define SEEK_CUR FILE_SEEK_CUR
+#define SEEK_END FILE_SEEK_END
+#endif
 
 #include "platform/syscall.inc"
 #include "platform/any.inc"

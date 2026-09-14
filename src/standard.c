@@ -961,23 +961,6 @@ typedef struct stat
 #define S_ISSOCK(mode) (((mode) & S_IFMT) == S_IFSOCK)
 #endif
 
-//      The *at flags. AT_FDCWD is already in library.c and is not repeated.
-#ifndef AT_SYMLINK_NOFOLLOW
-#define AT_SYMLINK_NOFOLLOW 0x100
-#endif
-#ifndef AT_EACCESS
-#define AT_EACCESS 0x200
-#endif
-#ifndef AT_REMOVEDIR
-#define AT_REMOVEDIR 0x200
-#endif
-#ifndef AT_SYMLINK_FOLLOW
-#define AT_SYMLINK_FOLLOW 0x400
-#endif
-#ifndef AT_EMPTY_PATH
-#define AT_EMPTY_PATH 0x1000
-#endif
-
 #ifndef F_OK
 #define F_OK 0
 #define X_OK 1
@@ -989,27 +972,12 @@ typedef struct stat
 #define MAP_FAILED address_bad
 #endif
 
-#ifndef SEEK_SET
-#define SEEK_SET FILE_SEEK_SET
-#define SEEK_CUR FILE_SEEK_CUR
-#define SEEK_END FILE_SEEK_END
-#endif
-
 //      The bit that makes O_TMPFILE create something, which is the second
 //      flag after O_CREAT that makes open read a mode argument. O_TMPFILE
 //      itself is this or-ed with O_DIRECTORY, whose value differs between
 //      arm64 and the other two, so the create bit is what is tested.
 #ifndef O_TMPFILE_CREATE
 #define O_TMPFILE_CREATE 020000000
-#endif
-
-#ifndef O_RDONLY
-#define O_RDONLY 00
-#define O_WRONLY 01
-#define O_RDWR 02
-#define O_CREAT 0100
-#define O_EXCL 0200
-#define O_APPEND 02000
 #endif
 
 #ifndef WNOHANG
@@ -12169,29 +12137,6 @@ fn free(address_any block);
 #define BUFSIZ 4096
 #define STREAM_DYNAMIC_BUFFER (BUFSIZ - sizeof(positive))
 
-#ifndef SEEK_SET
-#define SEEK_SET 0
-#define SEEK_CUR 1
-#define SEEK_END 2
-#endif
-
-/*
-        The open(2) bits, spelled out rather than reused.
-
-        library.c has FILE_READ, FILE_WRITE and the rest, but they are
-        combinations -- FILE_WRITE is O_WRONLY|O_CREAT|O_TRUNC in one name --
-        and fopen needs the individual bits so that "a" can ask for append
-        without truncate and "r+" can ask for read-write without create. These
-        are the asm-generic values, identical on all three targets.
-*/
-#define stream_open_read_only 00
-#define stream_open_write_only 01
-#define stream_open_read_write 02
-#define stream_open_create 0100
-#define stream_open_exclusive 0200
-#define stream_open_truncate 01000
-#define stream_open_append 02000
-
 // rw-rw-rw- before the process umask, which is what fopen("w") creates with.
 #define stream_create_permissions 0666
 
@@ -12654,19 +12599,19 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
                 errno = EINVAL;
                 return false;
         }
-        address_to open_flags = update ? stream_open_read_write
-                                : kind == 'r' ? stream_open_read_only
-                                              : stream_open_write_only;
+        address_to open_flags = update ? O_RDWR
+                                : kind == 'r' ? O_RDONLY
+                                              : O_WRONLY;
         address_to stream_flags = update ? STREAM_READABLE | STREAM_WRITABLE
                                   : kind == 'r' ? STREAM_READABLE : STREAM_WRITABLE;
         if (kind != 'r')
-                address_to open_flags |= stream_open_create |
-                    (kind == 'a' ? stream_open_append : stream_open_truncate);
+                address_to open_flags |= O_CREAT |
+                    (kind == 'a' ? O_APPEND : O_TRUNC);
         if (kind == 'a')
                 address_to stream_flags |= STREAM_APPEND;
 
         if (exclusive)
-                address_to open_flags |= stream_open_exclusive;
+                address_to open_flags |= O_EXCL;
 
         if (close_on_exec)
                 address_to open_flags |= O_CLOEXEC;
@@ -12798,9 +12743,9 @@ stream address_to stream_adopt(b32 descriptor, string_address mode)
                 errno = EINVAL;
                 return null;
         }
-        if ((stream_flags & STREAM_APPEND) && !(flags & stream_open_append) &&
+        if ((stream_flags & STREAM_APPEND) && !(flags & O_APPEND) &&
             error_result(system_call_3(syscall(fcntl), (positive)descriptor, 4,
-                                        (positive)flags | stream_open_append)) < 0)
+                                        (positive)flags | O_APPEND)) < 0)
                 return null;
         return stream_attach(descriptor, stream_flags);
 }

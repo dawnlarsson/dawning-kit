@@ -81,12 +81,6 @@ static bool regex_find(p8 mode, string_address text, positive length, positive f
 
 #define FILE_BLOCK 4096
 
-#define AT_SYMLINK_NOFOLLOW 0x100
-#define AT_REMOVEDIR 0x200
-#define AT_SYMLINK_FOLLOW 0x400
-#define AT_NO_AUTOMOUNT 0x800
-#define AT_EMPTY_PATH 0x1000
-
 #define ERROR_NOT_PERMITTED 1
 #define ERROR_NO_ENTRY 2
 #define ERROR_NO_PROCESS 3
