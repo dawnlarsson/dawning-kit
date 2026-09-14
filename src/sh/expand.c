@@ -137,10 +137,7 @@ static bool shell_utf8_on()
 static inline INLINE PURE bool expand_bytes_ascii(string_address text,
                                                   positive size)
 {
-        while (size--)
-                if ((p8)*text++ >= 0x80)
-                        return false;
-        return true;
+        return memory_escape_index(text, size, HEX_HIGH) == size;
 }
 
 static inline INLINE positive expand_character_count(string_address text,
@@ -893,29 +890,35 @@ static PURE bool glob_extended_anywhere(string_address pattern)
         }
 }
 
+// An escaped byte or a bracket set closed before bound, which a group scan
+// steps over whole: one byte past it, or nothing when at begins neither.
+static PURE string_address glob_unit_end(string_address at,
+                                         string_address bound)
+{
+        string_address close;
+
+        if (string_is(at, '\\') && at + 1 < bound)
+                return at + 2;
+        if (string_is(at, '[') && (close = expand_set_end(at)) && close < bound)
+                return close + 1;
+        return null;
+}
+
 // Where the group whose head is at ends, one byte past its parenthesis, or
 // nothing when it never closes.
 static PURE string_address glob_group_end(string_address at)
 {
+        string_address bound = at + string_length(at);
         string_address step = at;
+        string_address past;
         positive depth = 0;
 
-        while (string_get(step))
+        while (step < bound)
         {
-                if (string_is(step, '\\') && string_get(step + 1))
+                if ((past = glob_unit_end(step, bound)))
                 {
-                        step += 2;
+                        step = past;
                         continue;
-                }
-
-                if (string_is(step, '['))
-                {
-                        string_address close = expand_set_end(step);
-                        if (close)
-                        {
-                                step = close + 1;
-                                continue;
-                        }
                 }
 
                 if (string_is(step, '('))
@@ -938,24 +941,15 @@ static bool glob_alternatives(string_address body, string_address body_end,
 {
         string_address start = body;
         string_address at = body;
+        string_address past;
         positive depth = 0;
 
         while (at < body_end)
         {
-                if (string_is(at, '\\') && at + 1 < body_end)
+                if ((past = glob_unit_end(at, body_end)))
                 {
-                        at += 2;
+                        at = past;
                         continue;
-                }
-
-                if (string_is(at, '['))
-                {
-                        string_address close = expand_set_end(at);
-                        if (close && close < body_end)
-                        {
-                                at = close + 1;
-                                continue;
-                        }
                 }
 
                 if (string_is(at, '('))
@@ -1894,6 +1888,31 @@ static COLD fn expand_unbound(expand_reference reference, b32 indirect)
                       expand_reference_text(reference));
         expand_fatal_status(expand_nounset_status(indirect));
 }
+
+//      ${name:} names no offset at all.
+static COLD fn expand_slice_refused(expand_reference reference)
+{
+        expand_where();
+        if (!shell_bash_compat)
+                writer_stderr_once(str("Bad substitution\n"));
+        else
+                string_format(writer_stderr_once, "${%s:}: bad substitution\n",
+                              expand_reference_text(reference));
+        expand_fatal_status(shell_bash_compat ? 1 : 2);
+}
+
+//      An assignment made inside an expansion that the variable table refused.
+static COLD fn expand_assign_refused(expand_reference reference)
+{
+        string_address name = expand_reference_text(reference);
+
+        expand_where();
+        string_format(writer_stderr_once,
+                      !env_readonly(name) ? "%s: cannot assign\n"
+                      : shell_bash_compat ? "%s: readonly variable\n"
+                                          : "%s: is read only\n",
+                      name);
+}
 static COLD fn expand_slice_error();
 static string_address expand_tilde(string_address step, bool assignment);
 
@@ -2330,17 +2349,9 @@ static bipolar arith_store(expand_reference reference, bipolar value)
         bipolar_into_string(written, value);
         if (!expand_assign_named(reference, written))
         {
-                string_address name = expand_reference_text(reference);
                 arith_bad = true;
                 arith_said = true;
-                shell_diagnostic_where_to(writer_stderr_once);
-                string_format(writer_stderr_once,
-                              !env_readonly(name)
-                                  ? "%s: cannot assign\n"
-                                  : shell_bash_compat
-                                        ? "%s: readonly variable\n"
-                                        : "%s: is read only\n",
-                              name);
+                expand_assign_refused(reference);
 
                 if (!arith_bash_mode)
                         expand_fatal_status(2);
@@ -4096,48 +4107,18 @@ static string_address expand_command(string_address step, bool quoted)
 static fn expand_backtick_dash_cut(p8 address_to text)
 {
         string_address step = text;
-        bool single = false;
-        bool dquote = false;
 
         while (string_get(step))
         {
-                p8 c = string_get(step);
-
-                if (single)
+                if (string_is(step, '\\') && string_is(step + 1, '$') &&
+                    string_is(step + 2, '('))
                 {
-                        if (c == '\'')
-                                single = false;
+                        step[2] = end;
+                        return;
+                }
+
+                if (!lex_skip_held(address_of step))
                         step++;
-                        continue;
-                }
-
-                if (c == '\\' && string_get(step + 1))
-                {
-                        if (!dquote && string_get(step + 1) == '$' &&
-                            string_get(step + 2) == '(')
-                        {
-                                step[2] = end;
-                                return;
-                        }
-
-                        step += 2;
-                        continue;
-                }
-
-                if (dquote)
-                {
-                        if (c == '"')
-                                dquote = false;
-                        step++;
-                        continue;
-                }
-
-                if (c == '\'')
-                        single = true;
-                else if (c == '"')
-                        dquote = true;
-
-                step++;
         }
 }
 
@@ -5227,14 +5208,7 @@ static bool expand_slice_bounds(expand_reference reference, string_address expre
         }
         else if (!separator)
         {
-                expand_where();
-                if (!shell_bash_compat)
-                        writer_stderr_once(str("Bad substitution\n"));
-                else
-                        string_format(writer_stderr_once,
-                                      "${%s:}: bad substitution\n",
-                                      expand_reference_text(reference));
-                expand_fatal_status(shell_bash_compat ? 1 : 2);
+                expand_slice_refused(reference);
                 return false;
         }
 
@@ -5355,14 +5329,7 @@ static fn expand_substring(expand_reference reference, string_address expression
            that and expand to nothing. */
         if (!string_get(expression) && !expand_substring_separator(expression))
         {
-                expand_where();
-                if (!shell_bash_compat)
-                        writer_stderr_once(str("Bad substitution\n"));
-                else
-                        string_format(writer_stderr_once,
-                                      "${%s:}: bad substitution\n",
-                                      expand_reference_text(reference));
-                expand_fatal_status(shell_bash_compat ? 1 : 2);
+                expand_slice_refused(reference);
                 return;
         }
 
@@ -5786,38 +5753,19 @@ static const b8 expand_ansi_plain[STRING_SET_BYTES] = {
 static positive shell_code_point_bytes(p8 letter, positive wide, positive code,
                                        p8 address_to out)
 {
-        positive used = 0;
+        //      Bash spells a surrogate as it would any other code point, and
+        //      the library encoder refuses one: its neighbour a block down has
+        //      the same tail and a lead byte one less.
+        bool surrogate = code >= 0xd800 && code <= 0xdfff;
+        positive used = code < 0x80 || shell_utf8_on()
+                            ? memory_utf8_encode(out, CODE_POINT_MAX_BYTES,
+                                                 code - (surrogate ? 0x1000 : 0))
+                            : 0;
         positive at;
 
-        if (code < 0x80)
+        if (used)
         {
-                out[used++] = (p8)code;
-                return used;
-        }
-
-        if (code <= 0x10ffff && shell_utf8_on())
-        {
-                if (code < 0x800)
-                {
-                        out[used++] = (p8)(0xc0 | (code >> 6));
-                }
-                else
-                {
-                        if (code < 0x10000)
-                        {
-                                out[used++] = (p8)(0xe0 | (code >> 12));
-                        }
-                        else
-                        {
-                                out[used++] = (p8)(0xf0 | (code >> 18));
-                                out[used++] =
-                                    (p8)(0x80 | ((code >> 12) & 0x3f));
-                        }
-
-                        out[used++] = (p8)(0x80 | ((code >> 6) & 0x3f));
-                }
-
-                out[used++] = (p8)(0x80 | (code & 0x3f));
+                out[0] = (p8)(out[0] + surrogate);
                 return used;
         }
 
@@ -7815,17 +7763,7 @@ static string_address expand_braced_body(string_address step,
 
                                 if (!expand_assign_named(reference, made))
                                 {
-                                        name = expand_reference_text(reference);
-                                        expand_where();
-                                        string_format(
-                                            writer_stderr_once,
-                                            !env_readonly(name)
-                                                ? "%s: cannot assign\n"
-                                                : shell_bash_compat
-                                                      ? "%s: readonly "
-                                                        "variable\n"
-                                                      : "%s: is read only\n",
-                                            name);
+                                        expand_assign_refused(reference);
                                         expand_fatal_status(2);
                                         return close + 1;
                                 }
