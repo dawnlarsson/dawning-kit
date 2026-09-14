@@ -2452,6 +2452,10 @@ typedef struct
 
 static bipolar file_open_same(bipolar directory, string_address name,
                               file_facts address_to expected, positive flags);
+static bipolar file_open_same_facts(bipolar directory, string_address name,
+                                    file_facts address_to expected,
+                                    positive flags,
+                                    file_facts address_to opened);
 
 bool file_walk_open(file_walk address_to walk, bipolar directory, string_address path)
 {
@@ -2584,7 +2588,8 @@ PURE bool file_is_dot(string_address name)
         links into itself runs out of before the stack does.
 */
 typedef fn(address_to file_visit)(bipolar directory, string_address name,
-                                  string_address shown);
+                                  string_address shown,
+                                  file_facts address_to known);
 
 /*
         Whether a directory is visited before or after what is under it.
@@ -2603,22 +2608,44 @@ static bool file_change_after_contents;
    attack, and its default has to be the safe one. */
 static bool file_change_descended;
 
+/* True while the directory a visit's name sits in can be written by nobody
+   but the caller and root. Nobody else can exchange that name between a
+   look and a change, so the visit changes it through the name with
+   AT_SYMLINK_NOFOLLOW, one call, where anywhere else it pins the object with
+   an open and a second look first -- which is what made chmod -R three looks
+   an entry against the reference's one. The walk decides it from the
+   directory it opened, after a visit before the contents has given that
+   directory its new mode. */
+static bool file_change_trusted;
+static p32 file_change_user;
+
 static fn file_change_walk_as(bipolar directory, string_address name,
                               string_address shown, positive depth,
                               string_address program, b32 address_to status,
-                              file_visit visit, bool report_walk_errors)
+                              file_visit visit, bool report_walk_errors,
+                              p8 type, bool trusted_parent)
 {
         file_facts facts;
-        bool here = file_look(directory, name, AT_SYMLINK_NOFOLLOW,
-                              address_of facts) &&
-                    (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        //      A kind the listing gave that is not a directory is not looked
+        //      at here: the visit looks for itself, and a name that changed
+        //      kind since is what that look sees. What the walk did look at
+        //      is handed over, so no name is looked at twice.
+        bool looked = (type == 0 || type == DT_DIR) &&
+                      file_look(directory, name, AT_SYMLINK_NOFOLLOW,
+                                address_of facts);
+        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        if (depth == FILE_MAX_DEPTH)
+                file_change_user = (p32)system_call(syscall(geteuid));
 
         //      A name reached below the top of the walk is a descendant, and
         //      the depth is what says so: the roots enter at FILE_MAX_DEPTH.
         file_change_descended = depth != FILE_MAX_DEPTH;
+        file_change_trusted = trusted_parent;
 
         if (!here || !file_change_after_contents)
-                visit(directory, name, shown);
+                visit(directory, name, shown, looked ? address_of facts : null);
 
         if (!here)
                 return;
@@ -2632,9 +2659,16 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         }
 
         file_walk walk;
+        file_facts opened;
 
-        if (!file_walk_open_found_same(address_of walk, directory, name,
-                                       address_of facts))
+        walk.handle = file_open_same_facts(
+            directory, name, address_of facts,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW, address_of opened);
+        walk.error = walk.handle < 0 ? walk.handle : 0;
+        walk.have = 0;
+        walk.at = 0;
+
+        if (walk.handle < 0)
         {
                 if (report_walk_errors)
                 {
@@ -2644,10 +2678,16 @@ static fn file_change_walk_as(bipolar directory, string_address name,
                 }
 
                 if (file_change_after_contents)
-                        visit(directory, name, shown);
+                {
+                        file_change_trusted = trusted_parent;
+                        visit(directory, name, shown, address_of facts);
+                }
 
                 return;
         }
+
+        bool trusted = (opened.owner == file_change_user || opened.owner == 0) &&
+                       !(opened.mode & 0022);
 
         struct linux_dirent64 address_to entry;
 
@@ -2670,7 +2710,8 @@ static fn file_change_walk_as(bipolar directory, string_address name,
 
                 file_change_walk_as(walk.handle, entry->d_name, below,
                                     depth - 1, program, status, visit,
-                                    report_walk_errors);
+                                    report_walk_errors, entry->d_type,
+                                    trusted);
         }
 
         if (report_walk_errors && walk.error < 0)
@@ -2685,7 +2726,8 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         if (file_change_after_contents)
         {
                 file_change_descended = depth != FILE_MAX_DEPTH;
-                visit(directory, name, shown);
+                file_change_trusted = trusted_parent;
+                visit(directory, name, shown, address_of facts);
         }
 }
 
@@ -2714,11 +2756,13 @@ static fn file_change_paths(positive first, positive count, bool recursive,
 
                 if (recursive)
                         file_change_walk_as(AT_FDCWD, path, path, FILE_MAX_DEPTH,
-                                            program, status, visit, false);
+                                            program, status, visit, false, 0,
+                                            false);
                 else
                 {
                         file_change_descended = false;
-                        visit(AT_FDCWD, path, path);
+                        file_change_trusted = false;
+                        visit(AT_FDCWD, path, path, null);
                 }
         }
 
@@ -3502,23 +3546,36 @@ static bipolar file_copy_sparse(bipolar in, bipolar out,
         return system_truncate_handle(out, facts->size) < 0 ? -1 : 1;
 }
 
-static bipolar file_open_same(bipolar directory, string_address name,
-                              file_facts address_to expected, positive flags)
+/* The open proven to be the object that was looked at, and what the kernel
+   says about it once opened, for a caller that wants the facts as they are
+   now rather than as they were at the look. */
+static bipolar file_open_same_facts(bipolar directory, string_address name,
+                                    file_facts address_to expected,
+                                    positive flags,
+                                    file_facts address_to opened)
 {
         bipolar handle = system_open_at(directory, name, flags | O_CLOEXEC);
-        file_facts opened;
         bipolar looked = handle < 0 ? handle :
                          file_look_code(handle, (string_address)"",
-                                        AT_EMPTY_PATH, address_of opened);
+                                        AT_EMPTY_PATH, opened);
 
-        if (looked < 0 || !file_same_identity(expected, address_of opened) ||
-            (expected->mode & MODE_FORMAT) != (opened.mode & MODE_FORMAT))
+        if (looked < 0 || !file_same_identity(expected, opened) ||
+            (expected->mode & MODE_FORMAT) != (opened->mode & MODE_FORMAT))
         {
                 if (handle >= 0)
                         system_close(handle);
                 return looked < 0 ? looked : -ERROR_AGAIN;
         }
         return handle;
+}
+
+static bipolar file_open_same(bipolar directory, string_address name,
+                              file_facts address_to expected, positive flags)
+{
+        file_facts opened;
+
+        return file_open_same_facts(directory, name, expected, flags,
+                                    address_of opened);
 }
 
 /* facts must have been read from in itself, so the extent probe and the
@@ -11683,7 +11740,8 @@ static fn chmod_said(string_address shown, positive was, positive now)
         log("\n", 1);
 }
 
-static fn chmod_one(bipolar directory, string_address name, string_address shown)
+static fn chmod_one(bipolar directory, string_address name, string_address shown,
+                    file_facts address_to known)
 {
         file_facts facts;
         // A name on the command line is followed, because Linux has no mode
@@ -11695,7 +11753,12 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         // changes /etc.
         bool operand = directory == AT_FDCWD;
         bool through = operand && chmod_selected.dereference != 'h';
-        bipolar looked = file_look_code(directory, name,
+        bipolar looked = 0;
+
+        if (known && !through)
+                facts = *known;
+        else
+                looked = file_look_code(directory, name,
                                         through ? 0 : AT_SYMLINK_NOFOLLOW,
                                         address_of facts);
 
@@ -11760,14 +11823,24 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                 return;
         }
 
-        bipolar handle = file_open_same(
-            directory, name, address_of facts,
-            O_PATH | (through ? 0 : O_NOFOLLOW));
-        bipolar done = handle < 0 ? handle : system_call_4(
-            syscall(fchmodat2), (positive)handle,
-            (positive)(string_address)"", wanted, AT_EMPTY_PATH);
-        if (handle >= 0)
-                system_close(handle);
+        bipolar done;
+
+        if (file_change_trusted && !through && !operand)
+                done = system_call_4(syscall(fchmodat2), (positive)directory,
+                                     (positive)name, wanted,
+                                     AT_SYMLINK_NOFOLLOW);
+        else
+        {
+                bipolar handle = file_open_same(
+                    directory, name, address_of facts,
+                    O_PATH | (through ? 0 : O_NOFOLLOW));
+
+                done = handle < 0 ? handle : system_call_4(
+                    syscall(fchmodat2), (positive)handle,
+                    (positive)(string_address)"", wanted, AT_EMPTY_PATH);
+                if (handle >= 0)
+                        system_close(handle);
+        }
 
         if (done < 0)
         {
@@ -12038,7 +12111,8 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
                       writer_terminal_quoted_name, shown, before, who);
 }
 
-static fn chown_one(bipolar directory, string_address name, string_address shown)
+static fn chown_one(bipolar directory, string_address name, string_address shown,
+                    file_facts address_to known)
 {
         //      -h acts on the link everywhere. Otherwise a link the walk
         //      descended into is followed only where -L or -H asked for it;
@@ -12050,7 +12124,43 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
                     && chown_selected.traverse != 'H')
             ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
-        bipolar looked = file_look_code(directory, name, through, address_of facts);
+        bipolar looked = 0;
+
+        /*      Nothing below reads the facts unless -v, -c or --from asks,
+                and where the name cannot be exchanged the change is made
+                through it: the reference does not look at such a name
+                either, and the tree costs one call a name. */
+        if (file_change_trusted && through == AT_SYMLINK_NOFOLLOW &&
+            directory != AT_FDCWD && !chown_loud && !chown_changes &&
+            chown_from_user < 0 && chown_from_group < 0)
+        {
+                bipolar done = system_change_owner_at(
+                    directory, name, chown_user, chown_group,
+                    AT_SYMLINK_NOFOLLOW);
+
+                if (done < 0)
+                {
+                        if (!chown_quiet)
+                        {
+                                string_format(log_error,
+                                              chown_groups_only
+                                                  ? "%s: changing group of '"
+                                                  : "%s: changing ownership of '",
+                                              chown_program);
+                                string_format(log_error, "%w': %s\n",
+                                              writer_terminal_quoted_name, shown,
+                                              file_reason(done));
+                        }
+                        chown_status = 1;
+                }
+                return;
+        }
+
+        if (known && through == AT_SYMLINK_NOFOLLOW)
+                facts = *known;
+        else
+                looked = file_look_code(directory, name, through,
+                                        address_of facts);
 
         // A name that is not there, or one the caller may not look at, is
         // not an ownership that would not change: the reference says it
@@ -12084,13 +12194,26 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
                 return;
         }
 
-        bipolar handle = file_open_same(directory, name, address_of facts,
-                                        O_PATH | (through ? 0 : O_NOFOLLOW));
-        bipolar done = handle < 0 ? handle : system_change_owner_at(
-            handle, (string_address)"", chown_user, chown_group,
-            AT_EMPTY_PATH | through);
-        if (handle >= 0)
-                system_close(handle);
+        bipolar done;
+
+        if (file_change_trusted && through == AT_SYMLINK_NOFOLLOW &&
+            directory != AT_FDCWD)
+                done = system_change_owner_at(directory, name, chown_user,
+                                              chown_group,
+                                              AT_SYMLINK_NOFOLLOW);
+        else
+        {
+                //      through is the AT_ flag: set, it says not to follow.
+                bipolar handle = file_open_same(
+                    directory, name, address_of facts,
+                    O_PATH | (through ? O_NOFOLLOW : 0));
+
+                done = handle < 0 ? handle : system_change_owner_at(
+                    handle, (string_address)"", chown_user, chown_group,
+                    AT_EMPTY_PATH | through);
+                if (handle >= 0)
+                        system_close(handle);
+        }
 
         if (done < 0)
         {
@@ -16801,10 +16924,15 @@ static bool hardlink_seen_prepare(positive wanted)
 }
 
 static fn hardlink_visit(bipolar directory, string_address name,
-                         string_address shown)
+                         string_address shown, file_facts address_to known)
 {
         file_facts facts;
-        bipolar looked = file_look_code(directory, name, AT_SYMLINK_NOFOLLOW,
+        bipolar looked = 0;
+
+        if (known)
+                facts = *known;
+        else
+                looked = file_look_code(directory, name, AT_SYMLINK_NOFOLLOW,
                                         address_of facts);
 
         if (looked < 0)
@@ -17407,7 +17535,7 @@ static b32 file_hardlink()
                 file_change_walk_as(AT_FDCWD, path, path, FILE_MAX_DEPTH,
                                     (string_address)"hardlink",
                                     address_of hardlink_status, hardlink_visit,
-                                    true);
+                                    true, 0, false);
         }
 
         if (hardlink_file_count > 1)
