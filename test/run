@@ -179,6 +179,38 @@ lost()
                 "$test_case_width" "$1" "$2"
 }
 
+same()
+{
+        if [ "$2" = "$3" ]; then
+                won
+        else
+                lost "$1" "want [$2] got [$3]"
+        fi
+}
+
+#       A lane counted in one piece starts here, with the name its count goes
+#       into the tally under and the widths of a failure line, and ends with
+#       counted: the count printed and tallied, then failed before not run
+#       before passed.
+counting()
+{
+        pass=0
+        fail=0
+        current=$1
+        section_name=$1
+        section_pass=0
+        section_total=0
+        test_group_width=${2:-12}
+        test_case_width=${3:-24}
+}
+
+counted()
+{
+        section
+        [ "$fail" = 0 ] || return 1
+        return "${1:-0}"
+}
+
 #       The link a spark program gets, which is what library.c ships inside.
 #       Without the script the placement is the toolchain's default, and
 #       riscv64 does not survive that. -flto is not here on purpose: the
@@ -1822,23 +1854,31 @@ target_tools()
         if [ "$host_system" = Linux ] && [ "$host_arch" = "$target" ]; then
                 target_compiler=$compiler
                 target_runner=
-                return 0
+        else
+                case $target in
+                x86_64)  target_runner=qemu-x86_64 ;;
+                arm64)   target_runner=qemu-aarch64 ;;
+                riscv64) target_runner=qemu-riscv64 ;;
+                esac
+                target_compiler=${target_runner#qemu-}-linux-gnu-gcc
         fi
 
-        case $target in
-        x86_64)
-                target_compiler=x86_64-linux-gnu-gcc
-                target_runner=qemu-x86_64
-                ;;
-        arm64)
-                target_compiler=aarch64-linux-gnu-gcc
-                target_runner=qemu-aarch64
-                ;;
-        riscv64)
-                target_compiler=riscv64-linux-gnu-gcc
-                target_runner=qemu-riscv64
-                ;;
-        esac
+        #       A target whose tools are not here did not run, and says so.
+        for tool in $target_compiler $target_runner; do
+                command -v "$tool" > /dev/null 2>&1 ||
+                        { note "$target: NOT RUN -- no $tool"; return 2; }
+        done
+}
+
+#       A build with the target's compiler standing in for the host's.
+target_build()
+{
+        target_saved=$compiler
+        compiler=$target_compiler
+        "$@"
+        target_built=$?
+        compiler=$target_saved
+        return "$target_built"
 }
 
 verify_one() { freestanding_checks_one verify verify "$@"; }
@@ -1875,29 +1915,13 @@ KNOWN_FILES="exact_set needle bounded exact_scan exact_prefix exact_ascii_case h
 known_one()
 {
         name=$1
-        cross=$2
         runner=$3
         checks=0
         bad=0
 
-        if ! command -v "$cross" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $cross"
-                return 2
-        fi
-
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $runner"
-                return 2
-        fi
-
-        saved=$compiler
-        compiler=$cross
-
         for one in $KNOWN_FILES; do
-                freestanding_check "$one" "$work/known.$name.$one" "$name" || {
-                        compiler=$saved
-                        return 1
-                }
+                target_build freestanding_check "$one" \
+                        "$work/known.$name.$one" "$name" || return 1
 
                 $runner "$work/known.$name.$one" > "$work/known.$name.$one.out" 2>&1
                 status=$?
@@ -1914,14 +1938,12 @@ known_one()
                         bad=$((bad + ${line#* }))
                 elif [ "$status" != 0 ]; then
                         note "$name: $one did not say how it went"
-                        compiler=$saved
                         return 1
                 else
                         checks=$((checks + 1))
                 fi
         done
 
-        compiler=$saved
         tally "known-$name" "$((checks - bad))" "$checks"
 
         [ "$bad" = 0 ]
@@ -2059,63 +2081,21 @@ lane_known()
 #
 #       The reference needs glibc and a host compiler; without them the lane
 #       reports that it did not run rather than passing on nothing. Each
-#       target needs its cross compiler and its emulator, and a target that
-#       has neither is skipped by name.
+#       target needs its cross compiler and its emulator, and a target
+#       without them is named, and the lane did not run.
 #
 lane_spool()
 (
 work=$(mktemp -d "${TMPDIR:-/tmp}/dawning-spool.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
-
-report() {
-        if [ "$1" = ok ]; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-10s %-34s %s\n' spool "$2" "$3"
-}
-
-finish() {
-        printf '  %-12s %s of %s\n' spool "$pass" "$((pass + fail))"
-        [ -z "${TEST_TALLY:-}" ] ||
-                printf 'spool %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
-        [ "$fail" = 0 ]
-}
-
+counting spool 10 34
 host=${CC:-gcc}
 
 if ! command -v "$host" > /dev/null 2>&1; then
         printf '  no host compiler, the reference cannot be built -- not run\n'
         exit 2
 fi
-
-#       The link a spark program gets. Kept in step with test/run's own
-#       freestanding: no libgcc under an arm64 atomic, and the documented
-#       RISC-V floor rather than whatever the driver defaults to.
-build_ours() {
-        check=$1
-        output=$2
-        target=$3
-        cross=$4
-        where=$5
-
-        case $target in
-        x86_64)  set -- -march=x86-64 ;;
-        arm64)   set -- -mno-outline-atomics ;;
-        riscv64) set -- -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
-        *)       set -- ;;
-        esac
-
-        $cross -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-                -fno-builtin "$@" -DWORK="\"$where\"" -w -T src/build/spark.ld \
-                -Wl,-e,_start -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
-                -o "$output" "-DCHECK_$check" test/checks.c 2> "$output.err"
-}
 
 #
 #       The reference, built and run once.
@@ -2140,73 +2120,36 @@ fi
 #
 #       Each target, built, run, and diffed against it.
 #
-missing=0
-
-for target in x86_64 arm64 riscv64; do
-        case $target in
-        x86_64)
-                cross=$host
-                runner=
-                ;;
-        arm64)
-                cross=aarch64-linux-gnu-gcc
-                runner=qemu-aarch64
-                ;;
-        riscv64)
-                cross=riscv64-linux-gnu-gcc
-                runner=qemu-riscv64
-                ;;
-        esac
-
-        if ! command -v "$cross" > /dev/null 2>&1; then
-                printf '  %-10s no %s -- skipped\n' spool "$cross"
-                missing=1
-                continue
-        fi
-
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                printf '  %-10s no %s -- skipped\n' spool "$runner"
-                missing=1
-                continue
-        fi
-
+spool_one()
+{
+        target=$1
+        runner=$3
         mkdir -p "$work/$target"
 
-        if ! build_ours spool "$work/spool.$target" "$target" \
-                "$cross" "$work/$target"
+        if ! target_build freestanding_check spool "$work/spool.$target" \
+                "$target" "-DWORK=\"$work/$target\""
         then
-                report bad "$target" "did not build"
-                sed 's/^/    /' "$work/spool.$target.err" | head -10
-                continue
+                lost "$target" "did not build"
+                return 0
         fi
 
-        if [ -n "$runner" ]; then
-                if $runner "$work/spool.$target" > "$work/$target.out" 2>&1
-                then
-                        report ok
-                else
-                        report bad "$target" "internal invariant failed"
-                fi
+        if $runner "$work/spool.$target" > "$work/$target.out" 2>&1; then
+                won
         else
-                if "$work/spool.$target" > "$work/$target.out" 2>&1
-                then
-                        report ok
-                else
-                        report bad "$target" "internal invariant failed"
-                fi
+                lost "$target" "internal invariant failed"
         fi
 
         if [ ! -s "$work/$target.out" ]; then
-                report bad "$target" "printed nothing"
-                continue
+                lost "$target" "printed nothing"
+                return 0
         fi
 
         if diff -u "$work/reference.out" "$work/$target.out" \
                 > "$work/$target.diff" 2>&1
         then
-                report ok
+                won
         else
-                report bad "$target" "the trace differs from glibc"
+                lost "$target" "the trace differs from glibc"
                 sed 's/^/    /' "$work/$target.diff" | head -30
         fi
 
@@ -2217,16 +2160,15 @@ for target in x86_64 arm64 riscv64; do
         if diff -r "$work/reference" "$work/$target" \
                 > "$work/$target.tree" 2>&1
         then
-                report ok
+                won
         else
-                report bad "$target" "the files left behind differ"
+                lost "$target" "the files left behind differ"
                 sed 's/^/    /' "$work/$target.tree" | head -20
         fi
-done
+}
 
-finish || exit 1
-[ "$missing" = 0 ] || exit 2
-exit 0
+target_lane spool_one
+counted $?
 )
 
 #
@@ -2255,64 +2197,21 @@ exit 0
 #
 #       The reference needs glibc and a host compiler; without them the lane
 #       reports that it did not run rather than passing on nothing. Each
-#       target needs its cross compiler and its emulator, and a target that
-#       has neither is skipped by name.
+#       target needs its cross compiler and its emulator, and a target
+#       without them is named, and the lane did not run.
 #
 lane_stream()
 (
 work=$(mktemp -d "${TMPDIR:-/tmp}/dawning-stream.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
-
-report() {
-        if [ "$1" = ok ]; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-10s %-34s %s\n' stream "$2" "$3"
-}
-
-finish() {
-        printf '  %-12s %s of %s\n' stream "$pass" "$((pass + fail))"
-        [ -z "${TEST_TALLY:-}" ] ||
-                printf 'stream %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
-        [ "$fail" = 0 ]
-}
-
+counting stream 10 34
 host=${CC:-gcc}
 
 if ! command -v "$host" > /dev/null 2>&1; then
         printf '  no host compiler, the reference cannot be built -- not run\n'
         exit 2
 fi
-
-#       The link a spark program gets. Kept in step with test/run's own
-#       freestanding: no libgcc under an arm64 atomic, and the documented
-#       RISC-V floor rather than whatever the driver defaults to.
-build_ours() {
-        check=$1
-        output=$2
-        target=$3
-        cross=$4
-        extra=$5
-
-        case $target in
-        x86_64)  set -- -march=x86-64 ;;
-        arm64)   set -- -mno-outline-atomics ;;
-        riscv64) set -- -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
-        *)       set -- ;;
-        esac
-
-        # shellcheck disable=SC2086
-        $cross -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-                -fno-builtin "$@" $extra -w -T src/build/spark.ld -Wl,-e,_start \
-                -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
-                -o "$output" "-DCHECK_$check" test/checks.c 2> "$output.err"
-}
 
 #
 #       The reference, built once.
@@ -2334,9 +2233,9 @@ $host -O2 -w -o "$work/b.reference" -DCHECK_stream_buffering_reference \
 
 "$work/t.reference" > "$work/t.reference.out" 2>&1
 if timeout 10 "$work/t.reference" --allocation; then
-        report ok 'reference allocation failure'
+        won
 else
-        report no 'reference allocation failure' 'fdopen lost descriptor or ENOMEM'
+        lost 'reference allocation failure' 'fdopen lost descriptor or ENOMEM'
 fi
 
 printf 'alpha\nbeta\n\ngamma' > "$work/input.txt"
@@ -2383,67 +2282,46 @@ held_on_terminal() {
         wait $held 2>/dev/null
 }
 
+#       won always succeeds, so each "&& won ||" below loses only on the test.
 reference_on_file=$(held_on_file "$work/b.reference")
-report "$([ "$reference_on_file" = 0 ] && echo ok || echo no)" \
-        'reference blocks on a file' "held $reference_on_file bytes, wanted 0"
+[ "$reference_on_file" = 0 ] && won ||
+        lost 'reference blocks on a file' "held $reference_on_file bytes, wanted 0"
 
 if [ "$terminal_ready" = yes ]; then
         reference_on_terminal=$(held_on_terminal "$work/b.reference")
-        report "$([ "$reference_on_terminal" = yes ] && echo ok || echo no)" \
-                'reference lines on a terminal' 'nothing had been written'
+        [ "$reference_on_terminal" = yes ] && won ||
+                lost 'reference lines on a terminal' 'nothing had been written'
 fi
 
 #
 #       Each target: build, run, diff.
 #
-for target in x86_64 arm64 riscv64; do
-        case $target in
-        x86_64)
-                cross=$host
-                runner=""
-                ;;
-        arm64)
-                cross=aarch64-linux-gnu-gcc
-                runner=qemu-aarch64
-                ;;
-        riscv64)
-                cross=riscv64-linux-gnu-gcc
-                runner=qemu-riscv64
-                ;;
-        esac
-
-        if ! command -v "$cross" > /dev/null 2>&1; then
-                printf '  %-10s %s\n' stream "$target: no $cross, skipped"
-                continue
-        fi
-
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                printf '  %-10s %s\n' stream "$target: no $runner, skipped"
-                continue
-        fi
-
+stream_one()
+{
+        target=$1
+        runner=$3
         mkdir -p "$work/$target"
 
-        if ! build_ours stream "$work/t.$target" "$target" "$cross" \
+        if ! target_build freestanding_check stream "$work/t.$target" "$target" \
                 "-DWORK=\"$work/$target\""; then
-                report no "$target build" "$(head -3 "$work/t.$target.err")"
-                continue
+                lost "$target build" "did not build"
+                return 0
         fi
 
         if [ -z "$runner" ]; then
                 if timeout 10 "$work/t.$target" --allocation; then
-                        report ok "$target allocation failure"
+                        won
                 else
-                        report no "$target allocation failure" 'fdopen lost descriptor or ENOMEM'
+                        lost "$target allocation failure" 'fdopen lost descriptor or ENOMEM'
                 fi
                 if command -v strace > /dev/null 2>&1; then
                         for stop in retval=0:0 error=ENOSPC:28 error=EINTR:4; do
                                 if timeout 10 strace -qq -o "$work/write-stop.trace" \
                                         -e "inject=write:${stop%:*}:when=1+" \
                                         "$work/t.$target" --write-stop "${stop#*:}"; then
-                                        report ok "$target write stop $stop"
+                                        won
                                 else
-                                        report no "$target write stop $stop" 'checked result, errno or spool descriptor leak'
+                                        lost "$target write stop $stop" 'checked result, errno or spool descriptor leak'
                                 fi
                         done
                 else
@@ -2451,80 +2329,76 @@ for target in x86_64 arm64 riscv64; do
                 fi
         fi
 
-        if ! build_ours stream_standard "$work/s.$target" "$target" \
-                "$cross" ""; then
-                report no "$target standard build" "$(head -3 "$work/s.$target.err")"
-                continue
+        if ! target_build freestanding_check stream_standard "$work/s.$target" "$target"; then
+                lost "$target standard build" "did not build"
+                return 0
         fi
 
-        if ! build_ours stream_buffering "$work/b.$target" "$target" \
-                "$cross" ""; then
-                report no "$target buffering build" "$(head -3 "$work/b.$target.err")"
-                continue
+        if ! target_build freestanding_check stream_buffering "$work/b.$target" "$target"; then
+                lost "$target buffering build" "did not build"
+                return 0
         fi
 
         if timeout 30 $runner "$work/t.$target" > "$work/t.$target.out" 2>&1; then
-                report ok "$target internal invariants"
+                won
         else
-                report no "$target internal invariants" "test returned failure"
+                lost "$target internal invariants" "test returned failure"
         fi
 
         if diff -q "$work/t.reference.out" "$work/t.$target.out" > /dev/null; then
-                report ok "$target file trace"
+                won
         else
-                report no "$target file trace" \
+                lost "$target file trace" \
                         "$(diff "$work/t.reference.out" "$work/t.$target.out" | head -6 | tr '\n' '|')"
         fi
 
         if diff -r "$work/reference" "$work/$target" > /dev/null 2>&1; then
-                report ok "$target files produced"
+                won
         else
-                report no "$target files produced" \
+                lost "$target files produced" \
                         "$(diff -r "$work/reference" "$work/$target" 2>&1 | head -4 | tr '\n' '|')"
         fi
 
         $runner "$work/s.$target" < "$work/input.txt" \
                 > "$work/s.$target.out" 2> "$work/s.$target.err" 3> "$work/s.$target.trace"
 
-        for part in out err trace; do
-                if diff -q "$work/s.reference.$part" "$work/s.$target.$part" > /dev/null; then
-                        report ok "$target standard on files ($part)"
-                else
-                        report no "$target standard on files ($part)" \
-                                "$(diff "$work/s.reference.$part" "$work/s.$target.$part" | head -4 | tr '\n' '|')"
-                fi
-        done
-
         printf 'alpha\nbeta\n\ngamma' |
                 $runner "$work/s.$target" \
                         2> "$work/p.$target.err" 3> "$work/p.$target.trace" |
                 cat > "$work/p.$target.out"
 
-        for part in out err trace; do
-                if diff -q "$work/p.reference.$part" "$work/p.$target.$part" > /dev/null; then
-                        report ok "$target standard on pipes ($part)"
-                else
-                        report no "$target standard on pipes ($part)" \
-                                "$(diff "$work/p.reference.$part" "$work/p.$target.$part" | head -4 | tr '\n' '|')"
-                fi
+        for shape in s:files p:pipes; do
+                for part in out err trace; do
+                        got=$work/${shape%:*}.$target.$part
+                        want=$work/${shape%:*}.reference.$part
+                        if diff -q "$want" "$got" > /dev/null; then
+                                won
+                        else
+                                lost "$target standard on ${shape#*:} ($part)" \
+                                        "$(diff "$want" "$got" | head -4 | tr '\n' '|')"
+                        fi
+                done
         done
 
         held=$(held_on_file $runner "$work/b.$target")
-        report "$([ "$held" = 0 ] && echo ok || echo no)" \
-                "$target blocks on a file" "held $held bytes, wanted 0"
+        [ "$held" = 0 ] && won ||
+                lost "$target blocks on a file" "held $held bytes, wanted 0"
 
         if [ "$terminal_ready" = yes ]; then
                 held=$(held_on_terminal "$runner $work/b.$target")
-                report "$([ "$held" = yes ] && echo ok || echo no)" \
-                        "$target lines on a terminal" 'nothing had been written'
+                [ "$held" = yes ] && won ||
+                        lost "$target lines on a terminal" 'nothing had been written'
         fi
-done
+}
+
+target_lane stream_one
+stream_outcome=$?
 
 if [ "$terminal_ready" != yes ]; then
         printf '  %-10s %s\n' stream 'no script(1), the terminal half did not run'
 fi
 
-finish
+counted "$stream_outcome"
 )
 
 #
@@ -2532,13 +2406,17 @@ finish
 #
 #           sh test/run allocator
 #
-#       The allocator section of test/checks.c is built four times: once for each architecture
-#       against the allocator in src/standard.c with no C library under it, and once
-#       against glibc. Everything the test prints before its "shared-end" line
-#       is a statement about behaviour rather than about addresses, so those
-#       bytes have to be identical in all four, and that is what is diffed.
-#       What each build prints after that line is about its own internals and
-#       is shown rather than compared.
+#       The allocator section of test/checks.c runs on each architecture
+#       against the allocator in src/standard.c with no C library under it,
+#       and is built once more against glibc. Everything the test prints
+#       before its "shared-end" line is a statement about behaviour rather
+#       than about addresses, so those bytes have to be identical in all
+#       four, and that is what is diffed. What each build prints after that
+#       line is about its own internals and is shown rather than compared.
+#
+#       The three freestanding runs are the section lane's own: this reads
+#       what they printed, and a target that did not build or did not run
+#       has already been named there.
 #
 allocator_against_glibc()
 (
@@ -2546,13 +2424,6 @@ allocator_against_glibc()
         note "allocator: the glibc reference needs Linux -- not run"
         exit 2
 }
-
-work=${TMPDIR:-/tmp}/dawning-allocator.$$
-mkdir -p "$work" || exit 1
-trap 'rm -rf "$work"' EXIT INT TERM
-
-flags="-O2 -static -nostdlib -nostartfiles -fno-stack-protector -fno-builtin -w"
-link="-T src/build/spark.ld -Wl,-e,_start -Wl,--build-id=none -Wl,--no-warn-rwx-segments"
 
 failed=0
 
@@ -2563,85 +2434,56 @@ note()
 
 #       The reference first, because everything else is compared against it.
 if ! gcc -O2 -std=gnu17 -w -DCHECK_allocator -DALLOCATOR_REFERENCE \
-        -o "$work/reference" test/checks.c 2>"$work/reference.log"
+        -o "$work/allocator.reference" test/checks.c \
+        2> "$work/allocator.reference.log"
 then
         note "allocator: the glibc reference did not build"
-        cat "$work/reference.log"
+        cat "$work/allocator.reference.log"
         exit 1
 fi
 
-if ! "$work/reference" > "$work/reference.out"
+if ! "$work/allocator.reference" > "$work/allocator.reference.out"
 then
         note "allocator: glibc itself failed the test, which is a bug here"
         failed=1
 fi
 
-sed -n '1,/^shared-end$/p' "$work/reference.out" > "$work/reference.shared"
+sed -n '1,/^shared-end$/p' "$work/allocator.reference.out" \
+        > "$work/allocator.reference.shared"
 
-one()
-{
-        name=$1
-        compiler=$2
-        runner=$3
-        extra=$4
+for name in x86_64 arm64 riscv64; do
+        out=$work/allocator.$name.out
+        [ -f "$out" ] || continue
 
-        if ! command -v "$compiler" > /dev/null 2>&1
-        then
-                note "allocator $name: no $compiler here, not run"
-                return 0
-        fi
+        sed -n '1,/^shared-end$/p' "$out" > "$out.shared"
 
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1
-        then
-                note "allocator $name: no $runner here, not run"
-                return 0
-        fi
-
-        # shellcheck disable=SC2086
-        if ! $compiler $flags $extra $link -o "$work/$name" \
-                -DCHECK_allocator test/checks.c 2>"$work/$name.log"
-        then
-                note "allocator $name: did not build"
-                cat "$work/$name.log"
-                failed=1
-                return 0
-        fi
-
-        if ! $runner "$work/$name" > "$work/$name.out"
-        then
-                note "allocator $name: the test reported failures"
-                failed=1
-        fi
-
-        sed -n '1,/^shared-end$/p' "$work/$name.out" > "$work/$name.shared"
-
-        if ! diff -u "$work/reference.shared" "$work/$name.shared" \
-                > "$work/$name.diff"
+        if ! diff -u "$work/allocator.reference.shared" "$out.shared" \
+                > "$out.diff"
         then
                 note "allocator $name: differs from glibc"
-                cat "$work/$name.diff"
+                cat "$out.diff"
                 failed=1
-                return 0
+                continue
         fi
 
         note "allocator $name: agrees with glibc"
-        sed -n '/^shared-end$/,$p' "$work/$name.out" | sed '1d;s/^/    /'
-}
-
-one x86_64  gcc                    ""             "-march=x86-64"
-one arm64   aarch64-linux-gnu-gcc  qemu-aarch64   "-mno-outline-atomics"
-one riscv64 riscv64-linux-gnu-gcc  qemu-riscv64   "-march=rv64imafd_zicsr_zicntr -mabi=lp64d"
+        sed -n '/^shared-end$/,$p' "$out" | sed '1d;s/^/    /'
+done
 
 tally allocator-glibc "$((1 - failed))" 1
 exit $failed
 )
 
+#       Failed before not run before passed, across both halves.
 lane_allocator()
 {
         freestanding_checks_lane allocator allocator
         allocator_outcome=$?
-        allocator_against_glibc || allocator_outcome=1
-        return "$allocator_outcome"
+        allocator_against_glibc
+        case $allocator_outcome$? in
+        *1*) return 1 ;;
+        *2*) return 2 ;;
+        esac
 }
 
 
@@ -2652,28 +2494,12 @@ freestanding_checks_one()
         suite=$1
         source=$2
         name=$3
-        cross=$4
         runner=$5
 
-        if ! command -v "$cross" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $cross"
-                return 2
-        fi
-
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $runner"
-                return 2
-        fi
-
-        saved=$compiler
-        compiler=$cross
-        built=0
         case $source in
-        *.c) freestanding "$source" "$work/$suite.$name" "$name" || built=1 ;;
-        *)   freestanding_check "$source" "$work/$suite.$name" "$name" || built=1 ;;
-        esac
-        compiler=$saved
-        [ "$built" = 0 ] || return 1
+        *.c) target_build freestanding "$source" "$work/$suite.$name" "$name" ;;
+        *)   target_build freestanding_check "$source" "$work/$suite.$name" "$name" ;;
+        esac || return 1
 
         if [ "$suite" = reserve ] && [ -n "$runner" ]; then
                 $runner "$work/$suite.$name" --emulated > "$work/$suite.$name.out" 2>&1
@@ -2717,10 +2543,12 @@ target_lane()
         failed=0
         missing=0
 
+        #       The status is target_tools' when the tools are missing and
+        #       the check's when it ran.
         for target in x86_64 arm64 riscv64; do
-                target_tools "$target"
                 outcome=0
-                "$check" "$@" "$target" "$target_compiler" "$target_runner" ||
+                target_tools "$target" &&
+                        "$check" "$@" "$target" "$target_compiler" "$target_runner" ||
                         outcome=$?
 
                 case $outcome in
@@ -2937,19 +2765,6 @@ native_lifted()
 (
 lib=${1:-src/library.c}
 
-[ "$(uname -s)" = Darwin ] || {
-        echo "run: native lifting needs Darwin's Mach-O assembler" >&2
-        exit 2
-}
-
-case $(uname -m) in
-arm64 | aarch64) ;;
-*)
-        echo "run: native lifting needs an arm64 machine" >&2
-        exit 2
-        ;;
-esac
-
 [ -f "$lib" ] || { echo "run: no such library: $lib" >&2; exit 1; }
 
 #       The byte-commonness object is generated from one marked assembly
@@ -3069,47 +2884,33 @@ exit $status
 #       ships; this reads its verdicts into the tally.
 lane_native()
 (
-        if [ "$host_system" != Darwin ]; then
-                note "native lifting needs Darwin, skipped"
-                exit 0
+        if [ "$host_system" != Darwin ] || [ "$host_arch" != arm64 ]; then
+                note "native: NOT RUN -- the lifting needs Darwin's Mach-O assembler on arm64"
+                exit 2
         fi
-
-        case $(uname -m) in
-        arm64 | aarch64) ;;
-        *)
-                note "not an arm64 machine, skipped"
-                exit 0
-                ;;
-        esac
 
         note "lifted out of src/library.c"
 
-        if native_lifted src/library.c > "$work/native.out" 2>&1; then
-                answered=0
-        else
-                answered=1
-        fi
+        native_lifted src/library.c > "$work/native.out" 2>&1
+        answered=$?
 
         sed 's/^/  /' "$work/native.out"
 
-        counted=0
-
-        sed -n 's/^\(.*\): \([0-9][0-9]*\) checks.*/\1|\2/p' "$work/native.out" |
-                while IFS='|' read -r label total; do
-                        slug=$(printf '%s' "$label" | tr ' ' '-')
-
-                        if [ "$answered" = 0 ]; then
-                                tally "$slug" "$total" "$total"
-                        else
-                                tally "$slug" 0 "$total"
-                        fi
-                done
+        #       Every verdict is "<label>: <checks> checks" with nothing but
+        #       failure counts after it, however a section spells them, so a
+        #       section's failures are every number that follows its count.
+        awk -F': ' '$2 ~ /^[0-9]+ checks/ {
+                label = $1
+                gsub(/ /, "-", label)
+                count = split($2, number, /[^0-9]+/)
+                failures = 0
+                for (at = 2; at <= count; at++) failures += number[at]
+                print label, number[1] - failures, number[1]
+        }' "$work/native.out" >> "$TEST_TALLY"
 
         # A run that printed no verdict at all is a run that proved nothing,
         # which has to weigh something or it reads as a pass.
-        grep -q ' checks' "$work/native.out" || counted=1
-
-        [ "$answered" = 0 ] && [ "$counted" = 0 ]
+        [ "$answered" = 0 ] && grep -q ' checks' "$work/native.out"
 )
 
 #       spark.ld used to hide an RV64 process-entry ABI bug.  Its complete
@@ -3393,16 +3194,7 @@ probe=$work/probe
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
-
-won() { pass=$((pass + 1)); }
-
-lost()
-{
-        fail=$((fail + 1))
-        printf '  %-24s %s\n' "$1" "$2"
-}
+counting probe
 
 # Output and exit status both, because half of what these prove is the status.
 expect()
@@ -3465,15 +3257,16 @@ expect_line()
         line=$3
         shift 3
 
-        "$@" 2>&1 | sed -n "${line}p" > "$work/got" || true
+        "$@" > "$work/got" 2>&1
+        sed -n "${line}p" "$work/got" > "$work/line"
         printf '%s\n' "$want" > "$work/want"
 
-        if cmp -s "$work/want" "$work/got"; then
+        if cmp -s "$work/want" "$work/line"; then
                 won
                 return 0
         fi
 
-        lost "$name" "line $line want [$want] got [$(cat "$work/got")]"
+        lost "$name" "line $line want [$want] got [$(cat "$work/line")]"
 }
 
 #
@@ -3565,11 +3358,7 @@ else
         printf '  %-24s %s\n' 'spark device' 'not here, skipped'
 fi
 
-printf '  %-12s %s of %s\n' probe "$pass" "$((pass + fail))"
-[ -z "${TEST_TALLY:-}" ] ||
-        printf 'probe %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
-
-[ "$fail" = 0 ] || failed=1
+counted || failed=1
 
 startup_outcome=0
 riscv_default_startup || startup_outcome=$?
@@ -10460,16 +10249,6 @@ bench_target()
         *)     bench_arch_flags= ;;
         esac
 
-        if ! command -v "$bench_compiler" > /dev/null 2>&1; then
-                echo "$bench_arch: NOT RUN -- no $bench_compiler"
-                return 2
-        fi
-
-        if [ -n "$bench_runner" ] && ! command -v "$bench_runner" > /dev/null 2>&1; then
-                echo "$bench_arch: NOT RUN -- no $bench_runner"
-                return 2
-        fi
-
         bench_binary=$work/bench.$bench_name.$bench_arch
 
         # shellcheck disable=SC2086
@@ -10503,10 +10282,11 @@ bench_c()
         bench_missing=0
 
         for target in x86_64 arm64 riscv64; do
-                target_tools "$target"
                 outcome=0
-                bench_target "$bench_c_name" "$target" \
-                        "$target_compiler" "$target_runner" "$@" || outcome=$?
+                target_tools "$target" &&
+                        bench_target "$bench_c_name" "$target" \
+                                "$target_compiler" "$target_runner" "$@" ||
+                        outcome=$?
 
                 case $outcome in
                 0) ;;
