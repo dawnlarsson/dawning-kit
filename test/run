@@ -2145,7 +2145,81 @@ lane_error()     { freestanding_checks_lane error error; }
 lane_strings()   { freestanding_checks_lane strings strings; }
 lane_stdlib()    { freestanding_checks_lane stdlib stdlib; }
 lane_clock()     { freestanding_checks_lane clock clock; }
-lane_math()      { freestanding_checks_lane math math; }
+#
+#       fmod and remainder against glibc's libm. CHECK_modulo prints one digest
+#       per generator class of every answer, NaNs folded to one pattern, and
+#       the digests from all three machines must be the ones glibc gives for
+#       the same pairs. -fno-builtin matters: without it GCC expands the
+#       reference's fmod as an x87 fprem loop and the lane would compare
+#       against the compiler rather than against glibc.
+#
+modulo_against_glibc()
+(
+[ "$host_system" = Linux ] || {
+        note "modulo: the glibc reference needs Linux -- not run"
+        exit 2
+}
+
+failed=0
+
+note()
+{
+        printf '%s\n' "$*"
+}
+
+if ! gcc -O2 -std=gnu17 -w -fno-builtin -DCHECK_modulo -DMODULO_REFERENCE \
+        -o "$work/modulo.reference" test/checks.c -lm \
+        2> "$work/modulo.reference.log"
+then
+        note "modulo: the glibc reference did not build"
+        cat "$work/modulo.reference.log"
+        exit 1
+fi
+
+if ! "$work/modulo.reference" > "$work/modulo.reference.out"
+then
+        note "modulo: glibc itself failed a check, which is a bug here"
+        sed -n '/^FAIL/p' "$work/modulo.reference.out"
+        failed=1
+fi
+
+sed -n '/^pairs /,/^shared-end$/p' "$work/modulo.reference.out" \
+        > "$work/modulo.reference.shared"
+
+for name in x86_64 arm64 riscv64; do
+        out=$work/modulo.$name.out
+        [ -f "$out" ] || continue
+
+        sed -n '/^pairs /,/^shared-end$/p' "$out" > "$out.shared"
+
+        if ! diff -u "$work/modulo.reference.shared" "$out.shared" \
+                > "$out.diff"
+        then
+                note "modulo $name: differs from glibc"
+                cat "$out.diff"
+                failed=1
+                continue
+        fi
+
+        note "modulo $name: agrees with glibc on $(sed -n 's/^pairs //p' "$out") pairs"
+done
+
+tally modulo-glibc "$((1 - failed))" 1
+exit $failed
+)
+
+lane_math()
+{
+        freestanding_checks_lane math math
+        math_outcome=$?
+        freestanding_checks_lane modulo modulo
+        modulo_outcome=$?
+        modulo_against_glibc
+        case $math_outcome$modulo_outcome$? in
+        *1*) return 1 ;;
+        *2*) return 2 ;;
+        esac
+}
 lane_format()
 {
         format_status=0

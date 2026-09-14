@@ -34862,6 +34862,428 @@ b32 main()
 }
 #endif /* CHECK_math */
 
+#ifdef CHECK_modulo
+/*
+        Experimental C standard library
+
+        fmod and remainder, against glibc's
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        One file, built twice, the way CHECK_allocator is.
+
+        Built the ordinary way it includes compiler_memory.c and runs
+        standard.c's fmod and remainder on x86_64, arm64 and riscv64. Built
+        with MODULO_REFERENCE defined it links glibc's libm instead, and
+        test/run's math lane builds it with -fno-builtin and calls through a
+        pointer besides, because GCC otherwise expands fmod inline as an x87
+        fprem loop and the reference would be the compiler's, not glibc's.
+
+        Both builds walk the same seeded generator and print, before the
+        "shared-end" line, one digest per generator class of every fmod and
+        remainder answer. The lane diffs those lines, so a class that disagrees
+        is named. The classes are built to reach every path of the division:
+        raw bit patterns, every pairing of exponent fields, equal exponents,
+        subnormal pairs of every width, huge ratios, exact multiples, halfway
+        quotients for remainder's tie, small integers, the special values
+        against anything, near-equal magnitudes, and the widest gaps with odd
+        full-width divisors.
+
+        A NaN answer is folded to one pattern before it is digested. Which
+        NaN comes out is not an answer anybody defines: the sign and the
+        payload of a NaN are left open by IEEE 754 and by C, SSE, NEON and
+        RISC-V each choose differently when both operands are NaNs (riscv64
+        always answers its canonical NaN), GCC may swap the operands of the
+        multiplication that makes one, and glibc 2.43's remainder clears the
+        sign that its fmod keeps. Every other bit is compared, both zeros
+        included.
+
+        After "shared-end", each build checks what needs no reference on
+        every pair and prints the verdict: a finite dividend over a finite
+        nonzero divisor answers a finite value smaller than the divisor with
+        the dividend's sign, remainder lands within half a divisor, an
+        infinite dividend or a zero or NaN operand answers a NaN, and an
+        infinite divisor or a zero dividend hands the dividend back.
+*/
+
+#ifdef MODULO_REFERENCE
+
+#include <math.h>
+#include <stdio.h>
+
+typedef unsigned char p8;
+typedef unsigned long long positive;
+typedef unsigned long long p64;
+typedef long long bipolar;
+typedef int b32;
+typedef double decimal;
+typedef void fn;
+
+#define address_to *
+#define address_of &
+#define bool p8
+
+#else
+
+#include "../src/compiler_memory.c"
+
+#endif
+
+#define MODULO_PAIRS 4194304
+#define MODULO_CLASSES 12
+#define MODULO_SIGN 0x8000000000000000ULL
+#define MODULO_MAGNITUDE 0x7fffffffffffffffULL
+#define MODULO_INFINITY 0x7ff0000000000000ULL
+#define MODULO_NAN 0x7ff8000000000000ULL
+
+typedef union
+{
+        decimal value;
+        p64 bits;
+} modulo_shape;
+
+//      Through a pointer, so neither build can see which routine it calls.
+static decimal (address_to volatile modulo_fmod)(decimal, decimal) = fmod;
+static decimal (address_to volatile modulo_remainder)(decimal, decimal) = remainder;
+
+static p8 modulo_said[4096];
+static positive modulo_said_used;
+
+static fn modulo_say(const char address_to text)
+{
+        while (address_to text)
+        {
+                if (modulo_said_used < sizeof(modulo_said))
+                        modulo_said[modulo_said_used++] = (p8)address_to text;
+                text++;
+        }
+}
+
+static fn modulo_say_number(positive value)
+{
+        p8 digits[24];
+        b32 count = 0;
+
+        do
+                digits[count++] = (p8)('0' + value % 10);
+        while (value /= 10);
+
+        while (count--)
+                if (modulo_said_used < sizeof(modulo_said))
+                        modulo_said[modulo_said_used++] = digits[count];
+}
+
+static fn modulo_say_hex(p64 value)
+{
+        for (b32 shift = 60; shift >= 0; shift -= 4)
+                if (modulo_said_used < sizeof(modulo_said))
+                        modulo_said[modulo_said_used++] =
+                                (p8)"0123456789abcdef"[(value >> shift) & 15];
+}
+
+static fn modulo_flush(void)
+{
+#ifdef MODULO_REFERENCE
+        fwrite(modulo_said, 1, (size_t)modulo_said_used, stdout);
+        fflush(stdout);
+#else
+        log(modulo_said, modulo_said_used);
+        log_flush();
+#endif
+}
+
+static p64 modulo_state;
+
+//      splitmix64: a fixed seed and the same sequence in both builds.
+static p64 modulo_next(void)
+{
+        p64 z = (modulo_state += 0x9e3779b97f4a7c15ULL);
+
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+        return z ^ (z >> 31);
+}
+
+static decimal modulo_value(p64 bits)
+{
+        modulo_shape shape;
+
+        shape.bits = bits;
+        return shape.value;
+}
+
+static p64 modulo_bits(decimal value)
+{
+        modulo_shape shape;
+
+        shape.value = value;
+        return shape.bits;
+}
+
+static p64 modulo_field(p64 sign, p64 exponent, p64 mantissa)
+{
+        return (sign << 63) | ((exponent & 0x7ff) << 52) | (mantissa & 0xfffffffffffffULL);
+}
+
+//      A loop rather than the builtin, which is a libgcc call on a riscv
+//      baseline and this file links no libgcc.
+static b32 modulo_leading_zeros(p64 value)
+{
+        b32 count = 0;
+
+        if (!value)
+                return 64;
+
+        while (!(value >> 63))
+        {
+                value <<= 1;
+                count++;
+        }
+
+        return count;
+}
+
+//      The double equal to integer times two to scale, for an integer below
+//      2^53 and a scale that keeps it normal.
+static p64 modulo_scaled(p64 sign, p64 integer, bipolar scale)
+{
+        b32 lead = modulo_leading_zeros(integer) - 11;
+
+        return modulo_field(sign, (p64)(scale - lead + 52 + 1023), integer << lead);
+}
+
+static const p64 modulo_specials[] = {
+        0x0000000000000000ULL, 0x8000000000000000ULL, 0x7ff0000000000000ULL,
+        0xfff0000000000000ULL, 0x7ff8000000000000ULL, 0xfff8000000000000ULL,
+        0x7ff4000000000001ULL, 0x0000000000000001ULL, 0x8000000000000001ULL,
+        0x000fffffffffffffULL, 0x0010000000000000ULL, 0x0010000000000001ULL,
+        0x7fefffffffffffffULL, 0xffefffffffffffffULL, 0x3ff0000000000000ULL,
+        0xbff0000000000000ULL, 0x4008000000000000ULL, 0x3fe0000000000000ULL,
+};
+
+static fn modulo_pair(positive index, p64 address_to x, p64 address_to y)
+{
+        p64 a = modulo_next();
+        p64 b = modulo_next();
+        p64 c = modulo_next();
+
+        switch (index % MODULO_CLASSES)
+        {
+        case 0: //      raw bit patterns
+                address_to x = a;
+                address_to y = b;
+                break;
+
+        case 1: //      every pairing of exponent fields
+                address_to x = modulo_field(a >> 63, c, a);
+                address_to y = modulo_field(b >> 63, c >> 11, b);
+                break;
+
+        case 2: //      equal exponents
+                address_to x = modulo_field(a >> 63, c, a);
+                address_to y = modulo_field(b >> 63, c, b);
+                break;
+
+        case 3: //      subnormal pairs of every width
+                address_to x = modulo_field(a >> 63, 0, a >> (c % 53));
+                address_to y = modulo_field(b >> 63, 0, b >> ((c >> 8) % 53));
+                break;
+
+        case 4: //      huge ratios, subnormal divisors among them
+                address_to x = modulo_field(a >> 63, 1900 + c % 147, a);
+                address_to y = modulo_field(b >> 63, (c >> 8) % 64, b);
+                break;
+
+        case 5: //      exact multiples: y = m 2^s, x = k m 2^(s + j), j up to the top
+        {
+                p64 m = (b % (1ULL << 26)) | 1;
+                p64 k = a % (1ULL << 26) + 1;
+                bipolar s = (bipolar)(c % 1901) - 1000;
+
+                address_to y = modulo_scaled(b >> 63, m, s);
+                address_to x = modulo_scaled(a >> 63, k * m,
+                                             s + (bipolar)((c >> 16) % (p64)(971 - s)));
+                break;
+        }
+
+        case 6: //      halfway quotients: x = (2k + 1) m 2^(s - 1)
+        {
+                p64 m = (b % (1ULL << 26)) | 1;
+                p64 k = a % (1ULL << 25);
+                bipolar s = (bipolar)(c % 1901) - 1000;
+
+                address_to y = modulo_scaled(b >> 63, m, s);
+                address_to x = modulo_scaled(a >> 63, (2 * k + 1) * m, s - 1);
+                break;
+        }
+
+        case 7: //      small integers
+        {
+                bipolar p = (bipolar)(a % (1ULL << 21)) - (1 << 20);
+                bipolar q = (bipolar)(b % (1ULL << 21)) - (1 << 20);
+
+                address_to x = modulo_bits((decimal)p);
+                address_to y = modulo_bits((decimal)(q ? q : 1));
+                break;
+        }
+
+        case 8: //      the special values against anything
+                address_to x = (c & 1) ? modulo_specials[a % (sizeof(modulo_specials) / 8)] : a;
+                address_to y = (c & 2) ? modulo_specials[b % (sizeof(modulo_specials) / 8)] : b;
+                break;
+
+        case 9: //      near-equal magnitudes
+                address_to y = modulo_field(b >> 63, c, b);
+                address_to x = (((address_to y) & MODULO_MAGNITUDE) + a % 8 - 4) |
+                               ((a >> 63) << 63);
+                break;
+
+        case 10: //     the widest gaps, odd full-width divisors
+                address_to x = modulo_field(a >> 63, 2040 + c % 7, a);
+                address_to y = modulo_field(b >> 63, c % 3, b | 1);
+                break;
+
+        default: //     huge dividends by small integers, multiples or not
+        {
+                decimal small = (decimal)(b % 1024 + 1);
+
+                address_to x = modulo_field(a >> 63, 1100 + c % 947, a);
+                address_to y = modulo_bits((b >> 63) ? -small : small);
+                break;
+        }
+        }
+}
+
+static bool modulo_is_nan(p64 bits)
+{
+        return (bits & MODULO_MAGNITUDE) > MODULO_INFINITY;
+}
+
+static p64 modulo_mix(p64 digest, p64 value)
+{
+        if (modulo_is_nan(value))
+                value = MODULO_NAN;
+
+        digest ^= value;
+        digest *= 0x100000001b3ULL;
+        return digest ^ (digest >> 29);
+}
+
+//      What each answer must be without anything to compare it with.
+static bool modulo_sound(p64 x, p64 y, p64 kept, p64 near)
+{
+        p64 x_size = x & MODULO_MAGNITUDE;
+        p64 y_size = y & MODULO_MAGNITUDE;
+
+        if (modulo_is_nan(x) || modulo_is_nan(y) || x_size == MODULO_INFINITY || y_size == 0)
+                return modulo_is_nan(kept) && modulo_is_nan(near);
+
+        if (y_size == MODULO_INFINITY || x_size == 0)
+                return kept == x && near == x;
+
+        decimal divisor = modulo_value(y_size);
+        decimal truncated = modulo_value(kept & MODULO_MAGNITUDE);
+        decimal nearest = modulo_value(near & MODULO_MAGNITUDE);
+
+        return (kept & MODULO_MAGNITUDE) < MODULO_INFINITY &&
+               (kept & MODULO_SIGN) == (x & MODULO_SIGN) &&
+               truncated < divisor &&
+               (near & MODULO_MAGNITUDE) < MODULO_INFINITY &&
+               nearest <= divisor - nearest;
+}
+
+#ifdef MODULO_REFERENCE
+int main(int argument_count, char **arguments)
+#else
+b32 main(void)
+#endif
+{
+        positive pairs = MODULO_PAIRS;
+        positive failures = 0;
+        p64 digest[MODULO_CLASSES] = {0};
+        const char address_to count_text = 0;
+
+#ifdef MODULO_REFERENCE
+        if (argument_count > 1)
+                count_text = arguments[1];
+#else
+        if (program_argument_count() > 1)
+                count_text = (const char address_to)program_argument(1);
+#endif
+
+        //      A count on the command line walks further than the lane does,
+        //      the same sequence from the same seed.
+        if (count_text && address_to count_text)
+        {
+                pairs = 0;
+                while (address_to count_text >= '0' && address_to count_text <= '9')
+                        pairs = pairs * 10 + (positive)(address_to count_text++ - '0');
+        }
+
+        modulo_state = 0x2545f4914f6cdd1dULL;
+
+        for (positive index = 0; index < pairs; index++)
+        {
+                p64 x, y;
+
+                modulo_pair(index, address_of x, address_of y);
+
+                p64 kept = modulo_bits(modulo_fmod(modulo_value(x), modulo_value(y)));
+                p64 near = modulo_bits(modulo_remainder(modulo_value(x), modulo_value(y)));
+
+                digest[index % MODULO_CLASSES] =
+                        modulo_mix(modulo_mix(digest[index % MODULO_CLASSES], kept), near);
+
+                if (!modulo_sound(x, y, kept, near))
+                {
+                        if (failures < 8)
+                        {
+                                modulo_say("FAIL x ");
+                                modulo_say_hex(x);
+                                modulo_say(" y ");
+                                modulo_say_hex(y);
+                                modulo_say(" fmod ");
+                                modulo_say_hex(kept);
+                                modulo_say(" remainder ");
+                                modulo_say_hex(near);
+                                modulo_say("\n");
+                        }
+                        failures++;
+                }
+        }
+
+        //      The FAIL lines above are the lane's to show; they come before
+        //      the digests only when something is already wrong.
+        modulo_say("pairs ");
+        modulo_say_number(pairs);
+        modulo_say("\n");
+
+        for (b32 class = 0; class < MODULO_CLASSES; class++)
+        {
+                modulo_say("class ");
+                modulo_say_number((positive)class);
+                modulo_say(" ");
+                modulo_say_hex(digest[class]);
+                modulo_say("\n");
+        }
+
+        modulo_say("shared-end\n");
+        modulo_say("\n");
+        modulo_say_number(pairs);
+        modulo_say(" checks, ");
+        modulo_say_number(failures);
+        modulo_say(" failures\n");
+        modulo_flush();
+
+        return failures ? 1 : 0;
+}
+#endif /* CHECK_modulo */
+
 #ifdef CHECK_format_standalone
 #define FORMAT_STANDALONE
 #define CHECK_format

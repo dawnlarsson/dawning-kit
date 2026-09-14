@@ -9233,33 +9233,120 @@ static decimal decimal_split_whole(decimal value, decimal address_to whole)
         large numbers hands back noise. For x = 1e300 and y = 3.0 it does not
         get a single bit right.
 
-        So this is the long division everyone eventually writes: put both
-        significands in integer registers with the implied bit restored,
-        subtract when you can, shift, and count down the exponent difference.
-        Every step is integer arithmetic on values below 2^54, nothing
-        rounds, and the answer that comes out is the answer. The cost is one
-        iteration per bit of exponent difference, which for the worst pair a
-        double can hold is a little over two thousand -- and there is no
-        cheaper way to be right, which is why glibc's is the same loop.
+        So this is a long division: both significands as integers with the
+        implied bit restored, the dividend's followed by as many zero bits as
+        the exponents differ, divided by the divisor's, with only the
+        remainder and the low bits of the quotient kept. Every step is integer
+        arithmetic, nothing rounds, and the answer that comes out is the
+        answer.
+
+        It used to be done one bit at a time, a subtract and a shift per bit
+        of exponent difference, which for DBL_MAX by the smallest subnormal is
+        two thousand turns and fifteen thousand instructions. The same
+        division goes in digits instead. A gap of eleven bits or less fits the
+        dividend in one register and takes one hardware division. A wider gap
+        first takes the divisor's trailing zeros into its exponent, because
+        y = 1, 0.5, 3 or 5e-324 is a small odd integer at a larger scale and
+        most such pairs then finish in that one division too. What is still
+        wide normalises the divisor to its top bit, computes its reciprocal
+        once, and brings down sixty four bits per step with a 2/1 division by
+        that reciprocal: two multiplications and a correction, Moller and
+        Granlund's udiv_qrnnd_preinv, so the widest gap a double has is thirty
+        four steps and no step is a division at all. No wider integer division
+        is ever asked for, so nothing from libgcc is linked on any of the
+        three machines.
+
+        The bit counts are top_bit_known rather than the bits_ assembly: a
+        call the compiler cannot see through spilled three registers around
+        each of three calls, a third of the whole small-gap path.
 
         The quotient's low bits are carried out alongside, because remainder
         needs the parity of the quotient to break a tie and there is no way
         to recover it afterwards from the remainder alone.
 
-        Verified exact against glibc's fmod and remainder over twenty
-        million pairs of random bit patterns -- which is most of the special
-        values for free -- and four million more built to have large exponent
-        differences, so that the loop below runs its full two thousand
-        iterations. Identical bit patterns everywhere, both zeros and every
-        special value included, and not one disagreement.
+        CHECK_modulo in test/checks.c walks generated pairs through this and
+        through glibc's fmod and remainder -- random bit patterns, every
+        pairing of exponent fields, subnormal pairs, huge ratios, equal
+        exponents, exact multiples, halfway quotients, signed zeros,
+        infinities and NaNs -- and the math lane compares the digests on all
+        three machines.
 */
+
+//      The reciprocal of a divisor whose top bit is set, floor((2^128 - 1) /
+//      divisor) - 2^64: the 2/1 division of (~divisor, ~0) by the divisor in
+//      thirty two bit halves, so that no division wider than sixty four bits
+//      is asked of the machine. The first estimate of each half is at most
+//      two too large, and the two corrections are exactly that.
+static CONST p64 math_reciprocal(p64 divisor)
+{
+        p64 high = divisor >> 32;
+        p64 low = divisor & 0xffffffffu;
+        p64 upper = ~divisor / high;
+        p64 rest = ~divisor - upper * high;
+        p64 product = upper * low;
+
+        rest = (rest << 32) | 0xffffffffu;
+        if (rest < product)
+        {
+                upper--;
+                rest += divisor;
+                //      No carry out of the addition, and still short.
+                if (rest >= divisor && rest < product)
+                {
+                        upper--;
+                        rest += divisor;
+                }
+        }
+        rest -= product;
+
+        p64 lower = rest / high;
+
+        rest -= lower * high;
+        product = lower * low;
+        rest = (rest << 32) | 0xffffffffu;
+        if (rest < product)
+        {
+                lower--;
+                rest += divisor;
+                if (rest >= divisor && rest < product)
+                        lower--;
+        }
+
+        return (upper << 32) | lower;
+}
+
+//      (high, low) divided by a normalised divisor, high below it, with the
+//      reciprocal above: the quotient back, the remainder through rest. The
+//      estimate is the high word of the reciprocal's product plus the
+//      numerator, never more than one too small after the masked correction,
+//      and the second correction is the rare one.
+static inline INLINE p64 math_divide_by_reciprocal(p64 high, p64 low, p64 divisor,
+                                                   p64 reciprocal, p64 address_to rest)
+{
+        p128 estimate = (p128)high * reciprocal + ((p128)(high + 1) << 64) + low;
+        p64 quotient = (p64)(estimate >> 64);
+        p64 left = low - quotient * divisor;
+        p64 over = -(p64)(left > (p64)estimate);
+
+        quotient += over;
+        left += over & divisor;
+
+        if_rare(left >= divisor)
+        {
+                quotient++;
+                left -= divisor;
+        }
+
+        address_to rest = left;
+        return quotient;
+}
+
 static decimal math_modulo_quotient(decimal left, decimal right, p64 address_to quotient)
 {
         math_shape numerator, denominator;
-        p64 top, bottom, step;
-        b32 top_exponent, bottom_exponent;
+        p64 top, bottom, rest, counted;
+        b32 top_exponent, bottom_exponent, shift, gap;
         p64 sign;
-        p64 counted = 0;
 
         numerator.value = left;
         denominator.value = right;
@@ -9289,81 +9376,140 @@ static decimal math_modulo_quotient(decimal left, decimal right, p64 address_to 
                 return left;
         }
 
-        //      Restore the implied bit, or normalise a subnormal by hand and
-        //      pay for it out of the exponent, so that both significands are
-        //      integers with the same interpretation.
-        top = numerator.bits;
+        //      Restore the implied bit, or normalise a subnormal by its leading
+        //      zeros and pay for it out of the exponent, so that both
+        //      significands are integers in [2^52, 2^53) with the same
+        //      interpretation: the value is the integer times two to the
+        //      exponent field less 1075.
+        top = numerator.bits & MATH_MANTISSA_MASK;
         if (top_exponent == 0)
         {
-                for (step = top << 12; (step >> 63) == 0; top_exponent--, step <<= 1)
-                        ;
-                top <<= -top_exponent + 1;
+                shift = 52 - (b32)top_bit_known(top);
+                top <<= shift;
+                top_exponent = 1 - shift;
         }
         else
         {
-                top &= MATH_MANTISSA_MASK;
                 top |= MATH_IMPLIED_BIT;
         }
 
-        bottom = denominator.bits;
+        bottom = denominator.bits & MATH_MANTISSA_MASK;
         if (bottom_exponent == 0)
         {
-                for (step = bottom << 12; (step >> 63) == 0; bottom_exponent--, step <<= 1)
-                        ;
-                bottom <<= -bottom_exponent + 1;
+                shift = 52 - (b32)top_bit_known(bottom);
+                bottom <<= shift;
+                bottom_exponent = 1 - shift;
         }
         else
         {
-                bottom &= MATH_MANTISSA_MASK;
                 bottom |= MATH_IMPLIED_BIT;
         }
 
-        //      One quotient bit per exponent of difference. The subtraction
-        //      is tried unsigned and kept only when it did not borrow, which
-        //      is the sign bit of the difference read as a flag rather than
-        //      a comparison and a branch on its result.
-        for (; top_exponent > bottom_exponent; top_exponent--)
+        gap = top_exponent - bottom_exponent;
+
+        //      Too wide for one register: the divisor's trailing zeros come off
+        //      into its exponent, counted as the position of its isolated
+        //      lowest bit. When that takes its scale past the dividend's, as
+        //      many come back as the dividend needs, which never exceeds what
+        //      came off: the exponents were in order before any moved.
+        if (gap > 11)
         {
-                step = top - bottom;
-                counted <<= 1;
-                if ((step >> 63) == 0)
-                {
-                        top = step;
-                        counted |= 1;
-                }
-                top <<= 1;
+                shift = (b32)top_bit_known(bottom & (0 - bottom));
+                bottom >>= shift;
+                bottom_exponent += shift;
+                gap -= shift;
         }
-        step = top - bottom;
-        counted <<= 1;
-        if ((step >> 63) == 0)
+
+        if (gap < 0)
         {
-                top = step;
-                counted |= 1;
+                bottom <<= -gap;
+                bottom_exponent = top_exponent;
+                gap = 0;
         }
-        address_to quotient = counted;
 
-        if (top == 0)
-                return 0.0 * left;
-
-        //      Renormalise: shift the significand back up until the implied
-        //      bit is where the format wants it, and spend the shifts out of
-        //      the exponent. An exponent that walks off the bottom means the
-        //      answer is subnormal, and then the significand shifts down
-        //      instead and the exponent field stays zero.
-        for (; (top >> MATH_MANTISSA_BITS) == 0; top <<= 1, top_exponent--)
-                ;
-
-        if (top_exponent > 0)
+        if (gap <= 11)
         {
-                top -= MATH_IMPLIED_BIT;
-                top |= (p64)top_exponent << MATH_MANTISSA_BITS;
+                //      The dividend and its zeros fit one register.
+                top <<= gap;
+                counted = top / bottom;
+                rest = top - counted * bottom;
+        }
+        else if (bottom == 1)
+        {
+                //      A power of two divides every dividend it is below.
+                counted = gap < 64 ? top << gap : 0;
+                rest = 0;
         }
         else
         {
-                top >>= -top_exponent + 1;
+                //      Eleven of the zeros still come down with the dividend in
+                //      one hardware division, and an exact multiple -- 1e300 by
+                //      3 -- is answered there, before any reciprocal is made.
+                top <<= 11;
+                gap -= 11;
+                counted = top / bottom;
+                rest = top - counted * bottom;
+
+                if (rest)
+                {
+                        //      The remainder shifted by the same normalising
+                        //      distance as the divisor, so it carries it too.
+                        shift = 63 - (b32)top_bit_known(bottom);
+                        bottom <<= shift;
+                        rest <<= shift;
+
+                        p64 reciprocal = math_reciprocal(bottom);
+
+                        //      Then the zeros sixty four at a time, and what is
+                        //      left of them as one short step.
+                        for (; gap >= 64 && rest; gap -= 64)
+                                counted = math_divide_by_reciprocal(rest, 0, bottom, reciprocal,
+                                                                    address_of rest);
+
+                        if (rest && gap)
+                        {
+                                counted = (counted << gap) +
+                                          math_divide_by_reciprocal(rest >> (64 - gap),
+                                                                    rest << gap, bottom,
+                                                                    reciprocal, address_of rest);
+                                gap = 0;
+                        }
+
+                        rest >>= shift;
+                }
+
+                //      A remainder of zero stays zero, and the quotient only
+                //      moves up by the bits not brought down.
+                if (!rest)
+                        counted = gap < 64 ? counted << gap : 0;
         }
 
-        numerator.bits = top | sign;
+        address_to quotient = counted;
+
+        if (rest == 0)
+                return 0.0 * left;
+
+        //      Renormalise: the remainder is in units of the divisor's scale.
+        //      Shift it up until the implied bit is where the format wants it,
+        //      spend the shifts out of the exponent, and when the exponent
+        //      walks off the bottom the answer is subnormal: shift down
+        //      instead, which drops only zeros because the answer is a
+        //      multiple of the divisor's last place.
+        shift = 52 - (b32)top_bit_known(rest);
+        rest <<= shift;
+        bottom_exponent -= shift;
+
+        if (bottom_exponent > 0)
+        {
+                rest -= MATH_IMPLIED_BIT;
+                rest |= (p64)bottom_exponent << MATH_MANTISSA_BITS;
+        }
+        else
+        {
+                rest >>= -bottom_exponent + 1;
+        }
+
+        numerator.bits = rest | sign;
         return numerator.value;
 }
 
