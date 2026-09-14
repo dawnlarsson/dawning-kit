@@ -100,13 +100,19 @@ static inline bool string_digits_checked_exact(string_address text,
 #define ARM64_ERRATUM_ALIGN
 #endif
 
-/* Typed, unaligned loads and same-width bit casts.  __builtin_memcpy is the
-   compiler's one spelling that is both alias-safe and architecture-safe. */
+/* Typed, unaligned loads, stores and same-width bit casts.  __builtin_memcpy
+   is the compiler's one spelling that is both alias-safe and
+   architecture-safe. */
 #define memory_load_unaligned(type, source)                                  \
         ({ type _memory_loaded;                                              \
            __builtin_memcpy(address_of _memory_loaded, (source),             \
                             sizeof(_memory_loaded));                          \
            _memory_loaded; })
+
+#define memory_store_unaligned(type, destination, value)                     \
+        ({ type _memory_stored = (value);                                    \
+           __builtin_memcpy((destination), address_of _memory_stored,        \
+                            sizeof(_memory_stored)); })
 
 #define memory_cast(type, value)                                             \
         ({ __auto_type _memory_from = (value); type _memory_to;              \
@@ -143,6 +149,40 @@ static inline bool string_digits_checked_exact(string_address text,
         ({ __auto_type _memory_source = (source);                            \
            memory_is_4(_memory_source, a, b, c, d) &&                        \
                _memory_source[4] == (p8)(e); })
+
+/* Word, prefix and suffix tests against a literal.  The length is the
+   literal's own, so no site counts it by hand and none can count it wrong.
+   memory_is_word and memory_has_suffix take an exact span; string_has_prefix
+   stops at the text's NUL like string_compare_max does. */
+#define memory_is_word(bytes, length, literal)                               \
+        ((length) == sizeof(literal) - 1 &&                                  \
+         !memory_compare((bytes), literal, sizeof(literal) - 1))
+#define memory_has_suffix(bytes, length, literal)                            \
+        ({ positive _suffix_have = (length);                                 \
+           _suffix_have >= sizeof(literal) - 1 &&                            \
+               !memory_compare((bytes) + _suffix_have - (sizeof(literal) - 1),\
+                               literal, sizeof(literal) - 1); })
+#define string_has_prefix(text, literal)                                     \
+        (!string_compare_max((text), literal, sizeof(literal) - 1))
+
+/* a - b, floored at zero: the saturating difference every width and room
+   computation wants, spelled once. */
+#define difference_or_zero(a, b)                                             \
+        ({ __auto_type _difference_a = (a);                                  \
+           __auto_type _difference_b = (b);                                  \
+           _difference_a > _difference_b ? _difference_a - _difference_b : 0; })
+
+/* The count of a NULL-ended pointer vector: argv, environ, a word list. */
+static inline INLINE positive pointer_vector_count(
+    string_address address_to vector)
+{
+        positive count = 0;
+
+        while (vector[count])
+                count++;
+
+        return count;
+}
 
 /* Compile-time array shape, never a separately maintained count. */
 #define array_count(array) (sizeof(array) / sizeof((array)[0]))
@@ -1635,6 +1675,23 @@ typedef struct
         positive room, at, have;
         bool eof;
 } byte_input;
+
+/* Every codec opened its window with the same field resets under its own
+   name; the two sources are one opener each. */
+static inline fn byte_input_open_fd(byte_input address_to input, bipolar fd,
+                                    p8 address_to buf, positive room)
+{
+        address_to input = (byte_input){.fd = fd, .buf = buf, .room = room};
+}
+
+static inline fn byte_input_open_memory(byte_input address_to input,
+                                        p8 address_to mem, positive length,
+                                        p8 address_to buf, positive room)
+{
+        address_to input = (byte_input){.fd = -1, .mem = mem,
+                                        .mem_len = length, .buf = buf,
+                                        .room = room};
+}
 
 static bipolar byte_input_need(byte_input address_to input, positive want)
 {
