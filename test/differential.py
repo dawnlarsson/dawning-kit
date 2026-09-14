@@ -22824,6 +22824,81 @@ int main(void)
     return check.verdict('floodlight', 'floodlight')
 
 
+def harness_riscv_builtins(argv):
+    """Bit builtins the riscv floor cannot link.
+
+    The riscv64 baseline has no Zbb, so __builtin_ctz, clz, popcount, parity
+    and ffs there are calls into libgcc's __ctzdi2 and friends, which a
+    -nostdlib spark link cannot resolve. Every use in production source has to
+    sit on a branch only x86_64 or arm64 compiles; the library's
+    bits_trailing_zeros and its siblings are the spelling for everything else.
+    A riscv lane that links the use finds this as an undefined reference, but
+    only a lane that links that code, which is how a grep change passed the
+    three-machine known lane and broke checksum. This reads the conditions
+    around each use instead, so kit sees it on every landing.
+    """
+    import re
+    root = Path(__file__).resolve().parent.parent
+    use = re.compile(r"__builtin_(?:ctz|clz|popcount|parity|ffs)(?:ll|l)?\s*\(")
+    allowed = re.compile(r"\b(?:X64|ARM64|__x86_64__|__aarch64__|_M_X64|_M_ARM64)\b")
+    bad = []
+    files = sorted(list((root / "src").rglob("*.c")) + list((root / "src").rglob("*.inc")))
+
+    def lines_with_conditions(path):
+        stack = []   # (condition text, in the else branch)
+        comment = False
+        for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            text = line
+            if comment:
+                if "*/" not in text:
+                    continue
+                text = text.split("*/", 1)[1]
+                comment = False
+            text = re.sub(r"/\*.*?\*/", " ", text)
+            if "/*" in text:
+                text, comment = text.split("/*", 1)[0], True
+            text = text.split("//", 1)[0]
+            directive = re.match(r"\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)", text)
+            if directive:
+                kind, rest = directive.group(1), directive.group(2)
+                if kind in ("if", "ifdef", "ifndef"):
+                    stack.append((kind + rest, False))
+                elif kind == "elif" and stack:
+                    stack[-1] = ("if" + rest, False)
+                elif kind == "else" and stack:
+                    stack[-1] = (stack[-1][0], True)
+                elif kind == "endif" and stack:
+                    stack.pop()
+                continue
+            yield number, line, text, list(stack)
+
+    def under(stack, names):
+        return any(names.search(condition) and not in_else and
+                   not condition.startswith("ifndef") and "!" not in condition
+                   for condition, in_else in stack)
+
+    # A macro that is true only on an x86_64 or arm64 branch is a guard of its
+    # own: compiler_memory.c's KNOWN_BOUND_WORDS is 1 under X64 || ARM64 and 0
+    # otherwise, and the word helpers below it sit under that name.
+    derived = set()
+    for path in files:
+        for number, line, text, stack in lines_with_conditions(path):
+            defined = re.match(r"\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s+1\b", text)
+            if defined and under(stack, allowed):
+                derived.add(defined.group(1))
+    if derived:
+        allowed = re.compile(allowed.pattern[:-3] + "|" + "|".join(sorted(derived)) + r")\b")
+
+    for path in files:
+        for number, line, text, stack in lines_with_conditions(path):
+            if use.search(text) and not under(stack, allowed):
+                bad.append(f"{path.relative_to(root)}:{number}: {line.strip()}")
+    for entry in bad:
+        print("  riscv libgcc builtin outside an x86_64/arm64 branch:", entry)
+    print(f"  riscv-builtins {len(files) - len({b.split(':')[0] for b in bad})} of {len(files)}")
+    return 1 if bad else 0
+
+
 def harness_image_nodes(argv):
     """The image's device nodes and directories against the code that owns them.
 
@@ -24575,6 +24650,7 @@ HARNESS_CHECKS = {
     "canvas_view": harness_canvas_view,
     "floodlight": harness_floodlight,
     "image_nodes": harness_image_nodes,
+    "riscv_builtins": harness_riscv_builtins,
 }
 
 

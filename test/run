@@ -7781,6 +7781,7 @@ python3 test/function_audit.py --check || exit 1
 python3 test/differential.py --harness floodlight || exit 1
 python3 test/differential.py --harness surface_coreutils_gap || exit 1
 python3 test/differential.py --harness image_nodes || exit 1
+python3 test/differential.py --harness riscv_builtins || exit 1
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
