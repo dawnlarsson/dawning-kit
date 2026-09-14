@@ -20920,7 +20920,43 @@ typedef struct
 {
         positive handle;
         bool failed;
+        // The first failed write's error, for the diagnostic.
+        bipolar error;
 } sort_writer;
+
+// Where the newest temporary was made: a run or a merge is written right
+// after its temporary is, so a failed write names this directory.
+static string_address sort_temporary_place;
+
+static bool sort_write_all(sort_writer address_to out, address_any data,
+                           positive length)
+{
+        p8 address_to at = data;
+
+        while (length)
+        {
+                bipolar wrote = system_write_once(out->handle, at, length);
+
+                // Interrupted before anything was written.
+                if (wrote == -4)
+                        continue;
+
+                if (wrote <= 0)
+                {
+                        out->failed = true;
+
+                        if (!out->error)
+                                out->error = wrote ? wrote : -28;
+
+                        return false;
+                }
+
+                at += wrote;
+                length -= (positive)wrote;
+        }
+
+        return true;
+}
 
 static p8 address_to sort_out;
 static positive sort_out_room;
@@ -20930,6 +20966,7 @@ static bool sort_writer_ready(sort_writer address_to out, positive handle)
 {
         out->handle = handle;
         out->failed = false;
+        out->error = 0;
         sort_out_used = 0;
 
         if (sort_out || array_store_reserve(sort_out, sort_out_room, 0,
@@ -20941,9 +20978,8 @@ static bool sort_writer_ready(sort_writer address_to out, positive handle)
 
 static fn sort_writer_flush(sort_writer address_to out)
 {
-        if (sort_out_used &&
-            system_write_all(out->handle, sort_out, sort_out_used) != sort_out_used)
-                out->failed = true;
+        if (sort_out_used)
+                sort_write_all(out, sort_out, sort_out_used);
 
         sort_out_used = 0;
 }
@@ -20957,8 +20993,7 @@ static inline INLINE fn sort_writer_line(sort_writer address_to out,
 
                 if (sort_out_room <= length + SORT_SLACK)
                 {
-                        if (system_write_all(out->handle, at, length) != length)
-                                out->failed = true;
+                        sort_write_all(out, at, length);
 
                         sort_out[sort_out_used++] = text_delimiter;
                         return;
@@ -21014,76 +21049,77 @@ static fn sort_emit_serial(sort_writer address_to out)
 }
 
 /*
-        The answer a block of items a job, each job's lines copied into its
-        own output and handed to the writer in order on the caller. -u asks
-        of every item whether the item before it in sorted order has the same
+        The answer a block of items a job. Each job copies its lines once, in
+        sorted order with the next records and texts fetched ahead, into
+        scratch its own thread owns, and hands the block to the writer in one
+        piece; the pool gives the blocks to the caller in order. -u asks of
+        every item whether the item before it in sorted order has the same
         keys, which the first item of a block can ask as well as any.
 */
+typedef struct
+{
+        p8 address_to bytes;
+        positive room;
+} sort_scratch;
+
+static sort_scratch address_to sort_scratches;
+static positive sort_scratches_room;
+static positive sort_scratches_count;
+
 static fn sort_emit_job(address_any context, positive index,
                         parallel_output address_to output)
 {
         positive from = index * SORT_BLOCK;
         positive to = min(from + SORT_BLOCK, sort_lines_count);
-        positive bytes = 0;
-        p8 kept[SORT_BLOCK / 8];
+        sort_scratch address_to scratch = sort_scratches + parallel_slot();
+        positive used = 0;
 
         (void)context;
-        memory_fill(kept, 0, (to - from + 7) / 8);
 
         for (positive at = from; at < to; at++)
         {
-                bool keep = !sort_unique || !at;
-
-                if (!keep)
-                {
-                        sort_view before = sort_view_of(sort_items[at - 1].line);
-                        sort_view view = sort_view_of(sort_items[at].line);
-
-                        keep = sort_compare_views_keys(address_of before,
-                                                       address_of view, 0) != 0;
-                }
-
                 if (at + 16 < to)
                         __builtin_prefetch(sort_lines + sort_items[at + 16].line);
-
-                kept[(at - from) >> 3] |= (p8)(keep << ((at - from) & 7));
-
-                if (keep)
-                        bytes += sort_lines[sort_items[at].line].length + 1;
-        }
-
-        // A block -u emptied has nothing to hand over, and an empty span is
-        // not worth asking the pool for.
-        if (!bytes)
-                return;
-
-        p8 address_to into = parallel_reserve(output, bytes);
-        p8 address_to limit = into + bytes;
-
-        if (!into)
-                return;
-
-        for (positive at = from; at < to; at++)
-        {
-                if (!(kept[(at - from) >> 3] & (1 << ((at - from) & 7))))
-                        continue;
 
                 if (at + 8 < to)
                         __builtin_prefetch(sort_text +
                                            sort_lines[sort_items[at + 8].line].at);
 
+                if (sort_unique && at)
+                {
+                        sort_view before = sort_view_of(sort_items[at - 1].line);
+                        sort_view view = sort_view_of(sort_items[at].line);
+
+                        if (!sort_compare_views_keys(address_of before, address_of view, 0))
+                                continue;
+                }
+
                 sort_line address_to line = sort_lines + sort_items[at].line;
                 p8 address_to text = sort_text + line->at;
+                positive wanted = used + line->length + 1 + SORT_SLACK;
 
-                if (line->length <= 64 && limit - into >= (bipolar)(line->length + 16))
+                if (wanted > scratch->room &&
+                    !array_store_reserve(scratch->bytes, scratch->room, used, wanted,
+                                         4 << 20))
+                {
+                        parallel_stop();
+                        return;
+                }
+
+                p8 address_to into = scratch->bytes + used;
+
+                if (line->length <= 64)
                         for (positive copied = 0; copied < line->length; copied += 16)
                                 __builtin_memcpy(into + copied, text + copied, 16);
                 else
                         memory_copy_apart(into, text, line->length);
 
                 into[line->length] = text_delimiter;
-                into += line->length + 1;
+                used += line->length + 1;
         }
+
+        if (used)
+                parallel_write(output, scratch->bytes, used);
 }
 
 static bool sort_emit_sink(address_any context, positive index, address_any data,
@@ -21093,11 +21129,8 @@ static bool sort_emit_sink(address_any context, positive index, address_any data
 
         (void)index;
 
-        if (length && system_write_all(out->handle, data, length) != length)
-        {
-                out->failed = true;
+        if (length && !sort_write_all(out, data, length))
                 return false;
-        }
 
         return true;
 }
@@ -21110,9 +21143,29 @@ static fn sort_emit(sort_writer address_to out)
                 return;
         }
 
+        // A scratch for every slot the pool can run a job on, the caller's
+        // included, each written only by the thread in that slot.
+        positive slots = parallel_width() + 1;
+
+        if (!array_store_reserve(sort_scratches, sort_scratches_room,
+                                 sort_scratches_count, slots, 64))
+        {
+                sort_emit_serial(out);
+                return;
+        }
+
+        for (; sort_scratches_count < slots; sort_scratches_count++)
+                sort_scratches[sort_scratches_count] = (sort_scratch){0};
+
         sort_writer_flush(out);
-        parallel_ordered(sort_emit_job, sort_emit_sink, out,
-                         sort_blocks(sort_lines_count), sort_text_used);
+
+        if (!parallel_ordered(sort_emit_job, sort_emit_sink, out,
+                              sort_blocks(sort_lines_count), sort_text_used) &&
+            !out->failed)
+        {
+                out->failed = true;
+                out->error = -12;
+        }
 }
 
 /*
@@ -21202,7 +21255,10 @@ static bipolar sort_temporary()
                 handle = sort_temporary_named(directory);
 
         if (handle >= 0)
+        {
+                sort_temporary_place = directory;
                 return handle;
+        }
 
         text_flush();
         string_format(writer_stderr, "%s: cannot create temporary file in '%s': %s\n",
@@ -21552,11 +21608,15 @@ static bool sort_merge(positive count, sort_writer address_to out)
         return true;
 }
 
-static fn sort_writer_failed(string_address directory)
+// GNU names the temporary and the reason. An unnamed temporary has only the
+// directory it lives in, which is what an operator needs to free anyway.
+static fn sort_writer_failed(sort_writer address_to out)
 {
         text_flush();
-        string_format(writer_stderr, "%s: write failed: %s\n", text_name,
-                      directory ? directory : (string_address) "temporary file");
+        string_format(writer_stderr, "%s: write failed: %s: %s\n", text_name,
+                      sort_temporary_place ? sort_temporary_place
+                                           : (string_address) "temporary file",
+                      file_reason(out->error ? out->error : -5));
 }
 
 // The entries in [first, first + count) merged into one new temporary.
@@ -21577,7 +21637,7 @@ static bipolar sort_merge_temporary(positive first, positive count)
 
         if (fine && out.failed)
         {
-                sort_writer_failed(null);
+                sort_writer_failed(address_of out);
                 fine = false;
         }
 
@@ -21646,7 +21706,7 @@ static bool sort_spill()
 
         if (out.failed)
         {
-                sort_writer_failed(null);
+                sort_writer_failed(address_of out);
                 return false;
         }
 
@@ -21900,6 +21960,14 @@ static fn sort_release()
         array_store_release(sort_held, sort_held_room, none);
         array_store_release(sort_sources, sort_sources_room, none);
         array_store_release(sort_entries, sort_entries_room, none);
+
+        for (positive at = 0; at < sort_scratches_count; at++)
+                array_store_release(sort_scratches[at].bytes, sort_scratches[at].room,
+                                    none);
+
+        sort_scratches_count = 0;
+        array_store_release(sort_scratches, sort_scratches_room, none);
+        sort_temporary_place = null;
         sort_line_start = 0;
         sort_scanned = 0;
         sort_failed = false;
