@@ -178,8 +178,7 @@ static fn tls_expand_label(p8 address_to secret, string_address label,
         positive label_length = string_length(label);
         positive used = 2;
 
-        info[0] = (p8)(out_length >> 8);
-        info[1] = (p8)out_length;
+        network_store_16(info, (p16)out_length);
         info[used++] = (p8)(6 + label_length);
         memory_copy(info + used, "tls13 ", 6);
         used += 6;
@@ -245,8 +244,7 @@ static bipolar tls_send_plain(tls_conn address_to tls, p8 type, p8 address_to bo
         header[0] = type;
         header[1] = 0x03;
         header[2] = 0x03;
-        header[3] = (p8)(length >> 8);
-        header[4] = (p8)length;
+        network_store_16(header + 3, (p16)length);
         if (!network_stream_send_all(tls->handle, header, 5))
                 return TLS_FAIL;
         return network_stream_send_all(tls->handle, body, length) ? TLS_OK
@@ -277,8 +275,7 @@ static bipolar tls_send_enc(tls_conn address_to tls, p8 inner_type,
         header[0] = TLS_CT_APP;
         header[1] = 0x03;
         header[2] = 0x03;
-        header[3] = (p8)(record >> 8);
-        header[4] = (p8)record;
+        network_store_16(header + 3, (p16)record);
         memory_copy(aad, header, 5);
 
         tls_nonce(tls->c_iv, tls->seq_write, nonce);
@@ -386,7 +383,7 @@ static bipolar tls_read_record(tls_conn address_to tls, p8 address_to type,
                 goto done;
         }
 
-        payload_length = ((positive)header[3] << 8) | header[4];
+        payload_length = network_load_16(header + 3);
         if (!payload_length || payload_length > TLS_RECORD_MAX)
         {
                 status = TLS_FAIL;
@@ -1442,7 +1439,7 @@ static bool tls_verify_chain(p8 address_to body, positive body_length,
                                    count ? null : host))
                         return false;
                 at += cert_length;
-                ext_length = ((positive)body[at] << 8) | body[at + 1];
+                ext_length = network_load_16(body + at);
                 at += 2;
                 if (at + ext_length > list_end)
                         return false;
@@ -1627,8 +1624,7 @@ static bipolar tls_client_hello(tls_conn address_to tls, p8 address_to out,
 
         {
                 positive ext_length = at - ext_len_at - 2;
-                out[ext_len_at] = (p8)(ext_length >> 8);
-                out[ext_len_at + 1] = (p8)ext_length;
+                network_store_16(out + ext_len_at, (p16)ext_length);
         }
         {
                 positive body = at - 4;
@@ -1694,7 +1690,7 @@ static bipolar tls_server_hello_keys(p8 address_to hello, positive length,
         if (at + 2 > length)
                 return TLS_FAIL;
         {
-                positive ext_length = ((positive)hello[at] << 8) | hello[at + 1];
+                positive ext_length = network_load_16(hello + at);
                 at += 2;
                 ext_end = at + ext_length;
                 if (ext_end != length)
@@ -1706,8 +1702,8 @@ static bipolar tls_server_hello_keys(p8 address_to hello, positive length,
                 if (at + 4 > ext_end)
                         return TLS_FAIL;
 
-                positive id = ((positive)hello[at] << 8) | hello[at + 1];
-                positive elen = ((positive)hello[at + 2] << 8) | hello[at + 3];
+                positive id = network_load_16(hello + at);
+                positive elen = network_load_16(hello + at + 2);
                 at += 4;
                 if (at + elen > ext_end)
                         return TLS_FAIL;
@@ -1726,8 +1722,8 @@ static bipolar tls_server_hello_keys(p8 address_to hello, positive length,
 
                         if (seen_share || elen < 4)
                                 return TLS_FAIL;
-                        named = ((positive)hello[at] << 8) | hello[at + 1];
-                        klen = ((positive)hello[at + 2] << 8) | hello[at + 3];
+                        named = network_load_16(hello + at);
+                        klen = network_load_16(hello + at + 2);
                         if (4 + klen != elen)
                                 return TLS_FAIL;
                         if (!((named == 0x001d && klen == 32) ||
@@ -1748,23 +1744,6 @@ static bipolar tls_server_hello_keys(p8 address_to hello, positive length,
         }
 
         return seen_version && seen_share ? TLS_OK : TLS_FAIL;
-}
-
-static bipolar tls_server_hello_share(p8 address_to hello, positive length,
-                                      p8 address_to peer)
-{
-        p8 key[97];
-        positive n = 0;
-        positive group = 0;
-
-        if (tls_server_hello_keys(hello, length, key, sizeof key, address_of n,
-                                  address_of group))
-                return TLS_FAIL;
-        if (group != 0x001d || n != 32)
-                return TLS_FAIL;
-
-        memory_copy(peer, key, 32);
-        return TLS_OK;
 }
 
 #define TLS_HANDSHAKE_MORE 0
@@ -1947,9 +1926,9 @@ static bipolar tls_check_cert_verify(tls_conn address_to tls, p8 address_to msg,
         if (length < 8)
                 return TLS_FAIL;
         at = 4;
-        scheme = (p16)((msg[at] << 8) | msg[at + 1]);
+        scheme = network_load_16(msg + at);
         at += 2;
-        sig_length = ((positive)msg[at] << 8) | msg[at + 1];
+        sig_length = network_load_16(msg + at);
         at += 2;
         if (at + sig_length != length)
                 return TLS_FAIL;

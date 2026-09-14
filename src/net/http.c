@@ -986,84 +986,58 @@ static bipolar http_get_request(p8 address_to request, positive room,
                                 p8 version_minor, string_address agent,
                                 positive address_to used)
 {
-        static const p8 version[] = " HTTP/1.";
-        static const p8 host_label[] = "\r\nHost: ";
-        static const p8 agent_label[] = "\r\nUser-Agent: ";
-        static const p8 tail[] =
-            "\r\nAccept: */*\r\nConnection: close\r\n\r\n";
         p8 target[HTTP_URL_MAX];
-        positive host_length = string_length(host);
-        bipolar normalized = http_origin_form(path, target, sizeof target);
-        positive path_length = normalized ? 0 : string_length(target);
-        positive agent_length = string_length(agent);
+        p8 port_text[7] = {':'};
+        byte_store out = {request, room, 0};
         bool named_port = (tls && port != HTTP_HTTPS_PORT) ||
                           (!tls && port != HTTP_PORT);
-        p8 port_text[6];
-        positive port_length = named_port ? positive_into(port_text, port) : 0;
-        positive fixed = sizeof("GET ") - 1 + sizeof(version) - 1 + 1 +
-                         sizeof(host_label) - 1 + sizeof(agent_label) - 1 +
-                         sizeof(tail) - 1 + (named_port ? 1 : 0);
-        p8 address_to into = request;
+        bool ok;
 
-        if (normalized || version_minor < '0' || version_minor > '9' ||
-            fixed > room ||
-            path_length > room - fixed ||
-            host_length > room - fixed - path_length ||
-            agent_length > room - fixed - path_length - host_length ||
-            port_length >
-                room - fixed - path_length - host_length - agent_length)
+        if (http_origin_form(path, target, sizeof target) ||
+            version_minor < '0' || version_minor > '9')
                 return HTTP_BAD_URL;
 
-        into = memory_copy_apart_end(into, "GET ", sizeof("GET ") - 1);
-        into = memory_copy_apart_end(into, target, path_length);
-        into = memory_copy_apart_end(into, version, sizeof(version) - 1);
-        *into++ = version_minor;
-        into = memory_copy_apart_end(into, host_label,
-                                     sizeof(host_label) - 1);
-        into = memory_copy_apart_end(into, host, host_length);
-        if (named_port)
-        {
-                *into++ = ':';
-                into = memory_copy_apart_end(into, port_text, port_length);
-        }
-        into = memory_copy_apart_end(into, agent_label,
-                                     sizeof(agent_label) - 1);
-        into = memory_copy_apart_end(into, agent, agent_length);
-        into = memory_copy_apart_end(into, tail, sizeof(tail) - 1);
-        address_to used = (positive)(into - request);
+        ok = byte_store_append_exact(address_of out, "GET ", 4);
+        ok &= byte_store_append_exact(address_of out, target, string_length(target));
+        ok &= byte_store_append_exact(address_of out, " HTTP/1.", 8);
+        ok &= byte_store_append_exact(address_of out, address_of version_minor, 1);
+        ok &= byte_store_append_exact(address_of out, "\r\nHost: ", 8);
+        ok &= byte_store_append_exact(address_of out, host, string_length(host));
+        ok &= byte_store_append_exact(
+            address_of out, port_text,
+            named_port ? 1 + positive_into(port_text + 1, port) : 0);
+        ok &= byte_store_append_exact(address_of out, "\r\nUser-Agent: ", 14);
+        ok &= byte_store_append_exact(address_of out, agent, string_length(agent));
+        ok &= byte_store_append_exact(
+            address_of out, "\r\nAccept: */*\r\nConnection: close\r\n\r\n", 36);
+        if (!ok)
+                return HTTP_BAD_URL;
+        address_to used = out.used;
         return HTTP_OK;
 }
 
 static bipolar http_put_url(p8 address_to into, positive room, bool tls,
                             string_address host, p16 port, string_address path)
 {
-        p8 address_to at = into;
-        positive host_length = string_length(host);
-        positive path_length;
-        positive scheme_length = tls ? 8 : 7;
+        p8 port_text[7] = {':'};
+        //      The last byte of the room is kept for the terminator.
+        byte_store out = {into, room ? room - 1 : 0, 0};
         bool named_port = (tls && port != HTTP_HTTPS_PORT) ||
                           (!tls && port != HTTP_PORT);
-        p8 port_text[6];
-        positive port_length = 0;
+        bool ok = room != 0;
 
         if (!string_get(path))
                 path = (string_address) "/";
-        path_length = string_length(path);
-        if (named_port)
-                port_length = 1 + positive_into(port_text, port);
-        if (scheme_length + host_length + port_length + path_length + 1 > room)
+        ok &= byte_store_append_exact(address_of out, tls ? "https://" : "http://",
+                                      tls ? 8 : 7);
+        ok &= byte_store_append_exact(address_of out, host, string_length(host));
+        ok &= byte_store_append_exact(
+            address_of out, port_text,
+            named_port ? 1 + positive_into(port_text + 1, port) : 0);
+        ok &= byte_store_append_exact(address_of out, path, string_length(path));
+        if (!ok)
                 return HTTP_BAD_URL;
-
-        at = memory_copy_apart_end(at, tls ? "https://" : "http://", scheme_length);
-        at = memory_copy_apart_end(at, host, host_length);
-        if (named_port)
-        {
-                at[0] = ':';
-                at++;
-                at = memory_copy_apart_end(at, port_text, port_length - 1);
-        }
-        at = memory_copy_apart_end(at, path, path_length);
-        at[0] = end;
+        into[out.used] = end;
         return HTTP_OK;
 }
 

@@ -151,17 +151,13 @@ static bool net_word_is(string_address word, const char *full, positive least)
                !string_compare_max(word, (string_address)full, length);
 }
 
-//      The errno the kernel gave, said as plainly as this can say it.
+//      The errno the kernel gave, in the words libc gives it.
 static COLD b32 net_refused(string_address doing, bipolar status)
 {
-        if (status == -1)
-                string_format(net_out, "ip: %s: not permitted\n", doing);
-        else if (status == -19)
-                string_format(net_out, "ip: %s: no such device\n", doing);
-        else if (status == -101)
-                string_format(net_out, "ip: %s: network is unreachable\n", doing);
-        else if (status == -13)
-                string_format(net_out, "ip: %s: permission denied\n", doing);
+        string_address text = status < 0 ? system_error_message(-status) : null;
+
+        if (text)
+                string_format(net_out, "ip: %s: %s\n", doing, text);
         else
                 string_format(net_out, "ip: %s: failed (%p)\n", doing, (positive)(-status));
 
@@ -1750,11 +1746,24 @@ static b32 net_watch(void)
         return 1;
 }
 
+//      One table dumped, one line per entry; routes print interface names.
+static b32 net_show(b32 handle, p16 type, positive body, p8 family,
+                    netlink_visitor line, const char address_to doing)
+{
+        bipolar shown = type == RTM_GETROUTE ? net_names_gather(handle) : 0;
+
+        if (shown >= 0)
+                shown = netlink_dump(handle, type, body, family, line, null);
+        return shown < 0 ? net_refused((string_address)doing, shown) : 0;
+}
+
 static b32 net_ip(void)
 {
         bipolar handle;
         string_address object = net_words() > 1 ? net_word(1) : null;
         string_address verb = net_words() > 2 ? net_word(2) : null;
+        bool show = !verb || net_word_is(verb, "show", 1) ||
+                    net_word_is(verb, "list", 1);
         b32 status = 0;
 
         if (!object || net_word_is(object, "help", 4))
@@ -1794,13 +1803,9 @@ static b32 net_ip(void)
         //      link ------------------------------------------------------
         else if (net_word_is(object, "link", 1))
         {
-                if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
-                {
-                        bipolar shown = netlink_dump((b32)handle, RTM_GETLINK, sizeof(netlink_link),
-                                                     AF_UNSPEC, net_link_line, null);
-                        if (shown < 0)
-                                status = net_refused((string_address) "link show", shown);
-                }
+                if (show)
+                        status = net_show((b32)handle, RTM_GETLINK, sizeof(netlink_link),
+                                          AF_UNSPEC, net_link_line, "link show");
                 else if (net_word_is(verb, "set", 3) && net_words() == 5 &&
                          net_word_is(net_word(4), "up", 2))
                 {
@@ -1827,13 +1832,9 @@ static b32 net_ip(void)
         //      addr ------------------------------------------------------
         else if (net_word_is(object, "addr", 1) || net_word_is(object, "address", 1))
         {
-                if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
-                {
-                        bipolar shown = netlink_dump((b32)handle, RTM_GETADDR, sizeof(netlink_address),
-                                                     AF_INET, net_address_line, null);
-                        if (shown < 0)
-                                status = net_refused((string_address) "addr show", shown);
-                }
+                if (show)
+                        status = net_show((b32)handle, RTM_GETADDR, sizeof(netlink_address),
+                                          AF_INET, net_address_line, "addr show");
                 else if (net_word_is(verb, "add", 1) && net_words() == 6 &&
                          net_word_is(net_word(4), "dev", 3))
                 {
@@ -1871,16 +1872,9 @@ static b32 net_ip(void)
         //      route -----------------------------------------------------
         else if (net_word_is(object, "route", 1))
         {
-                if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
-                {
-                        bipolar shown = net_names_gather((b32)handle);
-                        if (shown >= 0)
-                                shown = netlink_dump((b32)handle, RTM_GETROUTE,
-                                                     sizeof(netlink_route), AF_INET,
-                                                     net_route_line, null);
-                        if (shown < 0)
-                                status = net_refused((string_address) "route show", shown);
-                }
+                if (show)
+                        status = net_show((b32)handle, RTM_GETROUTE, sizeof(netlink_route),
+                                          AF_INET, net_route_line, "route show");
                 else if (net_word_is(verb, "add", 1) &&
                          (net_words() == 6 || (net_words() == 8 &&
                           net_word_is(net_word(6), "dev", 3))) &&

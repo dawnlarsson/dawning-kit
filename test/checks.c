@@ -40850,6 +40850,8 @@ static fn tls_server_hello_validation(void)
 {
         p8 hello[91] = {0};
         p8 peer[32] = {0};
+        positive share = 0;
+        positive group = 0;
         p8 changed[91];
 
         hello[0] = TLS_HS_SERVER_HELLO;
@@ -40881,40 +40883,41 @@ static fn tls_server_hello_validation(void)
         hello[58] = 9;
 
         check("a complete TLS 1.3 ServerHello is accepted",
-              tls_server_hello_share(hello, 90, peer) == TLS_OK &&
+              tls_server_hello_keys(hello, 90, peer, sizeof peer, &share, &group) ==
+                      TLS_OK && group == 0x001d && share == 32 &&
                   !memory_compare(peer, hello + 58, 32));
 
         memory_copy(changed, hello, 90);
         changed[5] = 0x02;
         check("a ServerHello with the wrong legacy version is refused",
-              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+              tls_server_hello_keys(changed, 90, peer, sizeof peer, &share, &group) == TLS_FAIL);
 
         memory_copy(changed, hello, 90);
         changed[38] = 1;
         check("a ServerHello cannot invent a session id echo",
-              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+              tls_server_hello_keys(changed, 90, peer, sizeof peer, &share, &group) == TLS_FAIL);
 
         memory_copy(changed, hello, 90);
         changed[41] = 1;
         check("a ServerHello with compression is refused",
-              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+              tls_server_hello_keys(changed, 90, peer, sizeof peer, &share, &group) == TLS_FAIL);
 
         memory_copy(changed, hello, 90);
         changed[49] = 0x03;
         check("a ServerHello must select TLS 1.3",
-              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+              tls_server_hello_keys(changed, 90, peer, sizeof peer, &share, &group) == TLS_FAIL);
 
         memory_copy(changed, hello, 90);
         changed[45] = 0x34;
         check("an unexpected ServerHello extension is refused",
-              tls_server_hello_share(changed, 90, peer) == TLS_FAIL);
+              tls_server_hello_keys(changed, 90, peer, sizeof peer, &share, &group) == TLS_FAIL);
 
         memory_copy(changed, hello, 90);
         changed[3] = 87;
         changed[43] = 47;
         changed[90] = 0;
         check("trailing ServerHello extension bytes are refused",
-              tls_server_hello_share(changed, 91, peer) == TLS_FAIL);
+              tls_server_hello_keys(changed, 91, peer, sizeof peer, &share, &group) == TLS_FAIL);
 
         memory_copy(changed, hello, 90);
         changed[3] = 87;
@@ -40922,7 +40925,7 @@ static fn tls_server_hello_validation(void)
         changed[53] = 37;
         changed[90] = 0;
         check("an overlong X25519 ServerHello share is refused",
-              tls_server_hello_share(changed, 91, peer) == TLS_FAIL);
+              tls_server_hello_keys(changed, 91, peer, sizeof peer, &share, &group) == TLS_FAIL);
 
         {
                 p8 assembled[128];
@@ -40937,7 +40940,7 @@ static fn tls_server_hello_validation(void)
                           assembled, sizeof assembled, address_of used,
                           hello + 2, 88) == TLS_HANDSHAKE_COMPLETE &&
                           used == 90 &&
-                          tls_server_hello_share(assembled, used, peer) ==
+                          tls_server_hello_keys(assembled, used, peer, sizeof peer, &share, &group) ==
                               TLS_OK);
 
                 memory_copy(changed, hello, 90);
@@ -42534,29 +42537,31 @@ static fn leasing(void)
                 socket_address_internet peer = expected;
 
                 check("the selected DHCP server may acknowledge",
-                      dhcp_answer_matches(DHCP_ACK, address_of answer,
-                                          0x0a000202));
+                      dhcp_reacquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer, false));
                 check("the selected DHCP server may refuse",
-                      dhcp_answer_matches(DHCP_NAK, address_of answer,
-                                          0x0a000202));
+                      dhcp_reacquisition_answer_matches(
+                          DHCP_NAK, address_of answer, address_of offer, false));
                 check("a DHCP ACK completes the selected offered address",
-                      dhcp_acquisition_answer_matches(
-                          DHCP_ACK, address_of answer, address_of offer));
+                      dhcp_reacquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer, false));
                 answer.address++;
                 check("a DHCP ACK cannot replace the selected offered address",
-                      !dhcp_acquisition_answer_matches(
-                          DHCP_ACK, address_of answer, address_of offer));
+                      !dhcp_reacquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer, false));
                 answer.address = 0;
                 check("a selected server may still refuse without an address",
-                      dhcp_acquisition_answer_matches(
-                          DHCP_NAK, address_of answer, address_of offer));
+                      dhcp_reacquisition_answer_matches(
+                          DHCP_NAK, address_of answer, address_of offer, false));
+                offer.server++;
                 check("a different DHCP server cannot complete the exchange",
-                      !dhcp_answer_matches(DHCP_ACK, address_of answer,
-                                           0x0a000203));
+                      !dhcp_reacquisition_answer_matches(
+                          DHCP_NAK, address_of answer, address_of offer, false));
+                offer.server--;
                 answer.server = 0;
                 check("a DHCP answer without its server id is refused",
-                      !dhcp_answer_matches(DHCP_ACK, address_of answer,
-                                           0x0a000202));
+                      !dhcp_reacquisition_answer_matches(
+                          DHCP_NAK, address_of answer, address_of offer, false));
                 check("a DHCP reply is bound to server port 67",
                       dhcp_peer_matches(address_of peer, sizeof peer,
                                         address_of expected, false));

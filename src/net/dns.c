@@ -115,68 +115,24 @@ static bipolar dns_write_name(p8 address_to into, positive room, string_address 
 }
 
 /*
-        A name skipped over, following pointers but never in a circle.
+        A name expanded, following pointers but never in a circle.
 
-        The answer is where the name ENDS in the message, which for a
-        compressed name is two bytes on from where it began however far away
-        the pointer led. Each jump lowers the bound to its own offset: merely
-        moving backwards is insufficient because labels can step forwards to
-        that same pointer again.
+        The labels are copied uncompressed into the caller's bytes, and ended
+        says where the name ENDS in the message, which for a compressed name
+        is two bytes on from where it began however far away the pointer led.
+        Each jump lowers the ceiling to its own offset: merely moving
+        backwards is insufficient because labels can step forwards to that
+        same pointer again. The spelling is kept as sent; DNS names compare
+        without regard to ASCII case.
 */
-static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive at)
-{
-        bipolar ended = -1;
-
-        for (;;)
-        {
-                p8 length;
-
-                if (at >= size)
-                        return DNS_MALFORMED;
-
-                length = message[at];
-
-                if ((length & 0xc0) == 0xc0)
-                {
-                        positive target;
-
-                        if (at + 1 >= size)
-                                return DNS_MALFORMED;
-
-                        if (ended < 0)
-                                ended = (bipolar)(at + 2);
-
-                        target = network_load_16(message + at) & 0x3fff;
-
-                        if (target >= at)
-                                return DNS_MALFORMED;
-
-                        size = at;
-                        at = target;
-                        continue;
-                }
-
-                if (length & 0xc0)
-                        return DNS_MALFORMED;
-
-                at += 1 + length;
-
-                if (!length)
-                        return ended < 0 ? (bipolar)at : ended;
-        }
-}
-
-/* Expand one wire name into an uncompressed, lower-case label spelling.
-   Comparing that spelling keeps owner checks independent of compression and
-   of DNS's ASCII case-insensitivity.  The moving ceiling is the same loop
-   guard used by dns_skip_name: every compression pointer must move strictly
-   backwards and no target may wander back through the pointer that led to it. */
-static PURE bipolar dns_copy_name(p8 address_to message, positive size,
-                                  positive at, p8 address_to into,
-                                  positive room)
+static bipolar dns_copy_name(p8 address_to message, positive size,
+                             positive at, p8 address_to into, positive room,
+                             positive address_to ended)
 {
         positive ceiling = size;
         positive used = 0;
+
+        address_to ended = 0;
 
         for (;;)
         {
@@ -194,6 +150,9 @@ static PURE bipolar dns_copy_name(p8 address_to message, positive size,
                         if (at + 1 >= ceiling)
                                 return DNS_MALFORMED;
 
+                        if (!address_to ended)
+                                address_to ended = at + 2;
+
                         target = network_load_16(message + at) & 0x3fff;
 
                         if (target >= at)
@@ -204,28 +163,32 @@ static PURE bipolar dns_copy_name(p8 address_to message, positive size,
                         continue;
                 }
 
-                if (length & 0xc0 || length > 63 ||
-                    length > ceiling - at - 1 ||
-                    used > room || room - used < (positive)length + 1)
+                if (length & 0xc0 || length > ceiling - at - 1 ||
+                    room - used < (positive)length + 1)
                         return DNS_MALFORMED;
 
-                into[used++] = length;
-                at++;
-
-                for (positive byte = 0; byte < length; byte++)
-                {
-                        p8 value = message[at + byte];
-
-                        if (value >= 'A' && value <= 'Z')
-                                value = (p8)(value + ('a' - 'A'));
-                        into[used++] = value;
-                }
-
-                at += length;
+                memory_copy_apart(into + used, message + at, length + 1);
+                used += length + 1;
+                at += length + 1;
 
                 if (!length)
+                {
+                        if (!address_to ended)
+                                address_to ended = at;
                         return (bipolar)used;
+                }
         }
+}
+
+//      Where a name ends, for a caller with no use for its spelling.
+static bipolar dns_skip_name(p8 address_to message, positive size, positive at)
+{
+        p8 name[256];
+        positive ended;
+
+        return dns_copy_name(message, size, at, name, sizeof name,
+                             address_of ended) < 0
+                   ? DNS_MALFORMED : (bipolar)ended;
 }
 
 /* Find an address only along the name that was asked for and the CNAME chain
@@ -240,8 +203,10 @@ static bipolar dns_answer_address(p8 address_to message, positive size,
 {
         p8 wanted[256];
         p8 alias[256];
+        positive ended;
         bipolar wanted_length = dns_copy_name(message, size, question_at,
-                                              wanted, sizeof wanted);
+                                              wanted, sizeof wanted,
+                                              address_of ended);
 
         if (wanted_length < 0)
                 return DNS_MALFORMED;
@@ -259,20 +224,15 @@ static bipolar dns_answer_address(p8 address_to message, positive size,
                 for (positive record = 0; record < answers; record++)
                 {
                         p8 owner[256];
+                        //      at moves on to where the owner name ended.
                         bipolar owner_length = dns_copy_name(
-                            message, size, at, owner, sizeof owner);
-                        bipolar next = dns_skip_name(message, size, at);
+                            message, size, at, owner, sizeof owner, address_of at);
                         p16 kind;
                         p16 class;
                         p16 data_length;
                         bool is_wanted;
 
-                        if (owner_length < 0 || next < 0)
-                                return DNS_MALFORMED;
-
-                        at = (positive)next;
-
-                        if (at > size || size - at < 10)
+                        if (owner_length < 0 || size - at < 10)
                                 return DNS_MALFORMED;
 
                         kind = network_load_16(message + at);
@@ -284,8 +244,8 @@ static bipolar dns_answer_address(p8 address_to message, positive size,
                                 return DNS_MALFORMED;
 
                         is_wanted = owner_length == wanted_length &&
-                                    !memory_compare(owner, wanted,
-                                                    (positive)wanted_length);
+                                    !memory_compare_ascii_case(
+                                        owner, wanted, (positive)wanted_length);
 
                         if (class == DNS_CLASS_IN && is_wanted &&
                             kind == DNS_TYPE_A)
@@ -299,17 +259,17 @@ static bipolar dns_answer_address(p8 address_to message, positive size,
                         else if (class == DNS_CLASS_IN && is_wanted &&
                                  kind == DNS_TYPE_CNAME)
                         {
-                                bipolar target_end;
+                                positive target_end;
 
                                 if (has_alias)
                                         return DNS_MALFORMED;
 
-                                target_end = dns_skip_name(message, size, at);
                                 alias_length = dns_copy_name(
-                                    message, size, at, alias, sizeof alias);
+                                    message, size, at, alias, sizeof alias,
+                                    address_of target_end);
 
-                                if (target_end < 0 || alias_length < 0 ||
-                                    (positive)target_end != at + data_length)
+                                if (alias_length < 0 ||
+                                    target_end != at + data_length)
                                         return DNS_MALFORMED;
                                 has_alias = true;
                         }
@@ -334,8 +294,8 @@ static bipolar dns_answer_address(p8 address_to message, positive size,
                         return DNS_NO_ADDRESS;
 
                 if (alias_length == wanted_length &&
-                    !memory_compare(alias, wanted,
-                                    (positive)wanted_length))
+                    !memory_compare_ascii_case(alias, wanted,
+                                               (positive)wanted_length))
                         return DNS_MALFORMED;
 
                 memory_copy(wanted, alias, (positive)alias_length);
