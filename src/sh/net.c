@@ -1520,6 +1520,18 @@ static bool net_link_event(netlink_header address_to header,
         return net_link_news(link->index, link->flags, held);
 }
 
+//      Discovery again, on a routing socket of its own, if one will open.
+static fn net_reconfigure_fresh(net_holding address_to held)
+{
+        bipolar handle = netlink_open_groups(0);
+
+        if (handle >= 0)
+        {
+                net_reconfigure((b32)handle, held);
+                socket_close((b32)handle);
+        }
+}
+
 static b32 net_watch(void)
 {
         netlink_buffer message = {0};
@@ -1557,15 +1569,8 @@ static b32 net_watch(void)
         //      Configure whatever is already plugged in before waiting for
         //      anything to change, or a machine that boots with its cable in
         //      would wait forever for an event that already happened.
-        handle = netlink_open_groups(0);
-
         memory_fill(address_of held, 0, sizeof held);
-
-        if (handle >= 0)
-        {
-                net_reconfigure((b32)handle, address_of held);
-                socket_close((b32)handle);
-        }
+        net_reconfigure_fresh(address_of held);
 
         for (;;)
         {
@@ -1620,15 +1625,7 @@ static b32 net_watch(void)
                                                          net_seconds()))
                                 {
                                         held.lost = true;
-                                        handle = netlink_open_groups(0);
-
-                                        if (handle >= 0)
-                                        {
-                                                net_reconfigure(
-                                                    (b32)handle,
-                                                    address_of held);
-                                                socket_close((b32)handle);
-                                        }
+                                        net_reconfigure_fresh(address_of held);
                                         continue;
                                 }
 
@@ -1687,15 +1684,7 @@ static b32 net_watch(void)
                                         held.lost = true;
                                 }
 
-                                handle = netlink_open_groups(0);
-
-                                if (handle >= 0)
-                                {
-                                        net_reconfigure((b32)handle,
-                                                        address_of held);
-                                        socket_close((b32)handle);
-                                }
-
+                                net_reconfigure_fresh(address_of held);
                                 continue;
                         }
                 }
@@ -1725,16 +1714,8 @@ static b32 net_watch(void)
 
                         at += netlink_align(header->length);
 
-                        if (!interesting)
-                                continue;
-
-                        handle = netlink_open_groups(0);
-
-                        if (handle < 0)
-                                continue;
-
-                        net_reconfigure((b32)handle, address_of held);
-                        socket_close((b32)handle);
+                        if (interesting)
+                                net_reconfigure_fresh(address_of held);
                 }
         }
 

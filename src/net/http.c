@@ -665,6 +665,20 @@ static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
                          bool exact);
 static bipolar http_copy_chunked(http_body address_to body, bipolar dest);
 
+/* A final response's body, by the framing its head declared.  A memory store
+   refuses a close-delimited body beyond its limit as it arrives, so an EOF
+   that lands exactly on the limit is still a complete body. */
+static bipolar http_copy_body(http_body address_to body, bipolar dest,
+                              const http_response address_to response)
+{
+        bool exact = response->body_kind == HTTP_BODY_LENGTH;
+
+        if (response->body_kind == HTTP_BODY_CHUNKED)
+                return http_copy_chunked(body, dest);
+        return http_copy(body, dest,
+                         exact ? response->body_length : positive_max, exact);
+}
+
 static bipolar http_get(p32 host, p16 port, string_address name,
                         string_address path, http_buffer address_to body,
                         b32 address_to code)
@@ -719,35 +733,11 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                     .store_limit = HTTP_FETCH_MAX,
                 };
 
-                if (response.body_kind == HTTP_BODY_CHUNKED)
-                        status = http_copy_chunked(address_of source, -1);
-                else if (response.body_kind == HTTP_BODY_LENGTH)
-                {
-                        if (response.body_length > HTTP_FETCH_MAX)
-                                status = HTTP_MALFORMED;
-                        else
-                                status = http_copy(address_of source, -1,
-                                                   response.body_length, true);
-                }
-                else
-                {
-                        p8 extra;
-                        positive got = 0;
-
-                        status = http_copy(address_of source, -1,
-                                           HTTP_FETCH_MAX, false);
-                        /* A close-delimited body ends only at EOF.  When the
-                           store fills exactly, one bounded probe distinguishes
-                           that valid edge from an oversized response. */
-                        if (!status && whole.used == HTTP_FETCH_MAX)
-                        {
-                                status = http_body_read(address_of source,
-                                                        address_of extra, 1,
-                                                        address_of got);
-                                if (!status && got)
-                                        status = HTTP_MALFORMED;
-                        }
-                }
+                status = response.body_kind == HTTP_BODY_LENGTH &&
+                                 response.body_length > HTTP_FETCH_MAX
+                             ? HTTP_MALFORMED
+                             : http_copy_body(address_of source, -1,
+                                              address_of response);
                 if (status)
                         goto done;
                 length = whole.used;
@@ -1225,17 +1215,16 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
         {
                 p8 host[256];
                 p8 head[HTTP_HEAD_MAX];
+                p8 next[HTTP_URL_MAX];
                 string_address path;
                 p16 port;
                 bool tls;
                 p32 ip;
                 http_link link;
-                http_body body = {0};
                 http_response response;
                 positive header = 0;
                 bipolar status;
                 positive used = 0;
-                b32 answer = 0;
 
                 status = http_split_into(url, host, sizeof host, address_of port,
                                          address_of path, address_of tls);
@@ -1254,47 +1243,23 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                         return status;
 
                 status = http_send_get(address_of link, host, port, path, tls);
-                if (status)
+                if (!status)
+                        status = http_response_head(
+                            address_of link, head, sizeof head, address_of used,
+                            address_of header, address_of response,
+                            HTTP_HEAD_SECONDS, 0, false);
+                if (!status && code)
+                        address_to code = response.code;
+
+                if (!status && http_response_is_redirect(response.code))
                 {
-                        http_link_close(address_of link);
-                        return status;
-                }
-
-                status = http_response_head(
-                    address_of link, head, sizeof head, address_of used,
-                    address_of header, address_of response,
-                    HTTP_HEAD_SECONDS, 0, false);
-
-                if (status)
-                {
-                        http_link_close(address_of link);
-                        return status;
-                }
-                answer = response.code;
-                if (code)
-                        address_to code = answer;
-
-                body.link = address_of link;
-                body.stash = head + header;
-                body.stash_used = used - (positive)header;
-                body.scratch = head;
-
-                if (http_response_is_redirect(answer))
-                {
-                        p8 next[HTTP_URL_MAX];
-
-                        if (!response.location || !response.location_length)
-                        {
-                                http_link_close(address_of link);
-                                return HTTP_MALFORMED;
-                        }
+                        status = !response.location_length ? HTTP_MALFORMED
+                                 : response.location_length >= sizeof next
+                                     ? HTTP_BAD_URL : HTTP_OK;
+                        if (!status)
                         {
                                 p8 placed[HTTP_URL_MAX];
-                                if (response.location_length >= sizeof placed)
-                                {
-                                        http_link_close(address_of link);
-                                        return HTTP_BAD_URL;
-                                }
+
                                 memory_copy(placed, response.location,
                                             response.location_length);
                                 placed[response.location_length] = end;
@@ -1304,31 +1269,26 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                         http_link_close(address_of link);
                         if (status)
                                 return status;
-                        if (string_length(next) >= sizeof url)
-                                return HTTP_BAD_URL;
+                        //      http_absolutize terminates inside next, which is
+                        //      exactly as large as url.
                         string_copy(url, next);
                         continue;
                 }
 
-                if (!http_response_is_success(answer))
+                if (!status && !http_response_is_success(response.code))
+                        status = HTTP_STATUS;
+                else if (!status && !http_response_has_no_body(response.code))
                 {
-                        http_link_close(address_of link);
-                        return HTTP_STATUS;
-                }
+                        http_body body = {
+                            .link = address_of link,
+                            .stash = head + header,
+                            .stash_used = used - header,
+                            .scratch = head,
+                        };
 
-                if (http_response_has_no_body(answer))
-                {
-                        http_link_close(address_of link);
-                        return HTTP_OK;
+                        status = http_copy_body(address_of body, dest,
+                                                address_of response);
                 }
-
-                if (response.body_kind == HTTP_BODY_CHUNKED)
-                        status = http_copy_chunked(address_of body, dest);
-                else if (response.body_kind == HTTP_BODY_LENGTH)
-                        status = http_copy(address_of body, dest,
-                                           response.body_length, true);
-                else
-                        status = http_copy(address_of body, dest, positive_max, false);
 
                 http_link_close(address_of link);
                 return status;
