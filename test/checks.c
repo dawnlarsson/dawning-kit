@@ -41670,12 +41670,18 @@ static fn crypto_floor(void)
 
         The oracle is the former crypto_ghash_times, one masked select a bit,
         with nothing in common with the assembly: no lanes, no reversal, no
-        Karatsuba. Single-bit keys walk every lane of the key and every bit a
-        reversal moves; single-bit states with zero data do the same for the
-        operand; all-ones and zero keys take the extremes. The rest is random
-        state, key and runs of zero to nine blocks, which is what the loop
-        and its carried state need. The key and the data must come back
-        untouched, and zero blocks must not read the data at all.
+        powers, no Karatsuba. Single-bit keys walk every lane of the key and
+        every bit a reversal moves; single-bit states with zero data do the
+        same for the operand; all-ones and zero keys take the extremes. The
+        rest is random state, key and runs of zero to 130 blocks: two 48-block
+        turns, every 8- and 4-block remainder and every tail.
+
+        Every round runs each body this machine has, widest first, by writing
+        the feature bytes down and putting them back: the VPCLMULQDQ turn, the
+        PCLMULQDQ turn and the integer floor, ghash_integer, on x86_64. The
+        table, H and the
+        data must come back untouched, and zero blocks must not read the data
+        at all.
 */
 static fn ghash_reference_times(p8 address_to x, const p8 address_to y)
 {
@@ -41713,34 +41719,42 @@ static p8 ghash_check_byte(void)
         return (p8)(ghash_check_seed >> 29);
 }
 
+#define GHASH_CHECK_BLOCKS 131
+
 static fn crypto_floor_ghash(void)
 {
+        static p8 table[GHASH_KEY_SIZE] __attribute__((aligned(64)));
+        static p8 table_kept[GHASH_KEY_SIZE];
+        static p8 data[16 * GHASH_CHECK_BLOCKS];
+        static p8 data_kept[16 * GHASH_CHECK_BLOCKS];
         p8 key[16];
         p8 key_kept[16];
         p8 state[16];
         p8 expect[16];
-        p8 data[16 * 9];
-        p8 data_kept[16 * 9];
+        p8 got[16];
+        p8 vpclmul = cpu_has_vpclmul;
+        p8 pclmul = cpu_has_pclmul;
         positive wrong = 0;
-        positive rounds = 3000;
+        positive key_wrong = 0;
+        positive rounds = 800;
 
         for (positive round = 0; round < rounds; round++)
         {
-                positive blocks = 1 + ghash_check_byte() % 9;
+                positive blocks = round % GHASH_CHECK_BLOCKS;
 
                 for (positive i = 0; i < 16; i++)
                 {
                         key[i] = ghash_check_byte();
                         state[i] = ghash_check_byte();
                 }
-                for (positive i = 0; i < sizeof data; i++)
+                for (positive i = 0; i < 16 * blocks + 16; i++)
                         data[i] = ghash_check_byte();
 
                 if (round < 128)
                 {
                         memory_fill(key, 0, 16);
                         key[round / 8] = (p8)(0x80 >> (round % 8));
-                        blocks = 1;
+                        blocks = round % 2 ? 1 : 53;
                 }
                 else if (round < 256)
                 {
@@ -41756,15 +41770,21 @@ static fn crypto_floor_ghash(void)
                         memory_fill(key, 0xff, 16);
                         memory_fill(state, 0xff, 16);
                         memory_fill(data, 0, sizeof data);
+                        blocks = 97;
                 }
                 else if (round == 258)
                         memory_fill(key, 0, 16);
-                else if (round % 10 == 0)
-                        blocks = 0;
+                else if (round < 400)
+                        blocks = round % 20;
 
                 memory_copy(key_kept, key, 16);
+                ghash_key(table, key);
+                memory_copy(table_kept, table, GHASH_KEY_SIZE);
                 memory_copy(data_kept, data, sizeof data);
                 memory_copy(expect, state, 16);
+                if (memory_compare(key, key_kept, 16) != 0 ||
+                    memory_compare(table + 1536, key, 16) != 0)
+                        key_wrong++;
 
                 for (positive b = 0; b < blocks; b++)
                 {
@@ -41773,14 +41793,23 @@ static fn crypto_floor_ghash(void)
                         ghash_reference_times(expect, key);
                 }
 
-                ghash_blocks(state, key, blocks ? data : null, blocks);
+                for (positive body = 0; body < 3; body++)
+                {
+                        cpu_has_vpclmul = body == 0 ? vpclmul : 0;
+                        cpu_has_pclmul = body == 2 ? 0 : pclmul;
+                        memory_copy(got, state, 16);
+                        ghash_blocks(got, table, blocks ? data : null, blocks);
 
-                if (memory_compare(state, expect, 16) != 0 ||
-                    memory_compare(key, key_kept, 16) != 0 ||
-                    memory_compare(data, data_kept, sizeof data) != 0)
-                        wrong++;
+                        if (memory_compare(got, expect, 16) != 0 ||
+                            memory_compare(table, table_kept, GHASH_KEY_SIZE) != 0 ||
+                            memory_compare(data, data_kept, sizeof data) != 0)
+                                wrong++;
+                }
+                cpu_has_vpclmul = vpclmul;
+                cpu_has_pclmul = pclmul;
         }
 
+        check("GHASH key table keeps H and leaves the key alone", key_wrong == 0);
         check("GHASH blocks agree with the bit-serial multiply", wrong == 0);
 }
 

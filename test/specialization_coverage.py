@@ -588,7 +588,7 @@ cover('nothing_to_fold', None, '''
 _start moonwater_cpu_detect program_initial_identity get_cpu_time term_size working_directory_get
 working_directory_set program_argument_count program_argument_list program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
-string_hash_33_length hash_xxh64_finish sha256_compress ghash_blocks memory_get64 zstd_bits_reload zstd_sequences_run
+string_hash_33_length hash_xxh64_finish sha256_compress ghash_blocks ghash_key ghash_integer memory_get64 zstd_bits_reload zstd_sequences_run
 ''', 'no argument, or an argument that is a pointer into memory the caller '
      'owns; nothing the compiler could know shortens the body')
 cover('nothing_to_fold', None, '''

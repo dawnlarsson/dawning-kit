@@ -231,6 +231,7 @@ unsigned memory_checksum_bsd16(const void *, unsigned long, unsigned);
 void sha256_compress(unsigned int *, unsigned char *);
 #endif
 #ifndef SKIP_GHASH
+void ghash_key(unsigned char *, const unsigned char *);
 void ghash_blocks(unsigned char *, const unsigned char *,
                   const unsigned char *, unsigned long);
 #endif
@@ -558,14 +559,18 @@ static void sha_w(unsigned long size, unsigned long rounds)
 
 #ifndef SKIP_GHASH
 /*
-        GHASH against the same integer carry-less multiply written in C, so
-        the floor column is the compiler's arrangement of the algorithm the
-        assembly spells by hand: the thing to beat, not a traffic bound.
+        GHASH against the integer carry-less multiply written in C: the
+        floor column is the compiler's arrangement of the baseline algorithm,
+        the thing every body has to beat, not a traffic bound. ghash_blocks
+        takes its widest body here (VPCLMULQDQ zmm on a 9950X, PCLMULQDQ,
+        PMULL or Zbc where present). The ISA references for a 16 KiB record:
+        OpenSSL GMAC 37.0 GB/s on the 9950X and 7.6 GB/s on an M2 Pro.
 */
-static const unsigned char ghash_key[16] = {
+static const unsigned char ghash_key_bytes[16] = {
     0x66, 0xe9, 0x4b, 0xd4, 0xef, 0x8a, 0x2c, 0x3b,
     0x88, 0x4c, 0xfa, 0x59, 0xca, 0x34, 0x2b, 0x2e};
 static unsigned char ghash_state[16];
+static unsigned char ghash_table[1552] __attribute__((aligned(64)));
 
 static uint64_t ghash_c_load(const unsigned char *at)
 {
@@ -646,8 +651,10 @@ static void ghash_c_blocks(unsigned char *state, const unsigned char *key,
 static void ghash_w(unsigned long size, unsigned long rounds)
 {
         unsigned long i;
+        if (!ghash_table[1536] && !ghash_table[1537])
+                ghash_key(ghash_table, ghash_key_bytes);
         for (i = 0; i < rounds; i++) {
-                ghash_blocks(ghash_state, ghash_key, src, size / 16);
+                ghash_blocks(ghash_state, ghash_table, src, size / 16);
                 sink += ghash_state[0];
         }
 }
@@ -656,7 +663,7 @@ static void ghash_c_w(unsigned long size, unsigned long rounds)
 {
         unsigned long i;
         for (i = 0; i < rounds; i++) {
-                ghash_c_blocks(ghash_state, ghash_key, src, size / 16);
+                ghash_c_blocks(ghash_state, ghash_key_bytes, src, size / 16);
                 sink += ghash_state[0];
         }
 }

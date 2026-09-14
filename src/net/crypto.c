@@ -654,21 +654,22 @@ static fn crypto_aes128_encrypt(p8 address_to round, p8 address_to in,
 
 /*
         GHASH over a span, the last partial block zero padded. The multiply
-        is ghash_blocks in library.c; GCM's framing stays here.
+        is ghash_blocks in library.c over the table ghash_key made; GCM's
+        framing stays here.
 */
-static fn crypto_ghash_span(p8 address_to state, p8 address_to h,
+static fn crypto_ghash_span(p8 address_to state, p8 address_to table,
                             p8 address_to bytes, positive length)
 {
         positive whole = length / 16;
         p8 padded[16];
 
-        ghash_blocks(state, h, bytes, whole);
+        ghash_blocks(state, table, bytes, whole);
 
         if (length % 16)
         {
                 memory_fill(padded, 0, 16);
                 memory_copy(padded, bytes + whole * 16, length % 16);
-                ghash_blocks(state, h, padded, 1);
+                ghash_blocks(state, table, padded, 1);
                 crypto_forget(padded, sizeof padded);
         }
 }
@@ -680,6 +681,7 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
 {
         p8 round[176];
         p8 h[16];
+        p8 table[GHASH_KEY_SIZE] __attribute__((aligned(64)));
         p8 j0[16];
         p8 counter[16];
         p8 s[16];
@@ -692,6 +694,7 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
         crypto_aes128_expand(key, round);
         memory_fill(zero, 0, 16);
         crypto_aes128_encrypt(round, zero, h);
+        ghash_key(table, h);
 
         memory_copy(j0, iv, 12);
         j0[12] = 0;
@@ -702,13 +705,13 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
         memory_copy(counter, j0, 16);
         memory_fill(s, 0, 16);
 
-        crypto_ghash_span(s, h, aad, aad_length);
+        crypto_ghash_span(s, table, aad, aad_length);
 
         //      GHASH reads the ciphertext both ways: before the counter
         //      stream comes off it on the way in, after it goes on on the
         //      way out. So the whole span is hashed in one call.
         if (!encrypt)
-                crypto_ghash_span(s, h, text, text_length);
+                crypto_ghash_span(s, table, text, text_length);
 
         at = 0;
         while (at < text_length)
@@ -732,12 +735,12 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
         }
 
         if (encrypt)
-                crypto_ghash_span(s, h, text, text_length);
+                crypto_ghash_span(s, table, text, text_length);
 
         memory_fill(padded, 0, 16);
         crypto_put_be64(padded, (p64)aad_length * 8);
         crypto_put_be64(padded + 8, (p64)text_length * 8);
-        ghash_blocks(s, h, padded, 1);
+        ghash_blocks(s, table, padded, 1);
 
         crypto_aes128_encrypt(round, j0, enc);
         for (i = 0; i < 16; i++)
@@ -745,6 +748,7 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
 
         crypto_forget(round, sizeof round);
         crypto_forget(h, sizeof h);
+        crypto_forget(table, sizeof table);
         crypto_forget(j0, sizeof j0);
         crypto_forget(counter, sizeof counter);
         crypto_forget(s, sizeof s);

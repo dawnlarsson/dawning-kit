@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        291 routines (280 public, 11 local), 290 of them on all three and 1 local to one.
+        293 routines (281 public, 12 local), 292 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -138,6 +138,8 @@
           file_write                     public  yes     yes     yes
           get_cpu_time                   public  yes     yes     yes
           ghash_blocks                   public  yes     yes     yes
+          ghash_integer                  local   yes     yes     yes
+          ghash_key                      public  yes     yes     yes
           hash_crc32                     public  yes     yes     yes
           hash_crc64                     public  yes     yes     yes
           hash_xxh64                     public  yes     yes     yes
@@ -6435,7 +6437,7 @@ __asm__(
        The key's twenty four lanes, plain and reversed, are cut once a call
        into the frame, which is wiped before return. Measured and proved
        against the bit-serial multiply in CHECK_net and test/hardware_floor.c. */
-    ASM_FUNC(ghash_blocks)
+    ASM_LOCAL_FUNC(ghash_integer)
     "test %rcx, %rcx\n   jz .Lghash_x64_none\n"
     "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "sub $240, %rsp\n"
@@ -6512,7 +6514,252 @@ __asm__(
     ".quad 0x5555555555555555, 0x3333333333333333\n"
     ".quad 0x0f0f0f0f0f0f0f0f\n"
     ASM_SECTION
+    ASM_LOCAL_END(ghash_integer)
+
+    /* ghash_blocks over the table ghash_key made, and the two bodies above
+       the integer floor.
+
+       Both multiply by precomputed powers of H instead of by H each block:
+       with X the state and B1..Bk the blocks of a turn,
+
+           X' = (X ^ B1) H^k ^ B2 H^(k-1) ^ ... ^ Bk H
+
+       is k independent products and one reduction. Each power is stored
+       times x^-1, so the 256-bit carry-less product of two byte-reversed
+       values needs no one-bit shift: its high half is already the answer's
+       low end and its low half folds up in two carry-less multiplies by
+       0xc2 << 56, the reflected x^128 = x^7 + x^2 + x + 1.
+
+       The products are Karatsuba: low times low, high times high, and the
+       sum of the halves times the stored sum of the power's halves. The
+       middle term is that last product less the other two, and because
+       every term of a turn is summed before anything else happens, the
+       correction is one xor a turn rather than two a block. That is three
+       carry-less multiplies a block instead of four, and the multiply is
+       what these bodies wait on: on a 9950X the zmm body measured 2.75
+       instructions and 1.66 cycles a block, 50.7 GB/s over a 16 KiB
+       record, against 39.5 for the same loop with four multiplies and
+       37.0 for OpenSSL's GMAC (3.3 instructions, 2.3 cycles).
+
+       zmm, VPCLMULQDQ and AVX-512: 48 blocks a turn, 12 vectors of four,
+       paired so vpternlogq sums two products into each accumulator. 32
+       measured the same and 16 was 28 GB/s. zmm16 up only, so no
+       vzeroupper. The tails are four-block turns and then single blocks.
+
+       xmm, PCLMULQDQ and SSE: 8 blocks a turn, 12.1 GB/s against 7.4 for
+       4. Its memory operands are legacy SSE, which is why the table has to
+       be 16-byte aligned.
+
+       Registers the bodies leave holding products are cleared on the way
+       out; the powers themselves are only ever memory operands. */
+#define GHASH_ZMM_LOAD(at, reg)                                               \
+    "vmovdqu64 " at "(%rdx), %zmm" reg "\n"                                   \
+    "vpshufb %zmm31, %zmm" reg ", %zmm" reg "\n"
+#define GHASH_ZMM_SUM(reg, sum)                                               \
+    "vpsrldq $8, %zmm" reg ", %zmm" sum "\n"                                  \
+    "vpxorq %zmm" reg ", %zmm" sum ", %zmm" sum "\n"
+#define GHASH_ZMM_PRODUCTS(pa, pb, sa, sb, low, high, middle)                 \
+    "vpclmulqdq $0x00, " pa "(%rsi), %zmm16, %zmm19\n"                        \
+    "vpclmulqdq $0x00, " pb "(%rsi), %zmm18, %zmm20\n" low                    \
+    "vpclmulqdq $0x11, " pa "(%rsi), %zmm16, %zmm19\n"                        \
+    "vpclmulqdq $0x11, " pb "(%rsi), %zmm18, %zmm20\n" high                   \
+    "vpclmulqdq $0x00, " sa "(%rsi), %zmm24, %zmm19\n"                        \
+    "vpclmulqdq $0x00, " sb "(%rsi), %zmm25, %zmm20\n" middle
+#define GHASH_ZMM_PAIR_FIRST(da, db, pa, pb, sa, sb)                          \
+    GHASH_ZMM_LOAD(da, "16") "vpxorq %zmm17, %zmm16, %zmm16\n"                \
+    GHASH_ZMM_SUM("16", "24") GHASH_ZMM_LOAD(db, "18")                        \
+    GHASH_ZMM_SUM("18", "25")                                                 \
+    GHASH_ZMM_PRODUCTS(pa, pb, sa, sb,                                        \
+        "vpxorq %zmm20, %zmm19, %zmm21\n",                                    \
+        "vpxorq %zmm20, %zmm19, %zmm22\n",                                    \
+        "vpxorq %zmm20, %zmm19, %zmm23\n")
+#define GHASH_ZMM_PAIR(da, db, pa, pb, sa, sb)                                \
+    GHASH_ZMM_LOAD(da, "16") GHASH_ZMM_SUM("16", "24")                        \
+    GHASH_ZMM_LOAD(db, "18") GHASH_ZMM_SUM("18", "25")                        \
+    GHASH_ZMM_PRODUCTS(pa, pb, sa, sb,                                        \
+        "vpternlogq $0x96, %zmm20, %zmm19, %zmm21\n",                         \
+        "vpternlogq $0x96, %zmm20, %zmm19, %zmm22\n",                         \
+        "vpternlogq $0x96, %zmm20, %zmm19, %zmm23\n")
+//  Low half in xmm21 folds into high half xmm22; the state is xmm17.
+#define GHASH_EVEX_REDUCE                                                     \
+    "vpclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm21, %xmm19\n"       \
+    "vpshufd $0x4e, %xmm21, %xmm21\n   vpxorq %xmm19, %xmm21, %xmm21\n"       \
+    "vpclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm21, %xmm19\n"       \
+    "vpshufd $0x4e, %xmm21, %xmm21\n"                                         \
+    "vpternlogq $0x96, %xmm19, %xmm21, %xmm22\n"                              \
+    "vmovdqa64 %xmm22, %xmm17\n"
+//  Low zmm21, high zmm22, middle zmm23: split the middle, fold the four
+//  lanes of each half, reduce.
+#define GHASH_ZMM_SPLIT_FOLD                                                  \
+    "vpslldq $8, %zmm23, %zmm19\n   vpsrldq $8, %zmm23, %zmm23\n"             \
+    "vpxorq %zmm19, %zmm21, %zmm21\n   vpxorq %zmm23, %zmm22, %zmm22\n"       \
+    "vextracti64x4 $1, %zmm21, %ymm19\n   vpxorq %ymm19, %ymm21, %ymm21\n"    \
+    "vextracti32x4 $1, %ymm21, %xmm19\n   vpxorq %xmm19, %xmm21, %xmm21\n"    \
+    "vextracti64x4 $1, %zmm22, %ymm19\n   vpxorq %ymm19, %ymm22, %ymm22\n"    \
+    "vextracti32x4 $1, %ymm22, %xmm19\n   vpxorq %xmm19, %xmm22, %xmm22\n"    \
+    GHASH_EVEX_REDUCE
+#define GHASH_XMM_ZERO                                                        \
+    "pxor %xmm9, %xmm9\n   pxor %xmm10, %xmm10\n   pxor %xmm11, %xmm11\n"
+#define GHASH_XMM_BLOCK(at, power, sum, first)                                \
+    "movdqu " at "(%rdx), %xmm0\n   pshufb %xmm15, %xmm0\n" first             \
+    "movdqa %xmm0, %xmm1\n   pclmulqdq $0x00, " power "(%rsi), %xmm1\n"        \
+    "pxor %xmm1, %xmm9\n"                                                     \
+    "movdqa %xmm0, %xmm1\n   pclmulqdq $0x11, " power "(%rsi), %xmm1\n"        \
+    "pxor %xmm1, %xmm10\n"                                                    \
+    "movdqa %xmm0, %xmm1\n   psrldq $8, %xmm1\n   pxor %xmm0, %xmm1\n"         \
+    "pclmulqdq $0x00, " sum "(%rsi), %xmm1\n   pxor %xmm1, %xmm11\n"
+#define GHASH_XMM_FIRST "pxor %xmm8, %xmm0\n"
+#define GHASH_XMM_FINISH                                                      \
+    "pxor %xmm9, %xmm11\n   pxor %xmm10, %xmm11\n"                            \
+    "movdqa %xmm11, %xmm1\n   pslldq $8, %xmm1\n   psrldq $8, %xmm11\n"        \
+    "pxor %xmm1, %xmm9\n   pxor %xmm11, %xmm10\n"                             \
+    "movdqa %xmm9, %xmm1\n"                                                   \
+    "pclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm1\n"                 \
+    "pshufd $0x4e, %xmm9, %xmm9\n   pxor %xmm1, %xmm9\n"                      \
+    "movdqa %xmm9, %xmm1\n"                                                   \
+    "pclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm1\n"                 \
+    "pshufd $0x4e, %xmm9, %xmm9\n   pxor %xmm1, %xmm10\n   pxor %xmm9, %xmm10\n" \
+    "movdqa %xmm10, %xmm8\n"
+    ASM_FUNC(ghash_blocks)
+    "test %rcx, %rcx\n   jz .Lghash_blocks_x64_none\n"
+    ASM_USERSPACE_WIDE(
+    "cmpb $0, cpu_has_vpclmul(%rip)\n   je .Lghash_blocks_x64_narrow\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne .Lghash_blocks_x64_zmm\n"
+    ".Lghash_blocks_x64_narrow:\n"
+    "cmpb $0, cpu_has_pclmul(%rip)\n   jne .Lghash_blocks_x64_xmm\n"
+    )
+    "add $1536, %rsi\n   jmp ghash_integer\n"
+    ".Lghash_blocks_x64_none:\n"
+    ASM_RET
+    ASM_USERSPACE_WIDE(
+    ".Lghash_blocks_x64_zmm:\n"
+    "vbroadcasti64x2 .Lghash_blocks_x64_bswap(%rip), %zmm31\n"
+    "vmovdqu64 (%rdi), %xmm17\n   vpshufb %xmm31, %xmm17, %xmm17\n"
+    "cmp $48, %rcx\n   jb .Lghash_blocks_x64_zmm_four\n"
+    ".balign 16\n"
+    ".Lghash_blocks_x64_zmm_turn:\n"
+    GHASH_ZMM_PAIR_FIRST("0", "64", "0", "64", "768", "832")
+    GHASH_ZMM_PAIR("128", "192", "128", "192", "896", "960")
+    GHASH_ZMM_PAIR("256", "320", "256", "320", "1024", "1088")
+    GHASH_ZMM_PAIR("384", "448", "384", "448", "1152", "1216")
+    GHASH_ZMM_PAIR("512", "576", "512", "576", "1280", "1344")
+    GHASH_ZMM_PAIR("640", "704", "640", "704", "1408", "1472")
+    "vpternlogq $0x96, %zmm22, %zmm21, %zmm23\n"
+    GHASH_ZMM_SPLIT_FOLD
+    "add $768, %rdx\n   sub $48, %rcx\n   cmp $48, %rcx\n"
+    "jae .Lghash_blocks_x64_zmm_turn\n"
+    ".Lghash_blocks_x64_zmm_four:\n"
+    "cmp $4, %rcx\n   jb .Lghash_blocks_x64_zmm_one\n"
+    GHASH_ZMM_LOAD("0", "16") "vpxorq %zmm17, %zmm16, %zmm16\n"
+    "vpclmulqdq $0x00, 704(%rsi), %zmm16, %zmm21\n"
+    "vpclmulqdq $0x11, 704(%rsi), %zmm16, %zmm22\n"
+    "vpclmulqdq $0x01, 704(%rsi), %zmm16, %zmm19\n"
+    "vpclmulqdq $0x10, 704(%rsi), %zmm16, %zmm20\n"
+    "vpxorq %zmm20, %zmm19, %zmm23\n"
+    GHASH_ZMM_SPLIT_FOLD
+    "add $64, %rdx\n   sub $4, %rcx\n   jmp .Lghash_blocks_x64_zmm_four\n"
+    ".Lghash_blocks_x64_zmm_one:\n"
+    "test %rcx, %rcx\n   jz .Lghash_blocks_x64_zmm_done\n"
+    "vmovdqu64 (%rdx), %xmm16\n   vpshufb %xmm31, %xmm16, %xmm16\n"
+    "vpxorq %xmm17, %xmm16, %xmm16\n"
+    "vpclmulqdq $0x00, 752(%rsi), %xmm16, %xmm21\n"
+    "vpclmulqdq $0x11, 752(%rsi), %xmm16, %xmm22\n"
+    "vpclmulqdq $0x01, 752(%rsi), %xmm16, %xmm19\n"
+    "vpclmulqdq $0x10, 752(%rsi), %xmm16, %xmm20\n"
+    "vpxorq %xmm20, %xmm19, %xmm23\n"
+    "vpslldq $8, %xmm23, %xmm19\n   vpsrldq $8, %xmm23, %xmm23\n"
+    "vpxorq %xmm19, %xmm21, %xmm21\n   vpxorq %xmm23, %xmm22, %xmm22\n"
+    GHASH_EVEX_REDUCE
+    "add $16, %rdx\n   dec %rcx\n   jmp .Lghash_blocks_x64_zmm_one\n"
+    ".Lghash_blocks_x64_zmm_done:\n"
+    "vpshufb %xmm31, %xmm17, %xmm17\n   vmovdqu64 %xmm17, (%rdi)\n"
+    "vpxorq %xmm16, %xmm16, %xmm16\n   vpxorq %xmm17, %xmm17, %xmm17\n"
+    "vpxorq %xmm18, %xmm18, %xmm18\n   vpxorq %xmm19, %xmm19, %xmm19\n"
+    "vpxorq %xmm20, %xmm20, %xmm20\n   vpxorq %xmm21, %xmm21, %xmm21\n"
+    "vpxorq %xmm22, %xmm22, %xmm22\n   vpxorq %xmm23, %xmm23, %xmm23\n"
+    "vpxorq %xmm24, %xmm24, %xmm24\n   vpxorq %xmm25, %xmm25, %xmm25\n"
+    ASM_RET
+    ".Lghash_blocks_x64_xmm:\n"
+    "movdqa .Lghash_blocks_x64_bswap(%rip), %xmm15\n"
+    "movdqu (%rdi), %xmm8\n   pshufb %xmm15, %xmm8\n"
+    "cmp $8, %rcx\n   jb .Lghash_blocks_x64_xmm_four\n"
+    ".balign 16\n"
+    ".Lghash_blocks_x64_xmm_turn:\n"
+    GHASH_XMM_ZERO
+    GHASH_XMM_BLOCK("0", "640", "1408", GHASH_XMM_FIRST)
+    GHASH_XMM_BLOCK("16", "656", "1424", "")
+    GHASH_XMM_BLOCK("32", "672", "1440", "")
+    GHASH_XMM_BLOCK("48", "688", "1456", "")
+    GHASH_XMM_BLOCK("64", "704", "1472", "")
+    GHASH_XMM_BLOCK("80", "720", "1488", "")
+    GHASH_XMM_BLOCK("96", "736", "1504", "")
+    GHASH_XMM_BLOCK("112", "752", "1520", "")
+    GHASH_XMM_FINISH
+    "add $128, %rdx\n   sub $8, %rcx\n   cmp $8, %rcx\n"
+    "jae .Lghash_blocks_x64_xmm_turn\n"
+    ".Lghash_blocks_x64_xmm_four:\n"
+    "cmp $4, %rcx\n   jb .Lghash_blocks_x64_xmm_one\n"
+    GHASH_XMM_ZERO
+    GHASH_XMM_BLOCK("0", "704", "1472", GHASH_XMM_FIRST)
+    GHASH_XMM_BLOCK("16", "720", "1488", "")
+    GHASH_XMM_BLOCK("32", "736", "1504", "")
+    GHASH_XMM_BLOCK("48", "752", "1520", "")
+    GHASH_XMM_FINISH
+    "add $64, %rdx\n   sub $4, %rcx\n"
+    ".Lghash_blocks_x64_xmm_one:\n"
+    "test %rcx, %rcx\n   jz .Lghash_blocks_x64_xmm_done\n"
+    GHASH_XMM_ZERO
+    GHASH_XMM_BLOCK("0", "752", "1520", GHASH_XMM_FIRST)
+    GHASH_XMM_FINISH
+    "add $16, %rdx\n   dec %rcx\n   jmp .Lghash_blocks_x64_xmm_one\n"
+    ".Lghash_blocks_x64_xmm_done:\n"
+    "pshufb %xmm15, %xmm8\n   movdqu %xmm8, (%rdi)\n"
+    "pxor %xmm0, %xmm0\n   pxor %xmm1, %xmm1\n   pxor %xmm8, %xmm8\n"
+    "pxor %xmm9, %xmm9\n   pxor %xmm10, %xmm10\n   pxor %xmm11, %xmm11\n"
+    ASM_RET
+    ".section .rodata\n   .balign 64\n"
+    ".Lghash_blocks_x64_bswap:\n"
+    ".byte 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\n"
+    ".balign 16\n"
+    ".Lghash_blocks_x64_poly:\n   .quad 0xc200000000000000, 0\n"
+    ASM_SECTION
+    )
     ASM_END(ghash_blocks)
+
+    /* The table: H^48 down to H^1 at 16 bytes each from 0, each times x^-1
+       as (low, high) words of the byte-reversed value; the xor of each
+       entry's two words at 768 + the same offset; H itself at 1536. The
+       powers come from the integer multiply with a zero block, which is
+       forty seven calls once a key, so the table is the same on every
+       machine and nothing here branches on H. Multiplying by x^-1 is a
+       left shift of the reversed value with 0xc2 << 56 and 1 xored in
+       when the top bit falls out. */
+    ASM_FUNC(ghash_key)
+    "push %r12\n   push %r13\n   push %r14\n   sub $32, %rsp\n"
+    "mov %rdi, %r12\n   mov %rsi, %r13\n"
+    "mov (%rsi), %rax\n   mov %rax, 1536(%rdi)\n   mov %rax, (%rsp)\n"
+    "mov 8(%rsi), %rax\n   mov %rax, 1544(%rdi)\n   mov %rax, 8(%rsp)\n"
+    "movq $0, 16(%rsp)\n   movq $0, 24(%rsp)\n"
+    "mov $752, %r14d\n"
+    ".Lghash_key_x64_power:\n"
+    "mov (%rsp), %rax\n   bswap %rax\n   mov 8(%rsp), %rdx\n   bswap %rdx\n"
+    "mov %rax, %rcx\n   shr $63, %rcx\n"
+    "mov %rdx, %r8\n   shr $63, %r8\n   add %rax, %rax\n   or %r8, %rax\n"
+    "add %rdx, %rdx\n   xor %rcx, %rdx\n"
+    "neg %rcx\n   movabs $0xc200000000000000, %r8\n   and %r8, %rcx\n"
+    "xor %rcx, %rax\n"
+    "mov %rdx, (%r12,%r14)\n   mov %rax, 8(%r12,%r14)\n"
+    "xor %rax, %rdx\n   mov %rdx, 768(%r12,%r14)\n   movq $0, 776(%r12,%r14)\n"
+    "sub $16, %r14\n   jb .Lghash_key_x64_done\n"
+    "mov %rsp, %rdi\n   mov %r13, %rsi\n   lea 16(%rsp), %rdx\n   mov $1, %ecx\n"
+    "call ghash_integer\n"
+    "jmp .Lghash_key_x64_power\n"
+    ".Lghash_key_x64_done:\n"
+    "xor %eax, %eax\n   mov %rax, (%rsp)\n   mov %rax, 8(%rsp)\n"
+    "xor %edx, %edx\n   xor %ecx, %ecx\n   xor %r8d, %r8d\n"
+    "add $32, %rsp\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    ASM_RET
+    ASM_END(ghash_key)
 
     /* A NUL-terminated name normally needs both of these answers. Returning
        them together keeps the bytes in one hardware-floor pass: hash in rax,
@@ -14279,7 +14526,7 @@ __asm__(
     // See the x86_64 body for the field, the lanes, the high half and why
     // there is no table. rbit is baseline here, so a reversal is one
     // instruction, and eor takes its shift, so the fold is one a term.
-    ASM_FUNC(ghash_blocks)
+    ASM_LOCAL_FUNC(ghash_integer)
     "cbz x3, .Lghash_arm64_none\n"
     "sub sp, sp, #256\n"
     "stp x19, x20, [sp, #192]\n   stp x21, x22, [sp, #208]\n"
@@ -14338,7 +14585,42 @@ __asm__(
     "add sp, sp, #256\n"
     ".Lghash_arm64_none:\n"
     ASM_RET
+    ASM_LOCAL_END(ghash_integer)
+
+    // See the x86_64 body for the table.
+    ASM_FUNC(ghash_blocks)
+    "add x1, x1, #1536\n   b ghash_integer\n"
     ASM_END(ghash_blocks)
+
+    // See the x86_64 body. extr makes the shift of the reversed value one
+    // instruction; 0xc2 << 56 is not a logical immediate, so it is a movz.
+    ASM_FUNC(ghash_key)
+    "stp x29, x30, [sp, #-80]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n"
+    "ldp x2, x3, [x1]\n   add x6, x0, #1536\n   stp x2, x3, [x6]\n"
+    "stp x2, x3, [sp, #40]\n"
+    "stp xzr, xzr, [sp, #56]\n"
+    "mov x21, #752\n"
+    ".Lghash_key_arm64_power:\n"
+    "ldp x2, x3, [sp, #40]\n   rev x2, x2\n   rev x3, x3\n"
+    "lsr x4, x2, #63\n   extr x2, x2, x3, #63\n"
+    "lsl x3, x3, #1\n   eor x3, x3, x4\n"
+    "neg x4, x4\n   movz x5, #0xc200, lsl #48\n   and x4, x4, x5\n"
+    "eor x2, x2, x4\n"
+    "add x6, x19, x21\n   stp x3, x2, [x6]\n"
+    "eor x7, x2, x3\n   add x6, x6, #768\n   stp x7, xzr, [x6]\n"
+    "subs x21, x21, #16\n   b.lo .Lghash_key_arm64_done\n"
+    "add x0, sp, #40\n   mov x1, x20\n   add x2, sp, #56\n   mov x3, #1\n"
+    "bl ghash_integer\n"
+    "b .Lghash_key_arm64_power\n"
+    ".Lghash_key_arm64_done:\n"
+    "stp xzr, xzr, [sp, #40]\n"
+    "mov x2, xzr\n   mov x3, xzr\n   mov x4, xzr\n   mov x7, xzr\n"
+    "ldp x19, x20, [sp, #16]\n   ldr x21, [sp, #32]\n"
+    "ldp x29, x30, [sp], #80\n"
+    ASM_RET
+    ASM_END(ghash_key)
 
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
@@ -20309,7 +20591,7 @@ __asm__(
     // there is no table. Without Zbb there is no rev8, so the reversals are
     // six mask-and-shift swaps each, and the masks are built once into
     // s0 to s8: lanes in s0 to s3, swap masks in s4 to s8.
-    ASM_FUNC(ghash_blocks)
+    ASM_LOCAL_FUNC(ghash_integer)
     "bnez a3, 1f\n"
     ASM_RET
     "1:  addi sp, sp, -336\n"
@@ -20386,7 +20668,44 @@ __asm__(
     "ld s8, 296(sp)\n   ld s9, 304(sp)\n   ld s10, 312(sp)\n   ld s11, 320(sp)\n"
     "addi sp, sp, 336\n"
     ASM_RET
+    ASM_LOCAL_END(ghash_integer)
+
+    // See the x86_64 body for the table.
+    ASM_FUNC(ghash_blocks)
+    "addi a1, a1, 1536\n   j ghash_integer\n"
     ASM_END(ghash_blocks)
+
+    // See the x86_64 body. Without Zbb the reversal is the byte load.
+    ASM_FUNC(ghash_key)
+    "addi sp, sp, -64\n"
+    "sd ra, 32(sp)\n   sd s0, 40(sp)\n   sd s1, 48(sp)\n   sd s2, 56(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n"
+    "ld t0, 0(a1)\n   ld t1, 8(a1)\n"
+    "sd t0, 1536(a0)\n   sd t1, 1544(a0)\n"
+    "sd t0, 0(sp)\n   sd t1, 8(sp)\n   sd zero, 16(sp)\n   sd zero, 24(sp)\n"
+    "li s2, 752\n"
+    ".Lghash_key_rv_power:\n"
+    GHASH_RISCV_LOAD("sp", "a4", "0", "1", "2", "3", "4", "5", "6", "7")
+    GHASH_RISCV_LOAD("sp", "a5", "8", "9", "10", "11", "12", "13", "14", "15")
+    "srli a6, a4, 63\n"
+    "slli a4, a4, 1\n   srli a7, a5, 63\n   or a4, a4, a7\n"
+    "slli a5, a5, 1\n   xor a5, a5, a6\n"
+    "neg a6, a6\n   li a7, 0xc2\n   slli a7, a7, 56\n   and a6, a6, a7\n"
+    "xor a4, a4, a6\n"
+    "add t0, s0, s2\n   sd a5, 0(t0)\n   sd a4, 8(t0)\n"
+    "xor a6, a4, a5\n   sd a6, 768(t0)\n   sd zero, 776(t0)\n"
+    "beqz s2, .Lghash_key_rv_done\n"
+    "addi s2, s2, -16\n"
+    "mv a0, sp\n   mv a1, s1\n   addi a2, sp, 16\n   li a3, 1\n"
+    "call ghash_integer\n"
+    "j .Lghash_key_rv_power\n"
+    ".Lghash_key_rv_done:\n"
+    "sd zero, 0(sp)\n   sd zero, 8(sp)\n"
+    "li a4, 0\n   li a5, 0\n   li a6, 0\n   li t5, 0\n"
+    "ld ra, 32(sp)\n   ld s0, 40(sp)\n   ld s1, 48(sp)\n   ld s2, 56(sp)\n"
+    "addi sp, sp, 64\n"
+    ASM_RET
+    ASM_END(ghash_key)
 
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
@@ -26303,10 +26622,14 @@ PURE READS(1, 2) positive memory_hash_33(address_any block, positive size);
    rorx or SHA-NI, and RISC-V builds the same rotate from a shift pair. */
 fn sha256_compress(p32 address_to state, p8 address_to block);
 /* GHASH, the GCM authenticator, over whole 16-byte blocks: for each block
-   state = (state ^ block) * key in GF(2^128). state and key are 16 bytes in
-   GCM order. Nothing branches or indexes on key, state or data, so the
-   timing is the multiply's; zero blocks reads no data. */
-fn ghash_blocks(p8 address_to state, const p8 address_to key,
+   state = (state ^ block) * H in GF(2^128), state 16 bytes in GCM order.
+   table is GHASH_KEY_SIZE bytes that ghash_key filled from the 16-byte H,
+   and must be 16-byte aligned. It is key material: wipe it with the key.
+   Nothing branches or indexes on H, state or data, so the timing is the
+   multiply's; zero blocks reads no data. */
+#define GHASH_KEY_SIZE 1552
+fn ghash_key(p8 address_to table, const p8 address_to h);
+fn ghash_blocks(p8 address_to state, const p8 address_to table,
                 const p8 address_to data, positive blocks);
 PURE READS(1, 2) p32 memory_sum_bytes(address_any block, positive size);
 // Writes exactly 2*size lowercase hex bytes, without a terminator, and returns
