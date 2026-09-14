@@ -951,6 +951,24 @@ fn job_forget()
         job_previous = 0;
 }
 
+static bool shell_bytes_add(byte_store address_to store,
+                            string_address text, positive length)
+{
+        if (length > positive_max - store->used - 1 ||
+            !byte_store_reserve(store, store->used + length + 1, 256))
+                return false;
+
+        memory_copy_apart(store->bytes + store->used, text, length);
+        store->used += length;
+        store->bytes[store->used] = end;
+        return true;
+}
+
+static bool shell_bytes_byte(byte_store address_to store, p8 value)
+{
+        return shell_bytes_add(store, address_of value, 1);
+}
+
 /*
         The text a job is listed under.
 
@@ -965,15 +983,15 @@ static positive job_text_add(p8 address_to address_to into,
                              positive address_to room, positive used,
                              string_address text, positive length)
 {
-        if (!text || !shell_room((address_any address_to)into, room,
-                                 used + length + 1, 1))
-                return used;
+        byte_store store = {address_to into, address_to room, used};
 
-        memory_copy_apart(address_to into + used, text, length);
-        used += length;
-        (address_to into)[used] = end;
+        if (text && shell_bytes_add(address_of store, text, length))
+        {
+                address_to into = store.bytes;
+                address_to room = store.room;
+        }
 
-        return used;
+        return store.used;
 }
 
 static positive job_text_line(p8 address_to address_to into,
@@ -2098,24 +2116,6 @@ static positive job_specified(string_address word, positive address_to found)
 //      The words of a "jobs -x" with the job specs already resolved, run as
 //      one line. eval joins its words the same way, and for the same reason:
 //      what reads a line lives above this file.
-static bool shell_bytes_add(byte_store address_to store,
-                            string_address text, positive length)
-{
-        if (length > positive_max - store->used - 1 ||
-            !byte_store_reserve(store, store->used + length + 1, 256))
-                return false;
-
-        memory_copy_apart(store->bytes + store->used, text, length);
-        store->used += length;
-        store->bytes[store->used] = end;
-        return true;
-}
-
-static bool shell_bytes_byte(byte_store address_to store, p8 value)
-{
-        return shell_bytes_add(store, address_of value, 1);
-}
-
 // The words from argv[from] on, joined by single spaces and terminated.
 static bool shell_argv_joined(positive from, byte_store address_to store)
 {
@@ -4010,23 +4010,13 @@ replace:
         return true;
 }
 
-static bool history_quote_one(byte_store address_to into,
-                              string_address text, positive length)
+static bool history_quote_failed;
+
+// A quoted word lands in history_changed; running out of room is remembered.
+static fn history_quote_write(address_any bytes, positive length)
 {
-        if (!shell_bytes_byte(into, '\''))
-                return false;
-
-        for (positive at = 0; at < length; at++)
-                if (string_get(text + at) == '\'')
-                {
-                        if (!shell_bytes_add(into,
-                                               (string_address)"'\\''", 4))
-                                return false;
-                }
-                else if (!shell_bytes_byte(into, string_get(text + at)))
-                        return false;
-
-        return shell_bytes_byte(into, '\'');
+        if (!shell_bytes_add(address_of history_changed, bytes, length))
+                history_quote_failed = true;
 }
 
 static bool history_piece_quote(bool split)
@@ -4035,6 +4025,7 @@ static bool history_piece_quote(bool split)
         bool written = false;
 
         history_changed.used = 0;
+        history_quote_failed = false;
         while (at < history_piece.used)
         {
                 positive start = at;
@@ -4061,15 +4052,15 @@ static bool history_piece_quote(bool split)
                 if (written++ &&
                     !shell_bytes_byte(address_of history_changed, ' '))
                         return false;
-                if (!history_quote_one(address_of history_changed,
-                                       history_piece.bytes + start,
-                                       at - start))
-                        return false;
+                shell_single_quote_write(history_quote_write,
+                                         history_piece.bytes + start,
+                                         at - start);
         }
 
-        if (!written &&
-            !history_quote_one(address_of history_changed,
-                               (string_address)"", 0))
+        if (!written)
+                shell_single_quote_write(history_quote_write,
+                                         (string_address) "", 0);
+        if (history_quote_failed)
                 return false;
 
         {
@@ -6784,21 +6775,17 @@ typedef struct
 static fn exec_function_text_add(exec_function_text address_to made,
                                  const_string text, positive length)
 {
+        byte_store store = {address_to made->text, address_to made->room,
+                            made->used};
+
         if (made->failed || !length)
                 return;
 
-        if (made->used > positive_max - length - 1 ||
-            !shell_room((address_any address_to)made->text, made->room,
-                        made->used + length + 1, 1))
-        {
-                made->failed = true;
-                return;
-        }
-
-        memory_copy_apart(address_to made->text + made->used,
-                          (address_any)text, length);
-        made->used += length;
-        (address_to made->text)[made->used] = end;
+        made->failed = !shell_bytes_add(address_of store,
+                                        (string_address)text, length);
+        address_to made->text = store.bytes;
+        address_to made->room = store.room;
+        made->used = store.used;
 }
 
 #define exec_function_text_literal(made, literal)                           \
@@ -8050,106 +8037,23 @@ static COLD PURE bool exec_trace_quoting(string_address word)
         return false;
 }
 
-/*
-        A byte that cannot be written as itself.
-
-        In the C locale that is every control character and every byte with
-        the high bit set. Bash 5.2 still prefers ordinary single quotes when
-        a meta is present -- a newline and a tab live in quotes -- so $'...'
-        is only for a word whose unprintable bytes would otherwise stand
-        bare.
-*/
-static COLD PURE bool exec_trace_unprintable(string_address word)
-{
-        for (string_address at = word; string_get(at); at++)
-                if ((p8)string_get(at) < ' ' || (p8)string_get(at) >= 127)
-                        return true;
-
-        return false;
-}
-
-/* $'...': the seven named escapes, \E for escape itself, a backslash in
-   front of a quote or a backslash, and three octal digits for every other
-   byte that cannot be written as itself. */
-static COLD fn exec_trace_ansi(string_address word)
-{
-        static const p8 named[] = "abtnvfr";
-
-        log_error(str("$'"));
-        for (string_address at = word; string_get(at); at++)
-        {
-                p8 value = (p8)string_get(at);
-                p8 said[4];
-
-                said[0] = '\\';
-                if (value >= 7 && value <= 13)
-                {
-                        said[1] = named[value - 7];
-                        log_error(said, 2);
-                }
-                else if (value == 27)
-                {
-                        said[1] = 'E';
-                        log_error(said, 2);
-                }
-                else if (value == '\'' || value == '\\')
-                {
-                        said[1] = value;
-                        log_error(said, 2);
-                }
-                else if (value < ' ' || value >= 127)
-                {
-                        said[1] = (p8)('0' + (value >> 6));
-                        said[2] = (p8)('0' + ((value >> 3) & 7));
-                        said[3] = (p8)('0' + (value & 7));
-                        log_error(said, 4);
-                }
-                else
-                        log_error(at, 1);
-        }
-        log_error(str("'"));
-}
-
 /* One word as Bash 5.2 writes it: bare where it can be, in single quotes
-   where a meta requires quoting -- a newline and a tab among them -- in
-   the $'...' spelling only when an unprintable byte has no meta that would
-   have taken the other spelling, and a bare pair of quotes where the word
-   is empty. A quote inside a single-quoted run closes the run, is written
-   escaped, and opens the next. */
+   where a meta requires quoting -- a newline and a tab among them -- and a
+   bare pair of quotes where the word is empty. $'...' is only for a word
+   whose unprintable bytes -- in the C locale every control character and
+   every byte with the high bit set -- have no meta that would have taken
+   the other spelling. */
 static COLD fn exec_trace_word(string_address word)
 {
-        string_address run;
+        positive length = string_length(word);
 
-        if (!string_get(word))
-        {
-                log_error(str("''"));
-                return;
-        }
-        if (exec_trace_quoting(word))
-        {
-                log_error(str("'"));
-                for (run = word; string_get(run);)
-                {
-                        string_address stop = run;
-
-                        while (string_get(stop) && string_get(stop) != '\'')
-                                stop++;
-                        if (stop != run)
-                                log_error(run, (positive)(stop - run));
-                        if (!string_get(stop))
-                                break;
-                        log_error(str("'\\''"));
-                        run = stop + 1;
-                }
-                log_error(str("'"));
-                return;
-        }
-        if (exec_trace_unprintable(word))
-        {
-                exec_trace_ansi(word);
-                return;
-        }
-        log_error(word, 0);
+        if (!length || exec_trace_quoting(word))
+                shell_single_quote_write(log_error, word, length);
+        else if (memory_escape_index(word, length,
+                                     HEX_CONTROL | HEX_TAB | HEX_HIGH) < length)
+                shell_ansi_run(log_error, word, length, true);
+        else
+                log_error(word, length);
 }
 
 /* NAME= then the value, quoted the way a word is. Bash never wraps the
@@ -10549,30 +10453,16 @@ static COLD b32 exec_loop_assignment_error(string_address name)
 // A line built whole before it is written. What a select writes is one
 // menu somebody reads and what a time writes is one timing, not thirty
 // writes with somebody else's output free to land between them.
-static p8 address_to exec_built;
-static positive exec_built_room;
-static positive exec_built_used;
+static byte_store exec_built;
 
-static bool exec_built_add(string_address text, positive length)
-{
-        if (!shell_array_room(exec_built, exec_built_room,
-                              exec_built_used + length + 1))
-                return false;
-
-        memory_copy(exec_built + exec_built_used, text, length);
-        exec_built_used += length;
-
-        return true;
-}
+#define exec_built_add(text, length)                                         \
+        shell_bytes_add(address_of exec_built, (string_address)(text), (length))
 
 static bool exec_built_fill(p8 value, positive times)
 {
-        if (!shell_array_room(exec_built, exec_built_room,
-                              exec_built_used + times + 1))
-                return false;
-
-        memory_fill(exec_built + exec_built_used, value, times);
-        exec_built_used += times;
+        while (times--)
+                if (!shell_bytes_byte(address_of exec_built, value))
+                        return false;
 
         return true;
 }
@@ -10658,7 +10548,7 @@ static fn select_menu_write(positive base, b32 count)
         }
 
         first = positive_digits(rows);
-        exec_built_used = 0;
+        exec_built.used = 0;
 
         for (row = 0; row < rows; row++)
         {
@@ -10698,7 +10588,7 @@ static fn select_menu_write(positive base, b32 count)
                         return;
         }
 
-        log_error(exec_built, exec_built_used);
+        log_error(exec_built.bytes, exec_built.used);
 }
 
 // The line somebody answered with, without its newline. A byte at a time,
@@ -13162,7 +13052,7 @@ static bool time_formatted(string_address format, positive real,
 {
         string_address at = format;
 
-        exec_built_used = 0;
+        exec_built.used = 0;
 
         while (string_get(at))
         {
@@ -13275,7 +13165,7 @@ static fn time_written(bool posix, positive real, positive user,
         // Whatever the timed command wrote comes first. It has already
         // happened; only the buffer is holding it back.
         log_flush();
-        log_error(exec_built, exec_built_used);
+        log_error(exec_built.bytes, exec_built.used);
 }
 
 static b32 exec_time(b32 index)
