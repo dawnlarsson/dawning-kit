@@ -46,8 +46,7 @@ typedef struct
 static bipolar storage_format_write(bipolar handle, p8 address_to bytes,
                                     positive length, p64 offset)
 {
-        bipolar written = file_transfer_exact(syscall(pwrite64), handle, bytes,
-                                              length, offset);
+        bipolar written = storage_write(handle, bytes, length, offset);
 
         return written < 0 ? written : 0;
 }
