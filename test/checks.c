@@ -35284,6 +35284,510 @@ b32 main(void)
 }
 #endif /* CHECK_modulo */
 
+#ifdef CHECK_environment
+/*
+        Experimental C standard library
+
+        setenv, unsetenv, putenv, clearenv and getenv, against glibc's
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        One file, built twice, the way CHECK_allocator and CHECK_modulo are.
+
+        Built the ordinary way it runs standard.c's environment on x86_64,
+        arm64 and riscv64; built with ENVIRONMENT_REFERENCE it links glibc.
+        Both walk the same seeded sequences of calls over a small pool of
+        names, values and putenv buffers and print what every call answered
+        -- the return, errno after a refusal, what getenv found -- and what
+        environ holds after it, and the stdlib lane diffs those lines up to
+        "shared-end".
+
+        environ is printed for the pool's names only. Both builds start from
+        the environment the lane runs them in, and qemu-user and the host are
+        free to differ in it; the pool's names are the test's own, and the
+        clearenv that ends every sequence drops everything else in both.
+
+        A string getenv answered is sometimes kept and read again later in
+        the sequence. glibc never frees or rewrites one, and neither does
+        standard.c, which reinstalls a dropped string when a set asks for
+        exactly its bytes instead of making another; a putenv buffer written
+        through afterwards reads back changed in both.
+
+        Left out of the pool on purpose, because the two libraries differ by
+        design or glibc does not survive the call: a name with an equals in
+        it handed to getenv (a key ends at its first equals here, so it is
+        never found; glibc matches the longer prefix), putenv of an entry
+        with an empty name (refused here with EINVAL, which CHECK_stdlib
+        pins), and null names or values anywhere but setenv and unsetenv's
+        name.
+
+        After "shared-end" each build prints its own verdict on what needs no
+        reference: after every call, getenv of every pool name is exactly the
+        value of the first entry in environ with that key, or null.
+*/
+
+#ifdef ENVIRONMENT_REFERENCE
+
+#define _GNU_SOURCE
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+typedef unsigned long long positive;
+typedef unsigned long long p64;
+typedef long long bipolar;
+typedef int b32;
+typedef void fn;
+
+#define address_to *
+#define address_of &
+#define bool unsigned char
+#define true 1
+#define false 0
+
+#define environment_set(name, value, overwrite) setenv((name), (value), (overwrite))
+#define environment_unset(name) unsetenv(name)
+#define environment_put(entry) putenv(entry)
+#define environment_clear() clearenv()
+#define environment_get(name) ((const char *)getenv(name))
+#define environment_entries() ((const char **)environ)
+
+#else
+
+#include "../src/compiler_memory.c"
+
+#define environment_set(name, value, overwrite)                               \
+        setenv((string_address)(name), (string_address)(value), (overwrite))
+#define environment_unset(name) unsetenv((string_address)(name))
+#define environment_put(entry) putenv((string_address)(entry))
+#define environment_clear() clearenv()
+#define environment_get(name) ((const char *)getenv((string_address)(name)))
+#define environment_entries() ((const char **)environ)
+
+#endif
+
+#define ENVIRONMENT_SEQUENCES 12
+#define ENVIRONMENT_CALLS 300
+#define ENVIRONMENT_KEPT 8
+#define ENVIRONMENT_HELD 256
+
+static const char address_to const environment_names[] = {
+        "A", "B", "EMPTY_VALUE", "LONG_ENVIRONMENT_NAME", "LONG_ENVIRONMENT_NAME_2",
+        "PATH_LIKE", "Z9",
+};
+
+static const char address_to const environment_bad_names[] = {"", "A=B", "="};
+
+static const char address_to const environment_values[] = {
+        "",
+        "1",
+        "two",
+        "a value with spaces",
+        "=leading",
+        "x=y=z",
+        "BbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
+        "two",
+};
+
+#define environment_count(table) (sizeof(table) / sizeof(table[0]))
+
+//      putenv's strings belong to the test, and some are written through
+//      after they are installed.
+static const char address_to const environment_buffer_start[] = {
+        "A=from putenv", "B=", "PATH_LIKE=/bin:/usr/bin", "Z9=nine", "A",
+        "LONG_ENVIRONMENT_NAME=put",
+};
+
+static char environment_buffers[6][40];
+
+static const char address_to environment_kept[ENVIRONMENT_KEPT];
+static char environment_kept_copy[ENVIRONMENT_KEPT][ENVIRONMENT_HELD];
+static positive environment_kept_turn;
+
+static positive environment_checks;
+static positive environment_failures;
+
+static char environment_said[1 << 16];
+static positive environment_said_used;
+
+static fn environment_flush(void)
+{
+#ifdef ENVIRONMENT_REFERENCE
+        fwrite(environment_said, 1, (size_t)environment_said_used, stdout);
+        fflush(stdout);
+#else
+        log((p8 address_to)environment_said, environment_said_used);
+        log_flush();
+#endif
+        environment_said_used = 0;
+}
+
+static positive environment_length(const char address_to text)
+{
+        positive length = 0;
+
+        while (text[length])
+                length++;
+
+        return length;
+}
+
+static fn environment_say_bytes(const char address_to text, positive length)
+{
+        for (positive at = 0; at < length; at++)
+        {
+                if (environment_said_used == sizeof(environment_said))
+                        environment_flush();
+
+                environment_said[environment_said_used++] = text[at];
+        }
+}
+
+static fn environment_say(const char address_to text)
+{
+        environment_say_bytes(text, environment_length(text));
+}
+
+static fn environment_say_number(bipolar value)
+{
+        char digits[24];
+        b32 count = 0;
+        positive magnitude = value < 0 ? (positive)0 - (positive)value : (positive)value;
+
+        if (value < 0)
+                environment_say("-");
+
+        do
+                digits[count++] = (char)('0' + magnitude % 10);
+        while (magnitude /= 10);
+
+        while (count--)
+                environment_say_bytes(address_of digits[count], 1);
+}
+
+static fn environment_say_name(const char address_to name)
+{
+        if (!name)
+        {
+                environment_say("(null)");
+                return;
+        }
+
+        environment_say("[");
+        environment_say(name);
+        environment_say("]");
+}
+
+static fn environment_say_answer(b32 answer)
+{
+        environment_say(" -> ");
+        environment_say_number(answer);
+
+        if (answer)
+        {
+                environment_say(" errno ");
+                environment_say_number(errno);
+        }
+
+        environment_say("\n");
+}
+
+static p64 environment_state;
+
+static p64 environment_next(void)
+{
+        p64 z = (environment_state += 0x9e3779b97f4a7c15ULL);
+
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+        return z ^ (z >> 31);
+}
+
+static positive environment_key_length(const char address_to entry)
+{
+        positive length = 0;
+
+        while (entry[length] && entry[length] != '=')
+                length++;
+
+        return length;
+}
+
+//      Whether an entry's key, length bytes long, is this name.
+static bool environment_key_is_name(const char address_to entry, positive length,
+                                    const char address_to name)
+{
+        for (positive at = 0; at < length; at++)
+                if (entry[at] != name[at])
+                        return false;
+
+        return name[length] == 0 && entry[length] == '=';
+}
+
+static fn environment_show(void)
+{
+        const char address_to address_to walk = environment_entries();
+
+        environment_say("  env");
+
+        if (walk)
+                for (; address_to walk; walk++)
+                {
+                        positive key = environment_key_length(address_to walk);
+
+                        for (positive n = 0; n < environment_count(environment_names); n++)
+                                if (environment_key_is_name(address_to walk, key, environment_names[n]))
+                                {
+                                        environment_say(" ");
+                                        environment_say(address_to walk);
+                                        break;
+                                }
+                }
+
+        environment_say("\n");
+}
+
+static fn environment_agree(void)
+{
+        for (positive n = 0; n < environment_count(environment_names); n++)
+        {
+                const char address_to name = environment_names[n];
+                positive length = environment_length(name);
+                const char address_to found = environment_get(name);
+                const char address_to first = 0;
+                const char address_to address_to walk = environment_entries();
+
+                if (walk)
+                        for (; address_to walk && !first; walk++)
+                                if (environment_key_length(address_to walk) == length &&
+                                    environment_key_is_name(address_to walk, length, name))
+                                        first = address_to walk + length + 1;
+
+                environment_checks++;
+
+                if (found != first)
+                {
+                        if (environment_failures < 8)
+                        {
+                                environment_say("FAIL getenv ");
+                                environment_say_name(name);
+                                environment_say(" is not the first entry with that key\n");
+                        }
+
+                        environment_failures++;
+                }
+        }
+}
+
+static fn environment_keep(const char address_to value)
+{
+        positive slot = environment_kept_turn++ % ENVIRONMENT_KEPT;
+        positive at = 0;
+
+        environment_kept[slot] = value;
+
+        for (; value[at] && at + 1 < ENVIRONMENT_HELD; at++)
+                environment_kept_copy[slot][at] = value[at];
+
+        environment_kept_copy[slot][at] = 0;
+}
+
+static fn environment_step(void)
+{
+        p64 draw = environment_next();
+        p64 more = environment_next();
+        positive kind = draw % 100;
+
+        if (kind < 30)
+        {
+                positive pick = more % 24;
+                const char address_to name =
+                        pick == 0   ? 0
+                        : pick < 3  ? environment_bad_names[pick - 1]
+                                    : environment_names[pick % environment_count(environment_names)];
+                positive value = (more >> 8) % environment_count(environment_values);
+                b32 overwrite = (b32)((more >> 16) & 1);
+
+                environment_say("setenv ");
+                environment_say_name(name);
+                environment_say(" v");
+                environment_say_number((bipolar)value);
+                environment_say(overwrite ? " replace" : " keep");
+                environment_say_answer(environment_set(name, environment_values[value], overwrite));
+        }
+        else if (kind < 45)
+        {
+                positive pick = more % 20;
+                const char address_to name =
+                        pick == 0   ? 0
+                        : pick < 4  ? environment_bad_names[pick - 1]
+                                    : environment_names[pick % environment_count(environment_names)];
+
+                environment_say("unsetenv ");
+                environment_say_name(name);
+                environment_say_answer(environment_unset(name));
+        }
+        else if (kind < 60)
+        {
+                positive buffer = more % environment_count(environment_buffer_start);
+
+                environment_say("putenv b");
+                environment_say_number((bipolar)buffer);
+                environment_say(" ");
+                environment_say_name(environment_buffers[buffer]);
+                environment_say_answer(environment_put(environment_buffers[buffer]));
+        }
+        else if (kind < 65)
+        {
+                positive buffer = more % environment_count(environment_buffer_start);
+                char address_to text = environment_buffers[buffer];
+                positive key = environment_key_length(text);
+                positive length = environment_length(text);
+
+                //      Only a value's bytes, never the key's or the end.
+                if (text[key] == '=' && length > key + 1)
+                {
+                        positive at = key + 1 + (more >> 8) % (length - key - 1);
+
+                        text[at] = (char)('a' + (more >> 20) % 26);
+                        environment_say("write b");
+                        environment_say_number((bipolar)buffer);
+                        environment_say(" at ");
+                        environment_say_number((bipolar)at);
+                        environment_say(" ");
+                        environment_say_name(text);
+                        environment_say("\n");
+                }
+                else
+                {
+                        environment_say("write b");
+                        environment_say_number((bipolar)buffer);
+                        environment_say(" nothing to write\n");
+                }
+        }
+        else if (kind < 68)
+        {
+                environment_say("clearenv");
+                environment_say_answer(environment_clear());
+        }
+        else if (kind < 90)
+        {
+                positive pick = more % 16;
+                const char address_to name =
+                        pick == 0 ? "" : environment_names[pick % environment_count(environment_names)];
+                const char address_to found = environment_get(name);
+
+                environment_say("getenv ");
+                environment_say_name(name);
+                environment_say(" -> ");
+
+                if (found)
+                {
+                        environment_say_name(found);
+
+                        if ((more >> 8) & 1)
+                                environment_keep(found);
+                }
+                else
+                {
+                        environment_say("(none)");
+                }
+
+                environment_say("\n");
+        }
+        else
+        {
+                positive slot = more % ENVIRONMENT_KEPT;
+                const char address_to kept = environment_kept[slot];
+                positive at = 0;
+
+                environment_say("reread k");
+                environment_say_number((bipolar)slot);
+
+                if (!kept)
+                {
+                        environment_say(" empty\n");
+                        return;
+                }
+
+                while (kept[at] && kept[at] == environment_kept_copy[slot][at])
+                        at++;
+
+                environment_say(kept[at] == environment_kept_copy[slot][at] ? " same " : " changed ");
+                environment_say_name(kept);
+                environment_say("\n");
+        }
+}
+
+static fn environment_reset_buffers(void)
+{
+        for (positive buffer = 0; buffer < environment_count(environment_buffer_start); buffer++)
+        {
+                positive at = 0;
+
+                for (; environment_buffer_start[buffer][at]; at++)
+                        environment_buffers[buffer][at] = environment_buffer_start[buffer][at];
+
+                environment_buffers[buffer][at] = 0;
+        }
+}
+
+#ifdef ENVIRONMENT_REFERENCE
+int main(void)
+#else
+b32 main(void)
+#endif
+{
+        positive calls = 0;
+
+        environment_state = 0x5851f42d4c957f2dULL;
+        environment_reset_buffers();
+
+        for (positive sequence = 0; sequence < ENVIRONMENT_SEQUENCES; sequence++)
+        {
+                environment_say("sequence ");
+                environment_say_number((bipolar)sequence);
+                environment_say("\n");
+
+                for (positive call = 0; call < ENVIRONMENT_CALLS; call++, calls++)
+                {
+                        environment_step();
+                        environment_agree();
+                        environment_show();
+                }
+
+                //      Nothing of this sequence may be installed once its
+                //      buffers are written back to how they started.
+                environment_say("clearenv");
+                environment_say_answer(environment_clear());
+                environment_show();
+                environment_reset_buffers();
+
+                for (positive slot = 0; slot < ENVIRONMENT_KEPT; slot++)
+                        environment_kept[slot] = 0;
+        }
+
+        environment_say("calls ");
+        environment_say_number((bipolar)calls);
+        environment_say("\n");
+        environment_say("shared-end\n");
+        environment_say("\n");
+        environment_say_number((bipolar)environment_checks);
+        environment_say(" checks, ");
+        environment_say_number((bipolar)environment_failures);
+        environment_say(" failures\n");
+        environment_flush();
+
+        return environment_failures ? 1 : 0;
+}
+#endif /* CHECK_environment */
+
 #ifdef CHECK_format_standalone
 #define FORMAT_STANDALONE
 #define CHECK_format

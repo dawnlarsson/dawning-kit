@@ -4911,7 +4911,10 @@ typedef struct
 
         Aligned slices avoid per-entry allocator metadata and calls. Old
         strings remain valid after unsetenv or replacement; chunks are kept
-        until process exit, including their unused tails.
+        until process exit, including their unused tails. A dropped string is
+        never written to again, and a later set that asks for exactly its
+        bytes installs it again instead of making another; the ring beside
+        setenv below is what remembers them.
 
         Sixty four kilobytes at a time because that is one mmap for an
         environment far larger than any program here will build, and a program
@@ -4921,6 +4924,7 @@ typedef struct
 #define STDLIB_ARENA_CHUNK 65536
 #define STDLIB_ARENA_ALIGN 16
 
+static p8 address_to stdlib_arena_base = null;
 static p8 address_to stdlib_arena_next = null;
 static positive stdlib_arena_left = 0;
 
@@ -4956,6 +4960,7 @@ static address_any stdlib_arena_take(positive size)
                 //      Whatever was left of the previous chunk is abandoned.
                 //      It is at most one allocation's worth and chasing it
                 //      would need a free list this file has no other use for.
+                stdlib_arena_base = block;
                 stdlib_arena_next = block;
                 stdlib_arena_left = want;
         }
@@ -5117,23 +5122,147 @@ static bool stdlib_environment_grow(void)
         return true;
 }
 
-//      The index of the entry whose key is exactly this name, or -1. It is
-//      library.common.c's NAME= question asked of every entry in turn. The
-//      older spelling here compared first and
-//      looked for the equals afterwards, which answers differently for a name
-//      that carries an equals of its own -- the very case this comment says
-//      can never be found -- and which reads `length` bytes of an entry whose
-//      key is shorter than that before deciding it does not match.
+/*
+        Whether an entry's key is exactly this name of this length.
+
+        A byte at a time from the front, the shape string_get_environment
+        has: most entries differ from a name at byte zero and cost one
+        comparison. It used to find the entry's equals first and then compare
+        the whole name as one block, two calls into the assembly for every
+        entry of the vector, and a set among a hundred names cost 7,478
+        instructions to glibc's 4,640.
+
+        Nothing is read past what is allowed. Every caller has checked that
+        the name holds no equals and no end inside its length, so the walk
+        stops inside the entry: on the first byte that differs, the entry's
+        own end among them, or at the length, where a key that matched must
+        stop on its equals. A name with an equals of its own is never found,
+        because a key ends at its first one.
+*/
+static inline INLINE bool stdlib_environment_key(string_address entry,
+                                                 string_address name,
+                                                 positive length)
+{
+        positive at = 0;
+
+        while (at < length && entry[at] == name[at])
+                at++;
+
+        return at == length && entry[at] == '=';
+}
+
+//      The index of the first entry whose key is exactly this name, or -1.
 static PURE bipolar stdlib_environment_find(string_address name, positive length)
 {
         positive index;
 
         for (index = 0; index < stdlib_environment_count; index++)
-                if (environment_key_is(stdlib_environment_vector[index],
-                                       name, length))
+                if (stdlib_environment_key(stdlib_environment_vector[index],
+                                           name, length))
                         return (bipolar)index;
 
         return -1;
+}
+
+/*
+        Entries this file made and has since dropped, kept for their bytes.
+
+        setenv never writes into an entry once it is made and never gives one
+        back, so a pointer getenv handed out before a replacement or an
+        unsetenv goes on reading the string it read, as it does with glibc.
+        What that cost was a fresh copy for every set: a program that flips a
+        variable between two values, or sets and unsets it, or sets and
+        clears, grew the arena by one copy a call without bound, fifteen
+        megabytes for a million turns where glibc stays at half of one.
+
+        The ring is what stops those loops growing. A set whose NAME=value is
+        byte for byte one this file dropped a moment ago installs that same
+        string again instead of making another, and nothing about it can be
+        seen: the bytes are the bytes a new copy would have held. glibc does
+        the same with a tree of every string it ever made; this keeps the last
+        few, so a variable that takes a new value every time still costs one
+        copy each, a quarter of what glibc's tree spends on it.
+
+        Only strings inside the arena's current chunk are taken in, which is
+        how the ring knows a string is this file's and not a caller's from
+        putenv or the kernel's: nothing else lives in that mapping, and a loop
+        that reuses its strings stops rolling chunks, so that is where they
+        are.
+*/
+#define STDLIB_ENVIRONMENT_DROPPED 16
+#define STDLIB_ENVIRONMENT_PRINT_START 0xcbf29ce484222325ULL
+#define STDLIB_ENVIRONMENT_PRINT_STEP 0x100000001b3ULL
+
+static string_address stdlib_environment_dropped[STDLIB_ENVIRONMENT_DROPPED];
+static positive stdlib_environment_dropped_size[STDLIB_ENVIRONMENT_DROPPED];
+static positive stdlib_environment_dropped_print[STDLIB_ENVIRONMENT_DROPPED];
+static positive stdlib_environment_dropped_turn = 0;
+
+//      FNV-1a over some bytes, carried on from a running print. A slot is
+//      compared by size and print before any byte of it is read: a variable
+//      that takes a new value of the same length every time otherwise sent
+//      every slot of the ring through two block comparisons, and doubled
+//      what such a set cost.
+static inline INLINE positive stdlib_environment_print(positive print, string_address bytes,
+                                                       positive length)
+{
+        for (positive at = 0; at < length; at++)
+                print = (print ^ (p8)bytes[at]) * STDLIB_ENVIRONMENT_PRINT_STEP;
+
+        return print;
+}
+
+static fn stdlib_environment_drop(string_address entry)
+{
+        positive slot;
+        positive length = 0;
+        positive print = STDLIB_ENVIRONMENT_PRINT_START;
+
+        if ((p8 address_to)entry < stdlib_arena_base ||
+            (p8 address_to)entry >= stdlib_arena_next)
+                return;
+
+        //      The length and the print in the one walk.
+        for (; entry[length]; length++)
+                print = (print ^ (p8)entry[length]) * STDLIB_ENVIRONMENT_PRINT_STEP;
+
+        slot = stdlib_environment_dropped_turn++ % STDLIB_ENVIRONMENT_DROPPED;
+        stdlib_environment_dropped[slot] = entry;
+        stdlib_environment_dropped_size[slot] = length;
+        stdlib_environment_dropped_print[slot] = print;
+}
+
+//      A dropped string holding exactly NAME=value, taken out of the ring, or
+//      null. Size and print are compared first; a string of the right size
+//      has that many bytes and an end, so both comparisons stay inside it.
+static string_address stdlib_environment_reuse(string_address name, positive name_length,
+                                               string_address value, positive value_length)
+{
+        positive size = name_length + 1 + value_length;
+        positive print = stdlib_environment_print(STDLIB_ENVIRONMENT_PRINT_START,
+                                                  name, name_length);
+        positive slot;
+
+        print = (print ^ (p8)'=') * STDLIB_ENVIRONMENT_PRINT_STEP;
+        print = stdlib_environment_print(print, value, value_length);
+
+        for (slot = 0; slot < STDLIB_ENVIRONMENT_DROPPED; slot++)
+        {
+                string_address held = stdlib_environment_dropped[slot];
+
+                if (stdlib_environment_dropped_size[slot] != size ||
+                    stdlib_environment_dropped_print[slot] != print || is_null(held) ||
+                    held[name_length] != '=' ||
+                    memory_compare(held, name, name_length) ||
+                    memory_compare(held + name_length + 1, value, value_length))
+                        continue;
+
+                stdlib_environment_dropped[slot] = null;
+                stdlib_environment_dropped_size[slot] = 0;
+                return held;
+        }
+
+        return null;
 }
 
 //      A name is a name only if it is not empty and holds no equals: the
@@ -5222,15 +5351,27 @@ b32 setenv(string_address name, string_address value, b32 overwrite)
         if (name_length > positive_max - 2 ||
             value_length > positive_max - name_length - 2)
                 return stdlib_environment_failure(-ENOMEM);
-        entry = (p8 address_to)stdlib_arena_take(name_length + value_length + 2);
+
+        entry = (p8 address_to)stdlib_environment_reuse(name, name_length,
+                                                        value, value_length);
 
         if (is_null(entry))
-                return stdlib_environment_failure(-ENOMEM);
+        {
+                entry = (p8 address_to)stdlib_arena_take(name_length + value_length + 2);
 
-        memory_copy_apart(entry, name, name_length);
-        entry[name_length] = '=';
-        memory_copy_apart(entry + name_length + 1, value, value_length);
-        entry[name_length + 1 + value_length] = end;
+                if (is_null(entry))
+                        return stdlib_environment_failure(-ENOMEM);
+
+                memory_copy_apart(entry, name, name_length);
+                entry[name_length] = '=';
+                memory_copy_apart(entry + name_length + 1, value, value_length);
+                entry[name_length + 1 + value_length] = end;
+        }
+
+        //      Dropped after the ring was asked, so the string being replaced
+        //      is never the one handed back to replace itself.
+        if (found >= 0 && stdlib_environment_vector[found] != (string_address)entry)
+                stdlib_environment_drop(stdlib_environment_vector[found]);
 
         stdlib_environment_install(found, entry);
         return 0;
@@ -5258,9 +5399,11 @@ b32 unsetenv(string_address name)
 
         while (index < stdlib_environment_count)
         {
-                if (environment_key_is(stdlib_environment_vector[index],
-                                       name, name_length))
+                if (stdlib_environment_key(stdlib_environment_vector[index],
+                                           name, name_length))
                 {
+                        stdlib_environment_drop(stdlib_environment_vector[index]);
+
                         //      Everything above the entry moves down one
                         //      place, the null that ends the vector included,
                         //      which is why the count is the distance to the
@@ -5322,6 +5465,9 @@ b32 putenv(string_address entry)
 
         found = stdlib_environment_find(entry, name_length);
 
+        if (found >= 0 && stdlib_environment_vector[found] != entry)
+                stdlib_environment_drop(stdlib_environment_vector[found]);
+
         stdlib_environment_install(found, entry);
         return 0;
 }
@@ -5331,17 +5477,24 @@ b32 putenv(string_address entry)
         because everything that walks one stops on that null and not on a
         pointer that was never written.
 
-        The entries it drops are abandoned rather than reclaimed, like every
-        other drop here. Nothing leaks that the arena made on the first call,
-        because those pointers were the kernel's own strings, but a program
-        that clears and refills in a loop grows the arena without bound. That
-        is the same missing free() the arena's own note is about and it goes
-        away with it.
+        The entries it drops stay where they are, like every other drop here,
+        and the last few of them go to the ring, so a program that clears and
+        refills the same names and values in a loop takes its strings back
+        instead of growing the arena. The walk is from the end and stops when
+        the ring is full: a clear stays a handful of steps however large the
+        environment was.
 */
 b32 clearenv(void)
 {
+        positive index;
+
         if (!stdlib_environment_own())
                 return stdlib_environment_failure(-ENOMEM);
+
+        index = stdlib_environment_count;
+
+        while (index > 0 && stdlib_environment_count - index < STDLIB_ENVIRONMENT_DROPPED)
+                stdlib_environment_drop(stdlib_environment_vector[--index]);
 
         stdlib_environment_count = 0;
         stdlib_environment_vector[0] = null;

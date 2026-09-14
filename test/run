@@ -2143,7 +2143,79 @@ lane_signal()    { freestanding_checks_lane signal signal; }
 lane_lock()      { freestanding_checks_lane lock lock; }
 lane_error()     { freestanding_checks_lane error error; }
 lane_strings()   { freestanding_checks_lane strings strings; }
-lane_stdlib()    { freestanding_checks_lane stdlib stdlib; }
+#
+#       The environment against glibc's. CHECK_environment walks seeded
+#       sequences of setenv, unsetenv, putenv, clearenv and getenv and prints
+#       every answer and what environ holds after it; the three machines must
+#       print what glibc prints for the same calls.
+#
+environment_against_glibc()
+(
+[ "$host_system" = Linux ] || {
+        note "environment: the glibc reference needs Linux -- not run"
+        exit 2
+}
+
+failed=0
+
+note()
+{
+        printf '%s\n' "$*"
+}
+
+if ! gcc -O2 -std=gnu17 -w -DCHECK_environment -DENVIRONMENT_REFERENCE \
+        -o "$work/environment.reference" test/checks.c \
+        2> "$work/environment.reference.log"
+then
+        note "environment: the glibc reference did not build"
+        cat "$work/environment.reference.log"
+        exit 1
+fi
+
+if ! "$work/environment.reference" > "$work/environment.reference.out"
+then
+        note "environment: glibc itself failed a check, which is a bug here"
+        sed -n '/^FAIL/p' "$work/environment.reference.out"
+        failed=1
+fi
+
+sed -n '1,/^shared-end$/p' "$work/environment.reference.out" \
+        > "$work/environment.reference.shared"
+
+for name in x86_64 arm64 riscv64; do
+        out=$work/environment.$name.out
+        [ -f "$out" ] || continue
+
+        sed -n '1,/^shared-end$/p' "$out" > "$out.shared"
+
+        if ! diff -u "$work/environment.reference.shared" "$out.shared" \
+                > "$out.diff"
+        then
+                note "environment $name: differs from glibc"
+                head -60 "$out.diff"
+                failed=1
+                continue
+        fi
+
+        note "environment $name: agrees with glibc over $(sed -n 's/^calls //p' "$out") calls"
+done
+
+tally environment-glibc "$((1 - failed))" 1
+exit $failed
+)
+
+lane_stdlib()
+{
+        freestanding_checks_lane stdlib stdlib
+        stdlib_outcome=$?
+        freestanding_checks_lane environment environment
+        environment_outcome=$?
+        environment_against_glibc
+        case $stdlib_outcome$environment_outcome$? in
+        *1*) return 1 ;;
+        *2*) return 2 ;;
+        esac
+}
 lane_clock()     { freestanding_checks_lane clock clock; }
 #
 #       fmod and remainder against glibc's libm. CHECK_modulo prints one digest
