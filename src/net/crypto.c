@@ -1204,9 +1204,23 @@ static bool crypto_fe_is_zero(const p64 address_to a, positive n)
         return crypto_fe_zero_bit(a, n) != 0;
 }
 
+/* The two NIST field primes run on library.c's p256_ and p384_ routines;
+   the C below serves any other modulus, and a crypto_field copied to
+   another address, which is how CHECK_net compares the two. */
 static fn crypto_fe_add(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const crypto_field address_to f)
 {
+        if (f == address_of crypto_p256_field)
+        {
+                p256_add(d, a, b);
+                return;
+        }
+        if (f == address_of crypto_p384_field)
+        {
+                p384_add(d, a, b);
+                return;
+        }
+
         p64 sum[CRYPTO_FE_MAX];
         p64 reduced[CRYPTO_FE_MAX];
         crypto_wide carry = 0;
@@ -1234,6 +1248,17 @@ static fn crypto_fe_add(p64 address_to d, const p64 address_to a,
 static fn crypto_fe_sub(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const crypto_field address_to f)
 {
+        if (f == address_of crypto_p256_field)
+        {
+                p256_subtract(d, a, b);
+                return;
+        }
+        if (f == address_of crypto_p384_field)
+        {
+                p384_subtract(d, a, b);
+                return;
+        }
+
         p64 difference[CRYPTO_FE_MAX];
         p64 restored[CRYPTO_FE_MAX];
         positive n = f->n;
@@ -1376,13 +1401,23 @@ static fn crypto_montgomery_square(p64 address_to d, const p64 address_to a,
 static fn crypto_fe_mul(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const crypto_field address_to f)
 {
-        crypto_montgomery_multiply(d, a, b, f->m, f->inverse, f->n);
+        if (f == address_of crypto_p256_field)
+                p256_multiply(d, a, b);
+        else if (f == address_of crypto_p384_field)
+                p384_multiply(d, a, b);
+        else
+                crypto_montgomery_multiply(d, a, b, f->m, f->inverse, f->n);
 }
 
 static fn crypto_fe_sqr(p64 address_to d, const p64 address_to a,
                         const crypto_field address_to f)
 {
-        crypto_montgomery_square(d, a, f->m, f->inverse, f->n);
+        if (f == address_of crypto_p256_field)
+                p256_square(d, a);
+        else if (f == address_of crypto_p384_field)
+                p384_square(d, a);
+        else
+                crypto_montgomery_square(d, a, f->m, f->inverse, f->n);
 }
 
 /* d = 1/a in Montgomery form, by Fermat: a^(m-2).  The exponent is the

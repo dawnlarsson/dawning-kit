@@ -11,10 +11,11 @@
             Darwin (lifted ARM64 bodies):
                 python3 test/differential.py --harness native_extract \
                     src/library.c $NAMES > /tmp/lifted.h
-                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_HEX \
+                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_FIELD -DSKIP_HEX \
                     -DSKIP_ITOA -I/tmp test/hardware_floor.c -o /tmp/hwfloor
 
-            Darwin names (sha256/ghash/hex/itoa skipped: Mach-O :lo12: tables):
+            Darwin names (sha256/ghash/field/hex/itoa skipped: Mach-O :lo12: tables
+                or not lifted):
                 memory_copy_apart memory_copy memory_fill memory_fill_32
                 memory_fill_64 memory_reverse memory_frob
                 memory_to_lower_ascii memory_to_upper_ascii
@@ -233,6 +234,16 @@ void sha256_compress(unsigned int *, unsigned char *);
 #ifndef SKIP_AES
 void aes128_ctr_blocks(const unsigned char *, unsigned char *,
                        const unsigned char *, unsigned char *, unsigned long);
+#endif
+#ifndef SKIP_FIELD
+void p256_multiply(unsigned long *, const unsigned long *, const unsigned long *);
+void p256_square(unsigned long *, const unsigned long *);
+void p256_add(unsigned long *, const unsigned long *, const unsigned long *);
+void p256_subtract(unsigned long *, const unsigned long *, const unsigned long *);
+void p384_multiply(unsigned long *, const unsigned long *, const unsigned long *);
+void p384_square(unsigned long *, const unsigned long *);
+void p384_add(unsigned long *, const unsigned long *, const unsigned long *);
+void p384_subtract(unsigned long *, const unsigned long *, const unsigned long *);
 #endif
 #ifndef SKIP_GHASH
 void ghash_key(unsigned char *, const unsigned char *);
@@ -559,6 +570,146 @@ static void sha_w(unsigned long size, unsigned long rounds)
                 sink += sha_state[0];
         }
 }
+#endif
+
+#ifndef SKIP_FIELD
+/*
+        The P-256/P-384 field routines against the Montgomery arithmetic
+        crypto.c keeps for the group orders and RSA, compiled from C: the
+        schoolbook product, word-by-word reduction and a masked final
+        subtraction. Operands are fixed values below p.
+*/
+typedef unsigned __int128 field_wide;
+
+static const unsigned long field_p256[4] = {
+    0xffffffffffffffffUL, 0x00000000ffffffffUL, 0, 0xffffffff00000001UL};
+static const unsigned long field_p384[6] = {
+    0x00000000ffffffffUL, 0xffffffff00000000UL, 0xfffffffffffffffeUL,
+    0xffffffffffffffffUL, 0xffffffffffffffffUL, 0xffffffffffffffffUL};
+static unsigned long field_a[6] = {
+    0x243f6a8885a308d3UL, 0x13198a2e03707344UL, 0xa4093822299f31d0UL,
+    0x082efa98ec4e6c89UL, 0x452821e638d01377UL, 0x0be5466cf34e90c6UL};
+static unsigned long field_b[6] = {
+    0xc0ac29b7c97c50ddUL, 0x3f84d5b5b5470917UL, 0x9216d5d98979fb1bUL,
+    0x0801f2e2858efc16UL, 0x636920d871574e69UL, 0x0a458fea3f4933d7UL};
+static unsigned long field_r[6];
+
+static unsigned long field_c_sub(unsigned long *d, const unsigned long *a,
+                                 const unsigned long *b, int n)
+{
+        field_wide borrow = 0;
+        for (int i = 0; i < n; i++)
+        {
+                field_wide v = (field_wide)a[i] - b[i] - borrow;
+                d[i] = (unsigned long)v;
+                borrow = (v >> 64) & 1;
+        }
+        return (unsigned long)borrow;
+}
+
+static void field_c_pick(unsigned long *d, const unsigned long *a,
+                         const unsigned long *b, int n, unsigned long take_b)
+{
+        unsigned long mask = 0 - take_b;
+        for (int i = 0; i < n; i++)
+                d[i] = (a[i] & ~mask) | (b[i] & mask);
+}
+
+__attribute__((noinline))
+static void field_c_multiply(unsigned long *d, const unsigned long *a,
+                             const unsigned long *b, const unsigned long *m,
+                             unsigned long inverse, int n)
+{
+        unsigned long t[12] = {0}, reduced[6], top = 0;
+        for (int i = 0; i < n; i++)
+        {
+                field_wide carry = 0;
+                for (int j = 0; j < n; j++)
+                {
+                        carry += (field_wide)t[i + j] + (field_wide)a[i] * b[j];
+                        t[i + j] = (unsigned long)carry;
+                        carry >>= 64;
+                }
+                t[i + n] = (unsigned long)carry;
+        }
+        for (int i = 0; i < n; i++)
+        {
+                unsigned long q = t[i] * inverse;
+                field_wide carry = 0;
+                for (int j = 0; j < n; j++)
+                {
+                        carry += (field_wide)t[i + j] + (field_wide)q * m[j];
+                        t[i + j] = (unsigned long)carry;
+                        carry >>= 64;
+                }
+                carry += (field_wide)t[i + n] + top;
+                t[i + n] = (unsigned long)carry;
+                top = (unsigned long)(carry >> 64);
+        }
+        unsigned long borrow = field_c_sub(reduced, t + n, m, n);
+        field_c_pick(d, t + n, reduced, n, top | (borrow ^ 1));
+}
+
+__attribute__((noinline))
+static void field_c_add(unsigned long *d, const unsigned long *a,
+                        const unsigned long *b, const unsigned long *m, int n)
+{
+        unsigned long sum[6], reduced[6];
+        field_wide carry = 0;
+        for (int i = 0; i < n; i++)
+        {
+                carry += (field_wide)a[i] + b[i];
+                sum[i] = (unsigned long)carry;
+                carry >>= 64;
+        }
+        unsigned long borrow = field_c_sub(reduced, sum, m, n);
+        field_c_pick(d, sum, reduced, n, (unsigned long)carry | (borrow ^ 1));
+}
+
+__attribute__((noinline))
+static void field_c_subtract(unsigned long *d, const unsigned long *a,
+                             const unsigned long *b, const unsigned long *m,
+                             int n)
+{
+        unsigned long difference[6], restored[6];
+        unsigned long borrow = field_c_sub(difference, a, b, n);
+        field_wide carry = 0;
+        for (int i = 0; i < n; i++)
+        {
+                carry += (field_wide)difference[i] + m[i];
+                restored[i] = (unsigned long)carry;
+                carry >>= 64;
+        }
+        field_c_pick(d, difference, restored, n, borrow);
+}
+
+#define FIELD_ROW(name, call)                                                  \
+        static void name(unsigned long size, unsigned long rounds)             \
+        {                                                                      \
+                (void)size;                                                    \
+                for (unsigned long i = 0; i < rounds; i++)                     \
+                {                                                              \
+                        call;                                                  \
+                        sink += field_r[0];                                    \
+                }                                                              \
+        }
+
+FIELD_ROW(p256_mul_w, p256_multiply(field_r, field_a, field_b))
+FIELD_ROW(p256_mul_c_w, field_c_multiply(field_r, field_a, field_b, field_p256, 1, 4))
+FIELD_ROW(p256_sqr_w, p256_square(field_r, field_a))
+FIELD_ROW(p256_sqr_c_w, field_c_multiply(field_r, field_a, field_a, field_p256, 1, 4))
+FIELD_ROW(p256_add_w, p256_add(field_r, field_a, field_b))
+FIELD_ROW(p256_add_c_w, field_c_add(field_r, field_a, field_b, field_p256, 4))
+FIELD_ROW(p256_sub_w, p256_subtract(field_r, field_a, field_b))
+FIELD_ROW(p256_sub_c_w, field_c_subtract(field_r, field_a, field_b, field_p256, 4))
+FIELD_ROW(p384_mul_w, p384_multiply(field_r, field_a, field_b))
+FIELD_ROW(p384_mul_c_w, field_c_multiply(field_r, field_a, field_b, field_p384, 0x100000001UL, 6))
+FIELD_ROW(p384_sqr_w, p384_square(field_r, field_a))
+FIELD_ROW(p384_sqr_c_w, field_c_multiply(field_r, field_a, field_a, field_p384, 0x100000001UL, 6))
+FIELD_ROW(p384_add_w, p384_add(field_r, field_a, field_b))
+FIELD_ROW(p384_add_c_w, field_c_add(field_r, field_a, field_b, field_p384, 6))
+FIELD_ROW(p384_sub_w, p384_subtract(field_r, field_a, field_b))
+FIELD_ROW(p384_sub_c_w, field_c_subtract(field_r, field_a, field_b, field_p384, 6))
 #endif
 
 #ifndef SKIP_GHASH
@@ -1054,6 +1205,16 @@ int main(void)
 
 #ifndef SKIP_SHA256
         row("sha256_compress", "block", "compute", 64, sha_w, floor_one_w, 20);
+#endif
+#ifndef SKIP_FIELD
+        row("p256_multiply", "field", "compute", 32, p256_mul_w, p256_mul_c_w, 8);
+        row("p256_square", "field", "compute", 32, p256_sqr_w, p256_sqr_c_w, 6);
+        row("p256_add", "field", "compute", 32, p256_add_w, p256_add_c_w, 2);
+        row("p256_subtract", "field", "compute", 32, p256_sub_w, p256_sub_c_w, 2);
+        row("p384_multiply", "field", "compute", 48, p384_mul_w, p384_mul_c_w, 20);
+        row("p384_square", "field", "compute", 48, p384_sqr_w, p384_sqr_c_w, 15);
+        row("p384_add", "field", "compute", 48, p384_add_w, p384_add_c_w, 2);
+        row("p384_subtract", "field", "compute", 48, p384_sub_w, p384_sub_c_w, 2);
 #endif
 #ifndef SKIP_GHASH
         row("ghash_blocks", "record", "compute", 16384, ghash_w, ghash_c_w,

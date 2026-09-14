@@ -41999,6 +41999,133 @@ static fn crypto_floor_aes_ctr(void)
               wrong == 0);
 }
 
+/*
+        p256_multiply, p256_square, p256_add, p256_subtract, p384_multiply,
+        p384_square, p384_add and p384_subtract against the C Montgomery
+        arithmetic.
+
+        crypto_fe_mul, sqr, add and sub hand the two NIST field primes to
+        library.c; a copy of the same crypto_field at another address takes
+        the C path, which is the reference. Operands are the edges -- zero,
+        one, p - 1, p - 2 and R mod p -- then seeded values with limbs of all
+        ones and zeros sprinkled in, reduced below p; each routine also runs
+        with its output aliasing an operand. Two fixed answers pin the
+        reference itself: R^2 times plain 1 is R, and R times R is R.
+*/
+static p64 field_check_seed = 0x9e3779b97f4a7c15ull;
+
+static p64 field_check_next(void)
+{
+        field_check_seed ^= field_check_seed << 13;
+        field_check_seed ^= field_check_seed >> 7;
+        field_check_seed ^= field_check_seed << 17;
+        return field_check_seed;
+}
+
+static fn field_check_operand(p64 address_to x, const crypto_field address_to f,
+                              positive kind)
+{
+        p64 reduced[CRYPTO_FE_MAX];
+        positive n = f->n;
+
+        memory_fill(x, 0, n * 8);
+        switch (kind)
+        {
+        case 0:
+                return;
+        case 1:
+                x[0] = 1;
+                return;
+        case 2:
+        case 3:
+                memory_copy(x, f->m, n * 8);
+                x[0] -= kind - 1;
+                return;
+        case 4:
+                memory_copy(x, f->one, n * 8);
+                return;
+        }
+
+        for (positive i = 0; i < n; i++)
+        {
+                p64 pick = field_check_next() & 7;
+
+                x[i] = pick == 0 ? ~0ull : pick == 1 ? 0 : field_check_next();
+        }
+        while (!crypto_fe_subtract_raw(reduced, x, f->m, n))
+                memory_copy(x, reduced, n * 8);
+}
+
+static positive field_check_wrong(const crypto_field address_to f,
+                                  positive rounds)
+{
+        crypto_field reference = *f;
+        positive n = f->n;
+        positive wrong = 0;
+        p64 unit[CRYPTO_FE_MAX];
+        p64 x[CRYPTO_FE_MAX];
+        p64 y[CRYPTO_FE_MAX];
+
+        memory_fill(unit, 0, sizeof unit);
+        unit[0] = 1;
+        crypto_fe_mul(x, f->square, unit, f);
+        wrong += memory_compare(x, f->one, n * 8) != 0;
+        crypto_fe_mul(x, f->one, f->one, address_of reference);
+        wrong += memory_compare(x, f->one, n * 8) != 0;
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                p64 a[CRYPTO_FE_MAX];
+                p64 b[CRYPTO_FE_MAX];
+
+                field_check_operand(a, f, round < 40 ? round % 5 : 5);
+                field_check_operand(b, f, round < 40 ? round / 5 % 8 : 5);
+
+                crypto_fe_mul(x, a, b, f);
+                crypto_fe_mul(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                crypto_fe_sqr(x, a, f);
+                crypto_fe_sqr(y, a, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                crypto_fe_add(x, a, b, f);
+                crypto_fe_add(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                crypto_fe_sub(x, a, b, f);
+                crypto_fe_sub(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+
+                memory_copy(x, a, n * 8);
+                crypto_fe_mul(x, x, b, f);
+                crypto_fe_mul(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, b, n * 8);
+                crypto_fe_mul(x, a, x, f);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, a, n * 8);
+                crypto_fe_sqr(x, x, f);
+                crypto_fe_sqr(y, a, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, a, n * 8);
+                crypto_fe_add(x, x, b, f);
+                crypto_fe_add(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, b, n * 8);
+                crypto_fe_sub(x, a, x, f);
+                crypto_fe_sub(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+        }
+
+        return wrong;
+}
+
+static fn crypto_floor_field(void)
+{
+        check("p256_ field routines agree with the C Montgomery arithmetic",
+              field_check_wrong(address_of crypto_p256_field, 3000) == 0);
+        check("p384_ field routines agree with the C Montgomery arithmetic",
+              field_check_wrong(address_of crypto_p384_field, 3000) == 0);
+}
+
 static fn crypto_floor_aes(void)
 {
         p8 key[16];
@@ -43900,6 +44027,7 @@ b32 main(void)
         tls_certificate_framing();
         crypto_floor();
         crypto_floor_ghash();
+        crypto_floor_field();
         crypto_floor_aes();
         crypto_rsa_served_sizes();
         tls_trust_anchor_chains();
