@@ -3550,14 +3550,21 @@ COLD string_address shell_array_get(const_string name, positive length,
    environment writer do the actual cell growth/copy. */
 static bool shell_declare_binding_rejected;
 static bool shell_valid_name(string_address name, positive length);
-static bool shell_declare_target_valid(const_string value)
+//      A name, or an element of one with a subscript in its brackets.
+static bool shell_reference_valid(const_string name, positive length)
 {
-        positive value_length = string_length(env_reading(value)), base, subscript_length;
+        positive base, subscript_length;
         const_string subscript;
 
-        if (!shell_valid_name(env_reading(value), value_length) &&
-            !(env_reference_element_span(value, value_length, address_of base,
-                 address_of subscript, address_of subscript_length) && subscript_length))
+        return shell_valid_name(env_reading(name), length) ||
+               (env_reference_element_span(name, length, address_of base,
+                    address_of subscript, address_of subscript_length) &&
+                subscript_length);
+}
+
+static bool shell_declare_target_valid(const_string value)
+{
+        if (!shell_reference_valid(value, string_length(env_reading(value))))
                 return string_report(log_error, false, "%s: %s: invalid variable name for name reference\n",
                               shell_argv[0], value);
         return true;
@@ -5286,16 +5293,11 @@ static COLD fn shell_dirstack_said(writer write, string_address path, bool full)
 static COLD bool shell_dirstack_index(string_address word, positive count,
                                  positive address_to index)
 {
-        positive digits;
         positive value;
 
-        if (!string_get(word) ||
-            (string_not(word, '+') && string_not(word, '-')))
-                return false;
-
-        value = string_digits(word + 1, address_of digits);
-
-        if (!digits || string_get(word + 1 + digits) || value >= count)
+        if ((string_not(word, '+') && string_not(word, '-')) ||
+            !string_digits_checked_exact(word + 1, 10, address_of value) ||
+            value >= count)
                 return false;
 
         address_to index = string_is(word, '+') ? value : count - 1 - value;
@@ -5309,14 +5311,8 @@ static COLD bool shell_dirstack_index(string_address word, positive count,
 //      it was never given the number of.
 static PURE bool shell_dirstack_spec(string_address word)
 {
-        positive digits;
-
-        if (string_not(word, '+') && string_not(word, '-'))
-                return false;
-
-        string_digits(word + 1, address_of digits);
-
-        return digits && !string_get(word + 1 + digits);
+        return (string_is(word, '+') || string_is(word, '-')) &&
+               string_digits_checked_exact(word + 1, 10, null);
 }
 
 static COLD b32 shell_dirstack_number_refused(string_address command,
@@ -11828,39 +11824,34 @@ fn shell_printf(writer write, string_address input)
 {
         string_address format;
         string_address into = null;
-        positive first = 1;
 
         /* `--` is needed for formats beginning with a dash. Bash also takes
            -vname as well as -v name; both reach the same existing keeper and
            assignment path, rather than growing another formatter. */
-        while (first < shell_argc && string_is(shell_argv[first], '-') &&
-               string_not(shell_argv[first] + 1, end))
+        shell_option_walk walk = {1};
+        p8 letter;
+
+        while (shell_option_letter(address_of walk, address_of letter))
         {
-                string_address option = shell_argv[first];
+                if (letter != 'v')
+                        return shell_answer(shell_letter_refused(
+                            "printf", letter, "printf [-v var] format [arguments]"));
 
-                if (word_is(option, "--"))
+                into = shell_option_argument(address_of walk);
+                if (!into)
+                        return shell_answer(string_report(log_error, 2, "printf: -v: option requires an "
+                                         "argument\n"));
+
+                //      Bash refuses a name it could not assign as soon as it
+                //      reads it, before any later letter.
+                if (!shell_reference_valid(into, string_length(into)))
                 {
-                        first++;
-                        break;
+                        shell_name_refused("printf", into, string_length(into));
+                        return shell_answer(2);
                 }
-
-                if (string_is(option + 1, 'v'))
-                {
-                        if (string_get(option + 2))
-                                into = option + 2;
-                        else if (++first < shell_argc)
-                                into = shell_argv[first];
-                        else
-                                return shell_answer(string_report(log_error, 2, "printf: -v: option requires an "
-                                                 "argument\n"));
-
-                        first++;
-                        continue;
-                }
-
-                return shell_answer(shell_option_refused(
-                    "printf", option, "printf [-v var] format [arguments]"));
         }
+
+        positive first = walk.index;
 
         if (shell_argc <= first)
                 return shell_answer(2);
@@ -13925,59 +13916,46 @@ COLD fn shell_trap(writer write, string_address input)
                 has neither letter and refuses the first one it is shown,
                 fatally, because trap is a special builtin.
         */
-        while (index < shell_argc && shell_argv[index][0] == '-' &&
-               shell_argv[index][1] && !word_is(shell_argv[index], "--"))
+        shell_option_walk walk = {1};
+        p8 letter;
+
+        while (shell_option_letter(address_of walk, address_of letter))
         {
-                for (string_address at = shell_argv[index] + 1; at[0]; at++)
+                //      dash names the first letter and stops, and that ends
+                //      the script: trap is special.
+                if (!shell_bash_compat)
                 {
-                        //      dash names the first letter and stops, and
-                        //      that ends the script: trap is special.
-                        if (!shell_bash_compat)
-                        {
-                                shell_letter_refused("trap", at[0],
-                                    "trap [-Plp] [[action] signal_spec ...]");
-                                exec_special_error_note();
+                        shell_letter_refused("trap", letter,
+                            "trap [-Plp] [[action] signal_spec ...]");
+                        exec_special_error_note();
 
-                                return shell_answer(2);
-                        }
-
-                        if (at[0] == 'l')
-                        {
-                                listing = true;
-                                continue;
-                        }
-
-                        if (at[0] == 'p')
-                        {
-                                print = true;
-                                continue;
-                        }
-
-                        //      -P writes the action by itself, for scripts
-                        //      that want the line and not the command that
-                        //      would set it again.
-                        if (at[0] == 'P')
-                        {
-                                bare = true;
-                                continue;
-                        }
-
-                        //      Bash names the letter and prints how it is
-                        //      called; the word is never read as an operand,
-                        //      so `trap -x INT` sets nothing.
-                        {
-                                shell_letter_refused("trap", at[0],
-                                    "trap [-Plp] [[action] signal_spec ...]");
-
-                                if (shell_posix_on())
-                                        exec_special_error_note();
-
-                                return shell_answer(2);
-                        }
+                        return shell_answer(2);
                 }
 
-                index++;
+                if (letter == 'l')
+                        listing = true;
+                else if (letter == 'p')
+                        print = true;
+                //      -P writes the action by itself, for scripts that want
+                //      the line and not the command that would set it again.
+                else if (letter == 'P')
+                        bare = true;
+                //      Bash names the letter and prints how it is called; the
+                //      word is never read as an operand, so `trap -x INT`
+                //      sets nothing.
+                else
+                {
+                        shell_letter_refused("trap", letter,
+                            "trap [-Plp] [[action] signal_spec ...]");
+
+                        if (shell_posix_on())
+                                exec_special_error_note();
+
+                        return shell_answer(2);
+                }
         }
+
+        index = walk.index;
 
         if (listing)
         {
@@ -13997,9 +13975,6 @@ COLD fn shell_trap(writer write, string_address input)
 
                 return shell_answer(2);
         }
-
-        if (index < shell_argc && word_is(shell_argv[index], "--"))
-                index++;
 
         if (bare)
         {
@@ -14391,23 +14366,22 @@ fn alias_written(writer write, positive index)
 
 COLD fn shell_alias(writer write, string_address input)
 {
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 letter;
         b32 answer = 0;
         bool prefixed = shell_bash_compat && !shell_posix_on();
         bool listed = false;
 
-        while (shell_bash_compat && index < shell_argc &&
-               string_is(shell_argv[index], '-') && shell_argv[index][1])
+        while (shell_bash_compat &&
+               shell_option_letter(address_of walk, address_of letter))
         {
-                string_address word = shell_argv[index++];
-
-                if (word_is(word, "--"))
-                        break;
-                if (!word_is(word, "-p"))
-                        return shell_answer(shell_option_refused(
-                            "alias", word, "alias [-p] [name[=value] ... ]"));
+                if (letter != 'p')
+                        return shell_answer(shell_letter_refused(
+                            "alias", letter, "alias [-p] [name[=value] ... ]"));
                 prefixed = listed = true;
         }
+
+        positive index = walk.index;
 
         if (index == shell_argc || listed)
         {
@@ -19703,82 +19677,66 @@ fn shell_ulimit(writer write, string_address input)
                         break;
                 }
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
-        {
-                string_address letter = shell_argv[index] + 1;
+        //      "--" is the end of the options, not a resource called "-":
+        //      all three shells then report the default resource.
+        shell_option_walk walk = {1};
+        p8 which;
 
-                //      "--" is the end of the options, not a resource
-                //      called "-": all three shells then report the
-                //      default resource.
-                if (word_is(shell_argv[index], "--"))
+        while (shell_option_letter(address_of walk, address_of which))
+        {
+                if (which == 'H')
                 {
-                        index++;
-                        break;
+                        hard = true;
+                        continue;
                 }
 
-                while (string_get(letter))
+                if (which == 'S')
                 {
-                        p8 which = string_get(letter++);
+                        soft = true;
+                        continue;
+                }
 
-                        if (which == 'H')
-                        {
-                                hard = true;
-                                continue;
-                        }
+                if (which == 'a')
+                {
+                        listed = true;
+                        continue;
+                }
 
-                        if (which == 'S')
-                        {
-                                soft = true;
-                                continue;
-                        }
+                if (shell_bash_compat)
+                {
+                        limit = shell_bash_limits;
 
-                        if (which == 'a')
-                        {
-                                listed = true;
-                                continue;
-                        }
+                        while (limit->name && limit->letter != which)
+                                limit++;
+                }
+                else
+                {
+                        limit = shell_limits;
 
-                        if (shell_bash_compat)
-                        {
-                                limit = shell_bash_limits;
-
-                                while (limit->name && limit->letter != which)
-                                        limit++;
-                        }
-                        else
-                        {
-                                limit = shell_limits;
-
-                                while (limit->name && limit->letter != which)
-                                        limit++;
-
-                                if (!limit->name)
-                                {
-                                        limit = shell_extra_limits;
-
-                                        while (limit->name &&
-                                               limit->letter != which)
-                                                limit++;
-                                }
-                        }
+                        while (limit->name && limit->letter != which)
+                                limit++;
 
                         if (!limit->name)
                         {
-                                return shell_answer(shell_letter_refused(
-                                    "ulimit", which,
-                                    "ulimit [-SHabcdefiklmnpqrstuvxPRT] "
-                                    "[limit]"));
+                                limit = shell_extra_limits;
+
+                                while (limit->name && limit->letter != which)
+                                        limit++;
                         }
-
-                        chosen = limit;
-
-                        if (picked_count < array_count(picked))
-                                picked[picked_count++] = limit;
                 }
 
-                index++;
+                if (!limit->name)
+                        return shell_answer(shell_letter_refused(
+                            "ulimit", which,
+                            "ulimit [-SHabcdefiklmnpqrstuvxPRT] [limit]"));
+
+                chosen = limit;
+
+                if (picked_count < array_count(picked))
+                        picked[picked_count++] = limit;
         }
+
+        index = walk.index;
 
         if (listed)
         {
@@ -20155,7 +20113,6 @@ static COLD fn compgen_function(writer write, string_address name,
 
 fn shell_compgen(writer write, string_address input)
 {
-        positive index = 1;
         bool functions = false;
         bool variables = false;
         bool builtins = false;
@@ -20177,29 +20134,19 @@ fn shell_compgen(writer write, string_address input)
         compgen_before = null;
         compgen_after = null;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
-        {
-                p8 which = shell_argv[index][1];
-                string_address value = null;
+        shell_option_walk walk = {1};
+        p8 which;
 
-                if (word_is(shell_argv[index], "--"))
-                {
-                        index++;
-                        break;
-                }
+        while (shell_option_letter(address_of walk, address_of which))
+        {
+                string_address value = null;
 
                 optioned = true;
 
-                if (which == 'A' || which == 'W' || which == 'P' ||
-                    which == 'S' || which == 'X' || which == 'F' ||
-                    which == 'C' || which == 'G')
+                if (string_first_of("AWPSXFCG", which))
                 {
-                        if (string_get(shell_argv[index] + 2))
-                                value = shell_argv[index] + 2;
-                        else if (index + 1 < shell_argc)
-                                value = shell_argv[++index];
-                        else
+                        value = shell_option_argument(address_of walk);
+                        if (!value)
                                 return shell_answer(2);
                 }
 
@@ -20264,26 +20211,16 @@ fn shell_compgen(writer write, string_address input)
                         files = true;
                 else if (which == 'd')
                         directories = true;
-                else if (which != 'A' && which != 'W' && which != 'P' &&
-                         which != 'S' && which != 'X' && which != 'F' &&
-                         which != 'C' && which != 'G' && which != 'o' &&
-                         which != 'V' && which != 'e' && which != 'g' &&
-                         which != 'j' && which != 'k' && which != 's' &&
-                         which != 'u')
-                {
-                        // Two bytes: the shared formatter has no %c.
-                        p8 room[2];
-
+                else if (!string_first_of("AWPSXFCGoVegjksu", which))
                         return shell_answer(shell_letter_refused(
                             "compgen", which,
                             "compgen [-V varname] [-abcdefgjksuv] "
                             "[-o option] [-A action] [-G globpat] "
                             "[-W wordlist] [-F function] [-C command] "
                             "[-X filterpat] [-P prefix] [-S suffix] [word]"));
-                }
-
-                index++;
         }
+
+        positive index = walk.index;
 
         if (index < shell_argc)
         {
@@ -20564,33 +20501,18 @@ COLD fn shell_prompt_write(writer write, bool more)
 
 fn shell_help(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 letter;
         b32 answer = 0;
 
         //      -d, -s and -m are the shapes bash's help takes; any other
         //      letter is an error with the same status the reference gives.
-        if (index < shell_argc && string_is(shell_argv[index], '-') &&
-            string_get(shell_argv[index] + 1) &&
-            !word_is(shell_argv[index], "--"))
-        {
-                for (string_address letter = shell_argv[index] + 1;
-                     string_get(letter); letter++)
-                        if (!string_is(letter, 'd') && !string_is(letter, 's') &&
-                            !string_is(letter, 'm'))
-                        {
-                                return shell_answer(shell_letter_refused(
-                                    "help", string_get(letter),
-                                    "help [-dms] [pattern ...]"));
-                        }
+        while (shell_option_letter(address_of walk, address_of letter))
+                if (!string_first_of("dsm", letter))
+                        return shell_answer(shell_letter_refused(
+                            "help", letter, "help [-dms] [pattern ...]"));
 
-                index++;
-        }
-
-        if (index < shell_argc && word_is(shell_argv[index], "--"))
-                index++;
+        positive index = walk.index;
 
         //      A topic that names no builtin is a failure, as it is in bash.
         if (index < shell_argc)
