@@ -910,8 +910,7 @@ static bool file_codec_parse(file_codec_cli address_to codec,
                         }
                         else if ((codec->features &
                                   FILE_CODEC_OUTPUT_OPTION) &&
-                                 string_length(word) >= 9 &&
-                                 !memory_compare(word, "--output=", 9))
+                                 string_has_prefix(word, "--output="))
                                 codec->output_path = word + 9;
                         else
                         {
@@ -4674,9 +4673,20 @@ static positive ls_subdired_count;
 
 // The directories -R has listed, by identity, so a link back into one is
 // named as already listed rather than walked again.
-static p64 ls_listed_device[LS_LISTED];
-static p64 ls_listed_inode[LS_LISTED];
-static positive ls_listed_count;
+typedef struct
+{
+        p64 inode;
+        p64 device;
+} file_identity;
+
+typedef struct
+{
+        file_identity address_to slots;
+        positive room;
+        positive have;
+} file_identity_set;
+
+static file_identity_set ls_listed;
 
 static p8 ls_host[FILE_NAME_MAX];
 static p8 ls_cwd[FILE_PATH_MAX];
@@ -5936,7 +5946,7 @@ static fn ls_frills_before(ls_entry address_to entry)
                                                         ls_block_human, ls_block_si,
                                                         ls_block_suffix);
 
-                        writer_fill_bulk(ls_out, width > have ? width - have : 0, ' ');
+                        writer_fill_bulk(ls_out, difference_or_zero(width, have), ' ');
                         ls_scaled(ls_out, entry->blocks * 512, ls_block_unit, ls_block_human,
                                   ls_block_si, ls_block_suffix);
                 }
@@ -6241,7 +6251,7 @@ static fn ls_print_long(string_address directory)
                                                                 ls_size_human, ls_size_si,
                                                                 ls_size_suffix);
 
-                                writer_fill_bulk(ls_out, size_width > have ? size_width - have : 0, ' ');
+                                writer_fill_bulk(ls_out, difference_or_zero(size_width, have), ' ');
                                 ls_scaled(ls_out, entry->size, ls_size_unit, ls_size_human,
                                           ls_size_si, ls_size_suffix);
                         }
@@ -6290,8 +6300,7 @@ static fn ls_print_columns(string_address directory, bool across)
                 positive line = candidate * 3;
                 bool fits = true;
 
-                for (positive column = 0; column < candidate; column++)
-                        ls_column_widths[column] = 3;
+                memory_fill_u64_aligned(ls_column_widths, candidate, 3);
 
                 positive rows = (ls_count + candidate - 1) / candidate;
 
@@ -6597,22 +6606,77 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
 static fn ls_directory(string_address path, bool heading, positive depth,
                        bool named);
 
-static bool ls_already_listed(file_facts address_to facts)
+/*
+        A set of (device, inode) identities, open addressed and grown before
+        it is half full, so a repeated lookup stays constant-time with no
+        ceiling on the files it holds. An inode of zero is not one the kernel
+        hands out, so it is what an unused slot holds.
+*/
+static bipolar file_identity_seen(file_identity_set address_to set,
+                                  file_facts address_to facts)
 {
-        p64 device = file_device_key(facts->device_major, facts->device_minor);
-
-        for (positive i = 0; i < ls_listed_count; i++)
-                if (ls_listed_device[i] == device && ls_listed_inode[i] == facts->inode)
-                        return true;
-
-        if (ls_listed_count < LS_LISTED)
+        if (!set->room || set->have + 1 >= set->room / 2)
         {
-                ls_listed_device[ls_listed_count] = device;
-                ls_listed_inode[ls_listed_count] = facts->inode;
-                ls_listed_count++;
+                positive room = set->room ? set->room << 1 : 64;
+                file_identity address_to made =
+                    room > set->room && room <= positive_max / sizeof(file_identity)
+                        ? (file_identity address_to)memory(room * sizeof(file_identity))
+                        : null;
+
+                if (!made || system_failed(made))
+                        return -ERROR_NO_MEMORY;
+
+                memory_fill(made, 0, room * sizeof(file_identity));
+
+                for (positive i = 0; i < set->room; i++)
+                {
+                        positive at = (positive)(set->slots[i].inode * 1099511628211u +
+                                                 set->slots[i].device);
+
+                        if (!set->slots[i].inode)
+                                continue;
+                        while (made[at & (room - 1)].inode)
+                                at++;
+                        made[at & (room - 1)] = set->slots[i];
+                }
+
+                if (set->slots)
+                        memory_free(set->slots, set->room * sizeof(file_identity));
+
+                set->slots = made;
+                set->room = room;
         }
 
-        return false;
+        p64 device = file_device_key(facts->device_major, facts->device_minor);
+        positive at = (positive)(facts->inode * 1099511628211u + device);
+
+        for (;; at++)
+        {
+                file_identity address_to slot = set->slots + (at & (set->room - 1));
+
+                if (!slot->inode)
+                {
+                        address_to slot = (file_identity){facts->inode, device};
+                        set->have++;
+                        return 0;
+                }
+
+                if (slot->inode == facts->inode && slot->device == device)
+                        return 1;
+        }
+}
+
+static fn file_identity_set_clear(file_identity_set address_to set)
+{
+        if (set->room)
+                memory_fill(set->slots, 0, set->room * sizeof(file_identity));
+        set->have = 0;
+}
+
+static bool ls_already_listed(file_facts address_to facts)
+{
+        // A directory that cannot be recorded is listed rather than refused.
+        return file_identity_seen(address_of ls_listed, facts) > 0;
 }
 
 static fn ls_below(string_address path, positive depth)
@@ -7155,7 +7219,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         ls_out_bytes = 0;
         ls_dired_count = 0;
         ls_subdired_count = 0;
-        ls_listed_count = 0;
+        file_identity_set_clear(address_of ls_listed);
         ls_color_started = false;
 
         file_taking taking = {
@@ -7801,7 +7865,7 @@ static b32 file_run(string_address address_to words, bipolar directory)
         if (status & 0x7f)
                 return 125;
 
-        return (b32)((status >> 8) & 0xff);
+        return (b32)wait_status_code(status);
 }
 
 /* Saturating options consume the complete overflowing run and retain syntax. */
@@ -9579,30 +9643,17 @@ static fn find_printf_walk(string_address format, bipolar handle)
                 // The flags, width and precision in front of the directive,
                 // read the way a printf reads them.
                 positive begin = at;
-                bool left = false;
+                string_address field = format + at;
+                conversion_spec parsed = conversion_spec_take_max(&field, positive_max);
+                bool left = (parsed.flags & CONVERSION_FLAG_LEFT) != 0;
+                positive width = parsed.field[0];
+                positive precision = parsed.fields > 1 ? parsed.field[1] : positive_max;
 
-                while (string_first_of((string_address) "-+ #0", string_get(format + at)) &&
-                       string_get(format + at))
-                {
-                        left |= string_is(format + at, '-');
-                        at++;
-                }
-
-                positive width = 0;
-                positive precision = positive_max;
-
-                while (byte_is_digit(string_get(format + at)))
-                        width = width * 10 + (positive)(string_get(format + at++) - '0');
-
-                if (string_is(format + at, '.'))
-                {
-                        at++;
-                        precision = 0;
-
-                        while (byte_is_digit(string_get(format + at)))
-                                precision = precision * 10 +
-                                            (positive)(string_get(format + at++) - '0');
-                }
+                // find takes no star: the first one is the directive letter,
+                // an unknown one.
+                if (parsed.stars)
+                        field = string_first_of(format + at, '*');
+                at = (positive)(field - format);
 
                 p8 letter = string_get(format + at);
 
@@ -9642,7 +9693,7 @@ static fn find_printf_walk(string_address format, bipolar handle)
                 if (precision != positive_max && precision < length)
                         length = precision;
 
-                positive pad = width > length ? width - length : 0;
+                positive pad = difference_or_zero(width, length);
 
                 if (!left)
                         while (pad-- && used + 1 < sizeof(line))
@@ -10853,71 +10904,10 @@ static positive du_exclude_have;
 // and d_type is a hint some filesystems decline to give.
 static bool du_was_directory;
 
-typedef struct
-{
-        p64 inode;
-        p64 device;
-} du_seen_name;
-
-// An inode of zero is not one the kernel hands out, so it is what an unused
-// slot holds. The open-addressed table grows before it is half full, keeping
-// repeated hard-link lookup constant-time without imposing a file ceiling.
-static du_seen_name address_to du_seen;
-static positive du_seen_room;
-static positive du_seen_have;
+static file_identity_set du_seen;
 static bool du_seen_broken;
 static bool du_depth_broken;
 static p8 du_unit_option;
-
-static bool du_seen_grow()
-{
-        if (du_seen_room && du_seen_have + 1 < du_seen_room / 2)
-                return true;
-
-        positive room = du_seen_room ? du_seen_room << 1 : 64;
-
-        if (room < du_seen_room || room > (positive)-1 / sizeof(du_seen_name))
-                room = 0;
-
-        du_seen_name address_to made = room
-                                          ? (du_seen_name address_to)memory(
-                                                room * sizeof(du_seen_name))
-                                          : null;
-
-        if (!made || system_failed(made))
-        {
-                shell_memory_failed = true;
-                log_error("du: out of memory while tracking hard links\n", 0);
-                du_seen_broken = true;
-                du_status = 1;
-                return false;
-        }
-
-        memory_fill(made, 0, room * sizeof(du_seen_name));
-
-        for (positive i = 0; i < du_seen_room; i++)
-        {
-                if (!du_seen[i].inode)
-                        continue;
-
-                positive at = (positive)(du_seen[i].inode * 1099511628211u +
-                                         du_seen[i].device) &
-                              (room - 1);
-
-                while (made[at].inode)
-                        at = (at + 1) & (room - 1);
-
-                made[at] = du_seen[i];
-        }
-
-        if (du_seen)
-                memory_free(du_seen, du_seen_room * sizeof(du_seen_name));
-
-        du_seen = made;
-        du_seen_room = room;
-
-        return true;
-}
 
 static bool du_already(file_facts address_to facts)
 {
@@ -10927,36 +10917,19 @@ static bool du_already(file_facts address_to facts)
         if ((facts->mode & MODE_FORMAT) == MODE_DIRECTORY)
                 return false;
 
-        if (!du_seen_grow())
-                return true;
+        bipolar seen = file_identity_seen(address_of du_seen, facts);
 
-        p64 device = file_device_key(facts->device_major, facts->device_minor);
-        positive slot = (positive)(facts->inode * 1099511628211u + device) &
-                        (du_seen_room - 1);
-
-        for (positive step = 0; step < du_seen_room; step++)
+        if (seen < 0)
         {
-                positive at = (slot + step) & (du_seen_room - 1);
-
-                if (du_seen[at].inode == facts->inode && du_seen[at].device == device)
-                        return true;
-
-                if (du_seen[at].inode)
-                        continue;
-
-                du_seen[at].inode = facts->inode;
-                du_seen[at].device = device;
-                du_seen_have++;
-
-                return false;
+                shell_memory_failed = true;
+                log_error("du: out of memory while tracking hard links\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
         }
 
-        log_error("du: hard-link table is unexpectedly full\n", 0);
-        du_seen_broken = true;
-        du_status = 1;
-
-        /* Counting it again would be the silent over-count this table avoids. */
-        return true;
+        /* Counting one it could not record would be the silent over-count
+           this table avoids. */
+        return seen != 0;
 }
 
 // The system's du takes a pattern against the whole path it built and
@@ -11150,12 +11123,10 @@ static b32 file_du()
         du_unit = 1024;
         du_maximum = FILE_MAX_DEPTH;
         du_exclude_have = 0;
-        du_seen_have = 0;
+        file_identity_set_clear(address_of du_seen);
         du_seen_broken = false;
         du_depth_broken = false;
         du_unit_option = 0;
-        if (du_seen_room)
-                memory_fill(du_seen, 0, du_seen_room * sizeof(du_seen_name));
 
         file_taking taking = {
             .program = (string_address) "du",
@@ -13965,7 +13936,7 @@ static bool realpath_relative(string_address from, string_address path,
         positive from_length = string_length(from);
         positive path_length = string_length(path);
         positive same = memory_common_prefix(
-            from, path, from_length < path_length ? from_length : path_length);
+            from, path, min(from_length, path_length));
         string_address slash = memory_last_of(from, '/', same);
         positive mark = slash ? (positive)(slash - from) + 1 : 0;
 
@@ -15675,7 +15646,7 @@ static bool csplit_name(csplit_state address_to state, positive number)
 {
         p8 suffix[32];
         positive length = positive_into_base(suffix, number, 10, false);
-        positive width = length > state->digits ? length : state->digits;
+        positive width = max(length, state->digits);
 
         if (state->prefix_length >= FILE_PATH_MAX ||
             width >= FILE_PATH_MAX - state->prefix_length)
@@ -16455,9 +16426,9 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         bool overflow = false;
 
         if (relation == TRUNCATE_AT_MOST)
-                wanted = current < size ? current : size;
+                wanted = min(current, size);
         else if (relation == TRUNCATE_AT_LEAST)
-                wanted = current > size ? current : size;
+                wanted = max(current, size);
         else if (relation == TRUNCATE_ROUND_DOWN)
                 wanted = current - current % size;
         else if (relation == TRUNCATE_ROUND_UP)
@@ -22931,7 +22902,7 @@ static positive seq_decimal_width(seq_decimal address_to number,
         if (scale > precision)
                 magnitude /= positive_power_ten(scale - precision);
 
-        magnitude /= positive_power_ten(scale < precision ? scale : precision);
+        magnitude /= positive_power_ten(min(scale, precision));
 
         return max(positive_digits(magnitude), number->whole_width) +
                (precision ? precision + 1 : 0) +
@@ -24864,7 +24835,7 @@ static positive nproc_count(bool all, positive ignore)
                         limit = positive_max;
 
                 if (threads)
-                        count = threads < limit ? threads : limit;
+                        count = min(threads, limit);
                 else if (limit == 1)
                         count = 1;
                 else
@@ -27401,7 +27372,7 @@ static fn xargs_job_finish(positive slot, positive status)
                 return;
         }
 
-        b32 code = (b32)((status >> 8) & 0xff);
+        b32 code = (b32)wait_status_code(status);
 
         if (!code)
         {
