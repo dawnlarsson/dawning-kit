@@ -490,50 +490,37 @@ static p8 tar_link[TAR_PATH];
 static b32 tar_status;
 static bool tar_preserve;
 
-/* Directory permissions are an end-of-extraction property.  Applying an
-   archived mode such as 0000 while later members still need to traverse the
-   directory makes a valid archive extract differently according to member
-   order.  Keep the inode identity and final mode, then revisit deepest first
-   after the last member. */
-typedef struct
-{
-        positive path_at;
-        positive depth;
-        positive mode;
-        file_facts facts;
-} tar_directory_mode;
-
-static tar_directory_mode address_to tar_directories;
-static positive tar_directory_count;
-static positive tar_directory_room;
-static p8 address_to tar_directory_paths;
-static positive tar_directory_paths_used;
-static positive tar_directory_paths_room;
-static positive address_to tar_directory_order;
-static positive tar_directory_order_room;
-static positive address_to tar_directory_spare;
-static positive tar_directory_spare_room;
-
-/* A hard-link header names another archive member, not an arbitrary object
-   that happened to exist below the extraction root.  Retain the identity of
-   each non-directory member this run successfully materialized, replacing a
-   path's record when a later member overwrites it. */
+/* Path-keyed records: an arena of spellings behind a hashed index kept below
+   half full, whose stored indexes survive growth of both. Extraction keeps
+   two. Directories wait for the last member to get their final mode, deepest
+   first. A hard-link header names another archive member, not whatever
+   exists below the root, so each non-directory member this run materialized
+   keeps its identity, replaced when a later member overwrites the path. */
 typedef struct
 {
         positive path_at;
         positive path_hash;
+        positive depth;
+        positive mode;
         file_facts facts;
-} tar_materialized_file;
+} tar_path_record;
 
-static tar_materialized_file address_to tar_materialized;
-static positive tar_materialized_count;
-static positive tar_materialized_room;
-static p8 address_to tar_materialized_paths;
-static positive tar_materialized_paths_used;
-static positive tar_materialized_paths_room;
-static positive address_to tar_materialized_index;
-static positive tar_materialized_index_slots;
-static positive tar_materialized_index_room;
+typedef struct
+{
+        tar_path_record address_to records;
+        positive count, room;
+        p8 address_to paths;
+        positive paths_used, paths_room;
+        positive address_to index;
+        positive slots, index_room;
+} tar_path_store;
+
+static tar_path_store tar_directories;
+static tar_path_store tar_materialized;
+static positive address_to tar_directory_order;
+static positive tar_directory_order_room;
+static positive address_to tar_directory_spare;
+static positive tar_directory_spare_room;
 
 /*
         GNU default blocking is twenty 512-byte blocks (10 KiB). One 64 KiB
@@ -614,66 +601,96 @@ static bool tar_refuse_pack(p8 pack)
         return false;
 }
 
-/* Keep this table below one-half full.  Stored indexes survive growth of both
-   the record array and path arena, and the spelling comparison remains the
-   proof after the hash rejects unlike paths. */
-static bool tar_materialized_index_prepare(positive wanted)
+static bool tar_store_index_prepare(tar_path_store address_to store,
+                                    positive wanted)
 {
-        if (tar_materialized_index_slots &&
-            wanted <= tar_materialized_index_slots / 2)
+        if (store->slots && wanted <= store->slots / 2)
                 return true;
 
-        positive larger = tar_materialized_index_slots
-                              ? tar_materialized_index_slots : 64;
+        positive larger = store->slots ? store->slots : 64;
         while (wanted > larger / 2)
         {
                 if (larger > positive_max / 2)
                         return false;
                 larger *= 2;
         }
-        if (!shell_array_room(tar_materialized_index,
-                              tar_materialized_index_room, larger))
+        if (!shell_array_room(store->index, store->index_room, larger))
                 return false;
 
-        memory_fill(tar_materialized_index, 0,
-                    larger * sizeof(tar_materialized_index[0]));
-        for (positive at = 0; at < tar_materialized_count; at++)
+        memory_fill(store->index, 0, larger * sizeof(store->index[0]));
+        for (positive at = 0; at < store->count; at++)
         {
-                positive slot =
-                    tar_materialized[at].path_hash & (larger - 1);
-                while (tar_materialized_index[slot])
+                positive slot = store->records[at].path_hash & (larger - 1);
+                while (store->index[slot])
                         slot = (slot + 1) & (larger - 1);
-                tar_materialized_index[slot] = at + 1;
+                store->index[slot] = at + 1;
         }
-        tar_materialized_index_slots = larger;
+        store->slots = larger;
         return true;
 }
 
-static tar_materialized_file address_to tar_materialized_find_hashed(
-    string_address path, positive hash)
+static tar_path_record address_to tar_store_find(tar_path_store address_to store,
+                                                 string_address path,
+                                                 positive hash)
 {
-        if (!tar_materialized_index_slots)
+        if (!store->slots)
                 return null;
 
-        positive slot = hash & (tar_materialized_index_slots - 1);
-        while (tar_materialized_index[slot])
+        positive slot = hash & (store->slots - 1);
+        while (store->index[slot])
         {
-                tar_materialized_file address_to kept =
-                    tar_materialized + tar_materialized_index[slot] - 1;
+                tar_path_record address_to kept =
+                    store->records + store->index[slot] - 1;
                 if (kept->path_hash == hash &&
-                    string_equals(tar_materialized_paths + kept->path_at,
-                                  path))
+                    string_equals(store->paths + kept->path_at, path))
                         return kept;
-                slot = (slot + 1) & (tar_materialized_index_slots - 1);
+                slot = (slot + 1) & (store->slots - 1);
         }
         return null;
 }
 
-static file_facts address_to tar_materialized_find(string_address path)
+/* The record for path, added when absent; null when memory runs out. */
+static tar_path_record address_to tar_store_remember(
+    tar_path_store address_to store, string_address path)
 {
         positive2 named = string_hash_33_length(path);
-        tar_materialized_file address_to kept =
-            tar_materialized_find_hashed(path, named.x);
+        tar_path_record address_to kept = tar_store_find(store, path, named.x);
+        positive length = named.y + 1;
+
+        if (kept)
+                return kept;
+        if (!tar_store_index_prepare(store, store->count + 1) ||
+            named.y == positive_max ||
+            length > positive_max - store->paths_used ||
+            !shell_array_room(store->records, store->room, store->count + 1) ||
+            !shell_array_room(store->paths, store->paths_room,
+                              store->paths_used + length))
+                return null;
+
+        kept = store->records + store->count;
+        kept->path_at = store->paths_used;
+        kept->path_hash = named.x;
+        memory_copy(store->paths + store->paths_used, path, length);
+        store->paths_used += length;
+        positive slot = named.x & (store->slots - 1);
+        while (store->index[slot])
+                slot = (slot + 1) & (store->slots - 1);
+        store->index[slot] = ++store->count;
+        return kept;
+}
+
+/* Forget every record; the next index prepare zeroes the slots. */
+static fn tar_store_clear(tar_path_store address_to store)
+{
+        store->count = 0;
+        store->paths_used = 0;
+        store->slots = 0;
+}
+
+static file_facts address_to tar_materialized_find(string_address path)
+{
+        tar_path_record address_to kept = tar_store_find(
+            address_of tar_materialized, path, string_hash_33_length(path).x);
         return kept ? address_of kept->facts : null;
 }
 
@@ -683,102 +700,39 @@ static bipolar tar_materialized_remember(string_address path,
         if ((facts->mask & STATX_BASIC) != STATX_BASIC)
                 return -ERROR_INPUT_OUTPUT;
 
-        positive2 named = string_hash_33_length(path);
-        tar_materialized_file address_to kept =
-            tar_materialized_find_hashed(path, named.x);
-        if (kept)
-        {
-                kept->facts = *facts;
-                return 0;
-        }
-
-        if (!tar_materialized_index_prepare(tar_materialized_count + 1))
+        tar_path_record address_to kept =
+            tar_store_remember(address_of tar_materialized, path);
+        if (!kept)
                 return -ERROR_NO_MEMORY;
-
-        positive length = named.y + 1;
-        if (named.y == positive_max ||
-            length > positive_max - tar_materialized_paths_used ||
-            !shell_array_room(tar_materialized, tar_materialized_room,
-                              tar_materialized_count + 1) ||
-            !shell_array_room(tar_materialized_paths,
-                              tar_materialized_paths_room,
-                              tar_materialized_paths_used + length))
-                return -ERROR_NO_MEMORY;
-
-        kept = tar_materialized + tar_materialized_count;
-        kept->path_at = tar_materialized_paths_used;
-        kept->path_hash = named.x;
-        kept->facts = *facts;
-        memory_copy(tar_materialized_paths + tar_materialized_paths_used,
-                    path, length);
-        tar_materialized_paths_used += length;
-        positive slot = named.x & (tar_materialized_index_slots - 1);
-        while (tar_materialized_index[slot])
-                slot = (slot + 1) & (tar_materialized_index_slots - 1);
-        tar_materialized_index[slot] = ++tar_materialized_count;
+        kept->facts = address_to facts;
         return 0;
-}
-
-static positive tar_path_depth(string_address path)
-{
-        positive depth = 0;
-        bool component = false;
-
-        while (*path)
-        {
-                if (*path == '/')
-                        component = false;
-                else if (!component)
-                {
-                        component = true;
-                        depth++;
-                }
-                path++;
-        }
-        return depth;
 }
 
 static bool tar_directory_remember(string_address path, positive mode,
                                    file_facts address_to facts)
 {
-        for (positive at = 0; at < tar_directory_count; at++)
-        {
-                tar_directory_mode address_to kept = tar_directories + at;
-                if (string_equals(tar_directory_paths + kept->path_at, path))
-                {
-                        kept->mode = mode;
-                        kept->facts = *facts;
-                        return true;
-                }
-        }
+        tar_path_record address_to kept =
+            tar_store_remember(address_of tar_directories, path);
 
-        positive length = string_length(path) + 1;
-        if (length > positive_max - tar_directory_paths_used ||
-            !shell_array_room(tar_directories, tar_directory_room,
-                              tar_directory_count + 1) ||
-            !shell_array_room(tar_directory_paths, tar_directory_paths_room,
-                              tar_directory_paths_used + length))
+        if (!kept)
         {
                 tar_refuse("out of memory while retaining directory metadata");
                 return false;
         }
-
-        tar_directory_mode address_to kept =
-            tar_directories + tar_directory_count++;
-        kept->path_at = tar_directory_paths_used;
-        kept->depth = tar_path_depth(path);
+        /* A safe path joins its components with single slashes. */
+        kept->depth = path[0] == '/' && !path[1]
+                          ? 0
+                          : memory_count(path, string_length(path), '/') +
+                                (path[0] != '/');
         kept->mode = mode;
-        kept->facts = *facts;
-        memory_copy(tar_directory_paths + tar_directory_paths_used,
-                    path, length);
-        tar_directory_paths_used += length;
+        kept->facts = address_to facts;
         return true;
 }
 
 static bipolar tar_directory_index_order(positive left, positive right)
 {
-        positive one = tar_directories[left].depth;
-        positive two = tar_directories[right].depth;
+        positive one = tar_directories.records[left].depth;
+        positive two = tar_directories.records[right].depth;
 
         if (one != two)
                 return one > two ? -1 : 1;
@@ -787,31 +741,32 @@ static bipolar tar_directory_index_order(positive left, positive right)
 
 static fn tar_directories_finish(void)
 {
-        if (!tar_directory_count)
+        positive count = tar_directories.count;
+
+        if (!count)
                 return;
 
         if (!shell_array_room(tar_directory_order, tar_directory_order_room,
-                              tar_directory_count) ||
+                              count) ||
             !shell_array_room(tar_directory_spare, tar_directory_spare_room,
-                              tar_directory_count))
+                              count))
         {
                 tar_refuse("out of memory while restoring directory metadata");
-                tar_directory_count = 0;
-                tar_directory_paths_used = 0;
+                tar_store_clear(address_of tar_directories);
                 return;
         }
 
-        for (positive at = 0; at < tar_directory_count; at++)
+        for (positive at = 0; at < count; at++)
                 tar_directory_order[at] = at;
         positive address_to order = array_merge_sort(
-            tar_directory_order, tar_directory_spare, tar_directory_count,
+            tar_directory_order, tar_directory_spare, count,
             tar_directory_index_order);
 
-        for (positive at = 0; at < tar_directory_count; at++)
+        for (positive at = 0; at < count; at++)
         {
-                tar_directory_mode address_to kept =
-                    tar_directories + order[at];
-                string_address path = tar_directory_paths + kept->path_at;
+                tar_path_record address_to kept =
+                    tar_directories.records + order[at];
+                string_address path = tar_directories.paths + kept->path_at;
                 p8 leaf[TAR_PATH];
                 bipolar parent = system_open_parent_nofollow(
                     AT_FDCWD, path, false, 0, leaf, sizeof(leaf));
@@ -832,8 +787,7 @@ static fn tar_directories_finish(void)
                         tar_fail(path, changed);
         }
 
-        tar_directory_count = 0;
-        tar_directory_paths_used = 0;
+        tar_store_clear(address_of tar_directories);
 }
 
 static fn tar_reset(void)
@@ -847,11 +801,8 @@ static fn tar_reset(void)
         tar_output_known = false;
         tar_output_target_known = false;
         tar_output_stage_known = false;
-        tar_directory_count = 0;
-        tar_directory_paths_used = 0;
-        tar_materialized_count = 0;
-        tar_materialized_paths_used = 0;
-        tar_materialized_index_slots = 0;
+        tar_store_clear(address_of tar_directories);
+        tar_store_clear(address_of tar_materialized);
 }
 
 static bipolar tar_read_bytes(bipolar handle, p8 address_to into, positive n)
