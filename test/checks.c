@@ -72437,7 +72437,9 @@ static bool floor_lzma_packet(floor_lzma_oracle address_to o, p8 address_to addr
 /* The span kernel against the oracle: a 4096-byte dictionary that wraps
    several times, spans stopped at random packet boundaries, the input's last
    bytes run through a zero-padded tail, the dictionary buffer ending at a
-   guard page, and two malformed streams. */
+   guard page, and three malformed streams: a distance past the history, a
+   match past the chunk, and a distance past address zero from a dictionary
+   low in memory, which only a signed source check refuses. */
 static fn floor_lzma_span(void)
 {
         static p8 plain_storage[1 + 16384];
@@ -72447,6 +72449,7 @@ static fn floor_lzma_span(void)
         static p8 tail[128];
         static floor_lzma_oracle oracle;
         static xz_probability_state model;
+        static p8 low_dict[4096 + XZ_DICT_START + XZ_DICT_SLACK];
         const positive limit = 4096;
         const positive size = limit + XZ_DICT_START;
         const positive cap = size + XZ_DICT_SLACK;
@@ -72467,13 +72470,15 @@ static fn floor_lzma_span(void)
               __builtin_offsetof(xz_decode_job, rep) == 120 &&
               __builtin_offsetof(xz_decode_job, error) == 152);
 
-        p8 address_to dict = output + 3 * FLOOR_PAGE - cap;
+        p8 address_to guarded = output + 3 * FLOOR_PAGE - cap;
 
-        for (positive trial = 0; trial < 16; trial++)
+        for (positive trial = 0; trial < 17; trial++)
         {
                 p32 random = 0x57139021u + (p32)trial;
-                bool far = trial == 14;
+                bool low = trial == 16;
+                bool far = trial == 14 || low;
                 bool overrun = trial == 15;
+                p8 address_to dict = low ? low_dict : guarded;
                 positive first_match_end = 0;
                 positive at = 0;
                 p32 lc = trial % 5;
@@ -72507,7 +72512,7 @@ static fn floor_lzma_span(void)
                                 /* A distance past everything decoded so far. */
                                 for (positive k = 0; k < 5; k++) plain[at + k] = 0;
                                 e->read_pos = (p32)(at + 5); e->read_ahead = 5; e->position = at;
-                                xz_code_symbol(e, 3999 + 4, 5);
+                                xz_code_symbol(e, low ? 0xf0000000u - 1 + 4 : 3999 + 4, 5);
                                 at += 5;
                                 break;
                         }
@@ -72636,7 +72641,7 @@ static fn floor_lzma_span(void)
                         job.copy_end = dict + cap - XZ_COPY_SLACK;
                         if (job.copy_end > job.out_end)
                                 job.copy_end = job.out_end;
-                        job.dmax = limit;
+                        job.dmax = low ? ~(p64)0 : limit;
                         job.wrap = wrapped ? size - XZ_MIRROR : 0;
                         job.bottom = wrapped ? dict : dict + XZ_DICT_START;
                         job.lo = job.bottom;

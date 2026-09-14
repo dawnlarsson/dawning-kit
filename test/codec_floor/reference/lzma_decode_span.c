@@ -65,7 +65,7 @@ void lzma_decode_span(job *j)
                                 if ((long long)(src - j->lo) < 0)
                                 {
                                         if (rep0 > j->dmax) { j->error = 1; break; }
-                                        if (src < j->bottom) { if (!j->wrap) { j->error = 1; break; } src += j->wrap; }
+                                        if ((long long)(src - j->bottom) < 0) { if (!j->wrap) { j->error = 1; break; } src += j->wrap; }
                                 }
                                 u32 match = *src, offset = 0x100;
                                 for (int i = 0; i < 8; i++)
@@ -162,7 +162,7 @@ void lzma_decode_span(job *j)
                                         if ((long long)(src - j->lo) < 0)
                                         {
                                                 if (rep0 > j->dmax) { j->error = 1; break; }
-                                                if (src < j->bottom) { if (!j->wrap) { j->error = 1; break; } src += j->wrap; }
+                                                if ((long long)(src - j->bottom) < 0) { if (!j->wrap) { j->error = 1; break; } src += j->wrap; }
                                         }
                                         *out++ = *src;
                                         continue;
@@ -230,7 +230,7 @@ void lzma_decode_span(job *j)
                 if ((long long)(src - j->lo) < 0)
                 {
                         if (rep0 > j->dmax) { j->error = 1; break; }
-                        if (src < j->bottom) { if (!j->wrap) { j->error = 1; break; } src += j->wrap; }
+                        if ((long long)(src - j->bottom) < 0) { if (!j->wrap) { j->error = 1; break; } src += j->wrap; }
                 }
                 u8 *end = out + len;
                 if (end > j->copy_end)
