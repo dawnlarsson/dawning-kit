@@ -2873,6 +2873,8 @@ typedef struct
         p8 digits;
         fn(address_to operand)(b32 index);
         bool(address_to seen)(p8 letter, string_address value);
+        bool(address_to seen_in)(p8 letter, string_address value, address_any context);
+        address_any context;
         p8 address_to selection;
         p8 last;
         positive flags, repeated, bare, first;
@@ -3036,8 +3038,9 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 }
                 if (long_option)
                         argument_select(taking->selection, match.selection, letter);
-                if (taking->seen && !taking->seen(letter,
-                    long_option || optional || valued ? taking->value[bit] : null))
+                string_address seen_value = long_option || optional || valued ? taking->value[bit] : null;
+                if (taking->seen ? !taking->seen(letter, seen_value)
+                    : taking->seen_in && !taking->seen_in(letter, seen_value, taking->context))
                         return false;
         }
         taking->first = cursor.at;

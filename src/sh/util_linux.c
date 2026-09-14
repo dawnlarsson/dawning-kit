@@ -2563,14 +2563,6 @@ static const argument_option ul_setarch_arguments[] = {
     {"show", 's', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY}, {"pid", 'p', ARGUMENT_REQUIRED}, {null},
 };
 
-static p32 ul_setarch_options;
-static bool ul_setarch_verbose;
-static bool ul_setarch_list;
-static bool ul_setarch_do_show;
-
-static p8 ul_setarch_immediate;
-static string_address ul_setarch_shown;
-
 static fn ul_setarch_list_write()
 {
         for (positive i = 0; ul_arches[i].name; i++)
@@ -2578,41 +2570,21 @@ static fn ul_setarch_list_write()
         log_flush();
 }
 
-static bool ul_setarch_take(p8 letter, string_address value)
+/* The flags themselves are read back from taking once parsing is done; only
+   saying them is done here, so -v says the ones written after it. */
+static bool ul_setarch_take(p8 letter, string_address value, address_any context)
 {
-        if (letter == 'v') ul_setarch_verbose = true;
-        else if (letter == 'l')
-        {
-                /* Answered where it stands: the words after it are never
-                   looked at, malformed or not. */
-                ul_setarch_list = true;
-                ul_setarch_immediate = 'l';
-                return false;
-        }
-        else if (letter == 's')
-        {
-                ul_setarch_do_show = true;
-                if (value)
-                {
-                        ul_setarch_shown = value;
-                        ul_setarch_immediate = 's';
-                        return false;
-                }
-        }
-        else if (letter == 'u') {
-                ul_setarch_options |= UL_UNAME26;
-                if (ul_setarch_verbose) string_format(log, "Switching on UNAME26.\n");
-        }
-        else
-        {
-                p32 bit;
-                string_address name;
-                if (!ul_setarch_flag(letter, address_of bit, address_of name))
-                        return true;
-                ul_setarch_options |= bit;
-                if (ul_setarch_verbose)
-                        string_format(log, "Switching on %s.\n", name);
-        }
+        file_taking address_to taking = context;
+        p32 bit;
+        string_address name = "UNAME26";
+
+        /* --list and --show=VALUE are answered where they stand: the words
+           after them are never looked at, malformed or not. */
+        if (letter == 'l' || letter == 's')
+                return letter == 's' && !value;
+        if ((letter == 'u' || ul_setarch_flag(letter, address_of bit, address_of name)) &&
+            (taking->flags & FILE_FLAG('v')))
+                string_format(log, "Switching on %s.\n", name);
         return true;
 }
 
@@ -2625,38 +2597,30 @@ static b32 util_linux_setarch()
         file_taking taking = {
             .program = "setarch",
             .options = ul_setarch_arguments,
-            .seen = ul_setarch_take,
+            .seen_in = ul_setarch_take,
+            .context = address_of taking,
         };
 
         if (first < count && !string_is(program_argument((b32)first), '-'))
                 arch = program_argument((b32)first++);
-        ul_setarch_options = 0;
-        ul_setarch_verbose = ul_setarch_list = ul_setarch_do_show = false;
-        ul_setarch_immediate = 0;
-        ul_setarch_shown = null;
         if (!file_take_from(address_of taking, first))
         {
-                if (ul_setarch_immediate == 'l')
+                string_address shown = file_option_value(address_of taking, 's');
+                if (taking.flags & FILE_FLAG('l'))
                 {
                         ul_setarch_list_write();
                         return 0;
                 }
-                if (ul_setarch_immediate == 's')
-                        return ul_setarch_show(ul_setarch_shown, 0);
-                return 1;
+                return taking.last == 's' && shown ? ul_setarch_show(shown, 0) : 1;
         }
         if (ul_meta(address_of taking,
                     "[<arch>] [options] [<program> [argument ...]]",
                     address_of answer)) return answer;
-        if (ul_setarch_list) {
-                ul_setarch_list_write();
-                return 0;
-        }
         if (taking.flags & FILE_FLAG('p')) {
                 if (!ul_pid(file_option_value(address_of taking, 'p'),
                             "setarch", "PID", address_of pid) || !pid) return 1;
         }
-        if (ul_setarch_do_show)
+        if (taking.flags & FILE_FLAG('s'))
         {
                 /* --show=VALUE names the personality outright; only a bare
                    --show reads one from a process. */
@@ -2664,9 +2628,14 @@ static b32 util_linux_setarch()
                 return ul_setarch_show(shown, shown ? 0 : pid);
         }
         if (pid) return string_report(log_error, 1, "%s: %s\n", "setarch", "use -p/--pid option with --show option");
-        if (!arch && !ul_setarch_options) return string_report(log_error, 1, "%s: %s\n", "setarch", "no architecture argument or personality flags specified");
 
-        p32 personality = ul_setarch_options;
+        p32 personality = taking.flags & FILE_FLAG('u') ? UL_UNAME26 : 0, bit;
+        string_address name;
+        for (p8 letter = 1; letter < 128; letter++)
+                if (ul_setarch_flag(letter, address_of bit, address_of name) &&
+                    (taking.flags & FILE_FLAG(letter)))
+                        personality |= bit;
+        if (!arch && !personality) return string_report(log_error, 1, "%s: %s\n", "setarch", "no architecture argument or personality flags specified");
         if (arch)
         {
                 positive i;
@@ -2680,13 +2649,13 @@ static b32 util_linux_setarch()
 
         if (taking.first < count)
         {
-                if (ul_setarch_verbose) string_format(log, "Execute command `%s'.\n", program_argument((b32)taking.first));
+                if (taking.flags & FILE_FLAG('v')) string_format(log, "Execute command `%s'.\n", program_argument((b32)taking.first));
                 log_flush();
                 return ul_exec(taking.first, "setarch");
         }
 
         string_address shell_words[2] = {(string_address)"-sh", null};
-        if (ul_setarch_verbose) string_format(log, "Execute command `/bin/sh'.\n");
+        if (taking.flags & FILE_FLAG('v')) string_format(log, "Execute command `/bin/sh'.\n");
         log_flush();
         changed = shell_exec_file((string_address)"/bin/sh", shell_words, 1,
                                   file_environment_all());
@@ -2953,10 +2922,7 @@ typedef struct
         bipolar ptracer;
 } ul_setpriv;
 
-static positive ul_setpriv_seen;
-static positive ul_setpriv_total;
-static positive ul_setpriv_dumps;
-static p8 ul_setpriv_group_option;
+typedef struct { positive seen, total, dumps; p8 group_option; } ul_setpriv_given;
 
 static bipolar ul_prctl(positive option, positive one, positive two)
 {
@@ -2974,24 +2940,25 @@ static bipolar ul_signal_number(string_address text)
         return kill_number(name);
 }
 
-static bool ul_setpriv_take(p8 letter, string_address value)
+static bool ul_setpriv_take(p8 letter, string_address value, address_any context)
 {
+        ul_setpriv_given address_to given = context;
         positive bit = (positive)1 << file_letter_bit(letter);
-        ul_setpriv_total++;
+        given->total++;
         if (letter == 'd')
         {
-                ul_setpriv_dumps++;
+                given->dumps++;
                 return true;
         }
         if (letter == 'h' || letter == 'V')
                 return true;
-        if ((ul_setpriv_seen & bit) ||
+        if ((given->seen & bit) ||
             ((letter == 'c' || letter == 'k' || letter == 'I' || letter == 's') &&
-             ul_setpriv_group_option))
+             given->group_option))
                 return string_report(log_error, false, "setpriv: duplicate or mutually exclusive option\n");
-        ul_setpriv_seen |= bit;
+        given->seen |= bit;
         if (letter == 'c' || letter == 'k' || letter == 'I' || letter == 's')
-                ul_setpriv_group_option = letter;
+                given->group_option = letter;
         return true;
 }
 
@@ -3096,7 +3063,7 @@ static COLD fn ul_setpriv_secure_say(b32 bits)
 }
 
 /* Keep the /proc status block off every ordinary setpriv invocation's stack. */
-static COLD __attribute__((noinline)) b32 ul_setpriv_dump()
+static COLD __attribute__((noinline)) b32 ul_setpriv_dump(positive dumps)
 {
         p32 uid[3], gid[3];
         if (system_call_3(syscall(getresuid), (positive)uid,
@@ -3106,11 +3073,11 @@ static COLD __attribute__((noinline)) b32 ul_setpriv_dump()
                 return string_report(log_error, 1, "%s: %s\n", "setpriv", "cannot read process IDs");
         string_format(log, "uid: %p\neuid: %p\n", (positive)uid[0],
                       (positive)uid[1]);
-        if (ul_setpriv_dumps >= 3)
+        if (dumps >= 3)
                 string_format(log, "suid: %p\n", (positive)uid[2]);
         string_format(log, "gid: %p\negid: %p\n", (positive)gid[0],
                       (positive)gid[1]);
-        if (ul_setpriv_dumps >= 3)
+        if (dumps >= 3)
                 string_format(log, "sgid: %p\n", (positive)gid[2]);
 
         bipolar groups = system_call_2(syscall(getgroups), 0, 0);
@@ -3130,7 +3097,7 @@ static COLD __attribute__((noinline)) b32 ul_setpriv_dump()
         string_format(log, "no_new_privs: %b\n", nnp);
         p64 caps[5];
         if (!ul_cap_status(caps)) return string_report(log_error, 1, "%s: %s\n", "setpriv", "cannot read capability state");
-        if (ul_setpriv_dumps >= 2)
+        if (dumps >= 2)
         {
                 log("Effective capabilities: ", 24); ul_caps_say(caps[0]);
                 log("Permitted capabilities: ", 24); ul_caps_say(caps[1]);
@@ -3183,26 +3150,26 @@ static const argument_option ul_setpriv_options[] = {
 
 static b32 util_linux_setpriv()
 {
+        ul_setpriv_given given = {0};
         file_taking taking = {
             .program = "setpriv",
             .options = ul_setpriv_options,
-            .seen = ul_setpriv_take,
+            .seen_in = ul_setpriv_take,
+            .context = address_of given,
         };
         ul_setpriv set = {0};
         b32 answer;
-        ul_setpriv_seen = ul_setpriv_total = ul_setpriv_dumps = 0;
-        ul_setpriv_group_option = 0;
         if (ul_options_done(address_of taking, "[options] program [argument ...]", address_of answer)) return answer;
 
-        if (ul_setpriv_dumps)
+        if (given.dumps)
         {
-                if (ul_setpriv_total != ul_setpriv_dumps || taking.first < (positive)program_argument_count())
+                if (given.total != given.dumps || taking.first < (positive)program_argument_count())
                         return string_report(log_error, 1, "%s: %s\n", "setpriv", "--dump is incompatible with all other options");
-                return ul_setpriv_dump();
+                return ul_setpriv_dump(given.dumps);
         }
         if (taking.flags & FILE_FLAG('l'))
         {
-                if (ul_setpriv_total != 1 || taking.first < (positive)program_argument_count())
+                if (given.total != 1 || taking.first < (positive)program_argument_count())
                         return string_report(log_error, 1, "%s: %s\n", "setpriv", "--list-caps must be specified alone");
                 for (b32 i = 0; i <= ul_cap_last(); i++)
                         if ((positive)i < array_count(ul_cap_names))
@@ -3229,7 +3196,7 @@ static b32 util_linux_setpriv()
         if (taking.flags & FILE_FLAG('U')) { if (!ul_setpriv_id(file_option_value(address_of taking, 'U'), false, address_of set.ruid)) return string_report(log_error, 1, "%s: %s\n", "setpriv", "failed to parse reuid"); set.euid = set.ruid; set.ruid_set = set.euid_set = true; }
         if (taking.flags & FILE_FLAG('R')) { if (!ul_setpriv_id(file_option_value(address_of taking, 'R'), true, address_of set.rgid)) return string_report(log_error, 1, "%s: %s\n", "setpriv", "failed to parse regid"); set.egid = set.rgid; set.rgid_set = set.egid_set = true; }
 #undef UL_ID
-        set.groups = ul_setpriv_group_option;
+        set.groups = given.group_option;
         set.group_list = file_option_value(address_of taking, 's');
         positive group_count = 0;
 
@@ -5459,19 +5426,15 @@ typedef struct
         positive gid_range_count;
 } ul_user_mapping;
 
-static ul_id_map address_to ul_unshare_uid_ranges;
-static ul_id_map address_to ul_unshare_gid_ranges;
-static positive ul_unshare_uid_range_count;
-static positive ul_unshare_gid_range_count;
-
-static bool ul_unshare_seen(p8 letter, string_address value)
+static bool ul_unshare_seen(p8 letter, string_address value, address_any context)
 {
+        ul_user_mapping address_to mapping = context;
         if (letter != 'd' && letter != 'g')
                 return true;
 
         ul_id_map address_to map = letter == 'd'
-            ? ul_unshare_uid_ranges + ul_unshare_uid_range_count++
-            : ul_unshare_gid_ranges + ul_unshare_gid_range_count++;
+            ? mapping->uid_ranges + mapping->uid_range_count++
+            : mapping->gid_ranges + mapping->gid_range_count++;
 
         if (ul_namespace_range(value, map))
                 return true;
@@ -5803,18 +5766,17 @@ static b32 util_linux_unshare()
         ul_id_map uid_ranges[count];
         ul_id_map gid_ranges[count];
         ul_unshare_selection ul_unshare_selected = {.uid = 0, .gid = 0};
+        ul_user_mapping map = {.uid_ranges = uid_ranges, .gid_ranges = gid_ranges};
 
         file_taking taking = {
             .program = (string_address)"unshare",
             .options = ul_unshare_options,
-            .seen = ul_unshare_seen,
+            .seen_in = ul_unshare_seen,
+            .context = address_of map,
             .selection = (p8 address_to)address_of ul_unshare_selected,
         };
         b32 answer;
 
-        ul_unshare_uid_ranges = uid_ranges;
-        ul_unshare_gid_ranges = gid_ranges;
-        ul_unshare_uid_range_count = ul_unshare_gid_range_count = 0;
         if (ul_options_done(address_of taking, "[options] [program [argument ...]]",
                     address_of answer))
                 return answer;
@@ -5827,8 +5789,8 @@ static b32 util_linux_unshare()
 
         string_address map_user = file_option_value(address_of taking, 'x');
         string_address map_group = file_option_value(address_of taking, 'y');
-        if (ul_unshare_selected.uid || ul_unshare_selected.gid || ul_unshare_uid_range_count ||
-            ul_unshare_gid_range_count)
+        if (ul_unshare_selected.uid || ul_unshare_selected.gid || map.uid_range_count ||
+            map.gid_range_count)
                 flags |= CLONE_NEWUSER;
 
         if (taking.flags & FILE_FLAG('q'))
@@ -5864,18 +5826,12 @@ static b32 util_linux_unshare()
         {
                 positive real_uid = (positive)system_call(syscall(geteuid));
                 positive real_gid = (positive)system_call(syscall(getegid));
-                ul_user_mapping map = {
-                    .uid = ul_unshare_selected.uid != 0,
-                    .gid = ul_unshare_selected.gid != 0,
-                    .uid_single = {ul_unshare_selected.uid == 'r' ? 0 : real_uid,
-                                   real_uid, 1},
-                    .gid_single = {ul_unshare_selected.gid == 'r' ? 0 : real_gid,
-                                   real_gid, 1},
-                    .uid_ranges = uid_ranges,
-                    .gid_ranges = gid_ranges,
-                    .uid_range_count = ul_unshare_uid_range_count,
-                    .gid_range_count = ul_unshare_gid_range_count,
-                };
+                map.uid = ul_unshare_selected.uid != 0;
+                map.gid = ul_unshare_selected.gid != 0;
+                map.uid_single = (ul_id_map){ul_unshare_selected.uid == 'r' ? 0 : real_uid,
+                                             real_uid, 1};
+                map.gid_single = (ul_id_map){ul_unshare_selected.gid == 'r' ? 0 : real_gid,
+                                             real_gid, 1};
 
                 positive id;
                 if (ul_unshare_selected.uid == 'x')
@@ -6901,21 +6857,17 @@ static const argument_option ul_ionice_options[] = {
 static string_address ul_ionice_classes[] = {
     "none", "realtime", "best-effort", "idle",
 };
-static p8 ul_ionice_identity;
-
-static bool ul_ionice_seen(p8 letter, string_address value)
+static bool ul_ionice_seen(p8 letter, string_address value, address_any context)
 {
+        p8 address_to identity = context;
         (void)value;
 
         if (letter != 'p' && letter != 'P' && letter != 'u')
                 return true;
-        if (ul_ionice_identity)
-        {
-                string_report(log_error, 1, "%s: %s\n", "ionice", "only one of pid, pgid or uid is allowed");
-                return false;
-        }
+        if (address_to identity)
+                return string_report(log_error, false, "%s: %s\n", "ionice", "only one of pid, pgid or uid is allowed");
 
-        ul_ionice_identity = letter;
+        address_to identity = letter;
         return true;
 }
 
@@ -6971,10 +6923,12 @@ static b32 ul_ionice_set(b32 which, b32 id, b32 class, b32 data,
 
 static b32 util_linux_ionice()
 {
+        p8 identity = 0;
         file_taking taking = {
             .program = (string_address)"ionice",
             .options = ul_ionice_options,
-            .seen = ul_ionice_seen,
+            .seen_in = ul_ionice_seen,
+            .context = address_of identity,
         };
         positive count = (positive)program_argument_count();
         b32 class = 2;
@@ -6986,7 +6940,6 @@ static b32 util_linux_ionice()
         string_address id_kind = null;
         bool tolerant;
 
-        ul_ionice_identity = 0;
         if (ul_options_done(address_of taking,
                     "[options] [-p pid ... | command]", address_of answer))
                 return answer;
@@ -7011,16 +6964,16 @@ static b32 util_linux_ionice()
                 setting |= 1;
         }
 
-        if (ul_ionice_identity)
+        if (identity)
         {
-                which = ul_ionice_identity == 'p' ? UL_IOPRIO_PROCESS
-                        : ul_ionice_identity == 'P' ? UL_IOPRIO_PGRP
+                which = identity == 'p' ? UL_IOPRIO_PROCESS
+                        : identity == 'P' ? UL_IOPRIO_PGRP
                                                    : UL_IOPRIO_USER;
-                id_kind = ul_ionice_identity == 'p' ? "PID"
-                          : ul_ionice_identity == 'P' ? "PGID"
+                id_kind = identity == 'p' ? "PID"
+                          : identity == 'P' ? "PGID"
                                                      : "UID";
                 answer = !ul_pid(
-                    file_option_value(address_of taking, ul_ionice_identity),
+                    file_option_value(address_of taking, identity),
                     "ionice", id_kind, address_of id);
         }
         else
@@ -7314,16 +7267,12 @@ static const argument_option ul_getopt_options[] = {
     {"help", 'h'}, {"version", 'V'}, {null},
 };
 
-/* -U keeps an option getopt(3) rejects as a quoted word in the output. */
-static bool ul_getopt_keep_unknown;
-
 /* file_taking deliberately keeps only the last value for an option.  getopt
    is the exception: each -l contributes another comma-separated name list.
    Keep views of the original argv strings in the shared text arena; no names
-   are copied and no second allocator is involved. */
-static string_address address_to ul_getopt_long_lists;
-static positive ul_getopt_long_count;
-static positive ul_getopt_long_room;
+   are copied and no second allocator is involved.  -U keeps an option
+   getopt(3) rejects as a quoted word in the output. */
+typedef struct { string_address address_to lists; positive count, room; bool keep_unknown; } ul_getopt_state;
 
 static bool ul_getopt_shell_known(string_address shell)
 {
@@ -7331,8 +7280,9 @@ static bool ul_getopt_shell_known(string_address shell)
                string_equals(shell, "csh") || string_equals(shell, "tcsh");
 }
 
-static bool ul_getopt_seen(p8 letter, string_address value)
+static bool ul_getopt_seen(p8 letter, string_address value, address_any context)
 {
+        ul_getopt_state address_to state = context;
         /* Each occurrence is checked where it stands: keeping only the last
            value must not let an unknown shell through on the way. */
         if (letter == 's' && !ul_getopt_shell_known(value))
@@ -7343,10 +7293,10 @@ static bool ul_getopt_seen(p8 letter, string_address value)
         if (letter != 'l')
                 return true;
 
-        if (ul_getopt_long_count >= ul_getopt_long_room)
+        if (state->count >= state->room)
                 return false;
 
-        ul_getopt_long_lists[ul_getopt_long_count++] = value;
+        state->lists[state->count++] = value;
         return true;
 }
 
@@ -7447,14 +7397,14 @@ static fn ul_getopt_long_consider(string_address name, positive length,
         match->matches++;
 }
 
-static ul_getopt_long_match ul_getopt_long_find(string_address wanted,
-                                                 positive length)
+static ul_getopt_long_match ul_getopt_long_find(ul_getopt_state address_to state,
+                                                 string_address wanted, positive length)
 {
         ul_getopt_long_match match = {0};
         ul_getopt_long_search search = {wanted, length, address_of match};
 
-        for (positive i = 0; i < ul_getopt_long_count; i++)
-                ul_getopt_long_each(ul_getopt_long_lists[i],
+        for (positive i = 0; i < state->count; i++)
+                ul_getopt_long_each(state->lists[i],
                                     ul_getopt_long_consider, address_of search);
 
         return match;
@@ -7565,7 +7515,8 @@ static fn ul_getopt_option(p8 letter, string_address argument,
 static bool ul_getopt_short(string_address word, string_address next,
                             bool has_next, string_address options,
                             string_address name, bool quiet, bool unquoted,
-                            bool csh, bool output, bool address_to consumed)
+                            bool csh, bool output, bool address_to consumed,
+                            ul_getopt_state address_to state)
 {
         string_address words[4] = {name, word, next, null};
         b32 count = has_next ? 3 : 2;
@@ -7589,7 +7540,7 @@ static bool ul_getopt_short(string_address word, string_address next,
                         okay = false;
                         /* The word the unknown letter stands in, which is
                            what upstream keeps; never this program's name. */
-                        if (ul_getopt_keep_unknown)
+                        if (state->keep_unknown)
                                 ul_getopt_value(word, unquoted, csh, output);
                         if (optind >= 2)
                                 break;
@@ -7620,14 +7571,15 @@ static bool ul_getopt_short(string_address word, string_address next,
 static bool ul_getopt_long(string_address word, p8 dashes,
                            string_address next, bool has_next,
                            string_address name, bool quiet, bool unquoted,
-                           bool csh, bool output, bool address_to consumed)
+                           bool csh, bool output, bool address_to consumed,
+                           ul_getopt_state address_to state)
 {
         string_address wanted = word + dashes;
         string_address equal = string_first_of(wanted, '=');
         positive wanted_length = equal ? (positive)(equal - wanted)
                                          : string_length(wanted);
         ul_getopt_long_match match =
-            ul_getopt_long_find(wanted, wanted_length);
+            ul_getopt_long_find(state, wanted, wanted_length);
 
         address_to consumed = false;
 
@@ -7637,14 +7589,14 @@ static bool ul_getopt_long(string_address word, p8 dashes,
                         string_format(log_error,
                                       "%s: unrecognized option '%s'\n",
                                       name, word);
-                if (ul_getopt_keep_unknown)
+                if (state->keep_unknown)
                         ul_getopt_value(word, unquoted, csh, output);
                 return false;
         }
 
         if (match.matches > 1 && !match.exact)
         {
-                if (ul_getopt_keep_unknown)
+                if (state->keep_unknown)
                         ul_getopt_value(word, unquoted, csh, output);
                 if (!quiet)
                 {
@@ -7653,9 +7605,9 @@ static bool ul_getopt_long(string_address word, p8 dashes,
                         ul_getopt_ambiguity ambiguity = {
                             wanted, wanted_length, dashes, true,
                         };
-                        for (positive i = 0; i < ul_getopt_long_count; i++)
+                        for (positive i = 0; i < state->count; i++)
                                 ul_getopt_long_each(
-                                    ul_getopt_long_lists[i],
+                                    state->lists[i],
                                     ul_getopt_long_possibility,
                                     address_of ambiguity);
                         log_error("\n", 1);
@@ -7667,7 +7619,7 @@ static bool ul_getopt_long(string_address word, p8 dashes,
 
         if (!match.argument && equal)
         {
-                if (ul_getopt_keep_unknown)
+                if (state->keep_unknown)
                         ul_getopt_value(word, unquoted, csh, output);
                 if (!quiet)
                 {
@@ -7683,7 +7635,7 @@ static bool ul_getopt_long(string_address word, p8 dashes,
         {
                 if (!has_next)
                 {
-                        if (ul_getopt_keep_unknown)
+                        if (state->keep_unknown)
                                 ul_getopt_value(word, unquoted, csh, output);
                         if (!quiet)
                         {
@@ -7723,14 +7675,10 @@ static b32 util_linux_getopt()
         string_address diagnostic_name = "getopt";
 
         utility_arena.used = 0;
-        ul_getopt_keep_unknown = false;
-        ul_getopt_long_count = 0;
-        ul_getopt_long_room = count;
-        ul_getopt_long_lists = count
-            ? (string_address address_to)utility_arena_take(
-                  count * sizeof(*ul_getopt_long_lists))
-            : null;
-        if (count && !ul_getopt_long_lists)
+        ul_getopt_state state = {.room = count, .lists = count
+            ? (string_address address_to)utility_arena_take(count * sizeof(string_address))
+            : null};
+        if (count && !state.lists)
                 return 2;
 
         if (compatible)
@@ -7742,9 +7690,10 @@ static b32 util_linux_getopt()
         {
                 file_taking taking = {
                     .program = "getopt",
-            .options = ul_getopt_options,
-                    .seen = ul_getopt_seen,
-        };
+                    .options = ul_getopt_options,
+                    .seen_in = ul_getopt_seen,
+                    .context = address_of state,
+                };
                 b32 answer;
 
                 if (!file_take(address_of taking))
@@ -7769,9 +7718,9 @@ static b32 util_linux_getopt()
                 }
 
                 alternative = (taking.flags & FILE_FLAG('a')) != 0;
-                ul_getopt_keep_unknown = (taking.flags & FILE_FLAG('U')) != 0;
+                state.keep_unknown = (taking.flags & FILE_FLAG('U')) != 0;
                 quiet = (taking.flags & FILE_FLAG('q')) != 0 ||
-                        ul_getopt_keep_unknown;
+                        state.keep_unknown;
                 quiet_output = (taking.flags & FILE_FLAG('Q')) != 0;
                 unquoted = (taking.flags & FILE_FLAG('u')) != 0;
                 if (file_option_value(address_of taking, 'n'))
@@ -7837,7 +7786,7 @@ static b32 util_linux_getopt()
                         string_address equal = string_first_of(wanted, '=');
                         positive length = equal ? (positive)(equal - wanted)
                                                 : string_length(wanted);
-                        match = ul_getopt_long_find(wanted, length);
+                        match = ul_getopt_long_find(address_of state, wanted, length);
 
                         /* getopt_long_only gives a recognized long spelling
                            priority; when there is none, a valid first short
@@ -7862,13 +7811,14 @@ static b32 util_linux_getopt()
                         okay = ul_getopt_long(word, dashes, next, i + 1 < count,
                                               diagnostic_name, target_quiet,
                                               unquoted, csh,
-                                              output, address_of consumed);
+                                              output, address_of consumed,
+                                              address_of state);
                 else
                         okay = ul_getopt_short(word, next, i + 1 < count,
                                                options, diagnostic_name,
                                                target_quiet,
                                                unquoted, csh, output,
-                                               address_of consumed);
+                                               address_of consumed, address_of state);
 
                 if (!okay)
                         failed = true;
@@ -8193,9 +8143,7 @@ typedef struct
 } ul_blockdev_command;
 
 #define UL_BLOCKDEV_COMMANDS 32
-static ul_blockdev_command ul_blockdev_commands[UL_BLOCKDEV_COMMANDS];
-static positive ul_blockdev_command_count;
-static p8 ul_blockdev_verbosity;
+typedef struct { ul_blockdev_command commands[UL_BLOCKDEV_COMMANDS]; positive count; p8 verbosity; } ul_blockdev_run;
 
 static const ul_blockdev_descriptor address_to ul_blockdev_find(p8 letter)
 {
@@ -8205,28 +8153,29 @@ static const ul_blockdev_descriptor address_to ul_blockdev_find(p8 letter)
         return null;
 }
 
-static bool ul_blockdev_seen(p8 letter, string_address value)
+static bool ul_blockdev_seen(p8 letter, string_address value, address_any context)
 {
+        ul_blockdev_run address_to run = context;
         /* Verbosity is a command like any other: it holds from where it
            stands until the next one changes it. */
         if (letter == 'q' || letter == 'v')
         {
-                ul_blockdev_verbosity = letter;
+                run->verbosity = letter;
                 return true;
         }
         const ul_blockdev_descriptor address_to descriptor =
             ul_blockdev_find(letter);
         if (!descriptor)
                 return true;
-        if (ul_blockdev_command_count == UL_BLOCKDEV_COMMANDS)
+        if (run->count == UL_BLOCKDEV_COMMANDS)
         {
                 string_report(log_error, 1, "%s: %s\n", "blockdev", "too many commands");
                 return false;
         }
         /* The argument is read when the command runs, so the commands before
            it run first, exactly as they were asked to. */
-        ul_blockdev_commands[ul_blockdev_command_count++] =
-            (ul_blockdev_command){descriptor, value, ul_blockdev_verbosity};
+        run->commands[run->count++] =
+            (ul_blockdev_command){descriptor, value, run->verbosity};
         return true;
 }
 
@@ -8301,7 +8250,7 @@ static bipolar ul_blockdev_set_pointer(
         return system_control(handle, descriptor->request, address_of value);
 }
 
-static b32 ul_blockdev_one(string_address path)
+static b32 ul_blockdev_one(string_address path, ul_blockdev_run address_to run)
 {
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
@@ -8309,10 +8258,9 @@ static b32 ul_blockdev_one(string_address path)
                 return string_report(log_error, 1, "blockdev: cannot open %s: %s\n",
                               path, file_reason(handle));
 
-        for (positive at = 0; at < ul_blockdev_command_count; at++)
+        for (positive at = 0; at < run->count; at++)
         {
-                ul_blockdev_command address_to command =
-                    ul_blockdev_commands + at;
+                ul_blockdev_command address_to command = run->commands + at;
                 const ul_blockdev_descriptor address_to descriptor =
                     command->descriptor;
                 bool verbose = command->verbosity == 'v';
@@ -8447,13 +8395,13 @@ static bool ul_blockdev_report_visit(string_address path, address_any opaque)
 
 static b32 util_linux_blockdev()
 {
-        ul_blockdev_command_count = 0;
-        ul_blockdev_verbosity = 0;
+        ul_blockdev_run run = {0};
         file_taking taking = {
             .program = "blockdev",
             .options = ul_blockdev_options,
-            .seen = ul_blockdev_seen,
-            .selection = address_of ul_blockdev_verbosity,
+            .seen_in = ul_blockdev_seen,
+            .context = address_of run,
+            .selection = address_of run.verbosity,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[-v|-q] commands devices",
@@ -8468,7 +8416,7 @@ static b32 util_linux_blockdev()
                 return ul_usage_error("blockdev", "not enough arguments");
         if (!report && taking.first == count)
                 return ul_usage_error("blockdev", "no device specified");
-        if (report && ul_blockdev_command_count)
+        if (report && run.count)
                 return string_report(log_error, 1, "%s: %s\n", "blockdev", "--report cannot be combined with commands");
 
         b32 status = 0;
@@ -8491,7 +8439,7 @@ static b32 util_linux_blockdev()
         else
                 while (taking.first < count && !status)
                         status = ul_blockdev_one(
-                            program_argument((b32)taking.first++));
+                            program_argument((b32)taking.first++), address_of run);
         log_flush();
         return status;
 }
