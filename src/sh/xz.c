@@ -2017,14 +2017,14 @@ static xz_found address_to xz_chain(xz_encoder address_to e, p32 len_limit, p32 
         }
 }
 
-static xz_found address_to xz_tree(xz_encoder address_to e, p32 len_limit, p32 pos,
-                                   p8 address_to cur, p32 cur_match,
-                                   xz_found address_to matches, p32 len_best, bool find)
+/* The binary tree walks. Every loop value is a plain local and find and
+   skip are separate, so neither carries the other's state; that keeps the
+   walk in registers instead of spilling it to the stack. */
+static xz_found address_to xz_tree_find(p32 address_to son, p8 address_to cur, p32 pos,
+                                        p32 cur_match, p32 depth, p32 cyclic_pos,
+                                        p32 cyclic_size, p32 len_limit,
+                                        xz_found address_to matches, p32 len_best)
 {
-        p32 address_to son = e->son;
-        p32 cyclic_pos = e->cyclic_pos;
-        p32 cyclic_size = e->cyclic_size;
-        p32 depth = e->depth;
         p32 address_to ptr0 = son + ((positive)cyclic_pos << 1) + 1;
         p32 address_to ptr1 = son + ((positive)cyclic_pos << 1);
         p32 len0 = 0;
@@ -2036,12 +2036,13 @@ static xz_found address_to xz_tree(xz_encoder address_to e, p32 len_limit, p32 p
 
                 if (depth-- == 0 || delta >= cyclic_size)
                 {
-                        address_to ptr0 = 0;
-                        address_to ptr1 = 0;
+                        *ptr0 = 0;
+                        *ptr1 = 0;
                         return matches;
                 }
-                p32 address_to pair = son + ((positive)(cyclic_pos - delta +
-                                            (delta > cyclic_pos ? cyclic_size : 0)) << 1);
+                p32 at = cyclic_pos - delta;
+                at += delta > cyclic_pos ? cyclic_size : 0;
+                p32 address_to pair = son + ((positive)at << 1);
                 p8 address_to pb = cur - delta;
                 p32 len = len0 < len1 ? len0 : len1;
 
@@ -2051,32 +2052,80 @@ static xz_found address_to xz_tree(xz_encoder address_to e, p32 len_limit, p32 p
                         if (len_best < len)
                         {
                                 len_best = len;
-                                if (find)
+                                matches->len = len;
+                                matches->dist = delta - 1;
+                                matches++;
+                                if (len == len_limit)
                                 {
-                                        matches->len = len;
-                                        matches->dist = delta - 1;
-                                        matches++;
+                                        *ptr1 = pair[0];
+                                        *ptr0 = pair[1];
+                                        return matches;
                                 }
-                        }
-                        if (len == len_limit)
-                        {
-                                address_to ptr1 = pair[0];
-                                address_to ptr0 = pair[1];
-                                return matches;
                         }
                 }
                 if (pb[len] < cur[len])
                 {
-                        address_to ptr1 = cur_match;
+                        *ptr1 = cur_match;
                         ptr1 = pair + 1;
-                        cur_match = address_to ptr1;
+                        cur_match = *ptr1;
                         len1 = len;
                 }
                 else
                 {
-                        address_to ptr0 = cur_match;
+                        *ptr0 = cur_match;
                         ptr0 = pair;
-                        cur_match = address_to ptr0;
+                        cur_match = *ptr0;
+                        len0 = len;
+                }
+        }
+}
+
+static fn xz_tree_skip(p32 address_to son, p8 address_to cur, p32 pos, p32 cur_match,
+                       p32 depth, p32 cyclic_pos, p32 cyclic_size, p32 len_limit)
+{
+        p32 address_to ptr0 = son + ((positive)cyclic_pos << 1) + 1;
+        p32 address_to ptr1 = son + ((positive)cyclic_pos << 1);
+        p32 len0 = 0;
+        p32 len1 = 0;
+
+        for (;;)
+        {
+                p32 delta = pos - cur_match;
+
+                if (depth-- == 0 || delta >= cyclic_size)
+                {
+                        *ptr0 = 0;
+                        *ptr1 = 0;
+                        return;
+                }
+                p32 at = cyclic_pos - delta;
+                at += delta > cyclic_pos ? cyclic_size : 0;
+                p32 address_to pair = son + ((positive)at << 1);
+                p8 address_to pb = cur - delta;
+                p32 len = len0 < len1 ? len0 : len1;
+
+                if (pb[len] == cur[len])
+                {
+                        len = xz_common(pb, cur, len + 1, len_limit);
+                        if (len == len_limit)
+                        {
+                                *ptr1 = pair[0];
+                                *ptr0 = pair[1];
+                                return;
+                        }
+                }
+                if (pb[len] < cur[len])
+                {
+                        *ptr1 = cur_match;
+                        ptr1 = pair + 1;
+                        cur_match = *ptr1;
+                        len1 = len;
+                }
+                else
+                {
+                        *ptr0 = cur_match;
+                        ptr0 = pair;
+                        cur_match = *ptr0;
                         len0 = len;
                 }
         }
@@ -2167,8 +2216,8 @@ static p32 xz_finder_find(xz_encoder address_to e)
                 if (len_best == len_limit)
                 {
                         if (tree)
-                                xz_tree(e, len_limit, pos, cur, cur_match, matches, len_best,
-                                        false);
+                                xz_tree_skip(e->son, cur, pos, cur_match, e->depth,
+                                             e->cyclic_pos, e->cyclic_size, len_limit);
                         else
                                 e->son[e->cyclic_pos] = cur_match;
                         xz_move(e);
@@ -2177,8 +2226,9 @@ static p32 xz_finder_find(xz_encoder address_to e)
         }
         if (len_best < 3)
                 len_best = 3;
-        count = (p32)((tree ? xz_tree(e, len_limit, pos, cur, cur_match, matches + count,
-                                      len_best, true)
+        count = (p32)((tree ? xz_tree_find(e->son, cur, pos, cur_match, e->depth,
+                                           e->cyclic_pos, e->cyclic_size, len_limit,
+                                           matches + count, len_best)
                             : xz_chain(e, len_limit, pos, cur, cur_match, matches + count,
                                        len_best)) - matches);
         xz_move(e);
@@ -2222,8 +2272,8 @@ static fn xz_finder_skip(xz_encoder address_to e, p32 amount)
                         hash[h4] = pos;
                 }
                 if (p->finder == XZ_FINDER_BT4)
-                        xz_tree(e, avail < e->nice ? avail : e->nice, pos, cur, cur_match,
-                                e->matches, 0, false);
+                        xz_tree_skip(e->son, cur, pos, cur_match, e->depth, e->cyclic_pos,
+                                     e->cyclic_size, avail < e->nice ? avail : e->nice);
                 else
                         e->son[e->cyclic_pos] = cur_match;
                 xz_move(e);
