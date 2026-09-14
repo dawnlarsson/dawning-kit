@@ -171,37 +171,24 @@ typedef struct
         p8 address_to body;
 } logger_control;
 
+// A bounded header: the first field that does not fit fails the whole of it.
 typedef struct
 {
-        p8 address_to bytes;
-        positive used;
-        positive room;
+        byte_store store;
         bool failed;
 } logger_builder;
 
 static fn logger_build_bytes(logger_builder address_to build,
                              address_any bytes, positive length)
 {
-        if (build->failed || length > build->room - min(build->used, build->room))
-        {
-                build->failed = true;
-                return;
-        }
-
-        memory_copy(build->bytes + build->used, bytes, length);
-        build->used += length;
+        build->failed = build->failed ||
+                        !byte_store_append_exact(address_of build->store, bytes, length);
 }
-
-static fn logger_build_string(logger_builder address_to build,
-                              string_address text)
-{
-        logger_build_bytes(build, text, string_length(text));
-}
-
-static fn logger_build_character(logger_builder address_to build, p8 character)
-{
-        logger_build_bytes(build, address_of character, 1);
-}
+#define logger_build_string(build, text)                                     \
+        ({ string_address _logger_text = (text);                             \
+           logger_build_bytes((build), _logger_text, string_length(_logger_text)); })
+#define logger_build_character(build, character)                             \
+        logger_build_bytes((build), address_of (p8){(character)}, 1)
 
 static fn logger_build_positive(logger_builder address_to build, positive value)
 {
@@ -436,7 +423,7 @@ static bool logger_header(logger_control address_to control,
                           p8 address_to into, positive room,
                           positive priority, positive address_to length)
 {
-        logger_builder build = {.bytes = into, .room = room};
+        logger_builder build = {.store = {.bytes = into, .room = room}};
         p64 now[2] = {0, 0};
         if (control->protocol != LOGGER_PROTOCOL_5424 || control->rfc_time)
                 system_call_2(syscall(clock_gettime), CLOCK_REALTIME,
@@ -542,7 +529,7 @@ static bool logger_header(logger_control address_to control,
 
         if (build.failed)
                 return false;
-        address_to length = build.used;
+        address_to length = build.store.used;
         return true;
 }
 
@@ -1741,14 +1728,14 @@ static bipolar login_message_source_tty(p8 address_to path, positive room,
                 else
                 {
                         p8 link[32];
-                        logger_builder build = {.bytes = link,
-                                                .room = sizeof(link)};
+                        logger_builder build = {
+                            .store = {.bytes = link, .room = sizeof(link)}};
                         logger_build_string(address_of build,
                                             "/proc/self/fd/");
                         logger_build_positive(address_of build, descriptor);
-                        if (build.failed || build.used + 1 > sizeof(link))
+                        if (build.failed || build.store.used + 1 > sizeof(link))
                                 continue;
-                        link[build.used] = end;
+                        link[build.store.used] = end;
                         length = file_link_text(link, path, room);
                 }
 
@@ -2298,7 +2285,7 @@ static fn login_wall_banner(login_message_sink address_to sink)
                          (b64)file_now());
 
         p8 header[1024];
-        logger_builder build = {.bytes = header, .room = sizeof(header)};
+        logger_builder build = {.store = {.bytes = header, .room = sizeof(header)}};
         logger_build_string(address_of build, "Broadcast message from ");
         logger_build_string(address_of build, login);
         logger_build_character(address_of build, '@');
@@ -2312,7 +2299,7 @@ static fn login_wall_banner(login_message_sink address_to sink)
         login_message_character(sink, '\r');
         login_message_spaces(sink, LOGIN_MESSAGE_WIDTH);
         login_message_put(sink, "\r\n", 2);
-        positive length = min(build.used, (positive)LOGIN_MESSAGE_WIDTH);
+        positive length = min(build.store.used, (positive)LOGIN_MESSAGE_WIDTH);
         login_message_put(sink, header, length);
         login_message_spaces(sink, LOGIN_MESSAGE_WIDTH - length);
         login_message_put(sink, "\a\a\r\n", 4);
@@ -2525,8 +2512,7 @@ static positive login_address_text(p8 address_to into,
         p16 words[8];
         positive best = 8, best_count = 0;
         for (positive at = 0; at < 8; at++)
-                words[at] = ((p16)address[at * 2] << 8) |
-                            address[at * 2 + 1];
+                words[at] = network_load_16(address + at * 2);
         for (positive at = 0; at < 8;)
         {
                 if (words[at])
@@ -4484,21 +4470,14 @@ static bool numfmt_scale_name(string_address name, bool input, p8 address_to sca
         return true;
 }
 
+// k or K, then M through Q in capitals only.
 static bool numfmt_power_letter(p8 letter, positive address_to power)
 {
-        static const p8 names[] = "kMGTPEZYRQ";
+        p8 found = letter == 'k' || letter < 'a' ? size_suffix_power(letter, false) : 0;
 
-        if (letter == 'K')
-                letter = 'k';
-
-        for (positive at = 0; names[at]; at++)
-                if (names[at] == letter)
-                {
-                        address_to power = at + 1;
-                        return true;
-                }
-
-        return false;
+        if (found)
+                address_to power = found;
+        return found;
 }
 
 /* K and Ki are accepted in unit options without a leading one.  Repeating
@@ -4952,7 +4931,7 @@ static fn numfmt_body_out(p8 address_to number, positive number_length,
                 width = automatic_width;
 
         body += zero_padding;
-        positive padding = width > body ? width - body : 0;
+        positive padding = difference_or_zero(width, body);
 
         if (!left)
                 writer_fill_bulk(text_put, padding, ' ');
@@ -8110,7 +8089,7 @@ static b32 tools_dd(void)
 
                         while (left)
                         {
-                                positive ask = left < ibs ? left : ibs;
+                                positive ask = min(left, ibs);
                                 bipolar got = system_read_retry(in_handle, ibuf, ask);
 
                                 if (got <= 0)
@@ -8600,17 +8579,7 @@ static p8 dump_od_number(string_address text, positive address_to out)
 
         for (;; at++)
         {
-                p8 byte = string_get(at);
-                positive digit;
-
-                if (byte_is_digit(byte))
-                        digit = (positive)(byte - '0');
-                else if (base == 16 && byte >= 'a' && byte <= 'f')
-                        digit = (positive)(byte - 'a') + 10;
-                else if (base == 16 && byte >= 'A' && byte <= 'F')
-                        digit = (positive)(byte - 'A') + 10;
-                else
-                        break;
+                positive digit = digit_known(string_get(at), base);
 
                 if (digit >= base)
                         break;
@@ -9206,18 +9175,23 @@ static positive dump_pad(p8 address_to into, positive count, p8 byte)
         return count;
 }
 
+// Text right-aligned in a field at least width wide, filled with pad.
+static positive dump_right(p8 address_to into, string_address text,
+                          positive length, positive width, p8 pad)
+{
+        positive made = dump_pad(into, difference_or_zero(width, length), pad);
+
+        memory_copy_apart(into + made, text, length);
+        return made + length;
+}
+
 static positive dump_unsigned_field(p8 address_to into, positive value,
                                     positive base, positive width, p8 pad)
 {
         p8 digits[24];
-        positive length = positive_into_base(digits, value, base, false);
-        positive made = 0;
 
-        if (length < width)
-                made += dump_pad(into, width - length, pad);
-
-        memory_copy_apart(into + made, digits, length);
-        return made + length;
+        return dump_right(into, digits,
+                          positive_into_base(digits, value, base, false), width, pad);
 }
 
 static positive dump_signed_field(p8 address_to into, positive value,
@@ -9229,19 +9203,11 @@ static positive dump_signed_field(p8 address_to into, positive value,
                                                : ((positive)1 << bits) - 1;
         bool negative = (value & sign) != 0;
         positive magnitude = negative ? ((~value + 1) & mask) : value;
-        p8 digits[24];
-        positive length = positive_into_base(digits, magnitude, 10, false);
-        positive body = length + (negative ? 1 : 0);
-        positive made = 0;
+        p8 digits[25] = {'-'};
+        positive length = negative + positive_into_base(digits + negative,
+                                                        magnitude, 10, false);
 
-        if (body < width)
-                made += dump_pad(into, width - body, ' ');
-
-        if (negative)
-                into[made++] = '-';
-
-        memory_copy_apart(into + made, digits, length);
-        return made + length;
+        return dump_right(into, digits, length, width, ' ');
 }
 
 static positive dump_value(p8 address_to bytes, positive have, positive size)
@@ -9291,9 +9257,7 @@ static positive dump_character_field(p8 address_to into, p8 value)
                         return dump_unsigned_field(into, value, 8, 3, '0');
         }
 
-        positive made = dump_pad(into, 3 - length, ' ');
-        memory_copy_apart(into + made, spelling, length);
-        return made + length;
+        return dump_right(into, spelling, length, 3, ' ');
 }
 
 static positive dump_named_field(p8 address_to into, p8 value)
@@ -9328,10 +9292,7 @@ static positive dump_named_field(p8 address_to into, p8 value)
                 into[2] = value;
                 return 3;
         }
-        positive length = string_length(name);
-        positive made = dump_pad(into, 3 - length, ' ');
-        memory_copy_apart(into + made, name, length);
-        return made + length;
+        return dump_right(into, name, string_length(name), 3, ' ');
 }
 
 static fn dump_canonical_line(p8 address_to bytes, positive length,
@@ -9516,7 +9477,7 @@ static positive dump_skip_input(positive wanted)
                 if (here >= 0 && (positive)here <= size)
                 {
                         positive available = size - (positive)here;
-                        positive take = wanted < available ? wanted : available;
+                        positive take = min(wanted, available);
 
                         if (system_seek(text_input.handle, (positive)here + take,
                                         FILE_SEEK_SET) >= 0)
@@ -10943,7 +10904,7 @@ static fn diff_range(diff_side address_to side, bipolar first, bipolar last,
         bipolar low = first + (bipolar)side->prefix + 1;
         bipolar high = last + (bipolar)side->prefix + 1;
 
-        diff_number((positive)(high > low ? low : high));
+        diff_number((positive)min(high, low));
         if (high > low || (unified && high < low))
         {
                 text_put_character(',');
@@ -11285,7 +11246,7 @@ static b32 diff_pair(string_address left, string_address right)
             !diff_slurp(b, right, diff_new_file))
                 return 2;
 
-        positive shortest = a->size < b->size ? a->size : b->size;
+        positive shortest = min(a->size, b->size);
         positive bytes = memory_common_prefix(a->base, b->base, shortest);
 
         /* Equal bytes remain equal under every supported comparison option.
@@ -11361,7 +11322,7 @@ static b32 diff_pair(string_address left, string_address right)
                 of two identical lines is the changed one, and only in the
                 cases where a hunk reaches the edge of what was trimmed.
         */
-        prefix = prefix > horizon ? prefix - horizon : 0;
+        prefix = difference_or_zero(prefix, horizon);
         bytes = a->at[prefix];
 
         positive suffix = 0;
@@ -11372,7 +11333,7 @@ static b32 diff_pair(string_address left, string_address right)
                 positive tail_b = b->size - bytes;
                 positive tail = diff_common_suffix(
                     a->base, a->size, b->base, b->size,
-                    tail_a < tail_b ? tail_a : tail_b);
+                    min(tail_a, tail_b));
 
                 positive stop_a = a->size - tail;
                 positive stop_b = b->size - tail;
@@ -12342,7 +12303,7 @@ static byte_span ps_draw(struct snapshot_process address_to process,
         {
                 positive began = process->start_ns / SYSTEM_NANOSECONDS;
 
-                ps_put_clock(ps_now > began ? ps_now - began : 0, false);
+                ps_put_clock(difference_or_zero(ps_now, began), false);
                 break;
         }
         case PS_FIELD_RSS: ps_digits(process->resident_bytes / 1024); break;
@@ -12395,7 +12356,7 @@ static byte_span ps_draw(struct snapshot_process address_to process,
         {
                 positive began = process->start_ns / SYSTEM_NANOSECONDS;
 
-                ps_digits(ps_now > began ? ps_now - began : 0);
+                ps_digits(difference_or_zero(ps_now, began));
                 break;
         }
         case PS_FIELD_NICE:
@@ -12416,7 +12377,7 @@ static byte_span ps_draw(struct snapshot_process address_to process,
         case PS_FIELD_PCPU:
         {
                 positive began = process->start_ns / SYSTEM_NANOSECONDS;
-                positive lived = ps_now > began ? ps_now - began : 0;
+                positive lived = difference_or_zero(ps_now, began);
                 positive tenths = lived
                     ? system_saturating_add(process->user_ns,
                                             process->system_ns) /
@@ -14173,7 +14134,7 @@ static bool tools_fincore_one(string_address path,
 
                 if (!cached)
                 {
-                        resident = cache.cached < pages ? cache.cached : pages;
+                        resident = min(cache.cached, pages);
                         cache_answered = true;
                 }
         }
