@@ -5626,14 +5626,8 @@ static PURE bool transform_awkward(p8 value)
         return escape_categories[value] & (HEX_CONTROL | HEX_TAB);
 }
 
-// Immutable scanner sets for the builtin writers; parameter quoting asks
-// escape_categories the same questions.
-static const b8 shell_quote_value[STRING_SET_BYTES] = {
-        [32 ... 126] = 1, [128 ... 255] = 1
-};
-static const b8 shell_quote_printable[STRING_SET_BYTES] = {
-        [32 ... 126] = 1
-};
+// Immutable scanner sets for the builtin writers, for the quote forms
+// escape_categories has no category for: $, backquote and '.
 static const b8 shell_quote_double[STRING_SET_BYTES] = {
         [32 ... 33] = 1, [35] = 1, [37 ... 91] = 1,
         [93 ... 95] = 1, [97 ... 126] = 1
