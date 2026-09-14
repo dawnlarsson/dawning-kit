@@ -41896,6 +41896,166 @@ static fn crypto_floor_aes(void)
         }
 }
 
+/*
+        RSA public operations at the sizes servers actually present.
+
+        Let's Encrypt's RSA chains (dl-cdn.alpinelinux.org and
+        raw.githubusercontent.com serve leaf, YR1, Root YR) put a 4096-bit
+        ISRG Root X1 signature over Root YR at the top and an RSA-2048
+        rsa_pss_rsae_sha256 CertificateVerify at the bottom. The public
+        multiply once shared the curve field multiply's six-limb scratch and
+        a 32- or 64-limb operand wrote its product over the return address,
+        so wget dumped core on both hosts while an ECDSA chain worked. The
+        Root YR certificate below is the served DER byte for byte, checked
+        against the X1 anchor the way tls_verify_chain checks a last
+        certificate; the PSS vector is a fixed RSA-2048 signature over a
+        short message, made once with openssl and salt length 32.
+*/
+static positive crypto_hex_into(p8 address_to out, positive room,
+                                string_address hex)
+{
+        positive n = string_length(hex);
+
+        if (n % 2 || n / 2 > room)
+                return 0;
+        for (positive i = 0; i < n; i++)
+        {
+                p8 c = hex[i];
+                p8 v;
+
+                if (c >= '0' && c <= '9')
+                        v = (p8)(c - '0');
+                else if (c >= 'a' && c <= 'f')
+                        v = (p8)(c - 'a' + 10);
+                else
+                        return 0;
+                if (i % 2)
+                        out[i / 2] |= v;
+                else
+                        out[i / 2] = (p8)(v << 4);
+        }
+        return n / 2;
+}
+
+static fn crypto_rsa_served_sizes(void)
+{
+        static const char root_yr_hex[] =
+            "308205f4308203dca003020102021100f24b6d17f9d9ad7cb1c9fea78782699f"
+            "300d06092a864886f70d01010b0500304f310b30090603550406130255533129"
+            "3027060355040a1320496e7465726e6574205365637572697479205265736561"
+            "7263682047726f7570311530130603550403130c4953524720526f6f74205831"
+            "301e170d3236303531333030303030305a170d3332303930323233353935395a"
+            "302e310b3009060355040613025553310d300b060355040a1304495352473110"
+            "300e06035504031307526f6f7420595230820222300d06092a864886f70d0101"
+            "0105000382020f003082020a0282020100dbc626737bf024c97562f7f9e19fb0"
+            "b3794eb34126cf951fd8515ea45bc31bbdb06362074043d5f70ec5b494402248"
+            "335c44d770dbfb90b0d70d2cd04058b2fb883ffea3a05d30f1cb8899b811d4e1"
+            "a061b490e0ea7323e0c6f121ae4e5704f3bdce092fa4877b2b968eaf978dcce4"
+            "e260e007a8d6c7c7a7a913243a0888504d24063e38a7d7fc552f60aba18d3fa7"
+            "a38f659aa9aea52048e4f901422aab106b56539bb153f7105871aef234a3141c"
+            "e766abdb34f2cc5cc2c5c426f75937eb2415d78eabd61bebf86e3cf18e3780b4"
+            "e954eea6ab443bcd3b202e4182e59fdd3833e7da2b1f219cb0a9275e59a9a120"
+            "70d958fbd30c59c0b9caf2f60368f797dfb66ee820657f9d384f75cd898875ac"
+            "13bd266e56f95b46b0252f1201ea9c0c0639de5c28d843cfb70420a3b2c6d236"
+            "9654de14dc0437617c09440e562bea911ab6731d9834f906a9ca0bdd9b774121"
+            "3357db2c78a82dc70b0ae89ebd3f1990f859aeaecc8a2ee035701c504011f3e9"
+            "7361a97ef734e0ec2e4300bc9539e1bf0aa7d100c9f52921c247435203a3fcb6"
+            "7fe619196709cb79aed5422e7572495a54e87d6a1a0dc38133aeb247fc79a853"
+            "32261b2397b33c998ee5eaed6a5b24435bada7be3e783cbdd8f2387ed1ca4dba"
+            "bd216847e1864a8775a724422dfa842f95865b63cb6912ba0aac507a3c51b3ac"
+            "9203472b6ce07aafb87e764458f6ceffc10203010001a381eb3081e8300e0603"
+            "551d0f0101ff04040302010630130603551d25040c300a06082b060105050703"
+            "01300f0603551d130101ff040530030101ff301d0603551d0e04160414dee75b"
+            "60d0226d40287d3f0d01fea4b552b45194301f0603551d2304183016801479b4"
+            "59e67bb6e5e40173800888c81a58f6e99b6e303206082b060105050701010426"
+            "3024302206082b060105050730028616687474703a2f2f78312e692e6c656e63"
+            "722e6f72672f30130603551d20040c300a3008060667810c0102013027060355"
+            "1d1f0420301e301ca01aa0188616687474703a2f2f78312e632e6c656e63722e"
+            "6f72672f300d06092a864886f70d01010b050003820201003cb29488f7928a7e"
+            "7d96e863260e91c12523da2dbb12dd6f777228c909109801cd5fb0980bd4520b"
+            "ec2d02f5e70f39d7300767e2d03936a7de23f624c90b19ade4215228b456c275"
+            "d3d8c3125dec55c6aa1507bf417563f155711391599efea61202e2951e1e4fb3"
+            "ee418b1826c12d4992348073e31fad46cdb2c5441271f468488087eae8b57015"
+            "2523ff61eecb24f1300fd0d61bbdaf5566e101cb8e7f938b8f3e7b0ad93b3204"
+            "07ca767bf8f94726d6a3ae809a21bb42afab5c659680c14426fa3432796755fb"
+            "686ff5d78e60598a790ca38dc4ab37935a76bc3e2fd0d924b6c0d47a9e36f2e1"
+            "060aa93f47ef26ad8de84b43e7be0de9e308eee32c2539e38b6503cfd7a5e572"
+            "d2bfd7ea24cb8342d6156f6a133682a9a14aa1c4f542d1aab8786e4c11268876"
+            "7f1be5919249e0092cc1d796311d94dcdafa771f92f8979353ce2e79c576fc7c"
+            "fe093a337ef859b2d6157c3c375e3507f465fed20d19f9754f13888aab623189"
+            "0bd3645219bd64ab7e012fd34f3f6ef344632e1c69f34b784522b4537cac6bcd"
+            "467d473416cc41b72ba7c9debda7a9296d91ecad8acf43201a0563d5665728cb"
+            "33bd43322fb2d7e4d1489542944330bc0e322fefbbabd5d9c79af9c014560789"
+            "104ca1f9ab2a199c3c3b8a2ba1d65203c83171f2bee2f6f2095391d2de6a192e"
+            "461600e8a531a57d379e80f4181be9d35c1e4be0dcda1a60";
+        static const char pss_modulus_hex[] =
+            "e17d4dbd26256e1432b2173262cba7d7d94800c197bd07821453527cca69cce2"
+            "b2fd764561bf097a19507a2290d2d5440e17ec4228e3b5263da5fc52c821ca40"
+            "c1ae5ad4be9869b4daff9c116d7caa33ce6751b552877ca09f06a1f0c021375f"
+            "689c2646b01a3313b3350bafd5b3ca36794c1bfcca99cde6987f5c5a884f4cdf"
+            "6054f7d647c6e8c902952baa6c951b8c23776802af5b1e1468a1deeafa3c1142"
+            "c17c6a5735cdaf85bd10812020ce65a262774e02430aa363403faf6967ed5eb6"
+            "6a8b9036fcf23b664b3ecd926ff4b551413c3bdab2e2fe975c6d0365fb1c6988"
+            "fc70ad64f7f378881130182dce033f4f550eb68ba1e67a6cb0af5a042656d093";
+        static const char pss_signature_hex[] =
+            "cbf24caa5aab09dd8ae0493f7a29a4eb78dce76118c60cc52c125c3de4666619"
+            "4c034138256c432282cc1742e74af739afa0b7c285fa61bb921b640332320850"
+            "4487f35b3bbced3d139d04eadd05f9790f516b9da6d7c93ba171a1db4cab05fa"
+            "86505d48e9fa92d42ca5953b80c6331d40c61e577f98282be5f33e43c4734624"
+            "d8a977f69f828ea4d5a02ee4960b19ca610478cf272bb53dbf3e96da8c7861e9"
+            "6f24996bc1b32968dda1276b1888e7b83e0d837beab7dcfc030412838a4f9543"
+            "c1887dd3a1da8d6ff5b41d6f4109196b8cba02e3ec4f9b36ba673e500d1fc41f"
+            "1eaf92c512b20302a85845f2ed47cef339d19004056e6c4f2c2fe3cbe3ea9eac";
+        static p8 root_yr[1528];
+        static p8 modulus[256];
+        static p8 signature[256];
+        static p8 message[] = "Moonwater bowl setup alpine";
+        tls_cert child;
+        tls_cert anchor;
+        positive length =
+            crypto_hex_into(root_yr, sizeof root_yr, root_yr_hex);
+
+        memory_fill(address_of child, 0, sizeof child);
+        memory_fill(address_of anchor, 0, sizeof anchor);
+        check("the served Root YR certificate parses",
+              length == sizeof root_yr &&
+                  !tls_parse_cert(root_yr, length, address_of child, null) &&
+                  child.sig_length == 512);
+        anchor.curve = 3;
+        memory_copy(anchor.modulus, tls_isrg_x1_n, 512);
+        anchor.modulus_length = 512;
+        anchor.exponent = TLS_ISRG_X1_EXPONENT;
+        check("ISRG Root X1's 4096-bit PKCS#1 signature over Root YR verifies",
+              child.sig_length == 512 &&
+                  tls_verify_one(address_of child, address_of anchor));
+        if (child.sig_length == 512)
+        {
+                child.sig[child.sig_length - 1] ^= 1;
+                check("the 4096-bit verify refuses one flipped signature bit",
+                      !tls_verify_one(address_of child, address_of anchor));
+                child.sig[child.sig_length - 1] ^= 1;
+                child.tbs[child.tbs_length - 1] ^= 1;
+                check("the 4096-bit verify refuses one flipped TBS bit",
+                      !tls_verify_one(address_of child, address_of anchor));
+                child.tbs[child.tbs_length - 1] ^= 1;
+        }
+
+        check("an RSA-2048 PSS SHA-256 vector verifies",
+              crypto_hex_into(modulus, sizeof modulus, pss_modulus_hex) ==
+                      sizeof modulus &&
+                  crypto_hex_into(signature, sizeof signature,
+                                  pss_signature_hex) == sizeof signature &&
+                  crypto_rsa_pss_sha256(modulus, sizeof modulus, 65537,
+                                        signature, sizeof signature, message,
+                                        sizeof message - 1));
+        message[0] ^= 1;
+        check("the RSA-2048 PSS verify refuses a changed message",
+              !crypto_rsa_pss_sha256(modulus, sizeof modulus, 65537, signature,
+                                     sizeof signature, message,
+                                     sizeof message - 1));
+        message[0] ^= 1;
+}
+
 static fn redirect_urls(void)
 {
         p8 into[256];
@@ -43055,6 +43215,7 @@ b32 main(void)
         crypto_floor();
         crypto_floor_ghash();
         crypto_floor_aes();
+        crypto_rsa_served_sizes();
         redirect_urls();
         fetching_for_real();
         leasing();

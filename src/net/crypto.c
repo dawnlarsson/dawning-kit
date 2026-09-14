@@ -2105,10 +2105,60 @@ static bool crypto_ecdh_p384_shared(p8 address_to out, p8 address_to scalar,
 
 #define CRYPTO_RSA_LIMBS 64
 
+/* RSA operands run to CRYPTO_RSA_LIMBS, ten times what crypto_fe_mul's
+   curve-sized scratch holds; routing a 2048- or 4096-bit modulus through it
+   wrote the product over the caller's return address.  The public operation
+   has no secret, so reduction may branch. */
 static fn crypto_rsa_mul(p64 address_to d, p64 address_to a, p64 address_to b,
                          p64 address_to m, positive n)
 {
-        crypto_fe_mul(d, a, b, m, n);
+        p64 product[CRYPTO_RSA_LIMBS * 2];
+        p64 remainder[CRYPTO_RSA_LIMBS + 1];
+        positive i;
+        positive j;
+        positive bit;
+
+        if (n > CRYPTO_RSA_LIMBS)
+        {
+                memory_fill(d, 0, n * 8);
+                return;
+        }
+
+        memory_fill(product, 0, n * 2 * 8);
+        for (i = 0; i < n; i++)
+        {
+                crypto_wide carry = 0;
+                for (j = 0; j < n; j++)
+                {
+                        carry += (crypto_wide)product[i + j] +
+                                 (crypto_wide)a[i] * b[j];
+                        product[i + j] = (p64)carry;
+                        carry >>= 64;
+                }
+                product[i + n] = (p64)carry;
+        }
+
+        memory_fill(remainder, 0, (n + 1) * 8);
+        bit = n * 2 * 64;
+        while (bit)
+        {
+                crypto_wide carry = 0;
+
+                bit--;
+                for (i = 0; i <= n; i++)
+                {
+                        crypto_wide u =
+                            ((crypto_wide)remainder[i] << 1) | carry;
+                        remainder[i] = (p64)u;
+                        carry = u >> 64;
+                }
+                remainder[0] |= (product[bit / 64] >> (bit % 64)) & 1;
+                if (remainder[n] || crypto_fe_cmp(remainder, m, n) >= 0)
+                        remainder[n] -= crypto_fe_subtract_raw(remainder,
+                                                               remainder, m, n);
+        }
+
+        memory_copy(d, remainder, n * 8);
 }
 
 static fn crypto_rsa_modexp(p64 address_to out, p64 address_to base, p64 exp,
