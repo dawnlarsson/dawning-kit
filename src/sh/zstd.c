@@ -2777,6 +2777,54 @@ static p8 zstd_choose_table(const zstd_fse_prior address_to prior,
         return 2;
 }
 
+/*
+        The sequence bitstream's writer, shaped like libzstd's: a field goes
+        into a 64-bit container with no check, the container is stored whole
+        (eight bytes) and advanced by its full bytes twice a sequence, and the
+        pointer stops eight bytes before the buffer's end, where close sees
+        the overflow once.  A sequence adds at most 27 bits of states and 16
+        of literal length before the first store and 47 of match length and
+        offset before the second, so the container never passes 64 bits.
+*/
+typedef struct
+{
+        p64 acc;
+        positive bits;
+        p8 address_to at;
+        p8 address_to stop;
+        p8 address_to start;
+} zstd_bw;
+
+static __attribute__((always_inline)) inline fn
+zstd_bw_add(zstd_bw address_to w, p64 value, positive count)
+{
+        w->acc |= (value & (((p64)1 << count) - 1)) << w->bits;
+        w->bits += count;
+}
+
+static __attribute__((always_inline)) inline fn zstd_bw_flush(zstd_bw address_to w)
+{
+        positive const bytes = w->bits >> 3;
+
+        memory_store_unaligned(p64, w->at, w->acc);
+        w->at += bytes;
+        w->acc = bytes == 8 ? 0 : w->acc >> (bytes * 8);
+        w->bits &= 7;
+        if (w->at > w->stop)
+                w->at = w->stop;
+}
+
+/* One state step for symbol: its bits out, then the next state; the tables
+   are the encoder's own, so the index needs no check. */
+static __attribute__((always_inline)) inline fn
+zstd_bw_state(zstd_bw address_to w, zstd_cstate address_to st, p8 symbol)
+{
+        p32 const nb = (st->value + st->ct->delta_nb[symbol]) >> 16;
+
+        zstd_bw_add(w, st->value, nb);
+        st->value = st->ct->state[(bipolar)(st->value >> nb) + st->ct->delta_find[symbol]];
+}
+
 /* One compressed block from the encoder's sequences and literals: 1 when
    written, 0 when it would be no smaller than raw (nothing written and
    nothing committed), -1 when the write failed. */
@@ -2834,7 +2882,7 @@ static b32 zstd_entropy_block(zstd_encoder address_to e, positive n, bool last)
                 zstd_ctable address_to lt;
                 zstd_ctable address_to ot;
                 zstd_ctable address_to mt;
-                zstd_bout bits;
+                zstd_bw bits;
                 zstd_cstate ls = {0}, os = {0}, ms = {0};
                 zstd_enc_seq address_to s;
                 p8 ll_mode, of_mode, ml_mode;
@@ -2861,47 +2909,55 @@ static b32 zstd_entropy_block(zstd_encoder address_to e, positive n, bool last)
                 lt = ll_mode == 1 ? null : address_of pending[0].table;
                 ot = of_mode == 1 ? null : address_of pending[1].table;
                 mt = ml_mode == 1 ? null : address_of pending[2].table;
-                memory_fill(address_of bits, 0, sizeof(bits));
-                bits.buf = e->bits;
-                bits.cap = ZSTD_BLOCK_MAX + 256;
+                bits.acc = 0;
+                bits.bits = 0;
+                bits.start = at;
+                bits.at = at;
+                bits.stop = e->block_out + ZSTD_BLOCK_MAX + 2048 - 8;
                 s = e->seqs + nseq - 1;
                 if ((lt && !zstd_cstate_init2(address_of ls, lt, s->ll_code)) ||
                     (ot && !zstd_cstate_init2(address_of os, ot, s->of_code)) ||
                     (mt && !zstd_cstate_init2(address_of ms, mt, s->ml_code)))
                         return 0;
-                zstd_bout_add(address_of bits, s->lit - zstd_ll_base[s->ll_code],
-                              zstd_ll_extra[s->ll_code]);
-                zstd_bout_add(address_of bits, s->match - zstd_ml_base[s->ml_code],
-                              zstd_ml_extra[s->ml_code]);
-                zstd_bout_add(address_of bits, s->off - ((p32)1 << s->of_code),
-                              s->of_code);
+                zstd_bw_add(address_of bits, s->lit - zstd_ll_base[s->ll_code],
+                            zstd_ll_extra[s->ll_code]);
+                zstd_bw_flush(address_of bits);
+                zstd_bw_add(address_of bits, s->match - zstd_ml_base[s->ml_code],
+                            zstd_ml_extra[s->ml_code]);
+                zstd_bw_add(address_of bits, s->off - ((p32)1 << s->of_code), s->of_code);
+                zstd_bw_flush(address_of bits);
                 for (positive i = nseq - 1; i--;)
                 {
                         s = e->seqs + i;
                         if (ot)
-                                zstd_cstate_encode(address_of bits, address_of os, s->of_code);
+                                zstd_bw_state(address_of bits, address_of os, s->of_code);
                         if (mt)
-                                zstd_cstate_encode(address_of bits, address_of ms, s->ml_code);
+                                zstd_bw_state(address_of bits, address_of ms, s->ml_code);
                         if (lt)
-                                zstd_cstate_encode(address_of bits, address_of ls, s->ll_code);
-                        zstd_bout_add(address_of bits, s->lit - zstd_ll_base[s->ll_code],
-                                      zstd_ll_extra[s->ll_code]);
-                        zstd_bout_add(address_of bits, s->match - zstd_ml_base[s->ml_code],
-                                      zstd_ml_extra[s->ml_code]);
-                        zstd_bout_add(address_of bits, s->off - ((p32)1 << s->of_code),
-                                      s->of_code);
+                                zstd_bw_state(address_of bits, address_of ls, s->ll_code);
+                        zstd_bw_add(address_of bits, s->lit - zstd_ll_base[s->ll_code],
+                                    zstd_ll_extra[s->ll_code]);
+                        zstd_bw_flush(address_of bits);
+                        zstd_bw_add(address_of bits, s->match - zstd_ml_base[s->ml_code],
+                                    zstd_ml_extra[s->ml_code]);
+                        zstd_bw_add(address_of bits, s->off - ((p32)1 << s->of_code),
+                                    s->of_code);
+                        zstd_bw_flush(address_of bits);
                 }
                 if (mt)
-                        zstd_cstate_flush(address_of bits, address_of ms);
+                        zstd_bw_add(address_of bits, ms.value, mt->log);
                 if (ot)
-                        zstd_cstate_flush(address_of bits, address_of os);
+                        zstd_bw_add(address_of bits, os.value, ot->log);
+                zstd_bw_flush(address_of bits);
                 if (lt)
-                        zstd_cstate_flush(address_of bits, address_of ls);
-                if (!zstd_bout_close(address_of bits) ||
-                    (positive)(at - out) + bits.n >= n)
+                        zstd_bw_add(address_of bits, ls.value, lt->log);
+                zstd_bw_add(address_of bits, 1, 1);
+                zstd_bw_flush(address_of bits);
+                if (bits.at >= bits.stop)
                         return 0;
-                memory_copy_apart(at, e->bits, bits.n);
-                at += bits.n;
+                at = bits.at + (bits.bits ? 1 : 0);
+                if ((positive)(at - out) >= n)
+                        return 0;
         }
         zstd_block_header(head, last, 2, (positive)(at - out));
         memory_copy_apart(e->block_out, head, 3);
