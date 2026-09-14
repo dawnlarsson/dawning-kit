@@ -72763,9 +72763,9 @@ static fn floor_lzma_span(void)
                         }
                         if (at > 8 && (random & 3))
                         {
-                                positive dist = (random >> 8) % (at < 4096 ? at : 4096) + 1;
+                                positive dist = (random >> 8) % (at < limit ? at : limit) + 1;
                                 positive which = (random >> 6) & 3;
-                                bool repeat = (random & 4) && e->reps[which] + 1 <= (at < 4096 ? at : 4096);
+                                bool repeat = (random & 4) && e->reps[which] + 1 <= (at < limit ? at : limit);
                                 if (repeat) dist = e->reps[which] + 1;
                                 if (trial < 7 && !repeat) dist = trial + 1;
                                 n = 2 + ((random >> 16) % 272);
