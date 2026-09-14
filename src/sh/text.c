@@ -14752,6 +14752,43 @@ static bool grep_glob_add(grep_glob address_to address_to list,
         p8 address_to room = (p8 address_to)(made + 1);
 
         memory_copy_apart_end(room, value, length);
+
+        /*
+                GNU matches these with fnmatch, where a bracket expression
+                opened by [^ is the complement just as one opened by [! is.
+                The shell's matcher reads only the exclamation mark, so a
+                bracket's leading caret becomes one here, and only there: a
+                caret anywhere else in a bracket, or outside one, stays itself.
+        */
+        for (positive at = 0; at < length; at++)
+        {
+                if (room[at] == '\\')
+                {
+                        at++;
+                        continue;
+                }
+
+                if (room[at] != '[')
+                        continue;
+
+                positive close = at + 1;
+
+                if (close < length && (room[close] == '^' || room[close] == '!'))
+                        close++;
+                if (close < length && room[close] == ']')
+                        close++;
+                while (close < length && room[close] != ']')
+                        close++;
+
+                if (close == length)
+                        continue;
+
+                if (room[at + 1] == '^')
+                        room[at + 1] = '!';
+
+                at = close;
+        }
+
         made->value = (string_address)room;
         made->next = *list;
         *list = made;
@@ -16156,19 +16193,23 @@ static b32 text_grep()
                                                      address_of input_facts);
 
                 // A directory reads as EISDIR rather than as bytes, which is
-                // where GNU's message comes from and why -d skip has one to
-                // suppress.
-                if (name && input_known &&
-                    (input_facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                // where GNU's message comes from and why -d skip and -s each
+                // have one to suppress. What is left is a file with no lines
+                // in it: -L names it and -c counts nought for it.
+                bool directory = name && input_known &&
+                                 (input_facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                if (directory)
                 {
                         text_close();
 
                         if (grep_skip_directories)
                                 continue;
 
-                        string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
+                        if (!quietly)
+                                string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
+
                         trouble = 2;
-                        continue;
                 }
 
                 // GNU labels standard input, and -H on a pipe is the one way
@@ -16234,7 +16275,8 @@ static b32 text_grep()
                         that runs past its end, carried across the refill by
                         the line reader as before.
                 */
-                bool spanning = !grouped && !only && !grep_coloring && !never;
+                bool spanning = !grouped && !only && !grep_coloring && !never &&
+                                !directory;
 
                 if (spanning)
                 {
@@ -16309,7 +16351,7 @@ static b32 text_grep()
                         }
                 }
 
-                for (; !spanning;)
+                for (; !spanning && !directory;)
                 {
                         // The line skipping stopped on holds the fixed string
                         // already, and asking the machine again would be the
