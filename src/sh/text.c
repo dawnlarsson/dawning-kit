@@ -597,8 +597,6 @@ static fn text_put_rest()
 */
 static const b8 text_set_inside[STRING_SET_BYTES] = {
     [0 ... 8] = 1, [10 ... 31] = 1, [33 ... 255] = 1};
-// numfmt, in tools.c, walks its fields with the same table by this name.
-#define text_inside() text_set_inside
 
 /*
         Coreutils' numeric options accept leading white space and a plus, but

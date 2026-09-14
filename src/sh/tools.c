@@ -402,6 +402,16 @@ static positive tools_clock_iso(p8 address_to into, b64 seconds, p8 separator,
         return made + 6;
 }
 
+// The same with or without a comma and microseconds; process_tools.c's script
+// stamp calls it by this name too.
+static positive login_iso_time(p8 address_to into, positive room, b64 seconds,
+                               bool microseconds, b64 fraction)
+{
+        return room < 40 ? 0
+                         : tools_clock_iso(into, seconds, 'T', microseconds ? ',' : 0,
+                                           fraction < 0 ? 0 : (positive)fraction);
+}
+
 /*      The structured-data elements as the options spell them, all but the
         closing bracket: an --sd-id opens its element at its first
         --sd-param, so one nobody gave a parameter is not written at all, and
@@ -1514,8 +1524,7 @@ static bool login_records(string_address path, bool check_processes,
                 }
 
                 held = have - at;
-                for (positive i = 0; i < held; i++)
-                        file_transfer[i] = file_transfer[at + i];
+                memory_copy(file_transfer, file_transfer + at, held);
         }
 
 done:
@@ -1548,29 +1557,6 @@ static fn login_put_width(string_address value, positive length,
                           positive width, bool right)
 {
         writer_field_bulk(text_put, value, length, width, ' ', !right);
-}
-
-static positive login_time(p8 address_to into, b32 seconds)
-{
-        b64 year;
-        positive month, day, hour, minute, second;
-        file_split_moment((b64)seconds, address_of year, address_of month,
-                          address_of day, address_of hour, address_of minute,
-                          address_of second);
-        string_address named = file_month_names[month - 1];
-        positive made = 0;
-
-        into[made++] = byte_to_upper(named[0]);
-        into[made++] = named[1];
-        into[made++] = named[2];
-        into[made++] = ' ';
-        made += positive_into_padded(into + made, day, 2, ' ');
-        into[made++] = ' ';
-        made += positive_into_padded(into + made, hour, 2, '0');
-        into[made++] = ':';
-        made += positive_into_padded(into + made, minute, 2, '0');
-        into[made] = end;
-        return made;
 }
 
 typedef struct
@@ -2244,12 +2230,8 @@ static b32 tools_write()
                 string_copy_max_end(login, "???", sizeof(login) - 1);
         tools_hostname(hostname, sizeof(hostname), "???");
 
-        time_t now = (time_t)file_now();
-        tm broken;
-        p8 clock[8] = "??:??";
-        tm address_to parts = localtime_r(address_of now, address_of broken);
-        if (parts)
-                strftime(clock, sizeof(clock), "%H:%M", parts);
+        p8 clock[8];
+        tools_clock_text(clock, sizeof(clock), "%H:%M", (b64)file_now());
 
         text_out_to((positive)handle);
         text_put_string("\r\n\a\a\aMessage from ");
@@ -2311,12 +2293,9 @@ static fn login_wall_banner(login_message_sink address_to sink)
         if (login_message_source_tty(source_path, sizeof(source_path), true) >= 0)
                 where = login_message_line(source_path);
 
-        time_t now = (time_t)file_now();
-        tm broken;
-        p8 date[64] = "???";
-        tm address_to parts = localtime_r(address_of now, address_of broken);
-        if (parts)
-                strftime(date, sizeof(date), "%a %b %e %H:%M:%S %Y", parts);
+        p8 date[64];
+        tools_clock_text(date, sizeof(date), "%a %b %e %H:%M:%S %Y",
+                         (b64)file_now());
 
         p8 header[1024];
         logger_builder build = {.bytes = header, .room = sizeof(header)};
@@ -2512,13 +2491,13 @@ static positive login_idle(p8 address_to into, login_terminal terminal,
         return made;
 }
 
-static bool login_ends_with(string_address text, string_address suffix)
+// Whether a span ends with a suffix known only at run time, which may be empty.
+static bool tools_span_ends(string_address bytes, positive length,
+                            string_address suffix)
 {
-        positive length = string_length(text);
         positive tail = string_length(suffix);
 
-        return tail <= length && !memory_compare(text + length - tail,
-                                                  suffix, tail);
+        return tail <= length && !memory_compare(bytes + length - tail, suffix, tail);
 }
 
 /* utmpdump and last --------------------------------------- */
@@ -2578,49 +2557,6 @@ static positive login_address_text(p8 address_to into,
                         into[made++] = ':';
                 made += positive_into_base(into + made, words[at++], 16,
                                            false);
-        }
-        into[made] = end;
-        return made;
-}
-
-static positive login_iso_time(p8 address_to into, positive room,
-                               b64 seconds, bool microseconds,
-                               b64 fraction)
-{
-        if (room < 40)
-                return 0;
-        time_t value = (time_t)seconds;
-        tm broken;
-        tm address_to parts = localtime_r(address_of value,
-                                           address_of broken);
-        if (!parts)
-                return 0;
-
-        positive made = strftime(into, room, "%Y-%m-%dT%H:%M:%S", parts);
-        if (!made)
-                return 0;
-        if (microseconds)
-        {
-                into[made++] = ',';
-                positive usec = fraction < 0 ? 0 : (positive)fraction;
-                made += positive_into_padded(into + made, usec % 1000000,
-                                             6, '0');
-        }
-
-        p8 zone[16];
-        positive zone_length = strftime(zone, sizeof(zone), "%z", parts);
-        if (zone_length == 5)
-        {
-                memory_copy_apart(into + made, zone, 3);
-                made += 3;
-                into[made++] = ':';
-                memory_copy_apart(into + made, zone + 3, 2);
-                made += 2;
-        }
-        else
-        {
-                memory_copy_apart(into + made, "+00:00", 6);
-                made += 6;
         }
         into[made] = end;
         return made;
@@ -2971,22 +2907,13 @@ static positive login_last_time(p8 address_to into, b64 seconds,
                                 bool ending)
 {
         if (login_last.time_format == LOGIN_LAST_TIME_ISO)
-                return login_iso_time(into, 64, seconds, false, 0);
+                return tools_clock_iso(into, seconds, 'T', 0, 0);
 
-        time_t value = (time_t)seconds;
-        tm broken;
-        tm address_to parts = localtime_r(address_of value,
-                                           address_of broken);
-        if (!parts)
-        {
-                into[0] = end;
-                return 0;
-        }
         string_address format = login_last.time_format == LOGIN_LAST_TIME_FULL
                                     ? (string_address)"%a %b %e %H:%M:%S %Y"
                                     : ending ? (string_address)"%H:%M"
                                              : (string_address)"%a %b %e %H:%M";
-        return strftime(into, 64, format, parts);
+        return tools_clock_text(into, 64, format, seconds);
 }
 
 static positive login_last_duration(p8 address_to into, b64 start, b64 finish)
@@ -3467,21 +3394,11 @@ static b32 tools_last()
                 return text_done(0);
         text_put_character('\n');
         p8 beginning_text[64];
-        positive beginning_length;
-        if (login_last.time_format == LOGIN_LAST_TIME_ISO)
-                beginning_length = login_iso_time(beginning_text,
-                                                   sizeof(beginning_text),
-                                                   beginning, false, 0);
-        else
-        {
-                time_t value = (time_t)beginning;
-                tm broken;
-                tm address_to parts = localtime_r(address_of value,
-                                                   address_of broken);
-                beginning_length = parts
-                    ? strftime(beginning_text, sizeof(beginning_text),
-                               "%a %b %e %H:%M:%S %Y", parts) : 0;
-        }
+        positive beginning_length =
+            login_last.time_format == LOGIN_LAST_TIME_ISO
+                ? tools_clock_iso(beginning_text, beginning, 'T', 0, 0)
+                : tools_clock_text(beginning_text, sizeof(beginning_text),
+                                   "%a %b %e %H:%M:%S %Y", beginning);
         text_put_string(file_last_component(path));
         text_put_string(" begins ");
         text_put(beginning_text, beginning_length);
@@ -3601,10 +3518,10 @@ static bool login_who_visit(login_record address_to record)
         }
 
         if (login_who.my_line &&
-            (!login_who.tty || !login_ends_with(line, login_who.tty)))
+            (!login_who.tty || !tools_span_ends(line, string_length(line), login_who.tty)))
                 return true;
 
-        login_time(time, record->seconds);
+        tools_clock_text(time, sizeof(time), "%b %e %H:%M", record->seconds);
 
         if (record->type == LOGIN_USER_PROCESS && login_who.users)
         {
@@ -3971,7 +3888,8 @@ static bool login_pinky_visit(login_record address_to record)
             line, sizeof(line), record->line, sizeof(record->line), false);
         positive host_length = login_field(
             host, sizeof(host), record->host, sizeof(record->host), false);
-        positive time_length = login_time(time, record->seconds);
+        positive time_length = tools_clock_text(time, sizeof(time), "%b %e %H:%M",
+                                                record->seconds);
         login_terminal terminal = login_terminal_facts(line);
 
         login_put_width(user, user_length, user_length < 8 ? 8 : user_length,
@@ -4727,16 +4645,6 @@ static bool numfmt_format_read(string_address text,
         return found;
 }
 
-static bool numfmt_span_ends(p8 address_to bytes, positive length,
-                             string_address suffix)
-{
-        positive suffix_length = suffix ? string_length(suffix) : 0;
-
-        return suffix_length && length >= suffix_length &&
-               !memory_compare(bytes + length - suffix_length, suffix,
-                               suffix_length);
-}
-
 /* Normalize only enough to let seq's checked parser own the value.  Leading
    integral zeroes do not consume its coefficient budget, while the original
    fractional width remains visible in `shown`. */
@@ -5211,7 +5119,7 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
         length -= blanks;
         positive stop = length;
 
-        if (numfmt_span_ends(bytes, stop, numfmt.suffix))
+        if (numfmt.suffix && tools_span_ends(bytes, stop, numfmt.suffix))
                 stop -= string_length(numfmt.suffix);
 
         // A supplied suffix matches the exact field end, including any
@@ -5518,7 +5426,7 @@ static fn numfmt_record(p8 address_to bytes, positive length)
                         break;
                 }
 
-                at += string_span_max(bytes + at, length - at, text_inside());
+                at += string_span_max(bytes + at, length - at, text_set_inside);
 
                 field++;
 
@@ -6837,34 +6745,6 @@ static bool tools_uuid_all(tools_uuid address_to uuid, p8 value)
         return true;
 }
 
-static positive tools_uuid_time_text(p8 address_to into, b64 seconds,
-                                     positive microseconds)
-{
-        b64 year;
-        positive month, day, hour, minute, second;
-        file_split_moment((b64)seconds, address_of year, address_of month,
-                          address_of day, address_of hour, address_of minute,
-                          address_of second);
-
-        positive made = positive_into_padded(into, (positive)year, 4, '0');
-        into[made++] = '-';
-        made += positive_into_padded(into + made, month, 2, '0');
-        into[made++] = '-';
-        made += positive_into_padded(into + made, day, 2, '0');
-        into[made++] = ' ';
-        made += positive_into_padded(into + made, hour, 2, '0');
-        into[made++] = ':';
-        made += positive_into_padded(into + made, minute, 2, '0');
-        into[made++] = ':';
-        made += positive_into_padded(into + made, second, 2, '0');
-        into[made++] = ',';
-        made += positive_into_padded(into + made, microseconds, 6, '0');
-        memory_copy(into + made, "+00:00", 6);
-        made += 6;
-        into[made] = end;
-        return made;
-}
-
 static fn tools_uuid_record_read(string_address text,
                                  tools_uuid_record address_to record)
 {
@@ -6933,7 +6813,7 @@ static fn tools_uuid_record_read(string_address text,
         else
                 return;
 
-        tools_uuid_time_text(record->time, seconds, microseconds);
+        tools_clock_iso(record->time, seconds, ' ', ',', microseconds);
 }
 
 static const string_address tools_uuid_column_names[] = {
@@ -12482,35 +12362,30 @@ static byte_span ps_draw(struct snapshot_process address_to process,
                 break;
         }
         case PS_FIELD_STIME:
+        case PS_FIELD_LSTART:
+        case PS_FIELD_START:
         {
+                //      procps' spellings: STIME is the clock within the day,
+                //      the date within the year, else the year; START is the
+                //      clock within a day's span, else the date; LSTART is
+                //      the whole moment.
                 b64 began = ps_boot +
                             (b64)(process->start_ns / SYSTEM_NANOSECONDS);
-                b64 year, year_now;
-                positive month, day, hour, minute, second;
-                positive month_now, day_now, hour_now, minute_now, second_now;
-                file_split_moment(began, address_of year, address_of month,
-                                  address_of day, address_of hour,
-                                  address_of minute, address_of second);
-                file_split_moment((b64)ps_wall, address_of year_now, address_of month_now,
-                                  address_of day_now, address_of hour_now,
-                                  address_of minute_now, address_of second_now);
+                time_t stamp = (time_t)began, now = (time_t)ps_wall;
+                tm then, today;
+                bool this_year = gmtime_r(address_of stamp, address_of then) &&
+                                 gmtime_r(address_of now, address_of today) &&
+                                 then.tm_year == today.tm_year;
+                string_address format =
+                    field == PS_FIELD_LSTART ? "%a %b %e %H:%M:%S %Y"
+                    : field == PS_FIELD_START
+                        ? (ps_wall - (positive)began < 86400 ? "%H:%M:%S" : "%b %e")
+                    : this_year && then.tm_yday == today.tm_yday ? "%H:%M"
+                    : this_year ? "%b%d" : "%Y";
+                p8 moment[32];
 
-                if (year == year_now && month == month_now && day == day_now)
-                {
-                        file_two(ps_bytes, hour);
-                        ps_byte(':');
-                        file_two(ps_bytes, minute);
-                }
-                else if (year == year_now)
-                {
-                        file_month_short(ps_bytes, month);
-                        file_two(ps_bytes, day);
-                }
-                else
-                {
-                        ps_digits((positive)year);
-                }
-
+                ps_bytes(moment, tools_clock_text(moment, sizeof(moment), format,
+                                                  began));
                 break;
         }
         case PS_FIELD_SID: ps_digits(process->session); break;
@@ -12551,59 +12426,6 @@ static byte_span ps_draw(struct snapshot_process address_to process,
                 ps_digits(tenths / 10);
                 ps_byte('.');
                 ps_digits(tenths % 10);
-                break;
-        }
-        case PS_FIELD_LSTART:
-        case PS_FIELD_START:
-        {
-                b64 began = ps_boot +
-                            (b64)(process->start_ns / SYSTEM_NANOSECONDS);
-                b64 year;
-                positive month, day, hour, minute, second;
-
-                file_split_moment(began, address_of year, address_of month,
-                                  address_of day, address_of hour,
-                                  address_of minute, address_of second);
-                if (field == PS_FIELD_LSTART)
-                {
-                        //      The whole moment, spelled as the reference
-                        //      spells it: weekday, month, day, clock, year.
-                        ps_text(file_weekday_names[
-                            (positive)(((began / 86400) + 4) % 7)]);
-                        ps_byte(' ');
-                        file_month_short(ps_bytes, month);
-                        ps_byte(' ');
-                        if (day < 10)
-                                ps_byte(' ');
-                        ps_digits(day);
-                        ps_byte(' ');
-                        file_two(ps_bytes, hour);
-                        ps_byte(':');
-                        file_two(ps_bytes, minute);
-                        ps_byte(':');
-                        file_two(ps_bytes, second);
-                        ps_byte(' ');
-                        ps_digits((positive)year);
-                        break;
-                }
-                //      Within the day the clock, otherwise the date: the
-                //      column is eight wide and both fit it.
-                if (ps_wall - (positive)began < 86400)
-                {
-                        file_two(ps_bytes, hour);
-                        ps_byte(':');
-                        file_two(ps_bytes, minute);
-                        ps_byte(':');
-                        file_two(ps_bytes, second);
-                }
-                else
-                {
-                        file_month_short(ps_bytes, month);
-                        ps_byte(' ');
-                        if (day < 10)
-                                ps_byte(' ');
-                        ps_digits(day);
-                }
                 break;
         }
         default: break;
@@ -14122,7 +13944,7 @@ static b32 tools_dmesg_main()
         p64 real = system_clock_ns(0);
         p64 boot = system_clock_ns(7);
         state.realtime_base = real >= boot
-            ? (real - boot) / 1000 : 0;
+            ? real / 1000 - boot / 1000 : 0;
 
         positive capacity = 0;
         value = file_option_value(address_of taking, 's');

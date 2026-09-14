@@ -340,13 +340,6 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
         return value;
 }
 
-static PURE decimal awk_number_of(string_address text, positive length)
-{
-        positive used;
-
-        return awk_scan_number(text, length, address_of used);
-}
-
 /*
         Values.
 
@@ -476,7 +469,10 @@ static decimal awk_to_number(awk_value address_to which)
         if (which->state & AWK_UNSET)
                 return 0;
 
-        which->number = awk_number_of(which->text->text, which->text->length);
+        positive used;
+
+        which->number = awk_scan_number(which->text->text, which->text->length,
+                                        address_of used);
         which->state |= AWK_HAS_NUMBER;
         return which->number;
 }
