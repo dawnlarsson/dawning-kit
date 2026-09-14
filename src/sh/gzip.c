@@ -1441,18 +1441,27 @@ static fn gzip_block_deflate(gzip_encoder address_to e, p8 address_to data,
 }
 
 /*
-        The member around the blocks, on the calling thread: header, blocks
-        in input order, the empty final block, CRC-32 and size.
+        The member around the blocks: header, blocks, the empty final block,
+        CRC-32 and size. Input waits in batches of whole blocks after a
+        32 KiB history tail. Each block is one job deflating into its
+        worker's gzip_encoder; the sink checksums the block's input and
+        writes its bytes in block order on the calling thread. The batch
+        only decides how much input waits in memory, never where a block
+        starts or what history it sees.
 */
+#define GZIP_BATCH_BLOCKS 64
+
 typedef struct
 {
         p8 level;
-        /* [0, GZIP_WINDOW) the history tail, then the block being filled */
+        /* [0, GZIP_WINDOW) history tail, then the batch */
         p8 address_to input;
         positive input_room;
         positive history;
         positive n;
-        gzip_encoder address_to encoder;
+        gzip_encoder address_to address_to slots;
+        positive slot_count;
+        p8 address_to done;
         p32 crc;
         p32 isize;
         byte_store address_to store;
@@ -1483,57 +1492,108 @@ static bool gzip_writer_emit(p8 address_to bytes, positive n)
         return true;
 }
 
-static fn gzip_writer_close(void)
+static gzip_encoder address_to gzip_encoder_open(p8 level)
 {
-        gzip_encoder address_to e = gzip_writer.encoder;
+        gzip_encoder address_to e = (gzip_encoder address_to)memory(sizeof(gzip_encoder));
 
-        memory_free(gzip_writer.input, gzip_writer.input_room);
-        if (e)
+        if (!e || system_failed(e))
+                return null;
+        e->out_room = GZIP_BLOCK + GZIP_BLOCK / 8 + 4096;
+        e->out = (p8 address_to)memory(e->out_room);
+        if (!e->out || system_failed(e->out))
         {
-                memory_free(e->out, e->out_room);
                 memory_free(e, sizeof(gzip_encoder));
+                return null;
         }
-        gzip_writer.input = null;
-        gzip_writer.input_room = 0;
-        gzip_writer.encoder = null;
+        e->level = level;
+        return e;
 }
 
-static bool gzip_writer_block(void)
+static fn gzip_writer_close(void)
 {
-        gzip_encoder address_to e = gzip_writer.encoder;
-        p8 address_to data = gzip_writer.input + GZIP_WINDOW;
-        positive n = gzip_writer.n;
+        for (positive i = 0; i < gzip_writer.slot_count; i++)
+        {
+                gzip_encoder address_to e = gzip_writer.slots[i];
 
-        if (!n)
-                return !gzip_writer.failed;
+                if (e)
+                {
+                        memory_free(e->out, e->out_room);
+                        memory_free(e, sizeof(gzip_encoder));
+                }
+        }
+        memory_free(gzip_writer.slots, gzip_writer.slot_count * sizeof(gzip_encoder address_to));
+        memory_free(gzip_writer.done, GZIP_BATCH_BLOCKS);
+        memory_free(gzip_writer.input, gzip_writer.input_room);
+        gzip_writer.slots = null;
+        gzip_writer.slot_count = 0;
+        gzip_writer.done = null;
+        gzip_writer.input = null;
+        gzip_writer.input_room = 0;
+}
+
+static positive gzip_batch_bytes(gzip_stream_writer address_to w, positive index)
+{
+        positive from = index * GZIP_BLOCK;
+
+        return w->n - from < GZIP_BLOCK ? w->n - from : GZIP_BLOCK;
+}
+
+/* One block of the batch, on any thread: it touches only its worker's
+   encoder, its own done byte and its own output. */
+static fn gzip_batch_job(address_any context, positive index,
+                         parallel_output address_to output)
+{
+        gzip_stream_writer address_to w = (gzip_stream_writer address_to)context;
+        positive slot = parallel_slot();
+        gzip_encoder address_to e = w->slots[slot];
+
+        w->done[index] = false;
         if (!e)
         {
-                e = (gzip_encoder address_to)memory(sizeof(gzip_encoder));
-                if (!e || system_failed(e))
-                        return gzip_fail("gzip cannot map the encoder");
-                e->out_room = GZIP_BLOCK + GZIP_BLOCK / 8 + 4096;
-                e->out = (p8 address_to)memory(e->out_room);
-                if (!e->out || system_failed(e->out))
-                {
-                        memory_free(e, sizeof(gzip_encoder));
-                        return gzip_fail("gzip cannot map the encoder");
-                }
-                e->level = gzip_writer.level;
-                gzip_writer.encoder = e;
+                e = gzip_encoder_open(w->level);
+                if (!e)
+                        return;
+                w->slots[slot] = e;
         }
-        gzip_block_deflate(e, data, gzip_writer.history, n);
-        gzip_writer.crc = hash_crc32(gzip_writer.crc, data, n);
-        gzip_writer.isize += (p32)n;
-        if (!gzip_writer_emit(e->out, e->out_n))
-                return false;
+        gzip_block_deflate(e, w->input + GZIP_WINDOW + index * GZIP_BLOCK,
+                           index ? GZIP_WINDOW : w->history, gzip_batch_bytes(w, index));
+        w->done[index] = parallel_write(output, e->out, e->out_n);
+}
 
-        positive keep = gzip_writer.history + n;
+/* A block's checksum and bytes, in block order, on the calling thread. */
+static bool gzip_batch_sink(address_any context, positive index, address_any data,
+                            positive length)
+{
+        gzip_stream_writer address_to w = (gzip_stream_writer address_to)context;
+        positive n = gzip_batch_bytes(w, index);
+
+        if (!w->done[index])
+                return gzip_fail("gzip cannot map the encoder");
+        w->crc = hash_crc32(w->crc, w->input + GZIP_WINDOW + index * GZIP_BLOCK, n);
+        w->isize += (p32)n;
+        return gzip_writer_emit((p8 address_to)data, length);
+}
+
+/* Every block of the batch, deflated side by side and written in block
+   order, then the last 32 KiB kept as the next batch's history. */
+static bool gzip_writer_batch(void)
+{
+        gzip_stream_writer address_to w = address_of gzip_writer;
+        positive count = (w->n + GZIP_BLOCK - 1) / GZIP_BLOCK;
+
+        if (!w->n)
+                return !w->failed;
+        if (!parallel_ordered(gzip_batch_job, gzip_batch_sink, w, count, w->n))
+                return w->failed || gzip_why ? false
+                                             : gzip_fail("gzip cannot map the encoder");
+
+        positive keep = w->history + w->n;
 
         if (keep > GZIP_WINDOW)
                 keep = GZIP_WINDOW;
-        memory_copy(gzip_writer.input + GZIP_WINDOW - keep, data + n - keep, keep);
-        gzip_writer.history = keep;
-        gzip_writer.n = 0;
+        memory_copy(w->input + GZIP_WINDOW - keep, w->input + GZIP_WINDOW + w->n - keep, keep);
+        w->history = keep;
+        w->n = 0;
         return true;
 }
 
@@ -1554,12 +1614,22 @@ static bool gzip_encode_setup(p8 level)
         gzip_writer.failed = false;
         gzip_writer.store = gzip_output.bytes ? address_of gzip_output : null;
         gzip_writer.fd = gzip_out_fd;
-        gzip_writer.input_room = GZIP_WINDOW + GZIP_BLOCK;
+        gzip_writer.slot_count = parallel_width();
+        gzip_writer.slots = (gzip_encoder address_to address_to)memory(
+            gzip_writer.slot_count * sizeof(gzip_encoder address_to));
+        gzip_writer.done = (p8 address_to)memory(GZIP_BATCH_BLOCKS);
+        gzip_writer.input_room = GZIP_WINDOW + GZIP_BATCH_BLOCKS * GZIP_BLOCK;
         gzip_writer.input = (p8 address_to)memory(gzip_writer.input_room);
-        if (!gzip_writer.input || system_failed(gzip_writer.input))
+        if (!gzip_writer.slots || system_failed(gzip_writer.slots) || !gzip_writer.done ||
+            system_failed(gzip_writer.done) || !gzip_writer.input ||
+            system_failed(gzip_writer.input))
         {
-                gzip_writer.input = null;
-                gzip_writer.input_room = 0;
+                if (system_failed(gzip_writer.slots))
+                        gzip_writer.slots = null;
+                if (system_failed(gzip_writer.done))
+                        gzip_writer.done = null;
+                if (system_failed(gzip_writer.input))
+                        gzip_writer.input = null;
                 return gzip_fail("gzip cannot map the block input");
         }
         return gzip_writer_emit(header, sizeof(header));
@@ -1568,7 +1638,7 @@ static bool gzip_encode_setup(p8 level)
 static bool gzip_encode_trailer(void)
 {
         p8 tail[10] = {0x03, 0x00};
-        bool ok = gzip_writer_block();
+        bool ok = gzip_writer_batch();
 
         if (ok)
         {
@@ -1582,13 +1652,15 @@ static bool gzip_encode_trailer(void)
 
 static bool gzip_stream_encode(void)
 {
+        positive capacity = GZIP_BATCH_BLOCKS * GZIP_BLOCK;
+
         for (;;)
         {
-                if (gzip_writer.n == GZIP_BLOCK && !gzip_writer_block())
+                if (gzip_writer.n == capacity && !gzip_writer_batch())
                         break;
                 bipolar got = system_read_retry(
                     (positive)gzip_input.fd, gzip_writer.input + GZIP_WINDOW + gzip_writer.n,
-                    GZIP_BLOCK - gzip_writer.n);
+                    capacity - gzip_writer.n);
                 if (got < 0)
                 {
                         gzip_fail("gzip read failed");
@@ -1612,15 +1684,17 @@ static bool gzip_encode_begin(bipolar out, p8 level)
 
 static bool gzip_encode_write(p8 address_to src, positive n)
 {
+        positive capacity = GZIP_BATCH_BLOCKS * GZIP_BLOCK;
+
         while (n)
         {
-                positive take = min(n, GZIP_BLOCK - gzip_writer.n);
+                positive take = min(n, capacity - gzip_writer.n);
 
                 memory_copy(gzip_writer.input + GZIP_WINDOW + gzip_writer.n, src, take);
                 gzip_writer.n += take;
                 src += take;
                 n -= take;
-                if (gzip_writer.n == GZIP_BLOCK && !gzip_writer_block())
+                if (gzip_writer.n == capacity && !gzip_writer_batch())
                         return false;
         }
         return !gzip_writer.failed;

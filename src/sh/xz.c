@@ -3142,17 +3142,27 @@ static bool xz_block_encode(xz_encoder address_to e, p8 address_to input, p32 n)
 }
 
 /*
-        The stream around the blocks, on the calling thread: header, one
-        block per max(3 * dictionary, 1 MiB) of input, index and footer.
+        The stream around the blocks: header, blocks, index and footer.
+        Input waits in batches of whole blocks. Each block is one job that
+        encodes into its worker's xz_encoder; the sink writes the jobs'
+        bytes and index records in block order on the calling thread. A
+        batch only decides how much input waits in memory, never where a
+        block starts, so the bytes are the same for any batch or worker count.
 */
+#define XZ_BATCH_BYTES ((positive)1 << 30)
+#define XZ_BATCH_BLOCKS 64
+
 typedef struct
 {
         p8 level;
         positive block;
+        positive batch_blocks;
         p8 address_to input;
         positive input_room;
         positive input_n;
-        xz_encoder address_to encoder;
+        xz_encoder address_to address_to slots;
+        positive slot_count;
+        p64 address_to unpadded;
         p8 address_to index;
         positive index_room;
         positive index_n;
@@ -3163,6 +3173,9 @@ typedef struct
 } xz_stream_writer;
 
 static xz_stream_writer xz_writer;
+
+/* 1 keeps encoding on the calling thread; set by the command line only. */
+static bool xz_serial;
 
 static bool xz_writer_emit(p8 address_to bytes, positive n)
 {
@@ -3187,14 +3200,19 @@ static bool xz_writer_emit(p8 address_to bytes, positive n)
 
 static fn xz_writer_close(void)
 {
+        for (positive i = 0; i < xz_writer.slot_count; i++)
+                xz_encoder_close(xz_writer.slots[i]);
+        memory_free(xz_writer.slots, xz_writer.slot_count * sizeof(xz_encoder address_to));
+        memory_free(xz_writer.unpadded, xz_writer.batch_blocks * sizeof(p64));
         memory_free(xz_writer.input, xz_writer.input_room);
         memory_free(xz_writer.index, xz_writer.index_room);
-        xz_encoder_close(xz_writer.encoder);
+        xz_writer.slots = null;
+        xz_writer.slot_count = 0;
+        xz_writer.unpadded = null;
         xz_writer.input = null;
         xz_writer.input_room = 0;
         xz_writer.index = null;
         xz_writer.index_room = 0;
-        xz_writer.encoder = null;
 }
 
 static bool xz_writer_record(p64 unpadded, p64 uncompressed)
@@ -3220,25 +3238,62 @@ static bool xz_writer_record(p64 unpadded, p64 uncompressed)
         return true;
 }
 
-static bool xz_writer_block(void)
+static positive xz_batch_bytes(xz_stream_writer address_to w, positive index)
 {
-        xz_encoder address_to e = xz_writer.encoder;
+        positive from = index * w->block;
 
-        if (!xz_writer.input_n)
-                return true;
+        return w->input_n - from < w->block ? w->input_n - from : w->block;
+}
+
+/* One block of the batch, on any thread: it touches only its worker's
+   encoder, its own unpadded slot and its own output. A block that cannot be
+   encoded leaves unpadded zero for the sink to report at its place. */
+static fn xz_batch_job(address_any context, positive index,
+                       parallel_output address_to output)
+{
+        xz_stream_writer address_to w = (xz_stream_writer address_to)context;
+        positive slot = parallel_slot();
+        xz_encoder address_to e = w->slots[slot];
+
+        w->unpadded[index] = 0;
         if (!e)
         {
-                e = xz_writer.encoder = xz_encoder_open(xz_writer.level);
+                e = xz_encoder_open(w->level);
                 if (!e)
-                        return xz_fail("xz cannot map the encoder");
+                        return;
+                w->slots[slot] = e;
         }
-        if (!xz_block_encode(e, xz_writer.input, (p32)xz_writer.input_n))
+        if (xz_block_encode(e, w->input + index * w->block, (p32)xz_batch_bytes(w, index)) &&
+            parallel_write(output, e->out + e->out_at, e->out_n))
+                w->unpadded[index] = e->unpadded;
+}
+
+/* A block's bytes and index record, in block order, on the calling thread. */
+static bool xz_batch_sink(address_any context, positive index, address_any data,
+                          positive length)
+{
+        xz_stream_writer address_to w = (xz_stream_writer address_to)context;
+
+        if (!w->unpadded[index])
                 return xz_fail("xz cannot encode a block");
-        if (!xz_writer_emit(e->out + e->out_at, e->out_n) ||
-            !xz_writer_record(e->unpadded, xz_writer.input_n))
-                return false;
-        xz_writer.input_n = 0;
-        return true;
+        return xz_writer_emit((p8 address_to)data, length) &&
+               xz_writer_record(w->unpadded[index], xz_batch_bytes(w, index));
+}
+
+/* Every block of the batch: encoded side by side, written in block order.
+   Encoding is heavy per byte, so the pool spreads even a small batch. */
+static bool xz_writer_batch(void)
+{
+        xz_stream_writer address_to w = address_of xz_writer;
+        positive count = (w->input_n + w->block - 1) / w->block;
+
+        if (!count)
+                return !w->failed;
+        if (!parallel_ordered(xz_batch_job, xz_batch_sink, w, count,
+                              xz_serial ? 0 : PARALLEL_SPREAD))
+                return w->failed || xz_why ? false : xz_fail("xz cannot encode a block");
+        w->input_n = 0;
+        return !w->failed;
 }
 
 static bool xz_encode_setup(p8 level)
@@ -3251,34 +3306,52 @@ static bool xz_encode_setup(p8 level)
         xz_why = null;
         xz_writer.level = level > 9 ? 9 : level;
         xz_writer.block = 3 * dict > ((positive)1 << 20) ? 3 * dict : (positive)1 << 20;
+        xz_writer.batch_blocks = XZ_BATCH_BYTES / xz_writer.block;
+        if (xz_writer.batch_blocks > XZ_BATCH_BLOCKS)
+                xz_writer.batch_blocks = XZ_BATCH_BLOCKS;
+        if (!xz_writer.batch_blocks)
+                xz_writer.batch_blocks = 1;
         xz_writer.input_n = 0;
         xz_writer.index_n = 0;
         xz_writer.records = 0;
         xz_writer.failed = false;
         xz_writer.store = xz_output.bytes ? address_of xz_output : null;
         xz_writer.fd = xz_out_fd;
-        xz_writer.input = (p8 address_to)memory(xz_writer.block + XZ_SLACK);
-        if (!xz_writer.input || system_failed(xz_writer.input))
+        xz_writer.slot_count = parallel_width();
+        xz_writer.slots = (xz_encoder address_to address_to)memory(
+            xz_writer.slot_count * sizeof(xz_encoder address_to));
+        xz_writer.unpadded = (p64 address_to)memory(xz_writer.batch_blocks * sizeof(p64));
+        xz_writer.input_room = xz_writer.batch_blocks * xz_writer.block + XZ_SLACK;
+        xz_writer.input = (p8 address_to)memory(xz_writer.input_room);
+        if (!xz_writer.slots || system_failed(xz_writer.slots) || !xz_writer.unpadded ||
+            system_failed(xz_writer.unpadded) || !xz_writer.input ||
+            system_failed(xz_writer.input))
         {
-                xz_writer.input = null;
+                if (system_failed(xz_writer.slots))
+                        xz_writer.slots = null;
+                if (system_failed(xz_writer.unpadded))
+                        xz_writer.unpadded = null;
+                if (system_failed(xz_writer.input))
+                        xz_writer.input = null;
                 return xz_fail("xz cannot map the block input");
         }
-        xz_writer.input_room = xz_writer.block + XZ_SLACK;
         memory_store_unaligned(p32, header + 8, ~hash_crc32(0xffffffffu, header + 6, 2));
         return xz_writer_emit(header, sizeof(header));
 }
 
 static bool xz_encode_write(p8 address_to src, positive n)
 {
+        positive capacity = xz_writer.batch_blocks * xz_writer.block;
+
         while (n)
         {
-                positive take = min(n, xz_writer.block - xz_writer.input_n);
+                positive take = min(n, capacity - xz_writer.input_n);
 
                 memory_copy(xz_writer.input + xz_writer.input_n, src, take);
                 xz_writer.input_n += take;
                 src += take;
                 n -= take;
-                if (xz_writer.input_n == xz_writer.block && !xz_writer_block())
+                if (xz_writer.input_n == capacity && !xz_writer_batch())
                         return false;
         }
         return !xz_writer.failed;
@@ -3286,7 +3359,7 @@ static bool xz_encode_write(p8 address_to src, positive n)
 
 static bool xz_encode_end(void)
 {
-        bool ok = xz_writer_block();
+        bool ok = xz_writer_batch();
 
         if (ok)
         {
@@ -3325,13 +3398,16 @@ static bool xz_stream_encode(p8 level)
                 xz_writer_close();
                 return false;
         }
+
+        positive capacity = xz_writer.batch_blocks * xz_writer.block;
+
         for (;;)
         {
-                if (xz_writer.input_n == xz_writer.block && !xz_writer_block())
+                if (xz_writer.input_n == capacity && !xz_writer_batch())
                         break;
                 bipolar got = system_read_retry((positive)xz_input.fd,
                                                 xz_writer.input + xz_writer.input_n,
-                                                xz_writer.block - xz_writer.input_n);
+                                                capacity - xz_writer.input_n);
                 if (got < 0)
                 {
                         xz_fail("xz read failed");
@@ -3458,6 +3534,7 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
         xz_out_fd = out;
         xz_output.bytes = null;
         xz_status = 0;
+        xz_serial = file_codec_threads == 1;
         if (decode)
                 ok = xz_stream_decode();
         else
@@ -3480,13 +3557,13 @@ static b32 file_xz(void)
 {
         file_codec_cli codec = {
             .name = "xz", .decode_name = "unxz", .cat_name = "xzcat",
-            .usage = "Usage: xz [-cdfkqt0123456789] [FILE...]",
+            .usage = "Usage: xz [-cdfkqt0123456789] [-T N] [FILE...]",
             .version = "xz from dawning-kit",
             .status = address_of xz_status,
             .suffixes = xz_suffixes, .suffix_count = array_count(xz_suffixes),
             .decode_suffix_error = "unknown suffix; use -c",
             .encode_suffix_error = "cannot guess output name",
-            .features = FILE_CODEC_LEVEL_ZERO,
+            .features = FILE_CODEC_LEVEL_ZERO | FILE_CODEC_THREADS,
             .remove_source = true, .level = 6,
             .run = xz_stream_cli};
         return file_codec_main(address_of codec);

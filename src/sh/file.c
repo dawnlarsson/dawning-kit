@@ -832,6 +832,28 @@ static bipolar file_staged_name_finish(file_staged_name address_to stage,
 #define FILE_CODEC_NO_NAME 32
 #define FILE_CODEC_SHORT_VERSION 64
 #define FILE_CODEC_LEVEL_ZERO 128
+#define FILE_CODEC_THREADS 256
+
+/* -T N / --threads=N as xz spells them: 0 is every CPU the process may run
+   on, 1 keeps the codec on the calling thread. Only whether work may spread
+   is taken from it; the bytes never depend on it. */
+static positive file_codec_threads;
+
+static bool file_codec_thread_count(string_address text)
+{
+        positive value = 0;
+
+        if (!text || !*text)
+                return false;
+        for (; *text; text++)
+        {
+                if (*text < '0' || *text > '9' || value > 1000000)
+                        return false;
+                value = value * 10 + (positive)(*text - '0');
+        }
+        file_codec_threads = value;
+        return true;
+}
 
 static fn file_codec_print(string_address text)
 {
@@ -913,6 +935,18 @@ static bool file_codec_parse(file_codec_cli address_to codec,
                                   FILE_CODEC_OUTPUT_OPTION) &&
                                  string_has_prefix(word, "--output="))
                                 codec->output_path = word + 9;
+                        else if ((codec->features & FILE_CODEC_THREADS) &&
+                                 string_has_prefix(word, "--threads="))
+                        {
+                                if (!file_codec_thread_count(word + 10))
+                                {
+                                        string_format(log_error,
+                                                      "%s: invalid thread count '%s'\n",
+                                                      codec->name, word + 10);
+                                        *result = 2;
+                                        return false;
+                                }
+                        }
                         else
                         {
                                 string_format(log_error,
@@ -973,6 +1007,25 @@ static bool file_codec_parse(file_codec_cli address_to codec,
                                 file_codec_print(codec->usage);
                                 *result = 0;
                                 return false;
+                        }
+                        else if (*letter == 'T' &&
+                                 (codec->features & FILE_CODEC_THREADS))
+                        {
+                                string_address count = letter[1]
+                                        ? letter + 1
+                                        : *first + 1 < (positive)program_argument_count()
+                                        ? program_argument((b32)++*first)
+                                        : null;
+
+                                if (!file_codec_thread_count(count))
+                                {
+                                        string_format(log_error,
+                                                      "%s: invalid thread count '%s'\n",
+                                                      codec->name, count ? count : (string_address)"");
+                                        *result = 2;
+                                        return false;
+                                }
+                                break;
                         }
                         else if (*letter == 'o' &&
                                  (codec->features & FILE_CODEC_OUTPUT_OPTION))

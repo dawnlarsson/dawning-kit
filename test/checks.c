@@ -45860,11 +45860,50 @@ static fn large_roundtrip(void)
               m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
 }
 
+/* Fixed blocks through the pool: the same bytes at every width. */
+static fn threaded(void)
+{
+        static p8 src[3 * 1048576 + 12345];
+        static p8 first[3 * 1048576 + 65536];
+        static p8 again[3 * 1048576 + 65536];
+        static p8 back[3 * 1048576 + 12345];
+        const positive widths[] = {1, 2, 3, 8};
+        p32 random = 0x2545f491u;
+        bipolar n1 = -1;
+
+        for (positive i = 0; i < sizeof(src); i++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                src[i] = (i / 4096) % 3 ? (p8)(random & 7) : (p8)random;
+        }
+        for (positive w = 0; w < array_count(widths); w++)
+        {
+                parallel_reset(widths[w]);
+                bipolar n = gzip_deflate_mem(src, sizeof(src), w ? again : first,
+                                             sizeof(first), 6);
+                if (!w)
+                {
+                        n1 = n;
+                        check("gzip blocks encode at width 1", n > 0);
+                        continue;
+                }
+                check("gzip blocks are the same bytes at widths 2, 3 and 8",
+                      n == n1 && n > 0 && !memory_compare(first, again, (positive)n));
+        }
+        parallel_reset(0);
+        bipolar m = n1 > 0 ? gzip_inflate_mem(first, (positive)n1, back, sizeof(back)) : -1;
+        check("gzip blocks decode back to the input",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+}
+
 b32 main(void)
 {
         members();
         roundtrip();
         large_roundtrip();
+        threaded();
         return test_report(null);
 }
 #endif /* CHECK_gzip */
@@ -46012,12 +46051,51 @@ static fn streamed(void)
         xz_output.bytes = null;
 }
 
+/* Preset blocks through the pool: the same bytes at every width. */
+static fn threaded(void)
+{
+        static p8 src[3 * 1048576 + 12345];
+        static p8 first[3 * 1048576 + 65536];
+        static p8 again[3 * 1048576 + 65536];
+        static p8 back[3 * 1048576 + 12345];
+        const positive widths[] = {1, 2, 3, 8};
+        p32 random = 0x2545f491u;
+        bipolar n1 = -1;
+
+        for (positive i = 0; i < sizeof(src); i++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                src[i] = (i / 4096) % 3 ? (p8)(random & 7) : (p8)random;
+        }
+        for (positive w = 0; w < array_count(widths); w++)
+        {
+                parallel_reset(widths[w]);
+                bipolar n = xz_deflate_mem(src, sizeof(src), w ? again : first,
+                                           sizeof(first), 0);
+                if (!w)
+                {
+                        n1 = n;
+                        check("xz blocks encode at width 1", n > 0);
+                        continue;
+                }
+                check("xz blocks are the same bytes at widths 2, 3 and 8",
+                      n == n1 && n > 0 && !memory_compare(first, again, (positive)n));
+        }
+        parallel_reset(0);
+        bipolar m = n1 > 0 ? xz_inflate_mem(first, (positive)n1, back, sizeof(back)) : -1;
+        check("xz blocks decode back to the input",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+}
+
 b32 main(void)
 {
         members();
         roundtrip();
         large_roundtrip();
         streamed();
+        threaded();
         return test_report(null);
 }
 #endif /* CHECK_xz */
