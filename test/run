@@ -4981,8 +4981,12 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
 #include "src/sh/pty.c"
-// The terminal fixture does not execute the desktop launcher.
+// The terminal fixture does not execute the desktop launcher, so what its
+// child would call has only to be declared.
 #define BOWL_DEFAULT_PATH "/fixture/bin"
+fn host_terminal_opening(void);
+bipolar shell_exec_file(string_address path, string_address address_to arguments,
+                        positive count, string_address address_to environment);
 #include "src/sh/screen.c"
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
