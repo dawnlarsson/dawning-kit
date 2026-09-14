@@ -495,11 +495,8 @@ static b32 build_tool_words(string_address address_to words)
 {
         string_address address_to saved = program_argument_list();
         b32 saved_count = program_argument_count();
-        b32 count = 0;
+        b32 count = (b32)pointer_vector_count(words);
         b32 answer;
-
-        while (words[count])
-                count++;
 
         //      Ours buffers its output through the same log this does. Flush
         //      before and after or the tool's bytes land inside a line of the
@@ -876,6 +873,7 @@ typedef struct build_lines
         string_address at;
         string_address line;
         positive length;
+        p8 address_to store;
 } build_lines;
 
 static fn build_lines_open(build_lines address_to walk, string_address buffer)
@@ -883,6 +881,7 @@ static fn build_lines_open(build_lines address_to walk, string_address buffer)
         walk->at = buffer;
         walk->line = null;
         walk->length = 0;
+        walk->store = null;
 }
 
 /*
@@ -948,9 +947,23 @@ static positive build_words_of(string_address line, positive bound,
         return count;
 }
 
-//      Named here and defined with the assembly splitter, which is the other
-//      thing that cares where a line's blanks are.
-static bool build_blank(p8 byte);
+//      The next line and its words. The walk takes one store the first time
+//      it is asked, and every line's words reuse it.
+static bool build_lines_words(build_lines address_to walk,
+                              string_address address_to words,
+                              positive address_to count)
+{
+        if (!build_lines_next(walk))
+                return false;
+
+        if (!walk->store)
+                walk->store = build_text_take(BUILD_WORD_ROOM);
+
+        address_to count = build_words_of(walk->line, walk->length, words,
+                                          BUILD_ARGUMENT_ROOM, walk->store,
+                                          BUILD_WORD_ROOM);
+        return true;
+}
 
 /*
         A tree that is not this one.
@@ -968,13 +981,11 @@ static bool build_blank(p8 byte);
 static fn build_settings_read()
 {
         build_lines walk;
-        p8 address_to store;
 
         if (file_slurp(BUILD_SETTINGS_FILE, build_file_two,
                         BUILD_FILE_ROOM) < 0)
                 return;
 
-        store = build_text_take(BUILD_WORD_ROOM);
         build_lines_open(address_of walk, (string_address)build_file_two);
 
         while (build_lines_next(address_of walk))
@@ -984,14 +995,14 @@ static fn build_settings_read()
                 string_address name;
                 string_address value;
 
-                while (at < walk.length && build_blank(walk.line[at]))
+                while (at < walk.length && byte_is_blank(walk.line[at]))
                         at++;
 
                 if (at >= walk.length || walk.line[at] == '#')
                         continue;
 
                 while (at + name_length < walk.length &&
-                       !build_blank(walk.line[at + name_length]))
+                       !byte_is_blank(walk.line[at + name_length]))
                         name_length++;
 
                 //      Copied out of the file buffer, which the next thing to
@@ -999,7 +1010,7 @@ static fn build_settings_read()
                 name = build_text_keep(walk.line + at, name_length);
                 at += name_length;
 
-                while (at < walk.length && build_blank(walk.line[at]))
+                while (at < walk.length && byte_is_blank(walk.line[at]))
                         at++;
 
                 value = build_text_keep(walk.line + at, walk.length - at);
@@ -1024,10 +1035,8 @@ static fn build_settings_read()
 static string_address build_key_from(string_address buffer, string_address name,
                                      positive address_to matched)
 {
-        p8 address_to into = build_text_take(BUILD_WORD_ROOM);
+        byte_store joined = {build_text_take(BUILD_WORD_ROOM), BUILD_WORD_ROOM - 1, 0};
         p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-        p8 address_to write_at = into;
-        positive left = BUILD_WORD_ROOM - 1;
         string_address marker = build_join("#> ", name, " ", null);
         positive marker_length = string_length(marker);
         build_lines walk;
@@ -1053,29 +1062,20 @@ static string_address build_key_from(string_address buffer, string_address name,
 
                 for (positive at = 0; at < count; at++)
                 {
-                        positive length = string_length(words[at]);
+                        if (joined.used)
+                                byte_store_append_span(address_of joined, " ", 1);
 
-                        if (write_at != into && left)
-                        {
-                                *write_at++ = ' ';
-                                left--;
-                        }
-
-                        if (length > left)
-                                length = left;
-
-                        memory_copy(write_at, words[at], length);
-                        write_at += length;
-                        left -= length;
+                        byte_store_append_span(address_of joined, words[at],
+                                               string_length(words[at]));
                 }
         }
 
-        *write_at = end;
+        joined.bytes[joined.used] = end;
 
         if (matched)
                 address_to matched = seen;
 
-        return (string_address)into;
+        return (string_address)joined.bytes;
 }
 
 static bool build_config_loaded;
@@ -1208,18 +1208,25 @@ static fn build_pair_sort(positive count)
 //      run of capitals, digits and underscores that reaches an equals sign;
 //      anything else on the line -- a comment, an "is not set", a lower case
 //      letter in the middle of the name -- is not a setting this can compare.
+static positive build_symbol_end(string_address line, positive at,
+                                 positive length)
+{
+        while (at < length && ((line[at] >= 'A' && line[at] <= 'Z') ||
+                               byte_is_digit(line[at]) || line[at] == '_'))
+                at++;
+
+        return at;
+}
+
 static bool build_config_pair(string_address line, positive length,
                               build_pair address_to into)
 {
-        positive at = 7;
+        positive at;
 
-        if (length < 8 || memory_compare(line, "CONFIG_", 7))
+        if (length < 8 || !string_has_prefix(line, "CONFIG_"))
                 return false;
 
-        while (at < length && ((line[at] >= 'A' && line[at] <= 'Z') ||
-                               (line[at] >= '0' && line[at] <= '9') ||
-                               line[at] == '_'))
-                at++;
+        at = build_symbol_end(line, 7, length);
 
         if (at >= length || line[at] != '=' || at == 7)
                 return false;
@@ -1378,22 +1385,17 @@ static fn build_config_conflicts(string_address text,
 static bool build_config_name(string_address line, positive length,
                               build_pair address_to into)
 {
-        static const p8 unset[] = " is not set";
-        positive at = 9;
+        positive at;
 
         if (build_config_pair(line, length, into))
                 return true;
 
-        if (length <= at || memory_compare(line, "# CONFIG_", at))
+        if (length <= 9 || !string_has_prefix(line, "# CONFIG_"))
                 return false;
 
-        while (at < length && ((line[at] >= 'A' && line[at] <= 'Z') ||
-                               (line[at] >= '0' && line[at] <= '9') ||
-                               line[at] == '_'))
-                at++;
+        at = build_symbol_end(line, 9, length);
 
-        if (at == 9 || length - at != sizeof(unset) - 1 ||
-            memory_compare(line + at, unset, sizeof(unset) - 1))
+        if (at == 9 || !memory_is_word(line + at, length - at, " is not set"))
                 return false;
 
         into->name = line + 2;
@@ -1729,14 +1731,10 @@ static b32 build_verify_config(string_address config,
                 build_request address_to one = address_of build_requests[back - 1];
                 bool seen = false;
 
-                for (positive kept = 0; kept < effective; kept++)
-                        if (build_effective[kept].name_length == one->name_length &&
-                            !memory_compare(build_effective[kept].name, one->name,
-                                            one->name_length))
-                        {
-                                seen = true;
-                                break;
-                        }
+                for (positive kept = 0; kept < effective && !seen; kept++)
+                        seen = build_effective[kept].name_length == one->name_length &&
+                               !memory_compare(build_effective[kept].name, one->name,
+                                               one->name_length);
 
                 if (seen || effective >= BUILD_REQUEST_ROOM)
                         continue;
@@ -1745,70 +1743,50 @@ static b32 build_verify_config(string_address config,
         }
 
         {
-                p8 address_to dropped = build_file_two;
-                p8 address_to forced = build_file_two + BUILD_FILE_ROOM / 2;
-                positive dropped_used = 0;
-                positive forced_used = 0;
-
-                dropped[0] = end;
-                forced[0] = end;
+                byte_store dropped = {build_file_two, BUILD_FILE_ROOM / 2 - 1, 0};
+                byte_store forced = {build_file_two + BUILD_FILE_ROOM / 2,
+                                     BUILD_FILE_ROOM / 2 - 1, 0};
 
                 for (positive at = 0; at < effective; at++)
                 {
                         build_request address_to one = address_of build_effective[at];
+                        byte_store address_to list = null;
                         bool present = false;
 
-                        for (positive which = 0; which < built; which++)
-                                if (build_built_length[which] == one->name_length &&
-                                    !memory_compare(build_built[which], one->name,
-                                                    one->name_length))
-                                {
-                                        present = true;
-                                        break;
-                                }
+                        for (positive which = 0; which < built && !present; which++)
+                                present = build_built_length[which] == one->name_length &&
+                                          !memory_compare(build_built[which], one->name,
+                                                          one->name_length);
 
                         if ((one->setting == 'y' || one->setting == 'm') && !present)
                         {
-                                string_address line = build_join("  ", one->name,
-                                                                 "  (", one->profile,
-                                                                 ")\n", null);
-                                positive length = string_length(line);
-
-                                if (dropped_used + length < BUILD_FILE_ROOM / 2)
-                                {
-                                        memory_copy(dropped + dropped_used, line,
-                                                    length);
-                                        dropped_used += length;
-                                        dropped[dropped_used] = end;
-                                }
-
+                                list = address_of dropped;
                                 missing++;
                         }
                         else if (one->setting == 'n' && present)
                         {
-                                string_address line = build_join("  ", one->name,
-                                                                 "  (", one->profile,
-                                                                 ")\n", null);
-                                positive length = string_length(line);
-
-                                if (forced_used + length < BUILD_FILE_ROOM / 2)
-                                {
-                                        memory_copy(forced + forced_used, line,
-                                                    length);
-                                        forced_used += length;
-                                        forced[forced_used] = end;
-                                }
-
+                                list = address_of forced;
                                 lingering++;
                         }
+
+                        if (list)
+                        {
+                                string_address line = build_join("  ", one->name, "  (",
+                                                                 one->profile, ")\n", null);
+
+                                byte_store_append_exact(list, line, string_length(line));
+                        }
                 }
+
+                dropped.bytes[dropped.used] = end;
+                forced.bytes[forced.used] = end;
 
                 if (missing)
                 {
                         string_format(log, BUILD_YELLOW
                                       "Requested but not in the built kernel:"
                                       BUILD_RESET "\n");
-                        string_format(log, "%s", (string_address)dropped);
+                        string_format(log, "%s", (string_address)dropped.bytes);
                 }
 
                 if (lingering)
@@ -1816,7 +1794,7 @@ static b32 build_verify_config(string_address config,
                         string_format(log, BUILD_YELLOW
                                       "Asked to be off but built in anyway:"
                                       BUILD_RESET "\n");
-                        string_format(log, "%s", (string_address)forced);
+                        string_format(log, "%s", (string_address)forced.bytes);
                 }
         }
 
@@ -1916,11 +1894,6 @@ static bool build_asm_fail(string_address source, positive line,
         return false;
 }
 
-static bool build_blank(p8 byte)
-{
-        return byte == ' ' || byte == '\t';
-}
-
 static bool build_asm_pass(string_address text, string_address target,
                            string_address source, positive pass,
                            p8 address_to into, positive address_to used,
@@ -1965,7 +1938,7 @@ static bool build_asm_pass(string_address text, string_address target,
 
                 line_number++;
 
-                while (lead < walk.length && build_blank(walk.line[lead]))
+                while (lead < walk.length && byte_is_blank(walk.line[lead]))
                         lead++;
 
                 //      A directive is any line whose first non blank is "#>".
@@ -1981,10 +1954,10 @@ static bool build_asm_pass(string_address text, string_address target,
                         positive count;
                         bool claimed = false;
 
-                        while (at < stop && build_blank(walk.line[at]))
+                        while (at < stop && byte_is_blank(walk.line[at]))
                                 at++;
 
-                        while (stop > at && build_blank(walk.line[stop - 1]))
+                        while (stop > at && byte_is_blank(walk.line[stop - 1]))
                                 stop--;
 
                         count = build_words_of(walk.line + at, stop - at,
@@ -2141,7 +2114,7 @@ static bool build_asm_pass(string_address text, string_address target,
                         bool prose = lead < walk.length &&
                                      walk.line[lead] == '#' &&
                                      (lead + 1 == walk.length ||
-                                      build_blank(walk.line[lead + 1]));
+                                      byte_is_blank(walk.line[lead + 1]));
                         positive fill = address_to used;
 
                         if (fill + walk.length + 3 >= room)
@@ -2546,7 +2519,8 @@ static bool build_hex_field(string_address text, positive length,
 static bool build_section(string_address table, string_address name,
                           positive address_to size, positive address_to where)
 {
-        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+        string_address words[BUILD_ARGUMENT_ROOM];
+        positive count;
         build_lines walk;
 
         address_to size = 0;
@@ -2554,14 +2528,9 @@ static bool build_section(string_address table, string_address name,
 
         build_lines_open(address_of walk, table);
 
-        while (build_lines_next(address_of walk))
+        while (build_lines_words(address_of walk, (string_address address_to)words,
+                                 address_of count))
         {
-                string_address words[BUILD_ARGUMENT_ROOM];
-                positive count = build_words_of(walk.line, walk.length,
-                                                (string_address address_to)words,
-                                                BUILD_ARGUMENT_ROOM, store,
-                                                BUILD_WORD_ROOM);
-
                 if (count < 4 || !word_is(words[1], name))
                         continue;
 
@@ -2719,25 +2688,18 @@ static b32 build_spark(string_address source, string_address output,
         if (build_capture_words((string_address address_to)words, build_file_two,
                                 BUILD_FILE_ROOM) >= 0)
         {
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                string_address found[BUILD_ARGUMENT_ROOM];
+                positive parts;
                 build_lines walk;
 
                 build_lines_open(address_of walk, (string_address)build_file_two);
 
-                while (build_lines_next(address_of walk))
+                while (build_lines_words(address_of walk,
+                                         (string_address address_to)found,
+                                         address_of parts))
                 {
-                        string_address found[BUILD_ARGUMENT_ROOM];
-                        positive parts;
-
-                        if (!memory_search(walk.line, walk.length, "Entry point", 11))
-                                continue;
-
-                        parts = build_words_of(walk.line, walk.length,
-                                               (string_address address_to)found,
-                                               BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_WORD_ROOM);
-
-                        if (parts)
+                        if (parts &&
+                            memory_search(walk.line, walk.length, "Entry point", 11))
                                 build_hex_field(found[parts - 1],
                                                 string_length(found[parts - 1]),
                                                 address_of entry);
@@ -3258,7 +3220,7 @@ static bool build_isa_holds(string_address isa, string_address name)
         {
                 at = 2;
 
-                while (at < length && isa[at] >= '0' && isa[at] <= '9')
+                while (at < length && byte_is_digit(isa[at]))
                         at++;
         }
 
@@ -3440,19 +3402,17 @@ static b32 build_floor(string_address arch)
         //      looks for rather than either layout.
         {
                 build_lines walk;
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                string_address found[BUILD_ARGUMENT_ROOM];
+                positive parts;
                 positive wanted = string_length(prefix);
 
                 build_lines_open(address_of walk, (string_address)build_file_one);
 
-                while (build_lines_next(address_of walk) && !attributes)
+                while (!attributes &&
+                       build_lines_words(address_of walk,
+                                         (string_address address_to)found,
+                                         address_of parts))
                 {
-                        string_address found[BUILD_ARGUMENT_ROOM];
-                        positive parts = build_words_of(walk.line, walk.length,
-                                                        (string_address address_to)found,
-                                                        BUILD_ARGUMENT_ROOM,
-                                                        store, BUILD_WORD_ROOM);
-
                         for (positive at = 0; at < parts; at++)
                         {
                                 string_address word = found[at];
@@ -3589,11 +3549,8 @@ static bool build_install(string_address what)
 static string_address address_to build_environment_with(string_address address_to extra,
                                                         positive count)
 {
-        positive have = 0;
+        positive have = pointer_vector_count(environ);
         string_address address_to answer;
-
-        while (environ[have])
-                have++;
 
         answer = (string_address address_to)build_text_take(
                 (have + count + 1) * sizeof(string_address));
@@ -3715,41 +3672,31 @@ static fn build_components(string_address config)
 
         while (build_lines_next(address_of walk))
         {
-                string_address name = null;
-                positive length = 0;
-                bool on = false;
+                build_pair pair;
+                string_address name;
+                positive length;
+                bool on;
 
-                if (walk.length > 18 &&
-                    !memory_compare(walk.line, "CONFIG_MOONWATER_", 17) &&
-                    walk.line[walk.length - 2] == '=' &&
-                    walk.line[walk.length - 1] == 'y')
-                {
-                        name = walk.line + 17;
-                        length = walk.length - 17 - 2;
-                        on = true;
-                }
-                else if (walk.length > 30 &&
-                         !memory_compare(walk.line, "# CONFIG_MOONWATER_", 19) &&
-                         !memory_compare(walk.line + walk.length - 12,
-                                         " is not set", 11))
-                {
-                        name = walk.line + 19;
-                        length = walk.length - 19 - 11;
-                        on = false;
-                }
-
-                if (!name)
+                //      =y is on and "is not set" is off; any other value, =m
+                //      included, leaves the default alone.
+                if (!build_config_name(walk.line, walk.length, address_of pair) ||
+                    !string_has_prefix(pair.name, "CONFIG_MOONWATER_") ||
+                    (pair.value && !memory_is_word(pair.value, pair.value_length, "y")))
                         continue;
 
-                if (length == 4 && !memory_compare(name, "CORE", 4))
+                on = pair.value != null;
+                name = pair.name + 17;
+                length = pair.name_length - 17;
+
+                if (memory_is_word(name, length, "CORE"))
                         build_moon_core = on;
-                else if (length == 5 && !memory_compare(name, "SHELL", 5))
+                else if (memory_is_word(name, length, "SHELL"))
                         build_moon_shell = on;
-                else if (length == 9 && !memory_compare(name, "UTILITIES", 9))
+                else if (memory_is_word(name, length, "UTILITIES"))
                         build_moon_utilities = on;
-                else if (length == 10 && !memory_compare(name, "UTIL_LINUX", 10))
+                else if (memory_is_word(name, length, "UTIL_LINUX"))
                         build_moon_util_linux = on;
-                else if (length == 13 && !memory_compare(name, "SHELL_MONITOR", 13))
+                else if (memory_is_word(name, length, "SHELL_MONITOR"))
                         build_moon_shell_monitor = on;
         }
 }
@@ -4270,13 +4217,9 @@ static b32 build_local(string_address address_to profiles, positive count)
         build_label("", "KERNEL CONFIGURATION");
 
         {
-                string_address always = build_setting_get("profiles_always");
-                string_address names[BUILD_ARGUMENT_ROOM];
-                positive many = build_split(always, (string_address address_to)names,
-                                            BUILD_ARGUMENT_ROOM);
-
-                for (positive at = 0; at < many; at++)
-                        chosen[chosen_count++] = names[at];
+                chosen_count = build_add_split((string_address address_to)chosen,
+                                               chosen_count, BUILD_ARGUMENT_ROOM,
+                                               build_setting_get("profiles_always"));
 
                 if (!count)
                 {
@@ -4291,13 +4234,10 @@ static b32 build_local(string_address address_to profiles, positive count)
                                 timestamps that make the transcript readable,
                                 and debug_none quietens both.
                         */
-                        positive some = build_split(
-                                build_setting_get("profiles_default"),
-                                (string_address address_to)names,
-                                BUILD_ARGUMENT_ROOM);
-
-                        for (positive at = 0; at < some; at++)
-                                chosen[chosen_count++] = names[at];
+                        chosen_count = build_add_split(
+                                (string_address address_to)chosen, chosen_count,
+                                BUILD_ARGUMENT_ROOM,
+                                build_setting_get("profiles_default"));
                 }
                 else
                         for (positive at = 0; at < count; at++)
@@ -4488,10 +4428,6 @@ static b32 build_local(string_address address_to profiles, positive count)
         {
                 string_address cores;
                 string_address kernel_cflags = build_key("kernel_cflags");
-                string_address extra[BUILD_ARGUMENT_ROOM];
-                positive many = build_split(make_flags,
-                                            (string_address address_to)extra,
-                                            BUILD_ARGUMENT_ROOM);
                 string_address words[BUILD_ARGUMENT_ROOM];
                 build_command what = {.directory = tree};
                 positive at = 0;
@@ -4507,9 +4443,8 @@ static b32 build_local(string_address address_to profiles, positive count)
 
                 words[at++] = "make";
                 words[at++] = build_join("-j", cores, null);
-
-                for (positive which = 0; which < many; which++)
-                        words[at++] = extra[which];
+                at = build_add_split((string_address address_to)words, at,
+                                     BUILD_ARGUMENT_ROOM, make_flags);
 
                 words[at++] = build_join("KCFLAGS=", kernel_cflags, null);
                 words[at] = null;
@@ -4573,21 +4508,17 @@ static b32 build_local(string_address address_to profiles, positive count)
 static bool build_word_listed(string_address text, string_address word)
 {
         build_lines walk;
-        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+        string_address found[BUILD_ARGUMENT_ROOM];
+        positive parts;
 
         if (!text)
                 return false;
 
         build_lines_open(address_of walk, text);
 
-        while (build_lines_next(address_of walk))
+        while (build_lines_words(address_of walk, (string_address address_to)found,
+                                 address_of parts))
         {
-                string_address found[BUILD_ARGUMENT_ROOM];
-                positive parts = build_words_of(walk.line, walk.length,
-                                                (string_address address_to)found,
-                                                BUILD_ARGUMENT_ROOM, store,
-                                                BUILD_WORD_ROOM);
-
                 for (positive at = 0; at < parts; at++)
                         if (word_is(found[at], word))
                                 return true;
@@ -5194,7 +5125,8 @@ static b32 build_usb(string_address image)
                 string_address words[8];
                 positive at = 0;
                 build_lines walk;
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                string_address found[BUILD_ARGUMENT_ROOM];
+                positive parts;
 
                 words[at++] = "lsblk";
                 words[at++] = "-dno";
@@ -5207,15 +5139,10 @@ static b32 build_usb(string_address image)
                         build_lines_open(address_of walk,
                                          (string_address)build_file_one);
 
-                        while (build_lines_next(address_of walk))
+                        while (build_lines_words(address_of walk,
+                                                 (string_address address_to)found,
+                                                 address_of parts))
                         {
-                                string_address found[BUILD_ARGUMENT_ROOM];
-                                positive parts = build_words_of(
-                                        walk.line, walk.length,
-                                        (string_address address_to)found,
-                                        BUILD_ARGUMENT_ROOM, store,
-                                        BUILD_WORD_ROOM);
-
                                 if (parts < 3 || !word_is(found[2], "1"))
                                         continue;
 
@@ -5489,7 +5416,7 @@ b32 main()
 
                         if (at && word_is(word, "--set") && at + 1 < count)
                                 pair = arguments[++at];
-                        else if (at && !memory_compare(word, "--set=", 6))
+                        else if (at && string_has_prefix(word, "--set="))
                                 pair = word + 6;
                         else
                         {
@@ -5628,7 +5555,7 @@ b32 main()
 
                                 host = arguments[++at];
                         }
-                        else if (!memory_compare(word, "--host=", 7))
+                        else if (string_has_prefix(word, "--host="))
                                 host = word + 7;
                         else if (word[0] == '-' && word[1] == '-')
                                 return build_die(build_join("unknown option ",
