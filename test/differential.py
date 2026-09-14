@@ -23877,7 +23877,464 @@ def harness_compression(argv):
     return int(bool(report['failures']))
 
 
+def harness_https_bench(argv):
+    """Loopback HTTPS for wget: a CPU-bound download bench and a framing matrix.
+
+    A forked Python TLS 1.3 server (TLS_AES_128_GCM_SHA256, the one suite the
+    client offers, key exchange on --group) serves over the chain shape the
+    Arch mirror sends: a P-256 leaf under two P-384 intermediates under a P-384
+    root that is itself in the chain, all generated under WORK/pki and reused
+    while they stay valid. Only shells built here by --source trust that root:
+    they are compiled with -DTLS_BENCH_ANCHOR naming WORK/anchor.inc, which
+    build.sh never defines. --binary runs any other shell, normally in the
+    nocheck mode (--no-check-certificate), which still encrypts but skips the
+    chain and so measures the data path alone.
+
+    Paths on the server: /<framing>/<file> for framing length, chunked (seeded
+    chunk sizes that straddle record boundaries) or close; /hop/<framing>/<file>
+    is a 302 from 127.0.0.2 to 127.0.0.1, the GitHub-to-raw shape; and
+    /seed/<n> is n seeded bytes, which the matrix compares.
+
+        --build-only   build the --source shells and print their paths
+        --serve SEC    keep the server up SEC seconds for perf by hand
+        --matrix       every framing, with and without the hop, over sizes that
+                       straddle TLS and HTTP buffer edges; byte-compared
+        (default)      --runs interleaved rounds per shell and mode; best wall,
+                       user and sys per MB; --perf adds instructions per byte,
+                       --syscalls a perf trace -s count, --extract the tar -xf
+                       that bowl's land step does in-process by the same magic
+    """
+    import argparse
+    import getpass
+    import hashlib
+    import platform
+    import random
+    import selectors
+    import shutil
+    import signal
+    import socket
+    import ssl
+    import subprocess
+    import time
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(prog='https_bench')
+    parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--file', type=Path, help='payload the bench serves')
+    parser.add_argument('--source', action='append', default=[], metavar='LABEL=TREE')
+    parser.add_argument('--binary', action='append', default=[], metavar='LABEL=SHELL')
+    parser.add_argument('--cc', default='cc')
+    parser.add_argument('--march', default='x86-64')
+    parser.add_argument('--cflags', action='append', default=[], metavar='LABEL=FLAGS',
+                        help='extra compiler flags for one --source shell, e.g. -DTLS_RECEIVE_ROOM=65536')
+    parser.add_argument('--build-only', action='store_true')
+    parser.add_argument('--serve', type=float, metavar='SECONDS')
+    parser.add_argument('--matrix', action='store_true')
+    parser.add_argument('--runs', type=int, default=5)
+    parser.add_argument('--client-cpu', type=int, default=8)
+    parser.add_argument('--server-cpus', default='9,10,11')
+    parser.add_argument('--mode', action='append', choices=('verify', 'nocheck'))
+    parser.add_argument('--framing', default='length', choices=('length', 'chunked', 'close'))
+    parser.add_argument('--redirect', action='store_true')
+    parser.add_argument('--stdout', action='store_true', help='-O - into /dev/null, no file I/O')
+    parser.add_argument('--extract', action='store_true')
+    parser.add_argument('--curl', action='store_true', help='add a curl row: server headroom')
+    parser.add_argument('--perf', action='store_true')
+    parser.add_argument('--syscalls', action='store_true')
+    parser.add_argument('--group', default='prime256v1')
+    opts = parser.parse_args(argv)
+    if opts.runs < 1:
+        parser.error('--runs must be positive')
+    if not opts.source and not opts.binary:
+        parser.error('name a shell with --source LABEL=TREE or --binary LABEL=SHELL')
+
+    work = opts.work.resolve()
+    pki = work / 'pki'
+    pki.mkdir(parents=True, exist_ok=True)
+    server_cpus = {int(cpu) for cpu in opts.server_cpus.split(',')}
+
+    def openssl(*args):
+        subprocess.run(['openssl', *args], check=True, cwd=pki,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def issue(name, curve, subject, issuer, extensions, days):
+        (pki / (name + '.ext')).write_text(extensions)
+        openssl('req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:' + curve,
+                '-nodes', '-keyout', name + '.key', '-out', name + '.csr', '-subj', subject)
+        openssl('x509', '-req', '-in', name + '.csr', '-CA', issuer + '.pem',
+                '-CAkey', issuer + '.key', '-set_serial', str(random.getrandbits(62)),
+                '-out', name + '.pem', '-days', str(days), '-sha384', '-extfile', name + '.ext')
+
+    names = ('leaf', 'second', 'first', 'root')
+    fresh = all((pki / (n + '.pem')).is_file() for n in names) and subprocess.run(
+        ['openssl', 'x509', '-checkend', '86400', '-noout', '-in', str(pki / 'leaf.pem')],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if not fresh:
+        openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:secp384r1',
+                '-nodes', '-keyout', 'root.key', '-out', 'root.pem', '-days', '3650',
+                '-sha384', '-subj', '/CN=https_bench root',
+                '-addext', 'basicConstraints=critical,CA:TRUE',
+                '-addext', 'keyUsage=critical,keyCertSign,cRLSign')
+        issue('first', 'secp384r1', '/CN=https_bench first', 'root',
+              'basicConstraints=critical,CA:TRUE,pathlen:1\nkeyUsage=critical,keyCertSign,cRLSign\n', 3000)
+        issue('second', 'secp384r1', '/CN=https_bench second', 'first',
+              'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n', 2000)
+        issue('leaf', 'prime256v1', '/CN=127.0.0.1', 'second',
+              'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n'
+              'extendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1,IP:127.0.0.2\n', 90)
+        (pki / 'chain.pem').write_text(''.join((pki / (n + '.pem')).read_text() for n in names))
+
+    spki = subprocess.run(['openssl', 'pkey', '-in', str(pki / 'root.key'), '-pubout', '-outform', 'DER'],
+                          check=True, capture_output=True).stdout
+    point = spki[-97:]
+    if point[0] != 4:
+        print('https_bench: the root key is not an uncompressed P-384 point', file=sys.stderr)
+        return 2
+    anchor = work / 'anchor.inc'
+    anchor_text = ''.join('static const p8 tls_bench_anchor_%s[48] = {%s};\n' % (
+        axis, ', '.join('0x%02x' % b for b in coordinate))
+        for axis, coordinate in (('x', point[1:49]), ('y', point[49:97])))
+    if not anchor.is_file() or anchor.read_text() != anchor_text:
+        anchor.write_text(anchor_text)
+
+    labels = {}
+    builds = []
+    extra_flags = {}
+    for specification in opts.cflags:
+        label, _, flags = specification.partition('=')
+        extra_flags.setdefault(label, []).extend(flags.split())
+    for specification in opts.source + opts.binary:
+        label, sep, path = specification.partition('=')
+        if not sep or not label or label in labels or label in ('pki', 'curl') or '/' in label:
+            parser.error('bad or repeated label in ' + specification)
+        labels[label] = 'source' if specification in opts.source else 'binary'
+        place = work / label
+        place.mkdir(exist_ok=True)
+        if labels[label] == 'source':
+            tree = Path(path).resolve()
+            command = [opts.cc, '-O2', '-static', '-nostdlib', '-nostartfiles', '-fno-stack-protector',
+                       '-fno-builtin', '-march=' + opts.march, '-w', '-T', 'src/build/spark.ld',
+                       '-Wl,-e,_start', '-Wl,--build-id=none', '-Wl,--no-warn-rwx-segments',
+                       '-DTLS_BENCH_ANCHOR="%s"' % anchor, *extra_flags.get(label, []),
+                       '-o', str(place / 'shell.new'),
+                       'programs/shell.c']
+            builds.append((label, place, time.perf_counter(),
+                           subprocess.Popen(command, cwd=tree, stderr=subprocess.PIPE)))
+            shell = place / 'shell'
+        else:
+            shell = Path(path).resolve()
+            if not shell.is_file():
+                parser.error('no shell at ' + path)
+        for applet in ('wget', 'tar'):
+            link = place / applet
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(shell)
+    for label, place, began, build in builds:
+        _, errors = build.communicate()
+        if build.returncode:
+            sys.stderr.write(errors.decode(errors='replace')[-4000:])
+            print('https_bench: building %s failed' % label, file=sys.stderr)
+            return 2
+        (place / 'shell.new').replace(place / 'shell')
+        print('https_bench: built %s in %.1f s: %s' % (label, time.perf_counter() - began, place / 'shell'))
+    if opts.build_only:
+        print('https_bench: anchor %s; trust it with -DTLS_BENCH_ANCHOR=\'"%s"\'' % (anchor, anchor))
+        return 0
+
+    payload = opts.file.resolve() if opts.file else None
+    if not opts.matrix and not opts.serve and not payload:
+        parser.error('the bench needs --file')
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.load_cert_chain(pki / 'chain.pem', pki / 'leaf.key')
+    context.set_ecdh_curve(opts.group)
+
+    listeners = []
+    for attempt in range(32):
+        first = socket.socket()
+        first.bind(('127.0.0.1', 0))
+        port = first.getsockname()[1]
+        second = socket.socket()
+        try:
+            second.bind(('127.0.0.2', port))
+        except OSError:
+            first.close()
+            second.close()
+            continue
+        listeners = [first, second]
+        break
+    if not listeners:
+        print('https_bench: no port free on both 127.0.0.1 and 127.0.0.2', file=sys.stderr)
+        return 2
+    for listener in listeners:
+        listener.listen(64)
+
+    def seeded(n):
+        return random.Random(n).randbytes(n)
+
+    def respond(raw):
+        raw.settimeout(60)
+        tls = context.wrap_socket(raw, server_side=True)
+        head = b''
+        while b'\r\n\r\n' not in head and len(head) < 16384:
+            got = tls.recv(4096)
+            if not got:
+                return
+            head += got
+        request = head.split(b'\r\n', 1)[0].split()
+        parts = request[1].decode(errors='replace').strip('/').split('/') if len(request) > 1 else []
+        if parts and parts[0] == 'hop':
+            tls.sendall(b'HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:%d/%s\r\n'
+                        b'Content-Length: 0\r\nConnection: close\r\n\r\n' % (port, '/'.join(parts[1:]).encode()))
+        elif len(parts) == 3 and parts[0] == 'seed' and parts[2] in ('length', 'chunked', 'close'):
+            send(tls, parts[2], seeded(int(parts[1])))
+        elif len(parts) == 2 and payload and parts[1] == payload.name and parts[0] in ('length', 'chunked', 'close'):
+            send(tls, parts[0], payload)
+        else:
+            tls.sendall(b'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+        try:
+            tls.unwrap()
+        except (OSError, ValueError):
+            pass
+
+    def send(tls, framing, body):
+        size = len(body) if isinstance(body, bytes) else body.stat().st_size
+        fields = [b'HTTP/1.1 200 OK', b'Content-Type: application/octet-stream', b'Connection: close']
+        if framing == 'length':
+            fields.append(b'Content-Length: %d' % size)
+        elif framing == 'chunked':
+            fields.append(b'Transfer-Encoding: chunked')
+        tls.sendall(b'\r\n'.join(fields) + b'\r\n\r\n')
+        stream = open(body, 'rb', buffering=0) if not isinstance(body, bytes) else None
+        picks = random.Random(size)
+        at = 0
+        block = bytearray(1 << 20)
+        view = memoryview(block)
+        while at < size:
+            if framing == 'chunked':
+                want = min(size - at, picks.choice((1, 5, 4096, 8192, 16379, 16384, 16401,
+                                                    65536, picks.randrange(1, 1 << 18))))
+            else:
+                want = min(size - at, len(block))
+            if stream:
+                got = stream.readinto(view[:want])
+                if not got:
+                    break
+                data = view[:got]
+            else:
+                data = body[at:at + want]
+                got = want
+            if framing == 'chunked':
+                tls.sendall(b'%x\r\n' % got + bytes(data) + b'\r\n')
+            else:
+                tls.sendall(data)
+            at += got
+        if framing == 'chunked':
+            tls.sendall(b'0\r\n\r\n')
+        if stream:
+            stream.close()
+
+    server = os.fork()
+    if server == 0:
+        try:
+            os.setpgid(0, 0)
+            os.sched_setaffinity(0, server_cpus)
+            signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+            selector = selectors.DefaultSelector()
+            for listener in listeners:
+                selector.register(listener, selectors.EVENT_READ)
+            while True:
+                for key, _ in selector.select():
+                    try:
+                        raw, _ = key.fileobj.accept()
+                    except OSError:
+                        continue
+                    if os.fork() == 0:
+                        try:
+                            for listener in listeners:
+                                listener.close()
+                            respond(raw)
+                        except (OSError, ssl.SSLError, ValueError):
+                            pass
+                        finally:
+                            os._exit(0)
+                    raw.close()
+        finally:
+            os._exit(0)
+    for listener in listeners:
+        listener.close()
+
+    user = getpass.getuser()
+    sudo = shutil.which('sudo') and subprocess.run(['sudo', '-n', 'true'], stdout=subprocess.DEVNULL,
+                                                   stderr=subprocess.DEVNULL).returncode == 0
+
+    def pinned():
+        os.sched_setaffinity(0, {opts.client_cpu})
+
+    def run(command, output=subprocess.DEVNULL):
+        errors = work / 'client.err'
+        with open(errors, 'wb') as sink:
+            began = time.perf_counter()
+            process = subprocess.Popen(command, stdout=output, stderr=sink, preexec_fn=pinned)
+            _, status, usage = os.wait4(process.pid, 0)
+            wall = time.perf_counter() - began
+            process.returncode = os.waitstatus_to_exitcode(status)
+        return process.returncode, wall, usage.ru_utime, usage.ru_stime, errors.read_bytes()
+
+    def client(label, mode, url, out):
+        if label == 'curl':
+            return ['curl', '-sS', '--fail', '--cacert', str(pki / 'root.pem'), '-o', out, url]
+        return [str(work / label / 'wget'), '-q'] + (['--no-check-certificate'] if mode == 'nocheck' else []) + \
+            ['-O', out, url]
+
+    def digest(path):
+        hashing = hashlib.sha256()
+        with open(path, 'rb', buffering=0) as stream:
+            for block in iter(lambda: stream.read(1 << 22), b''):
+                hashing.update(block)
+        return hashing.hexdigest()
+
+    def modes_for(label):
+        if opts.mode:
+            return opts.mode
+        return ['verify'] if labels.get(label, 'source') == 'source' else ['nocheck']
+
+    failures = 0
+    try:
+        if opts.serve:
+            print('https_bench: serving https://127.0.0.1:%d/<length|chunked|close>/%s for %.0f s; anchor %s; '
+                  'curl --cacert %s' % (port, payload.name if payload else '<file>', opts.serve, anchor,
+                                        pki / 'root.pem'), flush=True)
+            time.sleep(opts.serve)
+            return 0
+
+        if opts.matrix:
+            sizes = (0, 1, 4095, 8192, 16383, 16384, 16385, 16401, 65536 + 7, 3 * 16384 - 22, (1 << 20) + 13)
+            checks = 0
+            for label in labels:
+                for mode in modes_for(label):
+                    for framing in ('length', 'chunked', 'close'):
+                        for hop in (False, True):
+                            for size in sizes:
+                                url = 'https://127.0.0.%d:%d/%sseed/%d/%s' % (
+                                    2 if hop else 1, port, 'hop/' if hop else '', size, framing)
+                                out = work / label / 'matrix.out'
+                                if out.exists():
+                                    out.unlink()
+                                code, _, _, _, errors = run(client(label, mode, url, str(out)))
+                                checks += 1
+                                if code or not out.is_file() or out.read_bytes() != seeded(size):
+                                    failures += 1
+                                    print('  FAIL %s %s %s%s %d bytes: exit %d %s' % (
+                                        label, mode, 'hop ' if hop else '', framing, size, code,
+                                        errors.decode(errors='replace').strip()))
+            print('https_bench matrix: %d of %d' % (checks - failures, checks))
+            if os.environ.get('TEST_TALLY'):
+                with open(os.environ['TEST_TALLY'], 'a') as tally:
+                    tally.write('https_bench %d %d\n' % (checks - failures, checks))
+            return int(bool(failures))
+
+        size = payload.stat().st_size
+        megabytes = size / 1e6
+        expected = digest(payload)
+        path = '%s%s/%s' % ('hop/' if opts.redirect else '', opts.framing, payload.name)
+        url = 'https://127.0.0.%d:%d/%s' % (2 if opts.redirect else 1, port, path)
+        rows = [(label, mode) for label in labels for mode in modes_for(label)]
+        if opts.curl and shutil.which('curl'):
+            rows.append(('curl', 'verify'))
+        best = {}
+        with open('/proc/loadavg') as load:
+            print('https_bench: %s %d bytes, %s framing%s, %s, client cpu %d, server cpus %s, %s, load %s' % (
+                payload.name, size, opts.framing, ' behind a 302' if opts.redirect else '',
+                '-O - to /dev/null' if opts.stdout else 'file under ' + str(work),
+                opts.client_cpu, opts.server_cpus, platform.machine(), load.read().split(' ', 3)[:3]), flush=True)
+        for round_at in range(opts.runs):
+            for label, mode in rows:
+                place = work / (label if label != 'curl' else 'pki')
+                if opts.stdout:
+                    out = '/dev/null' if label == 'curl' else '-'
+                else:
+                    out = str(place / 'bench.out')
+                    if os.path.exists(out):
+                        os.unlink(out)
+                code, wall, user_s, sys_s, errors = run(client(label, mode, url, out))
+                if code or (not opts.stdout and digest(out) != expected):
+                    failures += 1
+                    print('  FAIL %s %s: exit %d %s' % (label, mode, code, errors.decode(errors='replace').strip()))
+                    continue
+                row = {'wall': wall, 'user': user_s, 'sys': sys_s}
+                if opts.extract and not opts.stdout and label != 'curl':
+                    root = place / 'extract'
+                    shutil.rmtree(root, ignore_errors=True)
+                    root.mkdir()
+                    code, row['x_wall'], row['x_user'], row['x_sys'], errors = run(
+                        [str(place / 'tar'), '-xf', out, '-C', str(root)])
+                    if code:
+                        failures += 1
+                        print('  FAIL %s tar -xf: exit %d %s' % (label, code, errors.decode(errors='replace').strip()[:400]))
+                    subprocess.run(['chmod', '-R', 'u+rwX', str(root)], stderr=subprocess.DEVNULL)
+                    shutil.rmtree(root, ignore_errors=True)
+                key = (label, mode)
+                if key not in best or wall < best[key]['wall']:
+                    best[key] = row
+        for label, mode in rows:
+            row = best.get((label, mode))
+            if not row:
+                continue
+            text = '%-10s %-7s %7.3f s %7.1f MB/s  user %.3f s sys %.3f s  CPU %.2f ms/MB' % (
+                label, mode, row['wall'], megabytes / row['wall'], row['user'], row['sys'],
+                (row['user'] + row['sys']) * 1000 / megabytes)
+            if 'x_wall' in row:
+                text += '  | tar -xf %.3f s (user %.3f sys %.3f), both %.3f s' % (
+                    row['x_wall'], row['x_user'], row['x_sys'], row['wall'] + row['x_wall'])
+            print(text, flush=True)
+        if opts.perf or opts.syscalls:
+            for label, mode in rows:
+                if label == 'curl':
+                    continue
+                place = work / label
+                out = '-' if opts.stdout else str(place / 'bench.out')
+                command = client(label, mode, url, out)
+                as_user = ['sudo', '-n', '-u', user] if sudo else []
+                if opts.perf:
+                    record = place / 'perf.stat'
+                    events = 'instructions:u,cycles:u' + (',instructions:k,cycles:k' if sudo else '')
+                    run((['sudo', '-n'] if sudo else []) + ['perf', 'stat', '-x,', '-o', str(record), '-e', events,
+                                                            '--'] + as_user + command)
+                    counts = {}
+                    for line in record.read_text().splitlines():
+                        fields = line.split(',')
+                        if len(fields) > 2 and fields[0].strip().isdigit():
+                            counts[fields[2]] = int(fields[0])
+                    print('%-10s %-7s perf: %s' % (label, mode, '  '.join(
+                        '%s %.2f/byte' % (event, value / size) for event, value in counts.items())), flush=True)
+                if opts.syscalls and sudo:
+                    record = place / 'perf.trace'
+                    run(['sudo', '-n', 'perf', 'trace', '-s', '-o', str(record), '--'] + as_user + command)
+                    calls = {}
+                    inside = False
+                    for line in record.read_text().splitlines():
+                        if ' events, ' in line:
+                            inside = line.strip().startswith('wget (')
+                            continue
+                        fields = line.split()
+                        if inside and len(fields) > 2 and fields[1].isdigit():
+                            calls[fields[0]] = calls.get(fields[0], 0) + int(fields[1])
+                    print('%-10s %-7s syscalls: %d total; %s' % (label, mode, sum(calls.values()), ', '.join(
+                        '%s %d' % item for item in sorted(calls.items(), key=lambda item: -item[1])[:8])), flush=True)
+        return int(bool(failures))
+    finally:
+        try:
+            os.killpg(server, signal.SIGTERM)
+        except OSError:
+            pass
+        os.waitpid(server, 0)
+
+
 HARNESS_CHECKS = {
+    "https_bench": harness_https_bench,
     "compression": harness_compression,
     "engines": harness_engines_main,
     "core_state": harness_core_state,

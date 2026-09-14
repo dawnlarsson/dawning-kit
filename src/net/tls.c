@@ -20,6 +20,13 @@
 #include "wait.c"
 
 #define TLS_RECORD_MAX 16640
+/* One receive takes as many whole records as the socket has queued and this
+   room holds: about fifteen full records. At least two whole records must
+   fit, since the unopened tail moves to the front only when a record would
+   not. */
+#ifndef TLS_RECEIVE_ROOM
+#define TLS_RECEIVE_ROOM ((positive)1 << 18)
+#endif
 #define TLS_HS_MAX 16384
 #define TLS_HANDSHAKE_SECONDS 30
 #define TLS_OK 0
@@ -148,14 +155,22 @@ typedef struct
         p8 s_iv[12];
         p64 seq_read;
         p64 seq_write;
-        p8 leftover[TLS_RECORD_MAX];
-        positive leftover_used;
         p8 leaf_qx[48];
         p8 leaf_qy[48];
         p8 leaf_n[512];
         positive leaf_n_length;
         p64 leaf_e;
         p8 leaf_curve;
+        /* Socket bytes. Records not yet opened lie in
+           [receive_start, receive_end); application data is decrypted where
+           it lies, and plain_at and plain_used name the part of the last
+           opened record not yet handed out. Opened plaintext stays until a
+           later receive overwrites it or tls_forget erases the connection. */
+        positive receive_start;
+        positive receive_end;
+        positive plain_at;
+        positive plain_used;
+        p8 receive[TLS_RECEIVE_ROOM];
 } tls_conn;
 
 /* RFC 8446 requires each AEAD key to stay within its usage bound.  This
@@ -237,39 +252,43 @@ static fn tls_nonce(p8 address_to iv, p64 seq, p8 address_to nonce)
         crypto_forget(seq_bytes, sizeof seq_bytes);
 }
 
+/* A record leaves in one send. Sent in pieces, everything after the first
+   piece waits under Nagle for the peer to acknowledge it. */
 static bipolar tls_send_plain(tls_conn address_to tls, p8 type, p8 address_to body,
                               positive length)
 {
-        p8 header[5];
+        p8 record[5 + TLS_HS_MAX];
 
-        header[0] = type;
-        header[1] = 0x03;
-        header[2] = 0x03;
-        header[3] = (p8)(length >> 8);
-        header[4] = (p8)length;
-        if (!network_stream_send_all(tls->handle, header, 5))
+        if (length > TLS_HS_MAX)
                 return TLS_FAIL;
-        return network_stream_send_all(tls->handle, body, length) ? TLS_OK
-                                                                  : TLS_FAIL;
+        record[0] = type;
+        record[1] = 0x03;
+        record[2] = 0x03;
+        record[3] = (p8)(length >> 8);
+        record[4] = (p8)length;
+        memory_copy(record + 5, body, length);
+        return network_stream_send_all(tls->handle, record, 5 + length)
+                   ? TLS_OK : TLS_FAIL;
 }
 
 static bipolar tls_send_enc(tls_conn address_to tls, p8 inner_type,
                             p8 address_to body, positive length)
 {
-        p8 inner[TLS_RECORD_MAX];
-        p8 header[5];
+        p8 record[5 + TLS_RECORD_MAX];
+        p8 address_to header = record;
+        p8 address_to inner = record + 5;
         p8 nonce[12];
         p8 tag[16];
         p8 aad[5];
         positive inner_length = 0;
-        positive record = 0;
+        positive record_length = 0;
         bipolar status = TLS_FAIL;
 
         if (length > TLS_RECORD_MAX - 17 ||
             tls->seq_write >= TLS_AES_GCM_RECORD_LIMIT)
                 goto done;
         inner_length = length + 1;
-        record = inner_length + 16;
+        record_length = inner_length + 16;
 
         memory_copy(inner, body, length);
         inner[length] = inner_type;
@@ -277,8 +296,8 @@ static bipolar tls_send_enc(tls_conn address_to tls, p8 inner_type,
         header[0] = TLS_CT_APP;
         header[1] = 0x03;
         header[2] = 0x03;
-        header[3] = (p8)(record >> 8);
-        header[4] = (p8)record;
+        header[3] = (p8)(record_length >> 8);
+        header[4] = (p8)record_length;
         memory_copy(aad, header, 5);
 
         tls_nonce(tls->c_iv, tls->seq_write, nonce);
@@ -286,17 +305,13 @@ static bipolar tls_send_enc(tls_conn address_to tls, p8 inner_type,
                               tag);
         tls->seq_write++;
 
-        if (!network_stream_send_all(tls->handle, header, 5))
-                goto done;
-        if (!network_stream_send_all(tls->handle, inner, inner_length))
-                goto done;
-        status = network_stream_send_all(tls->handle, tag, 16) ? TLS_OK
-                                                               : TLS_FAIL;
+        memory_copy(inner + inner_length, tag, 16);
+        status = network_stream_send_all(tls->handle, record, 5 + record_length)
+                     ? TLS_OK : TLS_FAIL;
 
 done:
-        if (inner_length)
-                crypto_forget(inner, inner_length);
-        crypto_forget(header, sizeof header);
+        if (record_length)
+                crypto_forget(record, 5 + record_length);
         crypto_forget(nonce, sizeof nonce);
         crypto_forget(tag, sizeof tag);
         crypto_forget(aad, sizeof aad);
@@ -317,7 +332,9 @@ static bipolar tls_decrypt_record(tls_conn address_to tls, p8 address_to payload
             tls->seq_read >= TLS_AES_GCM_RECORD_LIMIT)
                 goto done;
 
-        memory_copy(inner, payload, payload_length - 16);
+        // The record layer opens records where they lie: inner is payload.
+        if (inner != payload)
+                memory_copy(inner, payload, payload_length - 16);
         memory_copy(tag, payload + payload_length - 16, 16);
         tls_nonce(tls->s_iv, tls->seq_read, nonce);
         if (!crypto_aesgcm_decrypt(tls->s_key, nonce, aad, 5, inner,
@@ -362,108 +379,160 @@ static bool tls_record_version_valid(p8 address_to header)
         return header[1] == 0x03 && header[2] == 0x03;
 }
 
-static bipolar tls_read_record(tls_conn address_to tls, p8 address_to type,
-                               p8 address_to body, positive room,
+/* Receive behind receive_end. Opened bytes before receive_start are dropped:
+   for free when nothing unopened remains, and otherwise the unopened tail
+   moves to the front only when the room behind it could not hold a whole
+   record, so a record arriving in pieces is not moved again per piece. The
+   read is tried before any wait, because mid-transfer the socket almost
+   always has bytes queued; only an empty socket polls, under the deadline,
+   and nothing blocks past it. */
+static bool tls_receive(tls_conn address_to tls,
+                        const network_deadline address_to deadline)
+{
+        positive have = tls->receive_end - tls->receive_start;
+        positive room;
+        bipolar got;
+
+        if (!have)
+        {
+                tls->receive_start = 0;
+                tls->receive_end = 0;
+        }
+        else if (sizeof(tls->receive) - tls->receive_end < 5 + TLS_RECORD_MAX)
+        {
+                memory_copy(tls->receive, tls->receive + tls->receive_start,
+                            have);
+                tls->receive_start = 0;
+                tls->receive_end = have;
+        }
+        room = sizeof(tls->receive) - tls->receive_end;
+
+        do
+        {
+                p8 address_to into = tls->receive + tls->receive_end;
+
+                if (!deadline)
+                        got = system_read_retry((positive)tls->handle, into,
+                                                room);
+                else
+                {
+                        got = socket_receive((b32)tls->handle, into, room,
+                                             MSG_DONTWAIT, null, 0);
+                        if (got == NETWORK_TRY_AGAIN)
+                                got = network_stream_read_some_until(
+                                    tls->handle, into, room, deadline);
+                }
+        } while (got == NETWORK_INTERRUPTED);
+
+        if (got <= 0 || (positive)got > room)
+                return false;
+        tls->receive_end += (positive)got;
+        return true;
+}
+
+static bool tls_record_whole(tls_conn address_to tls)
+{
+        positive have = tls->receive_end - tls->receive_start;
+        p8 address_to header = tls->receive + tls->receive_start;
+
+        return have >= 5 &&
+               have - 5 >= (((positive)header[3] << 8) | header[4]);
+}
+
+/* Open the next record, receiving until it is whole. Its bytes stay in the
+   receive buffer: *inner points at the plaintext, decrypted in place, and is
+   valid until the next receive. */
+static bipolar tls_next_record(tls_conn address_to tls, p8 address_to type,
+                               p8 address_to address_to inner,
                                positive address_to length,
                                const network_deadline address_to deadline)
 {
-        p8 header[5];
-        p8 payload[TLS_RECORD_MAX];
+        p8 address_to header;
+        p8 address_to payload;
         positive payload_length = 0;
-        p8 inner[TLS_RECORD_MAX];
         positive inner_length = 0;
         p8 inner_type = 0;
-        bipolar status = TLS_FAIL;
 
-        if (!network_stream_read_all(tls->handle, header, 5, deadline))
-                goto done;
-
-        /* TLS 1.3 authenticates these bytes as AAD for encrypted records and
-           fixes legacy_record_version at TLS 1.2 for every server record. */
-        if (!tls_record_version_valid(header))
+        for (;;)
         {
-                status = TLS_FAIL;
-                goto done;
+                positive have = tls->receive_end - tls->receive_start;
+
+                header = tls->receive + tls->receive_start;
+                if (have >= 5)
+                {
+                        /* TLS 1.3 authenticates these bytes as AAD for
+                           encrypted records and fixes legacy_record_version
+                           at TLS 1.2 for every server record. */
+                        if (!tls_record_version_valid(header))
+                                return TLS_FAIL;
+                        payload_length = ((positive)header[3] << 8) | header[4];
+                        if (!payload_length || payload_length > TLS_RECORD_MAX)
+                                return TLS_FAIL;
+                        if (have - 5 >= payload_length)
+                                break;
+                }
+                if (!tls_receive(tls, deadline))
+                        return TLS_FAIL;
         }
 
-        payload_length = ((positive)header[3] << 8) | header[4];
-        if (!payload_length || payload_length > TLS_RECORD_MAX)
-        {
-                status = TLS_FAIL;
-                goto done;
-        }
-        if (!network_stream_read_all(tls->handle, payload, payload_length,
-                                     deadline))
-        {
-                status = TLS_FAIL;
-                goto done;
-        }
+        payload = header + 5;
+        tls->receive_start += 5 + payload_length;
 
         if (header[0] == TLS_CT_CCS)
         {
                 if (!tls_compatibility_ccs_valid(payload, payload_length,
                                                  tls->application))
-                {
-                        status = TLS_FAIL;
-                        goto done;
-                }
+                        return TLS_FAIL;
                 address_to type = TLS_CT_CCS;
+                address_to inner = payload;
                 address_to length = 0;
-                status = TLS_OK;
-                goto done;
+                return TLS_OK;
         }
 
         if (!tls->encrypted)
         {
-                if (header[0] != TLS_CT_HANDSHAKE || payload_length > room)
-                {
-                        status = TLS_FAIL;
-                        goto done;
-                }
-                memory_copy(body, payload, payload_length);
+                if (header[0] != TLS_CT_HANDSHAKE)
+                        return TLS_FAIL;
                 address_to type = TLS_CT_HANDSHAKE;
+                address_to inner = payload;
                 address_to length = payload_length;
-                status = TLS_OK;
-                goto done;
+                return TLS_OK;
         }
 
-        if (header[0] != TLS_CT_APP)
-        {
-                status = TLS_FAIL;
-                goto done;
-        }
-
-        if (tls_decrypt_record(tls, payload, payload_length, header, inner,
+        if (header[0] != TLS_CT_APP ||
+            tls_decrypt_record(tls, payload, payload_length, header, payload,
                                address_of inner_length, address_of inner_type))
-        {
-                status = TLS_FAIL;
-                goto done;
-        }
+                return TLS_FAIL;
 
         if (inner_type == TLS_CT_ALERT)
-        {
-                status = (inner_length == 2 && inner[1] == 0) ? TLS_EOF
-                                                              : TLS_FAIL;
-                goto done;
-        }
+                return inner_length == 2 && payload[1] == 0 ? TLS_EOF
+                                                            : TLS_FAIL;
 
-        if (inner_length > room)
-        {
-                status = TLS_FAIL;
-                goto done;
-        }
-        memory_copy(body, inner, inner_length);
         address_to type = inner_type;
+        address_to inner = payload;
         address_to length = inner_length;
-        status = TLS_OK;
+        return TLS_OK;
+}
 
-done:
-        crypto_forget(header, sizeof header);
-        if (payload_length <= TLS_RECORD_MAX)
-                crypto_forget(payload, payload_length);
-        if (payload_length >= 16 && payload_length <= TLS_RECORD_MAX)
-                crypto_forget(inner, payload_length - 16);
-        return status;
+/* The handshake's copy of one record. */
+static bipolar tls_read_record(tls_conn address_to tls, p8 address_to type,
+                               p8 address_to body, positive room,
+                               positive address_to length,
+                               const network_deadline address_to deadline)
+{
+        p8 address_to inner = null;
+        positive inner_length = 0;
+        bipolar status = tls_next_record(tls, type, address_of inner,
+                                         address_of inner_length, deadline);
+
+        if (status)
+                return status;
+        if (inner_length > room)
+                return TLS_FAIL;
+        memory_copy(body, inner, inner_length);
+        crypto_forget(inner, inner_length);
+        address_to length = inner_length;
+        return TLS_OK;
 }
 
 static fn tls_transcript_add(tls_conn address_to tls, p8 address_to msg,
@@ -1254,10 +1323,24 @@ static bool tls_spki_is_usertrust(tls_cert address_to cert)
                !memory_compare(cert->qy, tls_usertrust_ecc_y, 48);
 }
 
+/* TLS_BENCH_ANCHOR names a file holding tls_bench_anchor_x and _y, the
+   P-384 root that test/differential.py --harness https_bench generates for a
+   loopback server. Only that harness defines it; build.sh never does, so a
+   shipped binary trusts exactly the three roots above. */
+#ifdef TLS_BENCH_ANCHOR
+#include TLS_BENCH_ANCHOR
+#endif
+
 static bool tls_spki_is_anchor(tls_cert address_to cert)
 {
         return tls_spki_is_x2(cert) || tls_spki_is_x1(cert) ||
-               tls_spki_is_usertrust(cert);
+               tls_spki_is_usertrust(cert)
+#ifdef TLS_BENCH_ANCHOR
+               || (cert->curve == 2 &&
+                   !memory_compare(cert->qx, tls_bench_anchor_x, 48) &&
+                   !memory_compare(cert->qy, tls_bench_anchor_y, 48))
+#endif
+            ;
 }
 
 static bool tls_certificate_names_chain(const tls_cert address_to child,
@@ -2211,7 +2294,9 @@ static bipolar tls_handshake(
         positive group = 0;
 
         crypto_sha256_open(address_of tls->transcript);
-        tls->leftover_used = 0;
+        tls->receive_start = 0;
+        tls->receive_end = 0;
+        tls->plain_used = 0;
         tls->encrypted = false;
         tls->application = false;
 
@@ -2410,38 +2495,50 @@ static bipolar tls_write(tls_conn address_to tls, p8 address_to data,
         return TLS_OK;
 }
 
-static bipolar tls_read_until(
-    tls_conn address_to tls, p8 address_to into, positive room,
-    positive address_to got, const network_deadline address_to deadline)
+/* Up to room bytes of the next application data, lent rather than copied:
+   *span points into the receive buffer and stays valid until the next read
+   on this connection; *got of zero is close_notify. Given a deadline, every
+   wait shares it. Given seconds or nanoseconds instead, a deadline that long
+   starts the first time a wait is needed, so records already whole in the
+   buffer are opened without asking the clock. Neither renews: tickets, empty
+   records and partial records all spend one budget. */
+static bipolar tls_take(tls_conn address_to tls, positive room,
+                        p8 address_to address_to span, positive address_to got,
+                        const network_deadline address_to deadline,
+                        positive seconds, positive nanoseconds)
 {
+        network_deadline patience;
+        bool waiting = !seconds && !nanoseconds;
         p8 type = 0;
-        p8 record[TLS_RECORD_MAX];
+        p8 address_to inner = null;
         positive length = 0;
         p8 post_handshake[TLS_HS_MAX];
         positive post_handshake_used = 0;
         bipolar status;
         bipolar result = TLS_FAIL;
 
-        if (tls->leftover_used)
+        if (tls->plain_used)
         {
-                positive old_used = tls->leftover_used;
-                positive take = tls->leftover_used;
+                positive take = min(room, tls->plain_used);
 
-                if (take > room)
-                        take = room;
-                memory_copy(into, tls->leftover, take);
-                memory_copy(tls->leftover, tls->leftover + take,
-                            tls->leftover_used - take);
-                tls->leftover_used -= take;
-                crypto_forget(tls->leftover + tls->leftover_used,
-                              old_used - tls->leftover_used);
+                address_to span = tls->receive + tls->plain_at;
+                tls->plain_at += take;
+                tls->plain_used -= take;
                 address_to got = take;
                 return TLS_OK;
         }
 
         for (;;)
         {
-                status = tls_read_record(tls, address_of type, record, sizeof(record),
+                if (!waiting && !tls_record_whole(tls))
+                {
+                        if (!network_deadline_begin(address_of patience,
+                                                    seconds, nanoseconds))
+                                goto done;
+                        deadline = address_of patience;
+                        waiting = true;
+                }
+                status = tls_next_record(tls, address_of type, address_of inner,
                                          address_of length, deadline);
                 if (status == TLS_EOF)
                 {
@@ -2451,45 +2548,57 @@ static bipolar tls_read_until(
                         result = TLS_OK;
                         goto done;
                 }
-                if (status)
-                        goto done;
-                if (type == TLS_CT_CCS)
+                if (status || type == TLS_CT_CCS)
                         goto done;
                 if (type == TLS_CT_HANDSHAKE)
                 {
                         if (tls_post_handshake_append(
                                 post_handshake,
                                 address_of post_handshake_used,
-                                record, length))
+                                inner, length))
                                 goto done;
-                        crypto_forget(record, length);
+                        crypto_forget(inner, length);
                         continue;
                 }
-                if (type != TLS_CT_APP)
-                        goto done;
-                if (post_handshake_used)
+                if (type != TLS_CT_APP || post_handshake_used)
                         goto done;
                 if (!length)
                         continue;
-                if (length <= room)
-                {
-                        memory_copy(into, record, length);
-                        address_to got = length;
-                        result = TLS_OK;
-                        goto done;
-                }
-                memory_copy(into, record, room);
-                memory_copy(tls->leftover, record + room, length - room);
-                tls->leftover_used = length - room;
+                if (room > length)
+                        room = length;
+                address_to span = inner;
                 address_to got = room;
+                tls->plain_at = (positive)(inner - tls->receive) + room;
+                tls->plain_used = length - room;
                 result = TLS_OK;
                 goto done;
         }
 
 done:
-        crypto_forget(record, sizeof record);
-        crypto_forget(post_handshake, sizeof post_handshake);
+        if (post_handshake_used)
+                crypto_forget(post_handshake, post_handshake_used);
         return result;
+}
+
+static bipolar tls_borrow(tls_conn address_to tls, positive room,
+                          p8 address_to address_to span,
+                          positive address_to got, positive seconds,
+                          positive nanoseconds)
+{
+        return tls_take(tls, room, span, got, null, seconds, nanoseconds);
+}
+
+static bipolar tls_read_until(
+    tls_conn address_to tls, p8 address_to into, positive room,
+    positive address_to got, const network_deadline address_to deadline)
+{
+        p8 address_to span = null;
+        bipolar status = tls_take(tls, room, address_of span, got, deadline,
+                                  0, 0);
+
+        if (!status && address_to got)
+                memory_copy(into, span, address_to got);
+        return status;
 }
 
 static bipolar tls_read(tls_conn address_to tls, p8 address_to into,

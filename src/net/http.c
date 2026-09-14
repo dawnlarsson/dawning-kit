@@ -816,8 +816,45 @@ static bipolar http_body_read(http_body address_to body, p8 address_to into,
         return HTTP_OK;
 }
 
-/* One transfer loop for exact lengths, EOF bodies and in-place decoding.
-   Stashed payload is already contiguous; only fresh socket data needs bounce. */
+/* Payload for a copy, lent wherever a buffer already holds it: the header
+   stash first, then plaintext the TLS record layer decrypted in place. Only a
+   plaintext socket read lands in the scratch, which callers size at
+   HTTP_HEAD_MAX. */
+static bipolar http_body_borrow(http_body address_to body, positive room,
+                                p8 address_to address_to data,
+                                positive address_to got)
+{
+        if (body->stash_used)
+        {
+                positive take = min(room, body->stash_used);
+
+                address_to data = body->stash;
+                body->stash += take;
+                body->stash_used -= take;
+                address_to got = take;
+                return HTTP_OK;
+        }
+
+        if (body->link && body->link->tls)
+        {
+                positive seconds = body->read_seconds;
+                positive nanoseconds = body->read_nanoseconds;
+
+                if (!seconds && !nanoseconds)
+                        seconds = HTTP_IDLE_SECONDS;
+                return tls_borrow(address_of body->link->session, room, data,
+                                  got, seconds, nanoseconds)
+                           ? HTTP_NO_REPLY : HTTP_OK;
+        }
+
+        address_to data = body->scratch;
+        return http_body_read(body, body->scratch,
+                              min(room, (positive)HTTP_HEAD_MAX), got);
+}
+
+/* One transfer loop for exact lengths, EOF bodies and in-place decoding: a
+   TLS record goes to the file in one write, straight from where it was
+   decrypted. */
 static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
                           bool exact)
 {
@@ -825,18 +862,11 @@ static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
                 return HTTP_NO_REPLY;
         while (want)
         {
-                p8 address_to data = body->scratch;
-                positive take = min(want, (positive)8192);
+                p8 address_to data = null;
                 positive got = 0;
 
-                if (body->stash_used)
-                {
-                        data = body->stash;
-                        got = min(take, body->stash_used);
-                        body->stash += got;
-                        body->stash_used -= got;
-                }
-                else if (http_body_read(body, data, take, address_of got))
+                if (http_body_borrow(body, want, address_of data,
+                                     address_of got))
                         return HTTP_NO_REPLY;
                 if (!got)
                         return exact ? HTTP_MALFORMED : HTTP_OK;
