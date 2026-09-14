@@ -42170,7 +42170,8 @@ static fn crypto_floor_aes(void)
         so wget dumped core on both hosts while an ECDSA chain worked. The
         Root YR certificate below is the served DER byte for byte, checked
         against the X1 anchor the way tls_verify_chain checks a last
-        certificate; the PSS vector is a fixed RSA-2048 signature over a
+        certificate, by the anchor its issuer Name finds; the PSS vector is
+        a fixed RSA-2048 signature over a
         short message, made once with openssl and salt length 32.
 */
 static positive crypto_hex_into(p8 address_to out, positive room,
@@ -42273,32 +42274,26 @@ static fn crypto_rsa_served_sizes(void)
         static p8 signature[256];
         static p8 message[] = "Moonwater bowl setup alpine";
         tls_cert child;
-        tls_cert anchor;
         positive length =
             crypto_hex_into(root_yr, sizeof root_yr, root_yr_hex);
 
         memory_fill(address_of child, 0, sizeof child);
-        memory_fill(address_of anchor, 0, sizeof anchor);
         check("the served Root YR certificate parses",
               length == sizeof root_yr &&
                   !tls_parse_cert(root_yr, length, address_of child, null) &&
                   child.sig_length == 512);
-        anchor.curve = 3;
-        memory_copy(anchor.modulus, tls_isrg_x1_n, 512);
-        anchor.modulus_length = 512;
-        anchor.exponent = TLS_ISRG_X1_EXPONENT;
         check("ISRG Root X1's 4096-bit PKCS#1 signature over Root YR verifies",
               child.sig_length == 512 &&
-                  tls_verify_one(address_of child, address_of anchor));
+                  tls_anchor_verifies(address_of child));
         if (child.sig_length == 512)
         {
                 child.sig[child.sig_length - 1] ^= 1;
                 check("the 4096-bit verify refuses one flipped signature bit",
-                      !tls_verify_one(address_of child, address_of anchor));
+                      !tls_anchor_verifies(address_of child));
                 child.sig[child.sig_length - 1] ^= 1;
                 child.tbs[child.tbs_length - 1] ^= 1;
                 check("the 4096-bit verify refuses one flipped TBS bit",
-                      !tls_verify_one(address_of child, address_of anchor));
+                      !tls_anchor_verifies(address_of child));
                 child.tbs[child.tbs_length - 1] ^= 1;
         }
 
@@ -42316,6 +42311,262 @@ static fn crypto_rsa_served_sizes(void)
                                      sizeof signature, message,
                                      sizeof message - 1));
         message[0] ^= 1;
+}
+
+/*
+        The anchor table against chains that failed before it existed.
+
+        www.kernel.org serves its leaf and GlobalSign Atlas R3 DV TLS CA 2025
+        Q3 but not that intermediate's issuer, GlobalSign Root CA - R3: the
+        last certificate has to find the anchor by Name. www.google.com
+        serves WR2 and a GTS Root R1 cross-signed by GlobalSign Root CA; GTS
+        Root R1's key is an anchor, so the chain ends there. www.sectigo.com's
+        OV R36 is signed with sha384WithRSAEncryption by the RSA-4096 Root
+        R46. Each certificate is the served DER byte for byte.
+*/
+static fn tls_trust_anchor_chains(void)
+{
+        static const char atlas_hex[] =
+            "3082049030820378a00302010202110083431c440db4d0f7867afe7c3a53cc2d"
+            "300d06092a864886f70d01010b0500304c3120301e060355040b1317476c6f62"
+            "616c5369676e20526f6f74204341202d20523331133011060355040a130a476c"
+            "6f62616c5369676e311330110603550403130a476c6f62616c5369676e301e17"
+            "0d3235303431363033313430365a170d3237303431363030303030305a305831"
+            "0b300906035504061302424531193017060355040a1310476c6f62616c536967"
+            "6e206e762d7361312e302c06035504031325476c6f62616c5369676e2041746c"
+            "617320523320445620544c53204341203230323520513330820122300d06092a"
+            "864886f70d01010105000382010f003082010a0282010100997e0d518e24000f"
+            "caf055dd63733b243d300e439194378bb6f3f24442e28d25b1cb169bc9d0368d"
+            "f7c2dee8d8870a706f4ba15dfd4cf037252a5cffe3d2985e5db524f7667c21e2"
+            "cadb8f0ebe5dbec0112443c8aff6fa26fefb61eeb1e9d5634a1fb32a16e11597"
+            "5068280390e32d272dd9ba1f251024d894cb6c5ceb3907017056d395843a5436"
+            "5dff9f64c941266b6499cfae80f5808e88635275da6ae1646b65da692042461a"
+            "b939e56906c507dbb8120d8746b16c6da5ce6bb5f046f6d55238f2958954a192"
+            "306004da770c78d7881029c8123ee06531e8c0a0a678531df75cf44719c1d6f3"
+            "73e6e9fbcc135542aa798b341b9f3a77a229c729c5e164930203010001a38201"
+            "5f3082015b300e0603551d0f0101ff040403020186301d0603551d2504163014"
+            "06082b0601050507030106082b0601050507030230120603551d130101ff0408"
+            "30060101ff020100301d0603551d0e04160414d3bce75782e6c06396b8bd4e6b"
+            "00b65fa3effedf301f0603551d230418301680148ff04b7fa82e4524ae4d50fa"
+            "639a8bdee2dd1bbc307b06082b06010505070101046f306d302e06082b060105"
+            "050730018622687474703a2f2f6f637370322e676c6f62616c7369676e2e636f"
+            "6d2f726f6f747233303b06082b06010505073002862f687474703a2f2f736563"
+            "7572652e676c6f62616c7369676e2e636f6d2f6361636572742f726f6f742d72"
+            "332e63727430360603551d1f042f302d302ba029a0278625687474703a2f2f63"
+            "726c2e676c6f62616c7369676e2e636f6d2f726f6f742d72332e63726c302106"
+            "03551d20041a30183008060667810c010201300c060a2b06010401a0320a0103"
+            "300d06092a864886f70d01010b05000382010100a15e6dde11b22d7cc3b79860"
+            "dd69ff72ef76a2240110ffbe58016bb0d1a67d8b0b794e5fd8460463b1461b8b"
+            "109a07a7642b9080aa6e62a2b996e2e311607526b5a9cdefa564ed25ac7aa18e"
+            "a7fbdc8ff6a7effe591e07f476f0e6f9248781607319e5bec8dbe60cbe082eb4"
+            "5beef71e9604720163353197ec05647d9ec73a7ac47962cfe9d760b44ef6c66d"
+            "662fe1c3f87032c6090a39191c9b942f717a979bdf5097efccd29f69bfdb0ec2"
+            "caecea61c44a689e0a101e15ba66838ffe1df5218e537cca80042c3809a86546"
+            "dc7c9d7ab11c5c4a723e18af9990771366292108b0e85ecb69262f680a46080c"
+            "08d74cc02b8a2b39eca6ac3cd07ceebb7f5ae805";
+        static const char wr2_hex[] =
+            "3082050b308202f3a00302010202107ff005a07c4cded100ad9d66a5107b9830"
+            "0d06092a864886f70d01010b05003047310b3009060355040613025553312230"
+            "20060355040a1319476f6f676c65205472757374205365727669636573204c4c"
+            "43311430120603550403130b47545320526f6f74205231301e170d3233313231"
+            "333039303030305a170d3239303232303134303030305a303b310b3009060355"
+            "040613025553311e301c060355040a1315476f6f676c65205472757374205365"
+            "727669636573310c300a0603550403130357523230820122300d06092a864886"
+            "f70d01010105000382010f003082010a0282010100a9ff9c7f451e70a8539fca"
+            "d9e50dde4657577dbc8f9a5aac46f1849abb91dbc9fb2f01fb920900165ea01c"
+            "f8c1abf9782f4accd885a2d8593c0ed318fbb1f5240d26eeb65b64767c14c72f"
+            "7acea84cb7f4d908fcdf87233520a8e269e28c4e3fb159fa60a21eb3c9205319"
+            "82ca36536d604de90091fc768d5c080f0ac2dcf1736bc5136e0a4f7ac2f2021c"
+            "2eb46383da31f62d7530b2fbabc26edba9c00eb9f967d4c3255774eb05b4e98e"
+            "b5de28cdcc7a14e47103cb4d612e6157c519a90b98841ae87929d9b28d2fff57"
+            "6a66e0ceab95a82996637012671e3ae1dbb02171d77c9efdaa176efe2bfb3817"
+            "14d166a7af9ab570ccc863813a8cc02aa97637cee30203010001a381fe3081fb"
+            "300e0603551d0f0101ff040403020186301d0603551d250416301406082b0601"
+            "050507030106082b0601050507030230120603551d130101ff040830060101ff"
+            "020100301d0603551d0e04160414de1b1eed7915d43e3724c321bbec34396d42"
+            "b230301f0603551d23041830168014e4af2b26711a2b4827852f52662ceff089"
+            "13713e303406082b0601050507010104283026302406082b0601050507300286"
+            "18687474703a2f2f692e706b692e676f6f672f72312e637274302b0603551d1f"
+            "042430223020a01ea01c861a687474703a2f2f632e706b692e676f6f672f722f"
+            "72312e63726c30130603551d20040c300a3008060667810c010201300d06092a"
+            "864886f70d01010b0500038202010045758be51f3b4413961aab58f135c96f3d"
+            "d2d0334a8633ba57514feec434da16124cbf139f0dd454e94879c0303c9425f2"
+            "1af4ba3294b633720b85ee0911253494e16f42db829b7b7f2a9aa9ff7fa9d2de"
+            "4a20cbb3fb0303b8f80705da59922f184698ceaf72be2426b11e004dbd08ad93"
+            "41440abbc7d50185bf9357e3df7412530e1125d39bdcdecb276eb3c2b9336239"
+            "c2e035e15ba7092e19cb912a765cf1dfca238440a56fff9a41e0b5ef32d185ae"
+            "af2509f062c56ec2c86e32fdb8dae2ce4a914af385554eb175d648332f6f84d9"
+            "125c9fd4719863258d695c0a6b7df241bde8bb8fe422d79d6545e84c0a87dae9"
+            "6066880e1fc7e14e56c576ffb47a5769f202220926411dda74a2e529f3c49ae5"
+            "5dd6aa7afde1b72b6638fbe82966baefa0132ff8737ef0da40111c5ddd8fa6fc"
+            "bedbbe56f8329c1f41416d7eb6c5ebc68b36b7178c9dcf197a349f2193c47e74"
+            "35d2aafd4c6d14f5c9b0795b493cf3bf1748e8ef9a26130c87f273d69cc5526b"
+            "63f7329078a96beb5ed693a1bfbc183d8b59f68ac6055e5218e266e0dac1dcad"
+            "5a25aaf445fcf10b78a4afb0f273a430a834c1537f4296e54841eb90460c06dc"
+            "cb92c65ef3444443462946a0a6fcb98e392739b15ae2b1adfc13ff8efc26e1d4"
+            "fe84f1505a8e976b2d2a79fb4064eaf33dbd5be1a004b097481c42f5ea5a1ccd"
+            "26c851ff14996789725f1decad5add";
+        static const char gts_r1_hex[] =
+            "308205623082044aa003020102021077bd0d6cdb36f91aea210fc4f058d30d30"
+            "0d06092a864886f70d01010b05003057310b3009060355040613024245311930"
+            "17060355040a1310476c6f62616c5369676e206e762d73613110300e06035504"
+            "0b1307526f6f74204341311b301906035504031312476c6f62616c5369676e20"
+            "526f6f74204341301e170d3230303631393030303034325a170d323830313238"
+            "3030303034325a3047310b300906035504061302555331223020060355040a13"
+            "19476f6f676c65205472757374205365727669636573204c4c43311430120603"
+            "550403130b47545320526f6f7420523130820222300d06092a864886f70d0101"
+            "0105000382020f003082020a0282020100b611028b1ee3a1779b3bdcbf943eb7"
+            "95a7403ca1fd82f97d32068271f6f68c7ffbe8dbbc6a2e9797a38c4bf92bf6b1"
+            "f9ce841db1f9c597deefb9f2a3e9bc12895ea7aa52abf82327cba4b19c63dbd7"
+            "997ef00a5eeb68a6f4c65a470d4d1033e34eb113a3c8186c4becfc0990df9d64"
+            "29252307a1b4d23d2e60e0cfd20987bbcd48f04dc2c27a888abbbacf5919d6af"
+            "8fb007b09e31f182c1c0df2ea66d6c190eb5d87e261a45033db079a49428ad0f"
+            "7f26e5a808fe96e83c689453ee833a882b159609b2e07a8c2e75d69ceba75664"
+            "8f964f68ae3d97c2848fc0bc40c00b5cbdf687b3356cac18507f84e04ccd92d3"
+            "20e933bc5299af32b529b3252ab448f972e1ca64f7e682108de89dc28a88fa38"
+            "668afc63f901f978fd7b5c77fa7687faecdfb10e799557b4bd26efd601d1eb16"
+            "0abb8e0bb5c5c58a55abd3acea914b29cc19a432254e2af16544d002ceaace49"
+            "b4ea9f7c83b0407be743aba76ca38f7d8981fa4ca5ffd58ec3ce4be0b5d8b38e"
+            "45cf76c0ed402bfd530fb0a7d53b0db18aa203de31adcc77ea6f7b3ed6df9122"
+            "12e6befad832fc1063145172de5dd61693bd296833ef3a66ec078a26df13d757"
+            "657827de5e491400a2007f9aa821b6a9b195b0a5b90d1611dac76c483c40e07e"
+            "0d5acd563cd19705b9cb4bed394b9cc43fd255136e24b0d671faf4c1bacced1b"
+            "f5fe8141d800983d3ac8ae7a98371805950203010001a382013830820134300e"
+            "0603551d0f0101ff040403020186300f0603551d130101ff040530030101ff30"
+            "1d0603551d0e04160414e4af2b26711a2b4827852f52662ceff08913713e301f"
+            "0603551d23041830168014607b661a450d97ca89502f7d04cd34a8fffcfd4b30"
+            "6006082b0601050507010104543052302506082b060105050730018619687474"
+            "703a2f2f6f6373702e706b692e676f6f672f67737231302906082b0601050507"
+            "3002861d687474703a2f2f706b692e676f6f672f677372312f677372312e6372"
+            "7430320603551d1f042b30293027a025a0238621687474703a2f2f63726c2e70"
+            "6b692e676f6f672f677372312f677372312e63726c303b0603551d2004343032"
+            "3008060667810c0102013008060667810c010202300d060b2b06010401d67902"
+            "050302300d060b2b06010401d67902050303300d06092a864886f70d01010b05"
+            "00038201010034a41eb128a3d0b47617a6317a21e9d1523ec8db74164188b83d"
+            "351dede4ff93e15c5fabbbea7ccfdbe40dd18b57f2266f5bbe17466894376f6b"
+            "7ac8c01837fa2551acec68bfb2c849fd5a9aca0123ac84802b028c9997eb496a"
+            "8c75d7c7deb2c9979f5848570e35a1e41ad6fd6f83816fef8ccf97afc0852af0"
+            "f54e6909912de168b8c12b73e9d4d9fc22c0371f0b661d49ed02558f67e132d7"
+            "d326bf70e33df4676d3d7ce53488e332faa76e066a6fbd8b91ee164be83ba9b3"
+            "37e7c344a47ed86cd7c746f5929be7d521be66921994556cd429b20dc1665be2"
+            "77494828ed9dd71a337253b38235cf628bc9248ba5b7390cbb7e2a41bf52cffc"
+            "a296b6c2823f";
+        static const char r36_hex[] =
+            "3082064c30820434a00302010202102c1a3c76e943ddddff191b31890aed7130"
+            "0d06092a864886f70d01010c0500305f310b3009060355040613024742311830"
+            "16060355040a130f5365637469676f204c696d69746564313630340603550403"
+            "132d5365637469676f205075626c6963205365727665722041757468656e7469"
+            "636174696f6e20526f6f7420523436301e170d3231303332323030303030305a"
+            "170d3336303332313233353935395a3060310b30090603550406130247423118"
+            "3016060355040a130f5365637469676f204c696d697465643137303506035504"
+            "03132e5365637469676f205075626c6963205365727665722041757468656e74"
+            "69636174696f6e204341204f5620523336308201a2300d06092a864886f70d01"
+            "010105000382018f003082018a0282018100a6432d277474ea3a347dc788d0ce"
+            "7607b2be4f231e19cbf6050e4055cde3958b7be93bc722efe735edb65bf4495d"
+            "7f6b5940ffd8613a185e71d15e1bb18ecadc8789f04efe2b31bf4c66e8c927c3"
+            "bbe179da3a9005b63ada87e162331e8806cb234dbe16ac0778cf2e22b52d717f"
+            "1bd910b1177e7c4c1d0d1d571c01765c1588199dd642797c63b9c6bba49276d0"
+            "b2d49d7b605dc8c0135bd8e16bdb45e5b45ba9a4799c8d19d9a94dc16ce58fac"
+            "cb2e8bb44e59a1c8e2f49f4d94d9d17a8c76456572117a40d42859e20a8df99a"
+            "554884341c1a2b5456c12b285d67211781980d48db41470c6ac08cc978f26161"
+            "de195213b5be4fbfb8fde7c03934a7de6afe3ee76973424af1129eb1cfca9681"
+            "5912b4eba9ca7cf44f8bd9bd9083a131d61f4bc8221514dc7602f6e18722963e"
+            "de7002bd4eb87455b8f0a2e278587fb16ede3bbbaf191420ff69ce792340cd1e"
+            "40a968faee8fa7bd466afb2b8eb06430185ee100a81eed186fe377a24003e1f6"
+            "3b8e0257df0d46c536d777f5912708667b4d0203010001a38201813082017d30"
+            "1f0603551d230418301680145673586495f9921ab0122a046279a14015882149"
+            "301d0603551d0e04160414e36674bb70688d2c5d4e0ea64a8f9b37229c829230"
+            "0e0603551d0f0101ff04040302018630120603551d130101ff040830060101ff"
+            "020100301d0603551d250416301406082b0601050507030106082b0601050507"
+            "0302301b0603551d200414301230060604551d20003008060667810c01020230"
+            "540603551d1f044d304b3049a047a0458643687474703a2f2f63726c2e736563"
+            "7469676f2e636f6d2f5365637469676f5075626c696353657276657241757468"
+            "656e7469636174696f6e526f6f745234362e63726c30818406082b0601050507"
+            "010104783076304f06082b060105050730028643687474703a2f2f6372742e73"
+            "65637469676f2e636f6d2f5365637469676f5075626c69635365727665724175"
+            "7468656e7469636174696f6e526f6f745234362e703763302306082b06010505"
+            "0730018617687474703a2f2f6f6373702e7365637469676f2e636f6d300d0609"
+            "2a864886f70d01010c050003820201000595d60c7582ddcb9b6ff7b52359338b"
+            "c94f1622bf654a07d3db9f9953ab73939b607fd72a45947b148fa919302852ab"
+            "eebf0eb86fa9ed5341f2b89f5faba8a6a28082cbd9b59b2aee2005c34e13a3ab"
+            "cd731781b7512eb21ddc4386fc9db4113102c2860100ab086e5e9f4fe3c4f840"
+            "405292c61abfbf9a1633724ac2d894fccda9533744dc2f05dbe9eaf803b46c1c"
+            "c65290655bae35521aa18ca5b3cb308710de4872a945dc516ae4cb67ea65fb01"
+            "afcb4a67acb109192cfd98e1267dba1d7bf5e8a51d8d1aa68727a6c88f2c4fbb"
+            "a52dc90188dba127ed4004a33002ac7cf4e8dc768d3018f44e8d781e97ba86c4"
+            "c0b2b4db96519af825714446d41ad5db8b461c74e0c427bc337a069695123132"
+            "90d9d92096365562dfa029d16d5842d932e45d8be5f75ecad1f0b173f9a2d488"
+            "345f42a866c374718c8c952afbeef543d86359ecbf162616751278cfb6ab5cff"
+            "88f52bcbec4363d302ebe22195e293d3de1529d155a7b2d71f8dbec2f53ed7b9"
+            "51a2543698ad8dfe704b541c1a22189b417c385582b007ce8173a792ea2aac73"
+            "de0a1200ff53856c8e681f84af97a7834cf956334d36b741e577a7cc4e334730"
+            "ab5a7ca19140f8e05ccf71585a90c87b98f43562a5c3d857b13c8f63f1de6545"
+            "79f5a92c9123924529837def302433d7e7cb81f7fee5b9dd06df1d29c5001c7d"
+            "f3f46b229abcdc034f0e147c9df8704c";
+        static p8 atlas[1172];
+        static p8 wr2[1295];
+        static p8 gts_r1[1382];
+        static p8 r36[1616];
+        tls_cert atlas_cert;
+        tls_cert wr2_cert;
+        tls_cert gts_cert;
+        tls_cert r36_cert;
+        positive bad_anchors = 0;
+        bool parsed;
+
+        memory_fill(address_of atlas_cert, 0, sizeof atlas_cert);
+        memory_fill(address_of wr2_cert, 0, sizeof wr2_cert);
+        memory_fill(address_of gts_cert, 0, sizeof gts_cert);
+        memory_fill(address_of r36_cert, 0, sizeof r36_cert);
+        parsed =
+            crypto_hex_into(atlas, sizeof atlas, atlas_hex) == sizeof atlas &&
+            crypto_hex_into(wr2, sizeof wr2, wr2_hex) == sizeof wr2 &&
+            crypto_hex_into(gts_r1, sizeof gts_r1, gts_r1_hex) ==
+                sizeof gts_r1 &&
+            crypto_hex_into(r36, sizeof r36, r36_hex) == sizeof r36 &&
+            !tls_parse_cert(atlas, sizeof atlas, address_of atlas_cert, null) &&
+            !tls_parse_cert(wr2, sizeof wr2, address_of wr2_cert, null) &&
+            !tls_parse_cert(gts_r1, sizeof gts_r1, address_of gts_cert, null) &&
+            !tls_parse_cert(r36, sizeof r36, address_of r36_cert, null);
+        check("the captured kernel.org, Google and Sectigo certificates parse",
+              parsed);
+        if (!parsed)
+                return;
+
+        check("kernel.org's Atlas intermediate finds GlobalSign Root CA - R3 by Name",
+              tls_anchor_verifies(address_of atlas_cert));
+        check("a served GTS Root R1 cross-certificate carries an anchor key",
+              tls_spki_is_anchor(address_of gts_cert) &&
+                  !tls_spki_is_anchor(address_of wr2_cert));
+        check("WR2 chains to the served GTS Root R1",
+              tls_certificate_names_chain(address_of wr2_cert,
+                                          address_of gts_cert) &&
+                  tls_verify_one(address_of wr2_cert, address_of gts_cert));
+        check("Sectigo OV R36 verifies under Root R46 with sha384WithRSAEncryption",
+              tls_anchor_verifies(address_of r36_cert));
+        r36_cert.sig[r36_cert.sig_length - 1] ^= 1;
+        check("the SHA-384 PKCS#1 verify refuses one flipped signature bit",
+              !tls_anchor_verifies(address_of r36_cert));
+        r36_cert.sig[r36_cert.sig_length - 1] ^= 1;
+        atlas_cert.issuer[atlas_cert.issuer_length - 1] ^= 1;
+        check("an issuer Name no anchor carries fails closed",
+              !tls_anchor_verifies(address_of atlas_cert));
+        atlas_cert.issuer[atlas_cert.issuer_length - 1] ^= 1;
+
+        for (positive i = 0; i < array_count(tls_anchors); i++)
+        {
+                tls_cert root;
+
+                if (!tls_anchor_key(tls_anchors + i, address_of root) ||
+                    !tls_spki_is_anchor(address_of root) ||
+                    (root.curve == 3 &&
+                     (root.modulus_length < 256 ||
+                      !(root.modulus[root.modulus_length - 1] & 1) ||
+                      root.exponent < 3 || !(root.exponent & 1))))
+                        bad_anchors++;
+        }
+        check("every anchor decodes to its length and finds itself by key",
+              bad_anchors == 0 && array_count(tls_anchors) == 120);
 }
 
 static fn redirect_urls(void)
@@ -43478,6 +43729,7 @@ b32 main(void)
         crypto_floor_ghash();
         crypto_floor_aes();
         crypto_rsa_served_sizes();
+        tls_trust_anchor_chains();
         redirect_urls();
         fetching_for_real();
         leasing();

@@ -2455,13 +2455,15 @@ static bool crypto_rsa_prepare(p8 address_to n_bytes, positive n_length,
         return crypto_fe_cmp(base, mod, address_to limbs) < 0;
 }
 
-static bool crypto_rsa_pkcs1_sha256(p8 address_to n_bytes, positive n_length,
-                                    p64 exponent, p8 address_to sig,
-                                    positive sig_length, p8 address_to hash)
+/* EMSA-PKCS1-v1_5: 00 01 FF..FF 00 DigestInfo hash, at least eight FF
+   bytes, the DigestInfo naming the hash exactly. */
+static bool crypto_rsa_pkcs1(p8 address_to n_bytes, positive n_length,
+                             p64 exponent, p8 address_to sig,
+                             positive sig_length,
+                             const p8 address_to digestinfo,
+                             positive digestinfo_length, p8 address_to hash,
+                             positive hash_length)
 {
-        static const p8 digestinfo[19] = {
-            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
-            0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
         p64 mod[CRYPTO_RSA_LIMBS];
         p64 base[CRYPTO_RSA_LIMBS];
         p64 out[CRYPTO_RSA_LIMBS];
@@ -2492,11 +2494,36 @@ static bool crypto_rsa_pkcs1_sha256(p8 address_to n_bytes, positive n_length,
         if (i < 10 || i >= k || em[i] != 0x00)
                 return false;
         i++;
-        if (i + 19 + 32 != k)
+        if (i + digestinfo_length + hash_length != k)
                 return false;
-        if (memory_compare(em + i, digestinfo, 19))
+        if (memory_compare(em + i, digestinfo, digestinfo_length))
                 return false;
-        return memory_compare(em + i + 19, hash, 32) == 0;
+        return memory_compare(em + i + digestinfo_length, hash, hash_length) ==
+               0;
+}
+
+static bool crypto_rsa_pkcs1_sha256(p8 address_to n_bytes, positive n_length,
+                                    p64 exponent, p8 address_to sig,
+                                    positive sig_length, p8 address_to hash)
+{
+        static const p8 digestinfo[19] = {
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+            0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
+
+        return crypto_rsa_pkcs1(n_bytes, n_length, exponent, sig, sig_length,
+                                digestinfo, sizeof digestinfo, hash, 32);
+}
+
+static bool crypto_rsa_pkcs1_sha384(p8 address_to n_bytes, positive n_length,
+                                    p64 exponent, p8 address_to sig,
+                                    positive sig_length, p8 address_to hash)
+{
+        static const p8 digestinfo[19] = {
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+            0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30};
+
+        return crypto_rsa_pkcs1(n_bytes, n_length, exponent, sig, sig_length,
+                                digestinfo, sizeof digestinfo, hash, 48);
 }
 
 static fn crypto_mgf1_sha256(p8 address_to seed, positive seed_length,
