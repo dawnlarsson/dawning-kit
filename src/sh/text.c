@@ -5237,6 +5237,102 @@ static positive text_window_start(p8 address_to data, positive used,
 #define TEXT_WINDOW_FIRST (1 << 22)
 #define TEXT_WINDOW_READ (1 << 20)
 
+// Up to want bytes of the input into a caller's span: what the reader still
+// holds first, then straight from the descriptor. Nought at the end, and at a
+// failed read, which is reported the way the reader reports it.
+static positive text_read_into(p8 address_to into, positive want)
+{
+        positive held = text_input.filled - text_input.position;
+
+        if (held)
+        {
+                positive got = min(held, want);
+
+                memory_copy_apart(into, text_input.buffer + text_input.position, got);
+                text_input.position += got;
+                return got;
+        }
+
+        if (text_input.finished)
+                return 0;
+
+        bipolar read = system_read_retry(text_input.handle, into, want);
+
+        if (read > 0)
+                return (positive)read;
+
+        text_input.finished = true;
+
+        if (read < 0)
+        {
+                string_diagnostic(&text_diagnostic, 0, text_input.name, "Read error");
+                text_input.failed = true;
+                text_status = 1;
+        }
+
+        return 0;
+}
+
+/*
+        tail -c N from a pipe, once N is large enough that sliding a window
+        would move megabytes at every step: a ring the size of the answer,
+        read into directly, so nothing is ever moved and nothing past the
+        answer is ever touched. Until the input has filled it the ring is a
+        plain prefix. Measured against GNU's chain of buffers: 100 MiB from a
+        1 GiB pipe took 0.13 s through the window and GNU 0.11 s.
+*/
+static bool text_tail_ring(positive count)
+{
+        byte_store ring = {0};
+        positive at = 0;
+        bool wrapped = false;
+
+        for (;;)
+        {
+                positive want = wrapped ? count - at
+                                        : min(count - ring.used, (positive)TEXT_WINDOW_READ);
+
+                want = min(want, (positive)TEXT_WINDOW_READ);
+
+                if (!wrapped && !byte_store_reserve(address_of ring, ring.used + want,
+                                                    TEXT_WINDOW_FIRST))
+                {
+                        string_diagnostic(&text_diagnostic, 0, null, "memory exhausted");
+                        text_status = 1;
+                        byte_store_release(address_of ring);
+                        return false;
+                }
+
+                positive got = text_read_into(wrapped ? ring.bytes + at
+                                                      : ring.bytes + ring.used,
+                                              want);
+
+                if (!got)
+                        break;
+
+                if (wrapped)
+                {
+                        at += got;
+
+                        if (at == count)
+                                at = 0;
+                }
+                else if ((ring.used += got) == count)
+                        wrapped = true;
+        }
+
+        if (wrapped)
+        {
+                text_put(ring.bytes + at, count - at);
+                text_put(ring.bytes, at);
+        }
+        else
+                text_put(ring.bytes, ring.used);
+
+        byte_store_release(address_of ring);
+        return true;
+}
+
 static bool text_window(positive count, bool by_bytes, bool front)
 {
         byte_store window = {0};
@@ -5256,46 +5352,12 @@ static bool text_window(positive count, bool by_bytes, bool front)
                         break;
                 }
 
-                // What the reader already holds goes first; after that the
-                // input is read straight into the window, not through it.
-                positive held = text_input.filled - text_input.position;
-                positive got;
+                // Read straight into the window, not through the reader.
+                positive got = text_read_into(window.bytes + window.used,
+                                              TEXT_WINDOW_READ);
 
-                if (held)
-                {
-                        got = min(held, (positive)TEXT_WINDOW_READ);
-                        memory_copy_apart(window.bytes + window.used,
-                                          text_input.buffer + text_input.position,
-                                          got);
-                        text_input.position += got;
-                }
-                else
-                {
-                        bipolar read = text_input.finished
-                                           ? 0
-                                           : system_read_retry(
-                                                 text_input.handle,
-                                                 window.bytes + window.used,
-                                                 TEXT_WINDOW_READ);
-
-                        if (read <= 0)
-                        {
-                                text_input.finished = true;
-
-                                if (read < 0)
-                                {
-                                        string_diagnostic(&text_diagnostic, 0,
-                                                          text_input.name,
-                                                          "Read error");
-                                        text_input.failed = true;
-                                        text_status = 1;
-                                }
-
-                                break;
-                        }
-
-                        got = (positive)read;
-                }
+                if (!got)
+                        break;
 
                 window.used += got;
 
@@ -5699,7 +5761,9 @@ static inline INLINE b32 text_head_tail(bool tail)
                         text_stream_skip(count ? count - 1 : 0, by_bytes);
                         text_put_rest();
                 }
-                else if (!text_window(count, by_bytes, false))
+                else if (by_bytes && count >= TEXT_WINDOW_FIRST
+                             ? !text_tail_ring(count)
+                             : !text_window(count, by_bytes, false))
                         return text_done(1);
 
                 text_close();
@@ -13580,15 +13644,7 @@ static b32 text_tr()
                         }
                 }
                 else if (remove && !squeeze)
-                {
-                        for (positive c = 0; c < left; c++)
-                        {
-                                p8 character = at[c];
-
-                                if (!in_first[character])
-                                        at[kept++] = character;
-                        }
-                }
+                        kept = memory_delete_bytes(at, left, in_first);
                 else
                 {
                         for (positive c = 0; c < left; c++)

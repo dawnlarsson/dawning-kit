@@ -11817,6 +11817,101 @@ fn check_cells_from_ascii()
         memory_free(rows, 3 * 4096);
 }
 
+/*
+        Every size across the four-lane and 64-byte boundaries, every residue
+        against a protected page on either side, tables that mark with any
+        nonzero byte at four densities, and on x86_64 each body in turn: all
+        features, the lazily asked VBMI2 answer forced to absent, and AVX-512
+        off. Bytes the routine leaves past the kept ones inside the block are
+        unspecified; everything before and after is compared exactly.
+*/
+fn check_delete_bytes()
+{
+        static const positive sizes[] = {
+            0, 1, 2, 3, 4, 5, 7, 8, 63, 64, 65, 67, 127, 128, 129,
+            255, 256, 257, 1000, 4095, 4096,
+        };
+        static p8 want[4096], table[256];
+        p8 address_to pages = memory(3 * 4096);
+        bool mapped = (bipolar)(positive)pages > 0;
+
+        same("memory_delete_bytes", "guard mapping", mapped, 1);
+        if (!mapped)
+                return;
+        bool protected =
+            system_call_3(syscall(mprotect), (positive)pages, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0;
+        same("memory_delete_bytes", "guard pages protected", protected, 1);
+        if (!protected)
+        {
+                memory_free(pages, 3 * 4096);
+                return;
+        }
+        p8 address_to got = pages + 4096;
+        p64 seed = 0x9e3779b97f4a7c15ull;
+#if X64
+        p8 avx512 = cpu_has_avx512, vbmi2 = cpu_has_avx512_vbmi2;
+        positive tiers = 3;
+#else
+        positive tiers = 1;
+#endif
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+#if X64
+                cpu_has_avx512 = tier < 2 ? avx512 : 0;
+                cpu_has_avx512_vbmi2 = tier == 1 ? 1 : vbmi2;
+#endif
+                same("memory_delete_bytes", "null zero-sized answer",
+                     (memory_delete_bytes)(null, 0, null), 0);
+                for (positive s = 0; s < array_count(sizes); s++)
+                        for (positive residue = 0; residue <= 64; residue += residue < 8 ? 1 : 7)
+                                for (positive density = 0; density < 4; density++)
+                                {
+                                        positive size = sizes[s];
+                                        positive offset = residue == 64 || size + residue > 4096
+                                                              ? 4096 - size : residue;
+                                        for (positive i = 0; i < 256; i++)
+                                        {
+                                                seed ^= seed << 13;
+                                                seed ^= seed >> 7;
+                                                seed ^= seed << 17;
+                                                p8 mark = (p8)(seed >> 24) | 1;
+                                                bool marked = density == 3 ? (seed & 15) != 0
+                                                              : density == 2 ? (seed & 1) != 0
+                                                              : density == 1 ? i == 'a' || i >= 0xf0
+                                                                             : false;
+                                                table[i] = marked ? mark : 0;
+                                        }
+                                        for (positive i = 0; i < 4096; i++)
+                                        {
+                                                seed ^= seed << 13;
+                                                seed ^= seed >> 7;
+                                                seed ^= seed << 17;
+                                                got[i] = want[i] = (p8)seed;
+                                        }
+                                        positive kept = 0;
+                                        for (positive i = 0; i < size; i++)
+                                        {
+                                                p8 value = want[offset + i];
+                                                if (!table[value])
+                                                        want[offset + kept++] = value;
+                                        }
+                                        positive answer = (memory_delete_bytes)(got + offset, size, table);
+                                        same("memory_delete_bytes", "kept count", answer, kept);
+                                        same_bytes("memory_delete_bytes", "kept bytes and those before",
+                                                   got, want, offset + kept);
+                                        same_bytes("memory_delete_bytes", "bytes after the block",
+                                                   got + offset + size, want + offset + size,
+                                                   4096 - offset - size);
+                                }
+        }
+#if X64
+        cpu_has_avx512 = avx512;
+        cpu_has_avx512_vbmi2 = vbmi2;
+#endif
+        memory_free(pages, 3 * 4096);
+}
+
 fn check_checksums()
 {
         same("memory_sum_bytes", "null zero-sized span",
@@ -21091,6 +21186,7 @@ b32 main()
         check_translate();
         check_cells_from_ascii();
         check_unicode_width();
+        check_delete_bytes();
         check_checksums();
         check_copy_match();
         check_move();
@@ -66666,6 +66762,226 @@ b32 main(void)
         return 0;
 }
 #endif /* BENCH_translate */
+
+#ifdef BENCH_delete
+/* In-place byte deletion by table: tr's former scalar loop against library
+   assembly. Each round restores the block first, because a deletion shrinks
+   it; that copy is timed on its own and taken out of both sides. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 26)
+
+static p8 source_block[MAXIMUM];
+static p8 former_block[MAXIMUM];
+static p8 assembly_block[MAXIMUM];
+static p8 marks[256];
+static positive former_kept;
+static positive assembly_kept;
+static volatile positive sink;
+
+NOT_INLINED static positive former_delete(address_any block, positive length,
+                                          address_any table_address)
+{
+        p8 address_to bytes = block;
+        p8 address_to table = table_address;
+        positive kept = 0;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 character = bytes[at];
+
+                if (!table[character])
+                        bytes[kept++] = character;
+        }
+
+        return kept;
+}
+
+// Text-shaped bytes: letters, spaces, commas and newlines.
+static fn prepare_source(void)
+{
+        p64 seed = 0x9e3779b97f4a7c15ull;
+
+        for (positive at = 0; at < MAXIMUM; at++)
+        {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+
+                positive pick = (positive)(seed % 40);
+
+                source_block[at] = pick < 26 ? (p8)('a' + pick)
+                                   : pick < 34 ? (p8)' '
+                                   : pick < 38 ? (p8)','
+                                               : (p8)'\n';
+        }
+}
+
+// tr -d ',' (rare), tr -d ' ,' (common) and tr -cd 'a-z\n' (most).
+static fn choose_marks(positive set)
+{
+        for (positive value = 0; value < 256; value++)
+                marks[value] = set == 2 ? (p8)!((value >= 'a' && value <= 'z') ||
+                                                value == '\n')
+                                        : 0;
+
+        if (set <= 1)
+                marks[','] = 1;
+
+        if (set == 1)
+                marks[' '] = 1;
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+
+        if (rounds < 8)
+                rounds = 8;
+        if (rounds > (1u << 20))
+                rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run_copy(positive length, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                memory_copy_apart(former_block, source_block, length);
+                sink += former_block[0];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 run(bool assembly, positive length, positive rounds)
+{
+        p8 address_to block = assembly ? assembly_block : former_block;
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                memory_copy_apart(block, source_block, length);
+
+                positive kept = assembly ? memory_delete_bytes(block, length, marks)
+                                         : former_delete(block, length, marks);
+
+                if (assembly)
+                        assembly_kept = kept;
+                else
+                        former_kept = kept;
+
+                sink += kept + block[0];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static bool row(positive length, positive set)
+{
+        positive rounds = rounds_for(length);
+        positive ratios[TRIES];
+
+        choose_marks(set);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 copy = run_copy(length, rounds);
+                p64 former;
+                p64 assembly;
+
+                if (trial & 1)
+                {
+                        assembly = run(true, length, rounds);
+                        former = run(false, length, rounds);
+                }
+                else
+                {
+                        former = run(false, length, rounds);
+                        assembly = run(true, length, rounds);
+                }
+
+                if (former_kept != assembly_kept ||
+                    memory_compare(former_block, assembly_block, former_kept))
+                        return false;
+
+                p64 former_work = former > copy ? former - copy : 1;
+                p64 assembly_work = assembly > copy ? assembly - copy : 0;
+
+                ratios[trial] = (positive)(assembly_work * 10000 / former_work);
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %p bytes, set %p  median asm/C %p.%p%%\n", length,
+                      set, ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        return true;
+}
+
+static bool boundaries(void)
+{
+        p8 guarded[264];
+        p8 expected[264];
+
+        choose_marks(2);
+
+        for (positive length = 0; length <= 257; length++)
+        {
+                for (positive at = 0; at < sizeof(guarded); at++)
+                        guarded[at] = expected[at] = source_block[at * 7 + length];
+
+                positive kept = 0;
+
+                for (positive at = 0; at < length; at++)
+                        if (!marks[expected[3 + at]])
+                                expected[3 + kept++] = expected[3 + at];
+
+                if (memory_delete_bytes(guarded + 3, length, marks) != kept ||
+                    memory_compare(guarded, expected, 3 + kept) ||
+                    memory_compare(guarded + 3 + length, expected + 3 + length,
+                                   sizeof(guarded) - 3 - length))
+                        return false;
+        }
+
+        return true;
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {64, 4096, MAXIMUM};
+
+        prepare_source();
+
+        if (!boundaries())
+        {
+                string_format(log, "memory_delete_bytes boundary check failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "memory_delete_bytes, paired median of %p, restoring copy taken out\n",
+                      (positive)TRIES);
+
+        for (positive at = 0; at < sizeof(sizes) / sizeof(sizes[0]); at++)
+                for (positive set = 0; set < 3; set++)
+                        if (!row(sizes[at], set))
+                        {
+                                string_format(log, "memory_delete_bytes result mismatch\n");
+                                log_flush();
+                                return 1;
+                        }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_delete */
 
 #ifdef BENCH_ascii_case
 /* ASCII-folded bounded comparison: scalar reference against library assembly. */

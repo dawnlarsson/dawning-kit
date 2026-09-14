@@ -250,6 +250,9 @@ cover('specialized', 'size', 'memory_count',
       'not permit unaligned word loads. The cutoff is the byte before one '
       'complete AArch64 vector block and two x86-64 vector blocks',
       expansion='count_known', evidence='test/checks.c#CHECK_verify')
+cover('folds_already', 'size', 'memory_delete_bytes',
+      'tr hands it the length of the read it just made; no reachable call site '
+      'passes a literal size, and the table is built from the command line')
 cover('specialized', 'size', 'memory_translate',
       'Measured at the six-byte temporary-name call site. Straight table '
       'loads with no loop or call take 98% of the assembly-call time on '

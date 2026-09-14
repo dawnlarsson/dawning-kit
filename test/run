@@ -11580,6 +11580,8 @@ bench_about()
                  bench_line="literal-size equal-span walk against the out-of-line routine" ;;
         translate) bench_section=BENCH_translate
                  bench_line="in-place byte-table translation against the former scalar C" ;;
+        delete)  bench_section=BENCH_delete
+                 bench_line="in-place byte deletion by table against the former scalar C" ;;
         ascii-case) bench_section=BENCH_ascii_case
                  bench_line="ASCII-folded bounded comparison against a scalar reference" ;;
         ascii-case-fold) bench_section=BENCH_ascii_case_fold

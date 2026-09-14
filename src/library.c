@@ -64,7 +64,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        331 routines (318 public, 13 local), 330 of them on all three and 1 local to one.
+        332 routines (319 public, 13 local), 331 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -192,6 +192,7 @@
           memory_count_words             public  yes     yes     yes
           memory_decimal_series          public  yes     yes     yes
           memory_decode_power2           public  yes     yes     yes
+          memory_delete_bytes            public  yes     yes     yes
           memory_encode_power2           public  yes     yes     yes
           memory_escape_index            public  yes     yes     yes
           memory_exchange_apart          public  yes     yes     yes
@@ -11019,6 +11020,89 @@ __asm__(
     "jmp .Lmemory_translate_x64_four\n"
 #endif
     ASM_END(memory_translate)
+
+    //
+    //       memory_delete_bytes -- keep the bytes a table leaves unmarked, in
+    //       order, at the front of the block.
+    //
+    //       The narrow body is four lanes a turn with no branch on the data:
+    //       every byte is stored at the write cursor, and the cursor moves on
+    //       only when its table entry is zero -- cmpb $1 sets the carry for a
+    //       zero entry and adc adds it. All four loads come before the first
+    //       store, so the in-place stores never overtake a byte not yet read.
+    //       tr's former branchy loop paid 2 cycles a byte deleting one byte
+    //       and 8 deleting a complement; this shape is 1.05 whatever the set.
+    //
+    //       The wide body classifies 64 bytes as memory_translate translates
+    //       them, over a table whose nonzero entries were turned into 0xff so
+    //       the looked-up byte's top bit is the mark, then compresses the kept
+    //       bytes into a register (vpcompressb, AVX512_VBMI2) and stores all
+    //       64 at the cursor, which moves by the population count. The store
+    //       stays inside the block: the cursor is never past the byte being
+    //       read. Measured on the 9950X at 0.05 ticks a byte against 1.05 for
+    //       the four lanes; compressing straight to memory cost 0.08.
+    //
+    //       VBMI2 is not in the feature word Spark publishes, which is full,
+    //       so it is asked for here the first time a wide call arrives: the
+    //       byte holds 0 until then, 1 for absent and 2 for present.
+    //
+    ASM_FUNC(memory_delete_bytes)
+    "mov %rdi, %rax\n   mov %rdi, %r11\n"
+    "cmp $4, %rsi\n   jb .Lmemory_delete_x64_tail\n"
+#ifndef KERNEL_MODE
+    "cmp $64, %rsi\n   jae .Lmemory_delete_x64_dispatch\n"
+#endif
+    ".balign 16\n.Lmemory_delete_x64_four:\n"
+    "movzbl 0(%rdi), %ecx\n   movzbl 1(%rdi), %r8d\n"
+    "movzbl 2(%rdi), %r9d\n   movzbl 3(%rdi), %r10d\n"
+    "mov %cl, (%rax)\n   cmpb $1, (%rdx,%rcx)\n   adc $0, %rax\n"
+    "mov %r8b, (%rax)\n   cmpb $1, (%rdx,%r8)\n   adc $0, %rax\n"
+    "mov %r9b, (%rax)\n   cmpb $1, (%rdx,%r9)\n   adc $0, %rax\n"
+    "mov %r10b, (%rax)\n   cmpb $1, (%rdx,%r10)\n   adc $0, %rax\n"
+    "add $4, %rdi\n   sub $4, %rsi\n   cmp $4, %rsi\n"
+    "jae .Lmemory_delete_x64_four\n"
+    ".Lmemory_delete_x64_tail:\n   test %rsi, %rsi\n"
+    "jz .Lmemory_delete_x64_done\n"
+    ".Lmemory_delete_x64_one:\n   movzbl (%rdi), %ecx\n"
+    "mov %cl, (%rax)\n   cmpb $1, (%rdx,%rcx)\n   adc $0, %rax\n"
+    "inc %rdi\n   dec %rsi\n   jnz .Lmemory_delete_x64_one\n"
+    ".Lmemory_delete_x64_done:\n   sub %r11, %rax\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".Lmemory_delete_x64_dispatch:\n"
+    ASM_NARROW("cpu_has_avx512", ".Lmemory_delete_x64_four")
+    ASM_NARROW("cpu_has_avx512_vbmi", ".Lmemory_delete_x64_four")
+    "movzbl cpu_has_avx512_vbmi2(%rip), %ecx\n"
+    "cmp $1, %ecx\n   je .Lmemory_delete_x64_four\n"
+    "ja .Lmemory_delete_x64_wide_start\n"
+    // First wide call: leaf 7, ECX bit 6. cpuid writes eax, ebx, ecx and edx,
+    // and rax is the write cursor, which still equals the block here.
+    "push %rbx\n   mov %rdx, %r8\n   mov $7, %eax\n   xor %ecx, %ecx\n"
+    "cpuid\n   mov %r8, %rdx\n   pop %rbx\n   mov %rdi, %rax\n"
+    "shr $6, %ecx\n   and $1, %ecx\n   inc %ecx\n"
+    "mov %cl, cpu_has_avx512_vbmi2(%rip)\n"
+    "cmp $1, %ecx\n   je .Lmemory_delete_x64_four\n"
+    ".Lmemory_delete_x64_wide_start:\n"
+    "vmovdqu64 (%rdx), %zmm4\n   vmovdqu64 64(%rdx), %zmm5\n"
+    "vmovdqu64 128(%rdx), %zmm6\n   vmovdqu64 192(%rdx), %zmm7\n"
+    "vptestmb %zmm4, %zmm4, %k1\n   vpmovm2b %k1, %zmm4\n"
+    "vptestmb %zmm5, %zmm5, %k1\n   vpmovm2b %k1, %zmm5\n"
+    "vptestmb %zmm6, %zmm6, %k1\n   vpmovm2b %k1, %zmm6\n"
+    "vptestmb %zmm7, %zmm7, %k1\n   vpmovm2b %k1, %zmm7\n"
+    ".balign 16\n.Lmemory_delete_x64_wide:\n"
+    "vmovdqu64 (%rdi), %zmm0\n   vmovdqa64 %zmm4, %zmm1\n"
+    "vpermt2b %zmm5, %zmm0, %zmm1\n   vmovdqa64 %zmm6, %zmm2\n"
+    "vpermt2b %zmm7, %zmm0, %zmm2\n   vpmovb2m %zmm0, %k1\n"
+    "vmovdqu8 %zmm2, %zmm1{%k1}\n   vpmovb2m %zmm1, %k2\n"
+    "knotq %k2, %k2\n   vpcompressb %zmm0, %zmm3{%k2}{z}\n"
+    "vmovdqu64 %zmm3, (%rax)\n   kmovq %k2, %rcx\n"
+    "popcnt %rcx, %rcx\n   add %rcx, %rax\n"
+    "add $64, %rdi\n   sub $64, %rsi\n   cmp $64, %rsi\n"
+    "jae .Lmemory_delete_x64_wide\n   vzeroupper\n"
+    "cmp $4, %rsi\n   jb .Lmemory_delete_x64_tail\n"
+    "jmp .Lmemory_delete_x64_four\n"
+#endif
+    ASM_END(memory_delete_bytes)
 
     /*
             Exchange two separate byte runs in place.
@@ -22701,6 +22785,28 @@ __asm__(
     ".Lmemory_translate_arm64_done:\n"
     ASM_RET
     ASM_END(memory_translate)
+
+    // memory_delete_bytes: four lanes a turn, all four loads before the
+    // first store, every byte stored at the cursor and the cursor moved by
+    // cinc when its entry is zero. The x86_64 block carries the full contract.
+    ASM_FUNC(memory_delete_bytes)
+    "mov x7, x0\n   mov x8, x0\n   cmp x1, #4\n   b.lo .Lmemory_delete_arm64_tail\n"
+    ".Lmemory_delete_arm64_four:\n"
+    "ldrb w3, [x0]\n   ldrb w4, [x0, #1]\n"
+    "ldrb w5, [x0, #2]\n   ldrb w6, [x0, #3]\n"
+    "strb w3, [x8]\n   ldrb w9, [x2, x3]\n   cmp w9, #0\n   cinc x8, x8, eq\n"
+    "strb w4, [x8]\n   ldrb w9, [x2, x4]\n   cmp w9, #0\n   cinc x8, x8, eq\n"
+    "strb w5, [x8]\n   ldrb w9, [x2, x5]\n   cmp w9, #0\n   cinc x8, x8, eq\n"
+    "strb w6, [x8]\n   ldrb w9, [x2, x6]\n   cmp w9, #0\n   cinc x8, x8, eq\n"
+    "add x0, x0, #4\n   sub x1, x1, #4\n   cmp x1, #4\n"
+    "b.hs .Lmemory_delete_arm64_four\n"
+    ".Lmemory_delete_arm64_tail:\n   cbz x1, .Lmemory_delete_arm64_done\n"
+    ".Lmemory_delete_arm64_one:\n   ldrb w3, [x0], #1\n"
+    "strb w3, [x8]\n   ldrb w9, [x2, x3]\n   cmp w9, #0\n   cinc x8, x8, eq\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_delete_arm64_one\n"
+    ".Lmemory_delete_arm64_done:\n   sub x0, x8, x7\n"
+    ASM_RET
+    ASM_END(memory_delete_bytes)
 
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract.
@@ -35300,6 +35406,29 @@ __asm__(
     ASM_RET
     ASM_END(memory_translate)
 
+    // memory_delete_bytes: four lanes a turn, all four loads before the first
+    // store, every byte stored at the cursor and the cursor moved by seqz of
+    // its entry -- sltiu, so neither C nor Zbb. The x86_64 block carries the
+    // full contract.
+    ASM_FUNC(memory_delete_bytes)
+    "mv t5, a0\n   mv t0, a0\n   li t6, 4\n"
+    "bltu a1, t6, .Lmemory_delete_rv_tail\n"
+    ".Lmemory_delete_rv_four:\n"
+    "lbu t1, 0(a0)\n   lbu t2, 1(a0)\n   lbu t3, 2(a0)\n   lbu t4, 3(a0)\n"
+    "sb t1, 0(t0)\n   add t1, a2, t1\n   lbu t1, 0(t1)\n   seqz t1, t1\n   add t0, t0, t1\n"
+    "sb t2, 0(t0)\n   add t2, a2, t2\n   lbu t2, 0(t2)\n   seqz t2, t2\n   add t0, t0, t2\n"
+    "sb t3, 0(t0)\n   add t3, a2, t3\n   lbu t3, 0(t3)\n   seqz t3, t3\n   add t0, t0, t3\n"
+    "sb t4, 0(t0)\n   add t4, a2, t4\n   lbu t4, 0(t4)\n   seqz t4, t4\n   add t0, t0, t4\n"
+    "addi a0, a0, 4\n   addi a1, a1, -4\n"
+    "bgeu a1, t6, .Lmemory_delete_rv_four\n"
+    ".Lmemory_delete_rv_tail:\n   beqz a1, .Lmemory_delete_rv_done\n"
+    ".Lmemory_delete_rv_one:\n   lbu t1, 0(a0)\n"
+    "sb t1, 0(t0)\n   add t1, a2, t1\n   lbu t1, 0(t1)\n   seqz t1, t1\n   add t0, t0, t1\n"
+    "addi a0, a0, 1\n   addi a1, a1, -1\n   bnez a1, .Lmemory_delete_rv_one\n"
+    ".Lmemory_delete_rv_done:\n   sub a0, t0, t5\n"
+    ASM_RET
+    ASM_END(memory_delete_bytes)
+
     // memory_exchange_apart: disjoint exchange with equal and zero-sized
     // no-op cases. The x86_64 block carries the full contract. RV64 may trap
     // on an unaligned wide access. The xor chooses the widest shared residue;
@@ -42956,6 +43085,13 @@ READS_WRITES(1, 2) address_any memory_to_upper_ascii(address_any block, positive
 READS_WRITES(1, 2)
 address_any memory_translate(address_any block, positive size,
                              address_any table);
+// Remove every byte whose entry in a readable 256-byte table is nonzero, moving
+// the kept bytes to the front of the block in their order, and answer how many
+// were kept. Size zero accesses neither pointer; the table must not overlap
+// the block.
+READS_WRITES(1, 2)
+positive memory_delete_bytes(address_any block, positive size,
+                             address_any table);
 // Swap exactly size bytes between separate ranges. The ranges must be
 // disjoint unless left == right; equal addresses and zero size are no-ops and
 // do not dereference either address.
@@ -43005,6 +43141,9 @@ extern p8 cpu_has_fma;
 extern p8 cpu_has_sha;
 extern p8 cpu_has_sha512;
 extern p8 cpu_hash_probed;
+// Not in the word Spark publishes, which is full: 0 until the first routine
+// that wants it asks the processor, then 1 for absent and 2 for present.
+extern p8 cpu_has_avx512_vbmi2;
 
 __asm__(
     ASM_BSS_OBJECT_BEGIN(cpu_has_pclmul, 1)
@@ -43040,6 +43179,9 @@ __asm__(
     ASM_BSS_OBJECT_BEGIN(cpu_hash_probed, 1)
     ".zero 1\n"
     ASM_OBJECT_END(cpu_hash_probed)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_avx512_vbmi2, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_avx512_vbmi2)
 );
 #endif
 fn moonwater_cpu_detect(void);
