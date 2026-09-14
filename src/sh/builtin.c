@@ -456,27 +456,66 @@ static bool floodlight_facts_complete(
                (!mount || (facts->mask & STATX_MOUNT_ID));
 }
 
+/* Whether an open handle is on procfs, asked of the handle rather than a path
+   so nothing can be swapped between the two: the filesystem magic, complete
+   facts, the mount of the proc root already proved when one is given, and
+   the kind of file wanted when one is. Anything else fails closed. */
+static bool floodlight_proc_genuine(bipolar handle, file_facts address_to facts,
+                                    file_facts address_to root, positive mode)
+{
+        file_mount_facts mount = {0};
+
+        return handle >= 0 &&
+               system_call_2(syscall(fstatfs), (positive)handle,
+                             (positive)address_of mount) >= 0 &&
+               mount.type == FLOODLIGHT_PROC_MAGIC &&
+               file_look(handle, (string_address)"", AT_EMPTY_PATH, facts) &&
+               floodlight_facts_complete(facts, true) &&
+               (!root || facts->mount_id == root->mount_id) &&
+               (!mode || (facts->mode & MODE_FORMAT) == mode);
+}
+
 static bipolar floodlight_proc_root_open(file_facts address_to facts)
 {
         bipolar proc = system_open_at(
             AT_FDCWD, (string_address)"/proc",
             FILE_READ | O_DIRECTORY | O_CLOEXEC);
-        file_mount_facts mount = {0};
 
-        if (proc < 0)
-                return proc;
-
-        if (system_call_2(syscall(fstatfs), (positive)proc,
-                          (positive)address_of mount) < 0 ||
-            mount.type != FLOODLIGHT_PROC_MAGIC ||
-            !file_look(proc, (string_address)"", AT_EMPTY_PATH, facts) ||
-            !floodlight_facts_complete(facts, true))
+        if (proc >= 0 && !floodlight_proc_genuine(proc, facts, null, 0))
         {
                 system_close(proc);
                 return -ERROR_ACCESS;
         }
 
         return proc;
+}
+
+/* Read an authenticated handle to its end into room bytes, one of them kept
+   for the terminator. seq_file reads may be short without being complete,
+   and a seccomp errno action can claim a read it never wrote, so every chunk
+   is cleared first and an impossible count refused. A file that fills the
+   room may have been cut, which is ambiguity rather than an answer. Answers
+   the bytes read, or -ERROR_ACCESS. */
+static bipolar floodlight_read_whole(bipolar handle, p8 address_to text,
+                                     positive room)
+{
+        positive used = 0;
+        bipolar got;
+
+        do
+        {
+                if (used == room - 1)
+                        return -ERROR_ACCESS;
+                memory_fill(text + used, 0, room - used);
+                got = system_read_retry((positive)handle, text + used,
+                                        room - 1 - used);
+                if (got > 0 && (positive)got > room - 1 - used)
+                        return -ERROR_ACCESS;
+                if (got > 0)
+                        used += (positive)got;
+        } while (got > 0);
+
+        return got < 0 ? -ERROR_ACCESS : (bipolar)used;
 }
 
 /* /proc/misc is a kernel-owned inventory outside the caller's /dev mount.
@@ -491,11 +530,10 @@ static bipolar floodlight_policy_registered()
         p8 text[FLOODLIGHT_MISC_MAX];
         file_facts proc_facts;
         file_facts misc_facts;
-        file_mount_facts mount = {0};
         bipolar proc = floodlight_proc_root_open(address_of proc_facts);
         bipolar handle = -1;
-        bipolar got = -ERROR_ACCESS;
-        positive used = 0;
+        bipolar got;
+        positive used;
         bipolar result = -ERROR_ACCESS;
 
         if (proc < 0)
@@ -504,30 +542,14 @@ static bipolar floodlight_policy_registered()
         handle = system_open_at(
             proc, (string_address)"misc",
             FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        if (handle < 0 ||
-            system_call_2(syscall(fstatfs), (positive)handle,
-                          (positive)address_of mount) < 0 ||
-            mount.type != FLOODLIGHT_PROC_MAGIC ||
-            !file_look(handle, (string_address)"", AT_EMPTY_PATH,
-                       address_of misc_facts) ||
-            !floodlight_facts_complete(address_of misc_facts, true) ||
-            misc_facts.mount_id != proc_facts.mount_id ||
-            (misc_facts.mode & MODE_FORMAT) != MODE_FILE)
+        if (!floodlight_proc_genuine(handle, address_of misc_facts,
+                                     address_of proc_facts, MODE_FILE))
                 goto finished;
 
-        while (used < sizeof(text) - 1)
-        {
-                memory_fill(text + used, 0, sizeof(text) - used);
-                got = system_read_retry((positive)handle, text + used,
-                                        sizeof(text) - 1 - used);
-                if (got <= 0)
-                        break;
-                if ((positive)got > sizeof(text) - 1 - used)
-                        goto finished;
-                used += (positive)got;
-        }
-        if (got < 0 || used >= sizeof(text) - 1)
+        got = floodlight_read_whole(handle, text, sizeof(text));
+        if (got < 0)
                 goto finished;
+        used = (positive)got;
 
         result = 0;
         for (positive at = 0; at < used;)
@@ -578,7 +600,6 @@ static fn floodlight_descriptor_path(p8 address_to into, bipolar handle)
 static bool floodlight_proc_directory_open(
     file_walk address_to table, string_address path)
 {
-        file_mount_facts table_mount = {0};
         file_facts proc_facts;
         file_facts table_facts;
         bool safe = false;
@@ -596,16 +617,8 @@ static bool floodlight_proc_directory_open(
         if (!file_walk_open(table, proc, path))
                 goto finished;
 
-        if (system_call_2(syscall(fstatfs), (positive)table->handle,
-                          (positive)address_of table_mount) < 0 ||
-            table_mount.type != FLOODLIGHT_PROC_MAGIC ||
-            !file_look(table->handle, (string_address)"", AT_EMPTY_PATH,
-                       address_of table_facts) ||
-            !floodlight_facts_complete(address_of table_facts, true) ||
-            table_facts.mount_id != proc_facts.mount_id)
-                goto finished;
-
-        safe = true;
+        safe = floodlight_proc_genuine(table->handle, address_of table_facts,
+                                       address_of proc_facts, 0);
 
 finished:
         system_close(proc);
@@ -673,11 +686,10 @@ static bool floodlight_ptrace_scope_safe()
         p8 text[16];
         file_facts proc_facts;
         file_facts scope_facts;
-        file_mount_facts mount = {0};
         bipolar proc = floodlight_proc_root_open(address_of proc_facts);
         bipolar handle = -1;
-        bipolar got = -ERROR_ACCESS;
-        positive used = 0;
+        bipolar got;
+        positive used;
         bool safe = false;
 
         if (proc < 0)
@@ -686,31 +698,14 @@ static bool floodlight_ptrace_scope_safe()
         handle = system_open_at(
             proc, (string_address)"sys/kernel/yama/ptrace_scope",
             FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        if (handle < 0 ||
-            system_call_2(syscall(fstatfs), (positive)handle,
-                          (positive)address_of mount) < 0 ||
-            mount.type != FLOODLIGHT_PROC_MAGIC ||
-            !file_look(handle, (string_address)"", AT_EMPTY_PATH,
-                       address_of scope_facts) ||
-            !floodlight_facts_complete(address_of scope_facts, true) ||
-            scope_facts.mount_id != proc_facts.mount_id ||
-            (scope_facts.mode & MODE_FORMAT) != MODE_FILE)
+        if (!floodlight_proc_genuine(handle, address_of scope_facts,
+                                     address_of proc_facts, MODE_FILE))
                 goto finished;
 
-        while (used < sizeof(text) - 1)
-        {
-                memory_fill(text + used, 0, sizeof(text) - used);
-                got = system_read_retry((positive)handle, text + used,
-                                        sizeof(text) - 1 - used);
-                if (got <= 0)
-                        break;
-                if ((positive)got > sizeof(text) - 1 - used)
-                        goto finished;
-                used += (positive)got;
-        }
-
-        if (got < 0 || !used || used >= sizeof(text) - 1)
+        got = floodlight_read_whole(handle, text, sizeof(text));
+        if (got <= 0)
                 goto finished;
+        used = (positive)got;
         if (text[used - 1] == '\n')
                 used--;
         safe = used == 1 && text[0] >= '1' && text[0] <= '3';
@@ -737,14 +732,12 @@ static bipolar floodlight_descendants_read(p8 address_to text, positive room)
         p8 path[64];
         file_facts proc_facts;
         file_facts children_facts;
-        file_mount_facts mount = {0};
         bipolar process = system_call_1(syscall(getpid), 0);
         positive used = sizeof(prefix) - 1;
         bipolar proc;
         bipolar handle = -1;
         bipolar got = -ERROR_ACCESS;
         bipolar closed = 0;
-        positive filled = 0;
 
         if (process <= 0)
                 return -ERROR_ACCESS;
@@ -758,48 +751,10 @@ static bipolar floodlight_descendants_read(p8 address_to text, positive room)
         if (proc < 0)
                 return -ERROR_ACCESS;
         handle = system_open_at(proc, path, FILE_READ | O_NOFOLLOW | O_CLOEXEC);
-        if (handle < 0 ||
-            system_call_2(syscall(fstatfs), (positive)handle,
-                          (positive)address_of mount) < 0 ||
-            mount.type != FLOODLIGHT_PROC_MAGIC ||
-            !file_look(handle, (string_address)"", AT_EMPTY_PATH,
-                       address_of children_facts) ||
-            !floodlight_facts_complete(address_of children_facts, true) ||
-            children_facts.mount_id != proc_facts.mount_id ||
-            (children_facts.mode & MODE_FORMAT) != MODE_FILE)
-                goto finished;
+        if (floodlight_proc_genuine(handle, address_of children_facts,
+                                    address_of proc_facts, MODE_FILE))
+                got = floodlight_read_whole(handle, text, room);
 
-        while (filled < room)
-        {
-                got = system_read_retry((positive)handle, text + filled,
-                                        room - filled);
-                if (got <= 0)
-                        break;
-                if ((positive)got > room - filled)
-                {
-                        got = -ERROR_ACCESS;
-                        break;
-                }
-                filled += (positive)got;
-        }
-
-        if (filled == room)
-        {
-                p8 probe;
-
-                got = system_read_retry((positive)handle,
-                                        address_of probe, 1);
-                if (!got)
-                        got = (bipolar)filled;
-                else
-                        got = -ERROR_ACCESS;
-        }
-        else if (!got)
-                got = (bipolar)filled;
-        else
-                got = -ERROR_ACCESS;
-
-finished:
         if (handle >= 0)
                 closed = system_close(handle);
         system_close(proc);
@@ -15405,37 +15360,18 @@ static fn floodlight_load()
            later disappearance downgrade the process to stock defaults. */
         floodlight_report_promised = true;
 
-        /* seq_file reads may be short without being complete. Keep going to
-           EOF, with system_read_retry owning EINTR, and reject a report that
-           cannot be proved whole inside the fixed bound. */
-        while (used < sizeof(report) - 1)
-        {
-                got = system_read_retry((positive)handle, report + used,
-                                        sizeof(report) - 1 - used);
-
-                if (got <= 0)
-                        break;
-
-                used += (positive)got;
-        }
-
+        /* A report that filled the buffer is one that may have been cut, and
+           half a report is worse than none: the half that is missing is the
+           half that refuses something. Thrown away, so the built-in answers
+           stand. */
+        got = floodlight_read_whole(handle, report, sizeof(report));
         system_close(handle);
 
         state = FLOODLIGHT_REPORT_REFUSED;
 
-        if (got < 0 || !used)
+        if (got <= 0)
                 goto publish;
-
-        /*
-                A report that filled the buffer is one that may have been cut,
-                and half a report is worse than none: the half that is missing
-                is the half that refuses something. Thrown away, so the
-                built-in answers stand.
-        */
-        if (used >= sizeof(report) - 1)
-                goto publish;
-
-        report[used] = 0;
+        used = (positive)got;
 
         if (!floodlight_take((string_address)report, used, parsed,
                              address_of parsed_count))
