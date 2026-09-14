@@ -5729,6 +5729,53 @@ static fn transform_quoted(string_address value, positive length, p8 mark)
         expand_push('\'', mark);
 }
 
+/* Both spellings through a writer, for words that are not expansion output:
+   xtrace and quoted history words. Which one a word needs is the caller's. */
+static COLD fn shell_single_quote_write(writer write, string_address value,
+                                        positive length)
+{
+        positive at = 0;
+
+        write("'", 1);
+        while (at < length)
+        {
+                positive run = memory_span_without_byte(value + at, '\'',
+                                                        length - at);
+
+                if (run)
+                        write(value + at, run);
+                at += run;
+                if (at < length)
+                {
+                        write("'\\''", 4);
+                        at++;
+                }
+        }
+        write("'", 1);
+}
+
+static COLD fn shell_ansi_run(writer write, string_address value,
+                              positive length, bool high)
+{
+        positive at = 0;
+
+        write("$'", 2);
+        while (at < length)
+        {
+                positive run = string_span_max(value + at, length - at,
+                                               shell_quote_ansi);
+                p8 written[4];
+
+                if (run)
+                        write(value + at, run);
+                at += run;
+                if (at < length)
+                        write(written,
+                              shell_ansi_byte(written, value[at++], high));
+        }
+        write("'", 1);
+}
+
 static const b8 expand_ansi_plain[STRING_SET_BYTES] = {
         [1 ... 38] = 1, [40 ... 91] = 1, [93 ... 255] = 1
 };

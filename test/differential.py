@@ -20218,6 +20218,20 @@ def harness_floodlight(argv):
                           exec_source.index('static b32 exec_pipe('))]
     pipe_tokens = [token.value for token in lex(pipe_source)[0]]
 
+    def exec_function_tokens(header):
+        """The lexed exec.c function that header opens, to its closing brace."""
+        start = exec_source.index(header)
+        return [token.value for token in
+                lex(exec_source[start:exec_source.index('\n}', start) + 2])[0]]
+
+    child_began_tokens = exec_function_tokens('\nfn exec_child_began()\n')
+    helper_expand_tokens = exec_function_tokens('static bool exec_helper_expand(')
+    script_moved_tokens = exec_function_tokens('static COLD bool exec_script_moved(')
+    script_preserve_tokens = exec_function_tokens(
+        'static COLD bool exec_script_preserve(')
+    source_release_tokens = exec_function_tokens(
+        'static COLD bool exec_internal_source_release(')
+
     def calls(*sequence):
         window = len(sequence)
         return any(shell_tokens[i:i + window] == list(sequence)
@@ -20397,7 +20411,13 @@ def harness_floodlight(argv):
              '              !floodlight_inplace_final)' in shell,
              'a final restricted child requires the inherited launcher '
              'contract, with a distinct authenticated in-place transition'),
-            (exec_source.count('exec_floodlight_child_began();') == 2 and
+            #   One child start resets the role, and the here-document and
+            #   here-string helper takes it too, handing back only the depth.
+            (exec_source.count('exec_floodlight_child_began();') == 1 and
+             source_calls(child_began_tokens, 'exec_floodlight_child_began',
+                          '(', ')', ';') and
+             source_calls(helper_expand_tokens, 'exec_child_began', '(', ')',
+                          ';') and
              'if (!floodlight_parent_protected ||\n'
              '            !floodlight_parent_supervised)\n'
              '                floodlight_parent_role = false;' in exec_source,
@@ -20542,8 +20562,11 @@ def harness_floodlight(argv):
                           ')', ',', '0', ')'),
              'a bare exec in a substitution or subshell cannot replace the '
              'reader identity owned by its still-running parent shell'),
-            (exec_source.count(
-                 'shell_parser_source_relocated(previous, moved);') >= 2 and
+            (source_calls(script_moved_tokens, 'shell_parser_source_relocated',
+                          '(', 'exec_script_fd', ',', 'moved', ')', ';',
+                          'system_close', '(', 'exec_script_fd', ')', ';') and
+             source_calls(script_preserve_tokens, 'exec_script_moved', '(') and
+             source_calls(source_release_tokens, 'exec_script_moved', '(') and
              source_calls(shell_main_tokens, 'if', '(',
                           'shell_parser_source_active', '&', '&',
                           'shell_parser_source_handle', '=', '=', 'from', ')',
