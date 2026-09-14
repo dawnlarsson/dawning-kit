@@ -6559,8 +6559,31 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
 
         memory_fill(entry, 0, sizeof(ls_entry));
 
+        /*
+                The reference ls asks the kernel about an entry the directory
+                has already described only when a column, an order or a mark
+                wants more than its kind -- the same test the failure below
+                reports under, widened by what needs a link's own facts or a
+                kind the directory would not give. A plain listing, and ls -R,
+                is getdents and nothing else: the look per name was 101,060
+                of ls -R's 132,580 system calls over a Linux tree.
+        */
+        positive given_kind = file_mode_from_type(type) & MODE_FORMAT;
+        bool wanted = given || !under || ls_format == 'l' || ls_inode ||
+                      ls_blocks || ls_sorting == 't' || ls_sorting == 'S' ||
+                      ls_dereference == 'L' ||
+                      ((ls_indicator || ls_coloring || ls_recursive ||
+                        ls_group_directories) && !given_kind) ||
+                      (ls_indicator == 'F' && given_kind == MODE_FILE) ||
+                      (ls_coloring && (given_kind == MODE_FILE ||
+                                       given_kind == MODE_DIRECTORY)) ||
+                      ((ls_indicator || ls_coloring || ls_group_directories) &&
+                       given_kind == MODE_LINK);
+
         if (given)
                 facts = *given;
+        else if (!wanted)
+                looked = -ERROR_NO_ENTRY;
         else
         {
                 looked = file_look_code(directory, path,
