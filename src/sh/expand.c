@@ -1881,6 +1881,19 @@ static string_address expand_value_of(expand_reference reference, p8 address_to 
 
 static COLD fn expand_fatal_status(b32 status);
 static PURE b32 expand_nounset_status(b32 indirect);
+
+//      set -u met an unset name. A command string that dies of it leaves 127,
+//      the same status the other unset-parameter path gives; only the two
+//      spellings differ.
+static COLD fn expand_unbound(expand_reference reference, b32 indirect)
+{
+        expand_where();
+        string_format(writer_stderr_once,
+                      shell_bash_compat ? "%s: unbound variable\n"
+                                        : "%s: parameter not set\n",
+                      expand_reference_text(reference));
+        expand_fatal_status(expand_nounset_status(indirect));
+}
 static COLD fn expand_slice_error();
 static string_address expand_tilde(string_address step, bool assignment);
 
@@ -1939,17 +1952,8 @@ static bool expand_push_parameter_as(expand_reference reference, bool quoted,
         {
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
-                        shell_diagnostic_where_to(writer_stderr_once);
-                        string_format(writer_stderr_once,
-                                      shell_bash_compat
-                                          ? "%s: unbound variable\n"
-                                          : "%s: parameter not set\n",
-                                      expand_reference_text(reference));
-                        // A command string that dies of nounset leaves 127,
-                        // the same status the other unset-parameter path
-                        // already gives; only the two spellings differed.
-                        expand_fatal_status(expand_nounset_status(
-                            mode & EXPAND_PARAMETER_INDIRECT));
+                        expand_unbound(reference,
+                                       mode & EXPAND_PARAMETER_INDIRECT);
                 }
 
                 return false;
@@ -2391,13 +2395,7 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
                 {
                         arith_bad = true;
                         arith_unset = true;
-                        shell_diagnostic_where_to(writer_stderr_once);
-                        string_format(writer_stderr_once,
-                                      shell_bash_compat
-                                          ? "%s: unbound variable\n"
-                                          : "%s: parameter not set\n",
-                                      expand_reference_text(reference));
-                        expand_fatal_status(expand_nounset_status(false));
+                        expand_unbound(reference, false);
                 }
 
                 return 0;
@@ -6165,15 +6163,7 @@ static COLD fn transform_assign(expand_reference reference, p8 mark)
         if (!flags && !value)
         {
                 if (shell_options & ((positive)1 << ('u' - 'a')))
-                {
-                        expand_where();
-                        string_format(writer_stderr_once,
-                                      shell_bash_compat
-                                          ? "%s: unbound variable\n"
-                                          : "%s: parameter not set\n",
-                                      expand_reference_text(reference));
-                        expand_fatal_status(expand_nounset_status(false));
-                }
+                        expand_unbound(reference, false);
                 return;
         }
 
@@ -7264,13 +7254,7 @@ static HOT string_address expand_braced_length(string_address name,
         {
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
-                        shell_diagnostic_where_to(writer_stderr_once);
-                        string_format(writer_stderr_once,
-                                      shell_bash_compat
-                                          ? "%s: unbound variable\n"
-                                          : "%s: parameter not set\n",
-                                      expand_reference_text(reference));
-                        expand_fatal_status(expand_nounset_status(false));
+                        expand_unbound(reference, false);
                         return close + 1;
                 }
 
@@ -7640,17 +7624,7 @@ static string_address expand_braced_body(string_address step,
                         if (!present)
                         {
                                 if (shell_options & ((positive)1 << ('u' - 'a')))
-                                {
-                                        expand_where();
-                                        string_format(
-                                            writer_stderr_once,
-                                            shell_bash_compat
-                                                ? "%s: unbound variable\n"
-                                                : "%s: parameter not set\n",
-                                            expand_reference_text(reference));
-                                        expand_fatal_status(
-                                            expand_nounset_status(false));
-                                }
+                                        expand_unbound(reference, false);
 
                                 return close + 1;
                         }
@@ -7777,14 +7751,9 @@ static string_address expand_braced_body(string_address step,
                 {
                         if (shell_options & ((positive)1 << ('u' - 'a')))
                         {
-                                shell_diagnostic_where_to(writer_stderr_once);
-                                string_format(writer_stderr_once,
-                                              shell_bash_compat
-                                                  ? "%s: unbound variable\n"
-                                                  : "%s: parameter not set\n",
-                                              expand_reference_text(reference));
-                                expand_fatal_status(expand_nounset_status(
-                                    parameter_mode & EXPAND_PARAMETER_INDIRECT));
+                                expand_unbound(reference,
+                                               parameter_mode &
+                                                   EXPAND_PARAMETER_INDIRECT);
                                 return close + 1;
                         }
 
@@ -9394,9 +9363,21 @@ static bool expand_brace_range(string_address word, string_address open,
                 bipolar current = first_number;
                 positive width = first_width > last_width ? first_width : last_width;
                 bool padded = first_padded || last_padded;
+                p8 address_to made;
 
                 if (step_number == bipolar_min)
                         return false;
+
+                /* The padded field is as wide as the operand was written,
+                   and positive_into_padded wants room for the widest
+                   machine word besides: {0000000000000000000000000001..2}
+                   is a 28-byte item. */
+                if (!(made = shell_store_take(address_of expand_store,
+                                              1 + (width > 20 ? width : 20))))
+                {
+                        expand_fail_state();
+                        return true;
+                }
 
                 step = step_number < 0 ? -step_number : step_number;
                 if (!step)
@@ -9407,7 +9388,6 @@ static bool expand_brace_range(string_address word, string_address open,
                 while ((step > 0 && current <= last_number) ||
                        (step < 0 && current >= last_number))
                 {
-                        p8 made[32];
                         positive length = expand_brace_number_text(
                             made, current, width, padded);
 
