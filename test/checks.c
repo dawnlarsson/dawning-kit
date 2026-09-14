@@ -49851,7 +49851,6 @@ static void drm_rect_init(struct drm_rect *r,int x,int y,int w,int h) {
 }
 static int drm_rect_width(const struct drm_rect *r) {return r->x2-r->x1;}
 static int drm_rect_height(const struct drm_rect *r) {return r->y2-r->y1;}
-static void drm_rect_translate(struct drm_rect *r,int dx,int dy) {r->x1+=dx;r->x2+=dx;r->y1+=dy;r->y2+=dy;}
 struct window_cell {unsigned character; unsigned char ink,paper; unsigned short flags;};
 struct font_desc {unsigned width,height; const unsigned char *data;};
 static const unsigned char *font_data_buf(const unsigned char *p) {return p;}
@@ -50009,7 +50008,7 @@ static void check_pane_focus_policy(void) {
     char *visible=strstr(text,"static PURE _Bool pane_visible");
     check(visible&&focusable);if(visible&&focusable){char keep=*focusable;*focusable=0;
         check(strstr(visible,"pane->width <= 0 || pane->height <= 0")!=NULL);
-        check(strstr(visible,"output_touched(output, &frame, 1)")!=NULL);
+        check(strstr(visible,"drm_rects_overlap(&frame, &screen)")!=NULL);
         *focusable=keep;}
 
     char *refresh=strstr(text,"static void desktop_refresh_panes");

@@ -16277,7 +16277,6 @@ static void pane_reshape(struct pane *p,int x,int y,int w,int h) {
     source += section(canvas, "static inline PURE _Bool drm_rects_overlap",
                       "static inline void canvas_rect_join")
     source += section(canvas, "static void pane_frame", "// Which edges")
-    source += section(compose, "static PURE _Bool output_touched", "struct shape\n")
     source += section(pane, "static PURE _Bool pane_visible",
                       "/*\n        The highest z")
     #   The close button, which lives below the edge defines rather than

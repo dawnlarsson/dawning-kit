@@ -473,8 +473,6 @@ struct target
 };
 
 static void target_row(const struct target *t, int y, int x1, int x2, u32 colour);
-static PURE _Bool output_touched(struct output *output, const struct drm_rect *damage,
-                                 unsigned int count);
 static void target_rectangle(const struct target *t, int x, int y, int w, int h,
                               u32 colour);
 
