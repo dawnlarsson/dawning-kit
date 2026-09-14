@@ -41099,25 +41099,45 @@ __asm__(
 /*
         The short decimal, read without the frame a hard one needs.
 
-        strtod has to be ready for an exponent, a hexadecimal significand, an
-        infinity and a significand longer than a register: src/standard's
-        conversion subtracts 0x778 from the stack pointer and clears thirteen
-        fields of a scan record before it looks at a byte. Nothing in "042"
-        reaches any of it, and awk asking for a three character field was
-        spending 11.0% of its run there.
+        strtod has to be ready for a hexadecimal significand, an infinity, a
+        significand longer than a register and a value that falls between two
+        doubles: src/standard's conversion subtracts 0x778 from the stack
+        pointer and clears thirteen fields of a scan record before it looks at
+        a byte. Nothing in "042", "1.5" or "-123456.789012" reaches any of it.
+        awk asking for a three character field was spending 11.0% of its run
+        there when this read only integers, and awk summing a column of
+        "-123456.789012" still spent 27% of its run there afterwards, at 742
+        instructions a call.
 
-        Fifteen digits is the most that lands on a double with no rounding
-        decision to make -- ten to the fifteenth is under two to the fifty
-        third -- so a run of at most fifteen with an optional sign converts
-        with one instruction and no rounding at all. Anything else answers
-        false and the caller takes the general path, untouched.
+        What this takes is Clinger's exact case and nothing else: an optional
+        sign, digits with at most one point among them and at least one digit
+        somewhere, then an optional e or E with an optional sign and at least
+        one digit. The digits, point ignored, make an integer that must be no
+        larger than two to the fifty third, and the power of ten -- the
+        exponent less the length of the fraction -- must lie within twenty two
+        either way. Every such integer is a double exactly and so is every
+        such power of ten, so one multiply of two exact operands, or one
+        divide for a negative power, is the correctly rounded answer IEEE
+        promises for a single operation. Anything else answers false before
+        writing anything and the caller takes the general path, untouched.
 
-        What counts as "anything else" is the whole of the correctness. A
-        point and an exponent are obvious. A sixteenth digit is not, and
-        neither is an x: 0x1p0 arrives as a leading zero followed by a byte
-        that is none of the above, and answering nought for it is wrong by
-        4607182418800017408. The ULP lane found exactly that, 129 cases of
-        2,352,654, every one hexadecimal.
+        Where the number ends is where glibc says it ends. The exponent is
+        taken only when a digit follows its sign, so "1e" and "1e+x" stop at
+        the e; a point belongs to the number with digits on either side of it
+        or on one side only, so ".5" and "5." both convert; a second point
+        ends the number.
+
+        What counts as "anything else" is the whole of the correctness. An x
+        is the case that is not obvious: 0x1p0 arrives as a leading zero
+        followed by a byte that is not a digit, and answering nought for it is
+        wrong by 4607182418800017408. The ULP lane found exactly that in the
+        first version of this routine, 129 cases of 2,352,654, every one
+        hexadecimal. So a number that stops at an x or an X is declined
+        wherever the x is. Leading space, a name, an empty significand, a
+        significand past two to the fifty third, and an exponent past 999 --
+        or past 22 when it is negative, which can only push the power further
+        down -- are declined as well: each is either the general path's
+        business or outside the window anyway.
 
         The sign is applied to the double and not to the integer, because
         negating nought as an integer gives nought and strtod owes -0.0 for
@@ -41131,56 +41151,129 @@ bool string_to_decimal_short(string_address input,
                              string_address address_to stopped,
                              decimal address_to answer);
 
+//      Ten to the nought through ten to the twenty second, as the bits of
+//      the doubles, which every body below carries beside itself; and after
+//      them, at 184, two to the fifty third as an integer, which is the bound
+//      compiler_memory.c's placed copy compares against when it has no
+//      register to spare for it.
+#define DECIMAL_SHORT_POWERS                                                  \
+    ".quad 0x3ff0000000000000, 0x4024000000000000, 0x4059000000000000\n"     \
+    ".quad 0x408f400000000000, 0x40c3880000000000, 0x40f86a0000000000\n"     \
+    ".quad 0x412e848000000000, 0x416312d000000000, 0x4197d78400000000\n"     \
+    ".quad 0x41cdcd6500000000, 0x4202a05f20000000, 0x42374876e8000000\n"     \
+    ".quad 0x426d1a94a2000000, 0x42a2309ce5400000, 0x42d6bcc41e900000\n"     \
+    ".quad 0x430c6bf526340000, 0x4341c37937e08000, 0x4376345785d8a000\n"     \
+    ".quad 0x43abc16d674ec800, 0x43e158e460913d00, 0x4415af1d78b58c40\n"     \
+    ".quad 0x444b1ae4d6e2ef50, 0x4480f0cf064dd592\n"                         \
+    ".quad 0x0020000000000000\n"
+
 #if X64
 __asm__(
     ASM_SECTION
     ASM_FUNC(string_to_decimal_short)
     //   rdi = input, rsi = stopped, rdx = answer
-    "xor %eax, %eax\n"
-    "xor %ecx, %ecx\n"
-    "xor %r8d, %r8d\n"
     "mov %rdi, %r9\n"
+    "xor %eax, %eax\n   xor %ecx, %ecx\n   xor %r8d, %r8d\n"
     "movzbl (%r9), %r10d\n"
     "cmp $45, %r10d\n   jne 1f\n"
     "mov $1, %r8d\n   inc %r9\n   jmp 2f\n"
     "1:  cmp $43, %r10d\n   jne 2f\n"
     "inc %r9\n"
-    //   value * 10 is a five scale and a double, which is two address
-    //   arithmetic and no multiplier.
-    "2:  cmp $15, %ecx\n   jae 4f\n"
-    "movzbl (%r9), %r10d\n"
+    //   r11 is where the significand starts, rcx where its fraction starts
+    //   (nought until a point is seen), and rdi the largest integer a double
+    //   holds with nothing lost.
+    "2:  mov %r9, %r11\n"
+    "movabs $0x20000000000000, %rdi\n"
+    //   value * 10 + digit is a five scale and then a two scale that adds
+    //   the digit: two address arithmetic and no multiplier. Checking the
+    //   bound after every digit keeps the next step inside sixty four bits.
+    "3:  movzbl (%r9), %r10d\n"
     "sub $48, %r10d\n"
     "cmp $9, %r10d\n   ja 4f\n"
     "lea (%rax,%rax,4), %rax\n"
-    "add %rax, %rax\n"
-    "add %r10, %rax\n"
-    "inc %r9\n   inc %ecx\n"
-    "jmp 2b\n"
-    "4:  test %ecx, %ecx\n   jz 9f\n"
-    "movzbl (%r9), %r10d\n"
-    //   e and E, x and X differ by the case bit alone, so one or folds
-    //   four compares into two.
-    "cmp $46, %r10d\n   je 9f\n"
-    "or $32, %r10d\n"
-    "cmp $101, %r10d\n   je 9f\n"
-    "cmp $120, %r10d\n   je 9f\n"
-    "lea -48(%r10), %r11d\n"
-    "cmp $9, %r11d\n   jbe 9f\n"
-    "test %rsi, %rsi\n   jz 5f\n"
-    "mov %r9, (%rsi)\n"
-    "5:  pxor %xmm0, %xmm0\n"
+    "lea (%r10,%rax,2), %rax\n"
+    "inc %r9\n"
+    "cmp %rdi, %rax\n   jbe 3b\n"
+    "jmp 9f\n"
+    //   A point less '0' is -2. The first one opens the fraction and a
+    //   second one ends the number.
+    //   The start moves past the point with the scan, so the significand
+    //   has a digit exactly when the two differ.
+    "4:  cmp $-2, %r10d\n   jne 5f\n"
+    "test %rcx, %rcx\n   jnz 5f\n"
+    "inc %r9\n   inc %r11\n   mov %r9, %rcx\n"
+    "jmp 3b\n"
+    //   r11 becomes the power of ten so far, which is minus the length of
+    //   the fraction.
+    "5:  cmp %r11, %r9\n   je 9f\n"
+    "xor %r11d, %r11d\n"
+    "test %rcx, %rcx\n   jz 6f\n"
+    "mov %rcx, %r11\n   sub %r9, %r11\n"
+    "6:\n"
+    "pxor %xmm0, %xmm0\n"
     "cvtsi2sdq %rax, %xmm0\n"
-    "test %r8d, %r8d\n   jz 6f\n"
+    //   e and E, x and X differ by the case bit alone, so one or folds four
+    //   compares into two.
+    "movzbl (%r9), %r10d\n"
+    "or $32, %r10d\n"
+    "cmp $120, %r10d\n   je 9f\n"
+    "cmp $101, %r10d\n   jne 8f\n"
+    //   The exponent is taken only when a digit follows its sign; otherwise
+    //   the number ends at the e and r9 stays there.
+    //   rcx is the largest exponent worth reading: 999 for a positive one,
+    //   and 22 for a negative one, which can only move the power further
+    //   out of the window. It is also how the sign is remembered.
+    "lea 1(%r9), %rdi\n"
+    "mov $999, %ecx\n"
+    "movzbl (%rdi), %r10d\n"
+    "cmp $43, %r10d\n   je 7f\n"
+    "cmp $45, %r10d\n   jne 71f\n"
+    "mov $22, %ecx\n"
+    "7:  inc %rdi\n"
+    "movzbl (%rdi), %r10d\n"
+    "71: sub $48, %r10d\n"
+    "cmp $9, %r10d\n   ja 8f\n"
+    "xor %eax, %eax\n"
+    "72: lea (%rax,%rax,4), %eax\n"
+    "lea (%r10,%rax,2), %eax\n"
+    "cmp %rcx, %rax\n   ja 9f\n"
+    "inc %rdi\n"
+    "movzbl (%rdi), %r10d\n"
+    "sub $48, %r10d\n"
+    "cmp $9, %r10d\n   jbe 72b\n"
+    "mov %rdi, %r9\n"
+    "cmp $22, %ecx\n   jne 73f\n"
+    "neg %rax\n"
+    "73: add %rax, %r11\n"
+    //   Ten to the power is exactly a double from nought to twenty two, so
+    //   one multiply or one divide of two exact operands is the correctly
+    //   rounded answer. A negative power divides, because ten to a negative
+    //   power is not a double and multiplying by its nearest one rounds
+    //   twice.
+    "8:  lea 22(%r11), %rax\n"
+    "cmp $44, %rax\n   ja 9f\n"
+    "lea .Ldecimal_short_powers(%rip), %rax\n"
+    "test %r11, %r11\n   jz 10f\n   js 81f\n"
+    "mulsd (%rax,%r11,8), %xmm0\n"
+    "jmp 10f\n"
+    "81: neg %r11\n"
+    "divsd (%rax,%r11,8), %xmm0\n"
+    "10: test %rsi, %rsi\n   jz 11f\n"
+    "mov %r9, (%rsi)\n"
+    "11: test %r8d, %r8d\n   jz 12f\n"
     "movq %xmm0, %rax\n"
-    "movabs $0x8000000000000000, %r10\n"
-    "xor %r10, %rax\n"
+    "btc $63, %rax\n"
     "movq %rax, %xmm0\n"
-    "6:  movsd %xmm0, (%rdx)\n"
+    "12: movsd %xmm0, (%rdx)\n"
     "mov $1, %eax\n"
     ASM_RET
     "9:  xor %eax, %eax\n"
     ASM_RET
     ASM_END(string_to_decimal_short)
+    ".section .rodata\n   .balign 8\n"
+    ".Ldecimal_short_powers:\n"
+    DECIMAL_SHORT_POWERS
+    ASM_SECTION
 );
 #elif ARM64
 __asm__(
@@ -41189,38 +41282,88 @@ __asm__(
     //   x0 = input, x1 = stopped, x2 = answer
     "mov x9, x0\n"
     "mov x10, #0\n   mov x11, #0\n   mov x12, #0\n   mov x14, #10\n"
+    "movz x15, #0x20, lsl #48\n"
     "ldrb w13, [x9]\n"
     "cmp w13, #45\n   b.ne 1f\n"
     "mov x12, #1\n   add x9, x9, #1\n   b 2f\n"
     "1:  cmp w13, #43\n   b.ne 2f\n"
     "add x9, x9, #1\n"
-    "2:  cmp x11, #15\n   b.hs 4f\n"
-    "ldrb w13, [x9]\n"
+    //   x16 is where the significand starts, x11 where its fraction starts
+    //   and x15 two to the fifty third, as x86_64 says.
+    "2:  mov x16, x9\n"
+    "3:  ldrb w13, [x9]\n"
     "sub w13, w13, #48\n"
     "cmp w13, #9\n   b.hi 4f\n"
     "madd x10, x10, x14, x13\n"
-    "add x9, x9, #1\n   add x11, x11, #1\n"
-    "b 2b\n"
-    "4:  cbz x11, 9f\n"
-    "ldrb w13, [x9]\n"
+    "add x9, x9, #1\n"
+    "cmp x10, x15\n   b.ls 3b\n"
+    "b 9f\n"
+    //   A point less '0' is -2, and cmn asks exactly that.
+    "4:  cmn w13, #2\n   b.ne 5f\n"
+    "cbnz x11, 5f\n"
+    "add x9, x9, #1\n   add x16, x16, #1\n   mov x11, x9\n"
+    "b 3b\n"
+    "5:  cmp x9, x16\n   b.eq 9f\n"
+    "mov x3, #0\n"
+    "cbz x11, 6f\n"
+    "sub x3, x11, x9\n"
+    "6:\n"
     //   the case bit folds four compares into two, as x86_64 says.
-    "cmp w13, #46\n   b.eq 9f\n"
-    "orr w15, w13, #32\n"
-    "cmp w15, #101\n   b.eq 9f\n"
-    "cmp w15, #120\n   b.eq 9f\n"
-    "sub w15, w13, #48\n   cmp w15, #9\n   b.ls 9f\n"
-    "cbz x1, 5f\n"
+    "ldrb w13, [x9]\n"
+    "orr w13, w13, #32\n"
+    "cmp w13, #120\n   b.eq 9f\n"
+    "cmp w13, #101\n   b.ne 8f\n"
+    //   x5 is the largest exponent worth reading and the sign both, as
+    //   x86_64 says.
+    "add x4, x9, #1\n"
+    "mov x5, #999\n"
+    "ldrb w13, [x4]\n"
+    "cmp w13, #43\n   b.eq 7f\n"
+    "cmp w13, #45\n   b.ne 71f\n"
+    "mov x5, #22\n"
+    "7:  add x4, x4, #1\n"
+    "ldrb w13, [x4]\n"
+    "71: sub w13, w13, #48\n"
+    "cmp w13, #9\n   b.hi 8f\n"
+    "mov x6, #0\n"
+    "72: madd x6, x6, x14, x13\n"
+    "cmp x6, x5\n   b.hi 9f\n"
+    "add x4, x4, #1\n"
+    "ldrb w13, [x4]\n"
+    "sub w13, w13, #48\n"
+    "cmp w13, #9\n   b.ls 72b\n"
+    "mov x9, x4\n"
+    "cmp x5, #22\n   b.ne 73f\n"
+    "neg x6, x6\n"
+    "73: add x3, x3, x6\n"
+    //   One multiply or one divide of two exact operands, as x86_64 says.
+    "8:  add x4, x3, #22\n"
+    "cmp x4, #44\n   b.hi 9f\n"
+    "scvtf d0, x10\n"
+    "adrp x4, .Ldecimal_short_powers\n"
+    "add x4, x4, :lo12:.Ldecimal_short_powers\n"
+    "cmp x3, #0\n   b.eq 10f\n   b.lt 81f\n"
+    "ldr d1, [x4, x3, lsl #3]\n"
+    "fmul d0, d0, d1\n"
+    "b 10f\n"
+    "81: neg x3, x3\n"
+    "ldr d1, [x4, x3, lsl #3]\n"
+    "fdiv d0, d0, d1\n"
+    "10: cbz x1, 11f\n"
     "str x9, [x1]\n"
     //   fneg flips the sign bit, so nought comes out negative as it must.
-    "5:  scvtf d0, x10\n"
-    "cbz x12, 6f\n"
+    "11: cbz x12, 12f\n"
     "fneg d0, d0\n"
-    "6:  str d0, [x2]\n"
+    "12: str d0, [x2]\n"
     "mov w0, #1\n"
     ASM_RET
     "9:  mov w0, #0\n"
     ASM_RET
     ASM_END(string_to_decimal_short)
+    ".section .rodata\n   .balign 8\n"
+    ".Ldecimal_short_powers:\n"
+    DECIMAL_SHORT_POWERS
+    ASM_SECTION
 );
 #elif RISCV64
 __asm__(
@@ -41228,40 +41371,92 @@ __asm__(
     ASM_FUNC(string_to_decimal_short)
     //   a0 = input, a1 = stopped, a2 = answer
     "mv a3, a0\n"
-    "li a4, 0\n   li a5, 0\n   li a6, 0\n"
+    "li a4, 0\n   li a6, 0\n   li t3, 0\n   li t4, 10\n   li t1, 9\n"
+    "li t5, 1\n   slli t5, t5, 53\n"
     "lbu a7, 0(a3)\n"
     "li t0, 45\n   bne a7, t0, 1f\n"
     "li a6, 1\n   addi a3, a3, 1\n   j 2f\n"
     "1:  li t0, 43\n   bne a7, t0, 2f\n"
     "addi a3, a3, 1\n"
-    "2:  li t0, 15\n   bgeu a5, t0, 4f\n"
-    "lbu a7, 0(a3)\n"
+    //   t6 is where the significand starts, t3 where its fraction starts
+    //   and t5 two to the fifty third, as x86_64 says.
+    "2:  mv t6, a3\n"
+    "3:  lbu a7, 0(a3)\n"
     "addi a7, a7, -48\n"
-    "li t0, 9\n   bltu t0, a7, 4f\n"
-    "li t0, 10\n   mul a4, a4, t0\n   add a4, a4, a7\n"
-    "addi a3, a3, 1\n   addi a5, a5, 1\n"
-    "j 2b\n"
-    "4:  beqz a5, 9f\n"
-    "lbu a7, 0(a3)\n"
+    "bltu t1, a7, 4f\n"
+    "mul a4, a4, t4\n   add a4, a4, a7\n"
+    "addi a3, a3, 1\n"
+    "bgeu t5, a4, 3b\n"
+    "j 9f\n"
+    "4:  li t0, -2\n   bne a7, t0, 5f\n"
+    "bnez t3, 5f\n"
+    "addi a3, a3, 1\n   addi t6, t6, 1\n   mv t3, a3\n"
+    "j 3b\n"
+    "5:  beq a3, t6, 9f\n"
+    "li t2, 0\n"
+    "beqz t3, 6f\n"
+    "sub t2, t3, a3\n"
+    "6:\n"
     //   the case bit folds four compares into two, as x86_64 says.
-    "li t0, 46\n   beq a7, t0, 9f\n"
-    "ori t1, a7, 32\n"
-    "li t0, 101\n   beq t1, t0, 9f\n"
-    "li t0, 120\n   beq t1, t0, 9f\n"
-    "addi t1, a7, -48\n   li t0, 9\n   bgeu t0, t1, 9f\n"
-    "beqz a1, 5f\n"
+    "lbu a7, 0(a3)\n"
+    "ori a7, a7, 32\n"
+    "li t0, 120\n   beq a7, t0, 9f\n"
+    "li t0, 101\n   bne a7, t0, 8f\n"
+    //   t3 is the largest exponent worth reading and the sign both, as
+    //   x86_64 says.
+    "addi a5, a3, 1\n"
+    "li t3, 999\n"
+    "lbu a7, 0(a5)\n"
+    "li t0, 43\n   beq a7, t0, 7f\n"
+    "li t0, 45\n   bne a7, t0, 71f\n"
+    "li t3, 22\n"
+    "7:  addi a5, a5, 1\n"
+    "lbu a7, 0(a5)\n"
+    "71: addi a7, a7, -48\n"
+    "bltu t1, a7, 8f\n"
+    "li t6, 0\n"
+    "72: mul t6, t6, t4\n   add t6, t6, a7\n"
+    "bltu t3, t6, 9f\n"
+    "addi a5, a5, 1\n"
+    "lbu a7, 0(a5)\n"
+    "addi a7, a7, -48\n"
+    "bgeu t1, a7, 72b\n"
+    "mv a3, a5\n"
+    "li t0, 22\n   bne t3, t0, 73f\n"
+    "neg t6, t6\n"
+    "73: add t2, t2, t6\n"
+    //   One multiply or one divide of two exact operands, as x86_64 says.
+    "8:  addi t0, t2, 22\n"
+    "li t5, 44\n   bltu t5, t0, 9f\n"
+    "fcvt.d.l fa0, a4\n"
+    "lla t0, .Ldecimal_short_powers\n"
+    "beqz t2, 10f\n"
+    "bltz t2, 81f\n"
+    "slli t2, t2, 3\n   add t0, t0, t2\n"
+    "fld fa1, 0(t0)\n"
+    "fmul.d fa0, fa0, fa1\n"
+    "j 10f\n"
+    "81: neg t2, t2\n"
+    "slli t2, t2, 3\n   add t0, t0, t2\n"
+    "fld fa1, 0(t0)\n"
+    "fdiv.d fa0, fa0, fa1\n"
+    "10: beqz a1, 11f\n"
     "sd a3, 0(a1)\n"
-    "5:  fcvt.d.l fa0, a4\n"
-    "beqz a6, 6f\n"
+    "11: beqz a6, 12f\n"
     "fneg.d fa0, fa0\n"
-    "6:  fsd fa0, 0(a2)\n"
+    "12: fsd fa0, 0(a2)\n"
     "li a0, 1\n"
     ASM_RET
     "9:  li a0, 0\n"
     ASM_RET
     ASM_END(string_to_decimal_short)
+    ".section .rodata\n   .balign 8\n"
+    ".Ldecimal_short_powers:\n"
+    DECIMAL_SHORT_POWERS
+    ASM_SECTION
 );
 #endif
+#undef DECIMAL_SHORT_POWERS
 #endif // KERNEL_MODE
 
 #if X64

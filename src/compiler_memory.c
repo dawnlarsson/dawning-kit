@@ -635,16 +635,20 @@ static inline INLINE address_any copy_running(address_any destination,
         The short decimal, placed rather than called.
 
         library.c owns string_to_decimal_short and is where its reasoning
-        lives. A routine there is a call, though, and this one is small
-        enough that the call is a measurable part of it: five cycles against
-        a body of about thirty, which came to 2% of an awk run.
+        lives. A routine there is a call, though, and for a plain run of
+        digits the call is a measurable part of it: five cycles against a body
+        of about thirty, which came to 2% of an awk run.
 
         So the same instructions are written here as well, in the shape the
         compiler can drop at the call site, the way KNOWN_FILL_ASM already
-        does for a folded fill. The out-of-line routine stays: it is the
-        symbol, the inventory entry, and what anything taking the address
-        gets. This is the fast placement of it, and the two are checked
-        against each other by the ULP lane, which runs whichever is wired.
+        does for a folded fill. They read the routine's own table of powers
+        of ten, which lives beside it in the same translation unit, and keep
+        two to the fifty third in the table rather than in a register, which
+        this placement has none of to spare. The out-of-line routine stays:
+        it is the symbol, the inventory entry, and what anything taking the
+        address gets. This is the fast placement of it. The ULP lane holds
+        this one to glibc through strtod and holds the routine, called by its
+        own name, to the general path on the same generated text.
 */
 #if X64 && !defined(KERNEL_MODE) && LIBRARY_INLINE
 #define DECIMAL_SHORT_PLACED 1
@@ -653,54 +657,91 @@ static inline INLINE bool decimal_short_placed(string_address input,
                                                string_address address_to stopped,
                                                decimal address_to answer)
 {
-        positive at, value, digits, negative, byte, scratch;
+        positive at, value, fraction, byte, start, power, table;
         decimal made;
-        bool ok;
 
+        //      Seven registers and the input's own, which is every register
+        //      the call clobbers anyway: an eighth made the caller save one on
+        //      every call, and "042" went from ten cycles to fourteen with two
+        //      instructions fewer. So the sign is read again from the input at
+        //      the end instead of being kept, and a decline is a scan pointer
+        //      of nought instead of a flag.
         __asm__(
-            "xor %k[val], %k[val]\n"
-            "xor %k[dig], %k[dig]\n"
-            "xor %k[neg], %k[neg]\n"
             "mov %[in], %[at]\n"
+            "xor %k[val], %k[val]\n"
+            "xor %k[frac], %k[frac]\n"
             "movzbl (%[at]), %k[byte]\n"
             "cmp $45, %k[byte]\n   jne Lp_%=\n"
-            "mov $1, %k[neg]\n   inc %[at]\n   jmp Ld_%=\n"
-            "Lp_%=:  cmp $43, %k[byte]\n   jne Ld_%=\n"
+            "inc %[at]\n   jmp Ls_%=\n"
+            "Lp_%=:  cmp $43, %k[byte]\n   jne Ls_%=\n"
             "inc %[at]\n"
-            "Ld_%=:  cmp $15, %k[dig]\n   jae Le_%=\n"
-            "movzbl (%[at]), %k[byte]\n"
+            "Ls_%=:  mov %[at], %[start]\n"
+            "Ld_%=:  movzbl (%[at]), %k[byte]\n"
             "sub $48, %k[byte]\n"
-            "cmp $9, %k[byte]\n   ja Le_%=\n"
+            "cmp $9, %k[byte]\n   ja Lq_%=\n"
             "lea (%[val],%[val],4), %[val]\n"
-            "add %[val], %[val]\n"
-            "add %[byte], %[val]\n"
-            "inc %[at]\n   inc %k[dig]\n"
+            "lea (%[byte],%[val],2), %[val]\n"
+            "inc %[at]\n"
+            "cmp .Ldecimal_short_powers+184(%%rip), %[val]\n   jbe Ld_%=\n"
+            "jmp Lx_%=\n"
+            "Lq_%=:  cmp $-2, %k[byte]\n   jne Lc_%=\n"
+            "test %[frac], %[frac]\n   jnz Lc_%=\n"
+            "inc %[at]\n   inc %[start]\n   mov %[at], %[frac]\n"
             "jmp Ld_%=\n"
-            "Le_%=:  xor %k[ok], %k[ok]\n"
-            "test %k[dig], %k[dig]\n   jz Lx_%=\n"
-            "movzbl (%[at]), %k[byte]\n"
-            "cmp $46, %k[byte]\n   je Lx_%=\n"
+            "Lc_%=:  cmp %[start], %[at]\n   je Lx_%=\n"
+            "xor %k[pow], %k[pow]\n"
+            "test %[frac], %[frac]\n   jz Lo_%=\n"
+            "mov %[frac], %[pow]\n   sub %[at], %[pow]\n"
+            "Lo_%=:  movzbl (%[at]), %k[byte]\n"
             "or $32, %k[byte]\n"
-            "cmp $101, %k[byte]\n   je Lx_%=\n"
             "cmp $120, %k[byte]\n   je Lx_%=\n"
-            "lea -48(%[byte]), %[scratch]\n"
-            "cmp $9, %k[scratch]\n   jbe Lx_%=\n"
+            "cmp $101, %k[byte]\n   jne Lw_%=\n"
+            "lea 1(%[at]), %[start]\n"
+            "mov $999, %k[frac]\n"
+            "movzbl (%[start]), %k[byte]\n"
+            "cmp $43, %k[byte]\n   je Lf_%=\n"
+            "cmp $45, %k[byte]\n   jne Lg_%=\n"
+            "mov $22, %k[frac]\n"
+            "Lf_%=:  inc %[start]\n"
+            "movzbl (%[start]), %k[byte]\n"
+            "Lg_%=:  sub $48, %k[byte]\n"
+            "cmp $9, %k[byte]\n   ja Lw_%=\n"
+            "xor %k[table], %k[table]\n"
+            "Le_%=:  lea (%[table],%[table],4), %k[table]\n"
+            "lea (%[byte],%[table],2), %k[table]\n"
+            "cmp %[frac], %[table]\n   ja Lx_%=\n"
+            "inc %[start]\n"
+            "movzbl (%[start]), %k[byte]\n"
+            "sub $48, %k[byte]\n"
+            "cmp $9, %k[byte]\n   jbe Le_%=\n"
+            "mov %[start], %[at]\n"
+            "cmp $22, %k[frac]\n   jne Ln_%=\n"
+            "neg %[table]\n"
+            "Ln_%=:  add %[table], %[pow]\n"
+            "Lw_%=:  lea 22(%[pow]), %[byte]\n"
+            "cmp $44, %[byte]\n   ja Lx_%=\n"
             "pxor %[made], %[made]\n"
             "cvtsi2sdq %[val], %[made]\n"
-            "test %k[neg], %k[neg]\n   jz Ls_%=\n"
-            "movq %[made], %[scratch]\n"
-            "movabs $0x8000000000000000, %[byte]\n"
-            "xor %[byte], %[scratch]\n"
-            "movq %[scratch], %[made]\n"
-            "Ls_%=:  mov $1, %k[ok]\n"
-            "Lx_%=:\n"
-            : [at] "=&r"(at), [val] "=&r"(value), [dig] "=&r"(digits),
-              [neg] "=&r"(negative), [byte] "=&r"(byte),
-              [scratch] "=&r"(scratch), [made] "=&x"(made), [ok] "=&r"(ok)
+            "lea .Ldecimal_short_powers(%%rip), %[table]\n"
+            "test %[pow], %[pow]\n   jz Lr_%=\n   js Lv_%=\n"
+            "mulsd (%[table],%[pow],8), %[made]\n"
+            "jmp Lr_%=\n"
+            "Lv_%=:  neg %[pow]\n"
+            "divsd (%[table],%[pow],8), %[made]\n"
+            "Lr_%=:  cmpb $45, (%[in])\n   jne Ly_%=\n"
+            "movq %[made], %[byte]\n"
+            "btc $63, %[byte]\n"
+            "movq %[byte], %[made]\n"
+            "jmp Ly_%=\n"
+            "Lx_%=:  xor %k[at], %k[at]\n"
+            "Ly_%=:\n"
+            : [at] "=&r"(at), [val] "=&r"(value), [frac] "=&r"(fraction),
+              [byte] "=&r"(byte), [start] "=&r"(start), [pow] "=&r"(power),
+              [table] "=&r"(table), [made] "=&x"(made)
             : [in] "r"(input), [seen] "m"(*(const p8 (address_to)[])input)
             : "cc");
 
-        if (!ok)
+        if (!at)
                 return false;
 
         if (stopped)

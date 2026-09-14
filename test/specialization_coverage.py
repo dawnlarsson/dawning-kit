@@ -324,7 +324,15 @@ cover('placed', None, 'string_to_decimal_short',
       '30,852,018 with one -- so the read is declared as an incomplete array '
       'instead, which says an unspecified amount is read at that address and '
       'is what GCC documents for a span whose length the constraint cannot '
-      'state',
+      'state. Widened to Clinger\'s window -- a point and an exponent, one '
+      'exact multiply or divide by the routine\'s own table -- the placement '
+      'stayed whole rather than fronting the routine: fronting it cost 283 '
+      'instructions a call for "-123456.789012" against 170 placed, because '
+      'the front half scans the integer digits a second time before handing '
+      'over. It keeps to seven registers and the input\'s: with an eighth '
+      'the caller saved one on every call and "042" took 14.4 cycles, and '
+      'with seven it takes 10.2 against the integer-only placement\'s 10.0 '
+      'in 68 instructions against 75',
       expansion='decimal_short_placed', evidence='test/checks.c#CHECK_number')
 
 cover('nothing_to_fold', None, '''

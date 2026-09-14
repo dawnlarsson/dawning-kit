@@ -2049,7 +2049,94 @@ lane_storage_format()
         [ "$refused" = 0 ]
 }
 lane_leaving()   { freestanding_checks_lane leaving leaving; }
-lane_numbers()   { freestanding_checks_lane numbers number; }
+#       strtod and strtof against glibc, over generated text.
+#
+#       test/checks.c's CHECK_number_differential walks seeded blocks of
+#       65,536 inputs and prints one hash a block over the bits, end offset
+#       and errno of both conversions; its _reference twin prints the same
+#       over the machine's glibc, and every block has to agree. The x86_64
+#       glibc is the answer key for all three machines: this tree decides
+#       tininess after rounding everywhere and arm64's glibc does not, and
+#       the riscv64 cross toolchain carries glibc 2.41, which reads the
+#       incomplete prefixes differently from 2.44. A block that disagrees is
+#       run again case by case on both sides and the first differing cases
+#       are shown. NUMBERS_BLOCKS is how many blocks the native run takes;
+#       the two emulated machines take an eighth of that.
+numbers_against_glibc()
+(
+        [ "$host_system" = Linux ] || {
+                note "numbers-glibc: NOT RUN -- the reference is Linux glibc"
+                exit 2
+        }
+
+        host=${CC:-gcc}
+        blocks=${NUMBERS_BLOCKS:-16}
+        reference=$work/number_differential.reference
+
+        if ! $host -O2 -w -o "$reference" \
+                -DCHECK_number_differential_reference test/checks.c \
+                2> "$reference.err"
+        then
+                note "numbers-glibc: the glibc reference did not build -- not run"
+                sed 's/^/    /' "$reference.err" | head -10
+                exit 2
+        fi
+
+        "$reference" 0 "$blocks" > "$reference.out" || {
+                note "numbers-glibc: the reference did not finish"
+                exit 1
+        }
+
+        failed=0
+        missing=0
+
+        for target in x86_64 arm64 riscv64; do
+                target_tools "$target" || { missing=1; continue; }
+
+                count=$blocks
+                [ -z "$target_runner" ] || count=$(( (blocks + 7) / 8 ))
+                program=$work/number_differential.$target
+
+                target_build freestanding_check number_differential \
+                        "$program" "$target" || { failed=1; continue; }
+
+                $target_runner "$program" 0 "$count" > "$program.out" 2>&1
+                head -n "$count" "$reference.out" > "$program.expected"
+
+                differing=$(diff "$program.expected" "$program.out" | grep -c '^>')
+                total=$(( count * 65536 ))
+                tally "numbers-glibc-$target" \
+                        "$(( (count - differing) * 65536 ))" "$total"
+
+                [ "$differing" = 0 ] && continue
+                failed=1
+
+                block=$(diff "$program.expected" "$program.out" |
+                        sed -n 's/^> block \([0-9]*\) .*/\1/p' | head -1)
+                note "numbers-glibc $target: $differing of $count blocks differ from glibc; block ${block:-?} case by case:"
+                [ -n "$block" ] || continue
+
+                "$reference" "$block" 1 "$block" > "$program.cases.expected"
+                $target_runner "$program" "$block" 1 "$block" > "$program.cases" 2>&1
+                diff "$program.cases.expected" "$program.cases" |
+                        sed 's/^/    /' | head -24
+        done
+
+        [ "$failed" = 0 ] || exit 1
+        [ "$missing" = 0 ] || exit 2
+        exit 0
+)
+
+lane_numbers()
+{
+        freestanding_checks_lane numbers number
+        numbers_outcome=$?
+        numbers_against_glibc
+        case $numbers_outcome$? in
+        *1*) return 1 ;;
+        *2*) return 2 ;;
+        esac
+}
 lane_scan()      { freestanding_checks_lane scan scan; }
 lane_process()   { freestanding_checks_lane process process; }
 lane_signal()    { freestanding_checks_lane signal signal; }

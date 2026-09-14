@@ -4662,6 +4662,860 @@ static u64 next(void)
 }
 #endif
 
+#elif defined(SHARED_number_stream)
+/*
+        The float conversions over generated text, written once for two sides.
+
+        CHECK_number_differential compiles this over this tree's strtod and
+        strtof and CHECK_number_differential_reference over the machine's
+        glibc. Both walk the same seeded cases in blocks of 65,536 and print
+        one line a block, a hash over the bits, the end offset and the errno
+        of both conversions, and the numbers lane diffs the two. Asked for one
+        block by name a program prints every case of that block instead, so a
+        block that disagrees names its inputs on the next run. A block is
+        seeded by its index alone, so any one of them can be run by itself and
+        a long sweep can be cut into ranges that run side by side.
+
+        CHECK_number draws from the same generator to hold
+        string_to_decimal_short to the general path, which needs no glibc.
+
+        THE FAMILIES, AND WHAT EACH ONE IS FOR
+
+        Random decimals: one to forty digits and now and then a thousand, a
+        point anywhere or nowhere, an exponent from -350 to 320 or none,
+        signs, space in front and a stray byte behind. Most of what a program
+        writes, and most of what lands in the estimating tier.
+
+        Clinger's window: significands up to and around two to the fifty third
+        and powers of ten within twenty five, which is the edge of what
+        string_to_decimal_short accepts and of the exact tier behind it.
+
+        Midpoints: the exact decimal of the point halfway between a random
+        double or float and the next one up, subnormals and the top of the
+        range included, then cut short, cut short and bumped a unit, pushed a
+        unit below, padded with zeros past the eight hundred and thirty two
+        digits the register holds, or given a one past its last digit.
+        Nothing else reaches the slow tier as often, and a tie is the one
+        place rounding can be wrong while every other answer is right.
+
+        Exact floats: the decimal expansion of a random double or float, and
+        of the smallest subnormal, the largest subnormal, the smallest normal,
+        the largest finite value and the tininess threshold, with the same
+        variations. That is where errno is decided.
+
+        Zero runs: leading zeros, zeros after a point, zeros inside the
+        significand, and runs long enough for the register and the point to
+        clamp.
+
+        Hexadecimal floats and the malformed: 0x with and without digits,
+        points and binary exponents, and strings put together from the pieces
+        a parser stumbles on -- signs, points, e, x, p and the names.
+
+        Nothing here calls a C library. What a side supplies is NS_STRTOD,
+        NS_STRTOF, NS_ERRNO and ns_emit, defined before the include; a section
+        that only wants the generator defines none of them.
+*/
+typedef unsigned long long ns_u64;
+typedef unsigned int ns_u32;
+
+static ns_u64 ns_state;
+
+static ns_u64 ns_next(void)
+{
+        ns_u64 mixed = (ns_state += 0x9e3779b97f4a7c15ULL);
+
+        mixed = (mixed ^ (mixed >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        mixed = (mixed ^ (mixed >> 27)) * 0x94d049bb133111ebULL;
+        return mixed ^ (mixed >> 31);
+}
+
+static ns_u64 ns_below(ns_u64 bound)
+{
+        return ns_next() % bound;
+}
+
+#define NS_TEXT 4096
+#define NS_DIGITS 2048
+#define NS_LIMBS 200
+#define NS_BLOCK 65536
+
+static char ns_text[NS_TEXT];
+static int ns_at;
+static char ns_digit[NS_DIGITS];
+static int ns_count;
+static ns_u32 ns_limb[NS_LIMBS];
+static int ns_used;
+
+static void ns_put(char byte)
+{
+        if (ns_at < NS_TEXT - 1)
+                ns_text[ns_at++] = byte;
+}
+
+static void ns_puts(const char *piece)
+{
+        while (*piece)
+                ns_put(*piece++);
+}
+
+static void ns_zeros(long long count)
+{
+        while (count-- > 0)
+                ns_put('0');
+}
+
+static void ns_number(ns_u64 value)
+{
+        char held[24];
+        int count = 0;
+
+        do
+        {
+                held[count++] = (char)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        while (count)
+                ns_put(held[--count]);
+}
+
+//      An optional sign, and now and then the space strtod skips.
+static void ns_front(void)
+{
+        ns_u64 pick = ns_below(100);
+
+        if (pick < 3)
+                ns_puts(pick == 0 ? " " : pick == 1 ? "\t" : "\n\v ");
+
+        pick = ns_below(100);
+        if (pick < 20)
+                ns_put('-');
+        else if (pick < 25)
+                ns_put('+');
+}
+
+//      An exponent in any spelling: either letter, a sign or none, and
+//      sometimes zeros in front of its digits.
+static void ns_exponent(long long value)
+{
+        ns_put(ns_below(2) ? 'e' : 'E');
+
+        if (value < 0)
+                ns_put('-');
+        else if (ns_below(3) == 0)
+                ns_put('+');
+
+        if (ns_below(8) == 0)
+                ns_zeros(1 + (long long)ns_below(4));
+
+        ns_number(value < 0 ? (ns_u64)-value : (ns_u64)value);
+}
+
+//      And now and then a byte behind the number, which may or may not turn
+//      out to be part of it.
+static void ns_back(void)
+{
+        static const char tails[] = "xXeE.+-p9 _";
+
+        if (ns_below(10) == 0)
+                ns_put(tails[ns_below(sizeof tails - 1)]);
+}
+
+//      digits times ten to the power, spelled one of the ways a program
+//      spells a number: an exponent after the digits, a point after the
+//      first digit or anywhere, or the point written out with no exponent.
+static void ns_render(long long power)
+{
+        ns_u64 style = ns_below(8);
+        int index;
+
+        if (style < 2)
+        {
+                for (index = 0; index < ns_count; index++)
+                        ns_put(ns_digit[index]);
+
+                if (power != 0 || ns_below(4) == 0)
+                        ns_exponent(power);
+                return;
+        }
+
+        if (style < 6)
+        {
+                int place = style < 4 ? 1 : (int)ns_below((ns_u64)ns_count + 1);
+
+                if (place > ns_count)
+                        place = ns_count;
+
+                for (index = 0; index < place; index++)
+                        ns_put(ns_digit[index]);
+
+                ns_put('.');
+
+                for (; index < ns_count; index++)
+                        ns_put(ns_digit[index]);
+
+                power += ns_count - place;
+
+                if (power != 0 || ns_below(4) == 0)
+                        ns_exponent(power);
+                return;
+        }
+
+        if (power >= 0 && power <= 40)
+        {
+                for (index = 0; index < ns_count; index++)
+                        ns_put(ns_digit[index]);
+
+                ns_zeros(power);
+
+                if (ns_below(2))
+                        ns_put('.');
+                return;
+        }
+
+        if (power < 0 && power + ns_count > -40)
+        {
+                long long lead = power + ns_count;
+
+                if (lead <= 0)
+                {
+                        ns_put('0');
+                        ns_put('.');
+                        ns_zeros(-lead);
+                        index = 0;
+                }
+                else
+                {
+                        for (index = 0; index < lead; index++)
+                                ns_put(ns_digit[index]);
+
+                        ns_put('.');
+                }
+
+                for (; index < ns_count; index++)
+                        ns_put(ns_digit[index]);
+                return;
+        }
+
+        ns_put('0');
+        ns_put('.');
+
+        for (index = 0; index < ns_count; index++)
+                ns_put(ns_digit[index]);
+
+        ns_exponent(power + ns_count);
+}
+
+//      A big number in limbs of a billion, which is all the exact decimal of
+//      a float needs: a multiply by a small factor and a spelling.
+static void ns_big(ns_u64 value)
+{
+        ns_used = 0;
+
+        while (value)
+        {
+                ns_limb[ns_used++] = (ns_u32)(value % 1000000000);
+                value /= 1000000000;
+        }
+}
+
+static void ns_scale(ns_u32 factor)
+{
+        ns_u64 carry = 0;
+        int index;
+
+        for (index = 0; index < ns_used; index++)
+        {
+                ns_u64 product = (ns_u64)ns_limb[index] * factor + carry;
+
+                ns_limb[index] = (ns_u32)(product % 1000000000);
+                carry = product / 1000000000;
+        }
+
+        while (carry && ns_used < NS_LIMBS)
+        {
+                ns_limb[ns_used++] = (ns_u32)(carry % 1000000000);
+                carry /= 1000000000;
+        }
+}
+
+static void ns_spell(void)
+{
+        char held[10];
+        int count = 0;
+        int index;
+        ns_u32 top;
+
+        ns_count = 0;
+
+        if (ns_used == 0)
+        {
+                ns_digit[ns_count++] = '0';
+                return;
+        }
+
+        for (top = ns_limb[ns_used - 1]; top; top /= 10)
+                held[count++] = (char)('0' + top % 10);
+
+        while (count)
+                ns_digit[ns_count++] = held[--count];
+
+        for (index = ns_used - 2; index >= 0; index--)
+        {
+                ns_u32 limb = ns_limb[index];
+                int place;
+
+                for (place = 8; place >= 0; place--)
+                {
+                        ns_digit[ns_count + place] = (char)('0' + limb % 10);
+                        limb /= 10;
+                }
+
+                ns_count += 9;
+        }
+}
+
+//      The exact decimal of significand times two to the power, into
+//      ns_digit, answering the power of ten the digits stand at.
+static long long ns_exact(ns_u64 significand, int power)
+{
+        ns_big(significand);
+
+        if (power >= 0)
+        {
+                while (power > 0)
+                {
+                        int step = power > 29 ? 29 : power;
+
+                        ns_scale((ns_u32)1 << step);
+                        power -= step;
+                }
+
+                ns_spell();
+                return 0;
+        }
+
+        {
+                int left = -power;
+
+                while (left > 0)
+                {
+                        int step = left > 12 ? 12 : left;
+                        ns_u32 five = 1;
+                        int count;
+
+                        for (count = 0; count < step; count++)
+                                five *= 5;
+
+                        ns_scale(five);
+                        left -= step;
+                }
+        }
+
+        ns_spell();
+        return power;
+}
+
+//      The variations every exact decimal is put through before spelling.
+static void ns_variant(long long power)
+{
+        ns_u64 pick = ns_below(10);
+        int index;
+
+        if ((pick == 1 || pick == 2) && ns_count > 1)
+        {
+                int keep = 1 + (int)ns_below((ns_u64)ns_count - 1);
+
+                power += ns_count - keep;
+                ns_count = keep;
+
+                if (pick == 2)
+                {
+                        index = ns_count - 1;
+
+                        while (index >= 0 && ns_digit[index] == '9')
+                        {
+                                ns_digit[index] = '0';
+                                index--;
+                        }
+
+                        if (index >= 0)
+                                ns_digit[index]++;
+                        else
+                        {
+                                for (index = ns_count; index > 0; index--)
+                                        ns_digit[index] = ns_digit[index - 1];
+
+                                ns_digit[0] = '1';
+                                ns_count++;
+                        }
+                }
+        }
+        else if (pick == 3)
+        {
+                int nines = 1 + (int)ns_below(30);
+
+                index = ns_count - 1;
+
+                while (index >= 0 && ns_digit[index] == '0')
+                {
+                        ns_digit[index] = '9';
+                        index--;
+                }
+
+                if (index >= 0)
+                        ns_digit[index]--;
+
+                while (nines-- > 0 && ns_count < NS_DIGITS)
+                {
+                        ns_digit[ns_count++] = '9';
+                        power--;
+                }
+        }
+        else if (pick == 4 || pick == 5)
+        {
+                int length = 700 + (int)ns_below(250);
+
+                while (ns_count < length)
+                {
+                        ns_digit[ns_count++] = '0';
+                        power--;
+                }
+
+                if (pick == 5)
+                {
+                        ns_digit[ns_count++] = '1';
+                        power--;
+                }
+        }
+        else if (pick == 6 && ns_count > 17)
+        {
+                power += ns_count - 17;
+                ns_count = 17;
+        }
+        else if (pick == 7 && ns_count < NS_DIGITS)
+        {
+                ns_digit[ns_count++] = '1';
+                power--;
+        }
+
+        ns_front();
+        ns_render(power);
+        ns_back();
+}
+
+//      A random double or float, a fifth of them subnormal and a tenth each
+//      at the bottom and the top of the normal range.
+static ns_u64 ns_float(int narrow, int *power)
+{
+        ns_u64 pick = ns_below(10);
+        int places = narrow ? 23 : 52;
+        int top = narrow ? 254 : 2046;
+        int bias = narrow ? 150 : 1075;
+        ns_u64 fraction = ns_next() & ((1ULL << places) - 1);
+        int field;
+
+        if (ns_below(8) == 0)
+                fraction = ns_below(2) ? (1ULL << places) - 1 : ns_below(4);
+
+        if (pick < 2)
+                field = 0;
+        else if (pick < 3)
+                field = 1 + (int)ns_below(40);
+        else if (pick < 4)
+                field = top - (int)ns_below(40);
+        else
+                field = 1 + (int)ns_below((ns_u64)top);
+
+        *power = field ? field - bias : 1 - bias;
+        return field ? fraction | (1ULL << places) : fraction;
+}
+
+static void ns_midpoint(void)
+{
+        int power;
+        ns_u64 significand = ns_float(ns_below(4) == 0, &power);
+
+        ns_variant(ns_exact(2 * significand + 1, power - 1));
+}
+
+static void ns_exact_float(void)
+{
+        static const struct
+        {
+                ns_u64 significand;
+                int power;
+        } edges[] = {
+                {1, -1074}, {0xfffffffffffffULL, -1074}, {1ULL << 52, -1074},
+                {0x1fffffffffffffULL, 971}, {0x3fffffffffffffULL, -1076},
+                {1, -1075}, {3, -1076}, {0x3fffffffffffffULL, 970},
+                {1, -149}, {0x7fffffULL, -149}, {1ULL << 23, -149},
+                {0xffffffULL, 104}, {0x1ffffffULL, -151}, {1, -150},
+                {0x1ffffffULL, 103},
+        };
+        int power;
+        ns_u64 significand;
+
+        if (ns_below(3) == 0)
+        {
+                ns_u64 which = ns_below(sizeof edges / sizeof edges[0]);
+
+                significand = edges[which].significand;
+                power = edges[which].power;
+        }
+        else
+                significand = ns_float(ns_below(4) == 0, &power);
+
+        if (significand == 0)
+                significand = 1;
+
+        ns_variant(ns_exact(significand, power));
+}
+
+static void ns_decimal(void)
+{
+        ns_u64 pick = ns_below(20);
+        int count = pick == 0 ? 100 + (int)ns_below(900)
+                  : pick < 7 ? 1 + (int)ns_below(40)
+                             : 1 + (int)ns_below(19);
+        long long power;
+        int index;
+
+        for (index = 0; index < count; index++)
+                ns_digit[index] = (char)('0' + ns_below(10));
+
+        ns_count = count;
+
+        if (ns_below(3) == 0)
+                power = -(long long)ns_below((ns_u64)count + 1);
+        else
+                power = (long long)ns_below(671) - 350 - (ns_below(2) ? count : 0);
+
+        ns_front();
+        ns_render(power);
+        ns_back();
+}
+
+static void ns_window(void)
+{
+        ns_u64 pick = ns_below(5);
+        ns_u64 value;
+        char held[24];
+        int count = 0;
+        int index;
+
+        if (pick == 0)
+                value = 9007199254740992ULL - 4 + ns_below(9);
+        else if (pick == 1)
+                value = ns_next() >> (11 + ns_below(53));
+        else if (pick == 2)
+                value = ns_below(1000000);
+        else if (pick == 3)
+                value = 999999999999999ULL + ns_below(3);
+        else
+                value = ns_next() >> ns_below(64);
+
+        do
+        {
+                held[count++] = (char)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        for (index = 0; index < count; index++)
+                ns_digit[index] = held[count - 1 - index];
+
+        ns_count = count;
+
+        if (ns_below(6) == 0)
+                for (index = (int)ns_below(4); index > 0; index--)
+                        ns_digit[ns_count++] = '0';
+
+        ns_front();
+        ns_render((long long)ns_below(51) - 25 - (ns_below(2) ? ns_count : 0));
+        ns_back();
+}
+
+static void ns_zero_runs(void)
+{
+        static const int runs[] = {0, 1, 2, 7, 19, 20, 40, 300, 831, 832, 833, 1200};
+        int count = 1 + (int)ns_below(20);
+
+        ns_front();
+        ns_zeros(runs[ns_below(sizeof runs / sizeof runs[0])]);
+
+        if (ns_below(2))
+        {
+                ns_put('.');
+                ns_zeros(runs[ns_below(sizeof runs / sizeof runs[0])]);
+        }
+
+        ns_put((char)('1' + ns_below(9)));
+        ns_zeros(runs[ns_below(8)]);
+
+        while (count-- > 0)
+                ns_put((char)('0' + ns_below(10)));
+
+        if (ns_below(3) == 0)
+                ns_zeros(runs[ns_below(sizeof runs / sizeof runs[0])]);
+
+        if (ns_below(2))
+                ns_exponent((long long)ns_below(800) - 400);
+
+        ns_back();
+}
+
+static void ns_hexadecimal(void)
+{
+        static const char digits[] = "0123456789abcdefABCDEF";
+        int count = (int)ns_below(20);
+        int point = ns_below(3) == 0 ? -1 : (int)ns_below((ns_u64)count + 1);
+        int index;
+
+        ns_front();
+        ns_put('0');
+        ns_put(ns_below(2) ? 'x' : 'X');
+
+        for (index = 0; index < count; index++)
+        {
+                if (index == point)
+                        ns_put('.');
+
+                ns_put(digits[ns_below(sizeof digits - 1)]);
+        }
+
+        if (point == count)
+                ns_put('.');
+
+        if (ns_below(4) != 0)
+        {
+                ns_put(ns_below(2) ? 'p' : 'P');
+
+                if (ns_below(3) == 0)
+                        ns_put(ns_below(2) ? '-' : '+');
+
+                if (ns_below(8) != 0)
+                        ns_number(ns_below(1200));
+        }
+
+        ns_back();
+}
+
+static void ns_malformed(void)
+{
+        static const char *pieces[] = {
+                "", " ", "\t", "\v", "\f", "\r", "\n", "+", "-", ".", "..", "e",
+                "E", "e+", "e-", "x", "X", "p", "p+", "0", "1", "9", "00", "5.",
+                ".5", "-.", "+.", "1e", "0x", "0x.", "0x1", "inf", "INF",
+                "infinity", "InFiNiTy", "infin", "in", "i", "nan", "NAN", "na",
+                "n", "nan(", "nan()", "nan(12)", "nan(0x1f)", "nan(abc_9)", "(",
+                ")", "_", "a"};
+        int count = 1 + (int)ns_below(6);
+
+        while (count-- > 0)
+                ns_puts(pieces[ns_below(sizeof pieces / sizeof pieces[0])]);
+}
+
+//      One case into ns_text.
+static void ns_case(void)
+{
+        ns_u64 family = ns_below(100);
+
+        ns_at = 0;
+
+        if (family < 22)
+                ns_decimal();
+        else if (family < 36)
+                ns_window();
+        else if (family < 58)
+                ns_midpoint();
+        else if (family < 70)
+                ns_exact_float();
+        else if (family < 80)
+                ns_zero_runs();
+        else if (family < 90)
+                ns_hexadecimal();
+        else
+                ns_malformed();
+
+        ns_text[ns_at] = 0;
+}
+
+//      Each block starts from its own index, so it can run alone.
+static void ns_seed(ns_u64 block)
+{
+        ns_state = 0x6a09e667f3bcc909ULL ^ (block * 0xbb67ae8584caa73bULL);
+}
+
+static ns_u64 ns_parse(const char *piece)
+{
+        ns_u64 value = 0;
+
+        while (*piece >= '0' && *piece <= '9')
+                value = value * 10 + (ns_u64)(*piece++ - '0');
+
+        return value;
+}
+
+#ifdef NS_STRTOD
+static int ns_hex(char *into, ns_u64 value, int places)
+{
+        int place;
+
+        for (place = 0; place < places; place++)
+                into[place] = "0123456789abcdef"[(value >> ((places - 1 - place) * 4)) & 15];
+
+        return places;
+}
+
+static int ns_decimal_into(char *into, ns_u64 value)
+{
+        char held[24];
+        int count = 0;
+        int at = 0;
+
+        do
+        {
+                held[count++] = (char)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        while (count)
+                into[at++] = held[--count];
+
+        return at;
+}
+
+static ns_u64 ns_fold(ns_u64 hash, ns_u64 value)
+{
+        return (hash ^ value) * 0x100000001b3ULL;
+}
+
+static ns_u64 ns_block(ns_u64 block, int verbose)
+{
+        ns_u64 hash = 0xcbf29ce484222325ULL;
+        ns_u64 index;
+
+        ns_seed(block);
+
+        for (index = 0; index < NS_BLOCK; index++)
+        {
+                union
+                {
+                        double value;
+                        ns_u64 bits;
+                } wide;
+                union
+                {
+                        float value;
+                        ns_u32 bits;
+                } narrow;
+                char *stop_at;
+                ns_u64 wide_end;
+                ns_u64 narrow_end;
+                ns_u64 wide_errno;
+                ns_u64 narrow_errno;
+
+                ns_case();
+
+                NS_ERRNO = 0;
+                wide.bits = 0;
+                wide.value = NS_STRTOD(ns_text, &stop_at);
+                wide_errno = (ns_u64)NS_ERRNO;
+                wide_end = (ns_u64)(stop_at - ns_text);
+
+                NS_ERRNO = 0;
+                narrow.value = NS_STRTOF(ns_text, &stop_at);
+                narrow_errno = (ns_u64)NS_ERRNO;
+                narrow_end = (ns_u64)(stop_at - ns_text);
+
+                hash = ns_fold(hash, wide.bits);
+                hash = ns_fold(hash, wide_end << 16 | wide_errno);
+                hash = ns_fold(hash, (ns_u64)narrow.bits << 32 |
+                                             narrow_end << 16 | narrow_errno);
+
+                if (verbose)
+                {
+                        char line[512];
+                        int at = 0;
+                        int read;
+
+                        at += ns_decimal_into(line + at, index);
+                        line[at++] = ' ';
+                        at += ns_hex(line + at, wide.bits, 16);
+                        line[at++] = ' ';
+                        at += ns_decimal_into(line + at, wide_end);
+                        line[at++] = ' ';
+                        at += ns_decimal_into(line + at, wide_errno);
+                        line[at++] = ' ';
+                        at += ns_hex(line + at, narrow.bits, 8);
+                        line[at++] = ' ';
+                        at += ns_decimal_into(line + at, narrow_end);
+                        line[at++] = ' ';
+                        at += ns_decimal_into(line + at, narrow_errno);
+                        line[at++] = ' ';
+                        line[at++] = '[';
+
+                        for (read = 0; ns_text[read] && read < 96; read++)
+                        {
+                                char byte = ns_text[read];
+
+                                if (byte > ' ' && byte < 127 && byte != '\\')
+                                        line[at++] = byte;
+                                else
+                                {
+                                        line[at++] = '\\';
+                                        at += ns_hex(line + at, (ns_u64)(unsigned char)byte, 2);
+                                }
+                        }
+
+                        if (ns_text[read])
+                        {
+                                line[at++] = '.';
+                                line[at++] = '.';
+                                at += ns_decimal_into(line + at, (ns_u64)ns_at);
+                        }
+
+                        line[at++] = ']';
+                        line[at] = 0;
+                        ns_emit(line);
+                }
+        }
+
+        return hash;
+}
+
+//      Blocks first through first + count - 1, one hash line each; or, when
+//      verbose names a block, every case of that one block and its hash.
+static void ns_run(ns_u64 first, ns_u64 count, ns_u64 verbose, int chosen)
+{
+        ns_u64 block;
+
+        for (block = first; block < first + count; block++)
+        {
+                char line[64];
+                int at = 0;
+                ns_u64 hash;
+
+                if (chosen && block != verbose)
+                        continue;
+
+                hash = ns_block(block, chosen);
+
+                line[at++] = 'b';
+                line[at++] = 'l';
+                line[at++] = 'o';
+                line[at++] = 'c';
+                line[at++] = 'k';
+                line[at++] = ' ';
+                at += ns_decimal_into(line + at, block);
+                line[at++] = ' ';
+                at += ns_hex(line + at, hash, 16);
+                line[at] = 0;
+                ns_emit(line);
+        }
+}
+#endif
+
 #else /* the sections */
 
 #ifdef CHECK_standard
@@ -30322,6 +31176,79 @@ number_case(small_integers)
         return number_failures == 0;
 }
 
+/*
+        The short decimal, held to the general path over generated text.
+
+        string_to_decimal_short answers only inside Clinger's window and
+        declines everything else, and both halves of that are checked here on
+        every case SHARED_number_stream makes: an answer has to be the general
+        path's bits and end pointer with errno untouched, and a decline must
+        leave the end pointer and the answer where they were. It is called by
+        its own name, which on x86_64 is not what strtod reaches first --
+        compiler_memory.c places an integer-only front half there -- so the
+        routine is exercised on its own on all three machines. It must also
+        take a real share of the stream, or agreeing proves nothing.
+*/
+#define SHARED_number_stream
+#include "checks.c"
+#undef SHARED_number_stream
+
+number_case(short_agrees)
+{
+        positive taken = 0;
+        positive block;
+        positive index;
+
+        for (block = 0; block < 2; block++)
+        {
+                ns_seed(0x5348 + block);
+
+                for (index = 0; index < NS_BLOCK; index++)
+                {
+                        string_address input;
+                        string_address untouched = (string_address)1;
+                        string_address quick_stop = untouched;
+                        string_address general_stop = null;
+                        number_wide_shape quick;
+                        number_wide_shape general;
+                        bool took;
+
+                        ns_case();
+                        input = (string_address)ns_text;
+                        quick.bits = 0x5a5a5a5a5a5a5a5aULL;
+                        errno = 0;
+
+                        took = (string_to_decimal_short)(input,
+                                                         index & 1 ? null : address_of quick_stop,
+                                                         address_of quick.value);
+
+                        if (!took)
+                        {
+                                number_say(quick_stop == untouched &&
+                                                   quick.bits == 0x5a5a5a5a5a5a5a5aULL,
+                                           text("short decline wrote"));
+                                continue;
+                        }
+
+                        taken++;
+                        number_say(errno == 0, text("short answer set errno"));
+
+                        general.value = string_to_decimal_general(input, address_of general_stop);
+                        number_note(quick.bits == general.bits, input, quick.bits,
+                                    general.bits);
+
+                        if (!(index & 1))
+                                number_note(quick_stop == general_stop, input,
+                                            (positive)(quick_stop - input),
+                                            (positive)(general_stop - input));
+                }
+        }
+
+        number_note(taken > 10000, text("short took a share"), taken, 10000);
+
+        return number_failures == 0;
+}
+
 typedef struct
 {
         const char address_to name;
@@ -30329,6 +31256,7 @@ typedef struct
 } number_entry;
 
 static const number_entry number_entries[] = {
+        {"short agrees", number_test_short_agrees},
         {"integers", number_test_integers},
         {"against glibc", number_test_against_glibc},
         {"extended", number_test_extended},
@@ -30368,6 +31296,100 @@ b32 main(void)
         return number_failures > 0 ? 1 : 0;
 }
 #endif /* CHECK_number */
+
+#ifdef CHECK_number_differential
+/*
+        Experimental C standard library
+
+        strtod and strtof over generated text, on this tree's conversions
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        The generator and the block walk are SHARED_number_stream, which says
+        what the cases are. This side puts this tree's strtod and strtof under
+        it and prints through log; CHECK_number_differential_reference puts
+        glibc's under the same body, and the numbers lane of test/run diffs
+        the two.
+
+            number_differential FIRST COUNT          one hash line a block
+            number_differential FIRST COUNT BLOCK    every case of BLOCK
+*/
+#include "../src/compiler_memory.c"
+
+#define NS_STRTOD strtod
+#define NS_STRTOF strtof
+#define NS_ERRNO errno
+
+static fn ns_emit(const char address_to line)
+{
+        string_format(log, "%s\n", (string_address)line);
+}
+
+#define SHARED_number_stream
+#include "checks.c"
+#undef SHARED_number_stream
+
+b32 main(void)
+{
+        b32 words = program_argument_count();
+        ns_u64 first = words > 1 ? ns_parse((const char address_to)program_argument(1)) : 0;
+        ns_u64 count = words > 2 ? ns_parse((const char address_to)program_argument(2)) : 1;
+        ns_u64 chosen = words > 3 ? ns_parse((const char address_to)program_argument(3)) : 0;
+
+        ns_run(first, count, chosen, words > 3);
+        log_flush();
+        return 0;
+}
+#endif /* CHECK_number_differential */
+
+#ifdef CHECK_number_differential_reference
+/*
+        Experimental C standard library
+
+        the same generated text, over the machine's glibc
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        Built by the host compiler in the ordinary way against glibc, and the
+        answer key for CHECK_number_differential on all three machines.
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+
+#define NS_STRTOD strtod
+#define NS_STRTOF strtof
+#define NS_ERRNO errno
+
+static void ns_emit(const char *line)
+{
+        fputs(line, stdout);
+        fputc('\n', stdout);
+}
+
+#define SHARED_number_stream
+#include "checks.c"
+#undef SHARED_number_stream
+
+int main(int words, char **word)
+{
+        ns_run(words > 1 ? ns_parse(word[1]) : 0,
+               words > 2 ? ns_parse(word[2]) : 1,
+               words > 3 ? ns_parse(word[3]) : 0, words > 3);
+        fflush(stdout);
+        return 0;
+}
+#endif /* CHECK_number_differential_reference */
 
 #ifdef CHECK_clock
 #include "../src/compiler_memory.c"

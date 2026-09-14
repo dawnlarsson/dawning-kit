@@ -107,10 +107,13 @@ string_search_folded string_split_next string_token string_token_next
      'diffed against the host headers; no caller in this tree, so no timing')
 
 cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',
-      'the short-decimal reader is exercised by every strtod case the ULP '
-      'lane runs against glibc, 702,066 a machine; its speed was measured on '
-      'an awk workload rather than in a dedicated harness, so no isolated '
-      'timing row is claimed here')
+      'the short-decimal reader is held to the general path by name on '
+      '131,072 generated inputs a machine in CHECK_number, and reached '
+      'through strtod by the numbers lane\'s glibc differential '
+      '(CHECK_number_differential: 1,048,576 cases natively and 131,072 under '
+      'each emulator, 50,331,648 in the sweep that widened it); its speed was '
+      'measured per call and on an awk workload rather than in a dedicated '
+      'harness, so no isolated timing row is claimed here')
 
 cover('direct_benchmark', 'test/checks.c#BENCH_lock', 'lock_take lock_release lock_try',
       'take/release pairs alone (the threads_live elision) and with a parked '

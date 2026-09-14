@@ -3006,7 +3006,6 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
         bool dotted = false;
         b32 whole_digits = 0;
         b32 hidden_zeros = 0;
-        bool leading = true;
 
         number->count = 0;
         number->point = 0;
@@ -3022,7 +3021,10 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
         number->hex_sticky = false;
         number->hexadecimal = false;
 
-        scan += string_span_of_set(scan, " \t\n\r\v\f");
+        //      Every byte the span can take is at or below a space, so a text
+        //      that starts above one does not need asking.
+        if (address_to scan <= ' ')
+                scan += string_span_of_set(scan, " \t\n\r\v\f");
 
         if (address_to scan == '+')
                 scan++;
@@ -3096,59 +3098,124 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
                 return number->kind != NUMBERS_NONE;
         }
 
-        while (true)
+        //      Leading zeros, on either side of a point, say where the point is
+        //      and nothing more.
+        while (address_to scan == '0')
         {
-                b32 byte = address_to scan;
-                b32 value;
-
-                if (byte == '.')
-                {
-                        if (dotted)
-                                break;
-
-                        dotted = true;
-                        scan++;
-                        continue;
-                }
-
-                if (!byte_is_digit(byte))
-                        break;
-
                 seen_digit = true;
-                value = byte - '0';
+                scan++;
+        }
 
-                if (leading && value == 0)
+        if (address_to scan == '.')
+        {
+                string_address after_point;
+
+                dotted = true;
+                scan++;
+                after_point = scan;
+
+                while (address_to scan == '0')
+                        scan++;
+
+                if (scan != after_point)
                 {
-                        if (dotted && hidden_zeros < NUMBERS_POINT_CLAMP)
-                                hidden_zeros++;
+                        seen_digit = true;
+                        hidden_zeros = scan - after_point > NUMBERS_POINT_CLAMP
+                                               ? NUMBERS_POINT_CLAMP
+                                               : (b32)(scan - after_point);
+                }
+        }
+
+        //      The significant digits, in two loops. The first takes nineteen
+        //      into packed and the register together and has nothing else to
+        //      keep; the second only fills the register. How many digits there
+        //      were and how many stood before the point fall out of pointer
+        //      differences afterwards, rather than being counted a digit at a
+        //      time -- the loop that counted three things a digit was forty
+        //      instructions a digit, which was most of what an eighteen digit
+        //      integer cost.
+        {
+                string_address first = scan;
+                string_address point_at = null;
+                bool point_first = dotted;
+                positive run;
+                b32 count = 0;
+                p64 packed = 0;
+
+                while (count < 19)
+                {
+                        p32 value = (p32)address_to scan - '0';
+
+                        if (value > 9)
+                        {
+                                if (address_to scan != '.' || dotted)
+                                        goto significand_done;
+
+                                dotted = true;
+                                point_at = scan;
+                                scan++;
+                                continue;
+                        }
+
+                        number->digits[count] = (p8)value;
+                        packed = packed * 10 + value;
+                        count++;
+                        scan++;
+                }
+
+                number->packed = packed;
+                number->packed_count = 19;
+
+                while (true)
+                {
+                        p32 value = (p32)address_to scan - '0';
+
+                        if (value > 9)
+                        {
+                                if (address_to scan != '.' || dotted)
+                                        break;
+
+                                dotted = true;
+                                point_at = scan;
+                                scan++;
+                                continue;
+                        }
+
+                        if (count < NUMBERS_DIGIT_MAX)
+                        {
+                                number->digits[count] = (p8)value;
+                                count++;
+                        }
+                        else if (value != 0)
+                                number->truncated = true;
 
                         scan++;
-                        continue;
                 }
 
-                leading = false;
-
-                if (number->count < NUMBERS_DIGIT_MAX)
+        significand_done:
+                if (count < 19)
                 {
-                        number->digits[number->count] = (p8)value;
-                        number->count++;
-                }
-                else if (value != 0)
-                        number->truncated = true;
-
-                if (number->packed_count < 19)
-                {
-                        number->packed = number->packed * 10 + (p64)(p32)value;
-                        number->packed_count++;
+                        number->packed = packed;
+                        number->packed_count = count;
                 }
 
-                if (number->significant < NUMBERS_POINT_CLAMP)
-                        number->significant++;
+                number->count = count;
+                run = (positive)(scan - first) - (point_at ? 1 : 0);
 
-                if (!dotted && whole_digits < NUMBERS_POINT_CLAMP)
-                        whole_digits++;
+                if (run > 0)
+                        seen_digit = true;
 
-                scan++;
+                number->significant = run > NUMBERS_POINT_CLAMP ? NUMBERS_POINT_CLAMP : (b32)run;
+
+                //      The digits before the point: none when the point came
+                //      before the first significant digit, the ones up to it
+                //      when it came inside the run, and all of them otherwise.
+                if (point_first)
+                        run = 0;
+                else if (point_at)
+                        run = (positive)(point_at - first);
+
+                whole_digits = run > NUMBERS_POINT_CLAMP ? NUMBERS_POINT_CLAMP : (b32)run;
         }
 
         if (!seen_digit)
