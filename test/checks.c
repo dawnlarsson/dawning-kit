@@ -61976,7 +61976,9 @@ static fn floor_deflate(void)
 
 static fn floor_lzma_span(void)
 {
-        static p8 plain[16384];
+        static p8 plain_storage[1 + 16384];
+        p8 address_to plain = plain_storage + 1;
+        const positive plain_n = 16384;
         static xz_probability_state model;
         p8 address_to input = floor_pages(6);
         p8 address_to output = floor_pages(3);
@@ -61995,9 +61997,21 @@ static fn floor_lzma_span(void)
                 xz_lp = (p8)(trial % (5 - xz_lc));
                 xz_pb = (p8)(trial % 5);
                 xz_probs_reset();
-                xz_rc_enc_init();
+                /* The block encoder codes each chosen packet; the position
+                   before plain reads as the zero a fresh dictionary holds. */
+                xz_encoder address_to e = xz_encoder_open(0);
+                check("LZMA fixture encoder", e != null);
+                if (!e) break;
+                e->lc = xz_lc; e->lp = xz_lp; e->pb = xz_pb;
+                e->lp_mask = ((p32)1 << xz_lp) - 1;
+                e->pos_mask = ((p32)1 << xz_pb) - 1;
+                xz_lzma_reset(e);
+                e->input = plain;
+                e->input_n = (p32)plain_n;
+                e->rc = (xz_range_state){0xffffffffu, 0, 0, 1, e->chunk,
+                                         e->chunk + sizeof(e->chunk), 0};
                 positive at = 0;
-                while (at < sizeof(plain))
+                while (at < plain_n)
                 {
                         random ^= random << 13; random ^= random >> 17; random ^= random << 5;
                         positive n = 1;
@@ -62005,32 +62019,34 @@ static fn floor_lzma_span(void)
                         {
                                 positive dist = (random >> 8) % (at < 4096 ? at : 4096) + 1;
                                 positive which = (random >> 6) & 3;
-                                bool repeat = (random & 4) && xz_rep[which] <= (at < 4096 ? at : 4096);
-                                if (repeat) dist = xz_rep[which];
+                                bool repeat = (random & 4) && e->reps[which] + 1 <= (at < 4096 ? at : 4096);
+                                if (repeat) dist = e->reps[which] + 1;
                                 if (trial < 7 && !repeat) dist = trial + 1;
                                 n = 2 + ((random >> 16) % 272);
-                                if (n > sizeof(plain) - at) n = sizeof(plain) - at;
+                                if (n > plain_n - at) n = plain_n - at;
                                 if (n >= 2)
                                 {
                                         for (positive k = 0; k < n; k++) plain[at + k] = plain[at + k - dist];
-                                        if (repeat) xz_enc_repeat(which, n);
-                                        else xz_enc_match(dist, n);
-                                        xz_unpacked += n;
+                                        e->read_pos = (p32)(at + n); e->read_ahead = (p32)n; e->position = at;
+                                        xz_code_symbol(e, repeat ? (p32)which : (p32)(dist - 1 + 4), (p32)n);
                                 }
                         }
                         if (n == 1)
                         {
                                 plain[at] = (p8)random;
-                                xz_enc_literal(plain + at);
+                                e->read_pos = (p32)(at + 1); e->read_ahead = 1; e->position = at;
+                                xz_code_symbol(e, XZ_LITERAL, 1);
                         }
                         at += n;
                 }
-                xz_rc_enc_flush();
-                positive packed = (positive)(xz_rc.next - xz_rc_buf);
-                check("LZMA differential fixture fits", !xz_rc.full && packed <= XZ_IN && packed > 64);
-                if (xz_rc.full || packed > XZ_IN || packed <= 64) break;
+                for (positive i = 0; i < 5; i++) lzma_range_shift(address_of e->rc);
+                positive packed = (positive)(e->rc.next - e->chunk);
+                bool fits = !e->rc.full && packed <= XZ_IN && packed > 64;
+                check("LZMA differential fixture fits", fits);
                 p8 address_to bytes = input + 5 * 4096 - packed;
-                memory_copy_apart(bytes, xz_rc_buf, packed);
+                if (fits) memory_copy_apart(bytes, e->chunk, packed);
+                xz_encoder_close(e);
+                if (!fits) break;
                 memory_copy_apart(xz_in_buf, bytes, packed);
                 xz_input.at = 0; xz_input.have = packed; xz_input.eof = true;
                 xz_input.mem = null; xz_input.fd = -1; xz_in_abs = 0;
@@ -62044,10 +62060,10 @@ static fn floor_lzma_span(void)
                 xz_out_fill = xz_out_taken = xz_out_hashed = 0;
                 check("LZMA differential range init", xz_rc_init());
                 xz_decode_job job = {xz_range, xz_code, bytes + 5, bytes + packed,
-                    address_of model, output + 4096, 4096, 0, 0, 0, sizeof(plain),
+                    address_of model, output + 4096, 4096, 0, 0, 0, plain_n,
                     4096, 0, xz_lc, xz_lp, xz_pb, {1,1,1,1}, 0};
                 positive spans = 0;
-                while (xz_unpacked < sizeof(plain))
+                while (xz_unpacked < plain_n)
                 {
                         job.room = 4096 - job.pos;
                         if (trial & 1 && job.room > 273) job.room = 273;
@@ -62091,7 +62107,7 @@ static fn floor_lzma_span(void)
                                 memory_copy_apart(output + 4096, xz_dict, 4096);
                         }
                 }
-                check("LZMA span exercised to completion", spans && xz_unpacked == sizeof(plain));
+                check("LZMA span exercised to completion", spans && xz_unpacked == plain_n);
         }
         xz_dict_close();
         memory_free(input, 6 * 4096);

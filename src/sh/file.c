@@ -831,6 +831,7 @@ static bipolar file_staged_name_finish(file_staged_name address_to stage,
 #define FILE_CODEC_LEVEL_WORDS 16
 #define FILE_CODEC_NO_NAME 32
 #define FILE_CODEC_SHORT_VERSION 64
+#define FILE_CODEC_LEVEL_ZERO 128
 
 static fn file_codec_print(string_address text)
 {
@@ -925,7 +926,10 @@ static bool file_codec_parse(file_codec_cli address_to codec,
 
                 for (string_address letter = word + 1; *letter; letter++)
                 {
-                        if (*letter >= '1' && *letter <= '9')
+                        if ((*letter >= '1' ||
+                             (*letter == '0' &&
+                              (codec->features & FILE_CODEC_LEVEL_ZERO))) &&
+                            *letter <= '9')
                                 codec->level = (p8)(*letter - '0');
                         else if (*letter == 'd')
                                 codec->decompress = true;

@@ -2,13 +2,14 @@
         xz -- LZMA2 inside the .xz stream (check none, CRC32 or CRC64).
 
         Decode is a range coder plus the twelve-state LZMA machine, then
-        LZMA2 chunks and the stream wrapper. Encode walks the pending
-        window into 64 KiB LZMA2 chunks using a 1 MiB rolling hash chain,
-        repeat distances and memory_common_prefix. Probability state survives
-        compressed chunks; a raw fallback resets it. Range trees use shared
-        assembly kernels with a scalar refill tail. Checksums are hash_crc32/hash_crc64. Concatenated
-        streams are accepted the way xz -d accepts them. There is no
-        SHA-256 check and no BCJ.
+        LZMA2 chunks and the stream wrapper. Encode follows xz's presets:
+        hash-chain match finders and the fast parser at -0 to -3, a binary
+        tree and the price-driven parser at -4 to -9, in blocks of three
+        dictionaries that each start fresh (see the encoder below). Range
+        trees use shared assembly kernels with a scalar refill tail.
+        Checksums are hash_crc32/hash_crc64. Concatenated streams are
+        accepted the way xz -d accepts them. There is no SHA-256 check and
+        no BCJ.
 */
 
 #include "compression_huffman.c"
@@ -28,10 +29,6 @@
 #define XZ_DIST_SLOTS 64
 #define XZ_ALIGN 16
 #define XZ_FULL_DIST 128
-#define XZ_HASH_BITS 16
-#define XZ_HASH_SIZE (1u << XZ_HASH_BITS)
-#define XZ_ENC_DICT (1024 * 1024)
-#define XZ_PENDING 65536
 
 #define XZ_CHECK_NONE 0
 #define XZ_CHECK_CRC32 1
@@ -146,23 +143,6 @@ static p64 xz_unpacked;
 static p32 xz_crc32;
 static p64 xz_crc64;
 
-static p32 xz_head[XZ_HASH_SIZE];
-static p32 xz_prev[XZ_ENC_DICT];
-static positive xz_match_abs;
-static p8 xz_level;
-static p8 xz_pending_storage[2 * XZ_ENC_DICT + XZ_PENDING];
-static positive xz_pending_position;
-#define xz_pending (xz_pending_storage + xz_pending_position)
-static positive xz_pending_n;
-static bool xz_need_reset;
-static bool xz_enc_have_lzma;
-static p8 xz_rc_buf[65536 + 32768];
-static positive xz_rc_n;
-static p64 xz_block_unpadded;
-static p64 xz_block_unpacked;
-static p64 xz_index_unpadded;
-static p64 xz_index_unpacked;
-static positive xz_index_n;
 
 static bool xz_fail(string_address why)
 {
@@ -1357,40 +1337,6 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
         return ok ? (bipolar)xz_output.used : -1;
 }
 
-/* Bytes into the output slab, flushed each time it holds XZ_OUT. */
-static bool xz_put_span(p8 address_to bytes, positive n)
-{
-        while (n)
-        {
-                if (xz_out_failed ||
-                    (xz_out_fill >= XZ_OUT && !xz_out_flush()))
-                        return false;
-                positive take = min(n, XZ_OUT - xz_out_fill);
-                memory_copy(xz_out_buf + xz_out_fill, bytes, take);
-                xz_out_fill += take;
-                bytes += take;
-                n -= take;
-                if (xz_out_fill == XZ_OUT && !xz_out_flush())
-                        return false;
-        }
-        return true;
-}
-
-static bool xz_put(p8 byte)
-{
-        return xz_put_span(address_of byte, 1);
-}
-
-static bool xz_put32(p32 v)
-{
-        return xz_put_span((p8 address_to)address_of v, 4);
-}
-
-static bool xz_put64(p64 v)
-{
-        return xz_put_span((p8 address_to)address_of v, 8);
-}
-
 static positive xz_vli_put(p8 address_to into, p64 value)
 {
         positive n = 0;
@@ -1411,534 +1357,1992 @@ static p8 xz_prop_from_dict(positive dict)
         return 39;
 }
 
-static bool xz_write_header(p8 check)
-{
-        p8 header[12] = {0xfd, 0x37, 0x7a, 0x58, 0x5a, 0, 0, check};
+/*
+        Encoder.
 
-        memory_store_unaligned(p32, header + 8,
-                               ~hash_crc32(0xffffffffu, header + 6, 2));
-        if (!xz_put_span(header, sizeof(header)))
+        One xz_encoder holds everything a block needs and nothing a second
+        block shares: the preset, a pointer to the block's input (readable
+        for XZ_SLACK bytes past its end), match-finder tables sized from the
+        dictionary, LZMA models, price tables, the optimum array, and the
+        block's finished bytes. A block is max(3 * dictionary, 1 MiB) of
+        input, decided by the preset alone, and starts with a dictionary
+        reset, so blocks can be encoded side by side and the bytes never
+        depend on how many are. The preset table, the fast and the price
+        driven normal parsers, the hc3/hc4/bt4 match finders and the LZMA2
+        chunk rules follow liblzma 5.8. Positions and distances inside the
+        encoder are zero-based, as in liblzma.
+*/
+
+#define XZ_OPTS 4096
+#define XZ_LOOP_INPUT (XZ_OPTS + 1)
+#define XZ_INFINITY_PRICE (1u << 30)
+#define XZ_HASH2_SIZE (1u << 10)
+#define XZ_HASH3_SIZE (1u << 16)
+#define XZ_CHUNK_PACKED_MAX 65536u
+#define XZ_CHUNK_PLAIN_MAX (1u << 21)
+#define XZ_BLOCK_HEADER_MAX 32
+#define XZ_SLACK 64
+#define XZ_LITERAL 0xffffffffu
+#define XZ_LEN_SYMBOLS (XZ_LEN_LOW + XZ_LEN_MID + XZ_LEN_HIGH)
+#define XZ_CHANGE_PAIR(small_dist, big_dist) (((big_dist) >> 7) > (small_dist))
+
+enum { XZ_FINDER_HC3, XZ_FINDER_HC4, XZ_FINDER_BT4 };
+
+typedef struct
+{
+        p8 dict_log;
+        bool normal;
+        p8 finder;
+        p16 nice;
+        p16 depth;
+} xz_preset;
+
+/* xz 5.8's -0 .. -9, all lc=3 lp=0 pb=2. Depth 0 means 16 + nice/2 for a
+   binary tree and 4 + nice/4 for a hash chain. */
+static const xz_preset xz_presets[10] = {
+        {18, false, XZ_FINDER_HC3, 128, 4},
+        {20, false, XZ_FINDER_HC4, 128, 8},
+        {21, false, XZ_FINDER_HC4, 273, 24},
+        {22, false, XZ_FINDER_HC4, 273, 48},
+        {22, true, XZ_FINDER_BT4, 16, 0},
+        {23, true, XZ_FINDER_BT4, 32, 0},
+        {23, true, XZ_FINDER_BT4, 64, 0},
+        {24, true, XZ_FINDER_BT4, 64, 0},
+        {25, true, XZ_FINDER_BT4, 64, 0},
+        {26, true, XZ_FINDER_BT4, 64, 0}};
+
+typedef struct
+{
+        p32 len;
+        p32 dist;
+} xz_found;
+
+typedef struct
+{
+        p8 state;
+        bool prev_1_is_literal;
+        bool prev_2;
+        p32 pos_prev_2;
+        p32 back_prev_2;
+        p32 price;
+        p32 pos_prev;
+        p32 back_prev;
+        p32 backs[4];
+} xz_optimal;
+
+typedef struct
+{
+        p32 prices[XZ_POS][XZ_LEN_SYMBOLS];
+        p32 counters[XZ_POS];
+} xz_length_price;
+
+typedef struct
+{
+        const xz_preset address_to preset;
+
+        /* The block: input_n bytes at input, zero-based read position,
+           how many of those the parser has looked at but not coded, and the
+           match finder's position bias (positions start past the window, so
+           zero is always too far to be a candidate). */
+        p8 address_to input;
+        p32 input_n;
+        p32 read_pos;
+        p32 read_ahead;
+        p32 offset;
+
+        p32 address_to hash;
+        positive hash_room;
+        p32 address_to son;
+        positive son_room;
+        p32 dict;
+        p32 hash_mask;
+        p32 cyclic_pos;
+        p32 cyclic_size;
+        p32 nice;
+        p32 depth;
+
+        xz_probability_state models;
+        xz_range_state rc;
+        p32 lc;
+        p32 lp;
+        p32 pb;
+        p32 lp_mask;
+        p32 pos_mask;
+        p8 state;
+        p32 reps[4];
+        p64 position;
+        p32 match_count;
+        p32 longest;
+        xz_found matches[XZ_MATCH_MAX + 1];
+
+        p8 bit_price[128];
+        xz_length_price match_prices;
+        xz_length_price rep_prices;
+        p32 len_table_size;
+        p32 dist_slot_prices[4][XZ_DIST_SLOTS];
+        p32 dist_prices[4][XZ_FULL_DIST];
+        p32 dist_table_size;
+        p32 match_price_count;
+        p32 align_prices[XZ_ALIGN];
+        p32 align_price_count;
+        p32 opts_end;
+        p32 opts_current;
+        xz_optimal opts[XZ_OPTS];
+
+        /* The finished block: out_n bytes at out + out_at. */
+        p8 address_to out;
+        positive out_room;
+        positive out_at;
+        positive out_n;
+        p64 unpadded;
+        p8 chunk[XZ_CHUNK_PACKED_MAX + 32768];
+} xz_encoder;
+
+static bool xz_area(p8 address_to address_to area, positive address_to room,
+                    positive need, bool address_to fresh)
+{
+        address_to fresh = false;
+        if (address_to room >= need)
+                return true;
+        if (address_to area)
+                memory_free(address_to area, address_to room);
+        address_to area = null;
+        address_to room = 0;
+        p8 address_to bytes = (p8 address_to)memory(need);
+        if (!bytes || system_failed(bytes))
                 return false;
-        xz_check = check;
-        xz_index_n = 0;
-        xz_block_unpadded = 0;
-        xz_block_unpacked = 0;
+        address_to area = bytes;
+        address_to room = need;
+        address_to fresh = true;
         return true;
 }
 
-static bool xz_write_uncompressed_chunk(p8 address_to src, positive n, bool reset)
+static xz_encoder address_to xz_encoder_open(p8 level)
 {
-        p8 control[3] = {reset ? 1 : 2, (p8)((n - 1) >> 8), (p8)(n - 1)};
+        xz_encoder address_to e = (xz_encoder address_to)memory(sizeof(xz_encoder));
 
-        if (!xz_put_span(control, 3) || !xz_put_span(src, n))
-                return false;
-        xz_block_unpadded += 3 + n;
-        xz_block_unpacked += n;
-        return true;
-}
-
-static bool xz_write_block_header(p8 dict_prop)
-{
-        p8 header[12] = {2, 0, 0x21, 1, dict_prop};
-
-        memory_store_unaligned(p32, header + 8,
-                               ~hash_crc32(0xffffffffu, header, 8));
-        if (!xz_put_span(header, sizeof(header)))
-                return false;
-        xz_block_unpadded = 12;
-        return true;
-}
-
-static bool xz_write_index_footer(void)
-{
-        p8 index[32];
-        p8 footer[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, xz_check, 'Y', 'Z'};
-        positive n = 1;
-
-        index[0] = 0;
-        n += xz_vli_put(index + n, xz_index_n);
-        if (xz_index_n)
+        if (!e || system_failed(e))
+                return null;
+        e->preset = xz_presets + (level > 9 ? 9 : level);
+        e->lc = 3;
+        e->lp = 0;
+        e->pb = 2;
+        e->lp_mask = 0;
+        e->pos_mask = 3;
+        for (p32 i = 8; i < 2048; i += 16)
         {
-                n += xz_vli_put(index + n, xz_index_unpadded);
-                n += xz_vli_put(index + n, xz_index_unpacked);
+                p32 w = i;
+                p32 bits = 0;
+
+                for (p32 j = 0; j < 4; j++)
+                {
+                        w *= w;
+                        bits <<= 1;
+                        while (w >= (1u << 16))
+                        {
+                                w >>= 1;
+                                bits++;
+                        }
+                }
+                e->bit_price[i >> 4] = (p8)((11u << 4) - 15 - bits);
         }
-        while (n & 3)
-                index[n++] = 0;
-        memory_store_unaligned(p32, index + n, ~hash_crc32(0xffffffffu, index, n));
-        memory_store_unaligned(p32, footer + 4, max(n / 4, (positive)1));
-        memory_store_unaligned(p32, footer, ~hash_crc32(0xffffffffu, footer + 4, 6));
-        return xz_put_span(index, n + 4) && xz_put_span(footer, sizeof(footer)) &&
-               xz_out_flush();
+        return e;
 }
 
-static fn xz_rc_shift(void)
+static fn xz_encoder_close(xz_encoder address_to e)
 {
-        lzma_range_shift(address_of xz_rc);
+        if (!e)
+                return;
+        memory_free(e->hash, e->hash_room);
+        memory_free(e->son, e->son_room);
+        memory_free(e->out, e->out_room);
+        memory_free(e, sizeof(xz_encoder));
 }
 
-static fn xz_rc_enc_init(void)
+/* Prices, in 1/16 bits. */
+static inline INLINE p32 xz_price(xz_encoder address_to e, p32 prob, p32 bit)
 {
-        xz_low = 0;
-        xz_range = 0xffffffffu;
-        xz_cache = 0;
-        xz_cache_size = 1;
-        xz_rc_n = 0;
-        xz_rc.next = xz_rc_buf;
-        xz_rc.limit = xz_rc_buf + sizeof(xz_rc_buf);
-        xz_rc_full = false;
+        return e->bit_price[(prob ^ ((0u - bit) & 2047)) >> 4];
 }
 
-static fn xz_rc_enc_bit(p16 address_to prob, p8 bit)
+static inline INLINE p32 xz_price0(xz_encoder address_to e, p32 prob)
 {
-        lzma_range_encode(address_of xz_rc, prob, bit, 0);
+        return e->bit_price[prob >> 4];
 }
 
-static fn xz_rc_enc_bittree(p16 address_to probs, p8 bits, positive v)
+static inline INLINE p32 xz_price1(xz_encoder address_to e, p32 prob)
 {
-        lzma_range_encode(address_of xz_rc, probs, v, bits);
+        return e->bit_price[(prob ^ 2047) >> 4];
 }
 
-static fn xz_rc_enc_bittree_rev(p16 address_to probs, p8 bits, positive v)
+static inline INLINE p32 xz_tree_price(xz_encoder address_to e, p16 address_to probs,
+                                       p32 bits, p32 symbol)
 {
-        lzma_range_encode(address_of xz_rc, probs, v, 0x100 | bits);
+        p32 price = 0;
+
+        symbol += 1u << bits;
+        do
+        {
+                p32 bit = symbol & 1;
+
+                symbol >>= 1;
+                price += xz_price(e, probs[symbol], bit);
+        } while (symbol != 1);
+        return price;
 }
 
-static fn xz_rc_enc_direct(p8 bits, positive v)
+static inline INLINE p32 xz_reverse_price(xz_encoder address_to e, p16 address_to probs,
+                                          p32 bits, p32 symbol)
+{
+        p32 price = 0;
+        p32 index = 1;
+
+        do
+        {
+                p32 bit = symbol & 1;
+
+                symbol >>= 1;
+                price += xz_price(e, probs[index], bit);
+                index = (index << 1) + bit;
+        } while (--bits);
+        return price;
+}
+
+/* Bit counts are one instruction where the ISA has them; RV64 without
+   Zbb takes the library routine rather than a libgcc call. */
+static inline INLINE p32 xz_top_bit(p32 value)
+{
+#if X64 || ARM64
+        return 31 - (p32)__builtin_clz(value);
+#else
+        return 63 - (p32)bits_leading_zeros(value);
+#endif
+}
+
+static inline INLINE p32 xz_low_bit(p64 value)
+{
+#if X64 || ARM64
+        return (p32)__builtin_ctzll(value);
+#else
+        return (p32)bits_trailing_zeros(value);
+#endif
+}
+
+static inline INLINE p32 xz_slot(p32 dist)
+{
+        if (dist < 4)
+                return dist;
+        p32 top = xz_top_bit(dist);
+        return (top << 1) + ((dist >> (top - 1)) & 1);
+}
+
+static fn xz_length_prices(xz_encoder address_to e, bool rep, p32 ps)
+{
+        xz_probability_state address_to m = address_of e->models;
+        xz_length_price address_to t = rep ? address_of e->rep_prices : address_of e->match_prices;
+        p32 choice = rep ? m->rep_choice : m->match_choice;
+        p32 choice2 = rep ? m->rep_choice2 : m->match_choice2;
+        p16 address_to low = rep ? m->rep_low[ps] : m->match_low[ps];
+        p16 address_to mid = rep ? m->rep_mid[ps] : m->match_mid[ps];
+        p16 address_to high = rep ? m->rep_high : m->match_high;
+        p32 a0 = xz_price0(e, choice);
+        p32 a1 = xz_price1(e, choice);
+        p32 b0 = a1 + xz_price0(e, choice2);
+        p32 b1 = a1 + xz_price1(e, choice2);
+        p32 size = e->len_table_size;
+        p32 i;
+
+        t->counters[ps] = size;
+        for (i = 0; i < size && i < XZ_LEN_LOW; i++)
+                t->prices[ps][i] = a0 + xz_tree_price(e, low, 3, i);
+        for (; i < size && i < XZ_LEN_LOW + XZ_LEN_MID; i++)
+                t->prices[ps][i] = b0 + xz_tree_price(e, mid, 3, i - XZ_LEN_LOW);
+        for (; i < size; i++)
+                t->prices[ps][i] = b1 + xz_tree_price(e, high, 8,
+                                                      i - XZ_LEN_LOW - XZ_LEN_MID);
+}
+
+static fn xz_fill_dist_prices(xz_encoder address_to e)
+{
+        for (p32 ds = 0; ds < 4; ds++)
+        {
+                p32 address_to slot_prices = e->dist_slot_prices[ds];
+
+                for (p32 slot = 0; slot < e->dist_table_size; slot++)
+                        slot_prices[slot] = xz_tree_price(e, e->models.dist_slot[ds], 6, slot);
+                for (p32 slot = 14; slot < e->dist_table_size; slot++)
+                        slot_prices[slot] += (((slot >> 1) - 1) - 4) << 4;
+                for (p32 i = 0; i < 4; i++)
+                        e->dist_prices[ds][i] = slot_prices[i];
+        }
+        for (p32 i = 4; i < XZ_FULL_DIST; i++)
+        {
+                p32 slot = xz_slot(i);
+                p32 footer = (slot >> 1) - 1;
+                p32 base = (2 | (slot & 1)) << footer;
+                p32 price = xz_reverse_price(e, e->models.dist_special + base - slot - 1,
+                                             footer, i - base);
+
+                for (p32 ds = 0; ds < 4; ds++)
+                        e->dist_prices[ds][i] = price + e->dist_slot_prices[ds][slot];
+        }
+        e->match_price_count = 0;
+}
+
+static fn xz_fill_align_prices(xz_encoder address_to e)
+{
+        for (p32 i = 0; i < XZ_ALIGN; i++)
+                e->align_prices[i] = xz_reverse_price(e, e->models.dist_align, 4, i);
+        e->align_price_count = 0;
+}
+
+static inline INLINE p16 address_to xz_literal_probs(xz_encoder address_to e, p64 position,
+                                                    p8 prev)
+{
+        return e->models.lit +
+               0x300 * ((((p32)position & e->lp_mask) << e->lc) + ((p32)prev >> (8 - e->lc)));
+}
+
+static p32 xz_literal_price(xz_encoder address_to e, p64 position, p8 prev, bool matched,
+                            p32 match_byte, p32 symbol)
+{
+        p16 address_to probs = xz_literal_probs(e, position, prev);
+
+        if (!matched)
+                return xz_tree_price(e, probs, 8, symbol);
+
+        p32 price = 0;
+        p32 offset = 0x100;
+
+        symbol += 0x100;
+        do
+        {
+                match_byte <<= 1;
+                p32 match_bit = match_byte & offset;
+                p32 index = offset + match_bit + (symbol >> 8);
+                p32 bit = (symbol >> 7) & 1;
+
+                price += xz_price(e, probs[index], bit);
+                symbol <<= 1;
+                offset &= ~(match_byte ^ symbol);
+        } while (symbol < 0x10000);
+        return price;
+}
+
+static inline INLINE p32 xz_short_rep_price(xz_encoder address_to e, p32 state, p32 ps)
+{
+        return xz_price0(e, e->models.is_rep0[state]) +
+               xz_price0(e, e->models.is_rep0_long[state][ps]);
+}
+
+static inline INLINE p32 xz_pure_rep_price(xz_encoder address_to e, p32 rep, p32 state,
+                                           p32 ps)
+{
+        xz_probability_state address_to m = address_of e->models;
+
+        if (!rep)
+                return xz_price0(e, m->is_rep0[state]) +
+                       xz_price1(e, m->is_rep0_long[state][ps]);
+        p32 price = xz_price1(e, m->is_rep0[state]);
+        if (rep == 1)
+                return price + xz_price0(e, m->is_rep1[state]);
+        return price + xz_price1(e, m->is_rep1[state]) +
+               xz_price(e, m->is_rep2[state], rep - 2);
+}
+
+static inline INLINE p32 xz_rep_price(xz_encoder address_to e, p32 rep, p32 len,
+                                      p32 state, p32 ps)
+{
+        return e->rep_prices.prices[ps][len - 2] + xz_pure_rep_price(e, rep, state, ps);
+}
+
+static inline INLINE p32 xz_dist_len_price(xz_encoder address_to e, p32 dist, p32 len,
+                                           p32 ps)
+{
+        p32 ds = len < 6 ? len - 2 : 3;
+        p32 price = dist < XZ_FULL_DIST
+                ? e->dist_prices[ds][dist]
+                : e->dist_slot_prices[ds][xz_slot(dist)] + e->align_prices[dist & 15];
+
+        return price + e->match_prices.prices[ps][len - 2];
+}
+
+/* Range coding into the chunk buffer. */
+static inline INLINE fn xz_bit(xz_encoder address_to e, p16 address_to prob, p32 bit)
+{
+        lzma_range_encode(address_of e->rc, prob, bit, 0);
+}
+
+static fn xz_direct(xz_encoder address_to e, p32 value, p32 bits)
 {
         while (bits)
         {
                 bits--;
-                xz_range >>= 1;
-                if ((v >> bits) & 1)
-                        xz_low += xz_range;
-                while (xz_range < 0x1000000u)
+                e->rc.range >>= 1;
+                if ((value >> bits) & 1)
+                        e->rc.low += e->rc.range;
+                while (e->rc.range < 0x1000000u)
                 {
-                        xz_rc_shift();
-                        xz_range <<= 8;
+                        lzma_range_shift(address_of e->rc);
+                        e->rc.range <<= 8;
                 }
         }
 }
 
-static fn xz_rc_enc_flush(void)
+static fn xz_length(xz_encoder address_to e, bool rep, p32 ps, p32 len)
 {
-        p8 at;
+        xz_probability_state address_to m = address_of e->models;
+        p16 address_to choice = rep ? address_of m->rep_choice : address_of m->match_choice;
+        p16 address_to choice2 = rep ? address_of m->rep_choice2 : address_of m->match_choice2;
 
-        for (at = 0; at < 5; at++)
-                xz_rc_shift();
-}
-
-static fn xz_enc_len(p16 address_to choice, p16 address_to choice2,
-                     p16 address_to low, p16 address_to mid, p16 address_to high,
-                     positive pos_state, positive len)
-{
-        positive v = len - 2;
-
-        if (v < 8)
+        len -= 2;
+        if (len < XZ_LEN_LOW)
         {
-                xz_rc_enc_bit(choice, 0);
-                xz_rc_enc_bittree(low + pos_state * XZ_LEN_LOW, 3, v);
-                return;
+                xz_bit(e, choice, 0);
+                lzma_range_encode(address_of e->rc, rep ? m->rep_low[ps] : m->match_low[ps],
+                                  len, 3);
         }
-        xz_rc_enc_bit(choice, 1);
-        if (v < 16)
-        {
-                xz_rc_enc_bit(choice2, 0);
-                xz_rc_enc_bittree(mid + pos_state * XZ_LEN_MID, 3, v - 8);
-                return;
-        }
-        xz_rc_enc_bit(choice2, 1);
-        xz_rc_enc_bittree(high, 8, v - 16);
-}
-
-static p8 xz_pos_slot(positive dist0)
-{
-        p8 hb;
-
-        if (dist0 < 4)
-                return (p8)dist0;
-        hb = (p8)(63 - bits_leading_zeros(dist0));
-        return (p8)((hb << 1) + ((dist0 >> (hb - 1)) & 1));
-}
-
-static fn xz_enc_dist(positive len_state, positive dist0)
-{
-        p8 slot = xz_pos_slot(dist0);
-        p8 bits;
-        positive base;
-        positive extra;
-
-        xz_rc_enc_bittree(xz_dist_slot[len_state], 6, slot);
-        if (slot < 4)
-                return;
-        bits = (p8)((slot >> 1) - 1);
-        base = (2 | (slot & 1)) << bits;
-        extra = dist0 - base;
-        if (slot < 14)
-        {
-                xz_rc_enc_bittree_rev(xz_dist_special + base - slot - 1, bits,
-                                      extra);
-                return;
-        }
-        xz_rc_enc_direct((p8)(bits - 4), extra >> 4);
-        xz_rc_enc_bittree_rev(xz_dist_align, 4, extra & 15);
-}
-
-/* The literal at `at` in the pending window, which holds the dictionary's
-   worth of history before it. */
-static fn xz_enc_literal(p8 address_to at)
-{
-        p8 byte = *at;
-        positive history = min(xz_unpacked, (positive)XZ_ENC_DICT);
-        positive rep = xz_rep[0];
-        p8 prev = history ? at[-1] : 0;
-        positive lit_pos = xz_unpacked & (((positive)1 << xz_lp) - 1);
-        p16 address_to probs = xz_lit +
-                (((lit_pos << xz_lc) + (prev >> (8 - xz_lc))) * 0x300);
-        positive ps = xz_unpacked & (((positive)1 << xz_pb) - 1);
-        positive mode = 8;
-
-        xz_rc_enc_bit(address_of xz_is_match[xz_state][ps], 0);
-        if (xz_state >= 7)
-                mode |= 0x200 |
-                        ((positive)(rep && rep <= history ? at[-rep] : 0) << 16);
-        lzma_range_encode(address_of xz_rc, probs, byte, mode);
-        xz_state = xz_state < 4 ? 0 : xz_state < 10 ? xz_state - 3 : xz_state - 6;
-        xz_unpacked++;
-}
-
-static fn xz_enc_match(positive dist, positive len)
-{
-        positive pos_state = (positive)xz_unpacked &
-                             ((((positive)1 << xz_pb) - 1));
-
-        xz_rc_enc_bit(address_of xz_is_match[xz_state][pos_state], 1);
-        xz_rc_enc_bit(address_of xz_is_rep[xz_state], 0);
-        xz_enc_len(address_of xz_match_choice, address_of xz_match_choice2,
-                   (p16 address_to)xz_match_low, (p16 address_to)xz_match_mid,
-                   xz_match_high, pos_state, len);
-        xz_enc_dist(len < 6 ? len - 2 : 3, dist - 1);
-        xz_rep[3] = xz_rep[2];
-        xz_rep[2] = xz_rep[1];
-        xz_rep[1] = xz_rep[0];
-        xz_rep[0] = dist;
-        xz_state = xz_state < 7 ? 7 : 10;
-}
-
-static fn xz_enc_repeat(positive which, positive len)
-{
-        positive ps = (positive)xz_unpacked & (((positive)1 << xz_pb) - 1);
-        positive dist = xz_rep[which];
-
-        xz_rc_enc_bit(address_of xz_is_match[xz_state][ps], 1);
-        xz_rc_enc_bit(address_of xz_is_rep[xz_state], 1);
-        xz_rc_enc_bit(address_of xz_is_rep0[xz_state], which != 0);
-        if (!which)
-                xz_rc_enc_bit(address_of xz_is_rep0_long[xz_state][ps], 1);
         else
         {
-                xz_rc_enc_bit(address_of xz_is_rep1[xz_state], which != 1);
-                if (which >= 2)
-                        xz_rc_enc_bit(address_of xz_is_rep2[xz_state], which == 3);
-                for (; which; which--)
-                        xz_rep[which] = xz_rep[which - 1];
-                xz_rep[0] = dist;
-        }
-        xz_enc_len(address_of xz_rep_choice, address_of xz_rep_choice2,
-                   (p16 address_to)xz_rep_low, (p16 address_to)xz_rep_mid,
-                   xz_rep_high, ps, len);
-        xz_state = xz_state < 7 ? 8 : 11;
-}
-
-
-static bool xz_lzma_chunk(p8 address_to src, positive n)
-{
-        positive pos;
-        p8 reset;
-        bool raw = false;
-
-        if (!n)
-                return true;
-        reset = xz_need_reset ? 3 : xz_enc_have_lzma ? 0 : 2;
-        xz_need_reset = false;
-        if (reset >= 2)
-        {
-                if (!xz_props(0x5d))
-                        return false;
-                xz_probs_reset();
-        }
-        xz_rc_enc_init();
-        pos = 0;
-        while (pos < n)
-        {
-                /* Stop spending range-coder work on a chunk already showing
-                   expansion. The raw frame still carries every byte and its
-                   checksum; the next compressed chunk resets the models. */
-                if (pos >= 8192 && !(pos & 1023) &&
-                    (positive)(xz_rc.next - xz_rc_buf) >= pos + 128)
+                xz_bit(e, choice, 1);
+                len -= XZ_LEN_LOW;
+                if (len < XZ_LEN_MID)
                 {
-                        xz_unpacked += n - pos;
-                        raw = true;
-                        break;
-                }
-                positive match = 0;
-                positive dist = 0;
-                positive rep_len = 0;
-                positive rep_index = 0;
-                positive r;
-                positive limit = n - pos;
-                if (limit > XZ_MATCH_MAX)
-                        limit = XZ_MATCH_MAX;
-                for (r = 0; r < 4; r++)
-                {
-                        positive d = xz_rep[r];
-                        if (d && d <= xz_match_abs + pos && d <= XZ_ENC_DICT && limit >= 2 &&
-                            src[pos] == src[pos - d] &&
-                            src[pos + 1] == src[pos - d + 1])
-                        {
-                                positive k = memory_common_prefix(src + pos,
-                                                        src + pos - d, limit);
-                                if (k > rep_len)
-                                        rep_len = k, rep_index = r;
-                        }
-                }
-
-                if (pos + 3 <= n)
-                {
-                        p16 h = compression_hash3(src + pos);
-                        p32 old = xz_head[h];
-                        positive chain = old;
-                        positive tries = xz_level <= 1 ? 4 : xz_level <= 3 ? 8 : 32;
-                        positive nice = xz_level <= 1 ? 32 : xz_level <= 3 ? 64
-                                                                                  : XZ_MATCH_MAX;
-                        xz_prev[(xz_match_abs + pos) & (XZ_ENC_DICT - 1)] = old;
-                        xz_head[h] = (p32)(xz_match_abs + pos + 1);
-                        while (chain && tries--)
-                        {
-                                positive there = chain - 1;
-                                if (there >= xz_match_abs + pos)
-                                        break;
-                                positive d = xz_match_abs + pos - there;
-                                if (d > XZ_ENC_DICT) break;
-                                p8 address_to candidate = src + pos - d;
-                                if (src[pos] == candidate[0] &&
-                                    (!match || src[pos + match] == candidate[match]))
-                                {
-                                        positive k = memory_common_prefix(src + pos,
-                                                                          candidate, limit);
-                                        if (k >= (xz_level <= 1 && d >= 128 ? 4 : 3) &&
-                                            k > match)
-                                        {
-                                                match = k;
-                                                dist = d;
-                                                if (k >= nice || k == limit)
-                                                        break;
-                                        }
-                                }
-                                positive next = xz_prev[there & (XZ_ENC_DICT - 1)];
-                                if (next >= chain)
-                                        break;
-                                chain = next;
-                        }
-                }
-                /* A repeat avoids coding a new distance. Prefer it when
-                   it saves that price at a cost of at most one byte. */
-                bool repeat = rep_len >= 2 && rep_len + 1 >= match;
-                if (repeat)
-                        match = rep_len, dist = xz_rep[rep_index];
-                if (match && dist)
-                {
-                        positive k;
-
-                        if (repeat)
-                                xz_enc_repeat(rep_index, match);
-                        else
-                                xz_enc_match(dist, match);
-                        xz_unpacked += match;
-                        k = match >= 128 && dist <= 16 ? match - 2 * dist : 1;
-                        for (; k < match; k++)
-                        {
-                                if (pos + k + 3 <= n)
-                                {
-                                        p16 hh = compression_hash3(src + pos + k);
-
-                                        p32 old = xz_head[hh];
-                                        xz_prev[(xz_match_abs + pos + k) & (XZ_ENC_DICT - 1)] = old;
-                                        xz_head[hh] = (p32)(xz_match_abs + pos + k + 1);
-                                }
-                        }
-                        pos += match;
+                        xz_bit(e, choice2, 0);
+                        lzma_range_encode(address_of e->rc,
+                                          rep ? m->rep_mid[ps] : m->match_mid[ps], len, 3);
                 }
                 else
                 {
-                        xz_enc_literal(src + pos);
-                        pos++;
+                        xz_bit(e, choice2, 1);
+                        lzma_range_encode(address_of e->rc, rep ? m->rep_high : m->match_high,
+                                          len - XZ_LEN_MID, 8);
                 }
         }
-        if (xz_check == XZ_CHECK_CRC32)
-                xz_crc32 = hash_crc32(xz_crc32, src, n);
-        else if (xz_check == XZ_CHECK_CRC64)
-                xz_crc64 = hash_crc64(xz_crc64, src, n);
-        xz_rc_enc_flush();
-        xz_rc_n = (positive)(xz_rc.next - xz_rc_buf);
-        if (xz_rc_full)
-                return xz_fail("xz compressed chunk");
-        if (raw || !xz_rc_n || xz_rc_n > 65536 || xz_rc_n >= n)
+        if (e->preset->normal)
         {
-                /* Speculative probabilities/reps were not sent. The next
-                   compressed chunk must start a fresh LZMA model. */
-                xz_enc_have_lzma = false;
-                return xz_write_uncompressed_chunk(src, n, reset >= 3);
+                xz_length_price address_to t = rep ? address_of e->rep_prices
+                                                   : address_of e->match_prices;
+                if (--t->counters[ps] == 0)
+                        xz_length_prices(e, rep, ps);
         }
-        p8 control[6] = {(p8)(0x80 | (reset << 5) | ((n - 1) >> 16)),
-                         (p8)((n - 1) >> 8), (p8)(n - 1),
-                         (p8)((xz_rc_n - 1) >> 8), (p8)(xz_rc_n - 1), 0x5d};
+}
 
-        if (!xz_put_span(control, reset >= 2 ? 6 : 5) ||
-            !xz_put_span(xz_rc_buf, xz_rc_n))
+static fn xz_code_match(xz_encoder address_to e, p32 ps, p32 dist, p32 len)
+{
+        p32 slot = xz_slot(dist);
+
+        e->state = e->state < 7 ? 7 : 10;
+        xz_length(e, false, ps, len);
+        lzma_range_encode(address_of e->rc, e->models.dist_slot[len < 6 ? len - 2 : 3],
+                          slot, 6);
+        if (slot >= 4)
+        {
+                p32 footer = (slot >> 1) - 1;
+                p32 base = (2 | (slot & 1)) << footer;
+                p32 reduced = dist - base;
+
+                if (slot < 14)
+                        lzma_range_encode(address_of e->rc,
+                                          e->models.dist_special + base - slot - 1,
+                                          reduced, 0x100 | footer);
+                else
+                {
+                        xz_direct(e, reduced >> 4, footer - 4);
+                        lzma_range_encode(address_of e->rc, e->models.dist_align,
+                                          reduced & 15, 0x100 | 4);
+                        e->align_price_count++;
+                }
+        }
+        e->reps[3] = e->reps[2];
+        e->reps[2] = e->reps[1];
+        e->reps[1] = e->reps[0];
+        e->reps[0] = dist;
+        e->match_price_count++;
+}
+
+static fn xz_code_rep(xz_encoder address_to e, p32 ps, p32 rep, p32 len)
+{
+        xz_probability_state address_to m = address_of e->models;
+        p8 state = e->state;
+
+        if (!rep)
+        {
+                xz_bit(e, address_of m->is_rep0[state], 0);
+                xz_bit(e, address_of m->is_rep0_long[state][ps], len != 1);
+        }
+        else
+        {
+                p32 distance = e->reps[rep];
+
+                xz_bit(e, address_of m->is_rep0[state], 1);
+                if (rep == 1)
+                        xz_bit(e, address_of m->is_rep1[state], 0);
+                else
+                {
+                        xz_bit(e, address_of m->is_rep1[state], 1);
+                        xz_bit(e, address_of m->is_rep2[state], rep - 2);
+                        if (rep == 3)
+                                e->reps[3] = e->reps[2];
+                        e->reps[2] = e->reps[1];
+                }
+                e->reps[1] = e->reps[0];
+                e->reps[0] = distance;
+        }
+        if (len == 1)
+                e->state = state < 7 ? 9 : 11;
+        else
+        {
+                xz_length(e, true, ps, len);
+                e->state = state < 7 ? 8 : 11;
+        }
+}
+
+static fn xz_code_symbol(xz_encoder address_to e, p32 back, p32 len)
+{
+        xz_probability_state address_to m = address_of e->models;
+        p32 ps = (p32)e->position & e->pos_mask;
+        p8 state = e->state;
+
+        if (back == XZ_LITERAL)
+        {
+                p8 address_to at = e->input + e->read_pos - e->read_ahead;
+                p16 address_to probs = xz_literal_probs(e, e->position, at[-1]);
+
+                xz_bit(e, address_of m->is_match[state][ps], 0);
+                if (state < 7)
+                {
+                        e->state = state < 4 ? 0 : state - 3;
+                        lzma_range_encode(address_of e->rc, probs, at[0], 8);
+                }
+                else
+                {
+                        p8 match = at[-(bipolar)e->reps[0] - 1];
+
+                        e->state = state < 10 ? state - 3 : state - 6;
+                        lzma_range_encode(address_of e->rc, probs, at[0],
+                                          0x200 | 8 | ((positive)match << 16));
+                }
+        }
+        else
+        {
+                xz_bit(e, address_of m->is_match[state][ps], 1);
+                if (back < 4)
+                {
+                        xz_bit(e, address_of m->is_rep[state], 1);
+                        xz_code_rep(e, ps, back, len);
+                }
+                else
+                {
+                        xz_bit(e, address_of m->is_rep[state], 0);
+                        xz_code_match(e, ps, back - 4, len);
+                }
+        }
+        e->read_ahead -= len;
+        e->position += len;
+}
+
+/* Match finders. A candidate at distance delta (1-based) is stored as
+   dist = delta - 1. Word compares read up to seven bytes past limit; the
+   block's slack keeps that readable and the result is clamped. */
+static inline INLINE p32 xz_common(p8 address_to a, p8 address_to b, p32 len, p32 limit)
+{
+        while (len < limit)
+        {
+                p64 x = memory_load_unaligned(p64, a + len) ^
+                        memory_load_unaligned(p64, b + len);
+
+                if (x)
+                {
+                        len += xz_low_bit(x) >> 3;
+                        return len < limit ? len : limit;
+                }
+                len += 8;
+        }
+        return limit;
+}
+
+static inline INLINE bool xz_differ16(p8 address_to a, p8 address_to b)
+{
+        return memory_load_unaligned(p16, a) != memory_load_unaligned(p16, b);
+}
+
+static inline INLINE fn xz_move(xz_encoder address_to e)
+{
+        if (++e->cyclic_pos == e->cyclic_size)
+                e->cyclic_pos = 0;
+        e->read_pos++;
+}
+
+/* The two- and three-byte hashes keep the byte-table form: once the first
+   byte of a candidate is known equal, an equal hash proves the second (and
+   third) equal too, so those candidates start their compare past them. */
+static inline INLINE p32 xz_hash_head(p8 address_to cur)
+{
+        return hash_crc32_tab[cur[0]] ^ cur[1];
+}
+
+static xz_found address_to xz_chain(xz_encoder address_to e, p32 len_limit, p32 pos,
+                                    p8 address_to cur, p32 cur_match,
+                                    xz_found address_to matches, p32 len_best)
+{
+        p32 address_to son = e->son;
+        p32 cyclic_pos = e->cyclic_pos;
+        p32 cyclic_size = e->cyclic_size;
+        p32 depth = e->depth;
+
+        son[cyclic_pos] = cur_match;
+        for (;;)
+        {
+                p32 delta = pos - cur_match;
+
+                if (depth-- == 0 || delta >= cyclic_size)
+                        return matches;
+                p8 address_to pb = cur - delta;
+                cur_match = son[cyclic_pos - delta + (delta > cyclic_pos ? cyclic_size : 0)];
+                if (pb[len_best] == cur[len_best] && pb[0] == cur[0])
+                {
+                        p32 len = xz_common(pb, cur, 1, len_limit);
+
+                        if (len_best < len)
+                        {
+                                len_best = len;
+                                matches->len = len;
+                                matches->dist = delta - 1;
+                                matches++;
+                                if (len == len_limit)
+                                        return matches;
+                        }
+                }
+        }
+}
+
+static xz_found address_to xz_tree(xz_encoder address_to e, p32 len_limit, p32 pos,
+                                   p8 address_to cur, p32 cur_match,
+                                   xz_found address_to matches, p32 len_best, bool find)
+{
+        p32 address_to son = e->son;
+        p32 cyclic_pos = e->cyclic_pos;
+        p32 cyclic_size = e->cyclic_size;
+        p32 depth = e->depth;
+        p32 address_to ptr0 = son + ((positive)cyclic_pos << 1) + 1;
+        p32 address_to ptr1 = son + ((positive)cyclic_pos << 1);
+        p32 len0 = 0;
+        p32 len1 = 0;
+
+        for (;;)
+        {
+                p32 delta = pos - cur_match;
+
+                if (depth-- == 0 || delta >= cyclic_size)
+                {
+                        address_to ptr0 = 0;
+                        address_to ptr1 = 0;
+                        return matches;
+                }
+                p32 address_to pair = son + ((positive)(cyclic_pos - delta +
+                                            (delta > cyclic_pos ? cyclic_size : 0)) << 1);
+                p8 address_to pb = cur - delta;
+                p32 len = len0 < len1 ? len0 : len1;
+
+                if (pb[len] == cur[len])
+                {
+                        len = xz_common(pb, cur, len + 1, len_limit);
+                        if (len_best < len)
+                        {
+                                len_best = len;
+                                if (find)
+                                {
+                                        matches->len = len;
+                                        matches->dist = delta - 1;
+                                        matches++;
+                                }
+                        }
+                        if (len == len_limit)
+                        {
+                                address_to ptr1 = pair[0];
+                                address_to ptr0 = pair[1];
+                                return matches;
+                        }
+                }
+                if (pb[len] < cur[len])
+                {
+                        address_to ptr1 = cur_match;
+                        ptr1 = pair + 1;
+                        cur_match = address_to ptr1;
+                        len1 = len;
+                }
+                else
+                {
+                        address_to ptr0 = cur_match;
+                        ptr0 = pair;
+                        cur_match = address_to ptr0;
+                        len0 = len;
+                }
+        }
+}
+
+/* One find at read_pos: the matches in increasing length, their count. */
+static p32 xz_finder_find(xz_encoder address_to e)
+{
+        const xz_preset address_to p = e->preset;
+        p32 avail = e->input_n - e->read_pos;
+        p32 len_min = p->finder == XZ_FINDER_HC3 ? 3 : 4;
+        p32 len_limit = e->nice;
+
+        if (avail < len_limit)
+        {
+                if (avail < len_min)
+                {
+                        e->read_pos++;
+                        return 0;
+                }
+                len_limit = avail;
+        }
+
+        p8 address_to cur = e->input + e->read_pos;
+        p32 pos = e->read_pos + e->offset;
+        p32 address_to hash = e->hash;
+        xz_found address_to matches = e->matches;
+        p32 count = 0;
+        p32 temp = xz_hash_head(cur);
+        p32 h2 = temp & (XZ_HASH2_SIZE - 1);
+        p32 delta2 = pos - hash[h2];
+
+        hash[h2] = pos;
+        temp ^= (p32)cur[2] << 8;
+        if (p->finder == XZ_FINDER_HC3)
+        {
+                p32 hv = XZ_HASH2_SIZE + (temp & e->hash_mask);
+                p32 cur_match = hash[hv];
+                p32 len_best = 2;
+
+                hash[hv] = pos;
+                if (delta2 < e->cyclic_size && *(cur - delta2) == *cur)
+                {
+                        len_best = xz_common(cur - delta2, cur, 2, len_limit);
+                        matches[0].len = len_best;
+                        matches[0].dist = delta2 - 1;
+                        count = 1;
+                        if (len_best == len_limit)
+                        {
+                                e->son[e->cyclic_pos] = cur_match;
+                                xz_move(e);
+                                return 1;
+                        }
+                }
+                count = (p32)(xz_chain(e, len_limit, pos, cur, cur_match, matches + count,
+                                       len_best) - matches);
+                xz_move(e);
+                return count;
+        }
+
+        p32 h3 = XZ_HASH2_SIZE + (temp & (XZ_HASH3_SIZE - 1));
+        p32 h4 = XZ_HASH2_SIZE + XZ_HASH3_SIZE +
+                 ((temp ^ (hash_crc32_tab[cur[3]] << 5)) & e->hash_mask);
+        p32 delta3 = pos - hash[h3];
+        p32 cur_match = hash[h4];
+        p32 len_best = 1;
+
+        hash[h3] = pos;
+        hash[h4] = pos;
+        if (delta2 < e->cyclic_size && *(cur - delta2) == *cur)
+        {
+                len_best = 2;
+                matches[0].len = 2;
+                matches[0].dist = delta2 - 1;
+                count = 1;
+        }
+        if (delta2 != delta3 && delta3 < e->cyclic_size && *(cur - delta3) == *cur)
+        {
+                len_best = 3;
+                matches[count++].dist = delta3 - 1;
+                delta2 = delta3;
+        }
+        bool tree = p->finder == XZ_FINDER_BT4;
+        if (count)
+        {
+                len_best = xz_common(cur - delta2, cur, len_best, len_limit);
+                matches[count - 1].len = len_best;
+                if (len_best == len_limit)
+                {
+                        if (tree)
+                                xz_tree(e, len_limit, pos, cur, cur_match, matches, len_best,
+                                        false);
+                        else
+                                e->son[e->cyclic_pos] = cur_match;
+                        xz_move(e);
+                        return count;
+                }
+        }
+        if (len_best < 3)
+                len_best = 3;
+        count = (p32)((tree ? xz_tree(e, len_limit, pos, cur, cur_match, matches + count,
+                                      len_best, true)
+                            : xz_chain(e, len_limit, pos, cur, cur_match, matches + count,
+                                       len_best)) - matches);
+        xz_move(e);
+        return count;
+}
+
+static fn xz_finder_skip(xz_encoder address_to e, p32 amount)
+{
+        const xz_preset address_to p = e->preset;
+        p32 len_min = p->finder == XZ_FINDER_HC3 ? 3 : 4;
+
+        while (amount--)
+        {
+                p32 avail = e->input_n - e->read_pos;
+
+                if (avail < len_min)
+                {
+                        e->read_pos++;
+                        continue;
+                }
+                p8 address_to cur = e->input + e->read_pos;
+                p32 pos = e->read_pos + e->offset;
+                p32 address_to hash = e->hash;
+                p32 temp = xz_hash_head(cur);
+                p32 cur_match;
+
+                hash[temp & (XZ_HASH2_SIZE - 1)] = pos;
+                temp ^= (p32)cur[2] << 8;
+                if (p->finder == XZ_FINDER_HC3)
+                {
+                        p32 hv = XZ_HASH2_SIZE + (temp & e->hash_mask);
+                        cur_match = hash[hv];
+                        hash[hv] = pos;
+                }
+                else
+                {
+                        p32 h4 = XZ_HASH2_SIZE + XZ_HASH3_SIZE +
+                                 ((temp ^ (hash_crc32_tab[cur[3]] << 5)) & e->hash_mask);
+                        hash[XZ_HASH2_SIZE + (temp & (XZ_HASH3_SIZE - 1))] = pos;
+                        cur_match = hash[h4];
+                        hash[h4] = pos;
+                }
+                if (p->finder == XZ_FINDER_BT4)
+                        xz_tree(e, avail < e->nice ? avail : e->nice, pos, cur, cur_match,
+                                e->matches, 0, false);
+                else
+                        e->son[e->cyclic_pos] = cur_match;
+                xz_move(e);
+        }
+}
+
+static p32 xz_find(xz_encoder address_to e, p32 address_to count_out)
+{
+        p32 count = xz_finder_find(e);
+        p32 len_best = 0;
+
+        if (count)
+        {
+                len_best = e->matches[count - 1].len;
+                if (len_best == e->nice)
+                {
+                        p32 limit = e->input_n - e->read_pos + 1;
+                        p8 address_to p1 = e->input + e->read_pos - 1;
+
+                        if (limit > XZ_MATCH_MAX)
+                                limit = XZ_MATCH_MAX;
+                        len_best = xz_common(p1, p1 - e->matches[count - 1].dist - 1,
+                                             len_best, limit);
+                }
+        }
+        address_to count_out = count;
+        e->read_ahead++;
+        return len_best;
+}
+
+static fn xz_skip(xz_encoder address_to e, p32 amount)
+{
+        if (amount)
+        {
+                xz_finder_skip(e, amount);
+                e->read_ahead += amount;
+        }
+}
+
+static inline INLINE fn xz_make_literal(xz_optimal address_to o)
+{
+        o->back_prev = XZ_LITERAL;
+        o->prev_1_is_literal = false;
+}
+
+static inline INLINE fn xz_make_short_rep(xz_optimal address_to o)
+{
+        o->back_prev = 0;
+        o->prev_1_is_literal = false;
+}
+
+/* Levels 0-3: the longest match, repeats preferred by a distance rule and
+   a one-byte lazy look. */
+static fn xz_optimum_fast(xz_encoder address_to e, p32 address_to back_res,
+                          p32 address_to len_res)
+{
+        p32 nice = e->nice;
+        p32 len_main;
+        p32 count;
+
+        if (!e->read_ahead)
+                len_main = xz_find(e, address_of count);
+        else
+        {
+                len_main = e->longest;
+                count = e->match_count;
+        }
+
+        p8 address_to buf = e->input + e->read_pos - 1;
+        p32 buf_avail = e->input_n - e->read_pos + 1;
+
+        if (buf_avail > XZ_MATCH_MAX)
+                buf_avail = XZ_MATCH_MAX;
+        address_to back_res = XZ_LITERAL;
+        address_to len_res = 1;
+        if (buf_avail < 2)
+                return;
+
+        p32 rep_len = 0;
+        p32 rep_index = 0;
+
+        for (p32 i = 0; i < 4; i++)
+        {
+                p8 address_to back = buf - e->reps[i] - 1;
+
+                if (xz_differ16(buf, back))
+                        continue;
+                p32 len = xz_common(buf, back, 2, buf_avail);
+                if (len >= nice)
+                {
+                        address_to back_res = i;
+                        address_to len_res = len;
+                        xz_skip(e, len - 1);
+                        return;
+                }
+                if (len > rep_len)
+                {
+                        rep_index = i;
+                        rep_len = len;
+                }
+        }
+        if (len_main >= nice)
+        {
+                address_to back_res = e->matches[count - 1].dist + 4;
+                address_to len_res = len_main;
+                xz_skip(e, len_main - 1);
+                return;
+        }
+
+        p32 back_main = 0;
+
+        if (len_main >= 2)
+        {
+                back_main = e->matches[count - 1].dist;
+                while (count > 1 && len_main == e->matches[count - 2].len + 1)
+                {
+                        if (!XZ_CHANGE_PAIR(e->matches[count - 2].dist, back_main))
+                                break;
+                        count--;
+                        len_main = e->matches[count - 1].len;
+                        back_main = e->matches[count - 1].dist;
+                }
+                if (len_main == 2 && back_main >= 0x80)
+                        len_main = 1;
+        }
+        if (rep_len >= 2 &&
+            (rep_len + 1 >= len_main ||
+             (rep_len + 2 >= len_main && back_main > (1u << 9)) ||
+             (rep_len + 3 >= len_main && back_main > (1u << 15))))
+        {
+                address_to back_res = rep_index;
+                address_to len_res = rep_len;
+                xz_skip(e, rep_len - 1);
+                return;
+        }
+        if (len_main < 2 || buf_avail <= 2)
+                return;
+
+        e->longest = xz_find(e, address_of e->match_count);
+        if (e->longest >= 2)
+        {
+                p32 new_dist = e->matches[e->match_count - 1].dist;
+
+                if ((e->longest >= len_main && new_dist < back_main) ||
+                    (e->longest == len_main + 1 && !XZ_CHANGE_PAIR(back_main, new_dist)) ||
+                    e->longest > len_main + 1 ||
+                    (e->longest + 1 >= len_main && len_main >= 3 &&
+                     XZ_CHANGE_PAIR(new_dist, back_main)))
+                        return;
+        }
+        buf++;
+        p32 limit = len_main - 1 > 2 ? len_main - 1 : 2;
+        for (p32 i = 0; i < 4; i++)
+                if (xz_common(buf, buf - e->reps[i] - 1, 0, limit) == limit)
+                        return;
+        address_to back_res = back_main + 4;
+        address_to len_res = len_main;
+        xz_skip(e, len_main - 2);
+}
+
+static fn xz_backward(xz_encoder address_to e, p32 address_to len_res, p32 address_to back_res,
+                      p32 cur)
+{
+        xz_optimal address_to opts = e->opts;
+        p32 pos_mem = opts[cur].pos_prev;
+        p32 back_mem = opts[cur].back_prev;
+
+        e->opts_end = cur;
+        do
+        {
+                if (opts[cur].prev_1_is_literal)
+                {
+                        xz_make_literal(opts + pos_mem);
+                        opts[pos_mem].pos_prev = pos_mem - 1;
+                        if (opts[cur].prev_2)
+                        {
+                                opts[pos_mem - 1].prev_1_is_literal = false;
+                                opts[pos_mem - 1].pos_prev = opts[cur].pos_prev_2;
+                                opts[pos_mem - 1].back_prev = opts[cur].back_prev_2;
+                        }
+                }
+                p32 pos_prev = pos_mem;
+                p32 back_cur = back_mem;
+
+                back_mem = opts[pos_prev].back_prev;
+                pos_mem = opts[pos_prev].pos_prev;
+                opts[pos_prev].back_prev = back_cur;
+                opts[pos_prev].pos_prev = cur;
+                cur = pos_prev;
+        } while (cur);
+        e->opts_current = opts[0].pos_prev;
+        address_to len_res = opts[0].pos_prev;
+        address_to back_res = opts[0].back_prev;
+}
+
+static p32 xz_optimum_first(xz_encoder address_to e, p32 address_to back_res,
+                            p32 address_to len_res, p32 position)
+{
+        xz_probability_state address_to m = address_of e->models;
+        xz_optimal address_to opts = e->opts;
+        p32 nice = e->nice;
+        p32 len_main;
+        p32 count;
+
+        if (!e->read_ahead)
+                len_main = xz_find(e, address_of count);
+        else
+        {
+                len_main = e->longest;
+                count = e->match_count;
+        }
+
+        p32 buf_avail = e->input_n - e->read_pos + 1;
+
+        if (buf_avail > XZ_MATCH_MAX)
+                buf_avail = XZ_MATCH_MAX;
+        address_to back_res = XZ_LITERAL;
+        address_to len_res = 1;
+        if (buf_avail < 2)
+                return XZ_LITERAL;
+
+        p8 address_to buf = e->input + e->read_pos - 1;
+        p32 rep_lens[4];
+        p32 rep_max = 0;
+
+        for (p32 i = 0; i < 4; i++)
+        {
+                p8 address_to back = buf - e->reps[i] - 1;
+
+                if (xz_differ16(buf, back))
+                {
+                        rep_lens[i] = 0;
+                        continue;
+                }
+                rep_lens[i] = xz_common(buf, back, 2, buf_avail);
+                if (rep_lens[i] > rep_lens[rep_max])
+                        rep_max = i;
+        }
+        if (rep_lens[rep_max] >= nice)
+        {
+                address_to back_res = rep_max;
+                address_to len_res = rep_lens[rep_max];
+                xz_skip(e, address_to len_res - 1);
+                return XZ_LITERAL;
+        }
+        if (len_main >= nice)
+        {
+                address_to back_res = e->matches[count - 1].dist + 4;
+                address_to len_res = len_main;
+                xz_skip(e, len_main - 1);
+                return XZ_LITERAL;
+        }
+
+        p8 current = buf[0];
+        p8 match_byte = *(buf - e->reps[0] - 1);
+        p32 state = e->state;
+
+        if (len_main < 2 && current != match_byte && rep_lens[rep_max] < 2)
+                return XZ_LITERAL;
+
+        opts[0].state = e->state;
+        p32 ps = position & e->pos_mask;
+
+        opts[1].price = xz_price0(e, m->is_match[state][ps]) +
+                        xz_literal_price(e, position, buf[-1], state >= 7, match_byte,
+                                         current);
+        xz_make_literal(opts + 1);
+
+        p32 match_price = xz_price1(e, m->is_match[state][ps]);
+        p32 rep_match_price = match_price + xz_price1(e, m->is_rep[state]);
+
+        if (match_byte == current)
+        {
+                p32 short_rep_price = rep_match_price + xz_short_rep_price(e, state, ps);
+
+                if (short_rep_price < opts[1].price)
+                {
+                        opts[1].price = short_rep_price;
+                        xz_make_short_rep(opts + 1);
+                }
+        }
+
+        p32 len_end = len_main > rep_lens[rep_max] ? len_main : rep_lens[rep_max];
+
+        if (len_end < 2)
+        {
+                address_to back_res = opts[1].back_prev;
+                address_to len_res = 1;
+                return XZ_LITERAL;
+        }
+        opts[1].pos_prev = 0;
+        for (p32 i = 0; i < 4; i++)
+                opts[0].backs[i] = e->reps[i];
+
+        p32 len = len_end;
+        do
+                opts[len].price = XZ_INFINITY_PRICE;
+        while (--len >= 2);
+
+        for (p32 i = 0; i < 4; i++)
+        {
+                p32 rep_len = rep_lens[i];
+
+                if (rep_len < 2)
+                        continue;
+                p32 price = rep_match_price + xz_pure_rep_price(e, i, state, ps);
+                do
+                {
+                        p32 cost = price + e->rep_prices.prices[ps][rep_len - 2];
+
+                        if (cost < opts[rep_len].price)
+                        {
+                                opts[rep_len].price = cost;
+                                opts[rep_len].pos_prev = 0;
+                                opts[rep_len].back_prev = i;
+                                opts[rep_len].prev_1_is_literal = false;
+                        }
+                } while (--rep_len >= 2);
+        }
+
+        p32 normal_match_price = match_price + xz_price0(e, m->is_rep[state]);
+
+        len = rep_lens[0] >= 2 ? rep_lens[0] + 1 : 2;
+        if (len <= len_main)
+        {
+                p32 i = 0;
+
+                while (len > e->matches[i].len)
+                        i++;
+                for (;; len++)
+                {
+                        p32 dist = e->matches[i].dist;
+                        p32 cost = normal_match_price + xz_dist_len_price(e, dist, len, ps);
+
+                        if (cost < opts[len].price)
+                        {
+                                opts[len].price = cost;
+                                opts[len].pos_prev = 0;
+                                opts[len].back_prev = dist + 4;
+                                opts[len].prev_1_is_literal = false;
+                        }
+                        if (len == e->matches[i].len && ++i == count)
+                                break;
+                }
+        }
+        return len_end;
+}
+
+static inline INLINE p8 xz_after_literal(p8 state)
+{
+        return state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
+}
+
+static inline INLINE p8 xz_after_match(p8 state)
+{
+        return state < 7 ? 7 : 10;
+}
+
+static inline INLINE p8 xz_after_long_rep(p8 state)
+{
+        return state < 7 ? 8 : 11;
+}
+
+static inline INLINE p8 xz_after_short_rep(p8 state)
+{
+        return state < 7 ? 9 : 11;
+}
+
+static p32 xz_optimum_next(xz_encoder address_to e, p32 address_to reps, p8 address_to buf,
+                           p32 len_end, p32 position, p32 cur, p32 nice,
+                           p32 buf_avail_full)
+{
+        xz_probability_state address_to m = address_of e->models;
+        xz_optimal address_to opts = e->opts;
+        p32 count = e->match_count;
+        p32 new_len = e->longest;
+        p32 pos_prev = opts[cur].pos_prev;
+        p8 state;
+
+        if (opts[cur].prev_1_is_literal)
+        {
+                pos_prev--;
+                if (opts[cur].prev_2)
+                {
+                        state = opts[opts[cur].pos_prev_2].state;
+                        state = opts[cur].back_prev_2 < 4 ? xz_after_long_rep(state)
+                                                          : xz_after_match(state);
+                }
+                else
+                        state = opts[pos_prev].state;
+                state = xz_after_literal(state);
+        }
+        else
+                state = opts[pos_prev].state;
+
+        if (pos_prev == cur - 1)
+        {
+                state = opts[cur].back_prev == 0 ? xz_after_short_rep(state)
+                                                 : xz_after_literal(state);
+        }
+        else
+        {
+                p32 pos;
+
+                if (opts[cur].prev_1_is_literal && opts[cur].prev_2)
+                {
+                        pos_prev = opts[cur].pos_prev_2;
+                        pos = opts[cur].back_prev_2;
+                        state = xz_after_long_rep(state);
+                }
+                else
+                {
+                        pos = opts[cur].back_prev;
+                        state = pos < 4 ? xz_after_long_rep(state) : xz_after_match(state);
+                }
+                if (pos < 4)
+                {
+                        p32 i;
+
+                        reps[0] = opts[pos_prev].backs[pos];
+                        for (i = 1; i <= pos; i++)
+                                reps[i] = opts[pos_prev].backs[i - 1];
+                        for (; i < 4; i++)
+                                reps[i] = opts[pos_prev].backs[i];
+                }
+                else
+                {
+                        reps[0] = pos - 4;
+                        for (p32 i = 1; i < 4; i++)
+                                reps[i] = opts[pos_prev].backs[i - 1];
+                }
+        }
+        opts[cur].state = state;
+        for (p32 i = 0; i < 4; i++)
+                opts[cur].backs[i] = reps[i];
+
+        p32 cur_price = opts[cur].price;
+        p8 current = buf[0];
+        p8 match_byte = *(buf - reps[0] - 1);
+        p32 ps = position & e->pos_mask;
+        p32 cur_and_1_price = cur_price + xz_price0(e, m->is_match[state][ps]) +
+                              xz_literal_price(e, position, buf[-1], state >= 7, match_byte,
+                                               current);
+        bool next_is_literal = false;
+
+        if (cur_and_1_price < opts[cur + 1].price)
+        {
+                opts[cur + 1].price = cur_and_1_price;
+                opts[cur + 1].pos_prev = cur;
+                xz_make_literal(opts + cur + 1);
+                next_is_literal = true;
+        }
+
+        p32 match_price = cur_price + xz_price1(e, m->is_match[state][ps]);
+        p32 rep_match_price = match_price + xz_price1(e, m->is_rep[state]);
+
+        if (match_byte == current &&
+            !(opts[cur + 1].pos_prev < cur && opts[cur + 1].back_prev == 0))
+        {
+                p32 short_rep_price = rep_match_price + xz_short_rep_price(e, state, ps);
+
+                if (short_rep_price <= opts[cur + 1].price)
+                {
+                        opts[cur + 1].price = short_rep_price;
+                        opts[cur + 1].pos_prev = cur;
+                        xz_make_short_rep(opts + cur + 1);
+                        next_is_literal = true;
+                }
+        }
+        if (buf_avail_full < 2)
+                return len_end;
+
+        p32 buf_avail = buf_avail_full < nice ? buf_avail_full : nice;
+
+        if (!next_is_literal && match_byte != current)
+        {
+                /* Literal, then repeat 0. */
+                p8 address_to back = buf - reps[0] - 1;
+                p32 limit = buf_avail_full < nice + 1 ? buf_avail_full : nice + 1;
+                p32 len_test = xz_common(buf, back, 1, limit) - 1;
+
+                if (len_test >= 2)
+                {
+                        p8 state_2 = xz_after_literal(state);
+                        p32 ps_next = (position + 1) & e->pos_mask;
+                        p32 next_rep_match_price = cur_and_1_price +
+                                xz_price1(e, m->is_match[state_2][ps_next]) +
+                                xz_price1(e, m->is_rep[state_2]);
+                        p32 offset = cur + 1 + len_test;
+
+                        while (len_end < offset)
+                                opts[++len_end].price = XZ_INFINITY_PRICE;
+                        p32 cost = next_rep_match_price +
+                                   xz_rep_price(e, 0, len_test, state_2, ps_next);
+                        if (cost < opts[offset].price)
+                        {
+                                opts[offset].price = cost;
+                                opts[offset].pos_prev = cur + 1;
+                                opts[offset].back_prev = 0;
+                                opts[offset].prev_1_is_literal = true;
+                                opts[offset].prev_2 = false;
+                        }
+                }
+        }
+
+        p32 start_len = 2;
+
+        for (p32 rep_index = 0; rep_index < 4; rep_index++)
+        {
+                p8 address_to back = buf - reps[rep_index] - 1;
+
+                if (xz_differ16(buf, back))
+                        continue;
+                p32 len_test = xz_common(buf, back, 2, buf_avail);
+
+                while (len_end < cur + len_test)
+                        opts[++len_end].price = XZ_INFINITY_PRICE;
+
+                p32 len_test_temp = len_test;
+                p32 price = rep_match_price + xz_pure_rep_price(e, rep_index, state, ps);
+
+                do
+                {
+                        p32 cost = price + e->rep_prices.prices[ps][len_test - 2];
+
+                        if (cost < opts[cur + len_test].price)
+                        {
+                                opts[cur + len_test].price = cost;
+                                opts[cur + len_test].pos_prev = cur;
+                                opts[cur + len_test].back_prev = rep_index;
+                                opts[cur + len_test].prev_1_is_literal = false;
+                        }
+                } while (--len_test >= 2);
+                len_test = len_test_temp;
+                if (!rep_index)
+                        start_len = len_test + 1;
+
+                /* Repeat, literal, repeat 0. */
+                p32 len_test_2 = len_test + 1;
+                p32 limit = buf_avail_full < len_test_2 + nice ? buf_avail_full
+                                                               : len_test_2 + nice;
+                if (len_test_2 < limit)
+                        len_test_2 = xz_common(buf, back, len_test_2, limit);
+                len_test_2 -= len_test + 1;
+                if (len_test_2 >= 2)
+                {
+                        p8 state_2 = xz_after_long_rep(state);
+                        p32 ps_next = (position + len_test) & e->pos_mask;
+                        p32 cost_literal = price + e->rep_prices.prices[ps][len_test - 2] +
+                                xz_price0(e, m->is_match[state_2][ps_next]) +
+                                xz_literal_price(e, position + len_test, buf[len_test - 1],
+                                                 true, back[len_test], buf[len_test]);
+
+                        state_2 = xz_after_literal(state_2);
+                        ps_next = (position + len_test + 1) & e->pos_mask;
+                        p32 next_rep_match_price = cost_literal +
+                                xz_price1(e, m->is_match[state_2][ps_next]) +
+                                xz_price1(e, m->is_rep[state_2]);
+                        p32 offset = cur + len_test + 1 + len_test_2;
+
+                        while (len_end < offset)
+                                opts[++len_end].price = XZ_INFINITY_PRICE;
+                        p32 cost = next_rep_match_price +
+                                   xz_rep_price(e, 0, len_test_2, state_2, ps_next);
+                        if (cost < opts[offset].price)
+                        {
+                                opts[offset].price = cost;
+                                opts[offset].pos_prev = cur + len_test + 1;
+                                opts[offset].back_prev = 0;
+                                opts[offset].prev_1_is_literal = true;
+                                opts[offset].prev_2 = true;
+                                opts[offset].pos_prev_2 = cur;
+                                opts[offset].back_prev_2 = rep_index;
+                        }
+                }
+        }
+
+        if (new_len > buf_avail)
+        {
+                new_len = buf_avail;
+                count = 0;
+                while (new_len > e->matches[count].len)
+                        count++;
+                e->matches[count++].len = new_len;
+        }
+        if (new_len < start_len)
+                return len_end;
+
+        p32 normal_match_price = match_price + xz_price0(e, m->is_rep[state]);
+
+        while (len_end < cur + new_len)
+                opts[++len_end].price = XZ_INFINITY_PRICE;
+
+        p32 i = 0;
+
+        while (start_len > e->matches[i].len)
+                i++;
+        for (p32 len_test = start_len;; len_test++)
+        {
+                p32 cur_back = e->matches[i].dist;
+                p32 cost = normal_match_price + xz_dist_len_price(e, cur_back, len_test, ps);
+
+                if (cost < opts[cur + len_test].price)
+                {
+                        opts[cur + len_test].price = cost;
+                        opts[cur + len_test].pos_prev = cur;
+                        opts[cur + len_test].back_prev = cur_back + 4;
+                        opts[cur + len_test].prev_1_is_literal = false;
+                }
+                if (len_test != e->matches[i].len)
+                        continue;
+
+                /* Match, literal, repeat 0. */
+                p8 address_to back = buf - cur_back - 1;
+                p32 len_test_2 = len_test + 1;
+                p32 limit = buf_avail_full < len_test_2 + nice ? buf_avail_full
+                                                               : len_test_2 + nice;
+
+                if (len_test_2 < limit)
+                        len_test_2 = xz_common(buf, back, len_test_2, limit);
+                len_test_2 -= len_test + 1;
+                if (len_test_2 >= 2)
+                {
+                        p8 state_2 = xz_after_match(state);
+                        p32 ps_next = (position + len_test) & e->pos_mask;
+                        p32 cost_literal = cost +
+                                xz_price0(e, m->is_match[state_2][ps_next]) +
+                                xz_literal_price(e, position + len_test, buf[len_test - 1],
+                                                 true, back[len_test], buf[len_test]);
+
+                        state_2 = xz_after_literal(state_2);
+                        ps_next = (ps_next + 1) & e->pos_mask;
+                        p32 next_rep_match_price = cost_literal +
+                                xz_price1(e, m->is_match[state_2][ps_next]) +
+                                xz_price1(e, m->is_rep[state_2]);
+                        p32 offset = cur + len_test + 1 + len_test_2;
+
+                        while (len_end < offset)
+                                opts[++len_end].price = XZ_INFINITY_PRICE;
+                        p32 cost_2 = next_rep_match_price +
+                                     xz_rep_price(e, 0, len_test_2, state_2, ps_next);
+                        if (cost_2 < opts[offset].price)
+                        {
+                                opts[offset].price = cost_2;
+                                opts[offset].pos_prev = cur + len_test + 1;
+                                opts[offset].back_prev = 0;
+                                opts[offset].prev_1_is_literal = true;
+                                opts[offset].prev_2 = true;
+                                opts[offset].pos_prev_2 = cur;
+                                opts[offset].back_prev_2 = cur_back + 4;
+                        }
+                }
+                if (++i == count)
+                        break;
+        }
+        return len_end;
+}
+
+/* Levels 4-9: price every way to cover the next positions, up to nice
+   length or 4096 positions, and code the cheapest path. */
+static fn xz_optimum_normal(xz_encoder address_to e, p32 address_to back_res,
+                            p32 address_to len_res, p32 position)
+{
+        xz_optimal address_to opts = e->opts;
+
+        if (e->opts_end != e->opts_current)
+        {
+                p32 at = e->opts_current;
+
+                address_to len_res = opts[at].pos_prev - at;
+                address_to back_res = opts[at].back_prev;
+                e->opts_current = opts[at].pos_prev;
+                return;
+        }
+        if (!e->read_ahead)
+        {
+                if (e->match_price_count >= (1u << 7))
+                        xz_fill_dist_prices(e);
+                if (e->align_price_count >= XZ_ALIGN)
+                        xz_fill_align_prices(e);
+        }
+
+        p32 len_end = xz_optimum_first(e, back_res, len_res, position);
+
+        if (len_end == XZ_LITERAL)
+                return;
+
+        p32 reps[4] = {e->reps[0], e->reps[1], e->reps[2], e->reps[3]};
+        p32 cur;
+
+        for (cur = 1; cur < len_end; cur++)
+        {
+                e->longest = xz_find(e, address_of e->match_count);
+                if (e->longest >= e->nice)
+                        break;
+                p32 avail = e->input_n - e->read_pos + 1;
+                if (avail > XZ_OPTS - 1 - cur)
+                        avail = XZ_OPTS - 1 - cur;
+                len_end = xz_optimum_next(e, reps, e->input + e->read_pos - 1, len_end,
+                                          position + cur, cur, e->nice, avail);
+        }
+        xz_backward(e, len_res, back_res, cur);
+}
+
+static fn xz_lzma_reset(xz_encoder address_to e)
+{
+        p16 address_to cell = (p16 address_to)address_of e->models;
+
+        for (positive i = 0; i < sizeof(e->models) / sizeof(p16); i++)
+                cell[i] = 1024;
+        e->state = 0;
+        e->reps[0] = e->reps[1] = e->reps[2] = e->reps[3] = 0;
+        e->match_price_count = 0x7fffffffu;
+        e->align_price_count = 0x7fffffffu;
+        e->opts_end = 0;
+        e->opts_current = 0;
+        if (e->preset->normal)
+                for (p32 ps = 0; ps <= e->pos_mask; ps++)
+                {
+                        xz_length_prices(e, false, ps);
+                        xz_length_prices(e, true, ps);
+                }
+}
+
+/* Size the dictionary to the block, clear the match finder, and make sure
+   the output span holds the block's worst case. */
+static bool xz_block_prepare(xz_encoder address_to e, p32 n)
+{
+        const xz_preset address_to p = e->preset;
+        p32 dict = (p32)1 << p->dict_log;
+        bool fresh;
+
+        while (dict > 4096 && dict / 2 >= n)
+                dict >>= 1;
+        e->dict = dict;
+        e->cyclic_size = dict + 1;
+        e->cyclic_pos = 0;
+        e->read_pos = 0;
+        e->read_ahead = 0;
+        e->offset = e->cyclic_size;
+
+        p32 hs = dict - 1;
+
+        hs |= hs >> 1;
+        hs |= hs >> 2;
+        hs |= hs >> 4;
+        hs |= hs >> 8;
+        hs |= hs >> 16;
+        hs >>= 1;
+        hs |= 0xffff;
+        if (hs > (1u << 24))
+                hs = p->finder == XZ_FINDER_HC3 ? (1u << 24) - 1 : hs >> 1;
+        e->hash_mask = hs;
+
+        positive entries = (positive)hs + 1 + XZ_HASH2_SIZE +
+                           (p->finder == XZ_FINDER_HC3 ? 0 : XZ_HASH3_SIZE);
+        positive sons = (positive)e->cyclic_size * (p->finder == XZ_FINDER_BT4 ? 2 : 1);
+        p8 address_to area = (p8 address_to)e->hash;
+
+        if (!xz_area(address_of area, address_of e->hash_room, entries * sizeof(p32),
+                     address_of fresh))
                 return false;
-        xz_block_unpadded += 5 + (reset >= 2 ? 1 : 0) + xz_rc_n;
-        xz_block_unpacked += n;
-        xz_enc_have_lzma = true;
+        e->hash = (p32 address_to)area;
+        if (!fresh)
+                memory_fill(e->hash, 0, entries * sizeof(p32));
+        area = (p8 address_to)e->son;
+        if (!xz_area(address_of area, address_of e->son_room, sons * sizeof(p32),
+                     address_of fresh))
+                return false;
+        e->son = (p32 address_to)area;
+        if (!xz_area(address_of e->out, address_of e->out_room,
+                     XZ_BLOCK_HEADER_MAX + (positive)n + (n >> 12) +
+                             2 * XZ_CHUNK_PACKED_MAX + 64,
+                     address_of fresh))
+                return false;
+
+        e->nice = p->nice;
+        e->depth = p->depth ? p->depth
+                 : p->finder == XZ_FINDER_BT4 ? 16 + e->nice / 2 : 4 + e->nice / 4;
+        e->dist_table_size = 2 * xz_top_bit(dict);
+        e->len_table_size = e->nice + 1 - 2;
         return true;
 }
 
-static bool xz_flush_pending(bool last)
+/* Encode input[0, n) as one complete block: header with both sizes, LZMA2
+   chunks and end marker, padding, CRC32. The input must stay readable for
+   XZ_SLACK bytes past n; what those bytes hold never changes the output. */
+static bool xz_block_encode(xz_encoder address_to e, p8 address_to input, p32 n)
 {
-        positive at = 0;
+        xz_probability_state address_to m = address_of e->models;
 
-        if (!xz_pending_n && !last)
-                return true;
-        if (!xz_pending_n && last && !xz_block_unpadded)
-                return true;
-        if (!xz_block_unpadded &&
-            !xz_write_block_header(xz_prop_from_dict(XZ_ENC_DICT)))
+        e->input = input;
+        e->input_n = n;
+        if (!n || !xz_block_prepare(e, n))
                 return false;
-        while (at < xz_pending_n)
-        {
-                positive take = xz_pending_n - at;
+        xz_lzma_reset(e);
 
-                if (take > 65536)
-                        take = 65536;
-                if (!xz_lzma_chunk(xz_pending + at, take))
-                        return false;
-                at += take;
-        }
-        xz_match_abs += xz_pending_n;
-        xz_pending_position += xz_pending_n;
-        if (xz_pending_position + XZ_PENDING > sizeof(xz_pending_storage))
+        p8 address_to out = e->out + XZ_BLOCK_HEADER_MAX;
+        positive at = 0;
+        bool props = true;
+        bool dict_reset = true;
+        bool state_reset = false;
+        bool started = false;
+
+        e->position = 0;
+        for (;;)
         {
-                memory_copy_apart(xz_pending_storage,
-                    xz_pending_storage + xz_pending_position - XZ_ENC_DICT,
-                    XZ_ENC_DICT);
-                xz_pending_position = XZ_ENC_DICT;
-        }
-        if (xz_match_abs >= 0x80000000u)
-        {
-                positive shift = xz_match_abs - XZ_ENC_DICT;
-                /* shift is a whole dictionary multiple, so ring slots remain
-                   stable after subtracting it from the absolute positions. */
-                for (positive i = 0; i < XZ_HASH_SIZE; i++)
-                        xz_head[i] = xz_head[i] > shift ? xz_head[i] - shift : 0;
-                for (positive i = 0; i < XZ_ENC_DICT; i++)
-                        xz_prev[i] = xz_prev[i] > shift ? xz_prev[i] - shift : 0;
-                xz_match_abs -= shift;
-        }
-        xz_pending_n = 0;
-        if (last)
-        {
-                if (!xz_put(0))
-                        return false;
-                xz_block_unpadded += 1;
+                p32 start = e->read_pos - e->read_ahead;
+
+                if (start >= n)
+                        break;
+                if (state_reset)
+                        xz_lzma_reset(e);
+                e->rc = (xz_range_state){0xffffffffu, 0, 0, 1, e->chunk,
+                                         e->chunk + sizeof(e->chunk), 0};
+                if (!started)
                 {
-                        p64 padded = xz_block_unpadded;
+                        xz_skip(e, 1);
+                        e->read_ahead = 0;
+                        xz_bit(e, address_of m->is_match[0][0], 0);
+                        lzma_range_encode(address_of e->rc, m->lit, input[0], 8);
+                        e->position = 1;
+                        started = true;
+                }
 
-                        while (padded & 3)
+                p32 limit = start + XZ_CHUNK_PLAIN_MAX - XZ_MATCH_MAX;
+
+                for (;;)
+                {
+                        if (e->read_pos - e->read_ahead >= limit ||
+                            (positive)(e->rc.next - e->chunk) + e->rc.pending + 4 >=
+                                    XZ_CHUNK_PACKED_MAX - XZ_LOOP_INPUT)
+                                break;
+                        if (e->read_pos >= n && !e->read_ahead)
+                                break;
+
+                        p32 back;
+                        p32 len;
+
+                        if (e->preset->normal)
+                                xz_optimum_normal(e, address_of back, address_of len,
+                                                  (p32)e->position);
+                        else
+                                xz_optimum_fast(e, address_of back, address_of len);
+                        xz_code_symbol(e, back, len);
+                }
+                for (p32 i = 0; i < 5; i++)
+                        lzma_range_shift(address_of e->rc);
+                if (e->rc.full)
+                        return false;
+
+                positive packed = (positive)(e->rc.next - e->chunk);
+                positive plain = e->read_pos - e->read_ahead - start;
+
+                if (packed >= plain)
+                {
+                        /* Stored: the models coded speculatively are dropped,
+                           so the next compressed chunk resets its state. */
+                        plain += e->read_ahead;
+                        e->read_ahead = 0;
+                        for (positive from = 0; from < plain;)
                         {
-                                if (!xz_put(0))
-                                        return false;
-                                padded++;
+                                positive take = plain - from;
+
+                                if (take > XZ_CHUNK_PACKED_MAX)
+                                        take = XZ_CHUNK_PACKED_MAX;
+                                out[at++] = dict_reset ? 1 : 2;
+                                out[at++] = (p8)((take - 1) >> 8);
+                                out[at++] = (p8)(take - 1);
+                                memory_copy_apart(out + at, input + start + from, take);
+                                at += take;
+                                from += take;
+                                dict_reset = false;
                         }
+                        state_reset = true;
+                        continue;
                 }
-                if (xz_check == XZ_CHECK_CRC32)
-                {
-                        if (!xz_put32(~xz_crc32))
-                                return false;
-                        xz_block_unpadded += 4;
-                }
-                else if (xz_check == XZ_CHECK_CRC64)
-                {
-                        if (!xz_put64(~xz_crc64))
-                                return false;
-                        xz_block_unpadded += 8;
-                }
-                xz_index_unpadded = xz_block_unpadded;
-                xz_index_unpacked = xz_block_unpacked;
-                xz_index_n = 1;
+                out[at++] = (p8)((props ? (dict_reset ? 0xe0 : 0xc0)
+                                        : state_reset ? 0xa0 : 0x80) |
+                                 ((plain - 1) >> 16));
+                out[at++] = (p8)((plain - 1) >> 8);
+                out[at++] = (p8)(plain - 1);
+                out[at++] = (p8)((packed - 1) >> 8);
+                out[at++] = (p8)(packed - 1);
+                if (props)
+                        out[at++] = (p8)((e->pb * 5 + e->lp) * 9 + e->lc);
+                memory_copy_apart(out + at, e->chunk, packed);
+                at += packed;
+                props = dict_reset = state_reset = false;
         }
-        return !xz_out_failed;
+        out[at++] = 0;
+
+        p8 header[XZ_BLOCK_HEADER_MAX];
+        positive h = 2;
+
+        header[1] = 0x40 | 0x80;
+        h += xz_vli_put(header + h, at);
+        h += xz_vli_put(header + h, n);
+        header[h++] = 0x21;
+        header[h++] = 1;
+        header[h++] = xz_prop_from_dict(e->dict);
+        while ((h + 4) & 3)
+                header[h++] = 0;
+        header[0] = (p8)((h + 4) / 4 - 1);
+        memory_store_unaligned(p32, header + h, ~hash_crc32(0xffffffffu, header, h));
+        h += 4;
+        memory_copy_apart(e->out + XZ_BLOCK_HEADER_MAX - h, header, h);
+
+        e->unpadded = h + at + 4;
+        while (at & 3)
+                out[at++] = 0;
+        memory_store_unaligned(p32, out + at, ~hash_crc32(0xffffffffu, input, n));
+        e->out_at = XZ_BLOCK_HEADER_MAX - h;
+        e->out_n = h + at + 4;
+        return true;
+}
+
+/*
+        The stream around the blocks, on the calling thread: header, one
+        block per max(3 * dictionary, 1 MiB) of input, index and footer.
+*/
+typedef struct
+{
+        p8 level;
+        positive block;
+        p8 address_to input;
+        positive input_room;
+        positive input_n;
+        xz_encoder address_to encoder;
+        p8 address_to index;
+        positive index_room;
+        positive index_n;
+        p64 records;
+        byte_store address_to store;
+        bipolar fd;
+        bool failed;
+} xz_stream_writer;
+
+static xz_stream_writer xz_writer;
+
+static bool xz_writer_emit(p8 address_to bytes, positive n)
+{
+        if (xz_writer.failed)
+                return false;
+        if (xz_writer.store)
+        {
+                if (!byte_store_append_exact(xz_writer.store, bytes, n))
+                {
+                        xz_writer.failed = true;
+                        return xz_fail("xz output is too small");
+                }
+        }
+        else if (xz_writer.fd >= 0 &&
+                 system_write_all((positive)xz_writer.fd, bytes, n) != (bipolar)n)
+        {
+                xz_writer.failed = true;
+                return xz_fail("xz write failed");
+        }
+        return true;
+}
+
+static fn xz_writer_close(void)
+{
+        memory_free(xz_writer.input, xz_writer.input_room);
+        memory_free(xz_writer.index, xz_writer.index_room);
+        xz_encoder_close(xz_writer.encoder);
+        xz_writer.input = null;
+        xz_writer.input_room = 0;
+        xz_writer.index = null;
+        xz_writer.index_room = 0;
+        xz_writer.encoder = null;
+}
+
+static bool xz_writer_record(p64 unpadded, p64 uncompressed)
+{
+        if (xz_writer.index_n + 20 > xz_writer.index_room)
+        {
+                positive room = xz_writer.index_room ? 2 * xz_writer.index_room : 4096;
+                p8 address_to grown = (p8 address_to)memory(room);
+
+                if (!grown || system_failed(grown))
+                        return xz_fail("xz cannot map the index");
+                if (xz_writer.index)
+                {
+                        memory_copy_apart(grown, xz_writer.index, xz_writer.index_n);
+                        memory_free(xz_writer.index, xz_writer.index_room);
+                }
+                xz_writer.index = grown;
+                xz_writer.index_room = room;
+        }
+        xz_writer.index_n += xz_vli_put(xz_writer.index + xz_writer.index_n, unpadded);
+        xz_writer.index_n += xz_vli_put(xz_writer.index + xz_writer.index_n, uncompressed);
+        xz_writer.records++;
+        return true;
+}
+
+static bool xz_writer_block(void)
+{
+        xz_encoder address_to e = xz_writer.encoder;
+
+        if (!xz_writer.input_n)
+                return true;
+        if (!e)
+        {
+                e = xz_writer.encoder = xz_encoder_open(xz_writer.level);
+                if (!e)
+                        return xz_fail("xz cannot map the encoder");
+        }
+        if (!xz_block_encode(e, xz_writer.input, (p32)xz_writer.input_n))
+                return xz_fail("xz cannot encode a block");
+        if (!xz_writer_emit(e->out + e->out_at, e->out_n) ||
+            !xz_writer_record(e->unpadded, xz_writer.input_n))
+                return false;
+        xz_writer.input_n = 0;
+        return true;
 }
 
 static bool xz_encode_setup(p8 level)
 {
-        xz_encoding = true;
+        const xz_preset address_to p = xz_presets + (level > 9 ? 9 : level);
+        positive dict = (positive)1 << p->dict_log;
+        p8 header[12] = {0xfd, 0x37, 0x7a, 0x58, 0x5a, 0, 0, XZ_CHECK_CRC32};
+
+        xz_writer_close();
         xz_why = null;
-        xz_out_failed = false;
-        xz_level = level ? level : 6;
-        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
-        xz_pending_n = 0;
-        xz_need_reset = true;
-        xz_enc_have_lzma = false;
-        xz_unpacked = 0;
-        xz_crc32 = 0xffffffffu;
-        xz_crc64 = 0xffffffffffffffffull;
-        xz_index_n = 0;
-        xz_match_abs = 0;
-        xz_pending_position = 0;
-        memory_fill(xz_head, 0, sizeof(xz_head));
-        if (!xz_props(0x5d))
-                return false;
-        xz_probs_reset();
-        return xz_write_header(XZ_CHECK_CRC32);
+        xz_writer.level = level > 9 ? 9 : level;
+        xz_writer.block = 3 * dict > ((positive)1 << 20) ? 3 * dict : (positive)1 << 20;
+        xz_writer.input_n = 0;
+        xz_writer.index_n = 0;
+        xz_writer.records = 0;
+        xz_writer.failed = false;
+        xz_writer.store = xz_output.bytes ? address_of xz_output : null;
+        xz_writer.fd = xz_out_fd;
+        xz_writer.input = (p8 address_to)memory(xz_writer.block + XZ_SLACK);
+        if (!xz_writer.input || system_failed(xz_writer.input))
+        {
+                xz_writer.input = null;
+                return xz_fail("xz cannot map the block input");
+        }
+        xz_writer.input_room = xz_writer.block + XZ_SLACK;
+        memory_store_unaligned(p32, header + 8, ~hash_crc32(0xffffffffu, header + 6, 2));
+        return xz_writer_emit(header, sizeof(header));
 }
 
-/* LZMA owns the history in pending_storage. Feed its chunk directly;
-   the former hold/feed stage only copied these same bytes a second time. */
 static bool xz_encode_write(p8 address_to src, positive n)
 {
         while (n)
         {
-                positive take = min(n, XZ_PENDING - xz_pending_n);
-                memory_copy(xz_pending + xz_pending_n, src, take);
-                xz_pending_n += take;
+                positive take = min(n, xz_writer.block - xz_writer.input_n);
+
+                memory_copy(xz_writer.input + xz_writer.input_n, src, take);
+                xz_writer.input_n += take;
                 src += take;
                 n -= take;
-                if (xz_pending_n == XZ_PENDING && !xz_flush_pending(false))
+                if (xz_writer.input_n == xz_writer.block && !xz_writer_block())
                         return false;
         }
-        return xz_out_flush();
+        return !xz_writer.failed;
 }
 
 static bool xz_encode_end(void)
 {
-        return xz_flush_pending(true) && xz_write_index_footer();
+        bool ok = xz_writer_block();
+
+        if (ok)
+        {
+                p8 head[16];
+                p8 tail[8];
+                p8 footer[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, XZ_CHECK_CRC32, 'Y', 'Z'};
+                positive h = 1;
+                positive size;
+                p32 crc;
+
+                head[0] = 0;
+                h += xz_vli_put(head + h, xz_writer.records);
+                size = h + xz_writer.index_n;
+                crc = hash_crc32(0xffffffffu, head, h);
+                crc = hash_crc32(crc, xz_writer.index, xz_writer.index_n);
+                positive pad = (4 - (size & 3)) & 3;
+                memory_fill(tail, 0, sizeof(tail));
+                crc = hash_crc32(crc, tail, pad);
+                memory_store_unaligned(p32, tail + pad, ~crc);
+                size += pad + 4;
+                memory_store_unaligned(p32, footer + 4, size / 4 - 1);
+                memory_store_unaligned(p32, footer, ~hash_crc32(0xffffffffu, footer + 4, 6));
+                ok = xz_writer_emit(head, h) &&
+                     xz_writer_emit(xz_writer.index, xz_writer.index_n) &&
+                     xz_writer_emit(tail, pad + 4) &&
+                     xz_writer_emit(footer, sizeof(footer));
+        }
+        xz_writer_close();
+        return ok;
 }
 
 static bool xz_stream_encode(p8 level)
 {
         if (!xz_encode_setup(level))
+        {
+                xz_writer_close();
                 return false;
+        }
         for (;;)
         {
+                if (xz_writer.input_n == xz_writer.block && !xz_writer_block())
+                        break;
                 bipolar got = system_read_retry((positive)xz_input.fd,
-                    xz_pending + xz_pending_n, XZ_PENDING - xz_pending_n);
+                                                xz_writer.input + xz_writer.input_n,
+                                                xz_writer.block - xz_writer.input_n);
                 if (got < 0)
-                        return xz_fail("xz read failed");
+                {
+                        xz_fail("xz read failed");
+                        break;
+                }
                 if (!got)
                         return xz_encode_end();
-                xz_pending_n += (positive)got;
-                if (xz_pending_n == XZ_PENDING && !xz_flush_pending(false))
-                        return false;
+                xz_writer.input_n += (positive)got;
         }
+        xz_writer_close();
+        return false;
 }
 
 static bipolar xz_deflate_mem(p8 address_to src, positive src_len,
@@ -1951,8 +3355,9 @@ static bipolar xz_deflate_mem(p8 address_to src, positive src_len,
         xz_output.bytes = dst;
         xz_output.room = dst_cap;
         xz_output.used = 0;
-        ok = xz_encode_setup(level) && xz_encode_write(src, src_len) &&
-             xz_encode_end();
+        ok = xz_encode_setup(level) && xz_encode_write(src, src_len) && xz_encode_end();
+        if (!ok)
+                xz_writer_close();
         xz_output.bytes = null;
         return ok ? (bipolar)xz_output.used : -1;
 }
@@ -2075,12 +3480,13 @@ static b32 file_xz(void)
 {
         file_codec_cli codec = {
             .name = "xz", .decode_name = "unxz", .cat_name = "xzcat",
-            .usage = "Usage: xz [-cdfkqt123456789] [FILE...]",
+            .usage = "Usage: xz [-cdfkqt0123456789] [FILE...]",
             .version = "xz from dawning-kit",
             .status = address_of xz_status,
             .suffixes = xz_suffixes, .suffix_count = array_count(xz_suffixes),
             .decode_suffix_error = "unknown suffix; use -c",
             .encode_suffix_error = "cannot guess output name",
+            .features = FILE_CODEC_LEVEL_ZERO,
             .remove_source = true, .level = 6,
             .run = xz_stream_cli};
         return file_codec_main(address_of codec);
