@@ -102,7 +102,7 @@ def lift(start, end):
 head+=lift('#define memory_load_unaligned(type, source)', '#define memory_cast(type, value)')
 head+=lift('typedef struct\n{\n        p8 address_to bytes;\n        positive room;\n        positive used;\n} byte_store;', '/* Stable storage owns')
 head+=lift('typedef struct\n{\n        bipolar fd;', '/* Read no more than maximum bytes')
-head+=gz[gz.index('#define GZIP_MAGIC0'):gz.index('static const p8 gzip_len_extra')]
+head+='#define FLOOR_NATIVE\n'+gz[gz.index('#define GZIP_MAGIC0'):gz.index('static const p8 gzip_len_extra')]
 for name in ('gzip_len_extra','gzip_len_base','gzip_dist_extra','gzip_dist_base'):
  head+=re.search(r'static const p(?:8|16) '+name+r'\[.*?};',gz,re.S).group(0)+'\n'
 head+=re.search(r'static bipolar gzip_code_space\(.*?\n}\n',gz,re.S).group(0)
@@ -126,6 +126,7 @@ body=body.replace('input + 4096, 0, 4096','input + getpagesize(), 0, getpagesize
 body=body.replace('positive i = 4096; i < 10 * 4096','positive i = getpagesize(); i < 10 * (positive)getpagesize()')
 body=body.replace('10 * 4096','10 * (positive)getpagesize()').replace('3 * 4096','3 * (positive)getpagesize()').replace('3*4096','3*(positive)getpagesize()').replace('11*4096','11*(positive)getpagesize()')
 body=body.replace('for (positive i = 0; i < 4096; i++) p[getpagesize() + i]', 'for (positive i = 0; i < (positive)getpagesize(); i++) p[getpagesize() + i]')
+body=body.replace('#define FLOOR_PAGE 4096','#define FLOOR_PAGE ((positive)getpagesize())')
 (root/'native-arm64.c').write_text(head+body)
 subprocess.run(['clang','-O2','-Isrc/sh',str(root/'native-arm64.c'),'-o',str(root/'native-arm64')],check=True)
 subprocess.run([str(root/'native-arm64')],check=True)
