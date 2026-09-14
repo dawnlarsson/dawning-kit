@@ -653,15 +653,11 @@ static COLD bipolar system_open_parent_walk(
                         system_close(held);
                         return -22;
                 }
-                positive length = 0;
-                while (string_get(path + length) && !string_is(path + length, '/'))
+                positive length = string_span_without_set(path, "/");
+                if (length >= component_room)
                 {
-                        if (length + 1 >= component_room)
-                        {
-                                system_close(held);
-                                return -36;
-                        }
-                        length++;
+                        system_close(held);
+                        return -36;
                 }
                 bool dotdot = length == 2 && path[0] == '.' && path[1] == '.';
 
@@ -1200,13 +1196,11 @@ static bipolar system_path_remove_opened_at(
     bipolar directory, string_address name, bipolar handle, positive flags)
 {
         positive length = name ? string_length(name) : 0;
-        positive cut = 0;
 
         while (length > 1 && name[length - 1] == '/')
                 length--;
-        for (positive at = length; at > 0 && !cut; at--)
-                if (name[at - 1] == '/')
-                        cut = at;
+        p8 address_to slash = memory_last_of(name, '/', length);
+        positive cut = slash ? (positive)(slash - name) + 1 : 0;
 
         if (cut && cut < length)
         {
@@ -1350,14 +1344,6 @@ static COLD bipolar system_path_file_open(
                 return directory;
         }
         return system_path_file_open_in(file, directory, true, leaf, output,
-                                        replace, mode);
-}
-
-static COLD bipolar system_path_file_open_sibling(
-    system_path_file address_to file, bipolar directory, string_address leaf,
-    bool replace, positive mode)
-{
-        return system_path_file_open_in(file, directory, false, leaf, true,
                                         replace, mode);
 }
 

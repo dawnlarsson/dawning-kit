@@ -577,43 +577,19 @@
         and cannot be asked to, since it is assembly in library.c that every
         program shares.
 
-        So the default is a plain object in .bss, which for a single-threaded
+        So the storage is a plain object in .bss, which for a single-threaded
         freestanding binary is exactly the same thing a working __thread would
         be -- one process, one thread, one cell -- and which does not fault.
-        The __thread spelling is written out below and reached by defining
-        STANDARD_ERROR_THREAD_LOCAL, and it is not hypothetical: a second
-        probe that set the thread register by hand before touching the
-        variable ran correctly on all three, and the linker does emit .tbss
-        and a PT_TLS program header without any help from spark.ld. What is
-        missing is only the startup that installs the block.
-
-        Two things the future implementer needs and this comment is the only
-        place they are written down.
-
-        First, initialized thread-locals. Everything here is zero-initialized,
-        so it lands in .tbss, which is NOBITS, and a zeroed block is a correct
-        initial image for it. A __thread object with a non-zero initializer
-        lands in .tdata instead, and spark.ld has no output section rule for
-        .tdata at all -- it would be placed wherever the linker felt like,
-        outside every region the loader maps, and read as zero with no
-        diagnostic. spark.ld needs .tdata and .tbss rules before any
-        thread-local carries an initializer.
-
-        Second, the block size. On x86_64 the thread register points at the
-        *end* of the TLS block and variables sit at negative offsets from it;
-        on arm64 it points at the start with sixteen bytes of thread control
-        block ahead of the first variable; on riscv64 it points at the start.
-        So the block handed over must be at least the whole program's PT_TLS
-        memsz, plus sixteen on arm64, and every family that adds a __thread
-        object grows that number. Overflowing it corrupts whatever sits before
-        the block rather than faulting.
+        A second probe that set the thread register by hand before touching
+        the variable ran correctly on all three, so a thread-local errno lacks
+        only the startup that installs the block. That startup must hand over
+        at least the program's PT_TLS memsz (plus sixteen bytes on arm64,
+        where the register points at a thread control block), and spark.ld
+        needs .tdata and .tbss rules before any thread-local carries an
+        initializer.
 */
 
-#ifdef STANDARD_ERROR_THREAD_LOCAL
-static local b32 error_number_storage;
-#else
 static b32 error_number_storage;
-#endif
 
 /*
         The accessor, spelled the way the platform ABI spells it.
@@ -633,57 +609,6 @@ CONST RETURNS_NONNULL b32 address_to __errno_location(void)
 
 #undef errno
 #define errno (address_to __errno_location())
-
-#ifdef STANDARD_ERROR_THREAD_LOCAL
-/*
-        Installing a thread pointer, which a program does once and on purpose.
-
-        This is explicit rather than lazy, and the difference matters. A lazy
-        version -- __errno_location checking a flag and installing the block
-        on first use -- has a bug in exactly the future it would exist for: a
-        program whose main thread never touches errno spawns a child with
-        CLONE_SETTLS, the kernel gives that child its own thread block, the
-        shared flag is still false, and the child's first errno access
-        overwrites the kernel's block with this one. Both threads then share a
-        single errno cell. Detecting that means reading the thread register
-        back, which on x86_64 at baseline is an arch_prctl trap on every errno
-        access. Being told once, by a program that knows it has one thread, is
-        cheaper and cannot be wrong.
-
-        The block must be zeroed and must be at least the program's PT_TLS
-        memsz plus sixteen bytes; a 4096 byte static array is the easy answer
-        and is what the probe used.
-
-        The three instructions are the only assembly in this family and they
-        are here rather than in a .inc under src/platform because in the
-        shipped configuration they do not exist -- this file is pure C unless
-        somebody asks for the other storage. When threads land they belong in
-        src/platform/thread.inc beside whatever creates them, because setting
-        the thread register is that layer's job and not this one's. x86_64 is
-        not even assembly: the thread base is set by a syscall there, so the
-        library's own system_call_2 does it.
-*/
-static bool error_thread_storage_begin(address_any block, positive size)
-{
-        if (is_null(block) || size < 64)
-                return false;
-
-#if X64
-        //      ARCH_SET_FS is 0x1002, and the base is the end of the block
-        //      because x86_64 local-exec offsets are negative from it.
-        return system_call_2(syscall(arch_prctl), 0x1002,
-                             (positive)((p8 address_to)block + size)) == 0;
-#elif ARM64
-        //      TPIDR_EL0 is writable at EL0, so no trap is involved.
-        __asm__ volatile("msr tpidr_el0, %0" : : "r"(block) : "memory");
-        return true;
-#else
-        //      tp is x4, reserved by the ABI for exactly this.
-        __asm__ volatile("mv tp, %0" : : "r"(block) : "memory");
-        return true;
-#endif
-}
-#endif // STANDARD_ERROR_THREAD_LOCAL
 
 /* Translate the kernel error window before each public return type narrows
    the result. Register-width offsets and mapped addresses stay intact. */
@@ -11037,31 +10962,15 @@ static decimal modf(decimal, decimal address_to)
 #define STANDARD_MODERN_C_STANDARD_SIGNAL
 
 /*
-        Guarded out of the kernel build and out of a no-platform build, for
-        the reason src/standard/text.c gives at the same point: core.c
+        Guarded out of the kernel build and out of a no-platform build: core.c
         includes the umbrella, library.c sets KERNEL_MODE from __MODULE__, and
         a module that pulled a second struct sigaction in beside the one
         <linux/signal.h> already has would not compile.
+
+        setjmp.inc holds jump_mark, jump_to_mark and the thirty two slot
+        jump_state that sigsetjmp extends, and guards itself.
 */
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
-
-/*
-        What this file needs under it, said out loud so it can be included
-        from a test before the umbrella grows a line for it.
-
-        errno and the three return-shape wrappers belong to the error family
-        and every routine here reports failure through them. The include is
-        guarded on that file's own guard, so the umbrella including error.c
-        first and a test including this file directly both end up with exactly
-        one copy.
-
-        setjmp.inc is next door and holds jump_mark, jump_to_mark and the
-        thirty two slot jump_state that sigsetjmp extends. It guards itself
-        too, and src/standard/text.c may already have read it.
-*/
-#ifndef STANDARD_MODERN_C_STANDARD_ERROR
-#include "error.c"
-#endif
 
 #include "platform/setjmp.inc"
 
