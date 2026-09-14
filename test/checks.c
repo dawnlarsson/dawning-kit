@@ -3002,6 +3002,74 @@ static void body_memory_stream(void)
 }
 
 /*
+        fmemopen across the sizes its first buffer is cut at.
+
+        A memory stream here is a memfd whose first buffer's worth is placed
+        straight into the stream's buffer when it is opened, with the kernel
+        offset left just past it. So the sizes that matter are the ones either
+        side of that buffer -- a byte, just under, at and just over it, a page,
+        and several buffers -- and each is pushed back at the start, read to
+        the end a byte at a time with ftell looked at on the way, sought back
+        into the middle and read again.
+*/
+static void body_memory_sizes(void)
+{
+        static const long sizes[] = {1, 63, 4087, 4088, 4089, 4095, 4096, 4097, 12001};
+        static char data[12001];
+        static unsigned char again[64];
+        unsigned long i;
+        long at;
+
+        for (at = 0; at < 12001; at++)
+                data[at] = (char)('a' + (at * 5) % 26);
+
+        for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++)
+        {
+                long size = sizes[i];
+                FILE *f = fmemopen(data, (unsigned long)size, "r");
+                long count = 0;
+                long sum = 0;
+                unsigned long got;
+                int c;
+
+                trace_number("fmemopen sizes: size", size);
+                trace_number("fmemopen sizes: opened", f != 0);
+
+                if (!f)
+                        continue;
+
+                trace_number("fmemopen sizes: tell at start", ftell(f));
+                trace_number("fmemopen sizes: ungetc at start", (long)ungetc('!', f));
+                trace_number("fmemopen sizes: getc after ungetc", (long)fgetc(f));
+
+                while ((c = fgetc(f)) != EOF)
+                {
+                        count++;
+                        sum = (sum * 31 + c) % 1000000007L;
+
+                        if (count % 1024 == 1 || count == size - 1)
+                                trace_number("fmemopen sizes: tell", ftell(f));
+                }
+
+                trace_number("fmemopen sizes: bytes", count);
+                trace_number("fmemopen sizes: sum", sum);
+                trace_number("fmemopen sizes: feof", (long)feof(f));
+                trace_number("fmemopen sizes: tell at end", ftell(f));
+                trace_number("fmemopen sizes: seek middle", (long)fseek(f, size / 2, SEEK_SET));
+                got = fread(again, 1, sizeof(again), f);
+                sum = 0;
+
+                for (at = 0; at < (long)got; at++)
+                        sum = (sum * 31 + again[at]) % 1000000007L;
+
+                trace_number("fmemopen sizes: fread", (long)got);
+                trace_number("fmemopen sizes: fread sum", sum);
+                trace_number("fmemopen sizes: tell after fread", ftell(f));
+                trace_number("fmemopen sizes: fclose", (long)fclose(f));
+        }
+}
+
+/*
         The unlocked spellings, which must answer exactly what the locked ones
         do. On glibc they are a different code path with the lock removed; here
         they are the same function. Either way the answers agree or one of the
@@ -3062,6 +3130,7 @@ static void trace_body(void)
         body_pipeline();
         body_buffering();
         body_memory_stream();
+        body_memory_sizes();
         body_unlocked();
 }
 
