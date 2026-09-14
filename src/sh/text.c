@@ -595,19 +595,10 @@ static fn text_put_rest()
         may hold a NUL that is neither a blank nor an end, so the bound is the
         only thing allowed to stop it.
 */
-static b8 text_set_inside[STRING_SET_BYTES];
-
-static const b8 address_to text_inside()
-{
-        if (!text_set_inside[0])
-        {
-                memory_fill(text_set_inside, 1, sizeof(text_set_inside));
-                text_set_inside[' '] = 0;
-                text_set_inside['\t'] = 0;
-        }
-
-        return text_set_inside;
-}
+static const b8 text_set_inside[STRING_SET_BYTES] = {
+    [0 ... 8] = 1, [10 ... 31] = 1, [33 ... 255] = 1};
+// numfmt, in tools.c, walks its fields with the same table by this name.
+#define text_inside() text_set_inside
 
 /*
         Coreutils' numeric options accept leading white space and a plus, but
@@ -901,10 +892,8 @@ static string_address text_digits_misplaced(file_taking address_to taking)
                 {
                         if (before[1] == '-')
                         {
-                                positive name = 2;
-
-                                while (before[name] && before[name] != '=')
-                                        name++;
+                                positive name = (positive)(
+                                    string_first_of_or_end(before + 2, '=') - before);
 
                                 if (!before[name] &&
                                     (argument_option_mode(taking->options,
@@ -4310,11 +4299,8 @@ static bool text_files_from(string_address path)
         memory_copy(names, held, have);
         names[have] = '\0';
 
-        positive count = 0;
-
-        for (positive at = 0; at < have; at++)
-                if (!names[at] || at + 1 == have)
-                        count++;
+        // Every name ends at a NUL, and the last one may end at the end.
+        positive count = memory_count(names, have, 0) + (have && names[have - 1]);
 
         string_address address_to list = (string_address address_to)
             utility_arena_take((count + 1) * sizeof(string_address));
@@ -5057,11 +5043,13 @@ static bool nl_style_valid(string_address said)
                said[0] == 'p';
 }
 
+static positive nl_width;
+static bipolar nl_start;
+static bipolar nl_step;
+static positive nl_join;
+
 static bool nl_option_seen(p8 letter, string_address value)
 {
-        positive number;
-        bipolar signed_number;
-
         if (letter == 'b' || letter == 'f' || letter == 'h')
         {
                 if (!nl_style_valid(value))
@@ -5078,18 +5066,19 @@ static bool nl_option_seen(p8 letter, string_address value)
         }
         else if (letter == 'w')
         {
-                if (!text_unsigned_option(value, false, address_of number) ||
-                    !number || number > 0x7fffffff)
+                if (!text_unsigned_option(value, false, address_of nl_width) ||
+                    !nl_width || nl_width > 0x7fffffff)
                         return string_diagnostic(&text_diagnostic, 0, value, "invalid line number field width");
         }
         else if (letter == 'l')
         {
-                if (!text_unsigned_option(value, false, address_of number))
+                if (!text_unsigned_option(value, false, address_of nl_join))
                         return string_diagnostic(&text_diagnostic, 0, value, "invalid line number of blank lines");
         }
         else if (letter == 'v' || letter == 'i')
         {
-                if (!nl_signed(value, address_of signed_number))
+                if (!nl_signed(value, letter == 'v' ? address_of nl_start
+                                                    : address_of nl_step))
                         return string_diagnostic(&text_diagnostic, 0, value,
                                                  letter == 'v' ? "invalid starting line number"
                                                                : "invalid line number increment");
@@ -5108,6 +5097,10 @@ static b32 text_nl()
         };
 
         text_begin("nl");
+        nl_width = 6;
+        nl_start = 1;
+        nl_step = 1;
+        nl_join = 1;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -5115,10 +5108,10 @@ static b32 text_nl()
         if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
-        positive width = 6;
-        bipolar number = 1;
-        bipolar step = 1;
-        positive join = 1;
+        positive width = nl_width;
+        bipolar number = nl_start;
+        bipolar step = nl_step;
+        positive join = nl_join;
         positive blanks = 0;
         p8 styles[3] = {'n', 't', 'n'};
         b32 patterns[3] = {-1, -1, -1};
@@ -5171,39 +5164,12 @@ static b32 text_nl()
 
         if (said)
         {
-                if (!string_equals(said, "ln") && !string_equals(said, "rn") &&
-                    !string_equals(said, "rz"))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid line numbering format"));
-
                 justify = said[0];
                 zeros = said[1] == 'z';
         }
 
         if (taking.flags & FILE_FLAG('s'))
                 separator = file_option_value(address_of taking, 's');
-
-        if ((taking.flags & FILE_FLAG('w')) &&
-            (!text_unsigned_option(file_option_value(address_of taking, 'w'),
-                                   false, address_of width) ||
-             !width || width > 0x7fffffff))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'w'),
-                                                  "invalid line number field width"));
-
-        if ((taking.flags & FILE_FLAG('v')) &&
-            !nl_signed(file_option_value(address_of taking, 'v'), address_of number))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'v'),
-                                                  "invalid starting line number"));
-
-        if ((taking.flags & FILE_FLAG('i')) &&
-            !nl_signed(file_option_value(address_of taking, 'i'), address_of step))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'i'),
-                                                  "invalid line number increment"));
-
-        if ((taking.flags & FILE_FLAG('l')) &&
-            !text_unsigned_option(file_option_value(address_of taking, 'l'),
-                                  false, address_of join))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'l'),
-                                                  "invalid line number of blank lines"));
 
         if (!join)
                 join = 1;
@@ -5340,9 +5306,12 @@ static bool text_tab_repeat_said;
 static bool text_tab_custom;
 static bool text_tab_option_seen;
 
-static p8 text_tab_expand_span[256];
-static p8 text_tab_unexpand_span[256];
-static p8 text_tab_space_span[256];
+// Bytes expand copies as they are, the same without the space for unexpand,
+// and the space alone.
+static const b8 text_tab_expand_span[256] = {[0 ... 7] = 1, [11 ... 255] = 1};
+static const b8 text_tab_unexpand_span[256] = {
+    [0 ... 7] = 1, [11 ... 31] = 1, [33 ... 255] = 1};
+static const b8 text_tab_space_span[256] = {[' '] = 1};
 
 static fn text_tab_reset()
 {
@@ -5480,10 +5449,8 @@ static bool text_tab_prescan(file_taking address_to taking, bool unexpand)
 
                 if (word[1] == '-')
                 {
-                        positive name = 2;
-
-                        while (word[name] && word[name] != '=')
-                                name++;
+                        positive name = (positive)(
+                            string_first_of_or_end(word + 2, '=') - word);
 
                         if (file_long_letter(taking, word + 2, name - 2) != 't')
                                 continue;
@@ -5634,23 +5601,6 @@ static fn text_unexpand_pending(positive count, bool first_tab)
         writer_fill_bulk(text_put, count, ' ');
 }
 
-static fn text_tab_sets()
-{
-        if (text_tab_space_span[' '])
-                return;
-
-        memory_fill(text_tab_expand_span, 1, sizeof(text_tab_expand_span));
-        memory_fill(text_tab_unexpand_span, 1, sizeof(text_tab_unexpand_span));
-        text_tab_space_span[' '] = 1;
-
-        text_tab_expand_span['\t'] = 0;
-        text_tab_expand_span['\b'] = 0;
-        text_tab_expand_span['\n'] = 0;
-        memory_copy_apart(text_tab_unexpand_span, text_tab_expand_span,
-                          sizeof(text_tab_expand_span));
-        text_tab_unexpand_span[' '] = 0;
-}
-
 static fn text_tab_transform(bool unexpand, bool initial_only)
 {
         positive column = 0;
@@ -5661,7 +5611,6 @@ static fn text_tab_transform(bool unexpand, bool initial_only)
         bool convert = true;
         b32 inputs = text_input_count();
 
-        text_tab_sets();
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -5984,7 +5933,8 @@ static bool fmt_tagged;
 static bool fmt_split;
 static bool fmt_uniform;
 static bool fmt_failed;
-static b8 fmt_word_bytes[STRING_SET_BYTES];
+static const b8 fmt_word_bytes[STRING_SET_BYTES] = {
+    [0 ... 8] = 1, [14 ... 31] = 1, [33 ... 255] = 1};
 
 static fn fmt_put_space(positive count)
 {
@@ -6077,15 +6027,12 @@ static fn fmt_analyze_line(fmt_line address_to line)
         {
                 line->prefix_indent = column;
 
-                positive matched = 0;
+                positive matched = memory_common_prefix(
+                    line->at + at, fmt_prefix,
+                    min(fmt_prefix_length, line->length - at));
 
-                while (matched < fmt_prefix_length && at < line->length &&
-                       line->at[at] == fmt_prefix[matched])
-                {
-                        matched++;
-                        at++;
-                        column++;
-                }
+                at += matched;
+                column += matched;
 
                 if (matched != fmt_prefix_length)
                 {
@@ -6546,16 +6493,6 @@ static b32 text_fmt()
         fmt_split = (taking.flags & FILE_FLAG('s')) != 0;
         fmt_uniform = (taking.flags & FILE_FLAG('u')) != 0;
         fmt_failed = false;
-
-        {
-                memory_fill(fmt_word_bytes, 1, sizeof(fmt_word_bytes));
-                fmt_word_bytes[' '] = 0;
-                fmt_word_bytes['\t'] = 0;
-                fmt_word_bytes['\n'] = 0;
-                fmt_word_bytes['\v'] = 0;
-                fmt_word_bytes['\f'] = 0;
-                fmt_word_bytes['\r'] = 0;
-        }
 
         fmt_words = (fmt_word address_to)utility_arena_take(
             (FMT_WORD_MAX + 1) * sizeof(fmt_word));
@@ -7648,6 +7585,7 @@ static string_address ptx_sentence_pattern;
 static string_address ptx_word_pattern;
 static string_address ptx_truncation;
 static positive ptx_truncation_length;
+static b8 ptx_word_bytes[STRING_SET_BYTES];
 static positive ptx_width;
 static positive ptx_gap;
 static positive ptx_reference_width;
@@ -7919,7 +7857,7 @@ static bool ptx_next_word(ptx_context address_to context,
                 return true;
         }
 
-        while (at < context->finish && !fmt_word_bytes[bytes[at]])
+        while (at < context->finish && !ptx_word_bytes[bytes[at]])
                 at++;
 
         if (at == context->finish)
@@ -7927,7 +7865,7 @@ static bool ptx_next_word(ptx_context address_to context,
 
         address_to start = at;
 
-        at += string_span_max(bytes + at, context->finish - at, fmt_word_bytes);
+        at += string_span_max(bytes + at, context->finish - at, ptx_word_bytes);
 
         address_to finish = at;
         address_to cursor = at;
@@ -8025,8 +7963,8 @@ static positive ptx_skip_something(ptx_file address_to file, positive at,
                 return at + 1;
         }
 
-        if (fmt_word_bytes[file->text.bytes[at]])
-                while (at < limit && fmt_word_bytes[file->text.bytes[at]])
+        if (ptx_word_bytes[file->text.bytes[at]])
+                while (at < limit && ptx_word_bytes[file->text.bytes[at]])
                         at++;
         else
                 at++;
@@ -8409,25 +8347,10 @@ static positive ptx_unescape(p8 address_to text)
 
                 from++;
 
-                if (escaped == 'a')
-                        text[into++] = '\a';
-                else if (escaped == 'b')
-                        text[into++] = '\b';
+                if (byte_simple_escape(escaped))
+                        text[into++] = byte_simple_escape(escaped);
                 else if (escaped == 'c')
-                {
-                        while (text[from])
-                                from++;
-                }
-                else if (escaped == 'f')
-                        text[into++] = '\f';
-                else if (escaped == 'n')
-                        text[into++] = '\n';
-                else if (escaped == 'r')
-                        text[into++] = '\r';
-                else if (escaped == 't')
-                        text[into++] = '\t';
-                else if (escaped == 'v')
-                        text[into++] = '\v';
+                        from += string_length(text + from);
                 else
                 {
                         text[into++] = '\\';
@@ -8442,9 +8365,9 @@ static positive ptx_unescape(p8 address_to text)
 // Every -g and -w is checked where it is written, not only the last.
 static bool ptx_option_seen(p8 letter, string_address value)
 {
-        positive number;
-
-        if ((letter == 'g' || letter == 'w') && !pr_parse_positive(value, address_of number))
+        if ((letter == 'g' || letter == 'w') &&
+            !pr_parse_positive(value, letter == 'g' ? address_of ptx_gap
+                                                    : address_of ptx_width))
                 return string_diagnostic(&text_diagnostic, 0, value, letter == 'g' ? "invalid gap width" : "invalid line width");
 
         return true;
@@ -8488,23 +8411,15 @@ static b32 text_ptx()
         ptx_truncation = (flags & FILE_FLAG('F'))
                              ? file_option_value(address_of taking, 'F')
                              : (string_address)"/";
-        ptx_width = (flags & FILE_FLAG('t')) ? 100 : 72;
-        ptx_gap = 3;
+        if (!(flags & FILE_FLAG('w')))
+                ptx_width = (flags & FILE_FLAG('t')) ? 100 : 72;
+        if (!(flags & FILE_FLAG('g')))
+                ptx_gap = 3;
         ptx_failed = false;
         ptx_ignore = (byte_span){null, 0};
         ptx_only = (byte_span){null, 0};
         ptx_reference_width = 0;
         ptx_maximum_word = 0;
-
-        if ((flags & FILE_FLAG('w')) &&
-            !pr_parse_positive(file_option_value(address_of taking, 'w'),
-                               address_of ptx_width))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'w'), "invalid line width"));
-
-        if ((flags & FILE_FLAG('g')) &&
-            !pr_parse_positive(file_option_value(address_of taking, 'g'),
-                               address_of ptx_gap))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'g'), "invalid gap width"));
 
         if (ptx_input_reference && ptx_custom_sentence)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--references with --sentence-regexp is unsupported"));
@@ -8555,7 +8470,7 @@ static b32 text_ptx()
         else if (ptx_lower_word || ptx_alpha_word)
         {
                 for (positive character = 0; character < 256; character++)
-                        fmt_word_bytes[character] =
+                        ptx_word_bytes[character] =
                             ptx_alpha_word || ptx_fold
                                 ? byte_is_alpha((p8)character)
                                 : character >= 'a' && character <= 'z';
@@ -8568,14 +8483,14 @@ static b32 text_ptx()
                                    address_of breaks))
                         return text_done(1);
 
-                memory_fill(fmt_word_bytes, 1, sizeof(fmt_word_bytes));
+                memory_fill(ptx_word_bytes, 1, sizeof(ptx_word_bytes));
 
                 for (positive at = 0; at < breaks.length; at++)
-                        fmt_word_bytes[breaks.bytes[at]] = 0;
+                        ptx_word_bytes[breaks.bytes[at]] = 0;
         }
         else
                 for (positive character = 0; character < 256; character++)
-                        fmt_word_bytes[character] =
+                        ptx_word_bytes[character] =
                             byte_is_alpha((p8)character);
 
         ptx_file_count = text_input_count();
@@ -8903,8 +8818,7 @@ static positive column_names_from_option(string_address names, bool fill,
         {
                 positive start = at;
 
-                while (names[at] && names[at] != ',')
-                        at++;
+                at = (positive)(string_first_of_or_end(names + at, ',') - names);
 
                 if (fill && count < room)
                         column_names[count] = (byte_span){
@@ -8991,8 +8905,7 @@ static bool column_apply_list(string_address list, p8 flag,
         {
                 positive start = at;
 
-                while (list[at] && list[at] != ',')
-                        at++;
+                at = (positive)(string_first_of_or_end(list + at, ',') - list);
 
                 positive length = at - start;
                 p8 address_to item = (p8 address_to)list + start;
@@ -9060,8 +8973,7 @@ static bool column_make_order(string_address list,
         if (list)
                 for (positive count = 0; count < column_count && list[stop]; count++)
                 {
-                        while (list[stop] && list[stop] != ',')
-                                stop++;
+                        stop = (positive)(string_first_of_or_end(list + stop, ',') - list);
                         if (list[stop] && list[stop + 1] && count + 1 < column_count)
                                 stop++;
                         else
@@ -10670,17 +10582,6 @@ static b32 text_col()
             (taking.flags & FILE_FLAG('x')))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--tabs and --spaces are mutually exclusive"));
 
-        if (taking.flags & FILE_FLAG('l'))
-        {
-                positive lines;
-                if (!text_unsigned_option(file_option_value(address_of taking,
-                                                            'l'),
-                                          false, address_of lines) ||
-                    lines > 0xffffffffU)
-                        return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking,
-                                                            'l'), "bad -l argument"));
-        }
-
         byte_span input = {null, 0};
         if (!text_blob_read(null, address_of input))
                 return text_done(1);
@@ -11897,7 +11798,7 @@ static b32 text_cut()
 
                                 bool split = whitespace
                                     ? string_span_max(line, line_length,
-                                                      text_inside()) < line_length
+                                                      text_set_inside) < line_length
                                     : memory_first_of(line, delimiter, line_length) != null;
 
                                 // A line with no delimiter is one whole field,
@@ -11925,7 +11826,7 @@ static b32 text_cut()
                                         if (whitespace)
                                                 at += string_span_max(
                                                     line + at, line_length - at,
-                                                    text_inside());
+                                                    text_set_inside);
                                         else
                                         {
                                                 p8 address_to next =
@@ -12673,21 +12574,17 @@ static bool uniq_grouping_of(string_address word, bool ends, positive address_to
         return true;
 }
 
-static bool uniq_number_of(file_taking address_to taking, p8 letter,
-                           positive address_to into)
-{
-        if (!(taking->flags & FILE_FLAG(letter)))
-                return true;
-
-        return text_unsigned_option(file_option_value(taking, letter), true, into);
-}
+static positive uniq_fields;
+static positive uniq_characters;
+static positive uniq_width;
 
 static bool uniq_option_seen(p8 letter, string_address value)
 {
-        positive number;
-
         if ((letter == 'f' || letter == 's' || letter == 'w') &&
-            !text_unsigned_option(value, true, address_of number))
+            !text_unsigned_option(value, true,
+                                  letter == 'f'   ? address_of uniq_fields
+                                  : letter == 's' ? address_of uniq_characters
+                                                  : address_of uniq_width))
                 return string_diagnostic(&text_diagnostic, 0, value,
                                          letter == 'f' ? "invalid number of fields to skip"
                                          : letter == 's' ? "invalid number of bytes to skip"
@@ -12719,7 +12616,7 @@ static positive uniq_skipped(p8 address_to line, positive length,
                 skip += string_span_max(line + skip, length - skip,
                                         string_set_blanks);
                 skip += string_span_max(line + skip, length - skip,
-                                        text_inside());
+                                        text_set_inside);
         }
 
         return skip + min(characters, length - skip);
@@ -12735,6 +12632,9 @@ static b32 text_uniq()
         };
 
         text_begin("uniq");
+        uniq_fields = 0;
+        uniq_characters = 0;
+        uniq_width = 0;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -12752,9 +12652,9 @@ static b32 text_uniq()
         bool bounded = (flags & FILE_FLAG('w')) != 0;
         positive all_how = UNIQ_GROUP_NONE;
         positive group_how = UNIQ_GROUP_SEPARATE;
-        positive skip_fields = 0;
-        positive skip_characters = 0;
-        positive compare_width = 0;
+        positive skip_fields = uniq_fields;
+        positive skip_characters = uniq_characters;
+        positive compare_width = uniq_width;
         string_address said = file_option_value(address_of taking, 'A');
 
         if (flags & FILE_FLAG('z'))
@@ -12767,11 +12667,6 @@ static b32 text_uniq()
 
         if (said && !uniq_grouping_of(said, true, address_of group_how))
                 return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument"));
-
-        if (!uniq_number_of(address_of taking, 'f', address_of skip_fields) ||
-            !uniq_number_of(address_of taking, 's', address_of skip_characters) ||
-            !uniq_number_of(address_of taking, 'w', address_of compare_width))
-                return text_done(1);
 
         if (all_repeated && counting)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "printing all duplicated lines and repeat counts is meaningless"));
@@ -17216,7 +17111,7 @@ static inline INLINE positive sort_field_edge(p8 address_to at,
         for (positive i = first; i < field && scan < length; i++)
         {
                 scan += string_span_max(at + scan, length - scan, string_set_blanks);
-                scan += string_span_max(at + scan, length - scan, text_inside());
+                scan += string_span_max(at + scan, length - scan, text_set_inside);
         }
 
         return scan;
@@ -18803,8 +18698,7 @@ static bool cmp_skip_of(string_address said)
         positive right;
         p8 head[32];
 
-        while (said[split] && said[split] != ':')
-                split++;
+        split = (positive)(string_first_of_or_end(said + split, ':') - said);
 
         if (said[split] != ':')
         {
@@ -19368,13 +19262,10 @@ static expr_value expr_primary()
                 text = expr_shown(address_of of);
                 wanted = expr_shown(address_of set);
 
-                for (positive i = 0; string_get(text + i); i++)
-                        for (positive j = 0; string_get(wanted + j); j++)
-                                if (string_get(text + i) == string_get(wanted + j))
-                                {
-                                        made.number = (bipolar)(i + 1);
-                                        return made;
-                                }
+                positive before = string_span_without_set(text, wanted);
+
+                if (string_get(text + before))
+                        made.number = (bipolar)(before + 1);
 
                 return made;
         }
