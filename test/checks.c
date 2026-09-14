@@ -43153,10 +43153,10 @@ static fn dhcp_test_random_child(positive which)
 
                 ok &= dhcp_ask((string_address)"moonwater-no-interface",
                                hardware, address_of empty) == DHCP_NO_RANDOM;
-                ok &= dhcp_renew((string_address)"moonwater-no-interface",
-                                 hardware, address_of lease, 4) == DHCP_NO_RANDOM;
-                ok &= dhcp_rebind((string_address)"moonwater-no-interface",
-                                  hardware, address_of lease, 4) == DHCP_NO_RANDOM;
+                ok &= dhcp_reacquire((string_address)"moonwater-no-interface",
+                                     hardware, address_of lease, false, 4) == DHCP_NO_RANDOM;
+                ok &= dhcp_reacquire((string_address)"moonwater-no-interface",
+                                     hardware, address_of lease, true, 4) == DHCP_NO_RANDOM;
         }
 
         system_call_1(syscall(exit_group), ok ? 0 : 1);

@@ -245,31 +245,19 @@ static bool net_split_prefix(string_address text, p32 address_to host,
 // The flags of a link, in the shape iproute2 writes them.
 static fn net_say_flags(p32 flags)
 {
+        static const struct { p32 bit; const char address_to name; } names[] = {
+            {IFF_UP, "UP"}, {IFF_BROADCAST, "BROADCAST"},
+            {IFF_LOOPBACK, "LOOPBACK"}, {IFF_RUNNING, "LOWER_UP"}};
         string_address between = (string_address) "";
 
         string_format(net_out, "<");
-
-        if (flags & IFF_UP)
-        {
-                string_format(net_out, "%sUP", between);
-                between = (string_address) ",";
-        }
-
-        if (flags & IFF_BROADCAST)
-        {
-                string_format(net_out, "%sBROADCAST", between);
-                between = (string_address) ",";
-        }
-
-        if (flags & IFF_LOOPBACK)
-        {
-                string_format(net_out, "%sLOOPBACK", between);
-                between = (string_address) ",";
-        }
-
-        if (flags & IFF_RUNNING)
-                string_format(net_out, "%sLOWER_UP", between);
-
+        for (positive at = 0; at < array_count(names); at++)
+                if (flags & names[at].bit)
+                {
+                        string_format(net_out, "%s%s", between,
+                                      (string_address)names[at].name);
+                        between = (string_address) ",";
+                }
         string_format(net_out, ">");
 }
 
@@ -528,7 +516,8 @@ static b32 net_host(void)
                         return 1;
                 }
 
-                status = dns_resolve((p32)server, net_word(1), address_of found, 5);
+                status = dns_resolve_at((p32)server, DNS_PORT, net_word(1),
+                                        address_of found, 5);
         }
         else
         {
@@ -593,16 +582,14 @@ static b32 net_fetch(void)
         string_address path;
         p16 port;
         bool tls;
-        p32 host = 0;
-        bipolar server;
+        p32 host;
         bipolar status;
         b32 code = 0;
 
         if (net_words() < 2)
         {
                 string_format(net_out, "usage: fetch http://host[:port]/path\n");
-                net_flush();
-                return 1;
+                goto failed;
         }
 
         status = http_split_into(net_word(1), name, sizeof name, address_of port,
@@ -612,85 +599,57 @@ static b32 net_fetch(void)
         {
                 string_format(net_out, "fetch: https is not implemented; this speaks "
                                    "http only. use wget\n");
-                net_flush();
-                return 1;
+                goto failed;
         }
 
         if (status < 0)
         {
                 string_format(net_out, "fetch: %w is not a url this understands\n",
                               writer_terminal_quoted_name, net_word(1));
-                net_flush();
-                return 1;
+                goto failed;
         }
 
         //      A literal address needs no resolver, which is what makes the
         //      test able to fetch from a socket on loopback with no nameserver
         //      anywhere in sight.
-        server = string_to_host(name);
-
-        if (server >= 0)
+        host = http_lookup(name);
+        if (!host)
         {
-                host = (p32)server;
-        }
-        else
-        {
-                if (dns_resolve_any((string_address) "/etc/resolv.conf", name,
-                                    address_of host, 3) != DNS_OK)
-                {
-                        string_format(net_out, "fetch: cannot resolve %w\n",
-                                      writer_terminal_quoted_name, name);
-                        net_flush();
-                        return 1;
-                }
+                string_format(net_out, "fetch: cannot resolve %w\n",
+                              writer_terminal_quoted_name, name);
+                goto failed;
         }
 
         status = http_get(host, port, name, path, address_of body, address_of code);
 
-        if (status < 0)
-        {
-                if (status == HTTP_NO_ROUTE)
-                        string_format(net_out, "fetch: cannot reach %w\n",
-                                      writer_terminal_quoted_name, name);
-                else if (status == HTTP_NO_REPLY)
-                        string_format(net_out, "fetch: no reply from %w\n",
-                                      writer_terminal_quoted_name, name);
-                else
-                        string_format(net_out, "fetch: the reply made no sense\n");
-
-                net_flush();
-                http_forget(address_of body);
-                return 1;
-        }
-
-        if (http_response_is_redirect(code))
-        {
+        if (status == HTTP_NO_ROUTE)
+                string_format(net_out, "fetch: cannot reach %w\n",
+                              writer_terminal_quoted_name, name);
+        else if (status == HTTP_NO_REPLY)
+                string_format(net_out, "fetch: no reply from %w\n",
+                              writer_terminal_quoted_name, name);
+        else if (status < 0)
+                string_format(net_out, "fetch: the reply made no sense\n");
+        else if (http_response_is_redirect(code))
                 string_format(net_out, "fetch: %p, which is a redirect this does not "
                                    "follow\n", (positive)code);
-                net_flush();
-                http_forget(address_of body);
-                return 1;
-        }
-
-        if (!http_response_is_success(code))
-        {
+        else if (!http_response_is_success(code))
                 string_format(net_out, "fetch: the server answered %p\n", (positive)code);
-                net_flush();
-                http_forget(address_of body);
-                return 1;
-        }
-
-        if (body.used &&
-            system_write_all(1, body.bytes, body.used) != body.used)
+        else
         {
+                bool short_write = body.used &&
+                    system_write_all(1, body.bytes, body.used) != body.used;
+
                 http_forget(address_of body);
-                return string_report(log_error, 1,
-                                     "fetch: write error on standard output\n");
+                return short_write ? string_report(log_error, 1,
+                                         "fetch: write error on standard output\n")
+                                   : 0;
         }
 
+failed:
+        net_flush();
         http_forget(address_of body);
-
-        return 0;
+        return 1;
 }
 
 
@@ -898,20 +857,17 @@ static b32 net_wget(void)
 */
 static bipolar net_write_resolv_to(string_address path, p32 nameserver)
 {
+        const p32 servers[2] = {
+            DNS_FALLBACK, nameserver == DNS_FALLBACK ? 0 : nameserver};
         p8 line[64];
-        positive used = 11;
+        positive used = 0;
         file_staged_name staged;
         bipolar handle;
 
-        memory_copy(line, "nameserver ", 11);
-        used += host_into(line + used, DNS_FALLBACK);
-        line[used++] = '\n';
-
-        if (nameserver && nameserver != DNS_FALLBACK)
+        for (positive at = 0; at < 2 && servers[at]; at++)
         {
                 memory_copy(line + used, "nameserver ", 11);
-                used += 11;
-                used += host_into(line + used, nameserver);
+                used += 11 + host_into(line + used + 11, servers[at]);
                 line[used++] = '\n';
         }
 
@@ -1126,6 +1082,13 @@ static fn net_lease_retry_after(net_holding address_to held, positive now,
         held->retry = (p32)(gone + delay);
 }
 
+static fn net_rollback_record(bipolar status,
+                              bipolar address_to first)
+{
+        if (!net_change_gone(status) && !*first)
+                *first = status;
+}
+
 static bipolar net_holding_release(b32 handle, net_holding address_to held)
 {
         bipolar failed = 0;
@@ -1134,22 +1097,17 @@ static bipolar net_holding_release(b32 handle, net_holding address_to held)
                 return 0;
 
         if (net_owns_route(held))
-        {
-                bipolar status = netlink_route_delete(handle, 0, 0,
-                                                       held->lease.router,
-                                                       held->index);
-                if (!net_change_gone(status))
-                        failed = status;
-        }
+                net_rollback_record(
+                    netlink_route_delete(handle, 0, 0, held->lease.router,
+                                         held->index),
+                    address_of failed);
 
         if (net_owns_address(held))
-        {
-                bipolar status = netlink_address_delete(
-                    handle, held->index, held->lease.address,
-                    dhcp_prefix_of(held->lease.mask));
-                if (!net_change_gone(status) && !failed)
-                        failed = status;
-        }
+                net_rollback_record(
+                    netlink_address_delete(handle, held->index,
+                                           held->lease.address,
+                                           dhcp_prefix_of(held->lease.mask)),
+                    address_of failed);
 
         /* Once the address is no longer ours, a DHCP-provided resolver is no
            longer ours either.  Keep the always-available fallback as the
@@ -1165,13 +1123,6 @@ static bipolar net_holding_release(b32 handle, net_holding address_to held)
         if (!failed)
                 memory_fill(held, 0, sizeof(*held));
         return failed;
-}
-
-static fn net_rollback_record(bipolar status,
-                              bipolar address_to first)
-{
-        if (!net_change_gone(status) && !*first)
-                *first = status;
 }
 
 /* Put the kernel back on the previous lease after any later step fails. The
@@ -1691,11 +1642,9 @@ static b32 net_watch(void)
                                 positive attempt = net_lease_attempt_time(
                                     address_of held, now, rebinding);
                                 dhcp_lease renewed = held.lease;
-                                bipolar renewal = rebinding
-                                    ? dhcp_rebind(held.name, held.hardware,
-                                                  address_of renewed, attempt)
-                                    : dhcp_renew(held.name, held.hardware,
-                                                 address_of renewed, attempt);
+                                bipolar renewal = dhcp_reacquire(
+                                    held.name, held.hardware,
+                                    address_of renewed, rebinding, attempt);
 
                                 if (renewal == DHCP_OK)
                                 {

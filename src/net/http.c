@@ -228,13 +228,8 @@ static string_address http_header(p8 address_to bytes, positive size,
 
 static bool http_token_byte(p8 byte)
 {
-        return (byte >= '0' && byte <= '9') ||
-               (byte >= 'A' && byte <= 'Z') ||
-               (byte >= 'a' && byte <= 'z') ||
-               byte == '!' || byte == '#' || byte == '$' || byte == '%' ||
-               byte == '&' || byte == '\'' || byte == '*' || byte == '+' ||
-               byte == '-' || byte == '.' || byte == '^' || byte == '_' ||
-               byte == '`' || byte == '|' || byte == '~';
+        return byte_is_alnum(byte) ||
+               memory_first_of("!#$%&'*+-.^_`|~", byte, 15);
 }
 
 static bool http_chunk_extensions_valid(string_address at,
@@ -1190,16 +1185,16 @@ static bipolar http_status_code(p8 address_to bytes, positive size, b32 address_
 {
         if (size < 13)
                 return HTTP_NO_REPLY;
+        positive digits = 0;
+        positive value = string_digits_max((string_address)(bytes + 9), 3,
+                                           address_of digits);
+
         if (string_compare_max(bytes, (string_address) "HTTP/1.", 7) ||
-            bytes[7] < '0' || bytes[7] > '9' || bytes[8] != ' ' ||
-            bytes[9] < '0' || bytes[9] > '9' || bytes[10] < '0' ||
-            bytes[10] > '9' || bytes[11] < '0' || bytes[11] > '9' ||
+            !byte_is_digit(bytes[7]) || bytes[8] != ' ' || digits != 3 ||
             (bytes[12] != ' ' && bytes[12] != '\r' && bytes[12] != '\n'))
                 return HTTP_MALFORMED;
         if (code)
-                address_to code = (b32)((bytes[9] - '0') * 100 +
-                                        (bytes[10] - '0') * 10 +
-                                        bytes[11] - '0');
+                address_to code = (b32)value;
         return HTTP_OK;
 }
 

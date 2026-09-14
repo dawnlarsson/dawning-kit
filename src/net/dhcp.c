@@ -41,7 +41,7 @@
         network needs it, not because a test proved it here.
 
         ARP conflict probing is not implemented. The network watcher schedules
-        dhcp_renew at half the lease lifetime.
+        dhcp_reacquire at half the lease lifetime.
 */
 
 #define DHCP_CLIENT_PORT 68
@@ -197,10 +197,7 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind,
         //      directly, and asking for a broadcast then is noise on every
         //      other machine's wire.
         if (broadcast)
-        {
-                into[10] = (p8)(DHCP_FLAG_BROADCAST >> 8);
-                into[11] = 0;
-        }
+                network_store_16(into + 10, DHCP_FLAG_BROADCAST);
 
         //      ciaddr. Zero while asking for an address; the address we
         //      already hold while asking to keep it, which is what tells the
@@ -233,18 +230,16 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind,
                 at += 4;
         }
 
-        //      What we would like to be told, which a server may ignore.
-        into[at++] = DHCP_OPTION_ASK;
-        into[at++] = 3;
-        into[at++] = DHCP_OPTION_MASK;
-        into[at++] = DHCP_OPTION_ROUTER;
-        into[at++] = DHCP_OPTION_DNS;
+        //      What we would like to be told, which a server may ignore, and
+        //      the end. Short packets are dropped by some servers and by some
+        //      switches, so the 261 bytes at most written here are padded to
+        //      the length everything accepts.
+        static const p8 ask[] = {DHCP_OPTION_ASK, 3, DHCP_OPTION_MASK,
+                                 DHCP_OPTION_ROUTER, DHCP_OPTION_DNS,
+                                 DHCP_OPTION_END};
 
-        into[at++] = DHCP_OPTION_END;
-
-        //      Short packets are dropped by some servers and by some switches,
-        //      so it is padded to the length everything accepts.
-        return at > 300 ? at : 300;
+        memory_copy(into + at, ask, sizeof ask);
+        return 300;
 }
 
 /*
@@ -745,18 +740,6 @@ static bipolar dhcp_reacquire(string_address device, p8 address_to hardware,
 done:
         socket_close((b32)handle);
         return status;
-}
-
-static bipolar dhcp_renew(string_address device, p8 address_to hardware,
-                          dhcp_lease address_to lease, positive wait)
-{
-        return dhcp_reacquire(device, hardware, lease, false, wait);
-}
-
-static bipolar dhcp_rebind(string_address device, p8 address_to hardware,
-                           dhcp_lease address_to lease, positive wait)
-{
-        return dhcp_reacquire(device, hardware, lease, true, wait);
 }
 
 #endif // STANDARD_MODERN_C_NET_DHCP

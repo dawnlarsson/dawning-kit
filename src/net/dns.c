@@ -91,30 +91,19 @@ static bipolar dns_write_name(p8 address_to into, positive room, string_address 
 
         while (string_get(name))
         {
+                string_address dot = string_first_of_or_end(name, '.');
+
                 mark = used++;
+                length = (positive)(dot - name);
 
-                if (used >= room)
+                if (used >= room || !length || length > 63 ||
+                    length > room - used)
                         return DNS_MALFORMED;
 
-                length = 0;
-
-                while (string_get(name) && !string_is(name, '.'))
-                {
-                        if (used >= room || length >= 63)
-                                return DNS_MALFORMED;
-
-                        into[used++] = string_get(name);
-                        name++;
-                        length++;
-                }
-
-                if (!length)
-                        return DNS_MALFORMED;
-
+                memory_copy_apart(into + used, name, length);
                 into[mark] = (p8)length;
-
-                if (string_is(name, '.'))
-                        name++;
+                used += length;
+                name = dot + string_is(dot, '.');
         }
 
         if (used + 1 > room || used + 1 > 255)
@@ -577,12 +566,10 @@ static bipolar dns_resolve_at(p32 server, p16 port, string_address name,
         if (written < 0)
                 return DNS_MALFORMED;
 
+        memory_fill(request, 0, DNS_HEADER);
         network_store_16(request, id);
         network_store_16(request + 2, DNS_FLAG_RECURSE);
         network_store_16(request + 4, 1);
-        network_store_16(request + 6, 0);
-        network_store_16(request + 8, 0);
-        network_store_16(request + 10, 0);
 
         network_store_16(request + DNS_HEADER + written, DNS_TYPE_A);
         network_store_16(request + DNS_HEADER + written + 2, DNS_CLASS_IN);
@@ -664,12 +651,6 @@ failed:
         return failure;
 }
 
-static bipolar dns_resolve(p32 server, string_address name, p32 address_to found,
-                           positive seconds)
-{
-        return dns_resolve_at(server, DNS_PORT, name, found, seconds);
-}
-
 /*
         The servers resolv.conf names, in the order it names them.
 
@@ -706,7 +687,8 @@ static bipolar dns_resolve_any(string_address path, string_address name,
         while ((server = dns_server_at(path, index++)) >= 0)
         {
                 asked = true;
-                status = dns_resolve((p32)server, name, found, seconds);
+                status = dns_resolve_at((p32)server, DNS_PORT, name, found,
+                                        seconds);
 
                 if (status == DNS_OK)
                         return DNS_OK;
@@ -717,7 +699,8 @@ static bipolar dns_resolve_any(string_address path, string_address name,
         }
 
         if (!asked)
-                return dns_resolve(DNS_FALLBACK, name, found, seconds);
+                return dns_resolve_at(DNS_FALLBACK, DNS_PORT, name, found,
+                                      seconds);
 
         return definite != DNS_NO_SERVER ? definite : status;
 }
