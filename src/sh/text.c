@@ -201,6 +201,22 @@ static b32 text_done(b32 code)
         return code;
 }
 
+// The same, for a run whose output went to a file it opened: flushed there,
+// then closed, because the shell that ran the tool goes on living with the
+// descriptors it leaves open.
+static b32 text_done_closing(b32 code, bipolar output)
+{
+        code = text_done(code);
+
+        if (output >= 0)
+        {
+                text_out_to(1);
+                system_close((positive)output);
+        }
+
+        return code;
+}
+
 /*
         Reading.
 
@@ -647,6 +663,7 @@ static fn text_begin(string_address name)
         text_files_failed = false;
         text_quiet_open = false;
         text_file_list = null;
+        text_delimiter = '\n';
 }
 
 /*
@@ -4241,6 +4258,18 @@ static bool text_lines_ready()
         return text_lines != null;
 }
 
+// An empty table with the arena cut back to just past it, wherever it was
+// taken: a shell runs tail and then sort in one process, and the second must
+// not gather its lines after the first's.
+static fn text_lines_reset()
+{
+        text_lines_count = 0;
+        utility_arena.used =
+            text_lines ? (positive)((p8 address_to)(text_lines + TEXT_LINES_MAX) -
+                                    utility_arena.bytes)
+                       : 0;
+}
+
 static bool text_lines_gather()
 {
         if (!text_lines_ready())
@@ -4552,8 +4581,7 @@ static fn text_head_short(positive count, bool by_bytes)
 {
         positive size = 0;
 
-        text_lines_count = 0;
-        utility_arena.used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
+        text_lines_reset();
 
         if (text_regular_size(text_input.handle, address_of size))
         {
@@ -4808,8 +4836,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         continue;
                 }
 
-                text_lines_count = 0;
-                utility_arena.used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
+                text_lines_reset();
 
                 positive size = 0;
                 bool seekable = !marked &&
@@ -11784,8 +11811,7 @@ static b32 text_cut()
         };
 
         text_begin("cut");
-
-        text_list_too_large = false;
+        text_list_reset();
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -12959,11 +12985,14 @@ static b32 text_uniq()
 
         // uniq's second operand is where the answer goes, not another input;
         // spelled "-" it is standard output, as GNU reads it.
+        bipolar target = -1;
+
         if (text_files_count > 1 &&
             !string_equals(program_argument(text_files[1]), "-"))
         {
                 string_address name = program_argument(text_files[1]);
-                bipolar target = text_open_handle(name, TEXT_WRITE, 0666);
+
+                target = text_open_handle(name, TEXT_WRITE, 0666);
 
                 if (target < 0)
                         return text_done(string_diagnostic(&text_diagnostic, 1, name, "Cannot open file"));
@@ -13149,7 +13178,7 @@ static b32 text_uniq()
                 text_put_character(text_delimiter);
 
         text_close();
-        return text_done(text_status);
+        return text_done_closing(text_status, target);
 }
 
 /*
@@ -15370,7 +15399,6 @@ static bool sed_line_across(b32 address_to i, b32 inputs)
         return true;
 }
 static bool sed_null_data;
-static string_address sed_in_place;
 static bool sed_follow_symlinks;
 
 static b32 sed_compile_regex(string_address pattern, bool icase)
@@ -15610,34 +15638,6 @@ static bool sed_parse_address(p8 address_to type, positive address_to line,
         }
 
         return false;
-}
-
-// How many groups a pattern opens, which is what a \N in a replacement may
-// name at most.
-static b32 sed_group_count(string_address pattern)
-{
-        b32 count = 0;
-
-        for (positive at = 0; pattern[at]; at++)
-        {
-                if (pattern[at] != '\\')
-                {
-                        if (sed_extended && pattern[at] == '(')
-                                count++;
-
-                        continue;
-                }
-
-                if (!pattern[at + 1])
-                        break;
-
-                if (!sed_extended && pattern[at + 1] == '(')
-                        count++;
-
-                at++;
-        }
-
-        return count;
 }
 
 static fn sed_parse()
@@ -15893,22 +15893,9 @@ static fn sed_parse()
                                 command->which = 1;
 
                         // A \N in the replacement names a group the pattern
-                        // has to have.
-                        for (positive c = 0; replacement[c]; c++)
-                        {
-                                if (replacement[c] != '\\' || !replacement[c + 1])
-                                        continue;
-
-                                p8 next = replacement[++c];
-
-                                if (byte_is_digit(next) &&
-                                    (b32)(next - '0') > sed_group_count(pattern))
-                                {
-                                        sed_broken = true;
-                                        return;
-                                }
-                        }
-
+                        // has to have. An empty pattern is whichever regex
+                        // ran last, so only the cycle can check it: GNU runs
+                        // /\(a\)/s//\1x/ and refuses s//\1/ when it runs.
                         command->pattern = sed_compile_regex(pattern, icase);
                         if (command->pattern >= 0 &&
                             command->references > sed_programs[command->pattern].groups)
@@ -16811,11 +16798,29 @@ static b32 text_sed()
 
         text_begin("sed");
 
+        // The script, its compiled programs, the names it writes and reads,
+        // and the three spaces x swaps: all of them belong to this run.
         sed_have_script = false;
         sed_option_status = 1;
         sed_broken = false;
+        sed_broken_status = 1;
         sed_io_failed = false;
+        sed_failed = null;
+        sed_space_full = false;
         sed_reader_count = 0;
+        sed_file_count = 0;
+        sed_script_length = 0;
+        sed_command_count = 0;
+        sed_program_count = 0;
+        sed_map_count = 0;
+        sed_text_used = 0;
+        sed_recent = -1;
+        sed_in_place = null;
+        sed_number = 0;
+        sed_output_unterminated = false;
+        sed_pattern = (sed_buffer){sed_buffers[0], 0, true};
+        sed_holding = (sed_buffer){sed_buffers[2], 0, true};
+        sed_work = sed_buffers[1];
 
         if (!file_take(address_of taking))
                 return text_done(sed_option_status);
@@ -18532,9 +18537,14 @@ static b32 text_sort()
         };
 
         text_begin("sort");
+        text_lines_reset();
         sort_outputs = 0;
         sort_option_status = 2;
         sort_tab_seen = false;
+        sort_key_count = 0;
+        sort_have_separator = false;
+        sort_numbers = null;
+        sort_spans = null;
 
         if (!file_take(address_of taking))
                 return text_done(sort_option_status);
@@ -18877,9 +18887,11 @@ static b32 text_sort()
 
         // -o is opened after every line has been read, so sort -o f f still
         // has a file to read.
+        bipolar handle = -1;
+
         if (output)
         {
-                bipolar handle = text_open_handle(output, TEXT_WRITE, 0666);
+                handle = text_open_handle(output, TEXT_WRITE, 0666);
 
                 if (handle < 0)
                         return text_done(string_diagnostic(&text_diagnostic, 2, output, "cannot open for writing"));
@@ -18899,7 +18911,7 @@ static b32 text_sort()
                 text_put_character(text_delimiter);
         }
 
-        return text_done(text_status ? 2 : 0);
+        return text_done_closing(text_status ? 2 : 0, handle);
 }
 
 // cmp -------------------------------------------------------------
