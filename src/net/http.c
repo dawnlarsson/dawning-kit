@@ -852,9 +852,46 @@ static bipolar http_body_borrow(http_body address_to body, positive room,
                               min(room, (positive)HTTP_HEAD_MAX), got);
 }
 
-/* One transfer loop for exact lengths, EOF bodies and in-place decoding: a
-   TLS record goes to the file in one write, straight from where it was
-   decrypted. */
+/* One writev iovec, laid out as the kernel reads it on every LP64 target. */
+typedef struct
+{
+        address_any base;
+        positive length;
+} http_span;
+
+#define HTTP_WRITE_SPANS 64
+
+/* Write every span, resuming after partial progress; as with
+   system_write_all, a zero or negative result ends it. */
+static bool http_write_spans(bipolar dest, http_span address_to spans,
+                             positive count, positive total)
+{
+        while (total)
+        {
+                bipolar wrote = (bipolar)system_call_3(
+                    syscall(writev), (positive)dest, (positive)spans, count);
+
+                if (wrote <= 0 || (positive)wrote > total)
+                        return false;
+                total -= (positive)wrote;
+                while (count && (positive)wrote >= spans->length)
+                {
+                        wrote -= (bipolar)spans->length;
+                        spans++;
+                        count--;
+                }
+                if (count)
+                {
+                        spans->base = (p8 address_to)spans->base + wrote;
+                        spans->length -= (positive)wrote;
+                }
+        }
+        return true;
+}
+
+/* One transfer loop for exact lengths, EOF bodies and in-place decoding.
+   Toward a file, TLS records go out straight from where they were decrypted,
+   every record already whole in the receive buffer in the same writev. */
 static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
                           bool exact)
 {
@@ -889,8 +926,39 @@ static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
                         body->store->used += got;
                         body->store->bytes[body->store->used] = end;
                 }
-                else if (system_write_all((positive)dest, data, got) != got)
-                        return HTTP_NO_REPLY;
+                else
+                {
+                        http_span spans[HTTP_WRITE_SPANS];
+                        positive count = 1;
+                        positive total = got;
+
+                        //      Lending never receives, so the spans already
+                        //      gathered stay where they are.
+                        spans[0].base = data;
+                        spans[0].length = got;
+                        while (body->link && body->link->tls &&
+                               count < HTTP_WRITE_SPANS && total < want)
+                        {
+                                p8 address_to more = null;
+                                positive more_got = 0;
+                                bipolar lent = tls_lend(
+                                    address_of body->link->session,
+                                    want - total, address_of more,
+                                    address_of more_got);
+
+                                if (lent == TLS_AGAIN || (!lent && !more_got))
+                                        break;
+                                if (lent)
+                                        return HTTP_NO_REPLY;
+                                spans[count].base = more;
+                                spans[count].length = more_got;
+                                count++;
+                                total += more_got;
+                        }
+                        if (!http_write_spans(dest, spans, count, total))
+                                return HTTP_NO_REPLY;
+                        got = total;
+                }
                 want -= got;
         }
         return HTTP_OK;

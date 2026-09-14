@@ -32,6 +32,7 @@
 #define TLS_OK 0
 #define TLS_FAIL (-1)
 #define TLS_EOF 1
+#define TLS_AGAIN 2
 
 #define TLS_CT_CCS 20
 #define TLS_CT_ALERT 21
@@ -161,6 +162,11 @@ typedef struct
         positive leaf_n_length;
         p64 leaf_e;
         p8 leaf_curve;
+        /* A post-handshake message may span records and reads; close_notify,
+           once read, answers every later read. */
+        bool closed;
+        positive post_handshake_used;
+        p8 post_handshake[TLS_HS_MAX];
         /* Socket bytes. Records not yet opened lie in
            [receive_start, receive_end); application data is decrypted where
            it lies, and plain_at and plain_used name the part of the last
@@ -2297,6 +2303,8 @@ static bipolar tls_handshake(
         tls->receive_start = 0;
         tls->receive_end = 0;
         tls->plain_used = 0;
+        tls->closed = false;
+        tls->post_handshake_used = 0;
         tls->encrypted = false;
         tls->application = false;
 
@@ -2496,26 +2504,26 @@ static bipolar tls_write(tls_conn address_to tls, p8 address_to data,
 }
 
 /* Up to room bytes of the next application data, lent rather than copied:
-   *span points into the receive buffer and stays valid until the next read
-   on this connection; *got of zero is close_notify. Given a deadline, every
-   wait shares it. Given seconds or nanoseconds instead, a deadline that long
-   starts the first time a wait is needed, so records already whole in the
-   buffer are opened without asking the clock. Neither renews: tickets, empty
-   records and partial records all spend one budget. */
+   *span points into the receive buffer and stays valid until a later read on
+   this connection receives; *got of zero is close_notify, and stays so. Given
+   a deadline, every wait shares it. Given seconds or nanoseconds instead, a
+   deadline that long starts the first time a wait is needed, so records
+   already whole in the buffer are opened without asking the clock. Neither
+   renews: tickets, empty records and partial records all spend one budget.
+   hold never receives: when the next record is not yet whole it answers
+   TLS_AGAIN, so a writer can gather every record already here while the
+   spans it holds stay put. */
 static bipolar tls_take(tls_conn address_to tls, positive room,
                         p8 address_to address_to span, positive address_to got,
                         const network_deadline address_to deadline,
-                        positive seconds, positive nanoseconds)
+                        positive seconds, positive nanoseconds, bool hold)
 {
         network_deadline patience;
         bool waiting = !seconds && !nanoseconds;
         p8 type = 0;
         p8 address_to inner = null;
         positive length = 0;
-        p8 post_handshake[TLS_HS_MAX];
-        positive post_handshake_used = 0;
         bipolar status;
-        bipolar result = TLS_FAIL;
 
         if (tls->plain_used)
         {
@@ -2530,38 +2538,46 @@ static bipolar tls_take(tls_conn address_to tls, positive room,
 
         for (;;)
         {
-                if (!waiting && !tls_record_whole(tls))
+                if (tls->closed)
                 {
-                        if (!network_deadline_begin(address_of patience,
-                                                    seconds, nanoseconds))
-                                goto done;
-                        deadline = address_of patience;
-                        waiting = true;
+                        address_to got = 0;
+                        return tls->post_handshake_used ? TLS_FAIL : TLS_OK;
+                }
+                if (!tls_record_whole(tls))
+                {
+                        if (hold)
+                                return TLS_AGAIN;
+                        if (!waiting)
+                        {
+                                if (!network_deadline_begin(address_of patience,
+                                                            seconds,
+                                                            nanoseconds))
+                                        return TLS_FAIL;
+                                deadline = address_of patience;
+                                waiting = true;
+                        }
                 }
                 status = tls_next_record(tls, address_of type, address_of inner,
                                          address_of length, deadline);
                 if (status == TLS_EOF)
                 {
-                        if (post_handshake_used)
-                                goto done;
-                        address_to got = 0;
-                        result = TLS_OK;
-                        goto done;
+                        tls->closed = true;
+                        continue;
                 }
                 if (status || type == TLS_CT_CCS)
-                        goto done;
+                        return TLS_FAIL;
                 if (type == TLS_CT_HANDSHAKE)
                 {
                         if (tls_post_handshake_append(
-                                post_handshake,
-                                address_of post_handshake_used,
+                                tls->post_handshake,
+                                address_of tls->post_handshake_used,
                                 inner, length))
-                                goto done;
+                                return TLS_FAIL;
                         crypto_forget(inner, length);
                         continue;
                 }
-                if (type != TLS_CT_APP || post_handshake_used)
-                        goto done;
+                if (type != TLS_CT_APP || tls->post_handshake_used)
+                        return TLS_FAIL;
                 if (!length)
                         continue;
                 if (room > length)
@@ -2570,14 +2586,8 @@ static bipolar tls_take(tls_conn address_to tls, positive room,
                 address_to got = room;
                 tls->plain_at = (positive)(inner - tls->receive) + room;
                 tls->plain_used = length - room;
-                result = TLS_OK;
-                goto done;
+                return TLS_OK;
         }
-
-done:
-        if (post_handshake_used)
-                crypto_forget(post_handshake, post_handshake_used);
-        return result;
 }
 
 static bipolar tls_borrow(tls_conn address_to tls, positive room,
@@ -2585,7 +2595,16 @@ static bipolar tls_borrow(tls_conn address_to tls, positive room,
                           positive address_to got, positive seconds,
                           positive nanoseconds)
 {
-        return tls_take(tls, room, span, got, null, seconds, nanoseconds);
+        return tls_take(tls, room, span, got, null, seconds, nanoseconds,
+                        false);
+}
+
+/* The next application data already whole in the receive buffer, lent
+   without receiving; TLS_AGAIN when none is. */
+static bipolar tls_lend(tls_conn address_to tls, positive room,
+                        p8 address_to address_to span, positive address_to got)
+{
+        return tls_take(tls, room, span, got, null, 0, 0, true);
 }
 
 static bipolar tls_read_until(
@@ -2594,7 +2613,7 @@ static bipolar tls_read_until(
 {
         p8 address_to span = null;
         bipolar status = tls_take(tls, room, address_of span, got, deadline,
-                                  0, 0);
+                                  0, 0, false);
 
         if (!status && address_to got)
                 memory_copy(into, span, address_to got);

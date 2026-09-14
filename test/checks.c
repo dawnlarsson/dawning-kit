@@ -40477,6 +40477,120 @@ static fn tls_closure_boundaries(void)
                                 socket_close(pair[0]);
                 }
         }
+
+        //      The same records as an exact HTTP body copied to a file: the
+        //      writev path gathers whole records and must keep them in order.
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                bipolar file = (bipolar)system_call_2(syscall(memfd_create),
+                                                      (positive)"tls-batch", 0);
+
+                check("TLS batched-body socket pair and file open",
+                      opened == 0 && file >= 0);
+                if (!opened && file >= 0)
+                {
+                        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                        if (!child)
+                        {
+                                tls_conn sender = {0};
+                                p8 record[16384];
+                                p8 alert[] = {1, 0};
+                                bool sent = true;
+
+                                socket_close(pair[0]);
+                                sender.handle = pair[1];
+                                for (positive at = 0;
+                                     at < TLS_BATCH_RECORDS && sent; at++)
+                                {
+                                        positive length = TLS_BATCH_LENGTH(at);
+
+                                        for (positive byte = 0; byte < length;
+                                             byte++)
+                                                record[byte] =
+                                                    (p8)(at * 31 + byte);
+                                        sent = tls_send_enc(address_of sender,
+                                                            TLS_CT_APP, record,
+                                                            length) == TLS_OK;
+                                }
+                                sent = sent &&
+                                       tls_send_enc(address_of sender,
+                                                    TLS_CT_ALERT, alert,
+                                                    sizeof alert) == TLS_OK;
+                                system_call_1(syscall(exit_group), sent ? 0 : 1);
+                        }
+                        check("TLS batched-body writer starts", child > 0);
+                        socket_close(pair[1]);
+                        if (child > 0)
+                        {
+                                static p8 whole[TLS_BATCH_RECORDS * 16384];
+                                http_link link = {
+                                    .handle = pair[0],
+                                    .tls = true,
+                                    .session = {
+                                        .handle = pair[0],
+                                        .encrypted = true,
+                                        .application = true,
+                                    },
+                                };
+                                http_body body = {.link = address_of link};
+                                positive total = 0;
+                                positive filled = 0;
+                                positive place = 0;
+                                positive got = 99;
+                                positive raw = 0;
+                                p8 byte = 0;
+                                bipolar count;
+                                bool intact = true;
+
+                                for (positive at = 0; at < TLS_BATCH_RECORDS;
+                                     at++)
+                                        total += TLS_BATCH_LENGTH(at);
+                                check("an exact HTTP body over batched TLS records is written",
+                                      http_copy(address_of body, file, total,
+                                                true) == HTTP_OK);
+                                check("close_notify still ends the stream after the body",
+                                      tls_read(address_of link.session,
+                                               address_of byte, 1,
+                                               address_of got) == TLS_OK &&
+                                          got == 0);
+                                system_call_3(syscall(lseek), (positive)file, 0, 0);
+                                while ((count = system_read_retry(
+                                            (positive)file, whole + filled,
+                                            sizeof whole - filled)) > 0)
+                                        filled += (positive)count;
+                                for (positive at = 0; at < TLS_BATCH_RECORDS;
+                                     at++)
+                                        for (positive offset = 0;
+                                             offset < TLS_BATCH_LENGTH(at);
+                                             offset++, place++)
+                                                intact &= place < filled &&
+                                                          whole[place] ==
+                                                              (p8)(at * 31 +
+                                                                   offset);
+                                check("the written body holds every record in order",
+                                      intact && filled == total);
+                                http_link_close(address_of link);
+                                check("TLS batched-body writer finishes",
+                                      system_wait4_retry((b32)child,
+                                                         address_of raw, 0,
+                                                         null) == child &&
+                                          wait_status_code(raw) == 0);
+                        }
+                        else
+                                socket_close(pair[0]);
+                }
+                else if (!opened)
+                {
+                        socket_close(pair[0]);
+                        socket_close(pair[1]);
+                }
+                if (file >= 0)
+                        socket_close((b32)file);
+        }
         #undef TLS_BATCH_LENGTH
         #undef TLS_BATCH_RECORDS
 }
