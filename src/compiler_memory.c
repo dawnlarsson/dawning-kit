@@ -3351,17 +3351,28 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      Note the `<` in string_copy_end where the other three have `<=`. That is not a typo and it is not an inconsistency to tidy: copy_end_known copies length plus one, so a length of exactly KNOWN_SIZE_MAX asks copy_apart_known for 129 bytes, which is past what it is correct for.
 //      memory_copy_until guards on the size alone and never on the byte. Folding the byte buys nothing — the compare is register against an immediate or against a register, and the length is the same either way — while requiring both would halve the number of call sites the expansion reaches.
 
-/* The compatibility families, which were src/standard/ and are src/standard.c
-   now: the same thirteen in the same order, because the order is load bearing.
-   errno and allocation precede their consumers, and stream.c changes stdin,
-   stdout and stderr from descriptor numbers into stream pointers partway
-   through, so descriptor-oriented families sit above that point and formatting
-   below it. The file says all of this at its top.
+/* Allocator C lives in library.common.c, but it is compiled here rather than
+   from the first include of that file. Here is after the size specializers
+   and after top_bit_known: a literal-size copy still folds, and
+   allocator_class_of can see the inline bit index. */
+#define LIBRARY_COMMON_ALLOCATOR
+#include "library.common.c"
+#undef LIBRARY_COMMON_ALLOCATOR
 
-   It is included here and not beside library.common.c above, because here is
-   after the constant-size specializers: a literal-size copy inside it folds to
-   straight line stores, and at the top of this file it would have become a call
-   into the general routine instead. */
+/* The remaining POSIX compatibility families in src/standard.c. Applets skip
+   FILE streams, popen/tmpfile, scanf and the lock stubs. The build tool keeps
+   spool because it uses mkdtemp. errno, clock, math, signals, getopt, printf
+   internals and strtod stay. Tests that include this file without
+   STANDARD_APPLETS still compile the lot. */
+#ifdef STANDARD_APPLETS
+#define STANDARD_SKIP_LOCK
+#define STANDARD_SKIP_SCAN
+#ifndef STANDARD_KEEP_SPOOL
+#define STANDARD_SKIP_STREAM
+#define STANDARD_SKIP_SPOOL
+#endif
+#endif
+
 #include "standard.c"
 
 /*
@@ -3412,7 +3423,7 @@ static inline INLINE address_any copy_until_known(address_any destination,
         to be on record before anything can fork.
 */
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM) && \
-        defined(STANDARD_MODERN_C_STANDARD_STREAM)
+        defined(STANDARD_MODERN_C_STANDARD_STDLIB)
 
 b32 moonwater_program_main(void);
 
@@ -3420,7 +3431,9 @@ b32 main(void)
 {
         stdlib_program_starting();
 
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
         stdlib_exit_flush_hook = stream_flush_at_exit;
+#endif
 
         stdlib_exit(moonwater_program_main());
 

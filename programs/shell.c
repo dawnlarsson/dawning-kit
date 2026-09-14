@@ -1,3 +1,4 @@
+#define STANDARD_APPLETS
 #include "../src/compiler_memory.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"

@@ -32,6 +32,8 @@
         somewhere else and the same guarantees apply to another tree.
 */
 
+#define STANDARD_APPLETS
+#define STANDARD_KEEP_SPOOL
 #include "../compiler_memory.c"
 #include "../spark.c"
 #include "../sh/shell.c"

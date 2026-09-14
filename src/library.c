@@ -27091,6 +27091,9 @@ typedef b64 ptrdiff_t;
 #define stdin 0
 #define stdout 1
 #define stderr 2
+#define standard_input_descriptor 0
+#define standard_output_descriptor 1
+#define standard_error_descriptor 2
 
 #define SIGTRAP 5
 #define SIGKILL 9
@@ -28141,8 +28144,8 @@ fn memory_release(address_any address_to held, positive address_to have,
         below are that file's constants and it asserts they still agree.
 */
 //      Emitted only when the umbrella is what is being built, because that is
-//      exactly when src/standard/allocator.c comes with it. The routines below
-//      jump to that file's C for anything a shelf cannot answer, and a
+//      exactly when library.common.c's allocator comes with it. The routines
+//      below jump to that file's C for anything a shelf cannot answer, and a
 //      configuration that includes library.c on its own -- the standalone
 //      printf check is one -- has no such C to jump to and fails at the link
 //      with an undefined allocator_take_slow. compiler_memory.c defines this
@@ -29022,7 +29025,8 @@ float fmaxf(float first, float second);
         that includes the umbrella has every standard name in scope at the
         same point, and there is one place to look for the list.
 
-        strdup and strndup allocate, so they need src/standard/allocator.c
+        strdup and strndup allocate, so they need the allocator in
+        library.common.c
         under them, which the umbrella includes.
 */
 char address_to strdup(const char address_to source);
