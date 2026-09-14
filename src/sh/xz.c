@@ -241,19 +241,30 @@ static bool xz_out_flush(void)
         return true;
 }
 
+/* Append a span no longer than the dictionary to its ring. */
+static fn xz_dict_append(p8 address_to bytes, positive n)
+{
+        positive first = min(n, xz_dict_size - xz_dict_pos);
+
+        memory_copy_apart(xz_dict + xz_dict_pos, bytes, first);
+        if (n > first)
+                memory_copy_apart(xz_dict, bytes + first, n - first);
+        xz_dict_pos += n;
+        if (xz_dict_pos >= xz_dict_size)
+                xz_dict_pos -= xz_dict_size;
+        xz_dict_full = min(xz_dict_full + n, xz_dict_size);
+}
+
 static bool xz_emit(p8 byte)
 {
-        if (!xz_dict || xz_dict_size)
+        if (xz_dict && xz_dict_size)
         {
-                if (xz_dict && xz_dict_size)
-                {
-                        xz_dict[xz_dict_pos] = byte;
-                        xz_dict_pos++;
-                        if (xz_dict_pos == xz_dict_size)
-                                xz_dict_pos = 0;
-                        if (xz_dict_full < xz_dict_size)
-                                xz_dict_full++;
-                }
+                xz_dict[xz_dict_pos] = byte;
+                xz_dict_pos++;
+                if (xz_dict_pos == xz_dict_size)
+                        xz_dict_pos = 0;
+                if (xz_dict_full < xz_dict_size)
+                        xz_dict_full++;
         }
         xz_unpacked++;
         xz_out_buf[xz_out_fill++] = byte;
@@ -291,18 +302,7 @@ static bool xz_emit_match(positive dist, positive length)
                 memory_copy_apart(into + first, xz_dict, seed - first);
         if (length > seed)
                 memory_copy_match(into + seed, dist, length - seed);
-        first = xz_dict_size - xz_dict_pos;
-        if (first > length)
-                first = length;
-        memory_copy_apart(xz_dict + xz_dict_pos, into, first);
-        if (length > first)
-                memory_copy_apart(xz_dict, into + first, length - first);
-        xz_dict_pos += length;
-        if (xz_dict_pos >= xz_dict_size)
-                xz_dict_pos -= xz_dict_size;
-        xz_dict_full += length;
-        if (xz_dict_full > xz_dict_size)
-                xz_dict_full = xz_dict_size;
+        xz_dict_append(into, length);
         xz_unpacked += length;
         xz_out_fill += length;
         if (!xz_pull && xz_out_fill >= XZ_OUT)
@@ -798,13 +798,7 @@ static bool xz_lzma2_raw(void)
                         return xz_fail("xz truncated uncompressed");
                 p8 address_to bytes = xz_in_buf + xz_input.at;
                 memory_copy_apart(xz_out_buf + xz_out_fill, bytes, take);
-                memory_copy_apart(xz_dict + xz_dict_pos, bytes, take);
-                xz_dict_pos += take;
-                if (xz_dict_pos == xz_dict_size)
-                        xz_dict_pos = 0;
-                xz_dict_full += take;
-                if (xz_dict_full > xz_dict_size)
-                        xz_dict_full = xz_dict_size;
+                xz_dict_append(bytes, take);
                 xz_out_fill += take;
                 xz_input.at += take;
                 xz_in_abs += take;
@@ -1477,41 +1471,6 @@ static bool xz_write_index_footer(void)
                xz_out_flush();
 }
 
-static fn xz_dict_push(p8 byte)
-{
-        if (!xz_dict || !xz_dict_size)
-                return;
-        xz_dict[xz_dict_pos] = byte;
-        xz_dict_pos++;
-        if (xz_dict_pos == xz_dict_size)
-                xz_dict_pos = 0;
-        if (xz_dict_full < xz_dict_size)
-                xz_dict_full++;
-}
-
-static fn xz_enc_seen(p8 byte)
-{
-        xz_dict_push(byte);
-        xz_unpacked++;
-}
-
-static fn xz_enc_seen_span(p8 address_to bytes, positive n)
-{
-        positive first = xz_dict_size - xz_dict_pos;
-        if (first > n)
-                first = n;
-        memory_copy_apart(xz_dict + xz_dict_pos, bytes, first);
-        if (n > first)
-                memory_copy_apart(xz_dict, bytes + first, n - first);
-        xz_dict_pos += n;
-        if (xz_dict_pos >= xz_dict_size)
-                xz_dict_pos -= xz_dict_size;
-        xz_dict_full += n;
-        if (xz_dict_full > xz_dict_size)
-                xz_dict_full = xz_dict_size;
-        xz_unpacked += n;
-}
-
 static fn xz_rc_shift(void)
 {
         lzma_range_shift(address_of xz_rc);
@@ -1594,17 +1553,10 @@ static fn xz_enc_len(p16 address_to choice, p16 address_to choice2,
 static p8 xz_pos_slot(positive dist0)
 {
         p8 hb;
-        positive v;
 
         if (dist0 < 4)
                 return (p8)dist0;
-        v = dist0;
-        hb = 0;
-        while (v >= 2)
-        {
-                v >>= 1;
-                hb++;
-        }
+        hb = (p8)(63 - bits_leading_zeros(dist0));
         return (p8)((hb << 1) + ((dist0 >> (hb - 1)) & 1));
 }
 
@@ -1631,9 +1583,14 @@ static fn xz_enc_dist(positive len_state, positive dist0)
         xz_rc_enc_bittree_rev(xz_dist_align, 4, extra & 15);
 }
 
-static fn xz_enc_literal(p8 byte)
+/* The literal at `at` in the pending window, which holds the dictionary's
+   worth of history before it. */
+static fn xz_enc_literal(p8 address_to at)
 {
-        p8 prev = xz_dict_full ? xz_dict_get(1) : 0;
+        p8 byte = *at;
+        positive history = min(xz_unpacked, (positive)XZ_ENC_DICT);
+        positive rep = xz_rep[0];
+        p8 prev = history ? at[-1] : 0;
         positive lit_pos = xz_unpacked & (((positive)1 << xz_lp) - 1);
         p16 address_to probs = xz_lit +
                 (((lit_pos << xz_lc) + (prev >> (8 - xz_lc))) * 0x300);
@@ -1642,10 +1599,11 @@ static fn xz_enc_literal(p8 byte)
 
         xz_rc_enc_bit(address_of xz_is_match[xz_state][ps], 0);
         if (xz_state >= 7)
-                mode |= 0x200 | ((positive)xz_dict_get(xz_rep[0]) << 16);
+                mode |= 0x200 |
+                        ((positive)(rep && rep <= history ? at[-rep] : 0) << 16);
         lzma_range_encode(address_of xz_rc, probs, byte, mode);
         xz_state = xz_state < 4 ? 0 : xz_state < 10 ? xz_state - 3 : xz_state - 6;
-        xz_enc_seen(byte);
+        xz_unpacked++;
 }
 
 static fn xz_enc_match(positive dist, positive len)
@@ -1702,12 +1660,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
         if (!n)
                 return true;
         reset = xz_need_reset ? 3 : xz_enc_have_lzma ? 0 : 2;
-        if (xz_need_reset)
-        {
-                xz_dict_pos = 0;
-                xz_dict_full = 0;
-                xz_need_reset = false;
-        }
+        xz_need_reset = false;
         if (reset >= 2)
         {
                 if (!xz_props(0x5d))
@@ -1724,7 +1677,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                 if (pos >= 8192 && !(pos & 1023) &&
                     (positive)(xz_rc.next - xz_rc_buf) >= pos + 128)
                 {
-                        xz_enc_seen_span(src + pos, n - pos);
+                        xz_unpacked += n - pos;
                         raw = true;
                         break;
                 }
@@ -1739,7 +1692,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                 for (r = 0; r < 4; r++)
                 {
                         positive d = xz_rep[r];
-                        if (d && d <= xz_match_abs + pos && d <= xz_dict_full && limit >= 2 &&
+                        if (d && d <= xz_match_abs + pos && d <= XZ_ENC_DICT && limit >= 2 &&
                             src[pos] == src[pos - d] &&
                             src[pos + 1] == src[pos - d + 1])
                         {
@@ -1768,7 +1721,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                                 positive d = xz_match_abs + pos - there;
                                 if (d > XZ_ENC_DICT) break;
                                 p8 address_to candidate = src + pos - d;
-                                if (d <= xz_dict_full &&
+                                if (d <= XZ_ENC_DICT &&
                                     src[pos] == candidate[0] &&
                                     (!match || src[pos + match] == candidate[match]))
                                 {
@@ -1802,7 +1755,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                                 xz_enc_repeat(rep_index, match);
                         else
                                 xz_enc_match(dist, match);
-                        xz_enc_seen_span(src + pos, match);
+                        xz_unpacked += match;
                         k = match >= 128 && dist <= 16 ? match - 2 * dist : 1;
                         for (; k < match; k++)
                         {
@@ -1819,7 +1772,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                 }
                 else
                 {
-                        xz_enc_literal(src[pos]);
+                        xz_enc_literal(src + pos);
                         pos++;
                 }
         }
@@ -1944,8 +1897,6 @@ static bool xz_encode_setup(p8 level)
         xz_match_abs = 0;
         xz_pending_position = 0;
         memory_fill(xz_head, 0, sizeof(xz_head));
-        if (!xz_dict_open(XZ_ENC_DICT))
-                return false;
         if (!xz_props(0x5d))
                 return false;
         xz_probs_reset();
