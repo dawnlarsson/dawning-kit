@@ -52687,6 +52687,240 @@ static fn threaded(void)
               m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
 }
 
+/* A stream of two megabytes that compresses unevenly. */
+static fn xz_fixture(p8 address_to src, positive n, p32 seed)
+{
+        p32 random = seed;
+
+        for (positive i = 0; i < n; i++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                src[i] = (i / 4096) % 3 ? (p8)(random & 7) : (p8)random;
+        }
+}
+
+/* The pull interface over a descriptor that holds all but a prefix. */
+static fn pulled(void)
+{
+        static p8 src[2 * 1048576 + 777];
+        static p8 packed[3 * 1048576];
+        static p8 back[2 * 1048576 + 777];
+        bipolar n;
+        bipolar handle;
+
+        xz_fixture(src, sizeof(src), 0x13572468u);
+        n = xz_deflate_mem(src, sizeof(src), packed, sizeof(packed), 6);
+        check("pull fixture encodes", n > 64);
+        handle = system_call_2(syscall(memfd_create), (positive)"xz-pull", 0);
+        check("pull fixture descriptor", handle >= 0);
+        if (n <= 64 || handle < 0)
+                return;
+        for (positive pass = 0; pass < 3; pass++)
+        {
+                if (pass == 2)
+                        packed[n / 2] ^= 0x40;
+                bool prepared = system_seek(handle, 0, FILE_SEEK_SET) == 0 &&
+                                system_truncate_handle(handle, 0) == 0 &&
+                                system_write_all(handle, packed + 7, (positive)n - 7) == n - 7 &&
+                                system_seek(handle, 0, FILE_SEEK_SET) == 0;
+                check("pull fixture prepared", prepared);
+                if (!prepared)
+                        break;
+
+                address_any d = xz_pull_open(handle, packed, 7);
+                positive got = 0;
+                bipolar last = 0;
+
+                check("pull opens", d != null);
+                if (!d)
+                        break;
+                for (positive turn = 0;; turn++)
+                {
+                        if (pass == 0)
+                        {
+                                p8 address_to span = null;
+
+                                last = xz_pull_span(d, address_of span);
+                                if (last > 0 && got + (positive)last <= sizeof(back))
+                                        memory_copy_apart(back + got, span, (positive)last);
+                        }
+                        else
+                        {
+                                positive want = turn % 3 == 0 ? 1 : turn % 3 == 1 ? 4099 : 65537;
+
+                                if (want > sizeof(back) - got)
+                                        want = sizeof(back) - got;
+                                last = want ? xz_pull_read(d, back + got, want) : 0;
+                        }
+                        if (last <= 0 || got + (positive)last > sizeof(back))
+                                break;
+                        got += (positive)last;
+                }
+                if (pass < 2)
+                {
+                        bool rebuilt = last == 0 && got == sizeof(src) &&
+                                       !memory_compare(back, src, sizeof(src)) &&
+                                       !xz_pull_error(d);
+
+                        if (pass)
+                                check("pull reads rebuild the input", rebuilt);
+                        else
+                                check("pull spans rebuild the input", rebuilt);
+                        check("pull close reports success", xz_pull_close(d));
+                }
+                else
+                {
+                        check("pull reports a corrupt stream by name",
+                              last < 0 && xz_pull_error(d) != null);
+                        check("pull close reports the failure", !xz_pull_close(d));
+                        packed[n / 2] ^= 0x40;
+                }
+        }
+        system_call_1(syscall(close), handle);
+}
+
+static positive xz_index_vli(p8 address_to bytes, positive address_to at)
+{
+        positive value = 0;
+
+        for (positive shift = 0;; shift += 7)
+        {
+                p8 byte = bytes[address_to at];
+
+                address_to at += 1;
+                value |= (positive)(byte & 0x7f) << shift;
+                if (!(byte & 0x80))
+                        return value;
+        }
+}
+
+/* Each block of a many-block stream on its own call, located through the
+   index, in reverse order and on one reused decoder. */
+static fn blocks(void)
+{
+        static p8 src[3 * 1048576 + 4321];
+        static p8 packed[4 * 1048576];
+        static p8 back[3 * 1048576 + 4321];
+        static positive starts[64];
+        static positive lengths[64];
+        static positive sizes[64];
+        static positive offsets[64];
+        p8 check_bytes[8];
+        bipolar n;
+
+        xz_fixture(src, sizeof(src), 0x2545f491u);
+        n = xz_deflate_mem(src, sizeof(src), packed, sizeof(packed), 0);
+        check("block fixture encodes", n > 64);
+        if (n <= 64)
+                return;
+
+        p8 check_type = packed[7] & 15;
+        positive backward = ((positive)memory_load_unaligned(p32, packed + n - 8) + 1) * 4;
+        positive at = (positive)n - 12 - backward;
+        positive count;
+        positive start = 12;
+        positive plain = 0;
+
+        check("block fixture index", packed[at] == 0);
+        at++;
+        count = xz_index_vli(packed, address_of at);
+        check("block fixture has several blocks", count > 1 && count <= 64);
+        if (count <= 1 || count > 64)
+                return;
+        for (positive i = 0; i < count; i++)
+        {
+                positive unpadded = xz_index_vli(packed, address_of at);
+
+                sizes[i] = xz_index_vli(packed, address_of at);
+                starts[i] = start;
+                lengths[i] = (unpadded + 3) & ~(positive)3;
+                offsets[i] = plain;
+                start += lengths[i];
+                plain += sizes[i];
+        }
+        check("block fixture index adds up", plain == sizeof(src));
+
+        address_any d = xz_block_decoder();
+        bool all = d != null;
+
+        for (positive k = count; all && k--;)
+        {
+                positive stored = 0;
+
+                all = xz_block_decode(d, packed + starts[k], lengths[k], sizes[k],
+                                      back + offsets[k], check_type, check_bytes);
+                memory_copy_apart(address_of stored, packed + starts[k] + lengths[k] -
+                                  (check_type == XZ_CHECK_CRC64 ? 8 : 4),
+                                  check_type == XZ_CHECK_CRC64 ? 8 : 4);
+                all = all && !memory_compare(address_of stored, check_bytes, 8);
+        }
+        check("every block decodes alone into its exact span",
+              all && !memory_compare(back, src, sizeof(src)) && !xz_pull_error(d));
+        if (d)
+        {
+                check("a block one byte longer than its data is refused by name",
+                      !xz_block_decode(d, packed + starts[0], lengths[0], sizes[0] + 1,
+                                       back, check_type, null) &&
+                      xz_pull_error(d) != null);
+                packed[starts[1] + lengths[1] - 1] ^= 1;
+                check("a block whose check fails is refused by name",
+                      !xz_block_decode(d, packed + starts[1], lengths[1], sizes[1],
+                                       back + offsets[1], check_type, null) &&
+                      xz_pull_error(d) != null);
+                packed[starts[1] + lengths[1] - 1] ^= 1;
+                check("the decoder recovers for the next block",
+                      xz_block_decode(d, packed + starts[1], lengths[1], sizes[1],
+                                      back + offsets[1], check_type, null) &&
+                      !memory_compare(back + offsets[1], src + offsets[1], sizes[1]));
+
+                /* Less room than the block's data, cut inside each of the
+                   three kinds of 4096-byte run the fixture lays down so that
+                   some cut falls inside a match: refused by name, and not a
+                   byte lands past the room. */
+                bool contained = sizes[0] > 4 * 4096;
+
+                for (positive run = 0; contained && run < 3; run++)
+                        for (positive cut = 1; contained && cut < 40; cut += 3)
+                        {
+                                positive room = sizes[0] - run * 4096 - 2048 - cut;
+                                bool untouched = true;
+
+                                memory_fill(back + room, 0xa5, 512);
+
+                                bool refused = !xz_block_decode(d, packed + starts[0], lengths[0],
+                                                                room, back, check_type, null) &&
+                                               xz_pull_error(d) != null;
+
+                                for (positive i = 0; i < 512; i++)
+                                        untouched = untouched && back[room + i] == 0xa5;
+                                contained = refused && untouched;
+                        }
+                check("a block given less room than its data is refused and writes nothing past it",
+                      contained);
+        }
+        /* A block shorter than its dictionary: the history ends at the
+           block's first byte, not at the dictionary size. */
+        n = xz_deflate_mem(src, 1048576 + 17, packed, sizeof(packed), 6);
+        if (d && n > 64)
+        {
+                p8 type = packed[7] & 15;
+                positive tail = ((positive)memory_load_unaligned(p32, packed + n - 8) + 1) * 4;
+                positive index = (positive)n - 12 - tail + 1;
+                positive records = xz_index_vli(packed, address_of index);
+                positive unpadded = xz_index_vli(packed, address_of index);
+                positive size = xz_index_vli(packed, address_of index);
+
+                check("a block shorter than its dictionary decodes alone",
+                      records == 1 && size == 1048576 + 17 &&
+                      xz_block_decode(d, packed + 12, (unpadded + 3) & ~(positive)3,
+                                      size, back, type, null) &&
+                      !memory_compare(back, src, size));
+        }
+        check("block decoder closes", xz_pull_close(d));
+}
+
 b32 main(void)
 {
         members();
@@ -52694,6 +52928,8 @@ b32 main(void)
         large_roundtrip();
         streamed();
         threaded();
+        pulled();
+        blocks();
         return test_report(null);
 }
 #endif /* CHECK_xz */

@@ -102,18 +102,26 @@ static positive xz_dict_from_prop(p8 prop)
 }
 
 /*
-        Decoding. A stream's whole state is one xz_decoder: the span kernel's
-        job, the models, the input window, the dictionary, and the LZMA2,
-        block and index framing between spans.
+        Decoding. A stream's whole state is one xz_decoder that whoever
+        decodes allocates: the span kernel's job, the models, the input
+        window, the dictionary, and the LZMA2, block and index framing between
+        spans. Nothing here is static and nothing logs, so decoders on
+        different threads share nothing; an error comes back as the
+        decoder's why, a static string.
 
-        The dictionary has liblzma's layout. The buffer holds the rounded
-        dictionary plus two 288-byte margins; decoding starts at 576, and when
-        the cursor passes the end, the last 288 bytes and any overshoot move
-        to the front. A match source is then one contiguous run (a source
-        below the buffer maps into the tail), buffer offsets keep the position
-        modulo 16 for pos_state and the literal position, and out[-1] is
-        always the previous byte. Output leaves in spans straight from the
-        buffer and is checksummed there.
+        A stream decodes into a ring with liblzma's layout. The buffer holds
+        the rounded dictionary plus two 288-byte margins; decoding starts at
+        576, and when the cursor passes the end, the last 288 bytes and any
+        overshoot move to the front. A match source is then one contiguous
+        run (a source below the buffer maps into the tail), buffer offsets
+        keep the position modulo 16 for pos_state and the literal position,
+        and out[-1] is always the previous byte. Output leaves in spans
+        straight from the buffer and is checksummed there.
+
+        A block or a memory image decodes linearly instead: the caller's
+        output is the dictionary, a match source is out - rep0 above the
+        latest reset, and the first packet after a reset runs on a scratch
+        byte that reads as the zero a fresh dictionary holds.
 
         The kernel runs every packet. Before the input ends the window keeps
         48 bytes of lookahead; at the end, 64 zero bytes follow the data and a
@@ -160,11 +168,12 @@ typedef struct
         positive dict_cap;
         positive dict_size;
         positive dict_limit;
+        bool linear;
+        bool first;
         bool wrapped;
         p8 address_to emitted;
         p8 address_to hashed;
         bipolar out_fd;
-        byte_store address_to store;
         bool pull;
         bool paused;
         bool finished;
@@ -180,13 +189,13 @@ typedef struct
         p64 block_body_abs;
         positive block_hdr_size;
         p8 check;
+        p8 check_bytes[8];
         p32 crc32;
         p64 crc64;
         string_address why;
+        p8 scratch[1 + XZ_COPY_SLACK + 8];
         p8 in_buf[XZ_DEC_IN + XZ_IN_PAD];
 } xz_decoder;
-
-static xz_decoder xz_dec;
 
 static bool xz_dec_fail(xz_decoder address_to d, string_address why)
 {
@@ -242,41 +251,45 @@ static fn xz_dec_hash(xz_decoder address_to d)
         d->hashed = d->job.out;
 }
 
-/* Hand the undelivered window on. A descriptor or store takes it whole; a
-   reader takes it through xz_decode_read, and until it has the stream
-   pauses. */
+/* Hand the undelivered window on. A descriptor takes it whole, a linear
+   decode already holds it where the caller wants it, and a reader takes it
+   through xz_pull_span, so until it has the stream pauses. */
 static bool xz_dec_drain(xz_decoder address_to d)
 {
         xz_dec_hash(d);
+
         positive n = (positive)(d->job.out - d->emitted);
 
-        if (!n)
+        if (!n || d->linear)
+        {
+                d->emitted = d->job.out;
                 return true;
+        }
         if (d->pull)
         {
                 d->paused = true;
                 return true;
         }
-        if (d->store)
-        {
-                if (!byte_store_append_exact(d->store, d->emitted, n))
-                        return xz_dec_fail(d, "xz output is too small");
-        }
-        else if (d->out_fd >= 0 &&
-                 system_write_all((positive)d->out_fd, d->emitted, n) !=
-                         (bipolar)n)
+        if (d->out_fd >= 0 &&
+            system_write_all((positive)d->out_fd, d->emitted, n) != (bipolar)n)
                 return xz_dec_fail(d, "xz write failed");
         d->emitted = d->job.out;
         return true;
 }
 
-/* An LZMA2 dictionary reset; the window must already be drained. */
+/* An LZMA2 dictionary reset; a ring must already be drained. */
 static fn xz_dec_dict_reset(xz_decoder address_to d)
 {
+        d->wrapped = false;
+        if (d->linear)
+        {
+                d->job.base = d->job.out;
+                d->first = true;
+                return;
+        }
         d->job.base = d->dict;
         d->job.out = d->emitted = d->hashed = d->dict + XZ_DICT_START;
         d->dict[XZ_DICT_START - 1] = 0;
-        d->wrapped = false;
 }
 
 static bool xz_dec_dict_open(xz_decoder address_to d, positive size)
@@ -287,6 +300,12 @@ static bool xz_dec_dict_open(xz_decoder address_to d, positive size)
         positive limit = (size + 15) & ~(positive)15;
         positive cap = limit + XZ_DICT_START + XZ_DICT_SLACK;
 
+        d->dict_limit = limit;
+        if (d->linear)
+        {
+                xz_dec_dict_reset(d);
+                return true;
+        }
         if (!d->dict || d->dict_cap < cap)
         {
                 if (d->dict)
@@ -300,7 +319,6 @@ static bool xz_dec_dict_open(xz_decoder address_to d, positive size)
                 }
                 d->dict_cap = cap;
         }
-        d->dict_limit = limit;
         d->dict_size = limit + XZ_DICT_START;
         xz_dec_dict_reset(d);
         return true;
@@ -308,7 +326,7 @@ static bool xz_dec_dict_open(xz_decoder address_to d, positive size)
 
 static fn xz_dec_dict_close(xz_decoder address_to d)
 {
-        if (d->dict)
+        if (d->dict && !d->linear)
                 memory_free(d->dict, d->dict_cap);
         d->dict = null;
         d->dict_cap = 0;
@@ -316,7 +334,7 @@ static fn xz_dec_dict_close(xz_decoder address_to d)
         d->job.base = d->job.out = d->emitted = d->hashed = null;
 }
 
-/* The cursor is past the buffer end and the window is drained: the last
+/* The cursor is past the ring's end and the window is drained: the last
    288 bytes and the overshoot move to the front. */
 static fn xz_dec_wrap(xz_decoder address_to d)
 {
@@ -329,12 +347,16 @@ static fn xz_dec_wrap(xz_decoder address_to d)
         d->wrapped = true;
 }
 
-/* Room to decode into: a full span is delivered and a full buffer wrapped.
-   A reader that still has to take the window pauses the stream. */
+/* Room to decode into: a full span is delivered and a full ring wrapped. A
+   reader that still has to take the window pauses the stream; a linear
+   decode has no more room past its end. */
 static bool xz_dec_room(xz_decoder address_to d)
 {
         p8 address_to top = d->dict + d->dict_size;
 
+        if (d->linear)
+                return d->job.out < top ||
+                       xz_dec_fail(d, "xz output is too small");
         if (d->job.out < top && (positive)(d->job.out - d->emitted) < XZ_SPAN)
                 return true;
         if (!xz_dec_drain(d))
@@ -412,16 +434,49 @@ static bool xz_dec_raw(xz_decoder address_to d)
                         take = d->raw_left;
                 if (take > (positive)(top - d->job.out))
                         take = (positive)(top - d->job.out);
-                if (take > (positive)(d->emitted + XZ_SPAN - d->job.out))
+                if (!d->linear &&
+                    take > (positive)(d->emitted + XZ_SPAN - d->job.out))
                         take = (positive)(d->emitted + XZ_SPAN - d->job.out);
                 memory_copy_apart(d->job.out, d->in_buf + d->input.at, take);
                 d->job.out += take;
                 d->input.at += take;
                 d->in_abs += take;
                 d->raw_left -= take;
+                d->first = false;
         }
         d->lz2_kind = 0;
         return true;
+}
+
+/* A linear decode's first packet after a reset, on a scratch byte that
+   reads as zero: it can only be a literal, and any match fails the source
+   check against an empty history. */
+static fn xz_dec_first(xz_decoder address_to d)
+{
+        xz_decode_job address_to job = address_of d->job;
+        xz_decode_job one = address_to job;
+        p8 address_to at = d->scratch + 1;
+
+        d->scratch[0] = 0;
+        one.base = one.bottom = one.lo = one.out = at;
+        one.out_stop = one.out_end = one.copy_end = at + 1;
+        one.wrap = 0;
+        lzma_decode_span(address_of one);
+        job->range = one.range;
+        job->code = one.code;
+        job->next = one.next;
+        job->state = one.state;
+        job->rep[0] = one.rep[0];
+        job->rep[1] = one.rep[1];
+        job->rep[2] = one.rep[2];
+        job->rep[3] = one.rep[3];
+        job->error = one.error;
+        if (one.out != at)
+        {
+                job->out[0] = at[0];
+                job->out++;
+                d->first = false;
+        }
 }
 
 /* One LZMA2 chunk's packets, a kernel span at a time. */
@@ -456,24 +511,43 @@ static bool xz_dec_lzma(xz_decoder address_to d)
                         job->in_stop = at + have + XZ_IN_PAD - (XZ_PACKET_IN - 1);
                 }
                 job->out_end = job->out + d->chunk_left;
+                /* A linear output ends at its room: a chunk that claims more
+                   fails on the match that would cross it. */
+                if (d->linear && job->out_end > top)
+                        job->out_end = top;
                 job->out_stop = top < job->out_end ? top : job->out_end;
-                if (job->out_stop > d->emitted + XZ_SPAN)
-                        job->out_stop = d->emitted + XZ_SPAN;
-                job->copy_end = d->dict + d->dict_cap - XZ_COPY_SLACK;
+                job->copy_end = d->dict_cap > XZ_COPY_SLACK
+                                        ? d->dict + d->dict_cap - XZ_COPY_SLACK
+                                        : d->dict;
                 if (job->copy_end > job->out_end)
                         job->copy_end = job->out_end;
                 job->dmax = d->dict_limit;
-                job->wrap = d->wrapped ? d->dict_size - XZ_MIRROR : 0;
-                job->bottom = d->wrapped ? d->dict : d->dict + XZ_DICT_START;
-                job->lo = job->bottom;
-                if (d->wrapped &&
-                    (positive)(job->out_stop - d->dict) > d->dict_limit)
-                        job->lo = job->out_stop - d->dict_limit;
                 job->error = 0;
+                if (d->linear)
+                {
+                        job->wrap = 0;
+                        job->bottom = job->lo = job->base;
+                        if ((positive)(job->out_stop - job->base) > d->dict_limit)
+                                job->lo = job->out_stop - d->dict_limit;
+                }
+                else
+                {
+                        if (job->out_stop > d->emitted + XZ_SPAN)
+                                job->out_stop = d->emitted + XZ_SPAN;
+                        job->wrap = d->wrapped ? d->dict_size - XZ_MIRROR : 0;
+                        job->bottom = d->wrapped ? d->dict : d->dict + XZ_DICT_START;
+                        job->lo = job->bottom;
+                        if (d->wrapped &&
+                            (positive)(job->out_stop - d->dict) > d->dict_limit)
+                                job->lo = job->out_stop - d->dict_limit;
+                }
 
                 p8 address_to before = job->out;
 
-                lzma_decode_span(job);
+                if (d->linear && d->first)
+                        xz_dec_first(d);
+                else
+                        lzma_decode_span(job);
 
                 positive used = (positive)(job->next - at);
 
@@ -533,7 +607,7 @@ static bool xz_dec_lzma2(xz_decoder address_to d)
                 p8 control = d->in_buf[d->input.at];
                 bool reset = control == 1 || control >= 0xe0;
 
-                /* A dictionary reset rewinds the cursor: deliver first. */
+                /* A dictionary reset rewinds a ring's cursor: deliver first. */
                 if (reset && d->job.out != d->emitted)
                 {
                         if (!xz_dec_drain(d))
@@ -637,6 +711,7 @@ static bool xz_dec_check(xz_decoder address_to d)
 
         if (!xz_dec_le(d, address_of got, wide ? 8 : 4))
                 return xz_dec_fail(d, "xz truncated check");
+        memory_store_unaligned(p64, d->check_bytes, got);
         if (got != (wide ? ~d->crc64 : (p32)~d->crc32))
                 return xz_dec_fail(d, wide ? "xz CRC64 mismatch" : "xz CRC32 mismatch");
         return true;
@@ -879,12 +954,28 @@ static bool xz_dec_stream(xz_decoder address_to d)
         return true;
 }
 
+/* A decoder with nothing mapped but itself. */
+static xz_decoder address_to xz_dec_new(void)
+{
+        xz_decoder address_to d = (xz_decoder address_to)memory(sizeof(xz_decoder));
+
+        if (!d || system_failed(d))
+                return null;
+        memory_fill(d, 0, __builtin_offsetof(xz_decoder, in_buf));
+        d->job.model = address_of d->models;
+        d->out_fd = -1;
+        return d;
+}
+
+/* Start over on new input, keeping a ring dictionary's mapping. */
 static fn xz_dec_open(xz_decoder address_to d)
 {
-        xz_dec_dict_close(d);
-        d->job.model = address_of d->models;
+        if (d->linear)
+                xz_dec_dict_close(d);
+        d->linear = false;
+        d->first = false;
+        d->job.base = d->job.out = d->emitted = d->hashed = d->dict;
         d->why = null;
-        d->store = null;
         d->out_fd = -1;
         d->pull = false;
         d->paused = false;
@@ -895,7 +986,16 @@ static fn xz_dec_open(xz_decoder address_to d)
         d->in_abs = 0;
 }
 
-/* Every stream on the input, delivered to the descriptor or store. */
+static fn xz_dec_free(xz_decoder address_to d)
+{
+        if (!d)
+                return;
+        xz_dec_dict_close(d);
+        memory_free(d, sizeof(xz_decoder));
+}
+
+/* Every stream on the input, delivered to the descriptor or kept in a
+   linear output. */
 static bool xz_dec_run(xz_decoder address_to d)
 {
         bool any = false;
@@ -913,23 +1013,182 @@ static bool xz_dec_run(xz_decoder address_to d)
         return xz_dec_drain(d);
 }
 
+/* Decode into dst's linear room: every block's dictionary is the output
+   itself. */
 static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
                               p8 address_to dst, positive dst_cap)
 {
-        xz_decoder address_to d = address_of xz_dec;
-        byte_store store = {dst, dst_cap, 0};
+        xz_decoder address_to d = xz_dec_new();
 
-        xz_dec_open(d);
+        if (!d)
+                return -1;
         byte_input_open_memory(address_of d->input, src, src_len, d->in_buf,
                                XZ_DEC_IN);
-        d->store = address_of store;
+        d->linear = true;
+        d->dict = dst;
+        d->dict_cap = dst_cap;
+        d->dict_size = dst_cap;
+        d->job.base = d->job.out = d->emitted = d->hashed = dst;
 
         bool ok = xz_dec_run(d);
+        bipolar used = (bipolar)(d->job.out - dst);
 
-        xz_dec_dict_close(d);
-        d->store = null;
-        d->input.mem = null;
-        return ok ? (bipolar)store.used : -1;
+        xz_dec_free(d);
+        return ok ? used : -1;
+}
+
+/*
+        One block, with nothing but its own decoder touched: the block header
+        through its check, exactly block_len bytes at block, decoding to
+        exactly uncompressed_len bytes at out, which is written only there
+        (matches in its last 32 bytes copy exactly). check_type is the
+        stream's, and check, when not null, receives the stored check (8
+        bytes, little-endian, zero-extended). Decoders from
+        xz_block_decoder on different threads may each run blocks at the
+        same time; xz_pull_error names a failure and xz_pull_close frees
+        one.
+*/
+static bool xz_block_decode(address_any state, p8 address_to block,
+                            positive block_len, p64 uncompressed_len,
+                            p8 address_to out, p8 check_type,
+                            p8 address_to check)
+{
+        xz_decoder address_to d = state;
+
+        xz_dec_open(d);
+        if (d->dict)
+                xz_dec_dict_close(d);
+        if (check_type != XZ_CHECK_NONE && check_type != XZ_CHECK_CRC32 &&
+            check_type != XZ_CHECK_CRC64)
+                return xz_dec_fail(d, "xz check type");
+        byte_input_open_memory(address_of d->input, block, block_len, d->in_buf,
+                               XZ_DEC_IN);
+        d->linear = true;
+        d->dict = out;
+        d->dict_cap = (positive)uncompressed_len;
+        d->dict_size = (positive)uncompressed_len;
+        d->job.base = d->job.out = d->emitted = d->hashed = out;
+        d->check = check_type;
+        memory_fill(d->check_bytes, 0, sizeof(d->check_bytes));
+        d->hdr_done = true;
+        if (!xz_dec_block(d))
+                return false;
+        if (check)
+                memory_copy_apart(check, d->check_bytes, sizeof(d->check_bytes));
+        if (d->job.out != out + uncompressed_len || d->in_abs != block_len)
+                return xz_dec_fail(d, "xz block sizes");
+        return true;
+}
+
+static address_any xz_block_decoder(void)
+{
+        return xz_dec_new();
+}
+
+/*
+        The pull interface: an opaque decoder on fd whose input starts with
+        prefix. A span points into the decoder's window and stays valid until
+        the next call on the same state. Reads return decoded bytes, 0 at the
+        clean end of the input, -1 on an error that xz_pull_error names.
+*/
+static address_any xz_pull_open(bipolar fd, p8 address_to prefix,
+                                positive prefix_len)
+{
+        xz_decoder address_to d = xz_dec_new();
+
+        if (!d)
+                return null;
+        byte_input_open_fd(address_of d->input, fd, d->in_buf, XZ_DEC_IN);
+        d->pull = true;
+        if (prefix_len > XZ_DEC_IN)
+                xz_dec_fail(d, "xz prefix");
+        else if (prefix_len)
+        {
+                memory_copy(d->in_buf, prefix, prefix_len);
+                d->input.have = prefix_len;
+        }
+        return d;
+}
+
+/* Bytes waiting in the window, decoding more when there are none. */
+static bipolar xz_pull_more(xz_decoder address_to d)
+{
+        for (;;)
+        {
+                positive left = (positive)(d->job.out - d->emitted);
+
+                if (left)
+                        return (bipolar)left;
+                if (d->why)
+                        return -1;
+                if (d->finished)
+                        return 0;
+                if (!d->hdr_done && !d->block_live && !xz_dec_more(d))
+                {
+                        if (d->why)
+                                return -1;
+                        d->finished = true;
+                        return 0;
+                }
+                d->paused = false;
+                if (!xz_dec_stream(d))
+                        return -1;
+        }
+}
+
+static bipolar xz_pull_span(address_any state, p8 address_to address_to span)
+{
+        xz_decoder address_to d = state;
+        bipolar n = xz_pull_more(d);
+
+        if (n > 0)
+        {
+                address_to span = d->emitted;
+                d->emitted = d->job.out;
+        }
+        return n;
+}
+
+static bipolar xz_pull_read(address_any state, p8 address_to into, positive n)
+{
+        xz_decoder address_to d = state;
+        positive copied = 0;
+
+        while (copied < n)
+        {
+                bipolar left = xz_pull_more(d);
+
+                if (left < 0)
+                        return -1;
+                if (!left)
+                        break;
+
+                positive take = min((positive)left, n - copied);
+
+                memory_copy_apart(into + copied, d->emitted, take);
+                d->emitted += take;
+                copied += take;
+        }
+        return (bipolar)copied;
+}
+
+static string_address xz_pull_error(address_any state)
+{
+        return state ? ((xz_decoder address_to)state)->why
+                     : (string_address)"xz cannot map the decoder";
+}
+
+static bool xz_pull_close(address_any state)
+{
+        xz_decoder address_to d = state;
+
+        if (!d)
+                return false;
+
+        bool ok = !d->why;
+
+        xz_dec_free(d);
+        return ok;
 }
 
 static positive xz_vli_put(p8 address_to into, p64 value)
@@ -3104,75 +3363,40 @@ static bipolar xz_deflate_mem(p8 address_to src, positive src_len,
         return ok ? (bipolar)xz_output.used : -1;
 }
 
-static bool xz_decode_begin(bipolar in)
-{
-        xz_decoder address_to d = address_of xz_dec;
-
-        xz_dec_open(d);
-        byte_input_open_fd(address_of d->input, in, d->in_buf, XZ_DEC_IN);
-        d->pull = true;
-        xz_why = null;
-        return true;
-}
+/*
+        tar's codec table reads through one live decoder between begin and
+        end, on whichever thread calls read; the error it reports is that
+        decoder's, mirrored into xz_why.
+*/
+static address_any xz_reader;
 
 static bool xz_decode_begin_prefix(bipolar in, p8 address_to prefix, positive n)
 {
-        xz_decode_begin(in);
-        if (n > XZ_DEC_IN)
-                return xz_fail("xz prefix");
-        memory_copy(xz_dec.in_buf, prefix, n);
-        xz_dec.input.have = n;
-        xz_dec.input.at = 0;
-        return true;
+        if (xz_reader)
+                xz_pull_close(xz_reader);
+        xz_reader = xz_pull_open(in, prefix, n);
+        xz_why = xz_pull_error(xz_reader);
+        return xz_why == null;
 }
 
-/* Copy decoded bytes out of the window, decoding more as it empties. */
 static bipolar xz_decode_read(p8 address_to dst, positive n)
 {
-        xz_decoder address_to d = address_of xz_dec;
-        positive copied = 0;
+        bipolar got = xz_reader ? xz_pull_read(xz_reader, dst, n) : -1;
 
-        while (copied < n)
-        {
-                positive left = (positive)(d->job.out - d->emitted);
-
-                if (left)
-                {
-                        positive take = left > n - copied ? n - copied : left;
-
-                        memory_copy_apart(dst + copied, d->emitted, take);
-                        d->emitted += take;
-                        copied += take;
-                        continue;
-                }
-                if (d->finished)
-                        break;
-                if (!d->hdr_done && !d->block_live && !xz_dec_more(d))
-                {
-                        if (d->why)
-                                break;
-                        d->finished = true;
-                        break;
-                }
-                d->paused = false;
-                if (!xz_dec_stream(d))
-                        break;
-        }
-        if (d->why)
-        {
-                xz_why = d->why;
-                return -1;
-        }
-        return (bipolar)copied;
+        if (got < 0)
+                xz_why = xz_pull_error(xz_reader);
+        return got;
 }
 
 static bool xz_decode_end(void)
 {
-        xz_dec.pull = false;
-        xz_dec.finished = true;
-        xz_dec_dict_close(address_of xz_dec);
-        if (xz_dec.why)
-                xz_why = xz_dec.why;
+        if (xz_reader)
+        {
+                if (!xz_why)
+                        xz_why = xz_pull_error(xz_reader);
+                xz_pull_close(xz_reader);
+                xz_reader = null;
+        }
         return xz_why == null;
 }
 
@@ -3369,40 +3593,17 @@ static string_address xz_par_block_decode(xz_par address_to r, positive slot,
                                           p8 address_to bytes, positive total,
                                           p8 address_to into, p64 uncompressed)
 {
-        xz_decoder address_to d = (xz_decoder address_to)r->slots[slot];
-
-        if (!d)
+        if (!r->slots[slot])
+                r->slots[slot] = xz_block_decoder();
+        if (!r->slots[slot])
+                return "xz cannot map a decoder";
+        if (!xz_block_decode(r->slots[slot], bytes, total, uncompressed, into,
+                             r->check, null))
         {
-                d = (xz_decoder address_to)memory(sizeof(xz_decoder));
-                if (!d || system_failed(d))
-                        return "xz cannot map a decoder";
-                r->slots[slot] = d;
+                string_address why = xz_pull_error(r->slots[slot]);
+
+                return why ? why : (string_address)"xz block";
         }
-
-        byte_store store = {into, (positive)uncompressed, 0};
-
-        d->job.model = address_of d->models;
-        d->why = null;
-        d->store = address_of store;
-        d->out_fd = -1;
-        d->pull = false;
-        d->paused = false;
-        d->finished = false;
-        d->hdr_done = true;
-        d->block_live = false;
-        d->lz2_kind = 0;
-        d->in_abs = 0;
-        d->check = r->check;
-        byte_input_open_memory(address_of d->input, bytes, total, d->in_buf, XZ_DEC_IN);
-
-        bool ok = xz_dec_block(d) && xz_dec_drain(d);
-
-        d->input.mem = null;
-        d->store = null;
-        if (!ok)
-                return d->why ? d->why : (string_address)"xz block";
-        if (d->in_abs != total || store.used != uncompressed)
-                return "xz block size does not match its header";
         return null;
 }
 
@@ -3644,9 +3845,13 @@ static bipolar xz_par_walk(xz_par address_to r, positive batch_output)
    the stream whose header the walk already read. */
 static bool xz_par_serial_rest(xz_par address_to r)
 {
-        xz_decoder address_to d = address_of xz_dec;
+        xz_decoder address_to d = xz_dec_new();
 
-        xz_dec_open(d);
+        if (!d)
+        {
+                r->why = "xz cannot map the decoder";
+                return false;
+        }
         byte_input_open_fd(address_of d->input, r->in, d->in_buf, XZ_DEC_IN);
         memory_copy_apart(d->in_buf, r->prefix, r->prefix_n);
         d->input.have = r->prefix_n;
@@ -3660,9 +3865,9 @@ static bool xz_par_serial_rest(xz_par address_to r)
 
         bool ok = xz_dec_run(d);
 
-        xz_dec_dict_close(d);
         if (!ok)
                 r->why = d->why;
+        xz_dec_free(d);
         return ok;
 }
 
@@ -3685,15 +3890,8 @@ static bool xz_par_decode(bipolar in, bipolar out)
 
                 ok = got > 0 || (got == 0 && xz_par_serial_rest(r));
                 for (positive i = 0; i < r->slot_count; i++)
-                {
-                        xz_decoder address_to d = (xz_decoder address_to)r->slots[i];
-
-                        if (d)
-                        {
-                                xz_dec_dict_close(d);
-                                memory_free(d, sizeof(xz_decoder));
-                        }
-                }
+                        if (r->slots[i])
+                                xz_pull_close(r->slots[i]);
                 memory_free(r->slots, r->slot_count * sizeof(address_any));
         }
         else
@@ -3716,15 +3914,19 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
                 ok = xz_par_decode(in, out);
         else if (decode)
         {
-                xz_decoder address_to d = address_of xz_dec;
+                xz_decoder address_to d = xz_dec_new();
 
-                xz_dec_open(d);
-                byte_input_open_fd(address_of d->input, in, d->in_buf, XZ_DEC_IN);
-                d->out_fd = out;
-                ok = xz_dec_run(d);
-                xz_dec_dict_close(d);
-                if (!ok)
+                ok = false;
+                xz_why = "xz cannot map the decoder";
+                if (d)
+                {
+                        byte_input_open_fd(address_of d->input, in, d->in_buf,
+                                           XZ_DEC_IN);
+                        d->out_fd = out;
+                        ok = xz_dec_run(d);
                         xz_why = d->why;
+                        xz_dec_free(d);
+                }
         }
         else
         {
