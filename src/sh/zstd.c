@@ -752,12 +752,15 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
         if (rank[1] < 2 || (rank[1] & 1))
                 return zstd_fail("zstd Huffman rank-1 weights");
 
-        huff->max_bits = max_bits;
+        /* Built at eleven bits whatever the depth: a depth-L cell repeats
+           1 << (11 - L) times, so every table takes the four-stream
+           walker, which indexes by the top eleven bits. */
+        huff->max_bits = 11;
         start = 0;
         for (w = 1; w <= 12; w++)
         {
                 p8 bits = (p8)(max_bits + 1 - w);
-                positive span = (positive)1 << (w - 1);
+                positive span = (positive)1 << (w - 1 + 11 - max_bits);
 
                 if (w > max_bits + 1)
                         continue;
@@ -767,7 +770,7 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
 
                         if (weight[s] != w)
                                 continue;
-                        if (start + span > ((positive)1 << max_bits))
+                        if (start + span > ((positive)1 << 11))
                                 return zstd_fail("zstd Huffman table overflow");
                         for (i = 0; i < span; i++)
                                 /* nbits in the low byte, symbol in the high
@@ -779,7 +782,7 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
                 }
         }
 
-        if (start != ((positive)1 << max_bits))
+        if (start != ((positive)1 << 11))
                 return zstd_fail("zstd Huffman table did not fill");
         huff->valid = true;
         return true;
@@ -896,6 +899,36 @@ static bool zstd_emit(p8 address_to p, positive n)
                 if (zstd_hashing)
                         hash_xxh64_add(address_of zstd_hash, p, n);
                 zstd_decoded += n;
+                return true;
+        }
+
+        /* A pull reader takes the span where it lies: the window keeps it
+           until the reader has drained it, since the next block is only
+           decoded after that. */
+        if (zstd_pull)
+        {
+                if (zstd_hashing)
+                        hash_xxh64_add(address_of zstd_hash, p, n);
+                zstd_decoded += n;
+                zstd_rest = p;
+                zstd_rest_n = n;
+                zstd_paused = true;
+                return true;
+        }
+
+        /* A block's worth goes to the descriptor from the window itself. */
+        if (n >= ZSTD_OUT)
+        {
+                if (!zstd_flush())
+                        return false;
+                if (zstd_hashing)
+                        hash_xxh64_add(address_of zstd_hash, p, n);
+                zstd_decoded += n;
+                if (system_write_all((positive)zstd_out_fd, p, n) !=
+                    (bipolar)n)
+                        return zstd_fail("zstd: write failed");
+                zstd_rest = null;
+                zstd_rest_n = 0;
                 return true;
         }
 
@@ -1708,9 +1741,14 @@ static bipolar zstd_decode_read(p8 address_to dst, positive n)
                 }
                 if (zstd_rest_n)
                 {
-                        zstd_paused = false;
-                        if (!zstd_emit(zstd_rest, zstd_rest_n))
-                                return -1;
+                        take = zstd_rest_n > n - copied ? n - copied
+                                                        : zstd_rest_n;
+                        memory_copy_apart(dst + copied, zstd_rest, take);
+                        zstd_rest += take;
+                        zstd_rest_n -= take;
+                        copied += take;
+                        if (!zstd_rest_n)
+                                zstd_paused = false;
                         continue;
                 }
                 if (zstd_finished)
