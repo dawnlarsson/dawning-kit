@@ -5877,70 +5877,72 @@ static inline INLINE bool shell_log_room(positive total)
                total <= MAX_INPUT - log_writer_buffer_length;
 }
 
+//      Two strings, an optional byte between them and an optional newline:
+//      echo's one- and two-word lines and printf's `%s %s\n` and `%s\n`.
+static inline INLINE fn shell_output_two(writer write, string_address a,
+                                        positive la, string_address b,
+                                        positive lb, p8 between, bool newline)
+{
+        positive total = la + lb + (between ? 1 : 0) + (newline ? 1 : 0);
+        p8 address_to dst;
+        positive have;
+
+        if (!total)
+                return;
+
+        if (write == log && shell_log_room(total))
+        {
+                have = log_writer_buffer_length;
+                dst = log_writer_buffer + have;
+                memory_copy_apart(dst, a, la);
+                dst += la;
+                if (between)
+                        *dst++ = between;
+                memory_copy_apart(dst, b, lb);
+                dst += lb;
+                if (newline)
+                        *dst = '\n';
+                log_writer_buffer_length = have + total;
+                return;
+        }
+
+        if (total <= SHELL_OUTPUT_JOIN)
+        {
+                p8 room[SHELL_OUTPUT_JOIN];
+
+                memory_copy_apart(room, a, la);
+                dst = room + la;
+                if (between)
+                        *dst++ = between;
+                memory_copy_apart(dst, b, lb);
+                if (newline)
+                        room[total - 1] = '\n';
+                write(room, total);
+                return;
+        }
+
+        if (la)
+                write(a, la);
+        if (between)
+                write(address_of between, 1);
+        if (lb)
+                write(b, lb);
+        if (newline)
+                write("\n", 1);
+}
+
 static inline INLINE fn shell_echo_join(writer write, positive first,
                                         bool newline)
 {
         positive words = shell_argc - first;
-        p8 address_to dst;
-        positive have;
 
         if (words <= 2)
-        {
-                string_address a = words ? shell_argv[first] : (string_address) "";
-                positive la = words ? string_length(a) : 0;
-                string_address b = words == 2 ? shell_argv[first + 1] : a;
-                positive lb = words == 2 ? string_length(b) : 0;
-                positive total = la + lb + (words == 2) + (newline ? 1 : 0);
-
-                if (!total)
-                        return;
-
-                if (write == log && shell_log_room(total))
-                {
-                        have = log_writer_buffer_length;
-                        dst = log_writer_buffer + have;
-                        memory_copy_apart(dst, a, la);
-                        dst += la;
-                        if (words == 2)
-                        {
-                                *dst++ = ' ';
-                                memory_copy_apart(dst, b, lb);
-                                dst += lb;
-                        }
-                        if (newline)
-                                *dst = '\n';
-                        log_writer_buffer_length = have + total;
-                        return;
-                }
-
-                if (total <= SHELL_OUTPUT_JOIN)
-                {
-                        p8 room[SHELL_OUTPUT_JOIN];
-
-                        memory_copy_apart(room, a, la);
-                        if (words == 2)
-                        {
-                                room[la] = ' ';
-                                memory_copy_apart(room + la + 1, b, lb);
-                        }
-                        if (newline)
-                                room[total - 1] = '\n';
-                        write(room, total);
-                        return;
-                }
-
-                if (la)
-                        write(a, la);
-                if (words == 2)
-                {
-                        write(" ", 1);
-                        if (lb)
-                                write(b, lb);
-                }
-                if (newline)
-                        write("\n", 1);
-                return;
-        }
+                return shell_output_two(
+                    write, words ? shell_argv[first] : (string_address)"",
+                    words ? string_length(shell_argv[first]) : 0,
+                    words == 2 ? shell_argv[first + 1] : (string_address)"",
+                    words == 2 ? string_length(shell_argv[first + 1]) : 0,
+                    words == 2 ? ' ' : 0, newline);
 
         {
                 p8 room[SHELL_OUTPUT_JOIN];
@@ -11608,93 +11610,6 @@ fn printf_one(writer write, string_address format)
         walker, including dash's missing %q (we still have it). `%s %s\n`
         and `%s\n` are the script-shaped cases and do not walk the format.
 */
-static inline INLINE fn printf_join_two_strings(writer write,
-                                                string_address a,
-                                                string_address b, p8 between,
-                                                bool newline)
-{
-        positive la = string_length(env_reading(a));
-        positive lb = string_length(env_reading(b));
-        positive total = la + lb + (between ? 1 : 0) + (newline ? 1 : 0);
-        p8 address_to dst;
-        positive have;
-
-        if (!total)
-                return;
-
-        if (write == log && shell_log_room(total))
-        {
-                have = log_writer_buffer_length;
-                dst = log_writer_buffer + have;
-                memory_copy_apart(dst, a, la);
-                dst += la;
-                if (between)
-                        *dst++ = between;
-                memory_copy_apart(dst, b, lb);
-                dst += lb;
-                if (newline)
-                        *dst = '\n';
-                log_writer_buffer_length = have + total;
-                return;
-        }
-
-        if (total <= SHELL_OUTPUT_JOIN)
-        {
-                p8 room[SHELL_OUTPUT_JOIN];
-
-                memory_copy_apart(room, a, la);
-                dst = room + la;
-                if (between)
-                        *dst++ = between;
-                memory_copy_apart(dst, b, lb);
-                if (newline)
-                        room[total - 1] = '\n';
-                write(room, total);
-                return;
-        }
-
-        if (la)
-                write(a, la);
-        if (between)
-                write(address_of between, 1);
-        if (lb)
-                write(b, lb);
-        if (newline)
-                write("\n", 1);
-}
-
-static inline INLINE fn printf_join_string_nl(writer write, string_address a)
-{
-        positive la = string_length(env_reading(a));
-        positive total = la + 1;
-        p8 address_to dst;
-        positive have;
-
-        if (write == log && shell_log_room(total))
-        {
-                have = log_writer_buffer_length;
-                dst = log_writer_buffer + have;
-                memory_copy_apart(dst, a, la);
-                dst[la] = '\n';
-                log_writer_buffer_length = have + total;
-                return;
-        }
-
-        if (total <= SHELL_OUTPUT_JOIN)
-        {
-                p8 room[SHELL_OUTPUT_JOIN];
-
-                memory_copy_apart(room, a, la);
-                room[la] = '\n';
-                write(room, total);
-                return;
-        }
-
-        if (la)
-                write(a, la);
-        write("\n", 1);
-}
-
 static bool printf_format_simple(string_address format)
 {
         string_address step = format;
@@ -11888,12 +11803,16 @@ fn shell_printf(writer write, string_address input)
                 while (1)
                 {
                         printf_took = false;
-                        if (kind == 1)
-                                printf_join_two_strings(write, printf_next(),
-                                                        printf_next(), ' ',
-                                                        true);
-                        else if (kind == 2)
-                                printf_join_string_nl(write, printf_next());
+                        if (kind && kind < 3)
+                        {
+                                string_address a = printf_next();
+                                string_address b = kind == 1 ? printf_next()
+                                                             : (string_address)"";
+
+                                shell_output_two(write, a, string_length(a), b,
+                                                 kind == 1 ? string_length(b) : 0,
+                                                 kind == 1 ? ' ' : 0, true);
+                        }
                         else if (kind)
                                 printf_simple_one(write, format);
                         else
