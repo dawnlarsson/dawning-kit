@@ -25,6 +25,7 @@ typedef uint64_t positive; typedef int64_t bipolar; typedef int32_t b32;
 #define system_failed(p) ((void*)(p)==MAP_FAILED)
 static void *memory(size_t n) { return mmap(0,n,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0); }
 #define syscall(n) 0
+#define system_call_1(number, a) (-1)
 #define system_call_3(no,p,n,prot) mprotect((void*)(p),n,prot)
 static int failed, total;
 static void check(const char *what, int ok) { total++; if(!ok) { failed++; fprintf(stderr,"FAIL %s\\n",what); } }
@@ -116,7 +117,7 @@ head+=subprocess.check_output(['python3','test/differential.py','--harness','nat
 a=checks.index('static p64 floor_crc(');b=checks.index('#endif\n#ifdef BENCH_compression_floor',a)
 body=checks[a:b].replace('#ifdef CHECK_compression_floor','')
 # Darwin pages are 16 KiB; the LZMA span check sizes its guards by FLOOR_PAGE.
-head+='#define FLOOR_PAGE ((positive)getpagesize())\n'
+head+='#define FLOOR_PAGE ((positive)getpagesize())\n#define FLOOR_PAGE_STATIC 16384\n'
 a=body.index('static p8 address_to floor_pages(');b=body.index('static fn floor_checksums',a)
 body=body[:a]+body[a:b].replace('4096','(positive)getpagesize()')+body[b:]
 body=body.replace('[8192]', '[8 * 1024]')
@@ -126,7 +127,6 @@ body=body.replace('input + 4096, 0, 4096','input + getpagesize(), 0, getpagesize
 body=body.replace('positive i = 4096; i < 10 * 4096','positive i = getpagesize(); i < 10 * (positive)getpagesize()')
 body=body.replace('10 * 4096','10 * (positive)getpagesize()').replace('3 * 4096','3 * (positive)getpagesize()').replace('3*4096','3*(positive)getpagesize()').replace('11*4096','11*(positive)getpagesize()')
 body=body.replace('for (positive i = 0; i < 4096; i++) p[getpagesize() + i]', 'for (positive i = 0; i < (positive)getpagesize(); i++) p[getpagesize() + i]')
-body=body.replace('#define FLOOR_PAGE 4096','#define FLOOR_PAGE ((positive)getpagesize())')
 (root/'native-arm64.c').write_text(head+body)
 subprocess.run(['clang','-O2','-Isrc/sh',str(root/'native-arm64.c'),'-o',str(root/'native-arm64')],check=True)
 subprocess.run([str(root/'native-arm64')],check=True)

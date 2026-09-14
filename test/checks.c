@@ -71976,7 +71976,14 @@ static fn floor_huffman(void)
         memory_free(input, 3 * 4096); memory_free(output, 3 * 4096);
 }
 
+/* Guard geometry follows the machine's page; static buffers take a constant
+   bound no smaller than any page the native harness runs on. */
+#ifndef FLOOR_PAGE
 #define FLOOR_PAGE 4096
+#endif
+#ifndef FLOOR_PAGE_STATIC
+#define FLOOR_PAGE_STATIC 4096
+#endif
 
 /* One-bit codes over all-zero input: code 0 is the symbol, code 1 unused. */
 static fn floor_deflate_one_bit(p32 address_to lit, p32 lit_cell, p32 address_to dist, p32 dist_cell)
@@ -72085,9 +72092,9 @@ static fn floor_deflate_codes(void)
         static p8 lens[GZIP_MAXLIT + GZIP_MAXDIST];
         static p32 revs[GZIP_MAXLIT + GZIP_MAXDIST];
         static p32 lit[GZIP_LITLEN_CELLS], dist[GZIP_OFFSET_CELLS];
-        static p8 packed[24 * FLOOR_PAGE];
-        static p8 full[32768 + 24 * FLOOR_PAGE + 300];
-        static positive boundary_bits[24 * FLOOR_PAGE], boundary_out[24 * FLOOR_PAGE];
+        static p8 packed[24 * FLOOR_PAGE_STATIC];
+        static p8 full[32768 + 24 * FLOOR_PAGE_STATIC + 300];
+        static positive boundary_bits[24 * FLOOR_PAGE_STATIC], boundary_out[24 * FLOOR_PAGE_STATIC];
         p8 address_to input = floor_pages(26);
         p8 address_to output = floor_pages(30);
         check("deflate code mappings", input && output);
@@ -72141,7 +72148,7 @@ static fn floor_deflate_codes(void)
                 memory_copy_apart(dst - 32768, full, 32768);
                 p64 acc = 0;
                 positive held = 0, bytes = 0, bits = 0, made = 0, tokens = 0;
-                while (made < target && bytes + 8 < sizeof(packed))
+                while (made < target && bytes + 8 < 24 * FLOOR_PAGE)
                 {
                         random ^= random << 13; random ^= random >> 17; random ^= random << 5;
                         positive mode = (trial >> 1) % 4;
@@ -72208,10 +72215,6 @@ static fn floor_deflate_codes(void)
         memory_free(input, 26 * FLOOR_PAGE);
         memory_free(output, 30 * FLOOR_PAGE);
 }
-
-#ifndef FLOOR_PAGE
-#define FLOOR_PAGE 4096
-#endif
 
 /* The scalar LZMA decoder the span kernel is held to: one packet and one bit
    at a time over a plain ring, reading nothing past its input limit. */
