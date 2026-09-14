@@ -2577,6 +2577,281 @@ PURE bool file_is_dot(string_address name)
         return string_is(name + 1, '.') && string_is(name + 2, end);
 }
 
+// Walking a tree --------------------------------------------
+
+/*
+        A tree, one name at a time, in the order a recursive walk meets it.
+
+        Each directory is opened through the handle of the directory above it
+        and read to its end before the first of its names is handed out. No
+        name is looked up by a path the kernel has to walk again, a caller may
+        remove what it is handed without moving what comes after it, and the
+        names of every directory still being walked stay readable below it.
+        The listings sit one above another in one store, the way the
+        directories do, so the walk costs one getdents block per level rather
+        than a block on the stack per frame.
+
+        walk_next hands out a name inside the directory above it (WALK_NAME)
+        and, once a directory the caller entered is finished, that directory
+        again (WALK_LEAVE), with the handle of the directory that holds it.
+        Nothing is entered unless the caller calls walk_enter straight after
+        the name: what to look at, whether to follow, what to prune and how
+        deep to go stay the caller's, and the kind is getdents' own,
+        DT_UNKNOWN included. A name and path are good until the next call.
+
+        A walk started holding its handles closes none of them on the way out
+        of a directory until walk_release. Names copied into a batch can then
+        be worked on relative to their directories after the walk has moved
+        past them -- a stat, an unlink, a change, an open -- which is the shape
+        a parallel pass over a fixed-size batch takes, with the order the
+        batch was filled in as the order its results are written.
+*/
+#define WALK_LEVELS (FILE_MAX_DEPTH + 2)
+#define WALK_READ 32768
+
+enum
+{
+        WALK_NAME = 1,
+        WALK_LEAVE = 2,
+};
+
+typedef struct
+{
+        p8 event;
+        p8 type;
+        positive depth;
+        bipolar directory;
+        string_address name;
+        //      The name joined to the directories above it, as shown; null
+        //      when that does not fit, and then parent is the part that did.
+        string_address path;
+        string_address parent;
+        positive path_length;
+        //      WALK_LEAVE: why the listing stopped short, when it did.
+        bipolar error;
+} walk_item;
+
+typedef struct
+{
+        bipolar handle;
+        bipolar parent;
+        positive path_length;
+        positive name_at;
+        positive listing;
+        positive stop;
+        positive at;
+        bipolar error;
+} walk_level;
+
+typedef struct
+{
+        walk_level levels[WALK_LEVELS];
+        positive depth;
+        walk_item item;
+        string_address root;
+        bool root_pending;
+        bool root_fits;
+        bool hold;
+        p8 address_to records;
+        positive records_room;
+        positive records_used;
+        bipolar address_to held;
+        positive held_room;
+        positive held_used;
+        p8 path[FILE_PATH_MAX];
+} walk;
+
+static fn walk_start(walk address_to walker, string_address root, bool hold)
+{
+        positive length = string_length(root);
+
+        walker->depth = 0;
+        walker->root = root;
+        walker->root_pending = true;
+        walker->root_fits = length < FILE_PATH_MAX;
+        walker->hold = hold;
+        walker->records_used = 0;
+        if (walker->root_fits)
+                memory_copy_apart(walker->path, root, length + 1);
+}
+
+static fn walk_release(walk address_to walker)
+{
+        for (positive i = 0; i < walker->held_used; i++)
+                system_close(walker->held[i]);
+        walker->held_used = 0;
+}
+
+// A handle nothing can be holding is closed; one a batch may still name
+// waits for walk_release, and is closed now only if it cannot be kept.
+static fn walk_close_level(walk address_to walker, bipolar handle)
+{
+        if (walker->hold &&
+            array_store_reserve(walker->held, walker->held_room,
+                                walker->held_used, walker->held_used + 1,
+                                256))
+        {
+                walker->held[walker->held_used++] = handle;
+                return;
+        }
+        system_close(handle);
+}
+
+static walk_item address_to walk_next(walk address_to walker)
+{
+        walk_item address_to item = address_of walker->item;
+
+        if (walker->root_pending)
+        {
+                walker->root_pending = false;
+                item->event = WALK_NAME;
+                item->type = 0;
+                item->depth = 0;
+                item->directory = AT_FDCWD;
+                item->name = walker->root;
+                item->path = walker->root;
+                item->parent = null;
+                item->path_length = string_length(walker->root);
+                item->error = 0;
+                return item;
+        }
+
+        while (walker->depth)
+        {
+                walk_level address_to level = address_of walker->levels[walker->depth - 1];
+
+                if (level->at >= level->stop)
+                {
+                        walker->depth--;
+                        walker->records_used = level->listing;
+                        walk_close_level(walker, level->handle);
+                        walker->path[level->path_length] = end;
+                        item->event = WALK_LEAVE;
+                        item->type = DT_DIR;
+                        item->depth = walker->depth;
+                        item->directory = level->parent;
+                        item->name = walker->depth
+                                         ? (string_address)walker->path + level->name_at
+                                         : walker->root;
+                        item->path = walker->depth ? (string_address)walker->path
+                                                   : walker->root;
+                        item->parent = null;
+                        item->path_length = level->path_length;
+                        item->error = level->error;
+                        return item;
+                }
+
+                struct linux_dirent64 address_to record =
+                    (struct linux_dirent64 address_to)(walker->records + level->at);
+
+                level->at += record->d_reclen;
+                if (file_is_dot(record->d_name))
+                        continue;
+
+                positive length = string_length(record->d_name);
+                positive head = level->path_length;
+                positive separator = head && walker->path[head - 1] != '/';
+
+                item->event = WALK_NAME;
+                item->type = record->d_type;
+                item->depth = walker->depth;
+                item->directory = level->handle;
+                item->name = record->d_name;
+                item->error = 0;
+
+                if (head + separator + length < FILE_PATH_MAX)
+                {
+                        if (separator)
+                                walker->path[head] = '/';
+                        memory_copy_apart(walker->path + head + separator,
+                                          record->d_name, length + 1);
+                        item->path = walker->path;
+                        item->parent = null;
+                        item->path_length = head + separator + length;
+                }
+                else
+                {
+                        walker->path[head] = end;
+                        item->path = null;
+                        item->parent = walker->path;
+                        item->path_length = head;
+                }
+                return item;
+        }
+
+        return null;
+}
+
+/* Enter the directory walk_next just named, opened through its parent with
+   flags (O_NOFOLLOW, or 0 to follow), and read the whole of it. A name
+   whose path does not fit is not entered: nothing below it could be shown. */
+static bipolar walk_enter(walk address_to walker, positive flags)
+{
+        walk_item address_to item = address_of walker->item;
+
+        if (item->event != WALK_NAME || !item->path ||
+            (!item->depth && !walker->root_fits))
+                return -ERROR_NAME_TOO_LONG;
+        if (walker->depth >= WALK_LEVELS)
+                return -ERROR_TOO_MANY_LEVELS;
+
+        bipolar handle = system_open_at(item->directory, item->name,
+                                        FILE_READ | O_DIRECTORY | O_CLOEXEC | flags);
+
+        if (handle < 0)
+                return handle;
+
+        walk_level address_to level = address_of walker->levels[walker->depth];
+
+        level->handle = handle;
+        level->parent = item->directory;
+        level->path_length = item->path_length;
+        level->name_at = item->depth ? item->path_length - string_length(item->name) : 0;
+        level->listing = walker->records_used;
+        level->error = 0;
+
+        for (;;)
+        {
+                if (!array_store_reserve(walker->records, walker->records_room,
+                                         walker->records_used,
+                                         walker->records_used + WALK_READ,
+                                         1 << 20))
+                {
+                        level->error = -ERROR_NO_MEMORY;
+                        break;
+                }
+
+                bipolar taken = system_read_directory(
+                    handle, walker->records + walker->records_used, WALK_READ);
+
+                if (taken <= 0)
+                {
+                        if (taken < 0)
+                                level->error = taken;
+                        break;
+                }
+                walker->records_used += (positive)taken;
+        }
+
+        level->stop = walker->records_used;
+        level->at = level->listing;
+        walker->depth++;
+        return handle;
+}
+
+// Close whatever a walk stopped early left open, and give its store back.
+static fn walk_end(walk address_to walker)
+{
+        while (walker->depth)
+                system_close(walker->levels[--walker->depth].handle);
+        walk_release(walker);
+        walker->root_pending = false;
+        array_store_release(walker->records, walker->records_room,
+                            walker->records_used);
+        array_store_release(walker->held, walker->held_room,
+                            walker->held_used);
+}
+
 /*
         A tool that changes something about a name, and under -R about
         everything beneath it. chmod, chown and chgrp are this one walk with a
@@ -11004,9 +11279,6 @@ static string_address address_to du_excludes;
 static positive du_exclude_room;
 static positive du_exclude_have;
 
-// -S needs to know whether the cost that just came back was a directory's,
-// and d_type is a hint some filesystems decline to give.
-static bool du_was_directory;
 
 static file_identity_set du_seen;
 static bool du_seen_broken;
@@ -11065,127 +11337,167 @@ static fn du_report(p64 bytes, string_address path)
         string_format(log, "\t%w\n", writer_terminal_name, path);
 }
 
-// Returns what the tree costs, and prints the parts of it that were asked for
-// on the way back up, which is the order du has always reported in.
-static p64 du_walk(string_address path, positive depth, bool named, positive level)
+/*
+        What a tree costs, printed on the way back up, which is the order du has
+        always reported in: each name is looked at through the directory that
+        holds it, and a directory's line comes once the walk leaves it. A frame
+        per depth keeps what the directory itself costs with what is under it,
+        and, for -S, what of that is under its subdirectories.
+*/
+static struct
 {
-        file_facts facts;
-        bipolar looked = file_look_code(AT_FDCWD, path,
-                                        du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
-                                        address_of facts);
+        p64 total;
+        p64 below;
+} du_levels[WALK_LEVELS];
 
-        if (looked < 0)
+static walk du_walker;
+
+static p64 du_measure(string_address root)
+{
+        walk address_to walker = address_of du_walker;
+        walk_item address_to item;
+        p64 result = 0;
+
+        walk_start(walker, root, false);
+
+        while ((item = walk_next(walker)))
         {
-                string_format(log_error, "du: cannot access '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(looked));
-                du_status = 1;
-                du_was_directory = false;
-                return 0;
-        }
+                positive depth = item->depth;
 
-        du_was_directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
-
-        if (named)
-                du_device = file_device_key(facts.device_major, facts.device_minor);
-        else if (du_one_system &&
-                 file_device_key(facts.device_major, facts.device_minor) != du_device)
-                return 0;
-
-        if (du_already(address_of facts))
-                return 0;
-
-        p64 mine = du_apparent ? (p64)facts.size : facts.blocks * 512;
-
-        // --apparent-size is asking how much was written, and nothing was
-        // written into the directory itself; only what is under it counts.
-        if (du_apparent && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
-                mine = 0;
-
-        if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
-        {
-                if ((du_all || named) && level <= du_maximum)
-                        du_report(mine, path);
-
-                du_was_directory = false;
-
-                return mine;
-        }
-
-        p64 total = mine;
-        p64 below = 0;
-        file_walk walk;
-
-        if (file_walk_open(address_of walk, AT_FDCWD, path))
-        {
-                struct linux_dirent64 address_to entry;
-
-                while ((entry = file_walk_next(address_of walk)))
+                if (item->event == WALK_LEAVE)
                 {
-                        if (file_is_dot(entry->d_name))
-                                continue;
+                        p64 total = du_levels[depth].total;
 
-                        // Out of depth is answered by the first entry there
-                        // is, before an exclusion could hide it: a tree this
-                        // deep has not been measured and saying so is the
-                        // whole of what is left to do here.
-                        if (depth == 0)
+                        if (depth <= du_maximum)
+                                du_report(du_separate ? total - du_levels[depth].below
+                                                      : total,
+                                          item->path);
+                        if (!depth)
+                                result = total;
+                        else
                         {
-                                log_error("du: tree is nested too deep\n", 0);
-                                du_depth_broken = true;
-                                du_status = 1;
-                                break;
+                                du_levels[depth - 1].total += total;
+                                du_levels[depth - 1].below += total;
                         }
-
-                        p8 under[FILE_PATH_MAX];
-
-                        if (!file_path_join(under, path, entry->d_name))
-                        {
-                                string_format(log_error, "du: cannot access '%w/%w': %s\n",
-                                              writer_terminal_quoted_name, path,
-                                              writer_terminal_quoted_name, entry->d_name,
-                                              file_reason(-ERROR_NAME_TOO_LONG));
-                                du_status = 1;
-                                continue;
-                        }
-
-                        if (du_excluded(under))
-                                continue;
-
-                        p64 cost = du_walk(under, depth - 1, false, level + 1);
-
-                        if (du_seen_broken || du_depth_broken)
-                                break;
-
-                        total += cost;
-
-                        if (du_was_directory)
-                                below += cost;
+                        continue;
                 }
 
-                file_walk_close(address_of walk);
-        }
-        else if (depth > 0)
-        {
-                // A directory that will not open at the bottom of the walk is
-                // not complained about, because nothing was going to be read
-                // out of it either way.
-                string_format(log_error, "du: cannot read directory '%w': %s\n",
-                              writer_terminal_quoted_name, path, file_reason(walk.handle));
-                du_status = 1;
+                // Out of depth is answered by the first entry there is,
+                // before an exclusion could hide it: a tree this deep has
+                // not been measured and saying so is the whole of what is
+                // left to do here.
+                if (depth > FILE_MAX_DEPTH)
+                {
+                        log_error("du: tree is nested too deep\n", 0);
+                        du_depth_broken = true;
+                        du_status = 1;
+                        break;
+                }
+
+                if (!item->path)
+                {
+                        string_format(log_error, "du: cannot access '%w/%w': %s\n",
+                                      writer_terminal_quoted_name, item->parent,
+                                      writer_terminal_quoted_name, item->name,
+                                      file_reason(-ERROR_NAME_TOO_LONG));
+                        du_status = 1;
+                        continue;
+                }
+
+                if (depth && du_excluded(item->path))
+                        continue;
+
+                file_facts facts;
+                bipolar looked = file_look_code(item->directory, item->name,
+                                                du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                address_of facts);
+
+                if (looked < 0)
+                {
+                        string_format(log_error, "du: cannot access '%w': %s\n",
+                                      writer_terminal_quoted_name, item->path,
+                                      file_reason(looked));
+                        du_status = 1;
+                        continue;
+                }
+
+                bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+                p64 device = file_device_key(facts.device_major, facts.device_minor);
+
+                if (!depth)
+                        du_device = device;
+                else if (du_one_system && device != du_device)
+                        continue;
+
+                if (du_already(address_of facts))
+                {
+                        if (du_seen_broken)
+                                break;
+                        continue;
+                }
+
+                p64 mine = du_apparent ? (p64)facts.size : facts.blocks * 512;
+
+                // --apparent-size is asking how much was written, and nothing
+                // was written into the directory itself; only what is under
+                // it counts.
+                if (du_apparent && directory)
+                        mine = 0;
+
+                if (!directory)
+                {
+                        if ((du_all || !depth) && depth <= du_maximum)
+                                du_report(mine, item->path);
+                        if (depth)
+                                du_levels[depth - 1].total += mine;
+                        else
+                                result = mine;
+                        continue;
+                }
+
+                // A root is opened as it was written, trailing slash and all;
+                // below it a link was not a directory to the look above, and
+                // the open refuses to become one unless -L follows.
+                bipolar entered = walk_enter(walker,
+                                             du_follow || !depth ? 0 : O_NOFOLLOW);
+
+                if (entered < 0)
+                {
+                        // A directory that will not open at the bottom of the
+                        // walk is not complained about, because nothing was
+                        // going to be read out of it either way.
+                        if (depth < FILE_MAX_DEPTH)
+                        {
+                                string_format(log_error, "du: cannot read directory '%w': %s\n",
+                                              writer_terminal_quoted_name, item->path,
+                                              file_reason(entered));
+                                du_status = 1;
+                        }
+
+                        if (depth <= du_maximum)
+                                du_report(mine, item->path);
+                        if (depth)
+                        {
+                                du_levels[depth - 1].total += mine;
+                                du_levels[depth - 1].below += mine;
+                        }
+                        else
+                                result = mine;
+                        continue;
+                }
+
+                du_levels[depth].total = mine;
+                du_levels[depth].below = 0;
         }
 
+        // A broken walk measured nothing it can stand behind.
         if (du_seen_broken || du_depth_broken)
         {
-                du_was_directory = true;
+                walk_end(walker);
                 return 0;
         }
 
-        if (level <= du_maximum)
-                du_report(du_separate ? total - below : total, path);
-
-        du_was_directory = true;
-
-        return total;
+        return result;
 }
 
 static bool du_exclude_seen(p8 letter, string_address value)
@@ -11285,18 +11597,18 @@ static b32 file_du()
 
         if (first >= count)
         {
-                du_grand += du_walk((string_address) ".", FILE_MAX_DEPTH, true, 0);
+                du_grand += du_measure((string_address) ".");
         }
         else
         {
                 while (first < count && !du_seen_broken && !du_depth_broken)
-                        du_grand += du_walk(program_argument((b32)first++),
-                                            FILE_MAX_DEPTH, true, 0);
+                        du_grand += du_measure(program_argument((b32)first++));
         }
 
         if (du_total && !du_seen_broken && !du_depth_broken)
                 du_report(du_grand, (string_address) "total");
 
+        walk_end(address_of du_walker);
         log_flush();
 
         return du_status;
