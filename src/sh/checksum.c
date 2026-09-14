@@ -911,7 +911,10 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
 
 static b32 checksum_main()
 {
-        string_address command = file_called_name(null);
+        string_address command = program_argument(0);
+
+        if (command)
+                command = file_last_component(command);
         const checksum_algorithm address_to algorithm =
             checksum_algorithm_find(command, false);
 
