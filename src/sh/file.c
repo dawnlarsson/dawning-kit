@@ -4883,14 +4883,13 @@ static fn ls_quote_shell(writer write, string_address name, positive length, boo
         {
                 p8 byte = string_get(name + at);
 
+                // Outside quotes, as after a $'...' run, GNU spells the quote
+                // \' and opens the next run; inside, it closes, escapes and
+                // reopens.
                 if (byte == '\'')
                 {
-                        if (!open)
-                        {
-                                write("'", 1);
-                                open = true;
-                        }
-                        write("'\\''", 4);
+                        write(open ? "'\\''" : "\\''", open ? 4 : 3);
+                        open = true;
                         continue;
                 }
 
