@@ -61252,7 +61252,7 @@ static fn floor_lzma_span(void)
                         {
                                 positive dist = (random >> 8) % (at < 4096 ? at : 4096) + 1;
                                 positive which = (random >> 6) & 3;
-                                bool repeat = (random & 4) && xz_rep[which] <= xz_dict_full;
+                                bool repeat = (random & 4) && xz_rep[which] <= (at < 4096 ? at : 4096);
                                 if (repeat) dist = xz_rep[which];
                                 if (trial < 7 && !repeat) dist = trial + 1;
                                 n = 2 + ((random >> 16) % 272);
@@ -61262,13 +61262,13 @@ static fn floor_lzma_span(void)
                                         for (positive k = 0; k < n; k++) plain[at + k] = plain[at + k - dist];
                                         if (repeat) xz_enc_repeat(which, n);
                                         else xz_enc_match(dist, n);
-                                        xz_enc_seen_span(plain + at, n);
+                                        xz_unpacked += n;
                                 }
                         }
                         if (n == 1)
                         {
                                 plain[at] = (p8)random;
-                                xz_enc_literal(plain[at]);
+                                xz_enc_literal(plain + at);
                         }
                         at += n;
                 }
