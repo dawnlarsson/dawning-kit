@@ -128,6 +128,8 @@ static struct canvas *canvas_take_over(struct drm_device *dev)
                         return NULL;
                 }
 
+                canvas_terminal_prepare();
+
         }
 
         canvas = kzalloc(sizeof(*canvas), GFP_KERNEL);

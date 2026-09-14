@@ -1677,6 +1677,75 @@ static _Bool desktop_sequence_changed(void)
         A magnified cursor goes back on its own. Nothing else is watching the
         clock, so the frame the shake armed is what notices.
 */
+static void pointer_report(struct pane *pane, int x, int y,
+                           unsigned int button, unsigned int flags)
+{
+        struct window *shared;
+        struct window_key key;
+        unsigned int head, tail;
+        int title, col, row;
+
+        if (!pane || !pane->shared || !pane->cells)
+                return;
+
+        shared = pane->shared;
+        if (!(READ_ONCE(shared->want) & WINDOW_WANT_POINTER))
+                return;
+
+        title = pane_title(pane);
+        if (canvas_cell_w <= 0 || canvas_cell_h <= 0)
+                return;
+
+        col = (x - pane->x) / canvas_cell_w;
+        row = (y - pane->y - title) / canvas_cell_h;
+        if (col < 0 || row < 0)
+                return;
+        if ((unsigned int)col >= pane->columns ||
+            (unsigned int)row >= pane->rows)
+                return;
+
+        {
+                unsigned int mods = (unsigned int)atomic_read(&desktop.modifiers);
+
+                if (mods & WINDOW_KEY_SHIFT)
+                        button += 4;
+                if (mods & WINDOW_KEY_ALT)
+                        button += 8;
+                if (mods & WINDOW_KEY_CONTROL)
+                        button += 16;
+        }
+
+        key.code = 0;
+        key.character = button;
+        key.flags = WINDOW_KEY_POINTER | flags;
+        key.reserved = ((unsigned int)(col + 1) & 0xffff) |
+                       (((unsigned int)(row + 1) & 0xffff) << 16);
+
+        head = READ_ONCE(shared->key_head);
+        tail = READ_ONCE(shared->key_tail);
+
+        if ((flags & WINDOW_KEY_POINTER_MOVE) && head != tail)
+        {
+                struct window_key *last =
+                    &shared->keys[(head - 1) % WINDOW_KEYS];
+
+                if (last->flags & WINDOW_KEY_POINTER_MOVE)
+                {
+                        *last = key;
+                        smp_wmb();
+                        return;
+                }
+        }
+
+        if (head - tail >= WINDOW_KEYS)
+                return;
+
+        shared->keys[head % WINDOW_KEYS] = key;
+        smp_wmb();
+        WRITE_ONCE(shared->key_head, head + 1);
+        wake_up_interruptible(&pane->wait);
+}
+
 static void cursor_settle(void)
 {
         if (desktop.cursor_scale <= desktop.scale)

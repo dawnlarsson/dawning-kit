@@ -736,6 +736,7 @@ static bipolar file_exec_path_try(string_address address_to words);
         nothing of the shell but file.c's environment, so it can come this
         early and be the one place that says where a root is.
 */
+#include "terminfo.c"
 #include "../bowl/runtime.c"
 #include "process_tools.c"
 #include "monitor.c"

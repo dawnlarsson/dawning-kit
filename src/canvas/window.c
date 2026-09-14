@@ -139,6 +139,8 @@
 #define WINDOW_KEY_SHIFT 2u
 #define WINDOW_KEY_CONTROL 4u
 #define WINDOW_KEY_ALT 8u
+#define WINDOW_KEY_POINTER 16u
+#define WINDOW_KEY_POINTER_MOVE 32u
 
 struct window_key
 {
@@ -238,6 +240,8 @@ struct window
         unsigned int max_columns;
         unsigned int max_rows;
         unsigned int mapping;
+
+        unsigned int want;
 };
 
 // Whether the compositor has asked this window to close. A program that draws
@@ -301,7 +305,14 @@ struct window_request
         hundred and twelve bytes of an eight by sixteen cell itself with a font
         of its own.
 
-        The colours are indices into the sixteen a terminal has always had.
+        The colours are indices into the two hundred and fifty six an xterm
+        has: the first sixteen are the ones a terminal has always had, and
+        the rest are the cube and the greys. A cell still carries an index
+        rather than a colour, so the compositor can look the colour up once.
+
+        flags is what SGR could not fold into those indices: underline, a
+        faint ink, a hidden glyph. Reverse is applied when the cell is
+        written, not stored.
 
         It is also what makes scrolling a store to one number: the cells are a
         ring of lines, and moving on is naming the next one.
@@ -313,6 +324,19 @@ struct window_cell
         unsigned char paper;
         unsigned short flags;
 };
+
+#define WINDOW_CELL_BOLD 1u
+#define WINDOW_CELL_DIM 2u
+#define WINDOW_CELL_ITALIC 4u
+#define WINDOW_CELL_UNDERLINE 8u
+#define WINDOW_CELL_BLINK 16u
+#define WINDOW_CELL_HIDDEN 32u
+#define WINDOW_CELL_STRIKE 64u
+
+/* The program writes this; the compositor reads it. A terminal that has
+   asked for mouse tracking sets WINDOW_WANT_POINTER so clicks, drags and
+   the wheel reach its key ring instead of only moving the desktop. */
+#define WINDOW_WANT_POINTER 1u
 
 #define WINDOW_CELL_W 8
 #define WINDOW_CELL_H 16

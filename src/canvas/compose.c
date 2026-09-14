@@ -181,6 +181,578 @@ static void shape_blit(const struct target *t, const struct shape *shape,
         }
 }
 
+#define BX_N 1u
+#define BX_S 2u
+#define BX_W 4u
+#define BX_E 8u
+
+static void glyph_hline(unsigned char *bits, unsigned int y, unsigned char mask)
+{
+        if (y < WINDOW_CELL_H)
+                bits[y] |= mask;
+}
+
+static void glyph_vline(unsigned char *bits, unsigned int x0, unsigned int x1,
+                        unsigned int y0, unsigned int y1)
+{
+        unsigned int y;
+        unsigned char mask = 0;
+
+        while (x0 <= x1 && x0 < 8)
+        {
+                mask |= (unsigned char)(0x80u >> x0);
+                x0++;
+        }
+
+        if (y1 >= WINDOW_CELL_H)
+                y1 = WINDOW_CELL_H - 1;
+        for (y = y0; y <= y1; y++)
+                bits[y] |= mask;
+}
+
+static void glyph_box_nsew(unsigned char *bits, unsigned int nsew, unsigned int thick)
+{
+        unsigned int mid_y = 7;
+        unsigned int mid_x = 3;
+        unsigned char hmask = 0;
+        unsigned int y;
+
+        if (nsew & BX_W)
+                hmask |= (unsigned char)(0xffu << (8 - (mid_x + 1 + thick)));
+        if (nsew & BX_E)
+                hmask |= (unsigned char)(0xffu >> mid_x);
+        if ((nsew & (BX_W | BX_E)) == (BX_W | BX_E))
+                hmask = 0xff;
+
+        for (y = 0; y < thick; y++)
+                glyph_hline(bits, mid_y + y, hmask);
+
+        if (nsew & BX_N)
+                glyph_vline(bits, mid_x, mid_x + thick - 1, 0, mid_y + thick - 1);
+        if (nsew & BX_S)
+                glyph_vline(bits, mid_x, mid_x + thick - 1, mid_y, WINDOW_CELL_H - 1);
+}
+
+static unsigned int glyph_box_nsew_from(unsigned int c)
+{
+        switch (c)
+        {
+        case 0x2500:
+        case 0x2501:
+        case 0x2504:
+        case 0x2505:
+        case 0x2508:
+        case 0x2509:
+        case 0x254c:
+        case 0x254d:
+                return BX_W | BX_E;
+        case 0x2502:
+        case 0x2503:
+        case 0x2506:
+        case 0x2507:
+        case 0x250a:
+        case 0x250b:
+        case 0x254e:
+        case 0x254f:
+                return BX_N | BX_S;
+        case 0x250c:
+        case 0x250d:
+        case 0x250e:
+        case 0x250f:
+        case 0x256d:
+                return BX_S | BX_E;
+        case 0x2510:
+        case 0x2511:
+        case 0x2512:
+        case 0x2513:
+        case 0x256e:
+                return BX_S | BX_W;
+        case 0x2514:
+        case 0x2515:
+        case 0x2516:
+        case 0x2517:
+        case 0x2570:
+                return BX_N | BX_E;
+        case 0x2518:
+        case 0x2519:
+        case 0x251a:
+        case 0x251b:
+        case 0x256f:
+                return BX_N | BX_W;
+        case 0x251c:
+        case 0x251d:
+        case 0x251e:
+        case 0x251f:
+        case 0x2520:
+        case 0x2521:
+        case 0x2522:
+        case 0x2523:
+                return BX_N | BX_S | BX_E;
+        case 0x2524:
+        case 0x2525:
+        case 0x2526:
+        case 0x2527:
+        case 0x2528:
+        case 0x2529:
+        case 0x252a:
+        case 0x252b:
+                return BX_N | BX_S | BX_W;
+        case 0x252c:
+        case 0x252d:
+        case 0x252e:
+        case 0x252f:
+        case 0x2530:
+        case 0x2531:
+        case 0x2532:
+        case 0x2533:
+                return BX_S | BX_W | BX_E;
+        case 0x2534:
+        case 0x2535:
+        case 0x2536:
+        case 0x2537:
+        case 0x2538:
+        case 0x2539:
+        case 0x253a:
+        case 0x253b:
+                return BX_N | BX_W | BX_E;
+        case 0x253c:
+        case 0x253d:
+        case 0x253e:
+        case 0x253f:
+        case 0x2540:
+        case 0x2541:
+        case 0x2542:
+        case 0x2543:
+        case 0x2544:
+        case 0x2545:
+        case 0x2546:
+        case 0x2547:
+        case 0x2548:
+        case 0x2549:
+        case 0x254a:
+        case 0x254b:
+                return BX_N | BX_S | BX_W | BX_E;
+        case 0x2550:
+                return BX_W | BX_E;
+        case 0x2551:
+                return BX_N | BX_S;
+        case 0x2552:
+        case 0x2553:
+        case 0x2554:
+                return BX_S | BX_E;
+        case 0x2555:
+        case 0x2556:
+        case 0x2557:
+                return BX_S | BX_W;
+        case 0x2558:
+        case 0x2559:
+        case 0x255a:
+                return BX_N | BX_E;
+        case 0x255b:
+        case 0x255c:
+        case 0x255d:
+                return BX_N | BX_W;
+        case 0x255e:
+        case 0x255f:
+        case 0x2560:
+                return BX_N | BX_S | BX_E;
+        case 0x2561:
+        case 0x2562:
+        case 0x2563:
+                return BX_N | BX_S | BX_W;
+        case 0x2564:
+        case 0x2565:
+        case 0x2566:
+                return BX_S | BX_W | BX_E;
+        case 0x2567:
+        case 0x2568:
+        case 0x2569:
+                return BX_N | BX_W | BX_E;
+        case 0x256a:
+        case 0x256b:
+        case 0x256c:
+                return BX_N | BX_S | BX_W | BX_E;
+        case 0x2574:
+                return BX_W;
+        case 0x2575:
+                return BX_N;
+        case 0x2576:
+                return BX_E;
+        case 0x2577:
+                return BX_S;
+        case 0x2578:
+                return BX_W;
+        case 0x2579:
+                return BX_N;
+        case 0x257a:
+                return BX_E;
+        case 0x257b:
+                return BX_S;
+        case 0x257c:
+                return BX_W | BX_E;
+        case 0x257d:
+                return BX_N | BX_S;
+        case 0x257e:
+                return BX_W | BX_E;
+        case 0x257f:
+                return BX_N | BX_S;
+        default:
+                return 0;
+        }
+}
+
+static void glyph_block(unsigned int c, unsigned char *bits)
+{
+        unsigned int y, n;
+        unsigned char left, shade;
+
+        if (c == 0x2588)
+        {
+                memory_fill(bits, 0xff, WINDOW_CELL_H);
+                return;
+        }
+
+        if (c == 0x2580)
+        {
+                memory_fill(bits, 0xff, 8);
+                return;
+        }
+
+        if (c >= 0x2581 && c <= 0x2587)
+        {
+                n = (c - 0x2580) * 2;
+                memory_fill(bits + (WINDOW_CELL_H - n), 0xff, n);
+                return;
+        }
+
+        if (c >= 0x2589 && c <= 0x258f)
+        {
+                left = (unsigned char)(0xffu << (c - 0x2588));
+                memory_fill(bits, left, WINDOW_CELL_H);
+                return;
+        }
+
+        if (c == 0x2590)
+        {
+                memory_fill(bits, 0x0f, WINDOW_CELL_H);
+                return;
+        }
+
+        if (c == 0x258c)
+        {
+                memory_fill(bits, 0xf0, WINDOW_CELL_H);
+                return;
+        }
+
+        if (c >= 0x2591 && c <= 0x2593)
+        {
+                shade = c == 0x2591 ? 0x44 : c == 0x2592 ? 0xaa : 0xee;
+                for (y = 0; y < WINDOW_CELL_H; y++)
+                        bits[y] = (unsigned char)(y & 1 ? shade >> 1 : shade);
+                return;
+        }
+
+        if (c == 0x2594)
+        {
+                bits[0] = 0xff;
+                bits[1] = 0xff;
+                return;
+        }
+
+        if (c == 0x2595)
+        {
+                memory_fill(bits, 0x01, WINDOW_CELL_H);
+                return;
+        }
+
+        if (c == 0x2596)
+        {
+                memory_fill(bits + 8, 0xf0, 8);
+                return;
+        }
+
+        if (c == 0x2597)
+        {
+                memory_fill(bits + 8, 0x0f, 8);
+                return;
+        }
+
+        if (c == 0x2598)
+        {
+                memory_fill(bits, 0xf0, 8);
+                return;
+        }
+
+        if (c == 0x259d)
+        {
+                memory_fill(bits, 0x0f, 8);
+                return;
+        }
+
+        memory_fill(bits, 0xff, WINDOW_CELL_H);
+}
+
+static void glyph_braille(unsigned int dots, unsigned char *bits)
+{
+        static const unsigned char ox[8] = {1, 1, 1, 4, 4, 4, 1, 4};
+        static const unsigned char oy[8] = {1, 5, 9, 1, 5, 9, 13, 13};
+        unsigned int i, x, y;
+
+        for (i = 0; i < 8; i++)
+        {
+                if (!(dots & (1u << i)))
+                        continue;
+                for (y = 0; y < 3; y++)
+                        for (x = 0; x < 2; x++)
+                                bits[oy[i] + y] |=
+                                    (unsigned char)(0x80u >> (ox[i] + x));
+        }
+}
+
+static void glyph_tofu(unsigned char *bits)
+{
+        unsigned int y;
+
+        bits[1] = 0x7e;
+        bits[WINDOW_CELL_H - 2] = 0x7e;
+        for (y = 2; y < WINDOW_CELL_H - 2; y++)
+                bits[y] = 0x42;
+}
+
+static _Bool glyph_synthesize(unsigned int c, unsigned char *bits)
+{
+        unsigned int nsew;
+
+        memory_fill(bits, 0, WINDOW_CELL_H);
+
+        if (c >= 0x2800 && c <= 0x28ff)
+        {
+                glyph_braille(c - 0x2800, bits);
+                return true;
+        }
+
+        if (c >= 0x2580 && c <= 0x259f)
+        {
+                glyph_block(c, bits);
+                return true;
+        }
+
+        if (c >= 0x2500 && c <= 0x257f)
+        {
+                nsew = glyph_box_nsew_from(c);
+                if (!nsew)
+                {
+                        if (c == 0x2571)
+                        {
+                                bits[0] = 0x01;
+                                bits[2] = 0x02;
+                                bits[4] = 0x04;
+                                bits[6] = 0x08;
+                                bits[8] = 0x10;
+                                bits[10] = 0x20;
+                                bits[12] = 0x40;
+                                bits[14] = 0x80;
+                                return true;
+                        }
+                        if (c == 0x2572)
+                        {
+                                bits[0] = 0x80;
+                                bits[2] = 0x40;
+                                bits[4] = 0x20;
+                                bits[6] = 0x10;
+                                bits[8] = 0x08;
+                                bits[10] = 0x04;
+                                bits[12] = 0x02;
+                                bits[14] = 0x01;
+                                return true;
+                        }
+                        glyph_tofu(bits);
+                        return true;
+                }
+                glyph_box_nsew(bits, nsew, (c == 0x2501 || c == 0x2503 ||
+                                            (c >= 0x2550 && c <= 0x256c))
+                                               ? 2
+                                               : 1);
+                return true;
+        }
+
+        if (c == 0x00a0)
+                return true;
+
+        if (c == 0x00b0)
+        {
+                bits[2] = 0x60;
+                bits[3] = 0x90;
+                bits[4] = 0x90;
+                bits[5] = 0x60;
+                return true;
+        }
+
+        if (c == 0x00b1)
+        {
+                bits[4] = 0x18;
+                bits[5] = 0x18;
+                bits[6] = 0xff;
+                bits[7] = 0x18;
+                bits[8] = 0x18;
+                bits[10] = 0xff;
+                return true;
+        }
+
+        if (c == 0x00a3)
+        {
+                bits[2] = 0x1c;
+                bits[3] = 0x22;
+                bits[4] = 0x20;
+                bits[5] = 0x20;
+                bits[6] = 0x7c;
+                bits[7] = 0x20;
+                bits[8] = 0x20;
+                bits[9] = 0x20;
+                bits[11] = 0x7e;
+                return true;
+        }
+
+        if (c == 0x00b7 || c == 0x2022 || c == 0x2219 || c == 0x25e6)
+        {
+                bits[7] = 0x18;
+                bits[8] = 0x18;
+                return true;
+        }
+
+        if (c == 0x2264)
+        {
+                bits[4] = 0x04;
+                bits[5] = 0x18;
+                bits[6] = 0x60;
+                bits[7] = 0x18;
+                bits[8] = 0x04;
+                bits[10] = 0x7e;
+                return true;
+        }
+
+        if (c == 0x2265)
+        {
+                bits[4] = 0x20;
+                bits[5] = 0x18;
+                bits[6] = 0x06;
+                bits[7] = 0x18;
+                bits[8] = 0x20;
+                bits[10] = 0x7e;
+                return true;
+        }
+
+        if (c == 0x2260)
+        {
+                bits[3] = 0x02;
+                bits[4] = 0x7e;
+                bits[5] = 0x04;
+                bits[6] = 0x08;
+                bits[7] = 0x7e;
+                bits[8] = 0x10;
+                bits[9] = 0x20;
+                return true;
+        }
+
+        if (c == 0x03c0)
+        {
+                bits[5] = 0x7e;
+                bits[6] = 0x24;
+                bits[7] = 0x24;
+                bits[8] = 0x24;
+                bits[9] = 0x24;
+                bits[10] = 0x26;
+                return true;
+        }
+
+        if (c == 0x25a0 || c == 0x25ae || c == 0x25fc || c == 0x25fe)
+        {
+                memory_fill(bits + 3, 0x7e, 10);
+                return true;
+        }
+
+        if (c == 0x25c6 || c == 0x2666)
+        {
+                bits[3] = 0x18;
+                bits[4] = 0x3c;
+                bits[5] = 0x7e;
+                bits[6] = 0xff;
+                bits[7] = 0xff;
+                bits[8] = 0x7e;
+                bits[9] = 0x3c;
+                bits[10] = 0x18;
+                return true;
+        }
+
+        if (c == 0x23ba)
+        {
+                bits[0] = 0xff;
+                return true;
+        }
+        if (c == 0x23bb)
+        {
+                bits[5] = 0xff;
+                return true;
+        }
+        if (c == 0x23bc)
+        {
+                bits[10] = 0xff;
+                return true;
+        }
+        if (c == 0x23bd)
+        {
+                bits[15] = 0xff;
+                return true;
+        }
+
+        if (c == 0xfffd)
+        {
+                glyph_tofu(bits);
+                return true;
+        }
+
+        return false;
+}
+
+static void glyph_apply_style(unsigned char *bits, unsigned short flags)
+{
+        unsigned int y;
+
+        if (flags & WINDOW_CELL_ITALIC)
+                for (y = 0; y < 8; y++)
+                        bits[y] = (unsigned char)(bits[y] >> 1);
+
+        if (flags & WINDOW_CELL_BOLD)
+                for (y = 0; y < WINDOW_CELL_H; y++)
+                        bits[y] |= (unsigned char)(bits[y] >> 1);
+
+        if (flags & WINDOW_CELL_STRIKE)
+                bits[7] |= 0xff;
+
+        if (flags & WINDOW_CELL_UNDERLINE)
+        {
+                bits[WINDOW_CELL_H - 2] |= 0xff;
+                bits[WINDOW_CELL_H - 1] |= 0xff;
+        }
+}
+
+static u32 cell_palette(unsigned char index, u32 opaque)
+{
+        return canvas_terminal[index] | opaque;
+}
+
+static u32 cell_ink_colour(const struct window_cell *cell, u32 opaque)
+{
+        u32 ink = cell_palette(cell->ink, opaque);
+        u32 paper;
+
+        if (!(cell->flags & WINDOW_CELL_DIM))
+                return ink;
+
+        paper = cell_palette(cell->paper, opaque);
+        return ((ink & 0xfefefe) >> 1) + ((paper & 0xfefefe) >> 1);
+}
+
 /*
         One cell, background and glyph together.
 
@@ -191,11 +763,10 @@ static void shape_blit(const struct target *t, const struct shape *shape,
         double write is worth more than the case is worth handling.
 */
 static void cell_draw(const struct target *t, const struct shape *shape,
-                      int x, int y, const struct window_cell *cell,
-                      const unsigned char *bits, _Bool direct,
+                      int x, int y, const unsigned char *bits, _Bool direct,
                       u32 ink, u32 paper)
 {
-        if (direct && x >= max(t->clip.x1, 0) &&
+        if (direct && bits && x >= max(t->clip.x1, 0) &&
             x + canvas_cell_w <= min(t->clip.x2, t->width))
         {
                 target_mark((unsigned long)canvas_cell_w *
@@ -210,7 +781,9 @@ static void cell_draw(const struct target *t, const struct shape *shape,
         }
 
         shape_fill(t, shape, x, y, canvas_cell_w, canvas_cell_h, paper);
-        glyph_draw(t, x, y, (int)desktop.scale, (unsigned char)cell->character, ink);
+        if (bits)
+                bits_draw(t, x, y, (int)desktop.scale, bits, 1, WINDOW_CELL_W,
+                          WINDOW_CELL_H, ink);
 }
 
 /*
@@ -237,12 +810,7 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                        !round_inset(y + canvas_cell_h - 1 - shape->y,
                                     shape->h, shape->radius);
 
-        /*
-                These are properties of the face, not of a cell.  Looking
-                them up in cell_draw made every printable character reload
-                the font descriptor around an out-of-line assembly call.
-        */
-        if (direct)
+        if (glyph_is_cell() && canvas_font)
         {
                 font_data = font_data_buf(canvas_font->data);
                 glyph_size = font_glyph_size(canvas_font->width,
@@ -252,49 +820,81 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
         while (column < used)
         {
                 unsigned int character = cells[column].character;
-                u32 paper = canvas_terminal[cells[column].paper & 15] | t->opaque;
+                unsigned short flags = cells[column].flags;
+                u32 paper = cell_palette(cells[column].paper, t->opaque);
+                u32 ink;
+                unsigned char made[WINDOW_CELL_H];
+                const unsigned char *bits;
+                _Bool styled;
                 int run;
 
-                if (character > ' ' && character <= 126)
+                styled = (flags & (WINDOW_CELL_BOLD | WINDOW_CELL_ITALIC |
+                                   WINDOW_CELL_UNDERLINE | WINDOW_CELL_STRIKE |
+                                   WINDOW_CELL_HIDDEN | WINDOW_CELL_DIM)) != 0;
+
+                if (character <= ' ' && !styled)
                 {
-                        cell_draw(t, shape, x + column * cell_w, y,
-                                  &cells[column],
-                                  direct ? font_data + (size_t)character * glyph_size
-                                         : NULL,
-                                  direct,
-                                  canvas_terminal[cells[column].ink & 15] | t->opaque,
-                                  paper);
-                        column++;
+                        for (run = column + 1; run < used; run++)
+                        {
+                                if (cells[run].character > ' ' ||
+                                    cells[run].flags ||
+                                    cell_palette(cells[run].paper, t->opaque) !=
+                                        paper)
+                                        break;
+                        }
+
+                        shape_fill(t, shape, x + column * cell_w, y,
+                                   (run - column) * cell_w, canvas_cell_h,
+                                   paper);
+                        column = run;
                         continue;
                 }
 
-                for (run = column; run < used; run++)
+                bits = NULL;
+                if (!(flags & WINDOW_CELL_HIDDEN) && character > ' ')
                 {
-                        unsigned int c = cells[run].character;
-
-                        if (c > ' ' && c <= 126)
-                                break;
-
-                        if ((canvas_terminal[cells[run].paper & 15] | t->opaque) != paper)
-                                break;
+                        if (character <= 126 && font_data && !styled)
+                                bits = font_data + (size_t)character * glyph_size;
+                        else
+                        {
+                                if (character <= 126 && font_data)
+                                        memory_copy(made,
+                                                    font_data +
+                                                        (size_t)character *
+                                                            glyph_size,
+                                                    WINDOW_CELL_H);
+                                else if (!glyph_synthesize(character, made))
+                                {
+                                        if (font_data)
+                                                memory_copy(made,
+                                                            font_data +
+                                                                (size_t)'?' *
+                                                                    glyph_size,
+                                                            WINDOW_CELL_H);
+                                        else
+                                                glyph_tofu(made);
+                                }
+                                glyph_apply_style(made, flags);
+                                bits = made;
+                        }
+                }
+                else if (flags & (WINDOW_CELL_UNDERLINE | WINDOW_CELL_STRIKE))
+                {
+                        memory_fill(made, 0, WINDOW_CELL_H);
+                        glyph_apply_style(made, flags);
+                        bits = made;
                 }
 
-                shape_fill(t, shape, x + column * cell_w, y,
-                           (run - column) * cell_w, canvas_cell_h, paper);
-
-                column = run;
+                ink = cell_ink_colour(&cells[column], t->opaque);
+                cell_draw(t, shape, x + column * cell_w, y, bits, direct, ink,
+                          paper);
+                column++;
         }
 
-        /*
-                Past the end of a line there is no cell to take a colour from,
-                and what is still in the ring out there is older text: a line
-                is as long as it was written, not as wide as the window it is
-                being shown in.
-        */
         if (column < last)
                 shape_fill(t, shape, x + column * cell_w, y,
                            (last - column) * cell_w, canvas_cell_h,
-                           canvas_terminal[0] | t->opaque);
+                           cell_palette(0, t->opaque));
 }
 
 /*
@@ -332,6 +932,9 @@ static void compose_cells(struct pane *pane, const struct target *t,
         // cells wide, to put sixteen pixels somewhere.
         int first = max((t->clip.x1 - x) / canvas_cell_w, 0);
         int last = min((t->clip.x2 - x + canvas_cell_w - 1) / canvas_cell_w, columns);
+        unsigned int skip;
+        unsigned int line;
+        int row = 0;
 
         /*
                 Frame and title damage reaches compose_pane too.  With no
@@ -342,9 +945,9 @@ static void compose_cells(struct pane *pane, const struct target *t,
         if (first_row >= last_row || first >= last)
                 return;
 
-        unsigned int skip;
-        unsigned int line = pane_view_at(pane, pane->view, &skip);
-        int row = 0;
+        canvas_terminal_prepare();
+
+        line = pane_view_at(pane, pane->view, &skip);
 
         while (row < last_row && line != pane->head)
         {
