@@ -5011,9 +5011,6 @@ bool shell_cd_walk(bool physical, bool address_to say,
 
 COLD fn shell_cd(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
 
         //      rbash: the working directory is the first thing a restricted
         //      shell keeps, because everything reached by a relative name
@@ -6024,9 +6021,6 @@ fn shell_echo(writer write, string_address input)
 */
 COLD fn shell_exec(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
 
         //      rbash: replacing the shell would replace the restriction
         //      with whatever was named.
@@ -6227,9 +6221,6 @@ STORAGE_ADAPTER(findfs, storage_findfs_run)
 
 COLD fn shell_pwd(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
         p8 out_buffer[4096];
         shell_option_walk walk = {1};
         p8 letter;
@@ -7360,9 +7351,6 @@ static COLD fn shell_shopt_option_said(writer write, string_address name,
 
 COLD fn shell_shopt(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         bool set = false;
@@ -7763,12 +7751,8 @@ static COLD b32 shell_set_refused_name(bool on, string_address name)
 static PURE bool shell_option_letter_known(p8 letter)
 {
         if (shell_bash_compat)
-        {
-                for (positive at = 0; SHELL_SET_LETTERS[at]; at++)
-                        if (SHELL_SET_LETTERS[at] == letter)
-                                return true;
-                return letter == 'r';
-        }
+                return string_first_of(SHELL_SET_LETTERS, letter) ||
+                       letter == 'r';
 
         for (positive option = 0; option < SHELL_OPTION_NAMES; option++)
                 if (shell_option_names[option].value == letter)
@@ -8057,11 +8041,21 @@ static bool shell_unset_variable(const_string name, positive length)
         return detached >= 0;
 }
 
+/*
+        A special builtin that refused what it was handed. dash answers two and
+        the script ends with it; bash ends the script only under posix mode
+        and answers whatever that builtin answers.
+*/
+static COLD b32 shell_special_refused(b32 bash_status)
+{
+        if (!shell_bash_compat || shell_posix_on())
+                exec_special_error_note();
+
+        return shell_bash_compat ? bash_status : 2;
+}
+
 COLD fn shell_unset(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         bool functions = false;
@@ -8101,8 +8095,9 @@ COLD fn shell_unset(writer write, string_address input)
         {
                 string_address word = shell_argv[index];
                 positive word_length = string_length(word);
-                string_address bracket =
-                    functions ? null : string_first_of(word, '[');
+                positive base;
+                const_string subscript;
+                positive subscript_length;
 
                 /* -n removes a nameref record rather than what it names.
                    Applied to an element or an ordinary variable it is a
@@ -8111,7 +8106,7 @@ COLD fn shell_unset(writer write, string_address input)
                 {
                         p8 attributes;
 
-                        if (bracket)
+                        if (string_first_of(word, '['))
                         {
                                 index++;
                                 continue;
@@ -8132,21 +8127,7 @@ COLD fn shell_unset(writer write, string_address input)
                                 shell_name_refused("unset", word,
                                                    word_length);
 
-                                if (shell_bash_compat)
-                                {
-                                        //      A special builtin refused a name takes
-                                        //      the script with it under posix, and
-                                        //      nowhere else.
-                                        if (shell_posix_on())
-                                                exec_special_error_note();
-
-                                        shell_answer(1);
-                                        return;
-                                }
-
-                                exec_special_error_note();
-                                shell_answer(2);
-                                return;
+                                return shell_answer(shell_special_refused(1));
                         }
 
                         attributes = shell_variable_attributes(word,
@@ -8178,11 +8159,12 @@ COLD fn shell_unset(writer write, string_address input)
                         way every other one is, so a[-1] and a[i+1] name the
                         same element here as they do when read.
                 */
-                if (bracket && word[word_length - 1] == ']' &&
-                    bracket > word &&
-                    shell_valid_name(word, (positive)(bracket - word)))
+                if (!functions &&
+                    env_reference_element_span(word, word_length,
+                                               address_of base,
+                                               address_of subscript,
+                                               address_of subscript_length))
                 {
-                        positive base = (positive)(bracket - word);
                         positive key_length;
                         string_address key;
 
@@ -8200,8 +8182,9 @@ COLD fn shell_unset(writer write, string_address input)
                                 return;
                         }
 
-                        key = shell_expand_subscript(word, base, bracket + 1,
-                                                     word_length - base - 2,
+                        key = shell_expand_subscript(word, base,
+                                                     (string_address)subscript,
+                                                     subscript_length,
                                                      address_of key_length);
 
                         b32 detached = 0;
@@ -8236,21 +8219,7 @@ COLD fn shell_unset(writer write, string_address input)
 
                         shell_name_refused("unset", word, word_length);
 
-                        if (shell_bash_compat)
-                        {
-                                //      A special builtin refused a name takes
-                                //      the script with it under posix, and
-                                //      nowhere else.
-                                if (shell_posix_on())
-                                        exec_special_error_note();
-
-                                shell_answer(1);
-                                return;
-                        }
-
-                        exec_special_error_note();
-                        shell_answer(2);
-                        return;
+                        return shell_answer(shell_special_refused(1));
                 }
 
                 if (functions)
@@ -8507,10 +8476,6 @@ typedef struct
 
 static bool shell_declare_options(shell_declare_state address_to state)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
-        p8 sign[2];
         shell_option_walk walk = {state->index, null, 0, true};
         bool indexed_told = false;
         bool associative_told = false;
@@ -9751,9 +9716,6 @@ static fn shell_marked_written(writer write, string_address name,
 
 static COLD fn shell_marked(writer write, p8 mark)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
         string_address command = mark == DECLARE_EXPORT ? "export"
                                                         : "readonly";
         bool listed = shell_argc < 2;
@@ -13131,8 +13093,6 @@ fn umask_spoken(writer write, positive mask)
 
 COLD fn shell_umask(writer write, string_address input)
 {
-        // Two bytes: the shared formatter has no %c.
-        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         bool spoken = false;
@@ -13803,38 +13763,23 @@ COLD fn shell_trap(writer write, string_address input)
 
         while (shell_option_letter(address_of walk, address_of letter))
         {
-                //      dash names the first letter and stops, and that ends
-                //      the script: trap is special.
-                if (!shell_bash_compat)
+                //      dash has none of the letters and names the first one
+                //      it is shown. Bash names one it does not know and
+                //      prints how it is called; the word is never read as an
+                //      operand, so `trap -x INT` sets nothing.
+                if (!shell_bash_compat || !string_first_of("lpP", letter))
                 {
                         shell_letter_refused("trap", letter,
                             "trap [-Plp] [[action] signal_spec ...]");
-                        exec_special_error_note();
 
-                        return shell_answer(2);
+                        return shell_answer(shell_special_refused(2));
                 }
 
-                if (letter == 'l')
-                        listing = true;
-                else if (letter == 'p')
-                        print = true;
+                listing |= letter == 'l';
+                print |= letter == 'p';
                 //      -P writes the action by itself, for scripts that want
                 //      the line and not the command that would set it again.
-                else if (letter == 'P')
-                        bare = true;
-                //      Bash names the letter and prints how it is called; the
-                //      word is never read as an operand, so `trap -x INT`
-                //      sets nothing.
-                else
-                {
-                        shell_letter_refused("trap", letter,
-                            "trap [-Plp] [[action] signal_spec ...]");
-
-                        if (shell_posix_on())
-                                exec_special_error_note();
-
-                        return shell_answer(2);
-                }
+                bare |= letter == 'P';
         }
 
         index = walk.index;
@@ -13852,10 +13797,7 @@ COLD fn shell_trap(writer write, string_address input)
         {
                 string_format(log_error, "trap: cannot specify both -p and -P\n");
 
-                if (shell_posix_on())
-                        exec_special_error_note();
-
-                return shell_answer(2);
+                return shell_answer(shell_special_refused(2));
         }
 
         if (bare)
@@ -13867,10 +13809,7 @@ COLD fn shell_trap(writer write, string_address input)
                         string_format(log_error,
                             "trap: -P requires at least one signal name\n");
 
-                        if (shell_posix_on())
-                                exec_special_error_note();
-
-                        return shell_answer(2);
+                        return shell_answer(shell_special_refused(2));
                 }
 
                 while (index < shell_argc)
@@ -14325,8 +14264,6 @@ COLD fn shell_alias(writer write, string_address input)
 
 COLD fn shell_unalias(writer write, string_address input)
 {
-        // Two bytes: the shared formatter has no %c, so a letter is spelled.
-        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         b32 status = 0;
@@ -14448,8 +14385,6 @@ COLD fn shell_eval(writer write, string_address input)
         //      why "eval -x" is a command not found there.
         if (shell_bash_compat)
         {
-                // Two bytes: the shared formatter has no %c.
-                p8 room_spelled[2];
                 shell_option_walk walk = {1};
                 p8 option;
 
@@ -17267,8 +17202,6 @@ COLD fn shell_dot(writer write, string_address input)
                  string_is(shell_argv[first], '-') &&
                  string_get(shell_argv[first] + 1))
         {
-                // Two bytes: the shared formatter has no %c.
-                p8 room[2];
                 shell_option_walk walk = {first};
                 p8 option;
 
@@ -18218,9 +18151,6 @@ static bool hash_drop(string_address name)
 
 fn shell_hash(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         b32 bad = 0;
@@ -18996,7 +18926,6 @@ COLD fn shell_type(writer write, string_address input)
                         no_functions = true;
                 else
                 {
-                        p8 said[2] = {which, end};
 
                         return shell_answer(shell_letter_refused(
                             "type", which, "type [-afptP] name [name ...]"));
@@ -19024,9 +18953,6 @@ COLD fn shell_type(writer write, string_address input)
 */
 fn shell_command_builtin(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         bool only_say = false;
@@ -19466,6 +19392,15 @@ fn shell_limit_listed(writer write, bool bash, bool hard)
         }
 }
 
+static shell_limit address_to shell_limit_by_letter(shell_limit address_to limit,
+                                                    p8 letter)
+{
+        while (limit->name && limit->letter != letter)
+                limit++;
+
+        return limit;
+}
+
 fn shell_ulimit(writer write, string_address input)
 {
         positive index = 1;
@@ -19520,28 +19455,10 @@ fn shell_ulimit(writer write, string_address input)
                         continue;
                 }
 
-                if (shell_bash_compat)
-                {
-                        limit = shell_bash_limits;
-
-                        while (limit->name && limit->letter != which)
-                                limit++;
-                }
-                else
-                {
-                        limit = shell_limits;
-
-                        while (limit->name && limit->letter != which)
-                                limit++;
-
-                        if (!limit->name)
-                        {
-                                limit = shell_extra_limits;
-
-                                while (limit->name && limit->letter != which)
-                                        limit++;
-                        }
-                }
+                limit = shell_limit_by_letter(
+                    shell_bash_compat ? shell_bash_limits : shell_limits, which);
+                if (!limit->name && !shell_bash_compat)
+                        limit = shell_limit_by_letter(shell_extra_limits, which);
 
                 if (!limit->name)
                         return shell_answer(shell_letter_refused(
@@ -19723,8 +19640,6 @@ fn shell_ulimit(writer write, string_address input)
 fn shell_builtin_run(writer write, string_address input)
 {
         bool tail = shell_tail_command;
-        // Two bytes: the shared formatter has no %c, so a letter is spelled.
-        p8 room[2];
         shell_option_walk walk = {1};
         p8 option;
         positive index;
@@ -19780,9 +19695,6 @@ fn shell_builtin_run(writer write, string_address input)
 */
 fn shell_enable(writer write, string_address input)
 {
-        // Two bytes each: the formatter has no %c, so an option letter is
-        // spelled here and named as a string.
-        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         bool off = false;
