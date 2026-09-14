@@ -783,19 +783,34 @@ typedef struct
         b32 (*run)(bipolar, bipolar, bool, p8);
 } file_codec_cli;
 
-/* A named codec output is written privately and published only after the
-   stream succeeds.  The destination decision is pinned to the inode seen
-   before encoding, so neither an alias of the input nor a concurrent name
-   exchange can make a forced output truncate or replace its source. */
+/* One regular-file output transaction shared by utilities that must never
+   truncate a public name before their complete output is ready.  The
+   destination decision is pinned to the inode seen at open, so with an input
+   named neither an alias of it nor a concurrent name exchange can make a
+   forced output truncate or replace its source. */
 typedef struct
 {
-        system_path_file target;
-        file_facts input;
-        file_facts replaced;
-        bool replaced_known;
+        bipolar directory;
+        bipolar handle;
         positive mode;
+        bool direct;
+        bool prepared;
+        bool replaced_known;
+        file_facts replaced;
+        file_facts address_to input;
         system_path_stage protected;
-} file_codec_output;
+        p8 leaf[FILE_PATH_MAX];
+} file_staged_name;
+
+#define FILE_STAGED_STREAM_SPECIAL 1
+#define FILE_STAGED_REGULAR_ONLY 2
+#define FILE_STAGED_NO_REPLACE 4
+
+static bipolar file_staged_name_open_at(
+    file_staged_name address_to stage, bipolar base, string_address path,
+    positive mode, positive behavior, file_facts address_to input);
+static bipolar file_staged_name_finish(file_staged_name address_to stage,
+                                       bool publish, positive flags);
 
 #define FILE_CODEC_COMPRESS_OPTION 1
 #define FILE_CODEC_OUTPUT_OPTION 2
@@ -804,200 +819,6 @@ typedef struct
 #define FILE_CODEC_LEVEL_WORDS 16
 #define FILE_CODEC_NO_NAME 32
 #define FILE_CODEC_SHORT_VERSION 64
-
-static fn file_codec_output_reset(file_codec_output address_to output)
-{
-        system_path_file_reset(address_of output->target);
-        memory_fill(address_of output->input, 0, sizeof(output->input));
-        memory_fill(address_of output->replaced, 0, sizeof(output->replaced));
-        output->replaced_known = false;
-        output->mode = 0;
-        system_path_stage_reset(address_of output->protected);
-}
-
-static bipolar file_codec_output_open_in(
-    file_codec_output address_to output, bipolar directory,
-    bool owns_directory, string_address leaf, bipolar input, bool replace)
-{
-        positive length = string_length(leaf);
-        bipolar looked;
-
-        file_codec_output_reset(output);
-        if (!length || length >= sizeof(output->target.leaf) ||
-            (length == 1 && leaf[0] == '.') ||
-            (length == 2 && leaf[0] == '.' && leaf[1] == '.'))
-        {
-                looked = -ERROR_INVALID;
-                goto failed;
-        }
-
-        memory_copy_end(output->target.leaf, leaf, length);
-        output->target.directory = directory;
-        output->target.owns_directory = owns_directory;
-
-        looked = file_look_code(
-            input, (string_address)"", AT_EMPTY_PATH, address_of output->input);
-        if (looked < 0)
-                goto failed;
-        if ((output->input.mask & STATX_BASIC) != STATX_BASIC)
-        {
-                looked = -ERROR_INPUT_OUTPUT;
-                goto failed;
-        }
-
-        looked = file_look_code(directory, output->target.leaf,
-                                AT_SYMLINK_NOFOLLOW,
-                                address_of output->replaced);
-        if (looked >= 0)
-        {
-                if ((output->replaced.mask & STATX_BASIC) != STATX_BASIC)
-                {
-                        looked = -ERROR_INPUT_OUTPUT;
-                        goto failed;
-                }
-                if (file_same_identity(address_of output->input,
-                                       address_of output->replaced))
-                {
-                        looked = -ERROR_INVALID;
-                        goto failed;
-                }
-                if (!replace)
-                {
-                        looked = -ERROR_EXISTS;
-                        goto failed;
-                }
-
-                positive kind = output->replaced.mode & MODE_FORMAT;
-                if (kind != MODE_FILE)
-                {
-                        looked = kind == MODE_LINK
-                                     ? -ERROR_LOOP
-                                     : kind == MODE_DIRECTORY
-                                           ? -ERROR_IS_DIRECTORY
-                                           : -ERROR_NOT_SUPPORTED;
-                        goto failed;
-                }
-                output->replaced_known = true;
-                output->mode = file_replacement_mode(
-                    output->replaced.mode);
-        }
-        else if (looked != -ERROR_NO_ENTRY)
-                goto failed;
-        else
-                output->mode = 0666 & ~file_umask();
-
-        output->target.handle = file_stage_file_open_at(
-            address_of output->protected, directory,
-            output->target.leaf, 0600);
-        if (output->target.handle < 0)
-        {
-                looked = output->target.handle;
-                goto failed;
-        }
-        return output->target.handle;
-
-failed:
-        if (owns_directory && directory >= 0)
-                system_close(directory);
-        file_codec_output_reset(output);
-        return looked;
-}
-
-static bipolar file_codec_output_open(
-    file_codec_output address_to output, string_address path,
-    bipolar input, bool replace)
-{
-        p8 leaf[SYSTEM_PATH_LEAF_ROOM];
-        bipolar directory = system_open_parent_pinned(
-            AT_FDCWD, path, leaf, sizeof(leaf));
-
-        if (directory < 0)
-        {
-                file_codec_output_reset(output);
-                return directory;
-        }
-        return file_codec_output_open_in(
-            output, directory, true, leaf, input, replace);
-}
-
-static bipolar file_codec_output_open_sibling(
-    file_codec_output address_to output, bipolar directory,
-    string_address leaf, bipolar input, bool replace)
-{
-        return file_codec_output_open_in(
-            output, directory, false, leaf, input, replace);
-}
-
-static bipolar file_codec_output_finish(
-    file_codec_output address_to output, bool success)
-{
-        bipolar result = success ? 0 : -ERROR_INPUT_OUTPUT;
-
-        if (result >= 0)
-        {
-                file_facts current;
-                bipolar found = file_look_code(
-                    output->target.directory, output->target.leaf,
-                    AT_SYMLINK_NOFOLLOW, address_of current);
-                if (output->replaced_known)
-                {
-                        result = found;
-                        if (result >= 0 &&
-                            ((current.mask & STATX_BASIC) != STATX_BASIC ||
-                             !file_same_identity(address_of output->replaced,
-                                                 address_of current) ||
-                             (current.mode & MODE_FORMAT) != MODE_FILE))
-                                result = -ERROR_AGAIN;
-                        if (result >= 0 &&
-                            file_same_identity(address_of output->input,
-                                               address_of current))
-                                result = -ERROR_INVALID;
-                }
-                else
-                {
-                        if (found >= 0)
-                                result =
-                                    (current.mask & STATX_BASIC) != STATX_BASIC
-                                        ? -ERROR_INPUT_OUTPUT
-                                        : file_same_identity(
-                                              address_of output->input,
-                                              address_of current)
-                                              ? -ERROR_INVALID
-                                              : -ERROR_EXISTS;
-                        else if (found != -ERROR_NO_ENTRY)
-                                result = found;
-                }
-        }
-        if (result < 0)
-                result = file_stage_publish_protected_at(
-                    address_of output->protected,
-                    output->target.directory, output->target.leaf,
-                    output->target.handle, result, true, null, 0);
-        else
-        {
-                if (output->replaced_known)
-                        result = system_call_3(
-                            syscall(fchown),
-                            (positive)output->target.handle,
-                            output->replaced.owner,
-                            output->replaced.group);
-                if (result >= 0)
-                        result = file_change_mode_handle(
-                            output->target.handle, output->mode);
-                result = file_stage_publish_protected_at(
-                    address_of output->protected,
-                    output->target.directory,
-                    output->target.leaf,
-                    output->target.handle, result,
-                    !output->replaced_known,
-                    output->replaced_known
-                        ? address_of output->replaced : null,
-                    0);
-        }
-        output->target.handle = -1;
-        system_path_file_release(address_of output->target);
-        return result;
-}
 
 static string_address file_called_name(string_address fallback)
 {
@@ -1230,7 +1051,8 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
         {
                 string_address path = program_argument((b32)at);
                 system_path_file input, passthrough;
-                file_codec_output output;
+                file_staged_name output;
+                file_facts input_facts;
                 p8 output_leaf[SYSTEM_PATH_LEAF_ROOM];
                 string_address output_display = null;
                 bipolar in = 0;
@@ -1239,7 +1061,6 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
 
                 system_path_file_reset(address_of input);
                 system_path_file_reset(address_of passthrough);
-                file_codec_output_reset(address_of output);
                 if (!string_equals(path, "-"))
                 {
                         in = system_path_file_open(address_of input, path, false,
@@ -1255,14 +1076,10 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
                         if (!codec->test && !codec->stdout_out)
                         {
                                 string_address named = codec->output_path;
+                                bipolar base = AT_FDCWD;
 
                                 if (named)
-                                {
-                                        out = file_codec_output_open(
-                                            address_of output, named, in,
-                                            codec->replace);
                                         output_display = named;
-                                }
                                 else if (!file_codec_name(
                                              path, output_name,
                                              sizeof(output_name), codec->suffixes,
@@ -1286,12 +1103,24 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
                                 }
                                 else
                                 {
+                                        // A sibling is named in the directory
+                                        // the input was pinned in.
                                         output_display = (string_address)output_name;
-                                        out = file_codec_output_open_sibling(
-                                            address_of output, input.directory,
-                                            (string_address)output_leaf, in,
-                                            codec->replace);
+                                        named = (string_address)output_leaf;
+                                        base = input.directory;
                                 }
+
+                                out = file_look_code(in, (string_address)"", AT_EMPTY_PATH,
+                                                     address_of input_facts);
+                                if (out >= 0 && (input_facts.mask & STATX_BASIC) != STATX_BASIC)
+                                        out = -ERROR_INPUT_OUTPUT;
+                                if (out >= 0)
+                                        out = file_staged_name_open_at(
+                                            address_of output, base, named,
+                                            0666 & ~file_umask(),
+                                            FILE_STAGED_REGULAR_ONLY |
+                                                (codec->replace ? 0 : FILE_STAGED_NO_REPLACE),
+                                            address_of input_facts);
 
                                 if (out < 0)
                                 {
@@ -1313,8 +1142,8 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
 
                 if (named_output)
                 {
-                        bipolar output_finished = file_codec_output_finish(
-                            address_of output, !*codec->status);
+                        bipolar output_finished = file_staged_name_finish(
+                            address_of output, !*codec->status, 0);
                         finished = output_finished;
                         if (output_finished >= 0 && !*codec->status &&
                             codec->remove_source && had_input)
@@ -3932,110 +3761,83 @@ static bipolar file_direct_endpoint_open(
     bipolar directory, string_address name,
     file_facts address_to entry, positive flags);
 
-/* One regular-file output transaction shared by utilities that must never
-   truncate a public name before their complete output is ready. */
-typedef struct
+static bipolar file_staged_name_open_at(
+    file_staged_name address_to stage, bipolar base, string_address path,
+    positive mode, positive behavior, file_facts address_to input)
 {
-        bipolar directory;
-        bipolar handle;
-        positive mode;
-        bool direct;
-        bool prepared;
-        bool replaced_known;
-        file_facts replaced;
-        system_path_stage protected;
-        p8 leaf[FILE_PATH_MAX];
-} file_staged_name;
-
-#define FILE_STAGED_STREAM_SPECIAL 1
-
-static bipolar file_staged_name_open(file_staged_name address_to stage,
-                                     string_address path, positive mode,
-                                     positive behavior)
-{
-        stage->directory = file_parent_open(path, stage->leaf);
+        stage->directory = system_open_parent_pinned(base, path, stage->leaf,
+                                                     FILE_PATH_MAX);
         stage->handle = -1;
         stage->mode = mode & 07777;
         stage->direct = false;
         stage->prepared = false;
         stage->replaced_known = false;
+        stage->input = input;
         system_path_stage_reset(address_of stage->protected);
         if (stage->directory < 0)
                 return stage->directory;
 
-        file_facts existing;
-        bipolar looked = file_look_code(
+        bipolar reason = file_look_code(
             stage->directory, stage->leaf, AT_SYMLINK_NOFOLLOW,
-            address_of existing);
-        if (looked >= 0)
+            address_of stage->replaced);
+        if (reason >= 0)
         {
-                if ((existing.mask & STATX_BASIC) != STATX_BASIC)
-                {
-                        system_close(stage->directory);
-                        stage->directory = -1;
-                        return -ERROR_INPUT_OUTPUT;
-                }
-                stage->replaced = existing;
+                positive kind = stage->replaced.mode & MODE_FORMAT;
+
                 stage->replaced_known = true;
-                if ((existing.mode & MODE_FORMAT) == MODE_FILE)
+                if ((stage->replaced.mask & STATX_BASIC) != STATX_BASIC)
+                        reason = -ERROR_INPUT_OUTPUT;
+                else if (input && file_same_identity(input, address_of stage->replaced))
+                        reason = -ERROR_INVALID;
+                else if (behavior & FILE_STAGED_NO_REPLACE)
+                        reason = -ERROR_EXISTS;
+                else if (kind == MODE_FILE)
                         /* New bytes must not inherit execution authority.
                            This matches truncating a regular file, where the
                            kernel clears set-ID bits after content changes. */
-                        stage->mode = file_replacement_mode(existing.mode);
-                else if (behavior & FILE_STAGED_STREAM_SPECIAL)
+                        stage->mode = file_replacement_mode(stage->replaced.mode);
+                else if (behavior & FILE_STAGED_REGULAR_ONLY)
+                        reason = kind == MODE_LINK        ? -ERROR_LOOP
+                                 : kind == MODE_DIRECTORY ? -ERROR_IS_DIRECTORY
+                                                          : -ERROR_NOT_SUPPORTED;
+                /* Stream compatibility applies only to the named FIFO or
+                   device itself. A link becomes an ordinary staged
+                   replacement; it is never followed to a stream or a
+                   regular victim. */
+                else if ((behavior & FILE_STAGED_STREAM_SPECIAL) && kind == MODE_DIRECTORY)
+                        reason = -ERROR_IS_DIRECTORY;
+                else if ((behavior & FILE_STAGED_STREAM_SPECIAL) && kind != MODE_LINK)
                 {
-                        positive kind = existing.mode & MODE_FORMAT;
-
-                        /* Stream compatibility applies only to the named FIFO
-                           or device itself. A link becomes an ordinary staged
-                           replacement; it is never followed to a stream or a
-                           regular victim. */
-                        if (kind == MODE_DIRECTORY)
-                        {
-                                system_close(stage->directory);
-                                stage->directory = -1;
-                                return -ERROR_IS_DIRECTORY;
-                        }
-                        if (kind != MODE_LINK)
-                        {
-                                positive open_flags =
-                                    (FILE_WRITE &
-                                     ~(FILE_CREATE | O_TRUNC)) |
-                                    O_CLOEXEC;
-                                stage->handle = file_direct_endpoint_open(
-                                    stage->directory, stage->leaf,
-                                    address_of existing, open_flags);
-                                if (stage->handle < 0)
-                                {
-                                        bipolar reason = stage->handle;
-                                        system_close(stage->directory);
-                                        stage->directory = -1;
-                                        return reason;
-                                }
-                                stage->direct = true;
-                                return stage->handle;
-                        }
+                        reason = stage->handle = file_direct_endpoint_open(
+                            stage->directory, stage->leaf,
+                            address_of stage->replaced,
+                            (FILE_WRITE & ~(FILE_CREATE | O_TRUNC)) | O_CLOEXEC);
+                        stage->direct = reason >= 0;
+                        if (stage->direct)
+                                return reason;
                 }
         }
-        else if (looked != -ERROR_NO_ENTRY)
+        else if (reason == -ERROR_NO_ENTRY)
+                reason = 0;
+
+        if (reason >= 0)
+                reason = stage->handle = file_stage_file_open_at(
+                    address_of stage->protected, stage->directory,
+                    stage->leaf, 0600);
+        if (reason < 0)
         {
                 system_close(stage->directory);
                 stage->directory = -1;
-                return looked;
         }
+        return reason;
+}
 
-        stage->handle = file_stage_file_open_at(
-            address_of stage->protected, stage->directory,
-            stage->leaf, 0600);
-        if (stage->handle < 0)
-        {
-                bipolar reason = stage->handle;
-                system_close(stage->directory);
-                stage->directory = -1;
-                return reason;
-        }
-
-        return stage->handle;
+static bipolar file_staged_name_open(file_staged_name address_to stage,
+                                     string_address path, positive mode,
+                                     positive behavior)
+{
+        return file_staged_name_open_at(stage, AT_FDCWD, path, mode, behavior,
+                                        null);
 }
 
 static bipolar file_staged_name_prepare(file_staged_name address_to stage)
@@ -4073,6 +3875,32 @@ static bipolar file_staged_name_finish(file_staged_name address_to stage,
                                   : closed < 0 ? closed : directory_closed;
         }
 
+        /* An output that names its input looks at the name again before
+           publishing: it must still be the file it replaces, or still be
+           absent, and it is never the input itself. */
+        if (result >= 0 && stage->input)
+        {
+                file_facts current;
+                bipolar found = file_look_code(
+                    stage->directory, stage->leaf, AT_SYMLINK_NOFOLLOW,
+                    address_of current);
+
+                if (stage->replaced_known)
+                        result = found < 0 ? found
+                                 : (current.mask & STATX_BASIC) != STATX_BASIC ||
+                                           (current.mode & MODE_FORMAT) != MODE_FILE ||
+                                           !file_same_identity(address_of stage->replaced,
+                                                               address_of current)
+                                     ? -ERROR_AGAIN
+                                     : 0;
+                else if (found != -ERROR_NO_ENTRY)
+                        result = found < 0 ? found
+                                 : (current.mask & STATX_BASIC) != STATX_BASIC
+                                     ? -ERROR_INPUT_OUTPUT
+                                 : file_same_identity(stage->input, address_of current)
+                                     ? -ERROR_INVALID
+                                     : -ERROR_EXISTS;
+        }
         if (result >= 0)
                 result = file_staged_name_prepare(stage);
         result = file_stage_publish_protected_at(
