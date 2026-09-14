@@ -1288,6 +1288,8 @@ static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer
         if (tls_oid_is(child->sig_oid, child->sig_oid_length, tls_oid_ecdsa_sha384,
                        8))
         {
+                if (issuer->curve != 1 && issuer->curve != 2)
+                        return false;
                 crypto_sha384(child->tbs, child->tbs_length, hash);
                 if (tls_parse_ecdsa_sig(child->sig, child->sig_length, r,
                                         address_of r_length, s, address_of s_length))
@@ -1304,6 +1306,8 @@ static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer
         if (tls_oid_is(child->sig_oid, child->sig_oid_length, tls_oid_ecdsa_sha256,
                        8))
         {
+                if (issuer->curve != 1 && issuer->curve != 2)
+                        return false;
                 crypto_sha256_of(child->tbs, child->tbs_length, hash);
                 if (tls_parse_ecdsa_sig(child->sig, child->sig_length, r,
                                         address_of r_length, s, address_of s_length))
@@ -1319,9 +1323,10 @@ static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer
 
         if (tls_oid_is(child->sig_oid, child->sig_oid_length, tls_oid_sha256_rsa, 9))
         {
+                if (issuer->curve != 3)
+                        return false;
                 crypto_sha256_of(child->tbs, child->tbs_length, hash);
-                return issuer->curve == 3 &&
-                       crypto_rsa_pkcs1_sha256(issuer->modulus, issuer->modulus_length,
+                return crypto_rsa_pkcs1_sha256(issuer->modulus, issuer->modulus_length,
                                                issuer->exponent, child->sig,
                                                child->sig_length, hash);
         }
@@ -1484,17 +1489,33 @@ static bool tls_verify_chain(p8 address_to body, positive body_length,
                 else
                 {
                         tls_cert root;
+                        bool usertrust_first =
+                            certs[i].issuer &&
+                            memory_search(certs[i].issuer,
+                                          certs[i].issuer_length,
+                                          "USERTrust", 9) != null;
 
+                        /* Every anchor is still tried; the issuer Name
+                           only picks which P-384 verify runs first, so a
+                           Sectigo chain no longer pays for a failed ISRG
+                           X2 verify before the USERTrust one. */
                         memory_fill(address_of root, 0, sizeof(root));
                         root.curve = 2;
-                        memory_copy(root.qx, tls_isrg_x2_x, 48);
-                        memory_copy(root.qy, tls_isrg_x2_y, 48);
-                        if (tls_verify_one(certs + i, address_of root))
-                                return true;
-                        memory_copy(root.qx, tls_usertrust_ecc_x, 48);
-                        memory_copy(root.qy, tls_usertrust_ecc_y, 48);
-                        if (tls_verify_one(certs + i, address_of root))
-                                return true;
+                        for (positive turn = 0; turn < 2; turn++)
+                        {
+                                bool usertrust = (turn == 0) == usertrust_first;
+
+                                memory_copy(root.qx,
+                                            usertrust ? tls_usertrust_ecc_x
+                                                      : tls_isrg_x2_x,
+                                            48);
+                                memory_copy(root.qy,
+                                            usertrust ? tls_usertrust_ecc_y
+                                                      : tls_isrg_x2_y,
+                                            48);
+                                if (tls_verify_one(certs + i, address_of root))
+                                        return true;
+                        }
                         root.curve = 3;
                         memory_copy(root.modulus, tls_isrg_x1_n, 512);
                         root.modulus_length = 512;

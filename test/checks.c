@@ -41315,6 +41315,7 @@ static fn crypto_private_scalar_probe(
         p64 y[CRYPTO_FE_MAX];
         p64 scalar[CRYPTO_FE_MAX];
         p64 complement[CRYPTO_FE_MAX];
+        p64 zero[CRYPTO_FE_MAX];
         p64 random = 0x243f6a8885a308d3ull;
         crypto_point base;
         crypto_point public_result;
@@ -41327,6 +41328,7 @@ static fn crypto_private_scalar_probe(
         memory_fill(y, 0, sizeof y);
         memory_fill(scalar, 0, sizeof scalar);
         memory_fill(complement, 0, sizeof complement);
+        memory_fill(zero, 0, sizeof zero);
         crypto_fe_load_be(x, gx, limbs);
         crypto_fe_load_be(y, gy, limbs);
         crypto_point_set_xy(address_of base, x, y, field);
@@ -41340,7 +41342,8 @@ static fn crypto_private_scalar_probe(
                 complement[i] = ~random;
         }
 
-        crypto_point_scalar(address_of public_result, address_of base, scalar);
+        crypto_point_double_scalar(address_of public_result, address_of base,
+                                   scalar, address_of base, zero);
         crypto_point_scalar_private(address_of private_result,
                                     address_of base, scalar,
                                     address_of first);
@@ -41353,8 +41356,8 @@ static fn crypto_private_scalar_probe(
                 !memory_compare(public_result.z, private_result.z,
                                 limbs * sizeof(p64));
 
-        crypto_point_scalar(address_of public_result, address_of base,
-                            complement);
+        crypto_point_double_scalar(address_of public_result, address_of base,
+                                   zero, address_of base, complement);
         crypto_point_scalar_private(address_of private_result,
                                     address_of base, complement,
                                     address_of second);
@@ -41372,10 +41375,10 @@ static fn crypto_private_scalar_probe(
             !memory_compare(address_of first, address_of second,
             sizeof first) &&
             first.bits == limbs * 64 &&
-            first.point_adds == first.bits &&
-            first.point_doubles == first.bits &&
-            first.conditional_swaps == first.bits * 2 &&
-            first.conditional_selects == first.bits * 2;
+            first.point_adds == 13 + first.bits / 4 &&
+            first.point_doubles == 1 + first.bits - 4 &&
+            first.conditional_swaps == 0 &&
+            first.conditional_selects == 13 * 2 + first.bits / 4 * 17;
 
         crypto_forget(x, sizeof x);
         crypto_forget(y, sizeof y);
