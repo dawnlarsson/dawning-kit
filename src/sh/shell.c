@@ -764,7 +764,6 @@ static positive shell_syntax_generation;
 #define SHELL_PARSER_SOURCE_MEMORY 0
 #define SHELL_PARSER_SOURCE_SEALED_FILE 1
 #define SHELL_PARSER_SOURCE_REGULAR_FILE 2
-#define SHELL_PARSER_SOURCE_SOCKET 3
 #define SHELL_PARSER_SOURCE_MUTABLE 4
 #define SHELL_PARSER_SOURCE_AMBIGUOUS 5
 
@@ -968,10 +967,8 @@ static fn shell_parser_source_refresh()
                         shell_parser_source_kind =
                             SHELL_PARSER_SOURCE_REGULAR_FILE;
         }
-        else if ((facts.mode & MODE_FORMAT) == MODE_SOCKET)
-                shell_parser_source_kind = SHELL_PARSER_SOURCE_SOCKET;
         else
-                /* Terminals, block devices and every other concrete source
+                /* Sockets, terminals, block devices and every other source
                    remain externally mutable while the shell streams later
                    parser bytes from them. A PTY's influencing master can be
                    held by an outside same-UID process, beyond this child's
@@ -1770,6 +1767,29 @@ bool shell_reading_more()
 
 /* Defined above the included readers, which trace under it. */
 
+/*
+        A syntax error drops what was parsed and moves the generation, which
+        is how a nested reader learns to stop. A terminal recovers at its next
+        prompt. A direct script, file, stdin stream or -c string has no
+        enclosing builtin to receive the error, so when it is fatal the rest
+        of that input must not run; the ordinary fatal boundary still honors
+        an installed EXIT trap.
+*/
+static fn shell_syntax_fatal(b32 status, bool fatal)
+{
+        shell_status = status;
+        parse_reset();
+        shell_more = false;
+        shell_syntax_generation += 2;
+        if (fatal && shell_run_depth == 1 && !shell_source_depth)
+        {
+                if (string_is(shell_option_flags, 'c'))
+                        exec_child_leave(shell_status);
+                if (!shell_is_interactive)
+                        expand_fatal_status(shell_status);
+        }
+}
+
 static fn run_line_inner(string_address line)
 {
         string_address waiting = parse_here_open();
@@ -1798,17 +1818,7 @@ static fn run_line_inner(string_address line)
         {
                 if (parse_here_limit_exceeded())
                 {
-                        shell_status = 2;
-                        parse_reset();
-                        shell_more = false;
-                        shell_syntax_generation += 2;
-                        if (shell_run_depth == 1 && !shell_source_depth)
-                        {
-                                if (string_is(shell_option_flags, 'c'))
-                                        exec_child_leave(shell_status);
-                                if (!shell_is_interactive)
-                                        expand_fatal_status(shell_status);
-                        }
+                        shell_syntax_fatal(2, true);
                         return;
                 }
 
@@ -1838,17 +1848,7 @@ static fn run_line_inner(string_address line)
         {
                 if (parse_here_limit_exceeded())
                 {
-                        shell_status = 2;
-                        parse_reset();
-                        shell_more = false;
-                        shell_syntax_generation += 2;
-                        if (shell_run_depth == 1 && !shell_source_depth)
-                        {
-                                if (string_is(shell_option_flags, 'c'))
-                                        exec_child_leave(shell_status);
-                                if (!shell_is_interactive)
-                                        expand_fatal_status(shell_status);
-                        }
+                        shell_syntax_fatal(2, true);
                         return;
                 }
 
@@ -1888,27 +1888,9 @@ static fn run_line_inner(string_address line)
                                       tok->text);
                 /* Compound-assignment interior errors are not the fatal
                    status-2 class: bash answers 1 and keeps the rest of the
-                   script, and its POSIX mode exits 127. */
-                shell_status = compound ? (shell_posix_on() ? 127 : 1) : 2;
-                parse_reset();
-
-                shell_syntax_generation += 2;
-
-                /* A terminal recovers at its next prompt. A direct script,
-                   file, stdin stream or -c string has no enclosing builtin
-                   to receive this error, so the rest of that input must not
-                   run. Use the ordinary fatal boundary so an installed EXIT
-                   trap is still honored. Recoverable compound errors are the
-                   exception under bash without POSIX. */
-                if (!(compound && !shell_posix_on()) &&
-                    shell_run_depth == 1 && !shell_source_depth)
-                {
-                        if (string_is(shell_option_flags, 'c'))
-                                exec_child_leave(shell_status);
-                        if (!shell_is_interactive)
-                                expand_fatal_status(shell_status);
-                }
-
+                   script, and its POSIX mode exits 127 and stops. */
+                shell_syntax_fatal(compound ? (shell_posix_on() ? 127 : 1) : 2,
+                                   !(compound && !shell_posix_on()));
                 return;
         }
 

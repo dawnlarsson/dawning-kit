@@ -1468,9 +1468,15 @@ static KEEP b32 lex_word(string_address address_to at)
 
         Returns how many, or -1 when there were more than there is room for.
         A comment runs to the end of the line and is not a token.
-*/
-#if X64 || ARM64 || RISCV64
 
+        Every target has the assembly floor, and this is its contract: skip
+        blanks; stop at the end, a newline, or a # where a word could begin
+        while comments are on; then at each position try, in order, a [[
+        conditional followed by a blank (lex_conditional_end), a (( arithmetic
+        command (lex_arithmetic_end), an operator (lex_operator_at), and
+        otherwise a word (lex_word), recording lex_at before each; close with
+        LEX_END and answer the count before it.
+*/
 b32 lex_line_floor(string_address line, b32 comments);
 
 #include "lex_line_floor.inc"
@@ -1480,88 +1486,3 @@ HOT b32 lex_line(string_address line)
         lex_prepare();
         return lex_line_floor(line, lex_comments_on());
 }
-
-#else
-
-HOT b32 lex_line(string_address line)
-{
-        string_address step = line;
-        bool comments = lex_comments_on();
-
-        lex_prepare();
-        lex_count = 0;
-
-        while (1)
-        {
-                positive length;
-                b32 op;
-
-                step += string_span(step, string_set_blanks);
-
-                if (!string_get(step) || string_get(step) == '\n')
-                        break;
-
-                // A comment only begins where a word could have.
-                if (string_get(step) == '#')
-                {
-                        if (comments)
-                                break;
-                }
-
-                lex_at = (positive)(step - line);
-
-                if (string_is(step, '[') && string_is(step + 1, '[') &&
-                    lex_is_space(string_get(step + 2)))
-                {
-                        string_address stop = lex_conditional_end(step);
-
-                        if (stop)
-                        {
-                                if (!lex_add(LEX_CONDITIONAL, 0, step,
-                                                   (positive)(stop - step)))
-                                        return -1;
-
-                                step = stop;
-                                continue;
-                        }
-                }
-
-                if (string_is(step, '(') && string_is(step + 1, '('))
-                {
-                        string_address stop = lex_arithmetic_end(step);
-
-                        if (stop)
-                        {
-                                if (!lex_add(LEX_ARITHMETIC, 0, step,
-                                                   (positive)(stop - step)))
-                                        return -1;
-
-                                step = stop;
-                                continue;
-                        }
-                }
-
-                op = lex_operator_at(step, address_of length);
-
-                if (op)
-                {
-                        if (!lex_add(LEX_OPERATOR, op, null, length))
-                                return -1;
-
-                        step += length;
-                        continue;
-                }
-
-                lex_at = (positive)(step - line);
-
-                if (!lex_word(address_of step))
-                        return -1;
-        }
-
-        lex_at = (positive)(step - line);
-        lex_add(LEX_END, 0, null, 0);
-
-        return lex_count - 1;
-}
-
-#endif
