@@ -1336,6 +1336,98 @@ static fn build_config_conflicts(string_address text,
         log_flush();
 }
 
+/*
+        The fragment merge_config is handed: the composed configuration with
+        only the last assignment of each option.
+
+        The composed file keeps every profile's lines, which is what the
+        disagreement report above reads. merge_config appends a fragment as it
+        stands, though, so each repeat reached olddefconfig, and olddefconfig
+        said "override: reassigning to symbol" for it -- eighty-nine lines, each
+        an agreement or a disagreement already reported. Kconfig keeps the last
+        assignment, and a choice member's last assignment is also the one that
+        sets its priority, so dropping the earlier ones leaves it nothing to
+        decide differently.
+*/
+static bool build_config_name(string_address line, positive length,
+                              build_pair address_to into)
+{
+        static const p8 unset[] = " is not set";
+        positive at = 9;
+
+        if (build_config_pair(line, length, into))
+                return true;
+
+        if (length <= at || memory_compare(line, "# CONFIG_", at))
+                return false;
+
+        while (at < length && ((line[at] >= 'A' && line[at] <= 'Z') ||
+                               (line[at] >= '0' && line[at] <= '9') ||
+                               line[at] == '_'))
+                at++;
+
+        if (at == 9 || length - at != sizeof(unset) - 1 ||
+            memory_compare(line + at, unset, sizeof(unset) - 1))
+                return false;
+
+        into->name = line + 2;
+        into->name_length = at - 2;
+        into->value = null;
+        into->value_length = 0;
+
+        return true;
+}
+
+static bool build_config_fragment(string_address from, string_address to)
+{
+        build_lines walk;
+        positive count = 0;
+        positive seen = 0;
+        positive used = 0;
+
+        if (file_slurp(from, build_file_two, BUILD_FILE_ROOM) < 0)
+                return false;
+
+        build_lines_open(address_of walk, (string_address)build_file_two);
+
+        while (build_lines_next(address_of walk))
+        {
+                if (count == BUILD_PAIR_ROOM)
+                        return false;
+
+                if (build_config_name(walk.line, walk.length,
+                                      address_of build_pairs[count]))
+                        count++;
+        }
+
+        build_lines_open(address_of walk, (string_address)build_file_two);
+
+        while (build_lines_next(address_of walk))
+        {
+                build_pair here;
+                bool later = false;
+
+                if (build_config_name(walk.line, walk.length, address_of here))
+                {
+                        seen++;
+
+                        for (positive after = seen; after < count && !later; after++)
+                                later = build_pairs[after].name_length == here.name_length &&
+                                        !memory_compare(build_pairs[after].name,
+                                                        here.name, here.name_length);
+                }
+
+                if (later)
+                        continue;
+
+                memory_copy(build_file_one + used, walk.line, walk.length);
+                used += walk.length;
+                build_file_one[used++] = '\n';
+        }
+
+        return build_write_file(to, (string_address)build_file_one, used);
+}
+
 static b32 build_config(string_address address_to profiles, positive count)
 {
         string_address artifacts = build_setting_get("artifacts");
@@ -4454,12 +4546,16 @@ static b32 build_local(string_address address_to profiles, positive count)
                         fragment paths, so "ARCH=arm64" became a file that did
                         not exist and stopped every cross build.
                 */
+                if (!build_config_fragment(build_join(artifacts, "/.config", null),
+                                           build_join(artifacts, "/merge.config", null)))
+                        return build_die("writing artifacts/merge.config");
+
                 at = 0;
                 words[at++] = "sh";
                 words[at++] = "scripts/kconfig/merge_config.sh";
                 words[at++] = "-m";
                 words[at++] = ".config";
-                words[at++] = build_join("../", artifacts, "/.config", null);
+                words[at++] = build_join("../", artifacts, "/merge.config", null);
                 words[at] = null;
 
                 what.words = (string_address address_to)words;
