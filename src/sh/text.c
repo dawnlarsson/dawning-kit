@@ -14072,6 +14072,8 @@ typedef struct
 } grep_set;
 
 static grep_set grep_literals;
+static rx_dfa grep_dfa;
+static rx_dfa_cache grep_dfa_cache;
 
 // False when some branch is not bytes alone, or the set would not fit.
 static bool grep_set_gather(const regex_program address_to program, p16 node,
@@ -14120,6 +14122,9 @@ typedef struct
         const rx_hints address_to literal;
         // The strings that are the whole program, or null.
         const grep_set address_to set;
+        // The deterministic machine, when a record needs the whole question
+        // asked and the question has no backreference in it; null otherwise.
+        rx_dfa_cache address_to dfa;
         positive limit;
         p8 mode, boundary;
         bool literal_proves, icase, invert, plain, numbered;
@@ -14208,8 +14213,24 @@ static bool grep_line_matches(const grep_plan address_to plan,
                 return false;
         }
 
+        /*
+                A line the hunt already chose is asked of the graph first: it
+                starts where the program can start and gives up a line early,
+                where the machine would read every byte of it. The machine
+                answers only what the graph gives up on. The line's delimiter
+                is always the byte after it, in a span and in the line reader's
+                own copy alike, so the machine reads it whole.
+        */
         p8 result = rx_find(state->match, plan->program, REGEX_FIRST, false,
                             line, length, 0);
+
+        if (result == RX_COMPLEX && plan->dfa && !plan->dfa->failed)
+        {
+                string_address hit = rx_dfa_scan(plan->dfa, line, line + length + 1);
+
+                if (hit || !plan->dfa->failed)
+                        return hit != null;
+        }
 
         if (result == RX_COMPLEX)
                 state->complex++;
@@ -14324,6 +14345,116 @@ static string_address grep_set_next(const grep_plan address_to plan,
         return first == past ? null : first;
 }
 
+// Whether the bytes hold the fixed string, or any string of the set.
+static bool grep_bytes_hold(const grep_plan address_to plan,
+                            string_address bytes, positive size)
+{
+        if (plan->literal)
+                return text_literal_find(bytes, size, 0,
+                                         (string_address)plan->literal->literal,
+                                         plan->literal->literal_length, plan->icase,
+                                         plan->literal->literal_anchors) != null;
+
+        const grep_set address_to set = plan->set;
+
+        for (positive i = 0; i < set->count; i++)
+                if (text_literal_find(bytes, size, 0, set->bytes + set->at[i],
+                                      set->size[i], plan->icase, set->anchors[i]))
+                        return true;
+
+        return false;
+}
+
+/*
+        A record that runs past the end of the reader, where none of it is
+        going to be printed and the strings are the whole question.
+
+        Nothing about the answer needs the record held: whether one of the
+        strings is in it is a search of each fill, plus the few bytes either
+        side of where two fills meet, which is where an occurrence can
+        straddle them. So a record of any length is counted, listed or asked
+        about without the line reader's copy and without its ceiling -- GNU
+        has no ceiling either. Once a string has been seen, the rest of the
+        record is only a hunt for its delimiter.
+*/
+static fn grep_record_stream(const grep_plan address_to plan,
+                             grep_state address_to state)
+{
+        positive longest = plan->literal ? plan->literal->literal_length : 0;
+
+        for (positive i = 0; plan->set && i < plan->set->count; i++)
+                if (plan->set->size[i] > longest)
+                        longest = plan->set->size[i];
+
+        // The last longest - 1 bytes of the record so far, then the first
+        // longest - 1 of the next fill beside them. A set's strings share
+        // GREP_SET_BYTES and a single string is shorter still.
+        p8 edge[2 * GREP_SET_BYTES];
+        positive window = longest - 1;
+        positive kept = 0;
+        bool found = false;
+        bool ended = false;
+
+        while (!found && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                p8 address_to stop = memory_first_of(at, text_delimiter, left);
+                positive size = stop ? (positive)(stop - at) : left;
+                positive head = size < window ? size : window;
+
+                if (kept)
+                {
+                        memory_copy(edge + kept, at, head);
+                        found = grep_bytes_hold(plan, edge, kept + head);
+                }
+
+                found = found || grep_bytes_hold(plan, at, size);
+
+                if (stop)
+                {
+                        text_input.position += size + 1;
+                        ended = true;
+                        break;
+                }
+
+                text_input.position = text_input.filled;
+
+                if (size >= window)
+                {
+                        memory_copy(edge, at + size - window, window);
+                        kept = window;
+                }
+                else
+                {
+                        positive total = kept + size;
+                        positive drop = total > window ? total - window : 0;
+
+                        memory_copy(edge, edge + drop, kept - drop);
+                        memory_copy(edge + kept - drop, at, size);
+                        kept = total - drop;
+                }
+        }
+
+        while (found && !ended && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                p8 address_to stop = memory_first_of(at, text_delimiter, left);
+
+                if (stop)
+                {
+                        text_input.position += (positive)(stop - at) + 1;
+                        break;
+                }
+
+                text_input.position = text_input.filled;
+        }
+
+        if (found != plan->invert)
+                grep_line_selected(plan, state, null, 0);
+}
+
 static fn grep_span(const grep_plan address_to plan, grep_state address_to state,
                     string_address span, positive size)
 {
@@ -14355,6 +14486,45 @@ static fn grep_span(const grep_plan address_to plan, grep_state address_to state
                                       ? memory_count(span, size, text_delimiter) - got
                                       : got;
                 at = past;
+        }
+
+        /*
+                With no string to hunt, the machine reads the span itself and
+                stops only at a record that matches; the records it passed are
+                the ones -v selects. If it will not fit, the rest of the span
+                goes a line at a time as before.
+        */
+        while (!literal && !plan->set && plan->dfa && !plan->dfa->failed &&
+               at < past && !state->done)
+        {
+                string_address hit = rx_dfa_scan(plan->dfa, at, past);
+
+                if (!hit && plan->dfa->failed)
+                        break;
+
+                string_address line = past;
+
+                if (hit)
+                {
+                        string_address before = (string_address)memory_last_of(
+                            at, text_delimiter, (positive)(hit - at));
+
+                        line = before ? before + 1 : at;
+                }
+
+                if (plan->invert)
+                        grep_lines_selected(plan, state, at, (positive)(line - at));
+
+                if (!hit)
+                {
+                        at = past;
+                        break;
+                }
+
+                if (!plan->invert && !state->done)
+                        grep_line_selected(plan, state, line, (positive)(hit - line));
+
+                at = hit + 1;
         }
 
         while (at < past && !state->done)
@@ -14481,6 +14651,9 @@ static b32 text_grep()
         bool only = (flags & FILE_FLAG('o')) != 0;
         bool null_data = (flags & FILE_FLAG('z')) != 0;
         positive limit = TEXT_UNSET;
+        // -m -1 is no limit, the same number as none given, but GNU keeps
+        // the count it was handed and so never finds it above one.
+        bool limit_negative = false;
         positive before = 0;
         positive after = 0;
         string_address label = file_option_value(address_of taking, 'J');
@@ -14551,6 +14724,7 @@ static b32 text_grep()
                 if (letter == 'm' && said[0] == '-')
                 {
                         limit = positive_max;
+                        limit_negative = true;
                         continue;
                 }
 
@@ -14614,6 +14788,15 @@ static b32 text_grep()
         if (null_data)
                 text_delimiter = '\0';
 
+        // Only where no string answers the whole question, and after the
+        // delimiter is known, since it is a column of the machine.
+        bool machine = !never && !literal_proves && !literal_set &&
+                       rx_dfa_compile(address_of grep_dfa, address_of regex_current,
+                                      regex_boundary, text_delimiter);
+
+        if (machine)
+                rx_dfa_attach(address_of grep_dfa_cache, address_of grep_dfa);
+
         // -m0 can match nothing, and a -f file with no patterns in it matches
         // nothing either. GNU answers both before it opens a single file --
         // measured: grep -c -f /dev/null prints no count and exits 1, and it
@@ -14640,6 +14823,21 @@ static b32 text_grep()
         // said about a file that would not open.
         text_quiet_open = quietly;
         bool discarded = grep_output_discarded();
+
+        /*
+                A regular file that is also where the lines are going is read
+                as fast as it is written and never ends, so GNU refuses it:
+                the same inode on both sides, whatever the file's size, unless
+                nothing of the lines is written -- -c, -l, -L and -q -- or at
+                most one line can be, which is -m 1.
+        */
+        file_facts output_facts;
+        bool output_regular = text_handle_facts(text_out_handle,
+                                                 address_of output_facts) &&
+                              (output_facts.mode & MODE_FORMAT) == MODE_FILE;
+        bool refuse_output = output_regular && !counting && !quiet &&
+                             !listing && !listing_without && !limit_negative &&
+                             limit > 1;
         bool found_any = false;
         bool shown_any = false;
         b32 trouble = 0;
@@ -14731,10 +14929,15 @@ static b32 text_grep()
                         continue;
                 }
 
+                file_facts input_facts;
+                bool input_known = text_handle_facts(text_input.handle,
+                                                     address_of input_facts);
+
                 // A directory reads as EISDIR rather than as bytes, which is
                 // where GNU's message comes from and why -d skip has one to
                 // suppress.
-                if (name && text_directory(text_input.handle))
+                if (name && input_known &&
+                    (input_facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
                 {
                         text_close();
 
@@ -14756,6 +14959,21 @@ static b32 text_grep()
                         ? name
                         : (label ? label : (string_address) "(standard input)");
 
+                if (refuse_output && input_known &&
+                    (input_facts.mode & MODE_FORMAT) == MODE_FILE &&
+                    file_same_identity(address_of input_facts,
+                                       address_of output_facts))
+                {
+                        text_close();
+
+                        if (!quietly)
+                                string_diagnostic(&text_diagnostic, 0, shown_name,
+                                                  "input file is also the output");
+
+                        trouble = 2;
+                        continue;
+                }
+
                 if (grep_tabbed)
                 {
                         positive size = 0;
@@ -14772,10 +14990,7 @@ static b32 text_grep()
                    match. Keep stdin (including '-') and pipe/device inputs
                    on their draining path so a producer never gains SIGPIPE
                    merely because the consumer's output was redirected. */
-                file_facts input_facts;
-                bool discard_file = discarded && text_input.opened &&
-                                    text_handle_facts(text_input.handle,
-                                                      address_of input_facts) &&
+                bool discard_file = discarded && text_input.opened && input_known &&
                                     (input_facts.mode & MODE_FORMAT) == MODE_FILE;
 
                 // -v wants the lines that do not match and the context flags
@@ -14805,6 +15020,7 @@ static b32 text_grep()
                             .program = address_of regex_current,
                             .literal = literal->literal_length ? literal : null,
                             .set = literal_set ? address_of grep_literals : null,
+                            .dfa = machine ? address_of grep_dfa_cache : null,
                             .limit = limit,
                             .mode = quiet || listing || listing_without || discard_file
                                         ? GREP_SPAN_FIRST
@@ -14832,6 +15048,14 @@ static b32 text_grep()
                                 {
                                         size = (positive)(last - at) + 1;
                                         text_input.position += size;
+                                }
+                                else if (plan.mode != GREP_SPAN_PRINT &&
+                                         (plan.literal_proves || plan.set) &&
+                                         plan.boundary == REGEX_BOUNDARY_NONE)
+                                {
+                                        grep_record_stream(address_of plan,
+                                                           address_of state);
+                                        continue;
                                 }
                                 else
                                 {

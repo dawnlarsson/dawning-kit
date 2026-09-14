@@ -984,6 +984,533 @@ static p8 rx_find(rx_match *match, const regex_program *program, p8 mode, bool c
         return RX_NO_MATCH;
 }
 
+/*
+        A deterministic machine built as it is needed, for the one question
+        grep asks of a record that no fixed string answers: does anything in
+        it match.
+
+        The graph above answers that by trying starts and backtracking, which
+        is exact and bounded by work rather than by time; over a span of many
+        records it is a run per record and sometimes per start. Here the
+        graph is first unrolled into a Thompson automaton -- counted
+        repetitions copied out, alternation and groups as splits -- and sets
+        of its states become the states of a machine that reads each byte
+        once. Only the transitions that bytes actually take are ever made,
+        so a machine that would be large in principle stays the size of the
+        input's habits.
+
+        Bytes are read by class: two bytes every set treats alike are one
+        column. The delimiter has a column of its own, which is where a
+        record is judged at its end, and name bytes are kept apart from the
+        rest whenever \b, \<, \> or -w can ask about them.
+
+        What would need a look ahead is settled one byte late. A state holds
+        the automaton's positions before any assertion is followed, with
+        whether the byte before was a name byte and whether this is the
+        record's first position; the transition on the next byte knows that
+        byte's class and so knows every assertion, follows them, notes a
+        match that ended before the byte, and only then consumes it. A match
+        at the end of a record is the delimiter's transition.
+
+        Starts are added back after every byte, as the graph's search tries
+        every position; under -w only after a byte that is not a name byte,
+        and under -x never, which is the same set of starts rx_find tries.
+
+        Backreferences are not a regular language and keep the graph. So
+        does an automaton that will not fit, and a machine whose states keep
+        outgrowing the cache: it is emptied and begun again from where it
+        stands a bounded number of times, and past that the caller asks the
+        graph instead.
+*/
+#define RX_DFA_NFA_MAX 4096
+#define RX_DFA_SET_MAX 128
+#define RX_DFA_STATE_MAX 2048
+#define RX_DFA_POOL_MAX 262144
+#define RX_DFA_HASH 8192
+#define RX_DFA_RESETS_MAX 64
+#define RX_DFA_DEPTH_MAX 256
+
+enum { RX_NFA_SET = 1, RX_NFA_SPLIT, RX_NFA_BEGIN, RX_NFA_END, RX_NFA_EDGE, RX_NFA_MATCH };
+enum { RX_DFA_UNKNOWN = -1, RX_DFA_HIT = -2, RX_DFA_DEAD = -3,
+       RX_DFA_END_HIT = -4, RX_DFA_END_MISS = -5, RX_DFA_FULL = -6 };
+enum { RX_DFA_PREVIOUS_NAME = 1, RX_DFA_BEGINNING = 2 };
+enum { RX_DFA_RESTART_ALWAYS, RX_DFA_RESTART_AFTER_OTHER, RX_DFA_RESTART_NEVER };
+
+typedef struct
+{
+        p8 kind;
+        // The set for RX_NFA_SET, the edge for RX_NFA_EDGE.
+        p8 argument;
+        p16 out, out1;
+} rx_nfa;
+
+typedef struct
+{
+        rx_nfa nfa[RX_DFA_NFA_MAX];
+        p8 sets[RX_DFA_SET_MAX][256];
+        // A byte's class, a class's first byte, and whether it is a name byte.
+        p8 classes[256];
+        p8 representative[256];
+        p8 name[256];
+        p16 order[RX_NODE_MAX];
+        positive nfa_count, set_count, class_count, order_top;
+        p16 start;
+        p8 boundary, delimiter, delimiter_class;
+        // Starts after the first position: every one, only after a byte that
+        // is not a name byte, or none -- -x, and a program that begins with ^,
+        // which rx_find tries at nought and nowhere else.
+        p8 restart;
+        bool usable;
+} rx_dfa;
+
+typedef struct
+{
+        const rx_dfa *dfa;
+        b32 trans[RX_DFA_STATE_MAX * 256];
+        p32 set_at[RX_DFA_STATE_MAX];
+        p16 set_size[RX_DFA_STATE_MAX];
+        p8 flags[RX_DFA_STATE_MAX];
+        p16 pool[RX_DFA_POOL_MAX];
+        p32 hash[RX_DFA_HASH];
+        p32 mark[RX_DFA_NFA_MAX];
+        p64 bits[RX_DFA_NFA_MAX / 64];
+        p16 stack[RX_DFA_NFA_MAX];
+        p16 found[RX_DFA_NFA_MAX];
+        positive pool_used, state_count, generation, resets;
+        b32 start;
+        bool failed;
+} rx_dfa_cache;
+
+static p16 rx_nfa_new(rx_dfa *dfa, p8 kind, p8 argument, p16 out, p16 out1)
+{
+        if (dfa->nfa_count == RX_DFA_NFA_MAX)
+        {
+                dfa->usable = false;
+                return 0;
+        }
+        p16 at = (p16)dfa->nfa_count++;
+        dfa->nfa[at] = (rx_nfa){kind, argument, out, out1};
+        return at;
+}
+
+static p8 rx_nfa_set(rx_dfa *dfa, const p8 *table)
+{
+        for (positive i = 0; i < dfa->set_count; i++)
+                if (!memory_compare(dfa->sets[i], table, 256))
+                        return (p8)i;
+        if (dfa->set_count == RX_DFA_SET_MAX)
+        {
+                dfa->usable = false;
+                return 0;
+        }
+        memory_copy_apart(dfa->sets[dfa->set_count], table, 256);
+        return (p8)dfa->set_count++;
+}
+
+/* The sequence from `first` along `next`, ending in `follow`, built from its
+   last node back so every piece already knows where it goes. */
+static p16 rx_nfa_build(rx_dfa *dfa, const regex_program *program, p16 first,
+                        p16 follow, b32 depth)
+{
+        const rx_node *nodes = program->nodes;
+        if (!first || !dfa->usable)
+                return follow;
+        if (depth > RX_DFA_DEPTH_MAX)
+        {
+                dfa->usable = false;
+                return follow;
+        }
+        positive base = dfa->order_top;
+        for (p16 at = first; at; at = nodes[at].next)
+        {
+                if (dfa->order_top == RX_NODE_MAX)
+                {
+                        dfa->usable = false;
+                        return follow;
+                }
+                dfa->order[dfa->order_top++] = at;
+        }
+        for (positive k = dfa->order_top; k > base && dfa->usable; k--)
+        {
+                const rx_node *node = nodes + dfa->order[k - 1];
+                p8 table[256];
+                switch (node->kind)
+                {
+                case RX_BYTE:
+                        memory_fill(table, 0, 256);
+                        table[node->argument] = 1;
+                        if ((program->flags & RX_IGNORE_CASE) && byte_is_alpha(node->argument))
+                                table[node->argument ^ 32] = 1;
+                        follow = rx_nfa_new(dfa, RX_NFA_SET, rx_nfa_set(dfa, table), follow, 0);
+                        break;
+                case RX_ANY:
+                        memory_fill(table, 1, 256);
+                        if (!(program->policy & REGEX_DOT_NEWLINE))
+                                table['\n'] = 0;
+                        follow = rx_nfa_new(dfa, RX_NFA_SET, rx_nfa_set(dfa, table), follow, 0);
+                        break;
+                case RX_SET:
+                        follow = rx_nfa_new(dfa, RX_NFA_SET,
+                                            rx_nfa_set(dfa, program->sets[node->argument]), follow, 0);
+                        break;
+                case RX_BEGIN:
+                        follow = rx_nfa_new(dfa, RX_NFA_BEGIN, 0, follow, 0);
+                        break;
+                case RX_END:
+                        follow = rx_nfa_new(dfa, RX_NFA_END, 0, follow, 0);
+                        break;
+                case RX_EDGE:
+                        follow = rx_nfa_new(dfa, RX_NFA_EDGE, node->argument, follow, 0);
+                        break;
+                case RX_CAPTURE:
+                        follow = rx_nfa_build(dfa, program, node->left, follow, depth + 1);
+                        break;
+                case RX_ALT:
+                {
+                        p16 left = rx_nfa_build(dfa, program, node->left, follow, depth + 1);
+                        p16 right = rx_nfa_build(dfa, program, node->right, follow, depth + 1);
+                        follow = rx_nfa_new(dfa, RX_NFA_SPLIT, 0, left, right);
+                        break;
+                }
+                case RX_COUNT:
+                {
+                        p16 after = follow;
+                        b32 low = node->minimum, high = node->maximum;
+                        if (high < 0)
+                        {
+                                p16 loop = rx_nfa_new(dfa, RX_NFA_SPLIT, 0, 0, after);
+                                p16 body = rx_nfa_build(dfa, program, node->left, loop, depth + 1);
+                                if (dfa->usable)
+                                        dfa->nfa[loop].out = body;
+                                follow = loop;
+                        }
+                        else
+                                for (b32 i = low; i < high && dfa->usable; i++)
+                                {
+                                        p16 body = rx_nfa_build(dfa, program, node->left, follow, depth + 1);
+                                        follow = rx_nfa_new(dfa, RX_NFA_SPLIT, 0, body, after);
+                                }
+                        for (b32 i = 0; i < low && dfa->usable; i++)
+                                follow = rx_nfa_build(dfa, program, node->left, follow, depth + 1);
+                        break;
+                }
+                default:
+                        dfa->usable = false;
+                        break;
+                }
+        }
+        dfa->order_top = base;
+        return follow;
+}
+
+/* Split the classes by one more property of a byte. */
+static fn rx_dfa_refine(rx_dfa *dfa, const p8 *member)
+{
+        p16 map[512];
+        p8 classes[256];
+        positive count = 0;
+        memory_fill(map, 0xff, sizeof(map));
+        for (b32 byte = 0; byte < 256; byte++)
+        {
+                p16 key = (p16)(dfa->classes[byte] * 2 + (member[byte] != 0));
+                if (map[key] == 0xffff)
+                        map[key] = (p16)count++;
+                classes[byte] = (p8)map[key];
+        }
+        memory_copy_apart(dfa->classes, classes, 256);
+        dfa->class_count = count;
+}
+
+static bool rx_dfa_compile(rx_dfa *dfa, const regex_program *program, p8 boundary,
+                           p8 delimiter)
+{
+        dfa->usable = !(program->flags & RX_HAS_BACKREF);
+        dfa->nfa_count = 1;
+        dfa->set_count = 0;
+        dfa->order_top = 0;
+        dfa->boundary = boundary;
+        dfa->delimiter = delimiter;
+        dfa->restart = boundary == REGEX_BOUNDARY_WORD ? RX_DFA_RESTART_AFTER_OTHER
+                     : boundary == REGEX_BOUNDARY_LINE || (program->flags & RX_ANCHORED)
+                           ? RX_DFA_RESTART_NEVER
+                           : RX_DFA_RESTART_ALWAYS;
+        if (!dfa->usable)
+                return false;
+        p16 match = rx_nfa_new(dfa, RX_NFA_MATCH, 0, 0, 0);
+        dfa->start = rx_nfa_build(dfa, program, program->first, match, 0);
+        if (!dfa->usable)
+                return false;
+        memory_fill(dfa->classes, 0, 256);
+        dfa->class_count = 1;
+        for (positive i = 0; i < dfa->set_count; i++)
+                rx_dfa_refine(dfa, dfa->sets[i]);
+        rx_dfa_refine(dfa, (const p8 *)string_set_name);
+        p8 alone[256];
+        memory_fill(alone, 0, 256);
+        alone[delimiter] = 1;
+        rx_dfa_refine(dfa, alone);
+        for (b32 byte = 255; byte >= 0; byte--)
+        {
+                dfa->representative[dfa->classes[byte]] = (p8)byte;
+                dfa->name[dfa->classes[byte]] = string_set_name[byte] != 0;
+        }
+        dfa->delimiter_class = dfa->classes[delimiter];
+        return true;
+}
+
+static fn rx_dfa_begin(rx_dfa_cache *cache);
+
+/* A state for the positions in cache->bits; interned, and the cache begun
+   again when it has no room for one more. */
+static b32 rx_dfa_intern(rx_dfa_cache *cache, p8 flags, bool *reset)
+{
+        const rx_dfa *dfa = cache->dfa;
+        positive size = 0;
+        p64 hash = 1469598103934665603ull ^ flags;
+        for (positive word = 0; word < RX_DFA_NFA_MAX / 64; word++)
+                for (p64 bits = cache->bits[word]; bits; bits &= bits - 1)
+                {
+                        p16 id = (p16)(word * 64 + (positive)__builtin_ctzll(bits));
+                        cache->found[size++] = id;
+                        hash = (hash ^ id) * 1099511628211ull;
+                }
+        positive slot = (positive)(hash >> 20) & (RX_DFA_HASH - 1);
+        for (;;)
+        {
+                p32 entry = cache->hash[slot];
+                if (!entry)
+                        break;
+                b32 state = (b32)entry - 1;
+                if (cache->flags[state] == flags && cache->set_size[state] == size &&
+                    !memory_compare(cache->pool + cache->set_at[state], cache->found,
+                                    size * sizeof(p16)))
+                        return state;
+                slot = (slot + 1) & (RX_DFA_HASH - 1);
+        }
+        if (cache->state_count == RX_DFA_STATE_MAX ||
+            cache->pool_used + size > RX_DFA_POOL_MAX)
+        {
+                if (*reset || ++cache->resets > RX_DFA_RESETS_MAX)
+                {
+                        cache->failed = true;
+                        return RX_DFA_FULL;
+                }
+                *reset = true;
+                rx_dfa_begin(cache);
+                return rx_dfa_intern(cache, flags, reset);
+        }
+        b32 state = (b32)cache->state_count++;
+        cache->set_at[state] = (p32)cache->pool_used;
+        cache->set_size[state] = (p16)size;
+        cache->flags[state] = flags;
+        memory_copy_apart(cache->pool + cache->pool_used, cache->found, size * sizeof(p16));
+        cache->pool_used += size;
+        cache->hash[slot] = (p32)state + 1;
+        for (positive c = 0; c < dfa->class_count; c++)
+                cache->trans[(positive)state * dfa->class_count + c] = RX_DFA_UNKNOWN;
+        return state;
+}
+
+static fn rx_dfa_begin(rx_dfa_cache *cache)
+{
+        cache->state_count = 0;
+        cache->pool_used = 0;
+        memory_fill(cache->hash, 0, sizeof(cache->hash));
+        // The start is the one set a caller holds across a reset.
+        p64 saved[RX_DFA_NFA_MAX / 64];
+        memory_copy_apart(saved, cache->bits, sizeof(saved));
+        memory_fill(cache->bits, 0, sizeof(cache->bits));
+        cache->bits[cache->dfa->start / 64] |= 1ull << (cache->dfa->start % 64);
+        bool reset = true;
+        cache->start = rx_dfa_intern(cache, RX_DFA_BEGINNING, &reset);
+        memory_copy_apart(cache->bits, saved, sizeof(saved));
+}
+
+static fn rx_dfa_attach(rx_dfa_cache *cache, const rx_dfa *dfa)
+{
+        cache->dfa = dfa;
+        cache->resets = 0;
+        cache->failed = !dfa->usable;
+        cache->generation = 0;
+        memory_fill(cache->mark, 0, sizeof(cache->mark));
+        memory_fill(cache->bits, 0, sizeof(cache->bits));
+        if (dfa->usable)
+                rx_dfa_begin(cache);
+}
+
+/* Follow every assertion the context allows from a state's positions:
+   consuming positions go to cache->found, and the answer is whether the
+   automaton's end was reached. */
+static bool rx_dfa_close(rx_dfa_cache *cache, b32 state, bool before, bool after,
+                         bool ending, positive *consuming)
+{
+        const rx_dfa *dfa = cache->dfa;
+        static const p8 edge_masks[] = {6, 9, 2, 4};
+        bool beginning = (cache->flags[state] & RX_DFA_BEGINNING) != 0;
+        bool matched = false;
+        positive top = 0, count = 0;
+        if (++cache->generation == 0)
+        {
+                memory_fill(cache->mark, 0, sizeof(cache->mark));
+                cache->generation = 1;
+        }
+        for (positive i = 0; i < cache->set_size[state]; i++)
+                cache->stack[top++] = cache->pool[cache->set_at[state] + i];
+        while (top)
+        {
+                p16 id = cache->stack[--top];
+                if (cache->mark[id] == cache->generation)
+                        continue;
+                cache->mark[id] = (p32)cache->generation;
+                const rx_nfa *nfa = dfa->nfa + id;
+                switch (nfa->kind)
+                {
+                case RX_NFA_SET:
+                        cache->found[count++] = id;
+                        break;
+                case RX_NFA_SPLIT:
+                        cache->stack[top++] = nfa->out1;
+                        cache->stack[top++] = nfa->out;
+                        break;
+                case RX_NFA_BEGIN:
+                        if (beginning)
+                                cache->stack[top++] = nfa->out;
+                        break;
+                case RX_NFA_END:
+                        if (ending)
+                                cache->stack[top++] = nfa->out;
+                        break;
+                case RX_NFA_EDGE:
+                        if (edge_masks[nfa->argument] & (1u << (before * 2 + after)))
+                                cache->stack[top++] = nfa->out;
+                        break;
+                case RX_NFA_MATCH:
+                        matched = true;
+                        break;
+                }
+        }
+        *consuming = count;
+        return matched;
+}
+
+/* The transition on one class from the state whose row starts at `row`,
+   made and remembered. */
+static b32 rx_dfa_step(rx_dfa_cache *cache, b32 row, p8 class)
+{
+        const rx_dfa *dfa = cache->dfa;
+        b32 state = row / (b32)dfa->class_count;
+        bool before = (cache->flags[state] & RX_DFA_PREVIOUS_NAME) != 0;
+        positive cell = (positive)row + class;
+        positive consuming;
+        b32 next;
+        if (class == dfa->delimiter_class)
+        {
+                next = rx_dfa_close(cache, state, before, false, true, &consuming)
+                           ? RX_DFA_END_HIT : RX_DFA_END_MISS;
+                cache->trans[cell] = next;
+                return next;
+        }
+        bool after = dfa->name[class];
+        if (rx_dfa_close(cache, state, before, after, false, &consuming) &&
+            dfa->boundary != REGEX_BOUNDARY_LINE &&
+            (dfa->boundary != REGEX_BOUNDARY_WORD || !after))
+        {
+                cache->trans[cell] = RX_DFA_HIT;
+                return RX_DFA_HIT;
+        }
+        p8 byte = dfa->representative[class];
+        memory_fill(cache->bits, 0, sizeof(cache->bits));
+        bool any = false;
+        for (positive i = 0; i < consuming; i++)
+        {
+                const rx_nfa *nfa = dfa->nfa + cache->found[i];
+                if (dfa->sets[nfa->argument][byte])
+                {
+                        cache->bits[nfa->out / 64] |= 1ull << (nfa->out % 64);
+                        any = true;
+                }
+        }
+        if (dfa->restart == RX_DFA_RESTART_ALWAYS ||
+            (dfa->restart == RX_DFA_RESTART_AFTER_OTHER && !after))
+        {
+                cache->bits[dfa->start / 64] |= 1ull << (dfa->start % 64);
+                any = true;
+        }
+        // Nothing left and nothing to come is the rest of the record skipped.
+        // Under -w nothing left is still waiting for the next byte that is
+        // not a name byte, and is a state like any other.
+        if (!any && dfa->restart == RX_DFA_RESTART_NEVER)
+        {
+                cache->trans[cell] = RX_DFA_DEAD;
+                return RX_DFA_DEAD;
+        }
+        bool reset = false;
+        next = rx_dfa_intern(cache, after ? RX_DFA_PREVIOUS_NAME : 0, &reset);
+        if (next < 0)
+                return next;
+        // A row, not a state: the scan adds a class to it and never multiplies.
+        next *= (b32)dfa->class_count;
+        // A reset emptied every row, this state's among them.
+        if (!reset)
+                cache->trans[cell] = next;
+        return next;
+}
+
+/* The first record in [at, past) that matches, as the address of the
+   delimiter that ends it; every record there ends with one. Null when none
+   does, and null with cache->failed when the machine would not fit. */
+static string_address rx_dfa_scan(rx_dfa_cache *cache, string_address at,
+                                  string_address past)
+{
+        const rx_dfa *dfa = cache->dfa;
+        const p8 *classes = dfa->classes;
+        const b32 *trans = cache->trans;
+        b32 start = cache->start * (b32)dfa->class_count;
+        b32 row = start;
+        for (;;)
+        {
+                // The whole of the work, while nothing needs deciding.
+                b32 next = 0;
+                while (at < past && (next = trans[row + classes[*at]]) >= 0)
+                {
+                        row = next;
+                        at++;
+                }
+                if (at == past)
+                        return null;
+                if (next == RX_DFA_UNKNOWN)
+                {
+                        next = rx_dfa_step(cache, row, classes[*at]);
+                        if (next == RX_DFA_FULL)
+                                return null;
+                        // A reset moves the start, which every record needs.
+                        start = cache->start * (b32)dfa->class_count;
+                        if (next >= 0)
+                        {
+                                row = next;
+                                at++;
+                                continue;
+                        }
+                }
+                if (next == RX_DFA_END_HIT)
+                        return at;
+                if (next == RX_DFA_END_MISS)
+                {
+                        at++;
+                        row = start;
+                        continue;
+                }
+                string_address stop = (string_address)memory_first_of(
+                    at, dfa->delimiter, (positive)(past - at));
+                if (!stop)
+                        return next == RX_DFA_HIT ? past - 1 : null;
+                if (next == RX_DFA_HIT)
+                        return stop;
+                at = stop + 1;
+                row = start;
+        }
+}
+
 #define REGEX_SCRATCH_MAX 20000
 
 static rx_pool regex_pool;
