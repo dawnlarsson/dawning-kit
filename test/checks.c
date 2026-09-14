@@ -3688,6 +3688,299 @@ static void body_write_failure(void)
         trace_number("full-device: fclose errno", errno);
 }
 
+/*
+        Every entry that stages bytes, walked over the edges its fast paths
+        decide.
+
+        The resident paths -- putc into a buffer already holding bytes, a run
+        that fits with a byte to spare, a printf piece copied straight into
+        the buffer, a pad filled in place, a whole formatted line staged for
+        an unbuffered stream -- each decide a boundary the general path used
+        to decide for them: exactly full, one byte short, a newline at the
+        start, in the middle, at the end or nowhere, a width wider than the
+        window or than the stage. So the walk is over buffer sizes either side
+        of every width the copies are cut at, in all three buffering
+        policies, with a seeded run of writes through every entry. After each
+        one the answer, the position and the error indicator are traced, and
+        the size of the file where every correct implementation must agree on
+        it: an unbuffered stream has written everything by the time the call
+        returns. The files the walk leaves behind are compared byte for byte
+        by the lane with every other file here.
+
+        What glibc cannot be asked -- whether a buffer was left full, whether
+        a newline is still waiting on a line buffered stream, whether waiting
+        bytes carry this process's stamp, whether the open list still links
+        up -- the wrapper asks through body_stream_invariants, and a broken
+        invariant is a trace line glibc never prints.
+*/
+#ifndef body_stream_invariants
+#define body_stream_invariants(f) ((void)(f))
+#endif
+
+static unsigned long body_walk_state;
+
+static unsigned long body_walk(unsigned long bound)
+{
+        body_walk_state = body_walk_state * 6364136223846793005UL +
+                          1442695040888963407UL;
+        return bound ? (body_walk_state >> 33) % bound : 0;
+}
+
+//      Letters, with newlines nowhere, first, in the middle, last, or at both
+//      ends, as the walk says.
+static long body_walk_text(char *into, unsigned long room)
+{
+        long n = (long)body_walk(room);
+        long i;
+
+        for (i = 0; i < n; i++)
+                into[i] = (char)('a' + (i * 7 + n) % 23);
+
+        switch (body_walk(5))
+        {
+        case 1: if (n) into[0] = '\n'; break;
+        case 2: if (n) into[n / 2] = '\n'; break;
+        case 3: if (n) into[n - 1] = '\n'; break;
+        case 4: if (n) { into[0] = '\n'; into[n - 1] = '\n'; } break;
+        default: break;
+        }
+
+        into[n] = 0;
+        return n;
+}
+
+static void body_walk_write(FILE *f, long size, int unbuffered)
+{
+        static char text[3 * 4096 + 72];
+        static char other[48];
+        unsigned long reach = unbuffered ? 3100 : (unsigned long)(3 * size + 70);
+        long n;
+        int byte;
+
+        if (reach > sizeof(text) - 1)
+                reach = sizeof(text) - 1;
+
+        n = body_walk_text(text, reach);
+        byte = body_walk(4) == 0 ? '\n' : 'a' + (int)body_walk(26);
+
+        body_walk_text(other, 40);
+
+        switch (body_walk(12))
+        {
+        case 0: trace_number("walk: fwrite", (long)fwrite(text, 1, (unsigned long)n, f)); break;
+        case 1: trace_number("walk: fwrite items", (long)fwrite(text, 3, (unsigned long)n / 3, f)); break;
+        case 2: trace_number("walk: fputc", (long)fputc(byte, f)); break;
+        case 3: trace_number("walk: putc", (long)putc(byte, f)); break;
+        case 4: trace_number("walk: fputs", (long)(fputs(text, f) >= 0)); break;
+        case 5: trace_number("walk: printf text", (long)fprintf(f, "%s", text)); break;
+        case 6: trace_number("walk: printf padded", (long)fprintf(f, "%*d|%s", (int)body_walk(reach), (int)n, other)); break;
+        case 7: trace_number("walk: printf two lines", (long)fprintf(f, "%s\n%s", other, text)); break;
+        case 8: trace_number("walk: printf left", (long)fprintf(f, "%-*s:%c", (int)body_walk(reach), other, byte)); break;
+        case 9: trace_number("walk: printf precision", (long)fprintf(f, "%.*s%%%x%c", (int)body_walk((unsigned long)n + 1), text, (unsigned)n, byte)); break;
+        case 10: trace_number("walk: fflush", (long)fflush(f)); break;
+        default: trace_number("walk: printf nothing", (long)fprintf(f, "%s", "")); break;
+        }
+}
+
+static void body_generated_writes(void)
+{
+        static const long sizes[] = {1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+                                     63, 64, 65, 200, 1023, 1024, 1025, 4096};
+        static const int modes[] = {_IOFBF, _IOLBF, _IONBF};
+        static char buffer[4096];
+        char path[256];
+        unsigned long m;
+        unsigned long i;
+
+        for (m = 0; m < 3; m++)
+                for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++)
+                {
+                        int unbuffered = modes[m] == _IONBF;
+                        int steps = unbuffered ? 120 : 48;
+                        FILE *f;
+
+                        if (unbuffered && i > 1)
+                                break;
+
+                        snprintf(path, sizeof(path), WORK "/walk-%lu-%ld.txt", m, sizes[i]);
+                        f = fopen(path, "w");
+                        body_walk_state = 0x5eedUL + m * 131 + i;
+                        trace_number("walk: size class", sizes[i]);
+                        trace_number("walk: setvbuf", (long)setvbuf(f, (i & 1) ? buffer : 0, modes[m], (unsigned long)sizes[i]));
+
+                        while (steps--)
+                        {
+                                body_walk_write(f, sizes[i], unbuffered);
+                                trace_number("walk: ftell", (long)ftell(f));
+                                trace_number("walk: ferror", (long)ferror(f));
+
+                                if (unbuffered)
+                                        trace_number("walk: size", body_file_size(path));
+
+                                body_stream_invariants(f);
+                        }
+
+                        trace_number("walk: fclose", (long)fclose(f));
+                        trace_number("walk: final size", body_file_size(path));
+                }
+}
+
+/*
+        The same writes on an update stream, turned round the way C allows: a
+        positioning call between writing and reading and between reading and
+        writing, with getc, fread and an ungetc of a byte the file does not
+        hold in the reading half.
+*/
+static void body_generated_updates(void)
+{
+        static const long sizes[] = {1, 8, 17, 64, 4096};
+        static const int modes[] = {_IOFBF, _IOLBF, _IONBF};
+        static unsigned char got[512];
+        char path[256];
+        unsigned long m;
+        unsigned long i;
+
+        for (m = 0; m < 3; m++)
+                for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++)
+                {
+                        FILE *f;
+                        int phase;
+
+                        snprintf(path, sizeof(path), WORK "/update-walk-%lu-%lu.txt", m, i);
+                        f = fopen(path, "w+");
+                        body_walk_state = 0xabcdUL + m * 977 + i;
+                        trace_number("update-walk: setvbuf", (long)setvbuf(f, 0, modes[m], (unsigned long)sizes[i]));
+
+                        for (phase = 0; phase < 10; phase++)
+                        {
+                                int step;
+
+                                for (step = 0; step < 5; step++)
+                                {
+                                        body_walk_write(f, sizes[i], 0);
+                                        trace_number("update-walk: ftell after write", (long)ftell(f));
+                                        body_stream_invariants(f);
+                                }
+
+                                trace_number("update-walk: seek", (long)fseek(f, (long)body_walk((unsigned long)ftell(f) + 1), SEEK_SET));
+
+                                for (step = 0; step < 5; step++)
+                                {
+                                        unsigned long want = body_walk(3 * (unsigned long)sizes[i] + 20);
+                                        unsigned long have;
+                                        unsigned long sum = 0;
+                                        unsigned long j;
+                                        int c;
+
+                                        if (want > sizeof(got))
+                                                want = sizeof(got);
+
+                                        switch (body_walk(3))
+                                        {
+                                        case 0:
+                                                have = fread(got, 1, want, f);
+                                                for (j = 0; j < have; j++)
+                                                        sum = (sum * 31 + got[j]) % 1000000007UL;
+                                                trace_number("update-walk: fread", (long)have);
+                                                trace_number("update-walk: bytes", (long)sum);
+                                                break;
+                                        case 1:
+                                                trace_number("update-walk: fgetc", (long)fgetc(f));
+                                                break;
+                                        default:
+                                                c = fgetc(f);
+                                                trace_number("update-walk: fgetc for ungetc", (long)c);
+                                                if (c != EOF)
+                                                        trace_number("update-walk: ungetc", (long)ungetc(c ^ 1, f));
+                                                break;
+                                        }
+
+                                        trace_number("update-walk: ftell after read", (long)ftell(f));
+                                        trace_number("update-walk: feof", (long)feof(f));
+                                        body_stream_invariants(f);
+                                }
+
+                                trace_number("update-walk: seek back", (long)fseek(f, 0, body_walk(2) ? SEEK_CUR : SEEK_END));
+                        }
+
+                        trace_number("update-walk: fclose", (long)fclose(f));
+                        trace_number("update-walk: final size", body_file_size(path));
+                }
+}
+
+/*
+        Many streams open at once, closed out of order.
+
+        fclose unlinks a stream from the list fflush(null) and exit walk, and
+        the orders that matter are the ones where the stream closed is not
+        the newest: every third from the oldest, the newest half newest
+        first, and what is left from the middle out. A flush of everything
+        after each pass is what would trip over a list the closes broke, and
+        every file must still hold what was written to it.
+*/
+static void body_many_streams(void)
+{
+        static FILE *streams[240];
+        char path[256];
+        int count = (int)(sizeof(streams) / sizeof(streams[0]));
+        int i;
+
+        for (i = 0; i < count; i++)
+        {
+                snprintf(path, sizeof(path), WORK "/many-%03d.txt", i);
+                streams[i] = fopen(path, "w");
+
+                if (!streams[i])
+                {
+                        trace_number("many: open failed at", i);
+                        return;
+                }
+
+                fprintf(streams[i], "stream %d\n", i);
+        }
+
+        for (i = 0; i < count; i += 3)
+        {
+                trace_number("many: close oldest first", (long)fclose(streams[i]));
+                streams[i] = 0;
+        }
+
+        body_stream_invariants(streams[1]);
+        trace_number("many: flush all", (long)fflush(0));
+
+        for (i = count - 1; i >= 0; i--)
+                if (streams[i])
+                        fprintf(streams[i], "again %d\n", i);
+
+        for (i = count - 1; i >= count / 2; i--)
+                if (streams[i])
+                {
+                        trace_number("many: close newest first", (long)fclose(streams[i]));
+                        streams[i] = 0;
+                }
+
+        body_stream_invariants(streams[1]);
+        trace_number("many: flush all again", (long)fflush(0));
+
+        for (i = 0; i < count / 2; i++)
+        {
+                int at = count / 4 + ((i & 1) ? -(i + 1) / 2 : i / 2);
+
+                if (at >= 0 && at < count && streams[at])
+                {
+                        fprintf(streams[at], "last %d\n", at);
+                        trace_number("many: close middle out", (long)fclose(streams[at]));
+                        streams[at] = 0;
+                }
+        }
+
+        for (i = 0; i < count; i++)
+                if (streams[i])
+                        trace_number("many: close the rest", (long)fclose(streams[i]));
+
+        trace_number("many: flush nothing left", (long)fflush(0));
+}
+
 static void trace_body(void)
 {
         body_make(WORK "/three.txt", "abc");
@@ -3723,6 +4016,9 @@ static void trace_body(void)
         body_odds_and_ends();
         body_refusals();
         body_write_failure();
+        body_generated_writes();
+        body_generated_updates();
+        body_many_streams();
 }
 
 #elif defined(SHARED_stream_buffering_body)
@@ -3838,6 +4134,40 @@ static void trace_body(void)
         fputs("out: done\n", stdout);
         trace_number("fflush stdout", (long)fflush(stdout));
         trace_number("length of the last line seen", line ? body_length(line) : -2);
+
+        /*
+                stderr formats a whole line before it writes, and stdout's
+                puts stages a line and its newline together. The bytes and
+                their order are what is compared: a line made of several
+                pieces, widths either side of the stage a formatted line is
+                built in, text wider than the stage, an empty format, and
+                puts lines of every length up to and past stdout's buffer.
+        */
+        {
+                static char wide[5001];
+                int i;
+
+                for (i = 0; i < 5000; i++)
+                        wide[i] = (char)('A' + i % 26);
+
+                wide[5000] = 0;
+
+                trace_number("stderr pieces", (long)fprintf(stderr, "%s: %s\n", "prog", "message"));
+
+                for (i = 1015; i <= 1030; i++)
+                        trace_number("stderr across the stage", (long)fprintf(stderr, "%*d|%s\n", i, i, "tail"));
+
+                trace_number("stderr wide text", (long)fprintf(stderr, "[%s]\n", wide));
+                trace_number("stderr wide pad", (long)fprintf(stderr, "%3000s|%-2100s|\n", "x", "y"));
+                trace_number("stderr nothing", (long)fprintf(stderr, "%s", ""));
+                trace_number("stderr putc", (long)fputc('!', stderr));
+                trace_number("stderr fputs", (long)(fputs("\n", stderr) >= 0));
+
+                for (i = 0; i < 90; i++)
+                        trace_number("puts", (long)(puts(wide + (i * 4099) % 5001) >= 0));
+
+                trace_number("fflush after puts", (long)fflush(stdout));
+        }
 }
 
 #endif
@@ -27713,6 +28043,9 @@ b32 main(void)
 #define LEAVE_FORK_CHILD_WROTE 32
 #define LEAVE_ATEXIT 33
 #define LEAVE_FORK_CHILD_FLUSHED 35
+#define LEAVE_MANY_STREAMS 36
+#define LEAVE_MATRIX_STATUS 40
+#define LEAVE_MATRIX 0x10000
 
 static fn leaving_handler(void)
 {
@@ -27738,6 +28071,148 @@ static fn leaving_fork_and_leave(void)
 
         if (child > 0)
                 system_wait4_retry(child, address_of raw, 0, null);
+}
+
+/*
+        The ownership stamp, walked rather than picked.
+
+        A stream stamps its buffer with the process that filled it when a
+        call leaves bytes behind in a buffer that was empty, and not when the
+        call empties it again before returning -- which is what keeps a line
+        buffered stream from asking the kernel for its identity once a line.
+        The handful of cases above pin the shapes that motivated the stamp.
+        This walks every pairing of a few steps before a fork with one step
+        in the child, fully and line buffered, and checks what reaches the
+        pipe against the policy written out as a model below, so a stamp that
+        is skipped where it was due -- or taken where the bytes were somebody
+        else's -- shows up as bytes printed twice or not at all.
+
+        The steps are the ways a byte gets into a stream: printf with and
+        without a newline and with one in the middle, a padded conversion,
+        putc, puts, fwrite, fputs, and fflush.
+*/
+#define LEAVING_STEPS 10
+#define LEAVING_STEP_FLUSH 6
+
+static const char *const leaving_step_bytes[LEAVING_STEPS] = {
+        "", "pp", "ll\n", "7\nqq", "c", "uu\n", "", "ww", "f\n", "  5",
+};
+
+static fn leaving_step(b32 step)
+{
+        switch (step)
+        {
+        case 1: printf("%s", "pp"); break;
+        case 2: printf("%s\n", "ll"); break;
+        case 3: printf("%d\n%s", 7, "qq"); break;
+        case 4: putc('c', stdout); break;
+        case 5: puts("uu"); break;
+        case LEAVING_STEP_FLUSH: fflush(stdout); break;
+        case 7: fwrite("ww", 1, 2, stdout); break;
+        case 8: fputs("f\n", stdout); break;
+        case 9: printf("%*d", 3, 5); break;
+        default: break;
+        }
+}
+
+DEAD_END static fn leaving_matrix_child(b32 which)
+{
+        bipolar grandchild;
+        positive raw = 0;
+
+        if ((which >> 12) & 1)
+                stream_set_buffering(stdout, null, _IOLBF, BUFSIZ);
+
+        leaving_step((which >> 8) & 15);
+        leaving_step((which >> 4) & 15);
+
+        grandchild = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (grandchild == 0)
+        {
+                leaving_step(which & 15);
+                exit(0);
+        }
+
+        if (grandchild > 0)
+                system_wait4_retry(grandchild, address_of raw, 0, null);
+
+        exit(LEAVE_MATRIX_STATUS);
+}
+
+typedef struct
+{
+        p8 bytes[256];
+        positive length;
+} leaving_text;
+
+static fn leaving_append(leaving_text address_to into, address_any bytes,
+                         positive length)
+{
+        memory_copy(into->bytes + into->length, bytes, length);
+        into->length += length;
+}
+
+//      One step of the policy: a flush sends what is waiting, a line buffered
+//      stream sends everything once a step stages a newline, and a buffer
+//      that went from empty to holding something and still holds it belongs
+//      to whoever ran the step.
+static fn leaving_model_step(b32 step, bool line, leaving_text address_to disk,
+                             leaving_text address_to pending,
+                             b32 address_to owner, b32 me)
+{
+        string_address text = (string_address)leaving_step_bytes[step];
+        positive length = string_length(text);
+        bool was_empty = pending->length == 0;
+
+        if (step == LEAVING_STEP_FLUSH)
+        {
+                leaving_append(disk, pending->bytes, pending->length);
+                pending->length = 0;
+                return;
+        }
+
+        leaving_append(pending, text, length);
+
+        if (line && length && memory_first_of(text, '\n', length))
+        {
+                leaving_append(disk, pending->bytes, pending->length);
+                pending->length = 0;
+                return;
+        }
+
+        if (was_empty && pending->length != 0)
+                address_to owner = me;
+}
+
+//      What the pipe holds at the end: the parent's steps, the child's step
+//      with whatever it inherited, the child's exit, then the parent's exit.
+static fn leaving_matrix_expect(b32 which, leaving_text address_to out)
+{
+        bool line = (which >> 12) & 1;
+        leaving_text pending;
+        leaving_text inherited;
+        b32 owner = 0;
+        b32 child_owner;
+
+        out->length = 0;
+        pending.length = 0;
+
+        leaving_model_step((which >> 8) & 15, line, out, address_of pending,
+                           address_of owner, 1);
+        leaving_model_step((which >> 4) & 15, line, out, address_of pending,
+                           address_of owner, 1);
+
+        inherited = pending;
+        child_owner = owner;
+        leaving_model_step(which & 15, line, out, address_of inherited,
+                           address_of child_owner, 2);
+
+        if (inherited.length && child_owner == 2)
+                leaving_append(out, inherited.bytes, inherited.length);
+
+        if (pending.length && owner == 1)
+                leaving_append(out, pending.bytes, pending.length);
 }
 
 DEAD_END static fn leaving_child(b32 which)
@@ -27865,7 +28340,34 @@ DEAD_END static fn leaving_child(b32 which)
                 exit(LEAVE_ATEXIT);
                 break;
 
+        //      Five streams onto the pipe, each holding a line, two of them
+        //      closed: the closes write theirs, and exit writes the three
+        //      still open, newest first, through the list the closes
+        //      unlinked from.
+        case LEAVE_MANY_STREAMS:
+        {
+                stream address_to many[5];
+                b32 at;
+
+                for (at = 0; at < 5; at++)
+                {
+                        many[at] = fdopen(dup(1), "w");
+
+                        if (is_null(many[at]))
+                                _Exit(71);
+
+                        fprintf(many[at], "s%d\n", at);
+                }
+
+                fclose(many[1]);
+                fclose(many[3]);
+                exit(LEAVE_MANY_STREAMS);
+                break;
+        }
+
         default:
+                if (which >= LEAVE_MATRIX)
+                        leaving_matrix_child(which);
                 break;
         }
 
@@ -28126,6 +28628,58 @@ test(a_hand_flushed_log_lands_before_a_stream_still_waiting)
         return leaving_says(LEAVE_BOTH, text(LEAVING_SECOND LEAVING_FIRST));
 }
 
+test(streams_left_open_are_flushed_at_exit_newest_first_after_closes)
+{
+        return leaving_says(LEAVE_MANY_STREAMS,
+                            text("s1\ns3\ns4\ns2\ns0\n"));
+}
+
+//      Every pairing of two parent steps -- the second one of none, a whole
+//      line, a flush or a partial line -- with one child step, fully and
+//      line buffered: 800 forks, each checked against the model.
+test(fork_ownership_follows_the_policy_for_every_generated_pairing)
+{
+        static const b32 second[] = {0, 2, LEAVING_STEP_FLUSH, 1};
+        p8 seen[512];
+        leaving_text want;
+        b32 line;
+        b32 first;
+        b32 other;
+        b32 child;
+
+        for (line = 0; line < 2; line++)
+                for (first = 0; first < LEAVING_STEPS; first++)
+                        for (other = 0; other < (b32)array_count(second); other++)
+                                for (child = 0; child < LEAVING_STEPS; child++)
+                                {
+                                        b32 which = LEAVE_MATRIX | (line << 12) |
+                                                    (first << 8) |
+                                                    (second[other] << 4) | child;
+                                        positive filled = 0;
+                                        b32 status;
+
+                                        leaving_matrix_expect(which,
+                                                              address_of want);
+                                        status = leaving_run(which, seen,
+                                                             sizeof(seen),
+                                                             address_of filled);
+
+                                        if (status == LEAVE_MATRIX_STATUS &&
+                                            filled == want.length &&
+                                            memory_compare(seen, want.bytes,
+                                                           filled) == 0)
+                                                continue;
+
+                                        string_format(log,
+                                                      "\n  pairing %p: status %b, %p bytes where %p were due\n",
+                                                      (positive)which, status,
+                                                      filled, want.length);
+                                        return false;
+                                }
+
+        return true;
+}
+
 /*
         environ, which the stdlib family left out until there was a C startup
         to point it at anything.
@@ -28344,6 +28898,8 @@ static test_case test_cases[] = {
         case(a_forked_child_can_still_flush_the_log_itself),
         case(a_forked_childs_log_flush_is_not_doubled_by_a_fork),
         case(a_hand_flushed_log_lands_before_a_stream_still_waiting),
+        case(streams_left_open_are_flushed_at_exit_newest_first_after_closes),
+        case(fork_ownership_follows_the_policy_for_every_generated_pairing),
         case(environ_agrees_with_getenv_entry_by_entry),
         case(environ_is_the_vector_the_family_owns_once_it_owns_one),
         case(environ_follows_setenv_through_a_growth),
@@ -35270,9 +35826,111 @@ b32 main(void)
 #define body_limit_memory() \
         (system_call_4(syscall(prlimit64), 0, 9, \
                         (positive)(p64[]){1, 1}, 0) == 0)
+
+/*
+        What the shared walk cannot ask glibc, asked of this tree's streams
+        after every step. A resident write never leaves a buffer full; staged
+        output is never beside read-ahead or on an unbuffered stream; a line
+        buffered stream never has a newline waiting; waiting bytes carry this
+        process's stamp, which a fresh stream starts without, so a stamp
+        skipped where it was due shows; and every stream on the open list is
+        named by the link its back pointer says names it.
+*/
+static fn stream_walk_invariants(stream address_to handle)
+{
+        stream address_to walk;
+        positive links = 0;
+
+        if (handle->write_used != 0)
+        {
+                if (handle->read_head != handle->read_tail)
+                        trace_number("invariant: staged beside read-ahead", 1);
+
+                if (handle->write_used >= handle->buffer_size)
+                        trace_number("invariant: buffer left full", (long)handle->write_used);
+
+                if (handle->flags & STREAM_UNBUFFERED)
+                        trace_number("invariant: unbuffered stream staged", (long)handle->write_used);
+
+                if ((handle->flags & STREAM_LINE_BUFFERED) &&
+                    memory_first_of(handle->buffer, '\n', handle->write_used))
+                        trace_number("invariant: newline waiting", (long)handle->write_used);
+
+                if (handle->owner != (positive)system_call(syscall(getpid)))
+                        trace_number("invariant: waiting bytes not stamped", (long)handle->write_used);
+        }
+
+        for (walk = stream_open_list; walk != null && links < 100000; walk = walk->next)
+        {
+                if (walk->back == null || address_to walk->back != walk ||
+                    !(walk->flags & STREAM_REGISTERED))
+                        trace_number("invariant: open list link", (long)links);
+
+                links++;
+        }
+}
+
+#define body_stream_invariants(f) stream_walk_invariants(f)
 #define SHARED_stream_body
 #include "checks.c"
 #undef SHARED_stream_body
+
+/*
+        A write straight after ungetc, which C leaves undefined, answered the
+        way the general path has always answered it: the pushed-back byte is
+        given up and its distance is given back to the kernel's offset. After
+        reading, that puts the write where the caller was. After writing there
+        is no read-ahead and the output is still staged, so the staged bytes
+        land one place early -- "abcdeghi" rather than anything a caller would
+        choose -- and that is pinned as it stands, because the point here is
+        not that answer but that the resident put paths, which skip
+        stream_face_writing, still refuse the one state it exists for. The
+        flush comes straight after the write so that no later general call
+        can give the byte back on the resident path's behalf.
+*/
+static bool write_after_pushback_through(b32 entry)
+{
+        b32 descriptor = (b32)system_call_2(syscall(memfd_create),
+                                            (positive)"pushback-write", 1);
+        p8 seen[16];
+        bool okay;
+
+        if (descriptor < 0) return false;
+        FILE *file = fdopen(descriptor, "w+");
+        if (!file) { close(descriptor); return false; }
+
+        okay = fputs("abcdef", file) >= 0 && fseek(file, 0, SEEK_SET) == 0 &&
+               fgetc(file) == 'a' && fgetc(file) == 'b' &&
+               ungetc('Z', file) == 'Z' && ftell(file) == 1 &&
+               fputc('X', file) == 'X' && ftell(file) == 2 &&
+               fputs("YY", file) >= 0 && ftell(file) == 4 &&
+               fflush(file) == 0;
+        okay &= pread(descriptor, seen, 16, 0) == 6 &&
+                memory_compare(seen, "aXYYef", 6) == 0;
+
+        okay &= fputs("abcdef", file) >= 0 && fseek(file, 0, SEEK_SET) == 0 &&
+                fseek(file, 0, SEEK_END) == 0;
+        okay &= entry == 0 ? fputc('g', file) == 'g' && fputc('h', file) == 'h'
+                : entry == 1 ? fputs("gh", file) >= 0
+                             : fprintf(file, "%s", "gh") == 2;
+        okay &= ungetc('Q', file) == 'Q';
+        okay &= entry == 0 ? fputc('i', file) == 'i'
+                : entry == 1 ? fputs("i", file) >= 0
+                             : fprintf(file, "%c", 'i') == 1;
+        okay &= fflush(file) == 0;
+        okay &= pread(descriptor, seen, 16, 4) == 8 &&
+                memory_compare(seen, "abcdeghi", 8) == 0;
+
+        fclose(file);
+        return okay;
+}
+
+static bool write_after_pushback(void)
+{
+        return write_after_pushback_through(0) &&
+               write_after_pushback_through(1) &&
+               write_after_pushback_through(2);
+}
 
 static bool dynamic_buffer_fits_one_shelf(void)
 {
@@ -35469,7 +36127,8 @@ b32 main(void)
         if (program_argument_count() > 1)
                 return body_allocation_failure();
         if (!empty_mode_stays_bounded() || !checked_write_errors() ||
-            !bounded_line_reads() || !bounded_stream_positions())
+            !bounded_line_reads() || !bounded_stream_positions() ||
+            !write_after_pushback())
                 return 1;
         trace_body();
         bool fits = dynamic_buffer_fits_one_shelf();
@@ -62936,6 +63595,33 @@ static fn stream_write_floor_work()
         }
 }
 
+/* The floor above folds its copy because the length is a literal, which no
+   call can. This one moves a length the compiler cannot see through a
+   called function, with the same inline copy and the same state update,
+   so the gap left between it and stream_put_bytes is the stream's own. */
+static volatile positive stream_write_length_unseen = STREAM_WRITE_LENGTH;
+
+static __attribute__((noinline, noclone)) positive
+stream_write_floor_call(stream address_to handle, address_any data,
+                        positive length)
+{
+        stream_copy_in(handle->buffer + handle->write_used,
+                       (const p8 address_to)data, length);
+        handle->write_used += length;
+        return length;
+}
+
+static fn stream_write_floor_running_work()
+{
+        for (positive i = 0; i < STREAM_WRITE_ROUNDS; i++)
+        {
+                stream_write_reset();
+                stream_write_sink += stream_write_floor_call(
+                        address_of stream_write_handle, stream_write_input,
+                        stream_write_length_unseen);
+        }
+}
+
 static fn stream_put_bytes_subject()
 {
         for (positive i = 0; i < STREAM_WRITE_ROUNDS; i++)
@@ -62994,6 +63680,8 @@ static bench_work stream_write_named(string_address name)
 {
         if (string_compare(name, (string_address)"floor-resident") == 0)
                 return stream_write_floor_work;
+        if (string_compare(name, (string_address)"floor-running") == 0)
+                return stream_write_floor_running_work;
         if (string_compare(name, (string_address)"subject-put") == 0)
                 return stream_put_bytes_subject;
         if (string_compare(name, (string_address)"subject-one") == 0)
@@ -63034,6 +63722,9 @@ b32 main(void)
         stream_write_report(
                 (string_address)"resident copy/state floor (state-specific)",
                 stream_write_floor_work);
+        stream_write_report(
+                (string_address)"resident floor, length unseen, called",
+                stream_write_floor_running_work);
         stream_write_report((string_address)"stream_put_bytes",
                             stream_put_bytes_subject);
         stream_write_report((string_address)"stream_write size=1",

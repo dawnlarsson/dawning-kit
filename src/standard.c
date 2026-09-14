@@ -4916,9 +4916,16 @@ fn(address_to stdlib_exit_flush_hook)(void) = null;
         itself.
 
         The identity is one getpid, 32ns on the machine this was written on,
-        and a stream asks for it only when its buffer goes from empty to
-        holding something -- once per four kilobytes for a program writing
-        steadily. Through fwrite to a real file, in milliseconds, lower is
+        and a stream asks for it only when a call leaves bytes behind in a
+        buffer that was empty when the call began -- at most once per buffer
+        for a program writing steadily, and never for a call that empties the
+        buffer again before it returns. That second half is what a line
+        buffered stream is: stamping on the way in cost one getpid a line, and
+        a hundred thousand printf("%d\n") lines into a line buffered stdout
+        made 100,001 getpid beside their 100,000 write; stamping on the way
+        out makes one, and glibc makes none. The stamp is still read only
+        where bytes are waiting, so the answer is the same. Through fwrite to
+        a real file, stamping on the way in, in milliseconds, lower is
         quicker:
 
               chunk    rounds    without      with
@@ -12161,8 +12168,9 @@ struct stream
         positive write_used;
 
         //      Which process put the bytes in write_used there. Stamped when
-        //      the buffer goes from empty to holding something, and read by
-        //      the flush at exit, which will not write out a buffer another
+        //      the buffer went from empty to holding something and still
+        //      holds it when the call that filled it returns, and read by the
+        //      flush at exit, which will not write out a buffer another
         //      process filled. See the block above stdlib_buffers_are_ours.
         positive owner;
 
@@ -12171,7 +12179,10 @@ struct stream
 
         p8 single[1];
 
+        //      The open list, and the one link that points at this stream, so
+        //      that fclose unlinks without walking. See stream_forget.
         stream address_to next;
+        stream address_to address_to back;
 };
 
 typedef stream FILE;
@@ -12534,29 +12545,41 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
         return true;
 }
 
+/*
+        Newest first, and each stream remembers the link that names it -- the
+        list head for the newest, the previous stream's next for the rest --
+        so that forgetting one is two stores rather than a walk.
+
+        The walk was the obvious code and it is quadratic in the order
+        programs actually close things in. A program that opens a hundred
+        thousand files and closes them oldest first walks the whole remaining
+        list for every close, because the oldest is at the far end: 6.49
+        seconds on the machine this was measured on, against glibc's 0.12,
+        whose list has been doubly linked since 2.41. The list order, and so
+        the order fflush(null) and the flush at exit visit streams in, is
+        unchanged.
+*/
 static fn stream_register(stream address_to handle)
 {
         handle->next = stream_open_list;
+        handle->back = address_of stream_open_list;
+
+        if (stream_open_list != null)
+                stream_open_list->back = address_of handle->next;
+
         stream_open_list = handle;
         handle->flags |= STREAM_REGISTERED;
 }
 
 static fn stream_forget(stream address_to handle)
 {
-        stream address_to address_to link = address_of stream_open_list;
+        address_to handle->back = handle->next;
 
-        while (address_to link != null)
-        {
-                if (address_to link == handle)
-                {
-                        address_to link = handle->next;
-                        break;
-                }
-
-                link = address_of(address_to link)->next;
-        }
+        if (handle->next != null)
+                handle->next->back = handle->back;
 
         handle->next = null;
+        handle->back = null;
         handle->flags &= ~STREAM_REGISTERED;
 }
 
@@ -12861,6 +12884,39 @@ static fn stream_flush_at_exit(void)
 }
 
 /*
+        A run into the buffer, inline up to thirty two bytes.
+
+        Two overlapping windows of the size class, both loaded before either
+        is stored, so a width needs no branch of its own and a source that
+        overlaps the buffer still copies as memory_copy would. Past thirty
+        two it is the routine, where the call is no longer most of the cost.
+*/
+static inline INLINE fn stream_copy_in(p8 address_to to,
+                                       const p8 address_to from,
+                                       positive length)
+{
+        if (length > 16)
+        {
+                p8 head[16];
+                p8 tail[16];
+
+                if (length > 32)
+                {
+                        memory_copy(to, from, length);
+                        return;
+                }
+
+                __builtin_memcpy(head, from, 16);
+                __builtin_memcpy(tail, from + length - 16, 16);
+                __builtin_memcpy(to, head, 16);
+                __builtin_memcpy(to + length - 16, tail, 16);
+                return;
+        }
+
+        copy_running_small(to, from, length);
+}
+
+/*
         Hand bytes to the stream, which is fwrite with the item arithmetic
         taken off and the primitive everything else in the family writes
         through.
@@ -12893,12 +12949,34 @@ static fn stream_flush_at_exit(void)
         the first four thousand did reach the buffer before the buffer reached
         the kernel. glibc answers zero there and so does this.
 */
-positive stream_put_bytes(stream address_to handle, address_any data,
-                          positive length)
+/*
+        The ownership stamp, taken late.
+
+        The stamp says which process put the bytes that are waiting, and the
+        only reader is the flush at exit, which looks at it only when bytes
+        are waiting. So it is due when a call leaves bytes behind in a buffer
+        that was empty when the call began, and not before: a call that
+        empties the buffer again before it returns -- a line buffered stream
+        handed a line, which is every call such a stream gets in the common
+        case -- leaves nothing to own. Stamping at entry instead cost one
+        getpid per line: a hundred thousand printf("%d\n") lines into a line
+        buffered stdout made 100,001 getpid and 100,000 write, against
+        glibc's 100,000 write and nothing else.
+
+        A process cannot run between the copy and the stamp, and a fork
+        before the call returns is a fork in the middle of a library call on
+        this stream, which the stream never promised anything about. The
+        value is the same getpid either way; only calls whose answer would
+        never have been read skip it.
+*/
+static __attribute__((noinline)) positive
+stream_put_bytes_general(stream address_to handle, address_any data,
+                         positive length)
 {
         p8 address_to bytes = (p8 address_to)data;
         positive done = 0;
         positive staged = 0;
+        bool fresh;
 
         if (handle == null || !(handle->flags & STREAM_WRITABLE))
         {
@@ -12924,12 +13002,7 @@ positive stream_put_bytes(stream address_to handle, address_any data,
                 return done;
         }
 
-        //      One getpid per buffer that goes from empty to not, which for a
-        //      program writing steadily is once per four kilobytes, and the
-        //      only thing that lets a child of a process that flushed before
-        //      it forked have its own output written out at exit.
-        if (handle->write_used == 0)
-                handle->owner = stdlib_process_identity();
+        fresh = handle->write_used == 0;
 
         //      A run at least a whole buffer wide has nothing the buffer can
         //      do for it: every byte would be copied in and handed straight
@@ -12937,7 +13010,8 @@ positive stream_put_bytes(stream address_to handle, address_any data,
         //      so the order is kept, then hand the run to the kernel entire.
         //      Tested once here rather than at the top of the loop, because
         //      after it the whole request is answered and the loop would
-        //      never come round again.
+        //      never come round again. The buffer is empty afterwards either
+        //      way, so there is nothing to stamp.
         if (length >= handle->buffer_size)
         {
                 positive written;
@@ -12951,30 +13025,6 @@ positive stream_put_bytes(stream address_to handle, address_any data,
                         handle->flags |= STREAM_FAILED;
 
                 return written;
-        }
-
-        /*
-                The usual buffered write is already resident and fits in the
-                space left. It can complete in one copy and, for a line
-                buffer, one newline decision; entering the multi-chunk loop
-                only to leave after its first iteration adds control with no
-                semantics.
-        */
-        if (length <= handle->buffer_size - handle->write_used)
-        {
-                memory_copy(handle->buffer + handle->write_used, bytes,
-                            length);
-                handle->write_used += length;
-
-                if (handle->write_used != handle->buffer_size &&
-                    (!(handle->flags & STREAM_LINE_BUFFERED) ||
-                     memory_last_of(bytes, '\n', length) == null))
-                        return length;
-
-                if (stream_flush_output(handle) != 0)
-                        return 0;
-
-                return length;
         }
 
         while (done < length)
@@ -13006,7 +13056,106 @@ positive stream_put_bytes(stream address_to handle, address_any data,
                 staged = 0;
         }
 
+        if (fresh && handle->write_used != 0)
+                handle->owner = stdlib_process_identity();
+
         return done;
+}
+
+/*
+        The resident write, which is most writes.
+
+        One test of the flags settles what the general path spends a call on
+        each: the stream is writable, stream_ready has run -- MODE_KNOWN is
+        only ever set where a buffer is attached with it, and the flags lose
+        WRITABLE on the one path, fclose, that takes the buffer away -- and it
+        is not unbuffered. Nothing read ahead and nothing pushed back is what
+        stream_face_writing would have checked. The run fits with a byte to
+        spare, so the buffer never becomes full here and the flush at full
+        stays with the general path, which keeps the write boundaries exactly
+        where they were.
+
+        After the copy a line buffered stream still has its newline to decide,
+        and a buffer that was empty still has its stamp; everything else
+        returns. A buffered 23 byte fwrite took 15.44 ticks a call through the
+        general path, and 18.35 through fwrite with an item size of one.
+*/
+static inline INLINE positive stream_resident_room(stream address_to handle)
+{
+        if ((handle->flags & (STREAM_WRITABLE | STREAM_MODE_KNOWN |
+                              STREAM_UNBUFFERED)) !=
+                    (STREAM_WRITABLE | STREAM_MODE_KNOWN) ||
+            (handle->pushback_used |
+             (handle->read_tail - handle->read_head)) != 0)
+                return 0;
+
+        return handle->buffer_size - handle->write_used;
+}
+
+/*
+        What is left to decide after a resident copy, when anything is: the
+        newline on a line buffered stream, and the stamp on a buffer that was
+        empty. Out of line, with the wide copy beside it, so the path that
+        has nothing left to decide builds no frame at all.
+*/
+static __attribute__((noinline)) positive stream_put_settle(
+    stream address_to handle, address_any data, positive length,
+    positive used)
+{
+        if ((handle->flags & STREAM_LINE_BUFFERED) &&
+            memory_last_of(data, '\n', length) != null)
+                return stream_flush_output(handle) == 0 ? length : 0;
+
+        if (used == 0 && length != 0)
+                handle->owner = stdlib_process_identity();
+
+        return length;
+}
+
+static __attribute__((noinline)) positive stream_put_resident_wide(
+    stream address_to handle, address_any data, positive length,
+    positive used)
+{
+        memory_copy(handle->buffer + used, data, length);
+        handle->write_used = used + length;
+
+        return stream_put_settle(handle, data, length, used);
+}
+
+static inline INLINE positive stream_put_bytes_inline(stream address_to handle,
+                                                      address_any data,
+                                                      positive length)
+{
+        if (handle != null)
+        {
+                p32 flags = handle->flags;
+                positive used = handle->write_used;
+
+                if (length < stream_resident_room(handle))
+                {
+                        if (length > 32)
+                                return stream_put_resident_wide(handle, data,
+                                                                length, used);
+
+                        stream_copy_in(handle->buffer + used,
+                                       (const p8 address_to)data, length);
+                        handle->write_used = used + length;
+
+                        if ((flags & STREAM_LINE_BUFFERED) || used == 0)
+                                return stream_put_settle(handle, data, length,
+                                                         used);
+
+                        return length;
+                }
+        }
+
+        return stream_put_bytes_general(handle, data, length);
+}
+
+positive stream_put_bytes(stream address_to handle, address_any data,
+                          positive length)
+{
+        return stream_put_bytes_inline(handle, data, length);
 }
 
 /*
@@ -13038,8 +13187,14 @@ sized stream_write(address_any from, sized size, sized count,
                 return 0;
         }
 
+        //      A byte is an item for most callers, and a division by a
+        //      register is the slowest instruction on the path.
+        if (size == 1)
+                return (sized)stream_put_bytes_inline(handle, from,
+                                                      (positive)count);
+
         total = (positive)size * (positive)count;
-        done = stream_put_bytes(handle, from, total);
+        done = stream_put_bytes_inline(handle, from, total);
         return (sized)(done / (positive)size);
 }
 
@@ -13224,14 +13379,87 @@ b32 stream_unget_byte(b32 byte, stream address_to handle)
         return (b32)(p8)byte;
 }
 
-b32 stream_put_byte(b32 byte, stream address_to handle)
-{
-        p8 value = (p8)byte;
+/*
+        fputc, putc, and the unlocked spellings.
 
-        if (stream_put_bytes(handle, address_of value, 1) != 1)
+        The put side of stream_get_byte's resident hit. A buffer already
+        holding bytes proves everything the general path would check: bytes
+        are only staged into a writable stream after stream_ready attached
+        its buffer and settled the mode and after stream_face_writing turned
+        it round, and every path that empties, closes, reopens or rebuffers a
+        stream sets write_used back to zero. What it does not prove is that
+        nothing was pushed back since -- ungetc on an update stream takes a
+        byte while output is staged, and the general path gives that byte
+        back to the file before the next write -- so pushback is tested.
+
+        used - 1 < size - 2 is used between one and size - 2 in one compare:
+        not empty, which is also where the ownership stamp would be due, and
+        with room for this byte and one more, so the byte never fills the
+        buffer and the flush at full stays with the general path. An
+        unbuffered stream never stages, so it never gets here. A newline on a
+        line buffered stream is the one byte that has something to decide.
+
+        Ten million putc into a sixty four kilobyte buffer: 78 instructions a
+        byte before this, against glibc's 30.
+*/
+//      Everything that is not the resident byte, in its own frame: the byte
+//      has to live in memory to be handed over by address, and a frame the
+//      resident path does not need is a frame it does not build.
+static __attribute__((noinline)) b32 stream_put_byte_general(
+    p8 value, stream address_to handle)
+{
+        //      A newline on a line buffered stream, or the first byte into an
+        //      empty buffer: still resident, and the one decision is already
+        //      known without scanning anything.
+        if (handle != null && 1 < stream_resident_room(handle))
+        {
+                positive used = handle->write_used;
+
+                handle->buffer[used] = value;
+                handle->write_used = used + 1;
+
+                if (value == '\n' && (handle->flags & STREAM_LINE_BUFFERED))
+                        return stream_flush_output(handle) == 0 ? (b32)value
+                                                                : EOF;
+
+                if (used == 0)
+                        handle->owner = stdlib_process_identity();
+
+                return (b32)value;
+        }
+
+        if (stream_put_bytes_general(handle, address_of value, 1) != 1)
                 return EOF;
 
         return (b32)value;
+}
+
+static inline INLINE b32 stream_put_byte_inline(b32 byte,
+                                                stream address_to handle)
+{
+        p8 value = (p8)byte;
+
+        if (handle != null)
+        {
+                positive used = handle->write_used;
+
+                if (used - 1 < handle->buffer_size - 2 &&
+                    handle->pushback_used == 0 &&
+                    (value != '\n' ||
+                     !(handle->flags & STREAM_LINE_BUFFERED)))
+                {
+                        handle->buffer[used] = value;
+                        handle->write_used = used + 1;
+                        return (b32)value;
+                }
+        }
+
+        return stream_put_byte_general(value, handle);
+}
+
+b32 stream_put_byte(b32 byte, stream address_to handle)
+{
+        return stream_put_byte_inline(byte, handle);
 }
 
 // No newline, unlike puts. That difference is the single most common thing a
@@ -13937,6 +14165,18 @@ typedef struct
         format_stream stream;
         bool streaming;
         bool failed;
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+        //      A stream sink writes into a window: buffer, capacity and used
+        //      are the stream's own buffer and its write_used while staged is
+        //      set, or the stage on the stack for an unbuffered stream. mark
+        //      is where the bytes not yet asked about a newline begin, and
+        //      fresh says the buffer was empty at some point in this run, so
+        //      whatever is left in it at the end is this process's.
+        bool staged;
+        bool fresh;
+        positive mark;
+        p8 address_to stage;
+#endif
 } format_sink;
 
 #ifndef EOVERFLOW
@@ -13961,6 +14201,271 @@ static inline INLINE bipolar format_answer(format_sink address_to sink)
         return (bipolar)sink->counted;
 }
 
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+/*
+        printf into a FILE, without a call per piece.
+
+        A format hands its output over in pieces -- the literal runs between
+        conversions, a sign, a prefix, a pad, the digits -- and every piece
+        used to be a whole stream_put_bytes: the writable test, stream_ready,
+        stream_face_writing, the size tests and a memory_last_of per piece on
+        a line buffered stream. A buffered "%08d:%-12s:%6.3f\n" cost 4,048
+        instructions a call against glibc's 2,166, and an unbuffered stderr
+        made one write per piece: four for "%s: %s\n", which is four chances
+        for another writer's bytes to land in the middle of the line.
+
+        So a stream sink stages. The first piece settles the stream once --
+        writable, ready, facing the kernel -- and then the pieces are copied
+        straight into the stream's buffer with the same inline ladder a
+        buffered put uses, for as long as each fits with a byte to spare. A
+        piece that does not fit is handed to stream_put_bytes, which fills
+        and flushes exactly as it always did, so the write boundaries of a
+        fully buffered stream are where they were. The format's end is where
+        a line buffered stream decides: one newline question over the bytes
+        this run staged, and one flush, which is also what glibc's own
+        printf does, staging the run and deciding once. The ownership stamp
+        is taken there too, and only for a buffer that still holds bytes.
+
+        An unbuffered stream has no buffer to stage into, so the run is
+        staged on the stack instead and goes out as one write -- or one
+        write per stage's worth, for output wider than the stage, with a
+        piece wider than the stage written straight after what came before
+        it. The bytes and their order are what they were; there are only
+        fewer writes carrying them. glibc stages a hundred and twenty eight
+        bytes and writes twice for a two hundred byte line; this stages a
+        kilobyte.
+
+        A stream that is not writable, or not there, keeps the old way: each
+        piece goes to stream_put_bytes, which sets the error indicator and
+        refuses it, and printf answers minus one as it did.
+*/
+#define FORMAT_STAGE_BYTES 1024
+
+static bool format_stream_begin(format_sink address_to sink)
+{
+        stream address_to handle = sink->stream;
+
+        if (is_null(handle) || !(handle->flags & STREAM_WRITABLE))
+                return false;
+
+        stream_ready(handle);
+        stream_face_writing(handle);
+
+        if (handle->flags & STREAM_UNBUFFERED)
+        {
+                //      Only when the stream became unbuffered after vfprintf
+                //      looked, which is a buffer that could not be allocated:
+                //      piece by piece, as before.
+                if (is_null(sink->stage))
+                        return false;
+
+                sink->buffer = sink->stage;
+                sink->capacity = FORMAT_STAGE_BYTES;
+                sink->used = 0;
+        }
+        else
+        {
+                sink->stage = null;
+                sink->buffer = handle->buffer;
+                sink->capacity = handle->buffer_size;
+                sink->used = handle->write_used;
+                sink->mark = sink->used;
+                sink->fresh = sink->used == 0;
+        }
+
+        sink->staged = true;
+        return true;
+}
+
+//      Bytes from the stage, or a piece wider than it, to the descriptor.
+static bool format_stage_send(format_sink address_to sink, address_any bytes,
+                              positive length)
+{
+        stream address_to handle = sink->stream;
+
+        if (length == 0 ||
+            stream_trap_write(handle->descriptor, bytes, length) == length)
+                return true;
+
+        handle->flags |= STREAM_FAILED;
+        sink->failed = true;
+        return false;
+}
+
+//      The window is exactly full: out it goes, and it starts again empty,
+//      which is where a buffered put would have flushed it too.
+static fn format_stream_drain(format_sink address_to sink)
+{
+        stream address_to handle = sink->stream;
+        positive staged = sink->used;
+
+        sink->used = 0;
+        sink->mark = 0;
+
+        if (!is_null(sink->stage))
+        {
+                format_stage_send(sink, sink->buffer, staged);
+                return;
+        }
+
+        handle->write_used = staged;
+
+        if (stream_flush_output(handle) != 0)
+                sink->failed = true;
+}
+
+static __attribute__((noinline)) fn format_stream_emit(
+    format_sink address_to sink, address_any data, positive length)
+{
+        stream address_to handle = sink->stream;
+        positive staged;
+        bool was_empty;
+
+        if (!sink->staged && !format_stream_begin(sink))
+        {
+                if (stream_put_bytes(handle, data, length) != length)
+                        sink->failed = true;
+                return;
+        }
+
+        if (length < sink->capacity - sink->used)
+        {
+                stream_copy_in(sink->buffer + sink->used,
+                               (const p8 address_to)data, length);
+                sink->used += length;
+                return;
+        }
+
+        if (!is_null(sink->stage))
+        {
+                staged = sink->used;
+                sink->used = 0;
+
+                if (!format_stage_send(sink, sink->buffer, staged))
+                        return;
+
+                if (length < sink->capacity)
+                {
+                        stream_copy_in(sink->buffer, (const p8 address_to)data,
+                                       length);
+                        sink->used = length;
+                        return;
+                }
+
+                format_stage_send(sink, data, length);
+                return;
+        }
+
+        //      The general path, with the window handed back first. It made
+        //      its own newline decision and, if it started on an empty buffer
+        //      and left bytes behind, its own stamp; what it left is where
+        //      the next newline question starts.
+        was_empty = sink->used == 0;
+        handle->write_used = sink->used;
+
+        if (stream_put_bytes(handle, data, length) != length)
+                sink->failed = true;
+
+        sink->used = handle->write_used;
+        sink->mark = sink->used;
+        sink->fresh = sink->used == 0 || (sink->fresh && !was_empty);
+}
+
+static __attribute__((noinline)) fn format_stream_fill(
+    format_sink address_to sink, p8 byte, positive count)
+{
+        sink->counted += count;
+
+        //      The pad that fits with a byte to spare, which is nearly every
+        //      pad: filled in place and done.
+        if (sink->staged && count < sink->capacity - sink->used)
+        {
+                memory_fill(sink->buffer + sink->used, byte, count);
+                sink->used += count;
+                return;
+        }
+
+        if (!sink->staged && !format_stream_begin(sink))
+        {
+                p8 block[64];
+
+                memory_fill(block, byte, sizeof(block));
+
+                while (count && !sink->failed)
+                {
+                        positive part = count < sizeof(block) ? count
+                                                               : sizeof(block);
+
+                        if (stream_put_bytes(sink->stream, block, part) != part)
+                                sink->failed = true;
+
+                        count -= part;
+                }
+
+                return;
+        }
+
+        for (;;)
+        {
+                positive room = sink->capacity - sink->used;
+
+                if (count < room)
+                {
+                        memory_fill(sink->buffer + sink->used, byte, count);
+                        sink->used += count;
+                        return;
+                }
+
+                memory_fill(sink->buffer + sink->used, byte, room);
+                sink->used = sink->capacity;
+                count -= room;
+                format_stream_drain(sink);
+
+                if (sink->failed)
+                        return;
+
+                //      The stamp follows what a put of the same bytes did: a
+                //      fill that ends on the flush leaves the next piece an
+                //      empty buffer, and one that carries on past it does not
+                //      start a new owner, exactly as the general path's loop
+                //      does not.
+                if (count == 0)
+                        sink->fresh = true;
+        }
+}
+
+//      The end of the format: the stage goes out, or the window is handed
+//      back to the stream with its one newline decision and its stamp.
+static fn format_stream_end(format_sink address_to sink)
+{
+        stream address_to handle = sink->stream;
+
+        if (!sink->staged)
+                return;
+
+        if (!is_null(sink->stage))
+        {
+                format_stage_send(sink, sink->buffer, sink->used);
+                return;
+        }
+
+        handle->write_used = sink->used;
+
+        if ((handle->flags & STREAM_LINE_BUFFERED) &&
+            memory_last_of(sink->buffer + sink->mark, '\n',
+                           sink->used - sink->mark) != null)
+        {
+                if (stream_flush_output(handle) != 0)
+                        sink->failed = true;
+
+                return;
+        }
+
+        if (sink->fresh && sink->used != 0)
+                handle->owner = stdlib_process_identity();
+}
+#endif // STANDARD_MODERN_C_STANDARD_STREAM
+
 static fn format_emit(format_sink address_to sink, address_any data,
                       positive length)
 {
@@ -13976,8 +14481,20 @@ static fn format_emit(format_sink address_to sink, address_any data,
 
         if (sink->streaming)
         {
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+                if (sink->staged && length < sink->capacity - sink->used)
+                {
+                        stream_copy_in(sink->buffer + sink->used,
+                                       (const p8 address_to)data, length);
+                        sink->used += length;
+                        return;
+                }
+
+                format_stream_emit(sink, data, length);
+#else
                 if (format_stream_write(sink->stream, data, length) != length)
                         sink->failed = true;
+#endif
                 return;
         }
 
@@ -14059,39 +14576,46 @@ static fn format_fill(format_sink address_to sink, p8 byte, positive count)
         if (count == 0 || (sink->streaming && sink->failed))
                 return;
 
-        /* A bounded buffer stops accepting bytes at capacity, but snprintf
-           must still count the whole field.  Filling sixty-four byte blocks
-           after that point made a count-only "%100000000d" walk 1,562,500
-           iterations.  Copy the resident prefix once and account for the
-           requested run once; sprintf keeps the ordinary full write because
-           its advertised capacity is the complete addressable buffer. */
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+        //      A stream sink fills its window in place, out of line: an inline
+        //      fill here is copied into every field routine that pads, and
+        //      the snprintf path those routines also serve measured 82
+        //      instructions a call slower for carrying it.
+        if (sink->streaming)
+        {
+                format_stream_fill(sink, byte, count);
+                return;
+        }
+#endif
+
+        /* A buffer sink takes a wide field in one fill: the retained prefix
+           once, and the requested run accounted for once.  Filling
+           sixty-four byte blocks made a count-only "%100000000d" walk
+           1,562,500 iterations, and a sprintf "%1000000d" that keeps every
+           byte made 15,625 emits of a block, 1,000,523 instructions a call
+           against glibc's 28,000.  A short pad still takes the block below,
+           which is the path the ordinary mixed format was measured on. */
         if (count > sizeof(block) && !sink->streaming && !sink->downstream)
         {
                 positive room = !is_null(sink->buffer) &&
                                         sink->used < sink->capacity
                                     ? sink->capacity - sink->used
                                     : 0;
+                positive keep = count < room ? count : room;
 
-                /* Keep the measured short-field path below when every byte
-                   fits.  This arm is for truncation: it avoids work only for
-                   the suffix the destination cannot retain. */
-                if (count > room)
+                if (keep)
                 {
-                        if (room)
-                        {
-                                memory_fill(sink->buffer + sink->used, byte,
-                                            room);
-                                sink->used += room;
-                        }
-
-                        if (__builtin_add_overflow(sink->counted, count,
-                                                   address_of sink->counted))
-                        {
-                                sink->failed = true;
-                                errno = EOVERFLOW;
-                        }
-                        return;
+                        memory_fill(sink->buffer + sink->used, byte, keep);
+                        sink->used += keep;
                 }
+
+                if (__builtin_add_overflow(sink->counted, count,
+                                           address_of sink->counted))
+                {
+                        sink->failed = true;
+                        errno = EOVERFLOW;
+                }
+                return;
         }
 
         //      The whole block, not the part this call needs: sizeof is a
@@ -15501,14 +16025,41 @@ static bipolar format_to_writer(writer write, string_address format, ...)
         return format_answer(address_of sink);
 }
 
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+//      The stage lives in its own frame, so a buffered printf does not carry
+//      a kilobyte of stack it never touches.
+static __attribute__((noinline)) bipolar format_to_unbuffered(
+    format_stream stream, string_address format, var_args list)
+{
+        p8 stage[FORMAT_STAGE_BYTES];
+        format_sink sink = {0};
+
+        sink.stream = stream;
+        sink.streaming = true;
+        sink.stage = stage;
+        format_run(address_of sink, format, list);
+        format_stream_end(address_of sink);
+
+        return format_answer(address_of sink);
+}
+#endif
+
 static bipolar vfprintf(format_stream stream, string_address format,
                         var_args list)
 {
         format_sink sink = {0};
 
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+        if (!is_null(stream) && (stream->flags & STREAM_UNBUFFERED))
+                return format_to_unbuffered(stream, format, list);
+#endif
+
         sink.stream = stream;
         sink.streaming = true;
         format_run(address_of sink, format, list);
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+        format_stream_end(address_of sink);
+#endif
 
         return format_answer(address_of sink);
 }
@@ -15613,6 +16164,53 @@ static b32 putchar(b32 byte)
         return fputc(byte, format_output);
 }
 
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+/*
+        The line and its newline as one staged run when both fit with a byte
+        to spare: a line buffered stdout decides once and flushes once, and a
+        buffer the newline is about to empty is never stamped. Anything else
+        is the two writes puts always made.
+
+        Out of line, and never cloned for a caller, so that a literal at the
+        call site is not what the copy sees: string_length is a routine the
+        compiler cannot fold, and a copy of unknown width out of a three byte
+        literal is a warning in every program that says puts("ok"). noinline
+        alone was not enough -- a single caller got a constant-propagated
+        clone and the warning with it.
+*/
+static __attribute__((noinline, noclone)) b32 format_put_line(
+    string_address text, positive length)
+{
+        stream address_to handle = format_output;
+
+        if (length + 1 < stream_resident_room(handle))
+        {
+                positive used = handle->write_used;
+
+                memory_copy(handle->buffer + used, text, length);
+                handle->buffer[used + length] = '\n';
+                handle->write_used = used + length + 1;
+
+                if (handle->flags & STREAM_LINE_BUFFERED)
+                        return stream_flush_output(handle) == 0 ? 1 : -1;
+
+                if (used == 0)
+                        handle->owner = stdlib_process_identity();
+
+                return 1;
+        }
+
+        if (length && stream_put_bytes(handle, (address_any)text, length) !=
+                          length)
+                return -1;
+
+        if (stream_put_bytes(handle, (address_any) "\n", 1) != 1)
+                return -1;
+
+        return 1;
+}
+#endif
+
 static b32 puts(string_address text)
 {
         positive length;
@@ -15621,6 +16219,10 @@ static b32 puts(string_address text)
                 return -1;
 
         length = string_length(text);
+
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+        return format_put_line(text, length);
+#endif
 
         if (length &&
             format_stream_write(format_output, (address_any)text, length) !=
@@ -16053,10 +16655,15 @@ static fn scan_finish(scan_source address_to source)
         chain written here.
 
         Reaching into stream.c's buffer would make this one call as well, and
-        it is deliberately not done: format.c writes through stream_put_bytes
-        for the same reason. The buffer, its direction and its refill are that
-        file's, and a second file that knew where the bytes were would have to
-        be right about all three forever.
+        it is deliberately not done. The buffer, its direction and its refill
+        are that file's, and a second file that knew where the bytes were would
+        have to be right about all three forever. format.c does copy into the
+        buffer now, and what that cost it is the proof: it settles the stream
+        through stream.c's own stream_ready and stream_face_writing before the
+        first byte, hands every piece that does not fit back to
+        stream_put_bytes, and gives the window back before the call returns,
+        with a generated walk against glibc and a fork matrix to keep it
+        honest. A reader would need the same for refill and pushback.
 */
 static fn scan_skip_white(scan_source address_to source)
 {
@@ -18706,7 +19313,7 @@ static b32 fputc_unlocked(b32 byte, stream address_to handle)
 
 static b32 putchar_unlocked(b32 byte)
 {
-        return stream_put_byte(byte, stdout);
+        return stream_put_byte_inline(byte, stdout);
 }
 
 static b32 fputs_unlocked(string_address text, stream address_to handle)
