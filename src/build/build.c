@@ -3504,11 +3504,8 @@ static b32 build_floor(string_address arch)
 
         {
                 string_address wanted[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive parts = build_words_of(require, string_length(require),
-                                                (string_address address_to)wanted,
-                                                BUILD_ARGUMENT_ROOM, store,
-                                                BUILD_WORD_ROOM);
+                positive parts = build_split(require, (string_address address_to)wanted,
+                                             BUILD_ARGUMENT_ROOM);
 
                 for (positive at = 0; at < parts; at++)
                         if (!build_isa_holds(attributes, wanted[at]))
@@ -3522,11 +3519,8 @@ static b32 build_floor(string_address arch)
 
         {
                 string_address banned[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive parts = build_words_of(forbid, string_length(forbid),
-                                                (string_address address_to)banned,
-                                                BUILD_ARGUMENT_ROOM, store,
-                                                BUILD_WORD_ROOM);
+                positive parts = build_split(forbid, (string_address address_to)banned,
+                                             BUILD_ARGUMENT_ROOM);
 
                 for (positive at = 0; at < parts; at++)
                         if (build_isa_holds(attributes, banned[at]))
@@ -3771,7 +3765,6 @@ static bool build_tools_read()
         {
                 string_address words[BUILD_ARGUMENT_ROOM];
                 positive parts;
-                positive at = 0;
                 positive length = walk.length;
                 p8 address_to flat = build_text_take(length + 1);
 
@@ -3800,7 +3793,6 @@ static bool build_tools_read()
                         build_join(words[1], null);
                 build_tool_table[build_tool_count].name = build_join(words[2], null);
                 build_tool_count++;
-                (void)at;
         }
 
         return true;
@@ -3908,11 +3900,8 @@ static b32 build_kernel_source()
         string_address download;
         string_address required = build_setting_get("required");
         string_address names[BUILD_ARGUMENT_ROOM];
-        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-        positive count = build_words_of(required, string_length(required),
-                                        (string_address address_to)names,
-                                        BUILD_ARGUMENT_ROOM, store,
-                                        BUILD_WORD_ROOM);
+        positive count = build_split(required, (string_address address_to)names,
+                                     BUILD_ARGUMENT_ROOM);
         bool present;
 
         //      Derived rather than written out, so moving to another release
@@ -4000,11 +3989,8 @@ static b32 build_kernel_source()
         {
                 string_address keys = build_setting_get("kernel_keys");
                 string_address named[BUILD_ARGUMENT_ROOM];
-                p8 address_to holder = build_text_take(BUILD_WORD_ROOM);
-                positive many = build_words_of(keys, string_length(keys),
-                                               (string_address address_to)named,
-                                               BUILD_ARGUMENT_ROOM, holder,
-                                               BUILD_WORD_ROOM);
+                positive many = build_split(keys, (string_address address_to)named,
+                                            BUILD_ARGUMENT_ROOM);
                 string_address words[BUILD_ARGUMENT_ROOM];
                 positive at = 0;
 
@@ -4366,12 +4352,9 @@ static b32 build_local(string_address address_to profiles, positive count)
         {
                 string_address directories = build_setting_get("image_directories");
                 string_address names[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive many = build_words_of(directories,
-                                               string_length(directories),
-                                               (string_address address_to)names,
-                                               BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_WORD_ROOM);
+                positive many = build_split(directories,
+                                            (string_address address_to)names,
+                                            BUILD_ARGUMENT_ROOM);
                 string_address words[BUILD_ARGUMENT_ROOM];
                 positive at = 0;
 
@@ -4390,13 +4373,15 @@ static b32 build_local(string_address address_to profiles, positive count)
         {
                 string_address nodes = build_setting_get("image_nodes");
                 string_address names[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive many = build_words_of(nodes, string_length(nodes),
-                                               (string_address address_to)names,
-                                               BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_WORD_ROOM);
+                positive many = build_split(nodes, (string_address address_to)names,
+                                            BUILD_ARGUMENT_ROOM);
 
-                for (positive at = 0; at + 3 < many + 1; at += 4)
+                //      path, type, major, minor: a short last entry would
+                //      hand mknod a pointer the splitter never wrote.
+                if (many % 4)
+                        return build_die("image_nodes wants path type major minor per node");
+
+                for (positive at = 0; at + 3 < many; at += 4)
                 {
                         string_address path = build_join(image, "/", names[at],
                                                          null);
@@ -4421,11 +4406,8 @@ static b32 build_local(string_address address_to profiles, positive count)
         {
                 string_address always = build_setting_get("profiles_always");
                 string_address names[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive many = build_words_of(always, string_length(always),
-                                               (string_address address_to)names,
-                                               BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_WORD_ROOM);
+                positive many = build_split(always, (string_address address_to)names,
+                                            BUILD_ARGUMENT_ROOM);
 
                 for (positive at = 0; at < many; at++)
                         chosen[chosen_count++] = names[at];
@@ -4443,13 +4425,10 @@ static b32 build_local(string_address address_to profiles, positive count)
                                 timestamps that make the transcript readable,
                                 and debug_none quietens both.
                         */
-                        string_address preset = build_setting_get("profiles_default");
-                        p8 address_to holder = build_text_take(BUILD_WORD_ROOM);
-                        positive some = build_words_of(preset,
-                                                       string_length(preset),
-                                                       (string_address address_to)names,
-                                                       BUILD_ARGUMENT_ROOM,
-                                                       holder, BUILD_WORD_ROOM);
+                        positive some = build_split(
+                                build_setting_get("profiles_default"),
+                                (string_address address_to)names,
+                                BUILD_ARGUMENT_ROOM);
 
                         for (positive at = 0; at < some; at++)
                                 chosen[chosen_count++] = names[at];
@@ -4513,12 +4492,9 @@ static b32 build_local(string_address address_to profiles, positive count)
                            build_join(tree, "/.config", null)))
         {
                 string_address extra[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive many = build_words_of(make_flags,
-                                               string_length(make_flags),
-                                               (string_address address_to)extra,
-                                               BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_WORD_ROOM);
+                positive many = build_split(make_flags,
+                                            (string_address address_to)extra,
+                                            BUILD_ARGUMENT_ROOM);
                 string_address words[BUILD_ARGUMENT_ROOM];
                 build_command what = {null, tree, null, true, true};
                 positive at;
@@ -4647,12 +4623,9 @@ static b32 build_local(string_address address_to profiles, positive count)
                 string_address cores;
                 string_address kernel_cflags = build_key("kernel_cflags");
                 string_address extra[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive many = build_words_of(make_flags,
-                                               string_length(make_flags),
-                                               (string_address address_to)extra,
-                                               BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_WORD_ROOM);
+                positive many = build_split(make_flags,
+                                            (string_address address_to)extra,
+                                            BUILD_ARGUMENT_ROOM);
                 string_address words[BUILD_ARGUMENT_ROOM];
                 build_command what = {null, tree, null, false, false};
                 positive at = 0;
@@ -5184,11 +5157,8 @@ static b32 build_remote(string_address host, string_address remote,
                 string_address words[BUILD_ARGUMENT_ROOM];
                 string_address excluded = build_setting_get("remote_excludes");
                 string_address names[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
-                positive many = build_words_of(excluded, string_length(excluded),
-                                               (string_address address_to)names,
-                                               BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_WORD_ROOM);
+                positive many = build_split(excluded, (string_address address_to)names,
+                                            BUILD_ARGUMENT_ROOM);
                 positive at = 0;
 
                 words[at++] = "rsync";
@@ -5316,7 +5286,6 @@ static b32 build_clean()
         string_address artifacts = build_setting_get("artifacts");
         string_address leftovers = build_setting_get("clean_patterns");
         string_address names[BUILD_ARGUMENT_ROOM];
-        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
         positive many;
 
         build_say("Removing build output");
@@ -5341,9 +5310,8 @@ static b32 build_clean()
                 are dotfiles and the shell never removed them; neither does
                 this.
         */
-        many = build_words_of(leftovers, string_length(leftovers),
-                              (string_address address_to)names,
-                              BUILD_ARGUMENT_ROOM, store, BUILD_WORD_ROOM);
+        many = build_split(leftovers, (string_address address_to)names,
+                           BUILD_ARGUMENT_ROOM);
 
         for (positive at = 0; at < many; at++)
                 build_tool("find", build_setting_get("module_root"), "-maxdepth",
@@ -5857,13 +5825,12 @@ b32 main()
                         Where the image ended up. A remote build set this from
                         its own generated configuration. A local build, or
                         --boot without a build, asks the local configuration
-                        and finally falls back to the default export.
+                        -- loaded above, and reloaded by build_config after it
+                        rewrites it -- and finally falls back to the default
+                        export.
                 */
                 if (!image)
-                {
-                        build_config_load();
                         image = build_key_one("kernel_export", null);
-                }
 
                 if (!image || !*image)
                         image = build_setting_get("default_image");
