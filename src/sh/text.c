@@ -3587,13 +3587,16 @@ static b32 text_wc()
                         why its -c looks impossibly fast beside anything that
                         counts honestly.
 
-                        Only where nothing else was asked for: -l, -w, -m and
-                        -L all have to see the bytes. And only from where the
-                        handle already stands, because something may have read
-                        part of it already -- a pipe has no size at all and
+                        Only where nothing else was asked for: -l, -w and -L
+                        all have to see the bytes. -m does not, here: a
+                        character is a byte in the only locale this has, which
+                        is also why GNU answers wc -m in the C locale from the
+                        same fstat. And only from where the handle already
+                        stands, because something may have read part of it
+                        already -- a pipe has no size at all and
                         text_regular_size says so by refusing.
                 */
-                if (want_bytes && !want_lines && !want_words && !want_chars &&
+                if ((want_bytes || want_chars) && !want_lines && !want_words &&
                     !want_longest)
                 {
                         positive size = 0;
@@ -14019,6 +14022,390 @@ static bool grep_output_discarded()
         return flags >= 0 && (flags & 3) != FILE_READ;
 }
 
+/*
+        A span of whole lines, answered without visiting the lines that
+        cannot be the answer.
+
+        The span is searched rather than the lines: the fixed string every
+        match must hold is hunted through the whole span at once, and only
+        the line a hit lands in has its edges found and is asked the full
+        question. Every line between two hits is decided by that hunt
+        alone -- none of them matches -- which is what -v prints and counts
+        without reading them one at a time.
+
+        Nothing here touches a reader. A span always ends with the
+        delimiter, so the same function serves a buffer of whole lines, the
+        one line the line reader carried across a refill, and a chunk of a
+        file handed to a worker. What it keeps between spans is in the
+        state: how many lines were selected, how many lines and bytes went
+        before, and whether the input needs anything more.
+*/
+enum
+{
+        GREP_SPAN_COUNT,
+        GREP_SPAN_FIRST,
+        GREP_SPAN_PRINT,
+};
+
+/*
+        Several fixed strings and nothing else, which is what -F makes of
+        more than one pattern and what a|b|c is in either syntax: an
+        alternation whose every branch is bytes. One program of alternatives
+        asks the machine at every line; the strings themselves can each be
+        hunted through the span with the prepared search, and the earliest of
+        their next occurrences is the next line worth a look.
+
+        Sixteen at most: every string is a pass of its own over the span, so
+        a set is only worth it while it is small, and a larger one stays with
+        the machine.
+*/
+#define GREP_SET_MAX 16
+#define GREP_SET_BYTES 4096
+
+typedef struct
+{
+        p8 bytes[GREP_SET_BYTES];
+        positive at[GREP_SET_MAX];
+        positive size[GREP_SET_MAX];
+        positive2 anchors[GREP_SET_MAX];
+        positive count, used;
+} grep_set;
+
+static grep_set grep_literals;
+
+// False when some branch is not bytes alone, or the set would not fit.
+static bool grep_set_gather(const regex_program address_to program, p16 node,
+                            bool icase)
+{
+        const rx_node address_to nodes = program->nodes;
+        grep_set address_to set = address_of grep_literals;
+
+        // An empty branch matches every line, and no string finds that.
+        if (!node)
+                return false;
+
+        if (nodes[node].kind == RX_ALT && !nodes[node].next)
+                return grep_set_gather(program, nodes[node].left, icase) &&
+                       grep_set_gather(program, nodes[node].right, icase);
+
+        // Nothing reads what a group captured when there are no references.
+        if (nodes[node].kind == RX_CAPTURE && !nodes[node].next)
+                return grep_set_gather(program, nodes[node].left, icase);
+
+        positive start = set->used;
+
+        for (p16 at = node; at; at = nodes[at].next)
+        {
+                if (nodes[at].kind != RX_BYTE || set->used == GREP_SET_BYTES)
+                        return false;
+
+                set->bytes[set->used++] = nodes[at].argument;
+        }
+
+        if (set->count == GREP_SET_MAX)
+                return false;
+
+        set->at[set->count] = start;
+        set->size[set->count] = set->used - start;
+        set->anchors[set->count] = memory_search_prepare(
+            set->bytes + start, set->used - start, icase);
+        set->count++;
+        return true;
+}
+
+typedef struct
+{
+        const regex_program address_to program;
+        // The fixed string a match must hold, or null when there is none.
+        const rx_hints address_to literal;
+        // The strings that are the whole program, or null.
+        const grep_set address_to set;
+        positive limit;
+        p8 mode, boundary;
+        bool literal_proves, icase, invert, plain, numbered;
+} grep_plan;
+
+typedef struct
+{
+        rx_match address_to match;
+        string_address name;
+        // Where the span began, and how far `number` has counted into it.
+        string_address span, counted;
+        positive matches, number, offset;
+        // Lines the machine gave up on; the caller says so for each.
+        positive complex;
+        bool done;
+        // Each string's next occurrence in the span: null before it has been
+        // looked for, the end of the span when there is none.
+        string_address next[GREP_SET_MAX];
+} grep_state;
+
+/*
+        A fixed-string program under -x or -w, answered without the machine.
+
+        -x is the line and the string being the same bytes. -w is some
+        occurrence with no name byte on either side of it, which is exactly
+        the set of starts the machine tries under a word boundary: the front
+        of the line and one past every byte that is not a name byte, ending
+        before one that is not either. Every occurrence of a fixed string is
+        the same length, so the first that is bounded answers the line.
+*/
+static bool grep_literal_bounded(const grep_plan address_to plan,
+                                 string_address line, positive length,
+                                 string_address want, positive size,
+                                 positive2 anchors)
+{
+        if (plan->boundary == REGEX_BOUNDARY_LINE)
+                return length == size &&
+                       !(plan->icase ? memory_compare_ascii_case(line, want, size)
+                                     : memory_compare(line, want, size));
+
+        for (positive from = 0;;)
+        {
+                string_address found = text_literal_find(
+                    line, length, from, want, size, plan->icase, anchors);
+
+                if (!found)
+                        return false;
+
+                positive at = (positive)(found - line);
+
+                if ((!at || !string_set_name[line[at - 1]]) &&
+                    (at + size == length || !string_set_name[line[at + size]]))
+                        return true;
+
+                from = at + 1;
+        }
+}
+
+static bool grep_line_matches(const grep_plan address_to plan,
+                              grep_state address_to state,
+                              string_address line, positive length)
+{
+        // A line the hunt landed in holds the string; a string that is the
+        // whole program is then the whole answer.
+        if (plan->literal_proves && length < TEXT_LINE_MAX)
+                return plan->boundary == REGEX_BOUNDARY_NONE ||
+                       grep_literal_bounded(plan, line, length,
+                                            (string_address)plan->literal->literal,
+                                            plan->literal->literal_length,
+                                            plan->literal->literal_anchors);
+
+        // The same for a set: the machine would try each branch in turn.
+        if (plan->set && length < TEXT_LINE_MAX)
+        {
+                const grep_set address_to set = plan->set;
+
+                if (plan->boundary == REGEX_BOUNDARY_NONE)
+                        return true;
+
+                for (positive i = 0; i < set->count; i++)
+                        if (grep_literal_bounded(plan, line, length,
+                                                 set->bytes + set->at[i],
+                                                 set->size[i], set->anchors[i]))
+                                return true;
+
+                return false;
+        }
+
+        p8 result = rx_find(state->match, plan->program, REGEX_FIRST, false,
+                            line, length, 0);
+
+        if (result == RX_COMPLEX)
+                state->complex++;
+
+        return result == RX_MATCH;
+}
+
+// One selected line. False once the input needs nothing more.
+static fn grep_line_selected(const grep_plan address_to plan,
+                             grep_state address_to state,
+                             string_address line, positive length)
+{
+        state->matches++;
+
+        if (plan->mode == GREP_SPAN_FIRST ||
+            (plan->limit != TEXT_UNSET && state->matches >= plan->limit))
+                state->done = true;
+
+        if (plan->mode != GREP_SPAN_PRINT)
+                return;
+
+        if (plan->plain)
+        {
+                text_put(line, length + 1);
+                return;
+        }
+
+        if (plan->numbered)
+        {
+                state->number += memory_count(state->counted,
+                                              (positive)(line - state->counted),
+                                              text_delimiter);
+                state->counted = line;
+        }
+
+        grep_head(state->name, ':', state->number + 1,
+                  state->offset + (positive)(line - state->span));
+        text_put(line, length);
+        text_put_character(text_delimiter);
+}
+
+// Whole lines already known to be selected, as -v has between two hits.
+static fn grep_lines_selected(const grep_plan address_to plan,
+                              grep_state address_to state,
+                              string_address run, positive size)
+{
+        if (!size || state->done)
+                return;
+
+        if (plan->mode == GREP_SPAN_FIRST)
+        {
+                grep_line_selected(plan, state, run, 0);
+                return;
+        }
+
+        bool unlimited = plan->limit == TEXT_UNSET;
+
+        if (plan->mode == GREP_SPAN_COUNT && unlimited)
+        {
+                state->matches += memory_count(run, size, text_delimiter);
+                return;
+        }
+
+        if (plan->mode == GREP_SPAN_PRINT && plan->plain && unlimited)
+        {
+                // Printing needs only that something was selected, not how
+                // many lines: the count is for -c, which is not here.
+                text_put(run, size);
+                state->matches++;
+                return;
+        }
+
+        string_address past = run + size;
+
+        while (run < past && !state->done)
+        {
+                string_address stop = (string_address)memory_first_of(
+                    run, text_delimiter, (positive)(past - run));
+                positive length = (positive)(stop - run);
+
+                grep_line_selected(plan, state, run, length);
+                run = stop + 1;
+        }
+}
+
+// The earliest occurrence of any string at or after `at`, or null.
+static string_address grep_set_next(const grep_plan address_to plan,
+                                    grep_state address_to state,
+                                    string_address at, string_address past)
+{
+        const grep_set address_to set = plan->set;
+        string_address first = past;
+
+        for (positive i = 0; i < set->count; i++)
+        {
+                string_address next = state->next[i];
+
+                if (!next || next < at)
+                {
+                        next = text_literal_find(at, (positive)(past - at), 0,
+                                                 set->bytes + set->at[i],
+                                                 set->size[i], plan->icase,
+                                                 set->anchors[i]);
+                        next = next ? next : past;
+                        state->next[i] = next;
+                }
+
+                if (next < first)
+                        first = next;
+        }
+
+        return first == past ? null : first;
+}
+
+static fn grep_span(const grep_plan address_to plan, grep_state address_to state,
+                    string_address span, positive size)
+{
+        const rx_hints address_to literal = plan->literal;
+        string_address at = span;
+        string_address past = span + size;
+
+        state->span = span;
+        state->counted = span;
+
+        if (plan->set)
+                memory_fill(state->next, 0, sizeof(state->next));
+
+        /*
+                Counting a fixed string with nothing around it is one pass that
+                never finds a line's edges except after a proven hit, and -v
+                is the lines less that count.
+        */
+        if (plan->mode == GREP_SPAN_COUNT && plan->literal_proves &&
+            plan->boundary == REGEX_BOUNDARY_NONE && !plan->icase &&
+            plan->limit == TEXT_UNSET)
+        {
+                positive got = memory_count_records_with_prepared(
+                    span, size, (address_any)literal->literal,
+                    literal->literal_length, literal->literal_anchors.x,
+                    literal->literal_anchors.y, text_delimiter);
+
+                state->matches += plan->invert
+                                      ? memory_count(span, size, text_delimiter) - got
+                                      : got;
+                at = past;
+        }
+
+        while (at < past && !state->done)
+        {
+                string_address line = at;
+
+                if (literal || plan->set)
+                {
+                        string_address found = literal
+                            ? text_literal_find(at, (positive)(past - at), 0,
+                                                (string_address)literal->literal,
+                                                literal->literal_length, plan->icase,
+                                                literal->literal_anchors)
+                            : grep_set_next(plan, state, at, past);
+
+                        line = past;
+
+                        if (found)
+                        {
+                                string_address before = (string_address)memory_last_of(
+                                    at, text_delimiter, (positive)(found - at));
+
+                                line = before ? before + 1 : at;
+                        }
+
+                        if (plan->invert)
+                                grep_lines_selected(plan, state, at,
+                                                    (positive)(line - at));
+
+                        if (!found || state->done)
+                                break;
+                }
+
+                string_address stop = (string_address)memory_first_of(
+                    line, text_delimiter, (positive)(past - line));
+                positive length = (positive)(stop - line);
+
+                if (grep_line_matches(plan, state, line, length) != plan->invert)
+                        grep_line_selected(plan, state, line, length);
+
+                at = stop + 1;
+        }
+
+        if (plan->numbered)
+                state->number += memory_count(state->counted,
+                                              (positive)(past - state->counted),
+                                              text_delimiter);
+
+        state->offset += size;
+}
+
 static b32 text_grep()
 {
         file_taking taking = {
@@ -14208,6 +14595,16 @@ static b32 text_grep()
         const rx_hints *literal = regex_current.hints;
         bool literal_proves = (regex_current.flags & RX_LITERAL_PROVES) != 0;
 
+        grep_literals.count = 0;
+        grep_literals.used = 0;
+
+        bool literal_set = !never && !literal_proves && !literal->literal_length &&
+                           (regex_current.flags & RX_BRANCHING) &&
+                           !(regex_current.flags & RX_HAS_BACKREF) &&
+                           grep_set_gather(address_of regex_current,
+                                           regex_current.first, icase) &&
+                           grep_literals.count > 1;
+
         if (before && !grep_hold_make(before))
                 return text_done(2);
 
@@ -14394,7 +14791,79 @@ static b32 text_grep()
                                     !grep_numbered && !grep_offsets &&
                                     !grep_coloring;
 
-                for (;;)
+                /*
+                        Everything without context, -o or colour is a span at a
+                        time: the whole lines in the reader, then the one line
+                        that runs past its end, carried across the refill by
+                        the line reader as before.
+                */
+                bool spanning = !grouped && !only && !grep_coloring && !never;
+
+                if (spanning)
+                {
+                        grep_plan plan = {
+                            .program = address_of regex_current,
+                            .literal = literal->literal_length ? literal : null,
+                            .set = literal_set ? address_of grep_literals : null,
+                            .limit = limit,
+                            .mode = quiet || listing || listing_without || discard_file
+                                        ? GREP_SPAN_FIRST
+                                    : counting ? GREP_SPAN_COUNT
+                                               : GREP_SPAN_PRINT,
+                            .boundary = regex_boundary,
+                            .literal_proves = literal_proves,
+                            .icase = icase,
+                            .invert = invert,
+                            .plain = plain_output,
+                            .numbered = grep_numbered,
+                        };
+                        grep_state state = {.match = address_of regex_match,
+                                            .name = shown_name};
+
+                        while (!state.done && text_fill())
+                        {
+                                p8 address_to at = text_input.buffer + text_input.position;
+                                positive left = text_input.filled - text_input.position;
+                                p8 address_to last = memory_last_of(at, text_delimiter, left);
+                                p8 address_to line = at;
+                                positive size;
+
+                                if (last)
+                                {
+                                        size = (positive)(last - at) + 1;
+                                        text_input.position += size;
+                                }
+                                else
+                                {
+                                        if (!text_line_view(address_of line,
+                                                            address_of text_line_length,
+                                                            null, 0, null))
+                                                break;
+
+                                        size = text_line_length + 1;
+                                }
+
+                                grep_span(address_of plan, address_of state, line, size);
+
+                                for (; state.complex; state.complex--)
+                                {
+                                        string_diagnostic(&text_diagnostic, 0, null,
+                                                          "regular expression too complex");
+                                        text_status = 2;
+                                }
+                        }
+
+                        matches = state.matches;
+                        found_any = found_any || matches;
+
+                        if (quiet && matches)
+                        {
+                                text_close();
+                                return text_done(0);
+                        }
+                }
+
+                for (; !spanning;)
                 {
                         // The line skipping stopped on holds the fixed string
                         // already, and asking the machine again would be the
