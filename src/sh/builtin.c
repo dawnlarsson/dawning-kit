@@ -1194,6 +1194,7 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
         shell_find_in_path_alloc_mode((name), (into), (room), ACCESS_EXECUTE, \
                                       (query), "/bin:/usr/bin")
 bipolar shell_signed(string_address input, bool address_to good);
+static bool exec_control_integer(string_address word, bipolar address_to answer);
 bool test_facts(string_address path, file_facts address_to out, bool follow);
 bool word_is(string_address word, string_address text);
 fn hash_forget();
@@ -4547,13 +4548,17 @@ COLD bool shell_dynamic_assign(const_string name, positive length,
 
         if (length == 7 && !memory_compare((address_any)text, "SECONDS", 7))
         {
-                bool good;
-                bipolar asked = shell_signed(said, address_of good);
+                //      bash reads SECONDS as it reads any number: a word
+                //      past the range or with a stray byte in it is zero.
+                bipolar asked = 0;
+
+                if (said)
+                        exec_control_integer(said, address_of asked);
 
                 shell_seconds_started = true;
                 shell_seconds_origin =
                     shell_clock_seconds(SHELL_CLOCK_MONOTONIC, null) -
-                    (good ? (p64)asked : 0);
+                    (p64)asked;
 
                 return true;
         }
@@ -6310,7 +6315,6 @@ COLD fn shell_pwd(writer write, string_address input)
 }
 
 fn shell_trap_exit();
-static bool exec_control_integer(string_address word, bipolar address_to answer);
 
 /*
         "exit", which bash says as an interactive shell leaves and dash does
@@ -6595,8 +6599,9 @@ bool env_set_number(string_address name, positive value)
         return env_assign(name, text);
 }
 
-// Forwards, and signed. string_to_bipolar reads from the end of the string,
-// which answers 5 for "0.5" and 0 for anything with a space after it.
+// A signed word that wraps past the range, which is how bash reads a RANDOM
+// seed and a ulimit value; every other count goes through
+// exec_control_integer, which refuses one.
 bipolar shell_signed(string_address input, bool address_to good)
 {
         address_to good = false;
@@ -8022,15 +8027,16 @@ fn shell_shift(writer write, string_address input)
 
         if (shell_argc > first)
         {
-                bool good;
-                bipolar asked = shell_signed(shell_argv[first], address_of good);
+                bipolar asked;
+                bool good = exec_control_integer(shell_argv[first],
+                                                 address_of asked);
 
                 if (!good || asked < 0)
                 {
                         if (shell_bash_compat)
                         {
                                 shell_diagnostic_where();
-                                return shell_answer(string_report(log_error, 1, "shift: %s: %s\n",
+                                return shell_answer(string_report(log_error, good ? 1 : 2, "shift: %s: %s\n",
                                               shell_argv[first],
                                               good ? "shift count out of range"
                                                    : "numeric argument required"));
@@ -13562,9 +13568,11 @@ bipolar trap_number(string_address word)
         if (real_time >= 0)
                 return real_time;
 
-        bool good;
-        bipolar value = shell_signed(word, address_of good);
-        return good && value >= 0 && value <= TRAP_NUMBER_MAX ? value : -1;
+        bipolar value;
+        return exec_control_integer(word, address_of value) && value >= 0 &&
+                       value <= TRAP_NUMBER_MAX
+                   ? value
+                   : -1;
 }
 
 /*
@@ -14688,31 +14696,16 @@ COLD fn shell_eval(writer write, string_address input)
         shell_answer(shell_status);
 }
 
-/*
-        return.
-
-        Without a function to leave, all this can honestly do is say what the
-        status is; leaving one is the business of whatever called it.
-*/
-fn shell_return(writer write, string_address input)
-{
-        bool good;
-
-        if (shell_argc > 1)
-                return shell_answer((b32)shell_signed(shell_argv[1], address_of good) & 0xff);
-
-        shell_answer(shell_status);
-}
-
 bool exec_control_builtin(string_address name, bool run);
 
 /*
-        break and continue.
+        break, continue and return.
 
-        The work is the executor's, because leaving a loop means unwinding C
-        frames it owns. They are named here so that they carry a disabled
-        flag like every other builtin: `enable` lists them, and `enable -n
-        break` sends the name back out to PATH the way the reference does.
+        The work is the executor's, because leaving a loop or a function means
+        unwinding C frames it owns. They are named here so that they carry a
+        disabled flag like every other builtin: `enable` lists them, and
+        `enable -n break` sends the name back out to PATH the way the
+        reference does.
 */
 fn shell_break(writer write, string_address input)
 {
@@ -17895,51 +17888,21 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted, bool forget,
         return status;
 }
 
-/* wait: all known asynchronous children, or every PID operand in order. Job
-   identifiers deliberately remain unsupported until the shell owns process
-   groups and a controlling terminal; accepting %1 here would be a lie. */
+/* The plain wait for every retained child that never became a job. job_wait
+   reads the operands and calls this only when it was given none. */
 COLD fn shell_wait(writer write, string_address input)
 {
-        b32 answer = 0;
-
-        if (shell_argc < 2)
+        while (shell_wait_count)
         {
-                while (shell_wait_count)
-                {
-                        bool interrupted;
-
-                        answer = shell_wait_one(shell_wait_table[0].job,
-                                                address_of interrupted, true,
-                                                false);
-                        if (interrupted)
-                                return shell_answer(answer);
-                }
-
-                return shell_answer(0);
-        }
-
-        for (positive at = 1; at < shell_argc; at++)
-        {
-                positive pid;
                 bool interrupted;
-
-                if (!string_digits_checked_exact(shell_argv[at], 10, address_of pid) ||
-                    pid > (positive)b32_max)
-                {
-                        shell_diagnostic_where();
-                        return shell_answer(string_report(log_error, 2, "wait: Illegal number: %s\n",
-                                      shell_argv[at]));
-                }
-
-                answer = shell_wait_one((bipolar)pid,
-                                        address_of interrupted,
-                                        shell_posix_on(), false);
+                b32 answer = shell_wait_one(shell_wait_table[0].job,
+                                            address_of interrupted, true, false);
 
                 if (interrupted)
-                        break;
+                        return shell_answer(answer);
         }
 
-        shell_answer(answer);
+        shell_answer(0);
 }
 
 COLD fn shell_jobs(writer write, string_address input);
@@ -18222,7 +18185,7 @@ shell_command shell_commands[] = {
     {"readarray", shell_mapfile},
     {"readonly", shell_readonly},
     {"reboot", shell_reboot},
-    {"return", shell_return},
+    {"return", shell_break},
     {"set", shell_set},
     {"shift", shell_shift},
     {"shopt", shell_shopt},
