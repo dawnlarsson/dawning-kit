@@ -962,14 +962,8 @@ static PURE _Bool pane_visible(struct pane *pane)
         pane_frame(pane, &frame);
 
         list_for_each_entry(output, &desktop.outputs, link)
-        {
-                struct drm_rect screen;
-
-                drm_rect_init(&screen, output->x, output->y,
-                              (int)output->width, (int)output->height);
-                if (drm_rects_overlap(&frame, &screen))
+                if (output_touched(output, &frame, 1))
                         return true;
-        }
 
         return false;
 }
@@ -989,14 +983,14 @@ static PURE _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
         walk was written once per caller before it was written here.
 */
 static PURE struct pane *pane_topmost(struct pane *except,
-                                      _Bool include_minimized)
+                                      _Bool include_minimized, int below)
 {
         struct pane *pane;
         struct pane *top = NULL;
 
         list_for_each_entry(pane, &desktop.windows, link)
                 if (pane != except && pane_focusable(pane, include_minimized) &&
-                    (!top || pane->z > top->z))
+                    pane->z < below && (!top || pane->z > top->z))
                         top = pane;
 
         return top;
@@ -1013,10 +1007,9 @@ static PURE struct pane *pane_topmost(struct pane *except,
 */
 static _Bool pane_focus_step(void)
 {
-        struct pane *pane;
-        struct pane *top = pane_topmost(NULL, true);
+        struct pane *top = pane_topmost(NULL, true, INT_MAX);
         struct pane *focused = desktop.focused;
-        struct pane *next = NULL;
+        struct pane *next;
         int below;
 
         /*
@@ -1030,11 +1023,7 @@ static _Bool pane_focus_step(void)
         else
                 below = focused == top && focused ? focused->z : INT_MAX;
 
-        list_for_each_entry(pane, &desktop.windows, link)
-                if (pane_focusable(pane, true) && pane->z < below &&
-                    (!next || pane->z > next->z))
-                        next = pane;
-
+        next = pane_topmost(NULL, true, below);
         if (!next)
                 next = top;
 
@@ -1076,7 +1065,7 @@ static _Bool pane_minimize_focused(void)
         pane->style |= WINDOW_MINIMIZED;
         WRITE_ONCE(pane->shared->style, pane->style);
 
-        pane_focus(pane_topmost(pane, false));
+        pane_focus(pane_topmost(pane, false, INT_MAX));
         return true;
 }
 
@@ -1125,14 +1114,6 @@ static void desktop_damage_rect(const struct drm_rect *r)
         desktop.damage[desktop.damage_count++] = *r;
 }
 
-static void desktop_damage(int x, int y, int w, int h)
-{
-        struct drm_rect r;
-
-        drm_rect_init(&r, x, y, w, h);
-        desktop_damage_rect(&r);
-}
-
 static void pane_damage_frame(struct pane *pane)
 {
         struct drm_rect frame;
@@ -1152,9 +1133,12 @@ static void pane_damage_was_and_now(struct pane *pane, const struct drm_rect *wa
 // offset was the same arithmetic written in each.
 static void pane_damage_rows(struct pane *pane, unsigned int row, unsigned int count)
 {
-        desktop_damage(pane->x,
-                       pane->y + pane_title(pane) + (int)row * canvas_cell_h,
-                       pane->width, (int)count * canvas_cell_h);
+        struct drm_rect r;
+
+        drm_rect_init(&r, pane->x,
+                      pane->y + pane_title(pane) + (int)row * canvas_cell_h,
+                      pane->width, (int)count * canvas_cell_h);
+        desktop_damage_rect(&r);
 }
 
 /*
@@ -1342,7 +1326,7 @@ static void desktop_refresh_panes(void)
                             atomic_read(&desktop.focus_cycling) ||
                             atomic_read(&desktop.focus_commit)))
         {
-                pane_focus(pane_topmost(desktop.focused, false));
+                pane_focus(pane_topmost(desktop.focused, false, INT_MAX));
 
                 // pane_focus restyles every titlebar, and the damage loop
                 // above has already run. Every other caller pairs it with a
@@ -1545,7 +1529,7 @@ static void window_release(struct file *file)
         // Closing the active window hands focus to what is now on top,
         // instead of leaving a live desktop with nowhere for keys to go.
         if (refocus)
-                pane_focus(pane_topmost(NULL, false));
+                pane_focus(pane_topmost(NULL, false, INT_MAX));
 
         if (!list_empty(&desktop.outputs))
                 desktop_redraw();

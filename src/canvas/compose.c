@@ -437,10 +437,7 @@ static void compose_bar(struct pane *pane, const struct target *t,
         struct drm_rect gutter;
 
         pane_gutter_rect(pane, &gutter);
-        gutter.x1 -= t->x;
-        gutter.x2 -= t->x;
-        gutter.y1 -= t->y;
-        gutter.y2 -= t->y;
+        drm_rect_translate(&gutter, -t->x, -t->y);
         if (!drm_rects_overlap(&gutter, &t->clip))
                 return;
 
@@ -470,10 +467,7 @@ static void compose_pane(struct pane *pane, const struct target *t)
 
         pane_frame(pane, &frame);
         local_frame = frame;
-        local_frame.x1 -= t->x;
-        local_frame.x2 -= t->x;
-        local_frame.y1 -= t->y;
-        local_frame.y2 -= t->y;
+        drm_rect_translate(&local_frame, -t->x, -t->y);
 
         /*
                 Nothing at all for a window the damage does not touch, and for
@@ -882,12 +876,9 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         drm_client_buffer_vunmap_local(output->buffer);
         pointer_draw_total += ktime_get_ns() - started;
 
-        flush.x1 = max(flush.x1 - output->x, 0);
-        flush.y1 = max(flush.y1 - output->y, 0);
-        flush.x2 = min(flush.x2 - output->x, (int)output->width);
-        flush.y2 = min(flush.y2 - output->y, (int)output->height);
-
-        if (flush.x2 <= flush.x1 || flush.y2 <= flush.y1)
+        drm_rect_translate(&flush, -output->x, -output->y);
+        if (!drm_rect_intersect(&flush, &(struct drm_rect){
+                        .x2 = (int)output->width, .y2 = (int)output->height }))
                 return;
 
         started = ktime_get_ns();

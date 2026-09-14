@@ -129,12 +129,7 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                 than trusted to the layout above.
         */
         box = *t;
-        box.clip.x1 = max(t->clip.x1, x);
-        box.clip.y1 = max(t->clip.y1, y);
-        box.clip.x2 = min(t->clip.x2, x + w);
-        box.clip.y2 = min(t->clip.y2, y + h);
-
-        if (box.clip.x2 <= box.clip.x1 || box.clip.y2 <= box.clip.y1)
+        if (!drm_rect_intersect(&box.clip, &(struct drm_rect){ x, y, x + w, y + h }))
                 return;
 
         cell_w = (int)canvas_font->width * scale;
