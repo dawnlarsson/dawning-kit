@@ -600,6 +600,18 @@ static fn file_times_of(file_facts address_to facts, p64 address_to times)
 
 // Paths -----------------------------------------------------
 
+// path_basename hands its writer the last component in place however long
+// the operand is; these keep where it is, so a caller can cut it or look
+// before it.
+static string_address path_found;
+static positive path_found_length;
+
+static fn path_found_take(address_any data, positive length)
+{
+        path_found = data;
+        path_found_length = length;
+}
+
 static string_address file_last_component(string_address path)
 {
         string_address last = string_last_of(path, '/');
@@ -819,17 +831,6 @@ static bipolar file_staged_name_finish(file_staged_name address_to stage,
 #define FILE_CODEC_LEVEL_WORDS 16
 #define FILE_CODEC_NO_NAME 32
 #define FILE_CODEC_SHORT_VERSION 64
-
-static string_address file_called_name(string_address fallback)
-{
-        string_address path = program_argument(0);
-        string_address slash;
-
-        if (!path)
-                return fallback;
-        slash = string_last_of(path, '/');
-        return slash && slash[1] ? slash + 1 : path;
-}
 
 static fn file_codec_print(string_address text)
 {
@@ -1177,7 +1178,9 @@ static b32 file_codec_main(file_codec_cli address_to codec)
 {
         positive first;
         b32 result;
-        string_address called = file_called_name(codec->name);
+        string_address called = program_argument(0);
+
+        called = called ? file_last_component(called) : codec->name;
 
         *codec->status = 0;
         if (codec->decode_name && string_equals(called, codec->decode_name))
@@ -1717,31 +1720,12 @@ fn file_two(writer write, positive value)
         write(pair, length);
 }
 
+static bool date_shape(writer write, b64 when, string_address format);
+
 fn file_stamp(writer write, b64 seconds, positive nanoseconds)
 {
-        b64 year;
-        positive month, day, hour, minute, second;
-
-        file_split_moment(seconds, address_of year, address_of month, address_of day,
-                          address_of hour, address_of minute, address_of second);
-
-        positive_to_string(write, (positive)year);
-        write("-", 1);
-        file_two(write, month);
-        write("-", 1);
-        file_two(write, day);
-        write(" ", 1);
-        file_two(write, hour);
-        write(":", 1);
-        file_two(write, minute);
-        write(":", 1);
-        file_two(write, second);
-        write(".", 1);
-
-        p8 fraction[9];
-        positive fraction_length = positive_into_padded(fraction, nanoseconds, 9, '0');
-
-        write(fraction, fraction_length);
+        date_shape(write, seconds, (string_address)"%Y-%m-%d %H:%M:%S.");
+        positive_to_padded(write, nanoseconds, 9, '0', 0);
         write(" +0000", 6);
 }
 
@@ -3924,11 +3908,12 @@ static fn file_staged_name_abort(file_staged_name address_to stage)
 
 static bipolar file_directory_empty_same(bipolar directory,
                                          string_address name,
-                                         file_facts address_to expected)
+                                         file_facts address_to expected,
+                                         positive nofollow)
 {
         bipolar handle = file_open_same(
             directory, name, expected,
-            FILE_READ | O_DIRECTORY | O_NOFOLLOW);
+            FILE_READ | O_DIRECTORY | nofollow);
         if (handle < 0)
                 return handle;
 
@@ -4015,7 +4000,7 @@ static bipolar file_replace_decided_at(
         if (replaced_directory)
         {
                 bipolar empty = file_directory_empty_same(
-                    to_directory, to, replaced);
+                    to_directory, to, replaced, O_NOFOLLOW);
                 if (empty <= 0)
                         return empty < 0 ? empty : -ERROR_NOT_EMPTY;
         }
@@ -4209,13 +4194,6 @@ static bipolar file_created_directory_mode_at(
         return verified;
 }
 
-static fn file_path_prefix(p8 address_to into, string_address path,
-                           positive length)
-{
-        memory_copy_apart(into, path, length);
-        into[length] = end;
-}
-
 /* Make a directory path while every namespace operation is relative to the
    directory descriptor obtained for the preceding component.  O_NOFOLLOW
    prevents an intermediate symbolic link from redirecting the walk.  The
@@ -4289,8 +4267,8 @@ static bipolar file_make_directories_open(
                 if (named >= sizeof(component))
                 {
                         if (failed)
-                                file_path_prefix(failed, work,
-                                                 last ? length : stop);
+                                memory_copy_apart_end(failed, work,
+                                                      last ? length : stop);
                         system_close(held);
                         return -ERROR_NAME_TOO_LONG;
                 }
@@ -4376,8 +4354,8 @@ static bipolar file_make_directories_open(
                 {
                         bipolar answer = next < 0 ? next : -ERROR_EXISTS;
                         if (failed)
-                                file_path_prefix(failed, work,
-                                                 last ? length : stop);
+                                memory_copy_apart_end(failed, work,
+                                                      last ? length : stop);
                         if (next >= 0)
                                 system_close(next);
                         system_close(held);
@@ -4629,7 +4607,7 @@ static positive ls_used;
 static p8 ls_format;      // l long, 1 one per line, C down columns, x across, m commas
 static p8 ls_sorting;     // n name, t time, S size, v version, X extension, w width, U none
 static p8 ls_time_key;    // m modified, a accessed, c changed, b born
-static p8 ls_time_style;  // d default, f full-iso, l long-iso, i iso, + a format of its own
+static p8 ls_time_style;  // d default, f full-iso, + a format (the other ISO styles are formats)
 static string_address ls_time_format_old;
 static string_address ls_time_format_recent;
 static p8 ls_quoting;     // L literal, s shell, S shell-always, e shell-escape,
@@ -4710,7 +4688,6 @@ static ls_selection ls_selected;
 //      one is not known until the word is read, so the question waits.
 static bool ls_zero_after_word;
 
-static bool date_shape(writer write, b64 when, string_address format);
 bool shell_match(string_address pattern, string_address text);
 
 static fn ls_out(address_any text, positive length)
@@ -5882,52 +5859,6 @@ static fn ls_time_say(ls_entry address_to entry)
         {
         case 'f':
                 return file_stamp(ls_out, seconds, fraction);
-        case 'l':
-        {
-                b64 year;
-                positive month, day, hour, minute, second;
-
-                file_split_moment(seconds, address_of year, address_of month, address_of day,
-                                  address_of hour, address_of minute, address_of second);
-                positive_to_string(ls_out, (positive)year);
-                ls_out("-", 1);
-                file_two(ls_out, month);
-                ls_out("-", 1);
-                file_two(ls_out, day);
-                ls_out(" ", 1);
-                file_two(ls_out, hour);
-                ls_out(":", 1);
-                file_two(ls_out, minute);
-                return;
-        }
-        case 'i':
-        {
-                b64 year;
-                positive month, day, hour, minute, second;
-
-                file_split_moment(seconds, address_of year, address_of month, address_of day,
-                                  address_of hour, address_of minute, address_of second);
-
-                if (ls_recent(seconds))
-                {
-                        file_two(ls_out, month);
-                        ls_out("-", 1);
-                        file_two(ls_out, day);
-                        ls_out(" ", 1);
-                        file_two(ls_out, hour);
-                        ls_out(":", 1);
-                        file_two(ls_out, minute);
-                        return;
-                }
-
-                positive_to_string(ls_out, (positive)year);
-                ls_out("-", 1);
-                file_two(ls_out, month);
-                ls_out("-", 1);
-                file_two(ls_out, day);
-                ls_out(" ", 1);
-                return;
-        }
         case '+':
                 date_shape(ls_out, seconds,
                            ls_recent(seconds) ? ls_time_format_recent : ls_time_format_old);
@@ -7377,9 +7308,17 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                 else if (!string_compare(style, "full-iso"))
                         ls_time_style = 'f';
                 else if (!string_compare(style, "long-iso"))
-                        ls_time_style = 'l';
+                {
+                        ls_time_style = '+';
+                        ls_time_format_old = (string_address)"%Y-%m-%d %H:%M";
+                        ls_time_format_recent = ls_time_format_old;
+                }
                 else if (!string_compare(style, "iso"))
-                        ls_time_style = 'i';
+                {
+                        ls_time_style = '+';
+                        ls_time_format_old = (string_address)"%Y-%m-%d ";
+                        ls_time_format_recent = (string_address)"%m-%d %H:%M";
+                }
                 else if (string_compare(style, "locale"))
                 {
                         return string_report(log_error, 2,
@@ -8290,35 +8229,8 @@ static bool find_empty(file_facts address_to facts)
         if ((facts->mode & MODE_FORMAT) != MODE_DIRECTORY)
                 return facts->size == 0;
 
-        file_walk walk;
-
-        walk.handle = file_open_same(
-            find_parent, find_entry, facts,
-            FILE_READ | O_DIRECTORY |
-                (find_facts_follow ? 0 : O_NOFOLLOW));
-        walk.error = walk.handle < 0 ? walk.handle : 0;
-        walk.have = 0;
-        walk.at = 0;
-        bool opened = walk.handle >= 0;
-
-        if (!opened)
-                return false;
-
-        struct linux_dirent64 address_to entry;
-        bool empty = true;
-
-        while ((entry = file_walk_next(address_of walk)))
-        {
-                if (file_is_dot(entry->d_name))
-                        continue;
-
-                empty = false;
-                break;
-        }
-
-        file_walk_close(address_of walk);
-
-        return empty;
+        return file_directory_empty_same(find_parent, find_entry, facts,
+                                         find_facts_follow ? 0 : O_NOFOLLOW) > 0;
 }
 
 // Building the tree -------------------------------------------------
@@ -12780,53 +12692,11 @@ static b32 file_ln()
 // link / unlink ------------------------------------------------------
 /* The single-purpose POSIX interfaces are deliberately narrower than ln and
    rm: no collision policy, directory traversal or symlink dereference. */
-static string_address file_simple_operand_list[3];
-static positive file_simple_operand_count;
 
 static b32 address_to file_operand_list;
 static positive file_operand_count;
 static positive file_operand_room;
 static bool file_operand_failed;
-
-static fn file_simple_operand(b32 index)
-{
-        if (file_simple_operand_count < 3)
-                file_simple_operand_list[file_simple_operand_count] =
-                    program_argument(index);
-        file_simple_operand_count++;
-}
-
-static bool file_simple_operands(string_address program, positive wanted)
-{
-        file_simple_operand_count = 0;
-        file_taking taking = {
-            .program = program,
-            .options = (const argument_option[]){
-    {null},
-        }, .operand = file_simple_operand,
-        };
-
-        if (!file_take(address_of taking))
-                return false;
-        if (file_simple_operand_count == wanted)
-                return true;
-
-        if (file_simple_operand_count > wanted)
-        {
-                string_format(log_error, "%s: extra operand '%w'\n", program,
-                              writer_terminal_quoted_name, file_simple_operand_list[wanted]);
-        }
-        else if (file_simple_operand_count)
-        {
-                string_format(log_error, "%s: missing operand after '%w'\n", program,
-                              writer_terminal_quoted_name,
-                              file_simple_operand_list[file_simple_operand_count - 1]);
-        }
-        else
-                string_format(log_error, "%s: missing operand\n", program);
-
-        return false;
-}
 
 static fn file_operand(b32 index)
 {
@@ -12853,13 +12723,45 @@ static string_address file_operand_at(positive index)
         return program_argument(file_operand_list[index]);
 }
 
+static bool file_simple_operands(string_address program, positive wanted)
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = program,
+            .options = (const argument_option[]){
+    {null},
+        }, .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return false;
+        if (file_operand_count == wanted)
+                return true;
+
+        if (file_operand_count > wanted)
+        {
+                string_format(log_error, "%s: extra operand '%w'\n", program,
+                              writer_terminal_quoted_name, file_operand_at(wanted));
+        }
+        else if (file_operand_count)
+        {
+                string_format(log_error, "%s: missing operand after '%w'\n", program,
+                              writer_terminal_quoted_name,
+                              file_operand_at(file_operand_count - 1));
+        }
+        else
+                string_format(log_error, "%s: missing operand\n", program);
+
+        return false;
+}
+
 static b32 file_link()
 {
         if (!file_simple_operands((string_address)"link", 2))
                 return 1;
 
-        string_address source = file_simple_operand_list[0];
-        string_address target = file_simple_operand_list[1];
+        string_address source = file_operand_at(0);
+        string_address target = file_operand_at(1);
         bipolar answer = system_link_at(AT_FDCWD, source, AT_FDCWD, target, 0);
 
         if (answer < 0)
@@ -12876,7 +12778,7 @@ static b32 file_unlink()
         if (!file_simple_operands((string_address)"unlink", 1))
                 return 1;
 
-        string_address path = file_simple_operand_list[0];
+        string_address path = file_operand_at(0);
         bipolar answer = system_remove_at(AT_FDCWD,
                                        path, 0);
 
@@ -13890,41 +13792,19 @@ static const argument_option basename_options[] = {
 
 static fn basename_one(string_address name, string_address suffix, bool zero)
 {
-        positive stop = string_length(name);
+        // Trailing separators are not part of the basename, and the basename
+        // of a run of separators is root.
+        path_basename(path_found_take, name);
 
-        // Trailing separators are not part of the basename. Preserve one
-        // when the complete operand is a run of separators, because the
-        // basename of root is root.
-        while (stop > 1 && name[stop - 1] == '/')
-                stop--;
+        positive cut = suffix ? string_length(suffix) : 0;
 
-        positive start = 0;
-        p8 address_to slash = memory_last_of(name, '/', stop);
+        // A name that is nothing but its suffix keeps it: stripping would
+        // leave an empty line where a name was asked for.
+        if (cut && cut < path_found_length &&
+            !memory_compare(path_found + path_found_length - cut, suffix, cut))
+                path_found_length -= cut;
 
-        if (slash)
-        {
-                start = (positive)(slash - name) + 1;
-
-                if (start == stop)
-                        start--;
-        }
-
-        positive length = stop - start;
-
-        if (suffix)
-        {
-                positive cut = string_length(suffix);
-
-                // A name that is nothing but its suffix keeps it: stripping
-                // would leave an empty line where a name was asked for.
-                if (cut > 0 && cut < length)
-                {
-                        if (!memory_compare(name + start + length - cut, suffix, cut))
-                                length -= cut;
-                }
-        }
-
-        log(name + start, length);
+        log(path_found, path_found_length);
         log(zero ? "\0" : "\n", 1);
 }
 
@@ -13981,42 +13861,20 @@ static const argument_option dirname_options[] = {
 
 static fn dirname_one(string_address name, bool zero)
 {
-        positive stop = string_length(name);
+        // What comes before the last component, less the separators between
+        // them. One is kept so every spelling of root answers "/", and a name
+        // with no directory in it answers ".".
+        path_basename(path_found_take, name);
 
-        // First discard separators after the basename, then the basename
-        // itself, then separators between it and the directory. Keeping one
-        // separator makes every spelling of root answer "/".
-        while (stop && name[stop - 1] == '/')
-                stop--;
-
-        if (!stop && !name[0])
-        {
-                log(".", 1);
-                log(zero ? "\0" : "\n", 1);
-                return;
-        }
-
-        if (!stop)
-        {
-                log("/", 1);
-                log(zero ? "\0" : "\n", 1);
-                return;
-        }
-
-        while (stop && name[stop - 1] != '/')
-                stop--;
-
-        if (!stop)
-        {
-                log(".", 1);
-                log(zero ? "\0" : "\n", 1);
-                return;
-        }
+        positive stop = (positive)(path_found - name);
 
         while (stop > 1 && name[stop - 1] == '/')
                 stop--;
 
-        log(name, stop);
+        if (stop)
+                log(name, stop);
+        else
+                log(string_is(name, '/') ? "/" : ".", 1);
         log(zero ? "\0" : "\n", 1);
 }
 
@@ -19855,38 +19713,26 @@ static bipolar file_stage_claim_at(
         return handle;
 }
 
-// -n, -i and -u are three ways of asking the same question about a
+// -n, -u and -i are three ways of asking the same question about a
 // destination that is already there, and a destination that is not there is
-// never in question.
-static bool cp_allowed(bipolar directory, string_address destination,
-                       string_address shown, file_facts address_to facts,
-                       bool exists, file_facts address_to there)
+// never in question. -u lets through only a source newer to the nanosecond.
+static bool file_overwrite_allowed(string_address program, string_address shown,
+                                   bool exists, bool never, bool newer, bool ask,
+                                   file_facts address_to facts,
+                                   file_facts address_to there,
+                                   b32 address_to status)
 {
-        if (!cp_never_clobber && !cp_newer_only && !cp_ask)
-                return true;
+        if (!exists || never)
+                return !exists;
 
-        (void)directory;
-        (void)destination;
-        if (!exists)
-                return true;
-
-        if (cp_never_clobber)
+        if (newer && (facts->modified.seconds < there->modified.seconds ||
+                      (facts->modified.seconds == there->modified.seconds &&
+                       facts->modified.nanoseconds <= there->modified.nanoseconds)))
                 return false;
 
-        if (cp_newer_only)
+        if (ask && !file_ask(program, (string_address)"overwrite", shown))
         {
-                if (facts->modified.seconds < there->modified.seconds)
-                        return false;
-
-                if (facts->modified.seconds == there->modified.seconds &&
-                    facts->modified.nanoseconds <= there->modified.nanoseconds)
-                        return false;
-        }
-
-        if (cp_ask && !file_ask((string_address) "cp", (string_address) "overwrite",
-                                shown))
-        {
-                cp_status = 1;
+                address_to status = 1;
                 return false;
         }
 
@@ -20205,9 +20051,10 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
         if (!moving && kind != MODE_DIRECTORY &&
             !(named && cp_destination_decided) &&
-            !cp_allowed(destination_directory, destination,
-                        destination_shown, address_of facts,
-                        destination_exists, address_of there))
+            !file_overwrite_allowed((string_address)"cp", destination_shown,
+                                    destination_exists, cp_never_clobber,
+                                    cp_newer_only, cp_ask, address_of facts,
+                                    address_of there, address_of cp_status))
                 return true;
 
         if (!moving && (cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
@@ -20735,9 +20582,10 @@ static fn cp_pair(string_address source, string_address destination)
                                                     ? address_of destination_facts
                                                     : address_of destination_entry;
         if (kind != MODE_DIRECTORY &&
-            !cp_allowed(destination_directory, destination_leaf,
-                        destination, address_of source_facts,
-                        collision_exists, collision_facts))
+            !file_overwrite_allowed((string_address)"cp", destination,
+                                    collision_exists, cp_never_clobber,
+                                    cp_newer_only, cp_ask, address_of source_facts,
+                                    collision_facts, address_of cp_status))
         {
                 system_close(source_directory);
                 system_close(destination_directory);
@@ -21411,32 +21259,6 @@ static p8 mv_collision_option;
 
 
 
-// -n, -i and -f are the same question mv asks about a destination that is
-// already there, and -f is the default it asks nothing under.
-static bool mv_allowed(bipolar directory, string_address destination,
-                       string_address shown, bool address_to exists,
-                       file_facts address_to facts)
-{
-        address_to exists = file_look(
-            directory, destination, AT_SYMLINK_NOFOLLOW, facts);
-
-        if (!mv_never_clobber && !mv_ask)
-                return true;
-
-        if (!address_to exists)
-                return true;
-
-        if (mv_never_clobber)
-                return false;
-
-        if (file_ask((string_address)"mv", (string_address)"overwrite",
-                     shown))
-                return true;
-
-        mv_status = 1;
-        return false;
-}
-
 static fn mv_one(string_address source, string_address destination)
 {
         p8 source_leaf[FILE_PATH_MAX];
@@ -21471,9 +21293,14 @@ static fn mv_one(string_address source, string_address destination)
                 goto finished;
         }
 
-        bool destination_exists;
-        if (!mv_allowed(destination_directory, destination_leaf, destination,
-                        address_of destination_exists, address_of to))
+        // -f is the default and asks nothing; -n, -u and -i are cp's.
+        bool destination_exists = file_look(
+            destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
+            address_of to);
+        if (!file_overwrite_allowed((string_address)"mv", destination,
+                                    destination_exists, mv_never_clobber,
+                                    mv_newer_only, mv_ask, address_of from,
+                                    address_of to, address_of mv_status))
                 goto finished;
 
         /* Cross-device fallback must honor the same destination inode/absence
@@ -21484,19 +21311,6 @@ static fn mv_one(string_address source, string_address destination)
                 mv_destination_facts = to;
         mv_collision_seen = false;
 
-        if (mv_newer_only)
-        {
-                file_facts source_time;
-                file_facts destination_time;
-
-                if (file_look(source_directory, source_leaf, 0,
-                              address_of source_time) &&
-                    file_look(destination_directory, destination_leaf, 0,
-                              address_of destination_time) &&
-                    source_time.modified.seconds <=
-                        destination_time.modified.seconds)
-                        goto finished;
-        }
 
         // The two names for one file, or a link named as the source that
         // points at the destination: renaming either would lose the file.
@@ -21823,21 +21637,12 @@ static bool rm_loud;
         the kernel is asked, and whatever -f says -- and names the operand as
         it was written rather than as it resolved.
 */
-static PURE bool rm_dot_operand(string_address path)
+static bool rm_dot_operand(string_address path)
 {
-        positive length = string_length(path);
-        positive at;
+        path_basename(path_found_take, path);
 
-        while (length > 1 && path[length - 1] == '/')
-                length--;
-
-        at = length;
-
-        while (at && path[at - 1] != '/')
-                at--;
-
-        return (length - at == 1 && path[at] == '.') ||
-               (length - at == 2 && path[at] == '.' && path[at + 1] == '.');
+        return memory_is_word(path_found, path_found_length, ".") ||
+               memory_is_word(path_found, path_found_length, "..");
 }
 
 static bool rm_one_system;
@@ -22862,19 +22667,19 @@ static const argument_option tty_options[] = {
 
 static b32 file_tty()
 {
-        file_simple_operand_count = 0;
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address) "tty",
             .options = tty_options,
-            .operand = file_simple_operand,
+            .operand = file_operand,
         };
 
         if (!file_take(address_of taking))
                 return 2;
 
-        if (file_simple_operand_count)
+        if (file_operand_count)
                 return string_report(log_error, 2, "tty: extra operand '%s'\n",
-                              file_simple_operand_list[0]);
+                              file_operand_at(0));
 
         if (taking.flags & FILE_FLAG('s'))
                 return stream_is_terminal(0) ? 0 : 1;
@@ -24358,21 +24163,21 @@ static b32 file_groups()
 // whoami ---------------------------------------------------------
 static b32 file_whoami()
 {
-        file_simple_operand_count = 0;
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address) "whoami",
             .options = (const argument_option[]){
     {null},
         },
-            .operand = file_simple_operand,
+            .operand = file_operand,
         };
 
         if (!file_take(address_of taking))
                 return 1;
 
-        if (file_simple_operand_count)
+        if (file_operand_count)
                 return string_report(log_error, 1, "whoami: extra operand '%s'\n",
-                              file_simple_operand_list[0]);
+                              file_operand_at(0));
 
         positive user = (positive)system_call(syscall(geteuid));
         p8 name[FILE_NAME_MAX];
@@ -24526,21 +24331,21 @@ static bool file_logname_utmp(string_address tty, p8 address_to name)
 
 static b32 file_logname()
 {
-        file_simple_operand_count = 0;
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address) "logname",
             .options = (const argument_option[]){
     {null},
         },
-            .operand = file_simple_operand,
+            .operand = file_operand,
         };
 
         if (!file_take(address_of taking))
                 return 1;
 
-        if (file_simple_operand_count)
+        if (file_operand_count)
                 return string_report(log_error, 1, "logname: extra operand '%s'\n",
-                              file_simple_operand_list[0]);
+                              file_operand_at(0));
 
         p8 loginuid[32];
         positive user = positive_max;
@@ -25085,22 +24890,22 @@ static positive nproc_count(bool all, positive ignore)
 
 static b32 file_nproc()
 {
-        file_simple_operand_count = 0;
+        file_operands_begin();
         nproc_ignore = 0;
 
         file_taking taking = {
             .program = (string_address) "nproc",
             .options = nproc_options,
-            .operand = file_simple_operand,
+            .operand = file_operand,
             .seen = nproc_option_seen,
         };
 
         if (!file_take(address_of taking))
                 return 1;
 
-        if (file_simple_operand_count)
+        if (file_operand_count)
                 return string_report(log_error, 1, "nproc: extra operand '%s'\n",
-                              file_simple_operand_list[0]);
+                              file_operand_at(0));
 
         positive count = nproc_count((taking.flags & FILE_FLAG('a')) != 0,
                                       nproc_ignore);
@@ -26255,17 +26060,19 @@ static p8 rename_name(string_address source, string_address before,
         }
         else if (every)
         {
-                positive at = 0;
-                while (at <= source_length - min(source_length, before_length))
-                {
-                        p8 address_to found = (p8 address_to)memory_search(
-                            (address_any)(name + at), source_length - at,
-                            (address_any)before, before_length);
-                        if (!found)
-                                break;
-                        matches++;
-                        at = (positive)(found - name) + before_length;
-                }
+                // Every occurrence, left to right and never overlapping.
+                if (!string_find(name, before))
+                        return 0;
+
+                positive wanted = file_replace_literal(name, before, before_length,
+                                                       after, after_length, null);
+
+                if (!wanted || prefix + wanted > FILE_PATH_MAX)
+                        return 2;
+                memory_copy_apart(into, source, prefix);
+                file_replace_literal(name, before, before_length, after,
+                                     after_length, into + prefix);
+                return string_equals(source, into) ? 0 : 1;
         }
         else
         {
@@ -26313,7 +26120,7 @@ static p8 rename_name(string_address source, string_address before,
                                   source_length - tail);
                 made += source_length - tail;
         }
-        else if (!before_length)
+        else
         {
                 for (positive at = 0; at <= source_length; at++)
                 {
@@ -26322,27 +26129,6 @@ static p8 rename_name(string_address source, string_address before,
                         if (at < source_length)
                                 into[made++] = name[at];
                 }
-        }
-        else
-        {
-                positive at = 0;
-                while (at < source_length)
-                {
-                        p8 address_to found = (p8 address_to)memory_search(
-                            (address_any)(name + at), source_length - at,
-                            (address_any)before, before_length);
-                        if (!found)
-                                break;
-                        positive place = (positive)(found - name);
-                        memory_copy_apart(into + made, name + at, place - at);
-                        made += place - at;
-                        memory_copy_apart(into + made, after, after_length);
-                        made += after_length;
-                        at = place + before_length;
-                }
-                memory_copy_apart(into + made, name + at,
-                                  source_length - at);
-                made += source_length - at;
         }
         into[made] = end;
         return string_equals(source, into) ? 0 : 1;
