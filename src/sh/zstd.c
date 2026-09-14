@@ -404,14 +404,35 @@ static p8 zstd_fse_symbol(zstd_fse address_to table, p16 address_to state,
         return symbol;
 }
 
+/* The symbol spread both FSE directions share: "less than one" symbols
+   take the top cells, the rest step through the remainder. False when the
+   counts do not fill the table exactly. */
+static bool zstd_fse_spread(p8 address_to symbol, const bipolar address_to norm,
+                            positive max_sym, p8 log)
+{
+        positive mask = ((positive)1 << log) - 1;
+        positive high = mask;
+        positive step = ((mask + 1) >> 1) + ((mask + 1) >> 3) + 3;
+        positive pos = 0;
+
+        for (positive s = 0; s <= max_sym; s++)
+                if (norm[s] == -1)
+                        symbol[high--] = (p8)s;
+        for (positive s = 0; s <= max_sym; s++)
+                for (bipolar i = 0; i < norm[s]; i++)
+                {
+                        while (pos > high)
+                                pos = (pos + step) & mask;
+                        symbol[pos] = (p8)s;
+                        pos = (pos + step) & mask;
+                }
+        return !pos;
+}
+
 static bool zstd_fse_build(zstd_fse address_to table, const bipolar address_to norm,
                            positive max_sym, p8 log)
 {
         positive size = (positive)1 << log;
-        positive high = size - 1;
-        positive step = (size >> 1) + (size >> 3) + 3;
-        positive mask = size - 1;
-        positive pos = 0;
         p16 next[256];
         p8 symbol[ZSTD_FSE_MAX];
         positive s;
@@ -424,34 +445,9 @@ static bool zstd_fse_build(zstd_fse address_to table, const bipolar address_to n
 
         memory_fill(symbol, 0xff, size);
         memory_fill(next, 0, sizeof(next));
-
         for (s = 0; s <= max_sym; s++)
-                if (norm[s] == -1)
-                {
-                        symbol[high] = (p8)s;
-                        high--;
-                        next[s] = 1;
-                }
-                else
-                        next[s] = (p16)(norm[s] < 0 ? 0 : norm[s]);
-
-        for (s = 0; s <= max_sym; s++)
-        {
-                bipolar count = norm[s];
-                bipolar i;
-
-                if (count <= 0)
-                        continue;
-                for (i = 0; i < count; i++)
-                {
-                        while (pos > high)
-                                pos = (pos + step) & mask;
-                        symbol[pos] = (p8)s;
-                        pos = (pos + step) & mask;
-                }
-        }
-
-        if (pos)
+                next[s] = (p16)(norm[s] == -1 ? 1 : norm[s] < 0 ? 0 : norm[s]);
+        if (!zstd_fse_spread(symbol, norm, max_sym, log))
                 return zstd_fail("zstd FSE table did not fill");
 
         for (u = 0; u < size; u++)
@@ -1889,10 +1885,6 @@ static bool zstd_ctable_build(zstd_ctable address_to ct,
                               p8 log)
 {
         positive size = (positive)1 << log;
-        positive high = size - 1;
-        positive step = (size >> 1) + (size >> 3) + 3;
-        positive mask = size - 1;
-        positive pos = 0;
         p16 cumul[64];
         p8 symbol[512];
         positive s;
@@ -1904,33 +1896,9 @@ static bool zstd_ctable_build(zstd_ctable address_to ct,
         memory_fill(symbol, 0, size);
         cumul[0] = 0;
         for (s = 0; s <= max_sym; s++)
-        {
-                if (norm[s] == -1)
-                {
-                        symbol[high] = (p8)s;
-                        high--;
-                        cumul[s + 1] = cumul[s] + 1;
-                }
-                else
-                        cumul[s + 1] =
-                            cumul[s] + (norm[s] < 0 ? 0 : (p16)norm[s]);
-        }
-        for (s = 0; s <= max_sym; s++)
-        {
-                bipolar n = norm[s];
-                bipolar i;
-
-                if (n <= 0)
-                        continue;
-                for (i = 0; i < n; i++)
-                {
-                        while (pos > high)
-                                pos = (pos + step) & mask;
-                        symbol[pos] = (p8)s;
-                        pos = (pos + step) & mask;
-                }
-        }
-        if (pos)
+                cumul[s + 1] = cumul[s] +
+                    (norm[s] == -1 ? 1 : norm[s] < 0 ? 0 : (p16)norm[s]);
+        if (!zstd_fse_spread(symbol, norm, max_sym, log))
                 return false;
         for (u = 0; u < size; u++)
         {
@@ -2123,33 +2091,48 @@ static positive zstd_log_cost(p32 n)
                                ((positive)1 << log);
 }
 
+/* Scale counts to a table of size cells: each present symbol keeps at least
+   one, a surplus comes off the largest cells and the shortfall goes to the
+   most frequent symbol. False when the symbols cannot all fit. */
+static bool zstd_normalize(const p32 address_to freq, positive count,
+                           positive n, positive size, bipolar address_to norm,
+                           positive address_to last)
+{
+        positive total = 0, largest = 0;
+
+        address_to last = 0;
+        for (positive i = 0; i < count; i++)
+                if (freq[i])
+                {
+                        norm[i] = (bipolar)(((positive)freq[i] * size) / n);
+                        if (!norm[i]) norm[i] = 1;
+                        total += (positive)norm[i];
+                        if (freq[i] > freq[largest]) largest = i;
+                        address_to last = i;
+                }
+        while (total > size)
+        {
+                positive most = largest;
+                for (positive i = 0; i <= address_to last; i++)
+                        if (norm[i] > norm[most]) most = i;
+                if (norm[most] <= 1) return false;
+                norm[most]--; total--;
+        }
+        norm[largest] += (bipolar)(size - total);
+        return true;
+}
+
 static zstd_ctable address_to zstd_sequence_model(p32 address_to freq,
         positive n, positive max, p8 log, const bipolar address_to defaults,
         zstd_ctable address_to base, zstd_ctable address_to dynamic,
         p8 address_to header, positive address_to header_n)
 {
         bipolar norm[53] = {0};
-        positive total = 0, largest = 0, last_symbol = 0;
-        positive size = (positive)1 << log;
-        if (n < 64) return base;
-        for (positive i = 0; i <= max; i++)
-                if (freq[i])
-                {
-                        norm[i] = (freq[i] * size) / n;
-                        if (!norm[i]) norm[i] = 1;
-                        total += norm[i];
-                        if (freq[i] > freq[largest]) largest = i;
-                        last_symbol = i;
-                }
-        while (total > size)
-        {
-                positive most = largest;
-                for (positive i = 0; i <= last_symbol; i++)
-                        if (norm[i] > norm[most]) most = i;
-                if (norm[most] <= 1) return base;
-                norm[most]--; total--;
-        }
-        norm[largest] += size - total;
+        positive last_symbol;
+        if (n < 64 ||
+            !zstd_normalize(freq, max + 1, n, (positive)1 << log, norm,
+                            address_of last_symbol))
+                return base;
         positive hn = zstd_write_norm(header, norm, last_symbol, log);
         if (!hn) return base;
         positive old_cost = 0, new_cost = hn * 8 * 256;
@@ -2175,49 +2158,24 @@ static positive zstd_pack_weights(p8 address_to dst, p8 address_to weight,
         zstd_cstate state[2];
         zstd_bout b = {0};
         positive at;
-        positive total = 0;
-        positive biggest = 0;
-        positive max_sym = 0;
+        positive max_sym;
         positive head;
 
         if (n < 2)
                 return 0;
         for (at = 0; at < n; at++)
                 freq[weight[at]]++;
-        for (at = 0; at < 12; at++)
-        {
-                if (freq[at] > freq[biggest])
-                        biggest = at;
-                if (freq[at])
-                {
-                        norm[at] = (freq[at] * 64) / n;
-                        if (!norm[at])
-                                norm[at] = 1;
-                        total += norm[at];
-                        max_sym = at;
-                }
-        }
+        if (!zstd_normalize(freq, 12, n, 64, norm, address_of max_sym))
+                return 0;
         /* A one-symbol, zero-bit FSE machine has no finite end marker. */
-        if (freq[biggest] == n)
+        if (freq[max_sym] == n)
         {
-                positive other = biggest ? 0 : 1;
+                positive other = max_sym ? 0 : 1;
                 norm[other] = 1;
-                total++;
+                norm[max_sym]--;
                 if (other > max_sym)
                         max_sym = other;
         }
-        while (total > 64)
-        {
-                positive most = biggest;
-                for (at = 0; at <= max_sym; at++)
-                        if (norm[at] > norm[most])
-                                most = at;
-                if (norm[most] <= 1)
-                        return 0;
-                norm[most]--;
-                total--;
-        }
-        norm[biggest] += 64 - total;
         head = zstd_write_norm(dst + 1, norm, max_sym, 6);
         if (!head || !zstd_ctable_build(address_of ct, norm, max_sym, 6))
                 return 0;
