@@ -5723,6 +5723,7 @@ group malformed
 #       that stopped short is one character that never arrived, and the byte
 #       that interrupted it is another that did.
 same 'cut short'      '[a<fffd>z]'               8 2 in 'a\xc3z' row 0
+same 'cut by a lead'  '[<fffd><00e9>]'           8 2 in '\xe2\xc3\xa9' row 0
 same 'stray continuation' '[<fffd>a]'            8 2 in '\x80a' row 0
 same 'overlong'       '[<fffd>]'                 8 2 in '\xc0\xaf' row 0
 same 'a surrogate half' '[<fffd>]'               8 2 in '\xed\xa0\x80' row 0

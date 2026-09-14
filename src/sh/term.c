@@ -336,18 +336,6 @@ static positive to_shell_room;
 #endif
 static positive to_shell_length;
 
-static fn emit(unsigned int byte)
-{
-#ifdef KERNEL_MODE
-        if (to_shell_length < TO_SHELL_MAX)
-                to_shell[to_shell_length++] = (p8)byte;
-#else
-        if (array_store_reserve(to_shell, to_shell_room, to_shell_length,
-                                to_shell_length + 1, 64))
-                to_shell[to_shell_length++] = (p8)byte;
-#endif
-}
-
 static fn emit_bytes(address_any data, positive length)
 {
 #ifdef KERNEL_MODE
@@ -367,6 +355,13 @@ static fn emit_bytes(address_any data, positive length)
         memory_copy_apart(to_shell + to_shell_length, data, length);
         to_shell_length += length;
 #endif
+}
+
+static fn emit(unsigned int byte)
+{
+        p8 one = (p8)byte;
+
+        emit_bytes(address_of one, 1);
 }
 
 #define emit_literal(text) \
@@ -603,7 +598,7 @@ static fn sgr()
         the hand back. There is no second buffer and nothing is copied.
 */
 static b32 alternate;
-static unsigned int alternate_head, alternate_row, alternate_column;
+static unsigned int alternate_head;
 
 static fn cursor_save()
 {
@@ -630,8 +625,6 @@ static fn alternate_enter()
 
         cursor_save();
         alternate_head = window->head;
-        alternate_row = row;
-        alternate_column = column;
 
         for (unsigned int r = 0; r < ROWS; r++)
                 window_scroll(window);
@@ -649,8 +642,6 @@ static fn alternate_leave()
 
         __atomic_store_n(address_of window->head, alternate_head, __ATOMIC_RELEASE);
 
-        row = alternate_row < ROWS ? alternate_row : ROWS - 1;
-        column = alternate_column < COLUMNS ? alternate_column : COLUMNS - 1;
         alternate = false;
         cursor_restore();
         touch_all();
@@ -914,7 +905,16 @@ static memory_utf8_state terminal_utf8;
 
 static fn utf8_byte(unsigned int c)
 {
+        // A byte that cuts a sequence short is refused along with it, and it
+        // is still a byte of its own: the feed leaves replaying it to us.
+        bool cut = terminal_utf8.left && ((p8)c & 0xc0) != 0x80;
         b32 result = memory_utf8_feed(address_of terminal_utf8, (p8)c);
+
+        if (result < 0 && cut)
+        {
+                put(0xfffd);
+                result = memory_utf8_feed(address_of terminal_utf8, (p8)c);
+        }
         if (result)
                 put(result < 0 ? 0xfffd : terminal_utf8.value);
 }
@@ -1551,6 +1551,16 @@ static fn line_clear_screen()
         it -- so the cursor is put past the end of what was drawn and taken
         down one from there.
 */
+// Nothing typed, the cursor at its start, and history back at the bottom.
+static fn line_reset()
+{
+        line_length = 0;
+        line_point = 0;
+        history_at = history_count;
+        history_held_length = 0;
+        line_forget();
+}
+
 static fn line_done()
 {
         row = line_anchor_row();
@@ -1568,12 +1578,7 @@ static fn line_done()
         line_feed();
         column = 0;
         touch(row);
-
-        line_length = 0;
-        line_point = 0;
-        history_at = history_count;
-        history_held_length = 0;
-        line_forget();
+        line_reset();
 }
 
 static fn line_accept()
@@ -1906,11 +1911,7 @@ static fn SPARE term_line_editing(b32 on)
                 return;
 
         line_editing = on;
-        line_length = 0;
-        line_point = 0;
-        history_at = history_count;
-        history_held_length = 0;
-        line_forget();
+        line_reset();
 }
 
 #endif
