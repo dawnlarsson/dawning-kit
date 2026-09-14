@@ -333,14 +333,16 @@ static bool net_names_commit(netlink_buffer address_to next, bipolar status)
         return true;
 }
 
-static bool net_names_gather(b32 handle)
+static bipolar net_names_gather(b32 handle)
 {
         netlink_buffer next = {0};
         bipolar status = netlink_dump(
             handle, RTM_GETLINK, sizeof(netlink_link), AF_UNSPEC,
             net_name_seen, address_of next);
 
-        return net_names_commit(address_of next, status);
+        if (net_names_commit(address_of next, status))
+                return 0;
+        return status < 0 ? status : -ERROR_NO_MEMORY;
 }
 
 static PURE string_address net_name_of(p32 index)
@@ -1845,9 +1847,10 @@ static b32 net_ip(void)
         {
                 if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
                 {
-                        if (netlink_dump((b32)handle, RTM_GETLINK, sizeof(netlink_link),
-                                         AF_UNSPEC, net_link_line, null) < 0)
-                                status = net_refused((string_address) "link show", -1);
+                        bipolar shown = netlink_dump((b32)handle, RTM_GETLINK, sizeof(netlink_link),
+                                                     AF_UNSPEC, net_link_line, null);
+                        if (shown < 0)
+                                status = net_refused((string_address) "link show", shown);
                 }
                 else if (net_word_is(verb, "set", 3) && net_words() == 5 &&
                          net_word_is(net_word(4), "up", 2))
@@ -1877,9 +1880,10 @@ static b32 net_ip(void)
         {
                 if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
                 {
-                        if (netlink_dump((b32)handle, RTM_GETADDR, sizeof(netlink_address),
-                                         AF_INET, net_address_line, null) < 0)
-                                status = net_refused((string_address) "addr show", -1);
+                        bipolar shown = netlink_dump((b32)handle, RTM_GETADDR, sizeof(netlink_address),
+                                                     AF_INET, net_address_line, null);
+                        if (shown < 0)
+                                status = net_refused((string_address) "addr show", shown);
                 }
                 else if (net_word_is(verb, "add", 1) && net_words() == 6 &&
                          net_word_is(net_word(4), "dev", 3))
@@ -1920,11 +1924,13 @@ static b32 net_ip(void)
         {
                 if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
                 {
-                        if (!net_names_gather((b32)handle) ||
-                            netlink_dump((b32)handle, RTM_GETROUTE,
-                                         sizeof(netlink_route), AF_INET,
-                                         net_route_line, null) < 0)
-                                status = net_refused((string_address) "route show", -1);
+                        bipolar shown = net_names_gather((b32)handle);
+                        if (shown >= 0)
+                                shown = netlink_dump((b32)handle, RTM_GETROUTE,
+                                                     sizeof(netlink_route), AF_INET,
+                                                     net_route_line, null);
+                        if (shown < 0)
+                                status = net_refused((string_address) "route show", shown);
                 }
                 else if (net_word_is(verb, "add", 1) &&
                          (net_words() == 6 || (net_words() == 8 &&

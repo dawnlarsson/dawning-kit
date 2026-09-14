@@ -188,7 +188,7 @@ static bool netlink_begin(netlink_buffer address_to buffer, p16 type, p16 flags,
                           p32 sequence, positive body)
 {
         netlink_header address_to header;
-        positive aligned;
+        positive used = NETLINK_HEADER + netlink_align(body);
 
         buffer->used = 0;
         buffer->failed = false;
@@ -201,15 +201,13 @@ static bool netlink_begin(netlink_buffer address_to buffer, p16 type, p16 flags,
                 return false;
         }
 
-        aligned = netlink_align(body);
-        if (aligned < body || aligned > positive_max - NETLINK_HEADER - 64 ||
-            !net_room(buffer, NETLINK_HEADER + aligned + 64))
+        if (!net_room(buffer, used + 64))
         {
                 netlink_forget(buffer);
                 return false;
         }
 
-        memory_fill(buffer->bytes, 0, NETLINK_HEADER + netlink_align(body));
+        memory_fill(buffer->bytes, 0, used);
 
         header = (netlink_header address_to)buffer->bytes;
         header->length = (p32)(NETLINK_HEADER + body);
@@ -218,7 +216,7 @@ static bool netlink_begin(netlink_buffer address_to buffer, p16 type, p16 flags,
         header->sequence = sequence;
         header->port = 0;
 
-        buffer->used = NETLINK_HEADER + netlink_align(body);
+        buffer->used = used;
 
         return true;
 }
@@ -258,13 +256,14 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
                 return false;
         }
 
+        /* The attribute starts at the aligned end of the message, as
+           iproute2's addattr_l places it, whatever the body length was. */
         length = sizeof(netlink_attribute) + size;
         padded = netlink_align(length);
-        header = (netlink_header address_to)buffer->bytes;
-        message_length = header->length;
+        message_length = netlink_align(
+            ((netlink_header address_to)buffer->bytes)->length);
 
-        if (buffer->used > positive_max - padded ||
-            padded > 0xffffffffu - message_length)
+        if (message_length > 0xffffffffu - padded)
         {
                 buffer->failed = true;
                 return false;
@@ -294,7 +293,7 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
 
         buffer->used += padded;
 
-        header->length += (p32)padded;
+        header->length = (p32)(message_length + padded);
 
         return true;
 }

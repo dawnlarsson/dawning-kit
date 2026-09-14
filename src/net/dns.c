@@ -494,10 +494,12 @@ done:
 /*
         The nameserver, out of resolv.conf.
 
-        Only "nameserver A.B.C.D" lines. The wanted-th of them is returned, so
-        a caller walks 0, 1, 2 until this answers negatively and the number of
-        servers a machine may list has no ceiling. Options, search domains and
-        IPv6 servers are read past rather than understood.
+        Only "nameserver A.B.C.D" lines: the keyword, blanks, and the address
+        up to the next blank, so a tab or a trailing comment does not hide a
+        server. The wanted-th of them is returned, so a caller walks 0, 1, 2
+        until this answers negatively and the number of servers a machine may
+        list has no ceiling. Options, search domains and IPv6 servers are read
+        past rather than understood.
 */
 static bipolar dns_server_at(string_address path, positive wanted)
 {
@@ -515,43 +517,30 @@ static bipolar dns_server_at(string_address path, positive wanted)
                 positive line = at;
                 positive stop = at + memory_span_without_byte(
                     text + at, '\n', (positive)got - at);
+                positive from = line + 10;
+                positive length = 0;
+                p8 kept[64];
+                bipolar host;
 
                 at = stop + (stop < (positive)got);
 
-                if (stop - line < 11)
+                if (stop - line < 12 ||
+                    memory_compare(text + line, "nameserver", 10) ||
+                    !byte_is_blank(text[from]))
                         continue;
 
-                if (!string_compare_max(text + line, (string_address) "nameserver ", 11))
-                {
-                        p8 kept[64];
-                        positive from = line + 11;
-                        positive length;
+                from += string_span_max(text + from, stop - from,
+                                        string_set_blanks);
+                while (from + length < stop && text[from + length] != '\r' &&
+                       !byte_is_blank(text[from + length]))
+                        length++;
+                if (!length || length >= sizeof kept)
+                        continue;
 
-                        from += string_span_max(text + from, stop - from,
-                                                string_set_blanks);
-
-                        length = stop - from;
-
-                        while (length && (text[from + length - 1] == '\r' ||
-                                          text[from + length - 1] == ' '))
-                                length--;
-
-                        if (length && length < sizeof(kept))
-                        {
-                                bipolar host;
-
-                                string_copy_max_end(kept, text + from, length);
-                                host = string_to_host(kept);
-
-                                if (host >= 0)
-                                {
-                                        if (!wanted)
-                                                return host;
-
-                                        wanted--;
-                                }
-                        }
-                }
+                string_copy_max_end(kept, text + from, length);
+                host = string_to_host(kept);
+                if (host >= 0 && !wanted--)
+                        return host;
         }
 
         return DNS_NO_SERVER;
@@ -641,8 +630,15 @@ static bipolar dns_resolve_at(p32 server, p16 port, string_address name,
                 got = socket_receive((b32)handle, reply, sizeof reply,
                                      MSG_TRUNC, 0, 0);
 
-                if (got < 0)
+                if (got == NETWORK_INTERRUPTED)
                         continue;
+                if (got < 0)
+                {
+                        /* ICMP port unreachable arrives as ECONNREFUSED on
+                           the connected socket: nobody will answer here. */
+                        failure = DNS_NO_SERVER;
+                        goto failed;
+                }
                 available = (positive)got > sizeof reply
                     ? sizeof reply : (positive)got;
                 if (!dns_reply_identity(reply, available, id, request,

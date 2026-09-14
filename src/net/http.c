@@ -277,8 +277,8 @@ static bool http_chunk_extensions_valid(string_address at,
                                                         return false;
                                                 byte = *at++;
                                         }
-                                        if ((byte < 0x20 && byte != '\t') ||
-                                            byte == 0x7f)
+                                        if (byte_is_control(byte) &&
+                                            byte != '\t')
                                                 return false;
                                 }
                                 if (!closed)
@@ -355,8 +355,7 @@ static bipolar http_trailer_line(p8 address_to line, positive line_length)
                 return HTTP_MALFORMED;
 
         for (positive at = colon + 1; at < stop; at++)
-                if ((line[at] < 0x20 && line[at] != '\t') ||
-                    line[at] == 0x7f)
+                if (byte_is_control(line[at]) && line[at] != '\t')
                         return HTTP_MALFORMED;
 
         return 0;
@@ -506,6 +505,13 @@ static bipolar http_response_framing(p8 address_to bytes, positive size,
                             address_of repeated);
                         if (repeated)
                                 return HTTP_MALFORMED;
+                        /* Controls, NUL included, would silently cut the
+                           Location the string calls later copy. */
+                        for (positive byte = 0;
+                             byte < response->location_length; byte++)
+                                if (byte_is_control((p8)response->location[byte]) &&
+                                    response->location[byte] != '\t')
+                                        return HTTP_MALFORMED;
                 }
 
                 address_to header_length = at + (positive)header;

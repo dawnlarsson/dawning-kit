@@ -566,14 +566,13 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                 length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER,
                                     transaction, hardware, 0, 0, 0, true);
 
-                if (socket_send((b32)handle, packet, length, 0, address_of where,
-                                sizeof where) < 0)
-                {
-                        //      No route yet, most likely. An unconnected UDP
-                        //      socket routes every send afresh, so carrier can
-                        //      appear underneath this one before the next try.
-                        continue;
-                }
+                //      A failed send is most likely no route yet. An
+                //      unconnected UDP socket routes every send afresh, so
+                //      carrier can appear underneath it; the attempt still
+                //      waits out its interval rather than spending the whole
+                //      schedule in one instant.
+                (void)socket_send((b32)handle, packet, length, 0,
+                                  address_of where, sizeof where);
 
                 if (!network_deadline_begin(
                         address_of deadline, wait / 4,
