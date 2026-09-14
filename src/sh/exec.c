@@ -8047,7 +8047,11 @@ static COLD fn exec_trace_word(string_address word)
 {
         positive length = string_length(word);
 
-        if (!length || exec_trace_quoting(word))
+        // An empty word is one write, as it was, so pipeline stages tracing
+        // side by side have no more places to interleave.
+        if (!length)
+                log_error(str("''"));
+        else if (exec_trace_quoting(word))
                 shell_single_quote_write(log_error, word, length);
         else if (memory_escape_index(word, length,
                                      HEX_CONTROL | HEX_TAB | HEX_HIGH) < length)
