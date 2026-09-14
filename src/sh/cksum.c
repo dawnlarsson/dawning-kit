@@ -1,10 +1,9 @@
 /*
         POSIX cksum.
 
-        This is deliberately separate from the optional AF_ALG digest
-        adapter: the default CRC must work on every image, and routing a
-        four-byte serial checksum through a crypto socket would add overhead
-        rather than remove it. Eight dynamically prepared 1 KiB slices keep
+        The CRC is deliberately separate from the digest engine the named
+        sums share: a four-byte serial checksum wants its own folds, not a
+        block core's buffering. Eight dynamically prepared 1 KiB slices keep
         the inner step compact; four independent spans let an out-of-order
         core overlap their table lookups, then the same polynomial combines
         them. Short blocks retain the one-span floor. No large constant object
@@ -400,19 +399,155 @@ static fn cksum_crc_put(p32 crc, p64 bytes, string_address name, bool named)
         text_put_character(checksum_zero ? '\0' : '\n');
 }
 
-#if defined(LINUX)
-static b32 cksum_digest(const checksum_algorithm address_to algorithm, bool tagged)
+/*
+        -a crc32b, bsd and sysv: the other three sums that are not digests.
+
+        crc32b is the reflected IEEE CRC gzip uses, hash_crc32, without the
+        length the POSIX CRC folds in. bsd is sum -r's rotating 16-bit sum
+        and sysv is sum -s's byte total folded to 16 bits, over 1024- and
+        512-byte blocks; text.c's sum computes both the same way.
+*/
+static bool cksum_other_path(p8 kind, string_address path, bool debug,
+                             p32 address_to result, p64 address_to size)
 {
-        bipolar transform = checksum_kernel_open(algorithm);
+        bool standard;
+        bipolar input = checksum_open(path, address_of standard);
 
-        if (transform < 0)
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm->type, "kernel AF_ALG hash support or requested algorithm is unavailable"));
+        if (input < 0)
+                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(input));
 
-        b32 answer = checksum_generate(algorithm, transform, 0, tagged, true);
-        system_close((positive)transform);
+        // coreutils names the crc32b machinery for every input it reads.
+        if (debug && kind == 'c')
+        {
+                text_flush();
+                string_format(writer_stderr, "cksum: using %s hardware support\n",
+#if !defined(KERNEL_MODE) && (X64 || ARM64 || RISCV64)
+                              cpu_has_pclmul ? (string_address) "pclmul" :
+#endif
+                              (string_address) "generic");
+        }
+
+        p32 sum = kind == 'c' ? ~(p32)0 : 0;
+        p64 bytes = 0;
+        bipolar got;
+
+        while ((got = system_read_retry((positive)input, file_transfer,
+                                        FILE_TRANSFER_SIZE)) > 0)
+        {
+                if (kind == 'c')
+                        sum = hash_crc32(sum, file_transfer, (positive)got);
+                else if (kind == 'b')
+                        sum = memory_checksum_bsd16(file_transfer, (positive)got, sum);
+                else
+                        sum += (p32)memory_sum_bytes(file_transfer, (positive)got);
+                bytes += (positive)got;
+        }
+
+        if (!standard)
+                system_close((positive)input);
+
+        if (got < 0)
+                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(got));
+
+        if (kind == 'c')
+                sum = ~sum;
+        else if (kind == 's')
+        {
+                p32 folded = (sum & 0xffff) + (sum >> 16);
+
+                sum = (folded & 0xffff) + (folded >> 16);
+        }
+
+        address_to result = sum;
+        address_to size = bytes;
+        return true;
+}
+
+static fn cksum_other_put(p8 kind, p32 sum, p64 bytes, string_address name,
+                          bool named)
+{
+        // --raw is the sum in network order: four bytes of CRC, two of the rest.
+        if (checksum_raw)
+        {
+                p8 wire[4];
+
+                if (kind == 'c')
+                {
+                        network_store_32(wire, sum);
+                        text_put(wire, 4);
+                }
+                else
+                {
+                        network_store_16(wire, (p16)sum);
+                        text_put(wire, 2);
+                }
+                return;
+        }
+
+        if (kind == 'c')
+        {
+                cksum_crc_put(sum, bytes, name, named);
+                return;
+        }
+
+        positive block = kind == 's' ? 512 : 1024;
+        p64 blocks = bytes / block + (bytes % block != 0);
+
+        if (kind == 's')
+        {
+                positive_to_string(text_put, sum);
+                text_put_character(' ');
+                positive_to_string(text_put, (positive)blocks);
+        }
+        else
+        {
+                positive_to_padded(text_put, sum, 5, '0', 0);
+                text_put_character(' ');
+                positive_to_padded(text_put, (positive)blocks, 5, ' ', 0);
+        }
+
+        if (named)
+        {
+                text_put_character(' ');
+                text_put_string(name);
+        }
+
+        text_put_character(checksum_zero ? '\0' : '\n');
+}
+
+static b32 cksum_others(p8 kind, bool debug)
+{
+        bool named = text_files_count != 0;
+        b32 inputs = text_input_count();
+        b32 answer = 0;
+
+        for (b32 i = 0; i < inputs; i++)
+        {
+                string_address name = text_file_name(i);
+                p32 sum;
+                p64 bytes;
+
+                if (!cksum_other_path(kind, name ? name : (string_address) "-",
+                                      debug, address_of sum, address_of bytes))
+                {
+                        answer = 1;
+                        continue;
+                }
+
+                cksum_other_put(kind, sum, bytes, name ? name : (string_address) "-", named);
+        }
+
         return text_done(answer);
 }
-#endif
+
+/* -a sha2 -l N: the SHA-2 digest N bits wide, or null for any other N. */
+static const checksum_algorithm address_to cksum_sha2_width(positive bits)
+{
+        for (positive which = CHECKSUM_SHA2_FIRST; which <= CHECKSUM_SHA2_LAST; which++)
+                if ((positive)checksum_algorithms[which].bytes * 8 == bits)
+                        return checksum_algorithms + which;
+        return null;
+}
 
 static const argument_option cksum_options[] = {
     {"algorithm", 'a', ARGUMENT_REQUIRED},
@@ -469,9 +604,7 @@ static b32 cksum_main()
 
 
         text_begin("cksum");
-#if defined(LINUX)
         checksum_modes_reset();
-#endif
 
         if (!file_take(address_of taking) ||
             (text_files_failed && string_diagnostic(
@@ -483,22 +616,56 @@ static b32 cksum_main()
         bool raw = (taking.flags & FILE_FLAG('R')) != 0;
         bool checking = (taking.flags & FILE_FLAG('c')) != 0;
         bool tagged = checksum_selected.style == 'T';
+        bool debug = (taking.flags & FILE_FLAG('D')) != 0;
+        bool lengthed = (taking.flags & FILE_FLAG('l')) && length;
+        bool sha2 = algorithm && string_equals(algorithm, "sha2");
+        bool sha3 = algorithm && string_equals(algorithm, "sha3");
+        bool blake2b = algorithm && string_equals(algorithm, "blake2b");
+        positive bits = 0;
 
         checksum_zero = (taking.flags & FILE_FLAG('z')) != 0;
 
         /*
                 The reference's own refusals, in the order it makes them. A
-                length of zero is no length at all -- it asks for the
-                algorithm's own width -- so it does not reach the first.
+                length that is no number is refused as it is read. A length of
+                zero is no length at all -- it asks for the algorithm's own
+                width -- so it does not reach the second.
         */
-        if ((taking.flags & FILE_FLAG('l')) && length && !string_equals(length, "0") &&
-            !(algorithm && (string_equals(algorithm, "blake2b") ||
-                            string_equals(algorithm, "sha2") ||
-                            string_equals(algorithm, "sha3"))))
+        if (lengthed && !checksum_decimal(length, address_of bits))
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "cksum: invalid length: '%s'\n", length));
+        }
+        if (lengthed && bits && !blake2b && !sha2 && !sha3)
         {
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
                     "cksum: --length is only supported with --algorithm blake2b, sha2, or sha3\n"));
+        }
+        if (lengthed && blake2b)
+        {
+                b32 refused = checksum_blake2b_length((string_address) "cksum",
+                                                      length, address_of checksum_length);
+                if (refused)
+                        return refused;
+        }
+        if (lengthed && (sha2 || sha3) && !cksum_sha2_width(bits))
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "cksum: invalid length: '%s'\n"
+                    "cksum: digest length for '%s' must be 224, 256, 384, or 512\n",
+                    length, sha2 ? (string_address) "SHA2" : (string_address) "SHA3"));
+        }
+        // The SHA-2 and SHA-3 families need their width said, before any
+        // complaint about the other mode's options.
+        if ((sha2 || sha3) && !lengthed && !checking)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "cksum: --algorithm=%s requires specifying --length 224, 256, 384, or 512\n",
+                    algorithm));
         }
         if (checking && algorithm &&
             (string_equals(algorithm, "bsd") || string_equals(algorithm, "sysv") ||
@@ -517,49 +684,50 @@ static b32 cksum_main()
         if (raw && text_files_count > 1)
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "the --raw option is not supported with multiple files"));
 
-#if defined(LINUX)
+        checksum_raw = raw;
+        checksum_base64 = (taking.flags & FILE_FLAG('B')) != 0;
+
+        // The digest an --algorithm names; SHA-2 by the width -l gave it.
+        const checksum_algorithm address_to digest = null;
+
+        if (sha2)
+                digest = bits ? cksum_sha2_width(bits)
+                              : checksum_algorithms + CHECKSUM_SHA2_FIRST + 1;
+        else if (algorithm && !sha3)
+                digest = checksum_algorithm_find(algorithm, true);
+
         if (checking)
         {
                 /*
                         Without --algorithm the reference reads whichever
                         algorithm each tagged line names; with one, that
-                        algorithm reads every line, tagged or not.
+                        algorithm reads every line, tagged or not. sha2
+                        without a width reads each record at the width its
+                        digits have.
                 */
-                const checksum_algorithm address_to digest =
-                    algorithm ? checksum_algorithm_find(algorithm, true) : null;
-
                 if (algorithm && !digest)
                         return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm, "algorithm is not supported by the available checksum engine"));
 
+                checksum_sha2_family = sha2 && !bits;
                 checksum_manifest_files = true;
                 checksum_program = (string_address) "cksum";
-                checksum_check_label = digest ? digest->label
-                                              : (string_address) "CRC";
-                return text_done(checksum_verify(digest, -1, address_of taking));
+                checksum_check_label = sha2 ? (string_address) "SHA2"
+                                       : digest ? digest->label
+                                                : (string_address) "CRC";
+                return text_done(checksum_verify(digest, address_of taking));
         }
-#endif
 
         if (algorithm && !string_equals(algorithm, "crc"))
         {
-                // The SHA-2 and SHA-3 families need their width said.
-                if (string_equals(algorithm, "sha2") || string_equals(algorithm, "sha3"))
-                {
-                        text_flush();
-                        return text_done(string_report(writer_stderr, 1,
-                            "cksum: --algorithm=%s requires specifying --length 224, 256, 384, or 512\n",
-                            algorithm));
-                }
-#if defined(LINUX)
-                const checksum_algorithm address_to digest =
-                    checksum_algorithm_find(algorithm, true);
+                if (string_equals(algorithm, "crc32b"))
+                        return cksum_others('c', debug);
+                if (string_equals(algorithm, "bsd"))
+                        return cksum_others('b', debug);
+                if (string_equals(algorithm, "sysv"))
+                        return cksum_others('s', debug);
 
                 if (digest)
-                {
-                        checksum_raw = raw;
-                        checksum_base64 = (taking.flags & FILE_FLAG('B')) != 0;
-                        return cksum_digest(digest, checksum_selected.style != 'U');
-                }
-#endif
+                        return text_done(checksum_generate(digest, 0, checksum_selected.style != 'U', true));
 
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm, "algorithm is not supported by the available checksum engine"));
         }
@@ -571,7 +739,7 @@ static b32 cksum_main()
 #endif
 
         /* --debug names the machinery the CRC is computed with, once. */
-        if (taking.flags & FILE_FLAG('D'))
+        if (debug)
         {
                 string_address machinery = (string_address) "generic";
 #if X64

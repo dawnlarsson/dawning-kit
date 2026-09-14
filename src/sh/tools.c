@@ -6368,9 +6368,9 @@ static b32 tools_factor()
 // UUID identities: uuidgen, uuidparse and mcookie -----------------
 
 /* blkid already owns the canonical UUID byte formatter, shred owns the one
-   kernel-seeded random stream, and checksum owns the one MD5/SHA1 backend.
-   These three applets join those primitives here instead of bringing in
-   libuuid, another PRNG, or software copies of either digest. */
+   kernel-seeded random stream, and the library owns the MD5 and SHA-1
+   cores every sum uses. These three applets join those primitives here
+   instead of bringing in libuuid, another PRNG, or copies of either digest. */
 typedef struct
 {
         p8 bytes[16];
@@ -6456,42 +6456,23 @@ static fn tools_uuid_time_seven(tools_uuid address_to uuid, p64 milliseconds,
         tools_uuid_version(uuid, 7);
 }
 
-#if defined(LINUX)
-static bipolar tools_uuid_name_transform(bool sha1)
+/* Name-based UUIDs (RFC 9562 versions 3 and 5): the digest of the
+   namespace bytes then the name, truncated to 16 bytes and stamped. */
+static fn tools_uuid_name(tools_uuid address_to space, p8 address_to name,
+                          positive name_length, bool sha1,
+                          tools_uuid address_to uuid)
 {
-        const checksum_algorithm address_to algorithm =
-            checksum_algorithm_find(sha1 ? (string_address)"sha1sum"
-                                         : (string_address)"md5sum", false);
+        digest_state digest;
+        p8 sum[20];
 
-        return algorithm ? checksum_kernel_open(algorithm) : -ERROR_INVALID;
-}
-
-static bool tools_uuid_name(bipolar transform, tools_uuid address_to space,
-                            p8 address_to name, positive name_length,
-                            bool sha1, tools_uuid address_to uuid)
-{
-        bipolar operation = checksum_operation_open(transform);
-        if (operation < 0)
-                return false;
-
-        p8 digest[20];
-        bipolar answer = checksum_send_more(operation, space->bytes,
-                                             sizeof(space->bytes));
-        if (!answer)
-                answer = checksum_send_more(operation, name, name_length);
-        if (!answer)
-                answer = checksum_digest_read(operation, digest,
-                                              sha1 ? 20 : 16);
-        system_close((positive)operation);
-
-        if (answer < 0)
-                return false;
-
-        memory_copy(uuid->bytes, digest, sizeof(uuid->bytes));
+        digest_open(address_of digest, sha1 ? DIGEST_SHA1 : DIGEST_MD5,
+                    sha1 ? 20 : 16);
+        digest_write(address_of digest, space->bytes, sizeof(space->bytes));
+        digest_write(address_of digest, name, name_length);
+        digest_close(address_of digest, sum);
+        memory_copy(uuid->bytes, sum, sizeof(uuid->bytes));
         tools_uuid_version(uuid, sha1 ? 5 : 3);
-        return true;
 }
-#endif
 
 static const argument_option tools_uuidgen_options[] = {
     {"count", 'C', ARGUMENT_REQUIRED},
@@ -6611,24 +6592,12 @@ static b32 tools_uuidgen()
                                             address_of name_length))
                         return text_done(string_diagnostic(&text_diagnostic, 1, name, "invalid hexadecimal name"));
 
-#if defined(LINUX)
-                bipolar transform = tools_uuid_name_transform(sha1);
-                if (transform < 0)
-                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel MD5/SHA1 service is unavailable"));
-
                 tools_uuid uuid;
-                bool made = tools_uuid_name(transform, address_of space,
-                                            name_bytes, name_length, sha1,
-                                            address_of uuid);
-                system_close((positive)transform);
-                if (!made)
-                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel UUID digest failed"));
+                tools_uuid_name(address_of space, name_bytes, name_length,
+                                sha1, address_of uuid);
                 tools_uuid_put(address_of uuid);
                 text_put_character('\n');
                 return text_done(0);
-#else
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "name UUIDs require the Linux hash service"));
-#endif
         }
 
         if (!count)

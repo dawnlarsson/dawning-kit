@@ -1,72 +1,49 @@
 /*
-        The checksum utilities' optional Linux AF_ALG compatibility backend.
+        md5sum, sha1sum, sha224sum, sha256sum, sha384sum, sha512sum, b2sum,
+        and the digest half of cksum.
 
-        One AF_ALG transform answers every installed name below.  A regular
-        file that fits Linux's one-transfer ceiling goes from the page cache
-        into the hash socket in one sendfile call; large regular files stay
-        kernel-only through splice.  The shared file-transfer block is the
-        uncommon fallback for descriptors a transfer primitive cannot move.
+        Every digest is the library's: md5_blocks through blake2b_blocks in
+        library.c, streamed by digest_open, digest_write and digest_close in
+        library.common.c. A file is read into the shared transfer block and
+        its whole blocks are hashed where they lie.
 
-        AF_ALG is deprecated upstream and is not enabled by Moonwater's
-        default kernel profiles.  This backend remains useful on distro
-        kernels that already expose it and in explicitly controlled images;
-        the intended native replacement is a narrow Moonwater fd-hash ABI,
-        not the generic unprivileged crypto socket surface.
-
-        There is deliberately no second software MD5, SHA or BLAKE2 stack
-        here.  Duplicating those cores would make the multicall image larger
-        and give this project two implementations to tune and audit.
+        These used to drive the kernel's AF_ALG hash sockets and carried no
+        software digest on purpose. Moonwater's kernels do not enable AF_ALG,
+        so the sums had no answer on the system they ship on, and the socket
+        round trip cost more than the cores it stood in for: 256 files of
+        4 MiB took 0.51 s, all of it system time.
 */
-
-#if defined(LINUX)
-
-#define CHECKSUM_AF_ALG 38
-#define CHECKSUM_SOCK_SEQPACKET 5
-#define CHECKSUM_SPLICE_MOVE 1
-#define CHECKSUM_SPLICE_MORE 4
-#define CHECKSUM_SPLICE_BLOCK (1 << 20)
-#define CHECKSUM_MSG_MORE 0x8000
-#define CHECKSUM_ERROR_INTERRUPTED (-4)
-#define CHECKSUM_ERROR_IO (-5)
-
-typedef struct
-{
-        p16 family;
-        p8 type[14];
-        p32 feature;
-        p32 mask;
-        p8 name[64];
-} checksum_socket_address;
-
-_Static_assert(sizeof(checksum_socket_address) == 88,
-               "sockaddr_alg is 88 bytes");
 
 typedef struct
 {
         string_address command;
         string_address type;
-        string_address kernel;
         string_address label;
-        positive bytes;
+        p8 algorithm;
+        p8 bytes;
         bool variable_length;
 } checksum_algorithm;
 
 static const checksum_algorithm checksum_algorithms[] = {
     {(string_address) "b2sum", (string_address) "blake2b",
-     (string_address) "blake2b-512", (string_address) "BLAKE2b", 64, true},
-    {(string_address) "md5sum", (string_address) "md5", (string_address) "md5",
-     (string_address) "MD5", 16, false},
-    {(string_address) "sha1sum", (string_address) "sha1", (string_address) "sha1",
-     (string_address) "SHA1", 20, false},
+     (string_address) "BLAKE2b", DIGEST_BLAKE2B, 64, true},
+    {(string_address) "md5sum", (string_address) "md5",
+     (string_address) "MD5", DIGEST_MD5, 16, false},
+    {(string_address) "sha1sum", (string_address) "sha1",
+     (string_address) "SHA1", DIGEST_SHA1, 20, false},
     {(string_address) "sha224sum", (string_address) "sha224",
-     (string_address) "sha224", (string_address) "SHA224", 28, false},
+     (string_address) "SHA224", DIGEST_SHA224, 28, false},
     {(string_address) "sha256sum", (string_address) "sha256",
-     (string_address) "sha256", (string_address) "SHA256", 32, false},
+     (string_address) "SHA256", DIGEST_SHA256, 32, false},
     {(string_address) "sha384sum", (string_address) "sha384",
-     (string_address) "sha384", (string_address) "SHA384", 48, false},
+     (string_address) "SHA384", DIGEST_SHA384, 48, false},
     {(string_address) "sha512sum", (string_address) "sha512",
-     (string_address) "sha512", (string_address) "SHA512", 64, false},
+     (string_address) "SHA512", DIGEST_SHA512, 64, false},
 };
+
+#define CHECKSUM_INTERRUPTED (-4)
+#define CHECKSUM_SHA2_FIRST 3
+#define CHECKSUM_SHA2_LAST 6
 
 typedef struct { p8 style, mode, verify; } checksum_selection;
 _Static_assert(sizeof(checksum_selection) <= 16, "selection record fits its mask");
@@ -95,6 +72,16 @@ static checksum_selection checksum_selected;
 static bool checksum_zero;
 static bool checksum_base64;
 static bool checksum_raw;
+/* The digest length -l asked BLAKE2b for, in bytes; the algorithm's own
+   when -l was not given or was zero. */
+static positive checksum_length;
+/* cksum -a sha2 --check without -l: each record's own width picks which of
+   the four SHA-2 digests reads it. */
+static bool checksum_sha2_family;
+/* Which untagged record shape this invocation's check run settled on:
+   -1 before the first, 0 the standard "digest  name", 1 the reversed BSD
+   "digest name". */
+static b32 checksum_bsd_reversed;
 /* Whose name a verification complains in, and the label it calls a line it
    could not read. cksum --check borrows this walk under its own name. */
 static string_address checksum_program;
@@ -113,6 +100,9 @@ static fn checksum_modes_reset()
         checksum_zero = false;
         checksum_base64 = false;
         checksum_raw = false;
+        checksum_length = 0;
+        checksum_sha2_family = false;
+        checksum_bsd_reversed = -1;
 }
 
 /* coreutils' complaint about an option out of place, with its usage hint. */
@@ -149,6 +139,60 @@ static b32 checksum_refuse_modes(string_address command, bool checking,
             "Try '%s --help' for more information.\n", command, verifying, command));
 }
 
+/* A length in bits as coreutils reads one: decimal digits and nothing else. */
+static bool checksum_decimal(string_address text, positive address_to value)
+{
+        positive total = 0;
+
+        if (!text || !string_get(text))
+                return false;
+
+        for (; string_get(text); text++)
+        {
+                positive digit = (positive)(p8)string_get(text) - '0';
+
+                if (digit > 9 || total > (((positive)-1) - digit) / 10)
+                        return false;
+                total = total * 10 + digit;
+        }
+
+        address_to value = total;
+        return true;
+}
+
+/* -l for BLAKE2b, in coreutils' order and words: a number, at most 512 bits,
+   a whole number of bytes. Zero is the full length. */
+static b32 checksum_blake2b_length(string_address program, string_address text,
+                                   positive address_to bytes)
+{
+        positive bits;
+
+        if (!checksum_decimal(text, address_of bits))
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "%s: invalid length: '%s'\n", program, text));
+        }
+        if (bits > 512)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "%s: invalid length: '%s'\n"
+                    "%s: maximum digest length for 'BLAKE2b' is 512 bits\n",
+                    program, text, program));
+        }
+        if (bits % 8)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "%s: invalid length: '%s'\n%s: length is not a multiple of 8\n",
+                    program, text, program));
+        }
+
+        address_to bytes = bits ? bits / 8 : 64;
+        return 0;
+}
+
 static fn checksum_base64_put(p8 address_to digest, positive length)
 {
         encoding_output output = {0};
@@ -168,248 +212,11 @@ static const checksum_algorithm address_to checksum_algorithm_find(
         return null;
 }
 
-static bipolar checksum_kernel_open(const checksum_algorithm address_to algorithm)
+/* The digest length an algorithm answers with under the current -l. */
+static positive checksum_bytes(const checksum_algorithm address_to algorithm)
 {
-        checksum_socket_address address;
-        bipolar handle;
-
-        memory_fill(address_of address, 0, sizeof(address));
-        address.family = CHECKSUM_AF_ALG;
-        memory_copy(address.type, "hash", 5);
-        memory_copy(address.name, algorithm->kernel,
-                    string_length(algorithm->kernel) + 1);
-
-        handle = socket_new(CHECKSUM_AF_ALG,
-                            CHECKSUM_SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
-        if (handle < 0)
-                return handle;
-
-        bipolar bound = socket_bind((b32)handle, address_of address,
-                                    sizeof(address));
-
-        if (bound < 0)
-        {
-                system_close((positive)handle);
-                return bound;
-        }
-
-        return handle;
-}
-
-static bipolar checksum_operation_open(bipolar transform)
-{
-        bipolar answer;
-
-        do
-                answer = socket_accept((b32)transform, null, null,
-                                       SOCK_CLOEXEC);
-        while (answer == CHECKSUM_ERROR_INTERRUPTED);
-
-        return answer;
-}
-
-/* All buffered pieces carry MSG_MORE.  Reading the digest is AF_ALG's
-   explicit finalisation, so no one-byte sentinel or empty software block is
-   inserted into the stream. */
-static bipolar checksum_send_more(bipolar operation, address_any bytes,
-                                   positive length)
-{
-        positive sent = 0;
-
-        while (sent < length)
-        {
-                bipolar wrote = socket_send((b32)operation,
-                                             (p8 address_to)bytes + sent,
-                                             length - sent, CHECKSUM_MSG_MORE,
-                                             null, 0);
-
-                if (wrote == CHECKSUM_ERROR_INTERRUPTED)
-                        continue;
-                if (wrote <= 0)
-                        return wrote ? wrote : CHECKSUM_ERROR_IO;
-
-                sent += (positive)wrote;
-        }
-
-        return 0;
-}
-
-/* The fallback uses cp's already-resident transfer block and the library's
-   EINTR-safe reader.  It exists for procfs, devices and restricted kernels;
-   ordinary files never reach it on a kernel with sendfile or splice. */
-static bipolar checksum_buffered(bipolar input, bipolar operation)
-{
-        for (;;)
-        {
-                bipolar got = system_read_retry((positive)input, file_transfer,
-                                                 FILE_TRANSFER_SIZE);
-
-                if (got < 0)
-                        return got;
-                if (!got)
-                        return 0;
-
-                bipolar sent = checksum_send_more(operation, file_transfer,
-                                                   (positive)got);
-                if (sent < 0)
-                        return sent;
-        }
-}
-
-/* Large regular files remain in the kernel.  At least one side of splice
-   must be a pipe, hence the two moves per block. */
-static bipolar checksum_splice(bipolar input, bipolar operation)
-{
-        b32 ends[2];
-        bipolar made;
-
-        do
-                made = system_call_2(syscall(pipe2), (positive)ends,
-                                     O_CLOEXEC);
-        while (made == CHECKSUM_ERROR_INTERRUPTED);
-
-        if (made < 0)
-                return made;
-
-        bipolar answer = 0;
-
-        for (;;)
-        {
-                bipolar taken;
-
-                do
-                        taken = system_call_6(
-                            syscall(splice), (positive)input, 0,
-                            (positive)ends[1], 0, CHECKSUM_SPLICE_BLOCK,
-                            CHECKSUM_SPLICE_MOVE | CHECKSUM_SPLICE_MORE);
-                while (taken == CHECKSUM_ERROR_INTERRUPTED);
-
-                if (taken <= 0)
-                {
-                        answer = taken;
-                        break;
-                }
-
-                positive left = (positive)taken;
-
-                while (left)
-                {
-                        bipolar moved;
-
-                        do
-                                moved = system_call_6(
-                                    syscall(splice), (positive)ends[0], 0,
-                                    (positive)operation, 0, left,
-                                    CHECKSUM_SPLICE_MOVE |
-                                        CHECKSUM_SPLICE_MORE);
-                        while (moved == CHECKSUM_ERROR_INTERRUPTED);
-
-                        if (moved <= 0)
-                        {
-                                answer = moved ? moved : CHECKSUM_ERROR_IO;
-                                goto done;
-                        }
-
-                        left -= (positive)moved;
-                }
-        }
-
-done:
-        system_close((positive)ends[0]);
-        system_close((positive)ends[1]);
-        return answer;
-}
-
-static bipolar checksum_digest_read(bipolar operation,
-                                     p8 address_to digest,
-                                     positive length)
-{
-        bipolar got = system_read_retry((positive)operation, digest, length);
-
-        if (got == (bipolar)length)
-                return 0;
-
-        return got < 0 ? got : CHECKSUM_ERROR_IO;
-}
-
-/* One accepted socket is one digest.  A failed fast path is discarded before
-   retrying from the descriptor's original position, so a partial send can
-   never become the prefix of the fallback digest. */
-static bipolar checksum_hash_descriptor(bipolar transform, bipolar input,
-                                         p8 address_to digest,
-                                         positive digest_length,
-                                         bool starts_at_zero)
-{
-        bipolar operation = checksum_operation_open(transform);
-
-        if (operation < 0)
-                return operation;
-
-        file_facts facts;
-        bool regular = system_stat_at((b32)input, (string_address) "",
-                                      AT_EMPTY_PATH | AT_NO_AUTOMOUNT,
-                                      STATX_BASIC, address_of facts) == 0 &&
-                       (facts.mode & MODE_FORMAT) == MODE_FILE;
-        bipolar start = regular
-                            ? starts_at_zero
-                                  ? 0
-                                  : system_seek(input, 0, FILE_SEEK_CUR)
-                            : -1;
-        regular = regular && start >= 0;
-        bipolar moved = CHECKSUM_ERROR_IO;
-
-        for (positive attempt = 0; regular && attempt < 2; attempt++)
-        {
-                if (!attempt)
-                {
-                        p64 remaining = facts.size > (p64)start
-                                            ? facts.size - (p64)start : 0;
-
-                        /* Asking for the ceiling, rather than the sampled
-                           size, includes a file that grows before this trap.
-                           A ceiling-sized answer was not EOF and is retried
-                           through the streaming path. */
-                        if (remaining < FILE_KERNEL_COPY_SIZE)
-                        {
-                                moved = file_send_range_once(
-                                    input, null, operation, FILE_KERNEL_COPY_SIZE);
-                                if (moved >= (bipolar)remaining &&
-                                    moved < FILE_KERNEL_COPY_SIZE)
-                                        goto digest;
-                                if (moved < 0 && !file_copy_range_fallback(moved))
-                                        goto done;
-                        }
-                }
-                else
-                {
-                        moved = checksum_splice(input, operation);
-                        if (!moved)
-                                goto digest;
-                        if (!file_copy_range_fallback(moved))
-                                goto done;
-                }
-
-                // Each failed transport discards its accepted digest before
-                // rewinding the input, whether the next try is splice or the
-                // buffered floor. No partial prefix survives into a retry.
-                system_close((positive)operation);
-                if (system_seek(input, start, FILE_SEEK_SET) < 0)
-                        return attempt ? moved : CHECKSUM_ERROR_IO;
-
-                operation = checksum_operation_open(transform);
-                if (operation < 0)
-                        return operation;
-        }
-
-        moved = checksum_buffered(input, operation);
-        if (moved < 0)
-                goto done;
-
-digest:
-        moved = checksum_digest_read(operation, digest, digest_length);
-done:
-        system_close((positive)operation);
-        return moved;
+        return algorithm->variable_length && checksum_length ? checksum_length
+                                                             : algorithm->bytes;
 }
 
 /* A missing name and "-" are standard input; an interrupted open is retried. */
@@ -421,13 +228,15 @@ static bipolar checksum_open(string_address path, bool address_to standard)
         if (!address_to standard)
                 do
                         input = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
-                while (input == CHECKSUM_ERROR_INTERRUPTED);
+                while (input == CHECKSUM_INTERRUPTED);
         return input;
 }
 
-static bipolar checksum_hash_path(bipolar transform, string_address path,
-                                   p8 address_to digest,
-                                   positive digest_length)
+/* One file's digest: read into block, a FILE_TRANSFER_SIZE buffer the
+   calling thread owns, and hashed where it lies. */
+static bipolar checksum_hash_path(const checksum_algorithm address_to algorithm,
+                                   positive bytes, string_address path,
+                                   p8 address_to digest, p8 address_to block)
 {
         bool standard;
         bipolar input = checksum_open(path, address_of standard);
@@ -435,13 +244,22 @@ static bipolar checksum_hash_path(bipolar transform, string_address path,
         if (input < 0)
                 return input;
 
-        bipolar answer = checksum_hash_descriptor(transform, input, digest,
-                                                   digest_length, !standard);
+        digest_state state;
+        bipolar got;
+
+        digest_open(address_of state, algorithm->algorithm, bytes);
+        while ((got = system_read_retry((positive)input, block,
+                                        FILE_TRANSFER_SIZE)) > 0)
+                digest_write(address_of state, block, (positive)got);
 
         if (!standard)
                 system_close((positive)input);
 
-        return answer;
+        if (got < 0)
+                return got;
+
+        digest_close(address_of state, digest);
+        return 0;
 }
 
 static fn checksum_filename_put(string_address name, bool escaped)
@@ -485,13 +303,26 @@ static fn checksum_digest_put(p8 address_to digest, positive length)
                 checksum_hex_put(digest, length);
 }
 
+/* The BSD tag's name: BLAKE2b says its width when it is not the full one. */
+static fn checksum_label_put(const checksum_algorithm address_to algorithm,
+                             positive bytes)
+{
+        text_put_string(algorithm->label);
+        if (algorithm->variable_length && bytes != algorithm->bytes)
+        {
+                text_put_character('-');
+                positive_to_string(text_put, bytes * 8);
+        }
+}
+
 static fn checksum_line_put(const checksum_algorithm address_to algorithm,
-                            p8 address_to digest, string_address name, bool tagged)
+                            positive bytes, p8 address_to digest,
+                            string_address name, bool tagged)
 {
         // --raw is the digest's bytes and nothing else.
         if (checksum_raw)
         {
-                text_put(digest, algorithm->bytes);
+                text_put(digest, bytes);
                 return;
         }
 
@@ -503,12 +334,12 @@ static fn checksum_line_put(const checksum_algorithm address_to algorithm,
 
         if (tagged)
         {
-                text_put_string(algorithm->label);
+                checksum_label_put(algorithm, bytes);
                 text_put_string(" (");
         }
         else
         {
-                checksum_digest_put(digest, algorithm->bytes);
+                checksum_digest_put(digest, bytes);
                 text_put_character(' ');
                 text_put_character(checksum_selected.mode == 'b' ? '*' : ' ');
         }
@@ -516,41 +347,240 @@ static fn checksum_line_put(const checksum_algorithm address_to algorithm,
         if (tagged)
         {
                 text_put_string(") = ");
-                checksum_digest_put(digest, algorithm->bytes);
+                checksum_digest_put(digest, bytes);
         }
         text_put_character(checksum_zero ? '\0' : '\n');
+}
+
+/*
+        Many inputs at once.
+
+        Each input is one job of the pool's ordered run, and a job's whole
+        answer is its read status and its digest; the sink, on the calling
+        thread, turns that into the line or the diagnostic in argument order.
+        So the bytes written are the serial bytes at any width: the work is
+        cut by input, never by thread count, and nothing but the sink writes.
+
+        A job reads into a transfer block its own thread owns -- the shared
+        one on the caller, a mapping of the same size taken once for each
+        worker -- and a job never opens anything that is not a regular file
+        or a directory. Standard input, a FIFO and a device are read in
+        order by the sink itself, so naming one twice reads it the way the
+        serial walk would.
+*/
+typedef struct
+{
+        bipolar status;
+        p8 digest[64];
+} checksum_answer;
+
+#define CHECKSUM_DEFERRED 1
+
+typedef struct
+{
+        const checksum_algorithm address_to algorithm;
+        positive bytes;
+        positive first;
+        positive width;
+        positive inputs;
+        positive group;
+        bool from_files;
+        bool tagged;
+        bool spread;
+        b32 answer;
+        p8 address_to address_to blocks;
+} checksum_batch;
+
+static string_address checksum_input_name(checksum_batch address_to batch,
+                                          positive index)
+{
+        string_address name = batch->from_files
+                                  ? text_file_name((b32)index)
+                              : batch->first < (positive)program_argument_count()
+                                  ? program_argument((b32)(batch->first + index))
+                                  : null;
+        return name ? name : (string_address) "-";
+}
+
+/* The transfer block of the thread running a job, taken once per worker. */
+static p8 address_to checksum_slot_block(p8 address_to address_to blocks,
+                                         positive width)
+{
+        positive slot = parallel_slot();
+
+        if (!slot)
+                return file_transfer;
+        if (!blocks || slot > width)
+                return null;
+        if (!blocks[slot])
+                blocks[slot] = memory(FILE_TRANSFER_SIZE);
+        return blocks[slot];
+}
+
+/* Whether a job may read this input itself: a regular file, a directory
+   (whose read fails at once), or a name that is not there. */
+static bool checksum_parallel_readable(string_address name)
+{
+        file_facts facts;
+
+        if (string_is(name, '-') && !string_get(name + 1))
+                return false;
+        if (system_stat_at(AT_FDCWD, name, AT_NO_AUTOMOUNT, STATX_BASIC,
+                           address_of facts) < 0)
+                return true;
+        return (facts.mode & MODE_FORMAT) == MODE_FILE ||
+               (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+}
+
+static fn checksum_batch_job(address_any context, positive index,
+                             parallel_output address_to output)
+{
+        checksum_batch address_to batch = context;
+        positive first = index * batch->group;
+        positive last = first + batch->group < batch->inputs ? first + batch->group
+                                                             : batch->inputs;
+        p8 address_to block = checksum_slot_block(batch->blocks, batch->width);
+
+        for (positive at = first; at < last; at++)
+        {
+                checksum_answer answer;
+                string_address name = checksum_input_name(batch, at);
+
+                if (batch->spread && !checksum_parallel_readable(name))
+                        answer.status = CHECKSUM_DEFERRED;
+                else if (!block)
+                        answer.status = -ERROR_NO_MEMORY;
+                else
+                        answer.status = checksum_hash_path(batch->algorithm, batch->bytes,
+                                                           name, answer.digest, block);
+
+                if (!parallel_write(output, address_of answer, sizeof(answer)))
+                        return;
+        }
+}
+
+static bool checksum_batch_sink(address_any context, positive index,
+                                address_any data, positive length)
+{
+        checksum_batch address_to batch = context;
+        positive first = index * batch->group;
+
+        for (positive at = 0; at + sizeof(checksum_answer) <= length; at += sizeof(checksum_answer))
+        {
+                checksum_answer answer;
+                string_address name = checksum_input_name(batch, first + at / sizeof(answer));
+
+                memory_copy(address_of answer, (p8 address_to)data + at, sizeof(answer));
+
+                if (answer.status == CHECKSUM_DEFERRED)
+                        answer.status = checksum_hash_path(batch->algorithm, batch->bytes,
+                                                           name, answer.digest, file_transfer);
+
+                if (answer.status < 0)
+                {
+                        string_diagnostic(address_of text_diagnostic, 0, name, file_reason(answer.status));
+                        batch->answer = 1;
+                }
+                else
+                        checksum_line_put(batch->algorithm, batch->bytes, answer.digest,
+                                          name, batch->tagged);
+        }
+        return true;
+}
+
+/*
+        How much a run weighs, and how many inputs one job carries.
+
+        The first CHECKSUM_WEIGHED inputs are weighed by their sizes. A run
+        of no more than that many stays on one thread unless its bytes are
+        worth sharing, one input a job. A longer run is spread, and its jobs
+        are cut from the sample: as many inputs as make about a mebibyte, so
+        a hundred thousand small files are a few hundred jobs rather than a
+        hundred thousand claims and wakes, and large files stay one a job.
+        The cut depends on the files, never on the thread count, and the
+        bytes written do not depend on it at all.
+*/
+#define CHECKSUM_WEIGHED 64
+#define CHECKSUM_GROUP_BYTES (1 << 20)
+#define CHECKSUM_GROUP_MAX 256
+
+static positive checksum_weigh(positive total, positive sampled, positive count,
+                               positive address_to group)
+{
+        address_to group = 1;
+        if (count <= CHECKSUM_WEIGHED)
+                return total;
+
+        positive mean = sampled ? total / sampled : 0;
+        positive per = mean ? CHECKSUM_GROUP_BYTES / mean : CHECKSUM_GROUP_MAX;
+
+        address_to group = per < 1 ? 1 : per > CHECKSUM_GROUP_MAX ? CHECKSUM_GROUP_MAX : per;
+        return PARALLEL_SPREAD;
+}
+
+static positive checksum_batch_weight(checksum_batch address_to batch,
+                                      positive count, positive address_to group)
+{
+        positive total = 0;
+        positive sampled = 0;
+
+        for (positive index = 0; index < count && index < CHECKSUM_WEIGHED; index++)
+        {
+                file_facts facts;
+
+                if (system_stat_at(AT_FDCWD, checksum_input_name(batch, index),
+                                   AT_NO_AUTOMOUNT, STATX_BASIC, address_of facts) == 0 &&
+                    (facts.mode & MODE_FORMAT) == MODE_FILE)
+                {
+                        total += facts.size;
+                        sampled++;
+                }
+        }
+
+        return checksum_weigh(total, sampled, count, group);
 }
 
 /* cksum's collected operands and the named sums' argv tail differ only at
    the input boundary; hashing, errors and escaped line output are shared. */
 static b32 checksum_generate(const checksum_algorithm address_to algorithm,
-                             bipolar transform, positive first, bool tagged,
-                             bool from_files)
+                             positive first, bool tagged, bool from_files)
 {
         positive count = (positive)program_argument_count();
         positive inputs = from_files ? (positive)text_input_count()
                                      : first < count ? count - first : 1;
-        b32 answer = 0;
+        checksum_batch batch = {
+            .algorithm = algorithm,
+            .bytes = checksum_bytes(algorithm),
+            .first = first,
+            .width = parallel_width(),
+            .inputs = inputs,
+            .from_files = from_files,
+            .tagged = tagged,
+        };
+        positive weight = checksum_batch_weight(address_of batch, inputs, address_of batch.group);
 
-        for (positive i = 0; i < inputs; i++)
+        // One thread, or too little to share: the jobs run inline in order
+        // on the caller and need neither worker blocks nor the stat test.
+        if (inputs > 1 && batch.width > 1 && weight >= PARALLEL_MINIMUM_BYTES)
+                batch.blocks = memory((batch.width + 1) * sizeof(p8 address_to));
+        if (!batch.blocks)
+                weight = 0;
+        batch.spread = batch.blocks != null;
+
+        if (!batch.spread)
+                batch.group = 1;
+        parallel_ordered(checksum_batch_job, checksum_batch_sink, address_of batch,
+                         (inputs + batch.group - 1) / batch.group, weight);
+
+        if (batch.blocks)
         {
-                string_address name = from_files ? text_file_name(i)
-                    : first < count ? program_argument((b32)(first + i)) : null;
-                name = name ? name : (string_address) "-";
-                p8 digest[64];
-                bipolar hashed = checksum_hash_path(
-                    transform, name, digest, algorithm->bytes);
-
-                if (hashed < 0)
-                {
-                        string_diagnostic(address_of text_diagnostic, 0, name, file_reason(hashed));
-                        answer = 1;
-                        continue;
-                }
-
-                checksum_line_put(algorithm, digest, name, tagged);
+                for (positive slot = 1; slot <= batch.width; slot++)
+                        if (batch.blocks[slot])
+                                memory_free(batch.blocks[slot], FILE_TRANSFER_SIZE);
+                memory_free(batch.blocks, (batch.width + 1) * sizeof(p8 address_to));
         }
-        return answer;
+
+        return batch.answer;
 }
 
 /* A name in a verification report or diagnostic, quoted as coreutils'
@@ -569,10 +599,88 @@ static fn checksum_check_result_put(string_address name,
         text_put_character('\n');
 }
 
-/* Decode a normal GNU checksum record in place.  Tagged and NUL records are
-   refused at option parsing, so the only escapes here are the two GNU emits
-   for portable newline-delimited output. */
+/*
+        Which algorithm a BSD tag at text_line + at names, and where its
+        name begins: the label, a width for BLAKE2b (BLAKE2b-256) or for the
+        SHA-2 family's other spelling (SHA2-256), at most one blank, then the
+        parenthesis. Zero when the line is not tagged that way.
+*/
+static positive checksum_tag_parse(positive at,
+                                   const checksum_algorithm address_to address_to found,
+                                   positive address_to bytes)
+{
+        for (positive which = 0; which < array_count(checksum_algorithms); which++)
+        {
+                const checksum_algorithm address_to one = checksum_algorithms + which;
+                positive length = string_length(one->label);
+                positive width = one->bytes;
+                positive from = at + length;
+
+                if (text_line_length < from + 1 ||
+                    string_compare_max(text_line + at, one->label, length))
+                        continue;
+
+                if (one->variable_length && text_line[from] == '-')
+                {
+                        positive bits = 0;
+                        positive digits = 0;
+
+                        for (from++; from < text_line_length &&
+                                     text_line[from] >= '0' && text_line[from] <= '9';
+                             from++, digits++)
+                                bits = bits * 10 + (positive)(text_line[from] - '0');
+                        if (!digits || digits > 3 || !bits || bits > 512 || bits % 8)
+                                continue;
+                        width = bits / 8;
+                }
+
+                if (from < text_line_length && text_line[from] == ' ')
+                        from++;
+                if (from >= text_line_length || text_line[from] != '(')
+                        continue;
+
+                address_to found = one;
+                address_to bytes = width;
+                return from + 1;
+        }
+
+        // SHA2-224 through SHA2-512 name the same four digests.
+        if (text_line_length > at + 5 && !string_compare_max(text_line + at, "SHA2-", 5))
+                for (positive which = CHECKSUM_SHA2_FIRST; which <= CHECKSUM_SHA2_LAST; which++)
+                {
+                        const checksum_algorithm address_to one = checksum_algorithms + which;
+                        positive from = at + 5 + 3;
+
+                        if (text_line_length < from + 1 ||
+                            string_compare_max(text_line + at + 5, one->label + 3, 3))
+                                continue;
+                        if (from < text_line_length && text_line[from] == ' ')
+                                from++;
+                        if (from >= text_line_length || text_line[from] != '(')
+                                continue;
+
+                        address_to found = one;
+                        address_to bytes = one->bytes;
+                        return from + 1;
+                }
+
+        return 0;
+}
+
+/*
+        Decode one checksum record in place.
+
+        algorithm is what the caller reads this record with: one algorithm,
+        or null for any tagged record (cksum --check without --algorithm).
+        On success found and bytes say which digest and how wide. Tagged
+        records must name an algorithm the caller accepts; untagged ones are
+        as wide as the algorithm, except that BLAKE2b and cksum's SHA-2
+        family take the width the digits have. The only escapes are the two
+        GNU emits for portable newline-delimited output.
+*/
 static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
+                                const checksum_algorithm address_to address_to found,
+                                positive address_to bytes,
                                 p8 address_to expected,
                                 string_address address_to filename)
 {
@@ -587,24 +695,76 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
         if (escaped)
                 at++;
 
-        positive digits = algorithm->bytes * 2;
-        positive label_length = string_length(algorithm->label);
-        positive digest_at = at;
+        const checksum_algorithm address_to one = null;
+        positive width = 0;
+        positive digest_at;
         p8 address_to name;
+        bool reversed = false;
+        positive named = checksum_tag_parse(at, address_of one, address_of width);
 
-        if (text_line_length >= at + label_length + 6 + digits &&
-            !string_compare_max(text_line + at, algorithm->label, label_length) &&
-            text_line[at + label_length] == ' ' &&
-            text_line[at + label_length + 1] == '(' &&
-            !memory_compare(text_line + text_line_length - digits - 4, ") = ", 4))
+        if (named)
         {
                 // The BSD tagged record: LABEL (name) = digest.
-                name = text_line + at + label_length + 2;
+                bool accepted = !algorithm || one == algorithm ||
+                                (checksum_sha2_family &&
+                                 one >= checksum_algorithms + CHECKSUM_SHA2_FIRST &&
+                                 one <= checksum_algorithms + CHECKSUM_SHA2_LAST);
+                if (!accepted)
+                        return false;
+                // A tag without a width is the algorithm's full one,
+                // whatever -l asked for.
+                if (!one->variable_length ||
+                    named == at + string_length(one->label) + 1 ||
+                    named == at + string_length(one->label) + 2)
+                        width = one->bytes;
+
+                positive digits = width * 2;
+
+                if (text_line_length < named + 4 + digits ||
+                    memory_compare(text_line + text_line_length - digits - 4, ") = ", 4))
+                        return false;
+
+                name = text_line + named;
                 digest_at = text_line_length - digits;
                 text_line[digest_at - 4] = end;
         }
         else
         {
+                if (!algorithm)
+                        return false;
+
+                one = algorithm;
+                width = checksum_bytes(algorithm);
+
+                if (algorithm->variable_length || checksum_sha2_family)
+                {
+                        positive digits = 0;
+
+                        while (at + digits < text_line_length &&
+                               digit_known(text_line[at + digits], 16) < 16)
+                                digits++;
+
+                        if (algorithm->variable_length)
+                        {
+                                if (digits < 2 || digits % 2 || digits > 128)
+                                        return false;
+                                width = digits / 2;
+                        }
+                        else
+                        {
+                                one = null;
+                                for (positive which = CHECKSUM_SHA2_FIRST;
+                                     which <= CHECKSUM_SHA2_LAST; which++)
+                                        if (digits == 2 * (positive)checksum_algorithms[which].bytes)
+                                                one = checksum_algorithms + which;
+                                if (!one)
+                                        return false;
+                                width = one->bytes;
+                        }
+                }
+
+                positive digits = width * 2;
+
                 if (text_line_length < at + digits + 2)
                         return false;
 
@@ -629,15 +789,21 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
 
                 at++;
 
-                if (at < text_line_length &&
-                    (text_line[at] == ' ' || text_line[at] == '*'))
-                        at++;
+                /*
+                        Then a mode marker, or the reversed BSD shape: a
+                        second blank or the asterisk of a binary record is the
+                        standard shape, and a name straight after the one
+                        blank -- or a name one byte long -- is the other.
+                        Which one this is waits for the digits to be read.
+                */
+                reversed = text_line_length - at == 1 ||
+                           (text_line[at] != ' ' && text_line[at] != '*');
 
                 text_line[text_line_length] = end;
                 name = text_line + at;
         }
 
-        for (positive i = 0; i < algorithm->bytes; i++)
+        for (positive i = 0; i < width; i++)
         {
                 positive high = digit_known(text_line[digest_at + i * 2], 16);
                 positive low = digit_known(text_line[digest_at + i * 2 + 1], 16);
@@ -646,6 +812,28 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
                         return false;
 
                 expected[i] = (p8)((high << 4) | low);
+        }
+
+        /*
+                coreutils will not let one run mix the two untagged shapes:
+                whichever the first well-formed untagged record has, a later
+                record of the other shape is malformed, and a standard record
+                read after reversed ones keeps its blank in the name. The run
+                is every manifest this invocation reads.
+        */
+        if (!named)
+        {
+                if (reversed)
+                {
+                        if (checksum_bsd_reversed == 0)
+                                return false;
+                        checksum_bsd_reversed = 1;
+                }
+                else if (checksum_bsd_reversed != 1)
+                {
+                        checksum_bsd_reversed = 0;
+                        name++;
+                }
         }
 
         if (escaped)
@@ -677,55 +865,284 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
                 *into = end;
         }
 
+        address_to found = one;
+        address_to bytes = width;
         address_to filename = name;
         return true;
 }
 
 /*
-        cksum --check reads whichever algorithm each tagged line names, so
-        the walk below is given no single algorithm and finds one per line.
-        Every other caller has one and keeps it. The transforms opened along
-        the way are held here, at most one per algorithm, and closed with the
-        walk.
+        A manifest, checked many records at once.
+
+        The records are read and parsed first, in order, on the calling
+        thread -- the reversed-shape rule and every malformed count come out
+        exactly as a serial read makes them -- and kept with their line
+        numbers. Then each record is one job of an ordered run that hashes
+        its file the way the generating jobs do, and the sink prints OK,
+        FAILED, the diagnostics and the -w warnings in line order. A record
+        naming standard input, a FIFO or a device is hashed by the sink.
 */
-static bipolar checksum_transforms[array_count(checksum_algorithms)];
-
-static const checksum_algorithm address_to checksum_line_algorithm()
+typedef struct
 {
-        positive at = text_line_length && text_line[0] == '\\';
+        const checksum_algorithm address_to algorithm;
+        positive line;
+        positive name;
+        p8 width;
+        p8 expected[64];
+} checksum_record;
 
-        for (positive which = 0; which < array_count(checksum_algorithms); which++)
+typedef struct
+{
+        const checksum_algorithm address_to algorithm;
+        string_address manifest;
+        checksum_record address_to records;
+        positive count;
+        positive room;
+        p8 address_to names;
+        positive names_used;
+        positive names_room;
+        positive width;
+        positive group;
+        p8 address_to address_to blocks;
+        bool spread;
+        bool quiet;
+        bool status;
+        bool warn;
+        bool ignore_missing;
+        bool failed;
+        positive malformed;
+        positive formatted;
+        positive mismatched;
+        positive unreadable;
+        positive verified;
+} checksum_check_run;
+
+/* A mapped region grown by doubling on the calling thread. */
+static bool checksum_region_grow(p8 address_to address_to region,
+                                 positive address_to room, positive wanted)
+{
+        if (wanted <= address_to room)
+                return true;
+
+        positive larger = address_to room ? address_to room : 65536;
+
+        while (larger < wanted)
+                larger *= 2;
+
+        p8 address_to fresh = memory(larger);
+
+        if (!fresh)
+                return false;
+        if (address_to region)
         {
-                const checksum_algorithm address_to one = checksum_algorithms + which;
-                positive length = string_length(one->label);
-
-                if (text_line_length > at + length + 1 &&
-                    !string_compare_max(text_line + at, one->label, length) &&
-                    text_line[at + length] == ' ' &&
-                    text_line[at + length + 1] == '(')
-                        return one;
+                memory_copy(fresh, address_to region, address_to room);
+                memory_free(address_to region, address_to room);
         }
-
-        return null;
+        address_to region = fresh;
+        address_to room = larger;
+        return true;
 }
 
-#define CHECKSUM_TRANSFORM_UNOPENED (-2)
-
-static bipolar checksum_transform_for(const checksum_algorithm address_to algorithm)
+static fn checksum_check_collect(checksum_check_run address_to run)
 {
-        positive which = (positive)(algorithm - checksum_algorithms);
+        positive line = 0;
 
-        if (checksum_transforms[which] == CHECKSUM_TRANSFORM_UNOPENED)
-                checksum_transforms[which] = checksum_kernel_open(algorithm);
+        while (text_line_next(text_line, 0))
+        {
+                checksum_record record = {0};
+                string_address filename;
+                const checksum_algorithm address_to one;
+                positive bytes;
 
-        return checksum_transforms[which];
+                line++;
+                // An empty record is passed over in silence.
+                if (!text_line_length)
+                        continue;
+
+                record.line = line;
+                if (checksum_line_parse(run->algorithm, address_of one,
+                                        address_of bytes, record.expected,
+                                        address_of filename))
+                {
+                        positive length = string_length(filename) + 1;
+
+                        if (!checksum_region_grow(address_of run->names,
+                                                  address_of run->names_room,
+                                                  run->names_used + length))
+                                break;
+                        memory_copy(run->names + run->names_used, filename, length);
+                        record.algorithm = one;
+                        record.width = (p8)bytes;
+                        record.name = run->names_used;
+                        run->names_used += length;
+                }
+
+                p8 address_to records = (p8 address_to)run->records;
+
+                if (!checksum_region_grow(address_of records, address_of run->room,
+                                          (run->count + 1) * sizeof(record)))
+                        break;
+                run->records = (checksum_record address_to)records;
+                run->records[run->count++] = record;
+        }
+}
+
+static string_address checksum_record_name(checksum_check_run address_to run,
+                                           const checksum_record address_to record)
+{
+        return (string_address)(run->names + record->name);
+}
+
+static fn checksum_check_job(address_any context, positive index,
+                             parallel_output address_to output)
+{
+        checksum_check_run address_to run = context;
+        positive first = index * run->group;
+        positive last = first + run->group < run->count ? first + run->group : run->count;
+        p8 address_to block = checksum_slot_block(run->blocks, run->width);
+
+        for (positive at = first; at < last; at++)
+        {
+                const checksum_record address_to record = run->records + at;
+                checksum_answer answer;
+
+                if (!record->algorithm)
+                        answer.status = CHECKSUM_DEFERRED;
+                else
+                {
+                        string_address name = checksum_record_name(run, record);
+
+                        if (run->spread && !checksum_parallel_readable(name))
+                                answer.status = CHECKSUM_DEFERRED;
+                        else if (!block)
+                                answer.status = -ERROR_NO_MEMORY;
+                        else
+                                answer.status = checksum_hash_path(record->algorithm, record->width,
+                                                                   name, answer.digest, block);
+                }
+
+                if (!parallel_write(output, address_of answer, sizeof(answer)))
+                        return;
+        }
+}
+
+static fn checksum_check_one(checksum_check_run address_to run,
+                             const checksum_record address_to record,
+                             checksum_answer address_to answer)
+{
+        if (!record->algorithm)
+        {
+                run->malformed++;
+                if (run->warn)
+                {
+                        text_flush();
+                        string_format(log_error, "%s: %w: %p: improperly formatted %s checksum line\n",
+                                      checksum_program, checksum_name_put,
+                                      run->manifest, record->line, checksum_check_label);
+                }
+                return;
+        }
+
+        string_address filename = checksum_record_name(run, record);
+
+        run->formatted++;
+
+        if (answer->status == CHECKSUM_DEFERRED)
+                answer->status = checksum_hash_path(record->algorithm, record->width,
+                                                    filename, answer->digest, file_transfer);
+
+        if (answer->status == -ERROR_NO_ENTRY && run->ignore_missing)
+                return;
+
+        if (answer->status < 0)
+        {
+                run->unreadable++;
+                run->failed = true;
+
+                string_diagnostic(address_of text_diagnostic, 0, filename, file_reason(answer->status));
+                if (!run->status)
+                        checksum_check_result_put(filename,
+                                                  (string_address) "FAILED open or read");
+                return;
+        }
+
+        run->verified++;
+        if (memory_compare(record->expected, answer->digest, record->width))
+        {
+                run->mismatched++;
+                run->failed = true;
+                if (!run->status)
+                        checksum_check_result_put(filename, (string_address) "FAILED");
+        }
+        else if (!run->quiet && !run->status)
+                checksum_check_result_put(filename, (string_address) "OK");
+}
+
+static bool checksum_check_sink(address_any context, positive index,
+                                address_any data, positive length)
+{
+        checksum_check_run address_to run = context;
+        positive first = index * run->group;
+
+        for (positive at = 0; at + sizeof(checksum_answer) <= length; at += sizeof(checksum_answer))
+        {
+                checksum_answer answer;
+
+                memory_copy(address_of answer, (p8 address_to)data + at, sizeof(answer));
+                checksum_check_one(run, run->records + first + at / sizeof(answer), address_of answer);
+        }
+        return true;
+}
+
+/* Every collected record through the pool, then the storage back. */
+static fn checksum_check_records(checksum_check_run address_to run)
+{
+        positive total = 0;
+        positive sampled = 0;
+
+        for (positive index = 0; index < run->count && index < CHECKSUM_WEIGHED; index++)
+        {
+                file_facts facts;
+                const checksum_record address_to record = run->records + index;
+
+                if (record->algorithm &&
+                    system_stat_at(AT_FDCWD, checksum_record_name(run, record),
+                                   AT_NO_AUTOMOUNT, STATX_BASIC, address_of facts) == 0 &&
+                    (facts.mode & MODE_FORMAT) == MODE_FILE)
+                {
+                        total += facts.size;
+                        sampled++;
+                }
+        }
+
+        positive weight = checksum_weigh(total, sampled, run->count, address_of run->group);
+
+        if (run->count > 1 && run->width > 1 && weight >= PARALLEL_MINIMUM_BYTES)
+                run->blocks = memory((run->width + 1) * sizeof(p8 address_to));
+        run->spread = run->blocks != null;
+        if (!run->spread)
+                run->group = 1;
+
+        parallel_ordered(checksum_check_job, checksum_check_sink, run,
+                         (run->count + run->group - 1) / run->group,
+                         run->spread ? weight : 0);
+
+        if (run->blocks)
+        {
+                for (positive slot = 1; slot <= run->width; slot++)
+                        if (run->blocks[slot])
+                                memory_free(run->blocks[slot], FILE_TRANSFER_SIZE);
+                memory_free(run->blocks, (run->width + 1) * sizeof(p8 address_to));
+        }
+        if (run->records)
+                memory_free(run->records, run->room);
+        if (run->names)
+                memory_free(run->names, run->names_room);
 }
 
 static b32 checksum_verify(const checksum_algorithm address_to algorithm,
-                           bipolar transform, file_taking address_to taking)
+                           file_taking address_to taking)
 {
-        for (positive which = 0; which < array_count(checksum_transforms); which++)
-                checksum_transforms[which] = CHECKSUM_TRANSFORM_UNOPENED;
         if (!checksum_program)
                 checksum_program = algorithm ? algorithm->command
                                              : (string_address) "cksum";
@@ -733,7 +1150,6 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                 checksum_check_label = algorithm ? algorithm->label
                                                  : (string_address) "CRC";
 
-        bool quiet = checksum_selected.verify == 'q';
         bool status = checksum_selected.verify == 's';
         bool strict = (taking->flags & FILE_FLAG('S')) != 0;
         bool ignore_missing = (taking->flags & FILE_FLAG('i')) != 0;
@@ -776,82 +1192,18 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                 if (!manifest || (manifest[0] == '-' && !manifest[1]))
                         manifest = (string_address) "standard input";
 
-                positive line = 0;
                 bool read_failed = false;
-                positive malformed = 0;
-                positive formatted = 0;
-                positive mismatched = 0;
-                positive unreadable = 0;
-                positive verified = 0;
+                checksum_check_run run = {
+                    .algorithm = algorithm,
+                    .manifest = manifest,
+                    .quiet = checksum_selected.verify == 'q',
+                    .status = checksum_selected.verify == 's',
+                    .warn = checksum_selected.verify == 'w',
+                    .ignore_missing = ignore_missing,
+                    .width = parallel_width(),
+                };
 
-                while (text_line_next(text_line, 0))
-                {
-                        p8 expected[64];
-                        p8 digest[64];
-                        string_address filename;
-
-                        line++;
-                        // An empty record is passed over in silence.
-                        if (!text_line_length)
-                                continue;
-
-                        const checksum_algorithm address_to one = algorithm;
-                        bipolar hash = transform;
-
-                        if (!one)
-                                one = checksum_line_algorithm();
-                        if (one && hash < 0)
-                                hash = checksum_transform_for(one);
-
-                        if (!one || hash < 0 ||
-                            !checksum_line_parse(one, expected,
-                                                 address_of filename))
-                        {
-                                malformed++;
-                                if (checksum_selected.verify == 'w')
-                                {
-                                        text_flush();
-                                        string_format(log_error, "%s: %w: %p: improperly formatted %s checksum line\n",
-                                                      checksum_program, checksum_name_put,
-                                                      manifest, line, checksum_check_label);
-                                }
-                                continue;
-                        }
-
-                        formatted++;
-
-                        bipolar hashed = checksum_hash_path(
-                            hash, filename, digest, one->bytes);
-
-                        if (hashed == -ERROR_NO_ENTRY && ignore_missing)
-                                continue;
-
-                        if (hashed < 0)
-                        {
-                                unreadable++;
-                                failed = true;
-
-                                string_diagnostic(address_of text_diagnostic, 0, filename, file_reason(hashed));
-                                if (!status)
-                                        checksum_check_result_put(
-                                            filename,
-                                            (string_address) "FAILED open or read");
-                                continue;
-                        }
-
-                        verified++;
-                        if (memory_compare(expected, digest, one->bytes))
-                        {
-                                mismatched++;
-                                failed = true;
-                                if (!status)
-                                        checksum_check_result_put(
-                                            filename, (string_address) "FAILED");
-                        }
-                        else if (!quiet && !status)
-                                checksum_check_result_put(filename,
-                                                          (string_address) "OK");
-                }
+                checksum_check_collect(address_of run);
 
                 if (text_input.failed)
                 {
@@ -861,50 +1213,73 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         read_failed = true;
                 }
 
+                checksum_check_records(address_of run);
+
+                positive malformed = run.malformed;
+                positive formatted = run.formatted;
+                positive mismatched = run.mismatched;
+                positive unreadable = run.unreadable;
+                positive verified = run.verified;
+
+                failed = failed || run.failed;
                 text_close();
 
-                // Every manifest has its own format/verification contract;
-                // a valid earlier file cannot make an empty later one valid.
-                if (!status)
-                {
-                        if (malformed && formatted)
-                        {
-                                text_flush();
-                                string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, malformed, malformed == 1 ? (string_address) " line is improperly formatted" : (string_address) " lines are improperly formatted");
-                        }
-                        if (unreadable)
-                        {
-                                text_flush();
-                                string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, unreadable, unreadable == 1 ? (string_address) " listed file could not be read" : (string_address) " listed files could not be read");
-                        }
-                        if (mismatched)
-                        {
-                                text_flush();
-                                string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, mismatched, mismatched == 1 ? (string_address) " computed checksum did NOT match" : (string_address) " computed checksums did NOT match");
-                        }
-                }
+                /*
+                        Every manifest has its own format and verification
+                        contract; a valid earlier file cannot make an empty
+                        later one valid. In coreutils' order: a manifest with
+                        no well-formed record says so even under --status;
+                        otherwise the warnings, and under --ignore-missing a
+                        manifest where no checksum matched says that. A
+                        manifest nothing matched in fails either way.
+                */
+                positive matched = verified - mismatched;
 
-                if (!verified && !unreadable && !read_failed)
+                if (!formatted)
                 {
-                        failed = true;
-                        if (!status || !formatted)
+                        if (!read_failed)
                         {
+                                failed = true;
                                 text_flush();
                                 string_format(writer_stderr, "%s: %w: %s\n",
                                     text_name, checksum_name_put, manifest,
-                                    ignore_missing && formatted
-                                        ? (string_address) "no file was verified"
-                                        : (string_address) "no properly formatted checksum lines found");
+                                    (string_address) "no properly formatted checksum lines found");
                         }
+                }
+                else
+                {
+                        if (!status)
+                        {
+                                if (malformed)
+                                {
+                                        text_flush();
+                                        string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, malformed, malformed == 1 ? (string_address) " line is improperly formatted" : (string_address) " lines are improperly formatted");
+                                }
+                                if (unreadable)
+                                {
+                                        text_flush();
+                                        string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, unreadable, unreadable == 1 ? (string_address) " listed file could not be read" : (string_address) " listed files could not be read");
+                                }
+                                if (mismatched)
+                                {
+                                        text_flush();
+                                        string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, mismatched, mismatched == 1 ? (string_address) " computed checksum did NOT match" : (string_address) " computed checksums did NOT match");
+                                }
+                                if (ignore_missing && !matched)
+                                {
+                                        text_flush();
+                                        string_format(writer_stderr, "%s: %w: %s\n",
+                                            text_name, checksum_name_put, manifest,
+                                            (string_address) "no file was verified");
+                                }
+                        }
+                        if (!matched)
+                                failed = true;
                 }
 
                 if (strict && malformed)
                         failed = true;
         }
-
-        for (positive which = 0; which < array_count(checksum_transforms); which++)
-                if (checksum_transforms[which] > 0)
-                        system_close((positive)checksum_transforms[which]);
 
         return failed ? 1 : 0;
 }
@@ -934,7 +1309,13 @@ static b32 checksum_main()
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('l'))
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "variable BLAKE2 lengths are not supported"));
+        {
+                b32 refused = checksum_blake2b_length(
+                    command, file_option_value(address_of taking, 'l'),
+                    address_of checksum_length);
+                if (refused)
+                        return refused;
+        }
 
         bool checking = (taking.flags & FILE_FLAG('c')) != 0;
         bool tagged = (taking.flags & FILE_FLAG('T')) != 0;
@@ -946,30 +1327,8 @@ static b32 checksum_main()
         if (tagged && checksum_selected.mode == 't')
                 return checksum_usage_error(command, "--tag does not support --text mode");
 
-        bipolar transform = checksum_kernel_open(algorithm);
-
-        if (transform < 0)
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "kernel AF_ALG hash support or requested algorithm is unavailable"));
-
-        b32 answer = 0;
-
         if (checking)
-                answer = checksum_verify(algorithm, transform,
-                                         address_of taking);
-        else
-                answer = checksum_generate(algorithm, transform, taking.first, tagged, false);
+                return text_done(checksum_verify(algorithm, address_of taking));
 
-        system_close((positive)transform);
-        return text_done(answer);
+        return text_done(checksum_generate(algorithm, taking.first, tagged, false));
 }
-
-#else
-
-/* AF_ALG is a Linux ABI.  Keep non-Linux compilation honest instead of
-   substituting an unreviewed software implementation. */
-static b32 checksum_main()
-{
-        return 1;
-}
-
-#endif
