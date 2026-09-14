@@ -354,22 +354,9 @@ static bool exec_child_process();
 static bool job_any_stopped();
 static bool exec_inplace_ready(bool restricted);
 static bool floodlight_parent_prepare(bool supervise);
-/* Only a shell process may establish the protected-launcher contract.  A
-   directly invoked applet is somebody else's child: making that applet
-   nondumpable cannot protect the external shell which may still be parsing
-   an inherited pipe.  Forked shell children inherit both this role and the
-   protection bit; a fresh exec or Spark image starts with neither. */
-static bool floodlight_parent_role;
 static bool floodlight_parent_protected;
 static bool floodlight_parent_subreaper;
-static bool floodlight_parent_subreaper_owned;
 static bool floodlight_parent_supervised;
-static bool floodlight_parent_dumpable_owned;
-static bipolar floodlight_parent_dumpable_prior;
-/* An authenticated no-descendant transition may replace this shell directly.
-   Once final confinement starts changing descriptors or process policy, a
-   failed exec is terminal: continuing the broader shell would retain those
-   irreversible changes. Fork children clear both inherited markers. */
 static bool floodlight_inplace_requested;
 static bool floodlight_inplace_final;
 static bool floodlight_inplace_descendants_checked;
@@ -788,7 +775,8 @@ static bipolar floodlight_child_next(p8 address_to address_to at,
                 return 0;
 
         while (address_to at < stop &&
-               byte_is_digit(address_to address_to at))
+               address_to address_to at >= '0' &&
+               address_to address_to at <= '9')
         {
                 positive digit = address_to address_to at - '0';
 
@@ -14718,6 +14706,26 @@ static positive floodlight_row_count;
 static p8 floodlight_report_state;
 static bool floodlight_report_promised;
 static bool floodlight_inherited_seccomp;
+/* Only a shell process may establish the protected-launcher contract.  A
+   directly invoked applet is somebody else's child: making that applet
+   nondumpable cannot protect the external shell which may still be parsing
+   an inherited pipe.  Forked shell children inherit both this role and the
+   protection bit; a fresh exec or Spark image starts with neither. */
+static bool floodlight_parent_role;
+static bool floodlight_parent_protected;
+static bool floodlight_parent_subreaper;
+static bool floodlight_parent_subreaper_owned;
+static bool floodlight_parent_supervised;
+static bool floodlight_parent_dumpable_owned;
+static bipolar floodlight_parent_dumpable_prior;
+/* An authenticated no-descendant transition may replace this shell directly.
+   Once final confinement starts changing descriptors or process policy, a
+   failed exec is terminal: continuing the broader shell would retain those
+   irreversible changes. Fork children clear both inherited markers. */
+static bool floodlight_inplace_requested;
+static bool floodlight_inplace_final;
+static bool floodlight_inplace_descendants_checked;
+static bool floodlight_inplace_terminal;
 /* Set only after this image installs its own verified filter.  Forks inherit
    both the bit and the filter; exec starts a fresh image with the bit clear. */
 static bool floodlight_own_seccomp;
@@ -14959,7 +14967,11 @@ static bool floodlight_report_number(floodlight_token word, bool seconds)
         if (!digits || (seconds && word.at[word.length - 1] != 's'))
                 return false;
 
-        return string_span_max(word.at, digits, string_set_digits) == digits;
+        for (positive at = 0; at < digits; at++)
+                if (word.at[at] < '0' || word.at[at] > '9')
+                        return false;
+
+        return true;
 }
 
 /* Parse into caller-owned staging rows. Nothing becomes an active answer
@@ -15151,18 +15163,37 @@ static fn floodlight_load()
            later disappearance downgrade the process to stock defaults. */
         floodlight_report_promised = true;
 
-        /* A report that filled the buffer is one that may have been cut, and
-           half a report is worse than none: the half that is missing is the
-           half that refuses something. Thrown away, so the built-in answers
-           stand. */
-        got = floodlight_read_whole(handle, report, sizeof(report));
+        /* seq_file reads may be short without being complete. Keep going to
+           EOF, with system_read_retry owning EINTR, and reject a report that
+           cannot be proved whole inside the fixed bound. */
+        while (used < sizeof(report) - 1)
+        {
+                got = system_read_retry((positive)handle, report + used,
+                                        sizeof(report) - 1 - used);
+
+                if (got <= 0)
+                        break;
+
+                used += (positive)got;
+        }
+
         system_close(handle);
 
         state = FLOODLIGHT_REPORT_REFUSED;
 
-        if (got <= 0)
+        if (got < 0 || !used)
                 goto publish;
-        used = (positive)got;
+
+        /*
+                A report that filled the buffer is one that may have been cut,
+                and half a report is worse than none: the half that is missing
+                is the half that refuses something. Thrown away, so the
+                built-in answers stand.
+        */
+        if (used >= sizeof(report) - 1)
+                goto publish;
+
+        report[used] = 0;
 
         if (!floodlight_take((string_address)report, used, parsed,
                              address_of parsed_count))
