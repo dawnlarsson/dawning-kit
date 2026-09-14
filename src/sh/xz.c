@@ -3346,6 +3346,27 @@ static bool xz_writer_batch(void)
         return !w->failed;
 }
 
+/* The input one batch may hold: at most an eighth of physical memory and
+   XZ_BATCH_BYTES, but always one block. Linux's sysinfo keeps totalram at
+   byte 32 and mem_unit at byte 104. This decides only how much waits in
+   memory, never a block boundary. */
+static positive xz_batch_room(positive block)
+{
+        p64 info[14];
+        positive room = XZ_BATCH_BYTES;
+
+        memory_fill(info, 0, sizeof(info));
+        if (system_call_1(syscall(sysinfo), (positive)info) == 0)
+        {
+                positive unit = (p32)info[13] ? (p32)info[13] : 1;
+                positive eighth = info[4] / 8 * unit;
+
+                if (eighth && eighth < room)
+                        room = eighth;
+        }
+        return room < block ? block : room;
+}
+
 static bool xz_encode_setup(p8 level)
 {
         const xz_preset address_to p = xz_presets + (level > 9 ? 9 : level);
@@ -3356,7 +3377,7 @@ static bool xz_encode_setup(p8 level)
         xz_why = null;
         xz_writer.level = level > 9 ? 9 : level;
         xz_writer.block = 3 * dict > ((positive)1 << 20) ? 3 * dict : (positive)1 << 20;
-        xz_writer.batch_blocks = XZ_BATCH_BYTES / xz_writer.block;
+        xz_writer.batch_blocks = xz_batch_room(xz_writer.block) / xz_writer.block;
         if (xz_writer.batch_blocks > XZ_BATCH_BLOCKS)
                 xz_writer.batch_blocks = XZ_BATCH_BLOCKS;
         if (!xz_writer.batch_blocks)
