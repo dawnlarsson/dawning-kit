@@ -3306,6 +3306,208 @@ static fn cat_walked()
         }
 }
 
+/*
+        cat with no flags is a copy, and the kernel can make it without the
+        bytes passing through this process, which is how GNU makes it
+        (measured with perf trace): copy_file_range from one regular file to
+        another, splice when either end is a pipe, and splice through a pipe
+        of its own when a regular file goes to a device such as /dev/null.
+        A small regular file keeps the read loop, which gathers many small
+        files into one write. Whatever the kernel refuses -- an O_APPEND
+        output, a filesystem, a descriptor splice does not take -- falls to
+        that loop from the offset the kernel left, and the loop owns every
+        diagnostic: a real failure the kernel copy met is met again there and
+        reported the way it always was.
+*/
+#define CAT_KERNEL_MINIMUM TEXT_READ_MAX
+#define CAT_SPLICE_BLOCK (1 << 19)
+#define CAT_SPLICE_FLAGS 5 // SPLICE_F_MOVE | SPLICE_F_MORE
+#define CAT_SETPIPE_SIZE 1031
+#define CAT_INTERRUPTED (-4)
+
+static file_facts cat_output;
+static bool cat_output_known;
+static bool cat_output_append;
+
+static bool cat_splice_all(positive input)
+{
+        for (;;)
+        {
+                bipolar moved = system_call_6(syscall(splice), input, 0,
+                                              text_out_handle, 0,
+                                              CAT_SPLICE_BLOCK, CAT_SPLICE_FLAGS);
+
+                if (moved > 0 || moved == CAT_INTERRUPTED)
+                        continue;
+
+                return !moved;
+        }
+}
+
+// splice wants a pipe at one end, so a file going to a device gets a pipe of
+// its own between them. Bytes a refused second move leaves in that pipe are
+// read back and written through the writer, in order, before the read loop
+// carries on from the input's offset.
+static bool cat_splice_through(positive input)
+{
+        b32 ends[2];
+        bool done = false;
+
+        if (system_call_2(syscall(pipe2), (positive)ends, O_CLOEXEC) < 0)
+                return false;
+
+        system_call_3(syscall(fcntl), (positive)ends[1], CAT_SETPIPE_SIZE,
+                      CAT_SPLICE_BLOCK);
+
+        for (;;)
+        {
+                bipolar taken = system_call_6(syscall(splice), input, 0,
+                                              (positive)ends[1], 0,
+                                              CAT_SPLICE_BLOCK, CAT_SPLICE_FLAGS);
+
+                if (taken == CAT_INTERRUPTED)
+                        continue;
+
+                if (taken <= 0)
+                {
+                        done = !taken;
+                        break;
+                }
+
+                positive left = (positive)taken;
+
+                while (left)
+                {
+                        bipolar moved = system_call_6(syscall(splice),
+                                                      (positive)ends[0], 0,
+                                                      text_out_handle, 0, left,
+                                                      CAT_SPLICE_FLAGS);
+
+                        if (moved == CAT_INTERRUPTED)
+                                continue;
+
+                        if (moved > 0)
+                        {
+                                left -= (positive)moved;
+                                continue;
+                        }
+
+                        while (left)
+                        {
+                                bipolar got = system_read_retry(
+                                    (positive)ends[0], text_input.buffer,
+                                    min(left, (positive)TEXT_READ_MAX));
+
+                                if (got <= 0)
+                                        break;
+
+                                text_put(text_input.buffer, (positive)got);
+                                left -= (positive)got;
+                        }
+
+                        goto closed;
+                }
+        }
+
+closed:
+        system_close((positive)ends[0]);
+        system_close((positive)ends[1]);
+        return done;
+}
+
+// True when the input was copied to its end.
+static bool cat_kernel_copy(const file_facts address_to in)
+{
+        positive input = text_input.handle;
+        positive from = in->mode & MODE_FORMAT;
+        positive to = cat_output.mode & MODE_FORMAT;
+
+        if (from == MODE_FILE && to == MODE_FILE)
+                for (;;)
+                {
+                        bipolar moved = file_copy_range_once(
+                            (bipolar)input, null, (bipolar)text_out_handle, null,
+                            FILE_KERNEL_COPY_SIZE);
+
+                        if (moved > 0 || moved == CAT_INTERRUPTED)
+                                continue;
+
+                        return !moved;
+                }
+
+        if (from == MODE_PIPE || to == MODE_PIPE)
+        {
+                // GNU grows an output pipe to its splice length first, so
+                // each move carries half a megabyte instead of one page
+                // ring's worth; a refusal leaves the pipe as it was.
+                if (to == MODE_PIPE)
+                        system_call_3(syscall(fcntl), text_out_handle,
+                                      CAT_SETPIPE_SIZE, CAT_SPLICE_BLOCK);
+
+                return cat_splice_all(input);
+        }
+
+        if ((from == MODE_FILE || from == MODE_BLOCK) &&
+            (to == MODE_CHARACTER || to == MODE_SOCKET))
+                return cat_splice_through(input);
+
+        return false;
+}
+
+/*
+        GNU's refusal, established case by case against it: a regular output
+        that is the input itself, read from before the place the copy would
+        be written -- the end of the file when appending, the output's own
+        offset when not -- would chase its own writes. Bytes the writer still
+        holds count as written, since GNU has written them by then.
+*/
+static bool cat_same_file(const file_facts address_to in, string_address shown)
+{
+        if (!cat_output_known || (cat_output.mode & MODE_FORMAT) != MODE_FILE ||
+            (in->mode & MODE_FORMAT) != MODE_FILE ||
+            !file_same_identity(in, address_of cat_output))
+                return false;
+
+        bipolar from = system_seek(text_input.handle, 0, FILE_SEEK_CUR);
+        bipolar to = cat_output_append
+                         ? (bipolar)in->size
+                         : system_seek(text_out_handle, 0, FILE_SEEK_CUR);
+
+        if (from < 0 || to < 0 || from >= to + (bipolar)text_out_used)
+                return false;
+
+        string_diagnostic(&text_diagnostic, 0, shown, "input file is output file");
+        text_status = 1;
+        return true;
+}
+
+static fn cat_one(string_address shown)
+{
+        file_facts in;
+        bool known = text_handle_facts(text_input.handle, address_of in);
+
+        if (known && cat_same_file(address_of in, shown))
+                return;
+
+        if (cat_flags)
+        {
+                cat_walked();
+                return;
+        }
+
+        if (known && cat_output_known && !text_out_failed &&
+            ((in.mode & MODE_FORMAT) != MODE_FILE ||
+             in.size >= CAT_KERNEL_MINIMUM))
+        {
+                text_flush();
+
+                if (!text_out_failed && cat_kernel_copy(address_of in))
+                        return;
+        }
+
+        text_put_rest();
+}
+
 static const argument_option cat_options[] = {
     {"show-all", 'A'},
     {"number-nonblank", 'b'},
@@ -3362,10 +3564,23 @@ static b32 text_cat()
         for (b32 i = first; i < text_argument_count; i++)
                 inputs++;
 
+        // The output is the same descriptor for every input, so it is looked
+        // at once: whether it is a regular file, and whether it appends.
+        cat_output_known = text_handle_facts(text_out_handle, address_of cat_output);
+        cat_output_append = false;
+
+        if (cat_output_known && (cat_output.mode & MODE_FORMAT) == MODE_FILE)
+        {
+                bipolar output_flags = system_call_3(syscall(fcntl), text_out_handle,
+                                                     FILE_F_GETFL, 0);
+
+                cat_output_append = output_flags >= 0 && (output_flags & O_APPEND);
+        }
+
         if (!inputs)
         {
                 if (text_open(null))
-                        cat_flags ? cat_walked() : text_put_rest();
+                        cat_one((string_address) "-");
 
                 text_close();
                 return text_done(text_status);
@@ -3373,10 +3588,12 @@ static b32 text_cat()
 
         for (b32 i = first; i < text_argument_count; i++)
         {
-                if (!text_open(program_argument(i)))
+                string_address name = program_argument(i);
+
+                if (!text_open(name))
                         continue;
 
-                cat_flags ? cat_walked() : text_put_rest();
+                cat_one(name);
                 text_close();
         }
 
@@ -4170,14 +4387,6 @@ static bool text_lines_gather()
         return true;
 }
 
-static fn text_put_slice(text_slice address_to line)
-{
-        text_put(line->at, line->length);
-
-        if (line->ended)
-                text_put_character(text_delimiter);
-}
-
 /*
         Whatever is left of the input, held whole in the arena, for the byte
         counts head and tail can only answer once a pipe has ended.
@@ -4399,9 +4608,11 @@ static positive text_tail_start(positive handle, positive size, positive count,
         return floor;
 }
 
+// Reads no further than the count, so a seekable input is left exactly where
+// the copy stopped -- where GNU leaves it for the command after head.
 static fn text_stream_count(positive left)
 {
-        while (left && text_fill())
+        while (left && text_fill_amount(left))
         {
                 positive have = text_input.filled - text_input.position;
                 positive take = min(have, left);
@@ -4432,6 +4643,245 @@ static fn text_stream_span(positive start, positive stop)
 {
         text_stream_seek(start);
         text_stream_count(difference_or_zero(stop, start));
+}
+
+/*
+        Where the last count records of a span held in memory begin: the
+        in-memory twin of text_tail_start, with its rule that the delimiter
+        ending the span is not one of the ones counted. Counted a read-sized
+        block at a time from the end, so only the block holding the answer
+        is walked delimiter by delimiter.
+*/
+static positive text_window_start(p8 address_to data, positive used,
+                                  positive count, bool by_bytes)
+{
+        if (by_bytes)
+                return used > count ? used - count : 0;
+
+        if (!count)
+                return used;
+
+        positive at = used;
+        positive found = 0;
+
+        if (at && data[at - 1] == text_delimiter)
+                at--;
+
+        while (at)
+        {
+                positive take = min(at, (positive)TEXT_READ_MAX);
+                positive from = at - take;
+                positive have = memory_count(data + from, take, text_delimiter);
+
+                if (found + have < count)
+                {
+                        found += have;
+                        at = from;
+                        continue;
+                }
+
+                positive need = count - found;
+                positive limit = take;
+
+                for (;;)
+                {
+                        p8 address_to hit = (p8 address_to)memory_last_of(
+                            data + from, (b8)text_delimiter, limit);
+
+                        limit = (positive)(hit - (data + from));
+
+                        if (!--need)
+                                return from + limit + 1;
+                }
+        }
+
+        return 0;
+}
+
+/*
+        The last count records of an input that cannot be seeked, in a window
+        that slides. Once the store has grown to twice what the window last
+        held, everything before the window goes -- written out when head is
+        leaving the end off, dropped when tail wants only the end -- and the
+        window moves to the front. So the store holds about twice the answer
+        plus one read, however long the input runs: the line table and the
+        arena used to make a pipe's length the limit instead, and GNU has
+        none.
+*/
+#define TEXT_WINDOW_FIRST (1 << 22)
+#define TEXT_WINDOW_READ (1 << 20)
+
+static bool text_window(positive count, bool by_bytes, bool front)
+{
+        byte_store window = {0};
+        positive limit = TEXT_WINDOW_FIRST;
+        bool okay = true;
+
+        for (;;)
+        {
+                if (window.used > positive_max - TEXT_WINDOW_READ ||
+                    !byte_store_reserve(address_of window,
+                                        window.used + TEXT_WINDOW_READ,
+                                        TEXT_WINDOW_FIRST))
+                {
+                        string_diagnostic(&text_diagnostic, 0, null, "memory exhausted");
+                        text_status = 1;
+                        okay = false;
+                        break;
+                }
+
+                // What the reader already holds goes first; after that the
+                // input is read straight into the window, not through it.
+                positive held = text_input.filled - text_input.position;
+                positive got;
+
+                if (held)
+                {
+                        got = min(held, (positive)TEXT_WINDOW_READ);
+                        memory_copy_apart(window.bytes + window.used,
+                                          text_input.buffer + text_input.position,
+                                          got);
+                        text_input.position += got;
+                }
+                else
+                {
+                        bipolar read = text_input.finished
+                                           ? 0
+                                           : system_read_retry(
+                                                 text_input.handle,
+                                                 window.bytes + window.used,
+                                                 TEXT_WINDOW_READ);
+
+                        if (read <= 0)
+                        {
+                                text_input.finished = true;
+
+                                if (read < 0)
+                                {
+                                        string_diagnostic(&text_diagnostic, 0,
+                                                          text_input.name,
+                                                          "Read error");
+                                        text_input.failed = true;
+                                        text_status = 1;
+                                }
+
+                                break;
+                        }
+
+                        got = (positive)read;
+                }
+
+                window.used += got;
+
+                if (window.used < limit)
+                        continue;
+
+                positive start = text_window_start(window.bytes, window.used,
+                                                   count, by_bytes);
+
+                if (front)
+                        text_put(window.bytes, start);
+
+                memory_copy(window.bytes, window.bytes + start, window.used - start);
+                window.used -= start;
+
+                if (limit < window.used * 2)
+                        limit = window.used * 2;
+        }
+
+        if (okay)
+        {
+                positive start = text_window_start(window.bytes, window.used,
+                                                   count, by_bytes);
+
+                if (front)
+                        text_put(window.bytes, start);
+                else
+                        text_put(window.bytes + start, window.used - start);
+        }
+
+        byte_store_release(address_of window);
+        return okay;
+}
+
+// Step over the first skip records -- lines, or bytes -- a read at a time,
+// walking only the read that holds the last of them.
+static fn text_stream_skip(positive skip, bool by_bytes)
+{
+        while (skip && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+
+                if (by_bytes)
+                {
+                        positive take = min(left, skip);
+
+                        text_input.position += take;
+                        skip -= take;
+                        continue;
+                }
+
+                positive have = memory_count(at, left, text_delimiter);
+
+                if (have < skip)
+                {
+                        skip -= have;
+                        text_input.position = text_input.filled;
+                        continue;
+                }
+
+                p8 address_to past = at;
+
+                for (; skip; skip--)
+                        past = (p8 address_to)memory_first_of(
+                                   past, (b8)text_delimiter,
+                                   (positive)(at + left - past)) + 1;
+
+                text_input.position += (positive)(past - at);
+        }
+}
+
+/*
+        head -n: a read holding fewer delimiters than are still wanted goes
+        out whole, and only the read that holds the last one is walked.
+        What was read past that line is handed back to a seekable input, as
+        GNU hands it back, so the command after head in a group reads on
+        from the line head stopped at. A pipe cannot take it back, for
+        either of them.
+*/
+static fn text_head_records(positive count)
+{
+        while (count && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                positive have = memory_count(at, left, text_delimiter);
+                positive take = left;
+
+                if (have >= count)
+                {
+                        p8 address_to past = at;
+
+                        for (; count; count--)
+                                past = (p8 address_to)memory_first_of(
+                                           past, (b8)text_delimiter,
+                                           (positive)(at + left - past)) + 1;
+
+                        take = (positive)(past - at);
+                }
+                else
+                        count -= have;
+
+                text_put(at, take);
+                text_input.position += take;
+        }
+
+        positive unread = text_input.filled - text_input.position;
+
+        if (unread)
+                system_seek(text_input.handle, (positive)-(bipolar)unread,
+                            FILE_SEEK_CUR);
 }
 
 static const argument_option head_options[] = {
@@ -4467,27 +4917,7 @@ static fn text_head_short(positive count, bool by_bytes)
                 return;
         }
 
-        if (by_bytes)
-        {
-                positive have;
-                p8 address_to held = utility_arena_hold_rest(address_of have);
-
-                if (!held)
-                        return;
-
-                if (count < have)
-                        text_put(held, have - count);
-
-                return;
-        }
-
-        if (!text_lines_gather())
-                return;
-
-        positive stop = difference_or_zero(text_lines_count, count);
-
-        for (positive c = 0; c < stop; c++)
-                text_put_slice(text_lines + c);
+        text_window(count, by_bytes, true);
 }
 
 /*
@@ -4678,6 +5108,17 @@ static inline INLINE b32 text_head_tail(bool tail)
                                address_of count))
                 return text_done(1);
 
+        /*
+                tail asked for nothing from the end, and not following, reads
+                nothing: GNU returns before it opens a file, so a missing one
+                is no error, no header is written, and a seekable input is
+                left where it stood. Measured with -n 0, -c 0 and -0, with and
+                without -q, -v and the following-only words warned about above.
+        */
+        if (tail && !marked && !count &&
+            !(taking.flags & (FILE_FLAG('f') | FILE_FLAG('F'))))
+                return text_done(0);
+
         b32 inputs = text_input_count();
         bool headers = (text_files_count > 1 || loud) && !quiet;
 
@@ -4696,14 +5137,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         else if (by_bytes)
                                 text_stream_count(count);
                         else
-                        {
-                                positive done = 0;
-                                while (done < count && text_line_next(text_line, 0))
-                                {
-                                        text_put_line();
-                                        done++;
-                                }
-                        }
+                                text_head_records(count);
                         text_close();
                         continue;
                 }
@@ -4727,52 +5161,15 @@ static inline INLINE b32 text_head_tail(bool tail)
                         continue;
                 }
 
-                if (by_bytes)
+                // +N starts at the Nth record and streams from there; N wants
+                // the end, which a pipe only has once it has been read through.
+                if (marked)
                 {
-                        // Bytes rather than lines, so the whole input is held
-                        // and the tail of it handed back.
-                        positive have;
-                        p8 address_to held = utility_arena_hold_rest(address_of have);
-
-                        if (!held)
-                                return text_done(1);
-
-                        if (marked)
-                        {
-                                positive skip = count ? count - 1 : 0;
-
-                                if (skip < have)
-                                        text_put(held + skip, have - skip);
-                        }
-                        else
-                        {
-                                positive take = min(count, have);
-
-                                text_put(held + have - take, take);
-                        }
+                        text_stream_skip(count ? count - 1 : 0, by_bytes);
+                        text_put_rest();
                 }
-                else if (marked)
-                {
-                        positive seen = 0;
-
-                        while (text_line_next(text_line, 0))
-                        {
-                                seen++;
-
-                                if (seen >= (count ? count : 1))
-                                        text_put_line();
-                        }
-                }
-                else
-                {
-                        if (!text_lines_gather())
-                                return text_done(1);
-
-                        positive first = difference_or_zero(text_lines_count, count);
-
-                        for (positive c = first; c < text_lines_count; c++)
-                                text_put_slice(text_lines + c);
-                }
+                else if (!text_window(count, by_bytes, false))
+                        return text_done(1);
 
                 text_close();
         }
@@ -11312,6 +11709,61 @@ static positive text_list_single_last;
 // says so rather than treating the whole list as malformed.
 static bool text_list_too_large;
 
+/*
+        The ranges as written, kept so the range starts can be settled the way
+        GNU settles them once the whole list is in: sorted, and merged where
+        one reaches into the next -- an open range reaches into every later
+        start, and two that only touch stay two. Measured against GNU with
+        3-,5 and 5,3-6 and 2-3,1-4 (one range each) and 1-2,3-4 (two).
+        A list with more ranges than this keeps the marks the parse made.
+*/
+#define TEXT_RANGES_MAX 64
+
+typedef struct
+{
+        positive first;
+        positive last; // TEXT_UNSET when the range is open
+} text_range;
+
+static text_range text_list_ranges[TEXT_RANGES_MAX];
+
+static fn text_list_merge_begins(positive count)
+{
+        for (positive i = 1; i < count; i++)
+        {
+                text_range moving = text_list_ranges[i];
+                positive j = i;
+
+                while (j && text_list_ranges[j - 1].first > moving.first)
+                {
+                        text_list_ranges[j] = text_list_ranges[j - 1];
+                        j--;
+                }
+
+                text_list_ranges[j] = moving;
+        }
+
+        memory_fill(text_list_begins, 0, text_list_used);
+
+        positive reach = 0;
+
+        for (positive i = 0; i < count; i++)
+        {
+                text_range address_to range = text_list_ranges + i;
+
+                if (i && range->first <= reach)
+                {
+                        reach = max(reach, range->last);
+                        continue;
+                }
+
+                if (range->first < TEXT_LIST_MAX)
+                        text_list_begins[range->first] = 1;
+
+                reach = range->last;
+        }
+}
+
 static bool text_list_parse(string_address spec)
 {
         positive at = 0;
@@ -11402,6 +11854,10 @@ static bool text_list_parse(string_address spec)
                 else
                         text_list_single = false;
 
+                if (pieces <= TEXT_RANGES_MAX)
+                        text_list_ranges[pieces - 1] =
+                            (text_range){first, open ? TEXT_UNSET : last};
+
                 if (first < TEXT_LIST_MAX)
                 {
                         if (!text_list[first])
@@ -11435,6 +11891,9 @@ static bool text_list_parse(string_address spec)
                         return false;
         }
 
+        if (pieces && pieces <= TEXT_RANGES_MAX)
+                text_list_merge_begins(pieces);
+
         return pieces != 0;
 }
 
@@ -11466,6 +11925,71 @@ static bool text_list_has(positive which)
                 return true;
 
         return which < TEXT_LIST_MAX && text_list[which];
+}
+
+/*
+        The same list as spans, for cut -b and -c, so a line is a handful of
+        copies rather than a membership question for every byte.
+
+        Built from the marks the byte walk reads, in one pass over the
+        positions a list can name: a span starts where the walk would have
+        started writing after a gap, or at a range start, which is exactly
+        where it would have written the output delimiter. So every span
+        after the first one written gets a delimiter, and none inside one
+        does. The open tail is the last span, reaching as far as any line.
+        A list that parts into more spans than the table holds keeps the
+        byte walk.
+*/
+#define TEXT_SPANS_MAX 256
+
+typedef struct
+{
+        positive first;
+        positive last;
+} text_span;
+
+static text_span text_spans[TEXT_SPANS_MAX];
+static positive text_spans_count;
+
+static bool text_spans_build(bool complement)
+{
+        positive limit = max(text_list_used, text_list_open);
+        bool ran = false;
+
+        text_spans_count = 0;
+
+        for (positive at = 1; at < limit; at++)
+        {
+                if (text_list_has(at) == complement)
+                {
+                        ran = false;
+                        continue;
+                }
+
+                if (ran && (complement || !text_list_begins[at]))
+                        text_spans[text_spans_count - 1].last = at;
+                else if (text_spans_count == TEXT_SPANS_MAX)
+                        return false;
+                else
+                        text_spans[text_spans_count++] = (text_span){at, at};
+
+                ran = true;
+        }
+
+        // Every position from limit on answers alike, and none of them was
+        // ever the start of a range.
+        if ((text_list_open != 0) != complement)
+        {
+                if (ran)
+                        text_spans[text_spans_count - 1].last = TEXT_UNSET;
+                else if (text_spans_count == TEXT_SPANS_MAX)
+                        return false;
+                else
+                        text_spans[text_spans_count++] =
+                            (text_span){limit ? limit : 1, TEXT_UNSET};
+        }
+
+        return true;
 }
 
 /*
@@ -11611,6 +12135,9 @@ static b32 text_cut()
         }
 
         b32 inputs = text_input_count();
+        bool spans = by_character &&
+                     !(text_list_single && (!complement || !separator)) &&
+                     text_spans_build(complement);
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -11662,6 +12189,28 @@ static b32 text_cut()
                                         else if (through > from)
                                                 text_put(line + from,
                                                          through - from);
+
+                                        text_put_character(text_delimiter);
+                                        continue;
+                                }
+
+                                if (spans)
+                                {
+                                        for (positive s = 0; s < text_spans_count; s++)
+                                        {
+                                                text_span address_to span = text_spans + s;
+
+                                                if (span->first > line_length)
+                                                        break;
+
+                                                positive through = min(span->last, line_length);
+
+                                                if (s && separator)
+                                                        text_put(separator, separator_length);
+
+                                                text_put(line + span->first - 1,
+                                                         through - span->first + 1);
+                                        }
 
                                         text_put_character(text_delimiter);
                                         continue;
@@ -11747,6 +12296,32 @@ static b32 text_cut()
                                                         break;
 
                                                 split = true;
+
+                                                /* No field past this one is
+                                                   listed, so the rest of the
+                                                   record is kept whole or
+                                                   dropped whole, delimiters
+                                                   and all, without finding
+                                                   them one at a time. */
+                                                if (!text_list_open &&
+                                                    which + 1 >= text_list_used)
+                                                {
+                                                        if (complement)
+                                                        {
+                                                                positive rest =
+                                                                    line_length - at - 1;
+
+                                                                if (wrote)
+                                                                        out[out_length++] = delimiter;
+
+                                                                memory_copy(out + out_length,
+                                                                            line + at + 1, rest);
+                                                                out_length += rest;
+                                                        }
+
+                                                        break;
+                                                }
+
                                                 at++;
                                                 which++;
                                         }
