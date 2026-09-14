@@ -11,6 +11,8 @@
         SHA-256 check and no BCJ.
 */
 
+#include "compression_huffman.c"
+
 #define XZ_MAGIC0 0xfd
 #define XZ_IN 16384
 #define XZ_OUT 16384
@@ -158,14 +160,9 @@ static p8 xz_rc_buf[65536 + 32768];
 static positive xz_rc_n;
 static p64 xz_block_unpadded;
 static p64 xz_block_unpacked;
-static p64 xz_index_unpadded[32];
-static p64 xz_index_unpacked[32];
+static p64 xz_index_unpadded;
+static p64 xz_index_unpacked;
 static positive xz_index_n;
-
-static p32 xz_crc32_byte(p32 crc, p8 byte)
-{
-        return hash_crc32_tab[(crc ^ byte) & 255] ^ (crc >> 8);
-}
 
 static bool xz_fail(string_address why)
 {
@@ -185,6 +182,21 @@ static bipolar xz_in_byte(void)
                 return -1;
         xz_in_abs++;
         return xz_in_buf[xz_input.at++];
+}
+
+/* A little-endian field, read a byte at a time across refills. */
+static bool xz_in_le(p64 address_to value, p8 bytes)
+{
+        address_to value = 0;
+        for (p8 at = 0; at < bytes; at++)
+        {
+                bipolar byte = xz_in_byte();
+
+                if (byte < 0)
+                        return false;
+                address_to value |= (p64)byte << (8 * at);
+        }
+        return true;
 }
 
 /* Hash completed output spans once, before a drain or block check. A
@@ -1023,42 +1035,17 @@ static bool xz_check_read(p64 want32, p64 want64)
 {
         if (xz_check == XZ_CHECK_NONE)
                 return true;
-        if (xz_check == XZ_CHECK_CRC32)
-        {
-                p32 got = 0;
-                p8 at;
+        if (xz_check != XZ_CHECK_CRC32 && xz_check != XZ_CHECK_CRC64)
+                return xz_fail("xz check type");
 
-                for (at = 0; at < 4; at++)
-                {
-                        bipolar byte = xz_in_byte();
+        bool wide = xz_check == XZ_CHECK_CRC64;
+        p64 got;
 
-                        if (byte < 0)
-                                return xz_fail("xz truncated check");
-                        got |= (p32)(p8)byte << (8 * at);
-                }
-                (void)want64;
-                if (got != (p32)want32)
-                        return xz_fail("xz CRC32 mismatch");
-                return true;
-        }
-        if (xz_check == XZ_CHECK_CRC64)
-        {
-                p64 got = 0;
-                p8 at;
-
-                for (at = 0; at < 8; at++)
-                {
-                        bipolar byte = xz_in_byte();
-
-                        if (byte < 0)
-                                return xz_fail("xz truncated check");
-                        got |= (p64)(p8)byte << (8 * at);
-                }
-                if (got != want64)
-                        return xz_fail("xz CRC64 mismatch");
-                return true;
-        }
-        return xz_fail("xz check type");
+        if (!xz_in_le(address_of got, wide ? 8 : 4))
+                return xz_fail("xz truncated check");
+        if (got != (wide ? want64 : (p32)want32))
+                return xz_fail(wide ? "xz CRC64 mismatch" : "xz CRC32 mismatch");
+        return true;
 }
 
 static bool xz_block(void)
@@ -1170,7 +1157,9 @@ static bipolar xz_vli_crc(p32 address_to crc, positive address_to hashed)
 
                 if (byte < 0)
                         return -1;
-                address_to crc = xz_crc32_byte(address_to crc, (p8)byte);
+                p8 read = (p8)byte;
+
+                address_to crc = hash_crc32(address_to crc, address_of read, 1);
                 address_to hashed += 1;
                 v |= (p64)((p8)byte & 0x7f) << shift;
                 if (!((p8)byte & 0x80))
@@ -1183,13 +1172,13 @@ static bipolar xz_vli_crc(p32 address_to crc, positive address_to hashed)
 
 static bool xz_index_and_footer(void)
 {
+        p8 zero = 0;
         bipolar indicator;
         bipolar records;
         p32 crc;
-        p32 got;
-        p8 at;
-        p8 flags[2];
-        p32 back;
+        p64 got;
+        p64 back;
+        p8 body[6];
         positive hashed = 1;
         bipolar fb0;
         bipolar fb1;
@@ -1199,7 +1188,7 @@ static bool xz_index_and_footer(void)
         indicator = xz_in_byte();
         if (indicator != 0)
                 return xz_fail("xz index indicator");
-        crc = xz_crc32_byte(0xffffffffu, 0);
+        crc = hash_crc32(0xffffffffu, address_of zero, 1);
         records = xz_vli_crc(address_of crc, address_of hashed);
         if (records < 0)
                 return false;
@@ -1217,74 +1206,39 @@ static bool xz_index_and_footer(void)
                         return xz_fail("xz truncated index padding");
                 if (byte)
                         return xz_fail("xz index padding");
-                crc = xz_crc32_byte(crc, 0);
+                crc = hash_crc32(crc, address_of zero, 1);
                 hashed++;
         }
-        crc = ~crc;
-        got = 0;
-        for (at = 0; at < 4; at++)
-        {
-                bipolar byte = xz_in_byte();
-
-                if (byte < 0)
-                        return xz_fail("xz truncated index CRC");
-                got |= (p32)(p8)byte << (8 * at);
-        }
-        if (got != crc)
+        if (!xz_in_le(address_of got, 4))
+                return xz_fail("xz truncated index CRC");
+        if (got != (p32)~crc)
                 return xz_fail("xz index CRC");
 
-        got = 0;
-        for (at = 0; at < 4; at++)
-        {
-                bipolar byte = xz_in_byte();
-
-                if (byte < 0)
-                        return xz_fail("xz truncated footer");
-                got |= (p32)(p8)byte << (8 * at);
-        }
-        back = 0;
-        for (at = 0; at < 4; at++)
-        {
-                bipolar byte = xz_in_byte();
-
-                if (byte < 0)
-                        return xz_fail("xz truncated footer");
-                back |= (p32)(p8)byte << (8 * at);
-        }
+        if (!xz_in_le(address_of got, 4) || !xz_in_le(address_of back, 4))
+                return xz_fail("xz truncated footer");
         fb0 = xz_in_byte();
         fb1 = xz_in_byte();
         if (fb0 < 0 || fb1 < 0)
                 return xz_fail("xz truncated footer");
-        flags[0] = (p8)fb0;
-        flags[1] = (p8)fb1;
-        if (flags[0] || (flags[1] & 0xf0) || (flags[1] & 0xf) != xz_check)
+        if (fb0 || (fb1 & 0xf0) || (fb1 & 0xf) != xz_check)
                 return xz_fail("xz footer flags");
         y = xz_in_byte();
         z = xz_in_byte();
         if (y != 'Y' || z != 'Z')
                 return xz_fail("xz footer magic");
-        {
-                p8 body[6];
-
-                body[0] = (p8)back;
-                body[1] = (p8)(back >> 8);
-                body[2] = (p8)(back >> 16);
-                body[3] = (p8)(back >> 24);
-                body[4] = flags[0];
-                body[5] = flags[1];
-                if (got != ~hash_crc32(0xffffffffu, body, 6))
-                        return xz_fail("xz footer CRC");
-        }
+        memory_store_unaligned(p32, body, (p32)back);
+        body[4] = (p8)fb0;
+        body[5] = (p8)fb1;
+        if (got != (p32)~hash_crc32(0xffffffffu, body, 6))
+                return xz_fail("xz footer CRC");
         return true;
 }
 
 static bool xz_stream(void)
 {
-        p8 magic[6];
+        p64 magic;
         p8 flags[2];
-        p32 crc;
-        p32 got;
-        p8 at;
+        p64 got;
 
         /* Stream Padding: after a stream, NUL bytes in fours may precede the
            next one or the end of the file. */
@@ -1308,16 +1262,9 @@ static bool xz_stream(void)
 
         if (!xz_hdr_done)
         {
-                for (at = 0; at < 6; at++)
-                {
-                        bipolar byte = xz_in_byte();
-
-                        if (byte < 0)
-                                return xz_fail("xz truncated header");
-                        magic[at] = (p8)byte;
-                }
-                if (magic[0] != 0xfd || magic[1] != 0x37 || magic[2] != 0x7a ||
-                    magic[3] != 0x58 || magic[4] != 0x5a || magic[5] != 0)
+                if (!xz_in_le(address_of magic, 6))
+                        return xz_fail("xz truncated header");
+                if (magic != 0x005a587a37fdull)
                         return xz_fail("xz bad magic");
                 flags[0] = (p8)xz_in_byte();
                 flags[1] = (p8)xz_in_byte();
@@ -1327,17 +1274,9 @@ static bool xz_stream(void)
                 if (xz_check != XZ_CHECK_NONE && xz_check != XZ_CHECK_CRC32 &&
                     xz_check != XZ_CHECK_CRC64)
                         return xz_fail("xz check type");
-                crc = ~hash_crc32(0xffffffffu, flags, 2);
-                got = 0;
-                for (at = 0; at < 4; at++)
-                {
-                        bipolar byte = xz_in_byte();
-
-                        if (byte < 0)
-                                return xz_fail("xz truncated header CRC");
-                        got |= (p32)(p8)byte << (8 * at);
-                }
-                if (got != crc)
+                if (!xz_in_le(address_of got, 4))
+                        return xz_fail("xz truncated header CRC");
+                if (got != (p32)~hash_crc32(0xffffffffu, flags, 2))
                         return xz_fail("xz header CRC");
                 xz_hdr_done = true;
         }
@@ -1427,32 +1366,48 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
         return ok ? (bipolar)xz_output.used : -1;
 }
 
+/* Bytes into the output slab, flushed each time it holds XZ_OUT. */
+static bool xz_put_span(p8 address_to bytes, positive n)
+{
+        while (n)
+        {
+                if (xz_out_failed ||
+                    (xz_out_fill >= XZ_OUT && !xz_out_flush()))
+                        return false;
+                positive take = min(n, XZ_OUT - xz_out_fill);
+                memory_copy(xz_out_buf + xz_out_fill, bytes, take);
+                xz_out_fill += take;
+                bytes += take;
+                n -= take;
+                if (xz_out_fill == XZ_OUT && !xz_out_flush())
+                        return false;
+        }
+        return true;
+}
+
 static bool xz_put(p8 byte)
 {
-        if (xz_out_failed)
-                return false;
-        if (xz_out_fill >= XZ_OUT && !xz_out_flush())
-                return false;
-        xz_out_buf[xz_out_fill++] = byte;
-        if (xz_out_fill == XZ_OUT && !xz_out_flush())
-                return false;
-        return true;
+        return xz_put_span(address_of byte, 1);
 }
 
 static bool xz_put32(p32 v)
 {
-        return xz_put((p8)v) && xz_put((p8)(v >> 8)) &&
-               xz_put((p8)(v >> 16)) && xz_put((p8)(v >> 24));
+        return xz_put_span((p8 address_to)address_of v, 4);
 }
 
 static bool xz_put64(p64 v)
 {
-        p8 at;
+        return xz_put_span((p8 address_to)address_of v, 8);
+}
 
-        for (at = 0; at < 8; at++)
-                if (!xz_put((p8)(v >> (8 * at))))
-                        return false;
-        return true;
+static positive xz_vli_put(p8 address_to into, p64 value)
+{
+        positive n = 0;
+
+        for (; value >= 0x80; value >>= 7)
+                into[n++] = (p8)value | 0x80;
+        into[n++] = (p8)value;
+        return n;
 }
 
 static p8 xz_prop_from_dict(positive dict)
@@ -1467,14 +1422,11 @@ static p8 xz_prop_from_dict(positive dict)
 
 static bool xz_write_header(p8 check)
 {
-        p8 flags[2];
+        p8 header[12] = {0xfd, 0x37, 0x7a, 0x58, 0x5a, 0, 0, check};
 
-        flags[0] = 0;
-        flags[1] = check;
-        if (!xz_put(0xfd) || !xz_put(0x37) || !xz_put(0x7a) ||
-            !xz_put(0x58) || !xz_put(0x5a) || !xz_put(0) ||
-            !xz_put(flags[0]) || !xz_put(flags[1]) ||
-            !xz_put32(~hash_crc32(0xffffffffu, flags, 2)))
+        memory_store_unaligned(p32, header + 8,
+                               ~hash_crc32(0xffffffffu, header + 6, 2));
+        if (!xz_put_span(header, sizeof(header)))
                 return false;
         xz_check = check;
         xz_index_n = 0;
@@ -1485,14 +1437,10 @@ static bool xz_write_header(p8 check)
 
 static bool xz_write_uncompressed_chunk(p8 address_to src, positive n, bool reset)
 {
-        positive at;
+        p8 control[3] = {reset ? 1 : 2, (p8)((n - 1) >> 8), (p8)(n - 1)};
 
-        if (!xz_put(reset ? 1 : 2) || !xz_put((p8)((n - 1) >> 8)) ||
-            !xz_put((p8)(n - 1)))
+        if (!xz_put_span(control, 3) || !xz_put_span(src, n))
                 return false;
-        for (at = 0; at < n; at++)
-                if (!xz_put(src[at]))
-                        return false;
         xz_block_unpadded += 3 + n;
         xz_block_unpacked += n;
         return true;
@@ -1500,108 +1448,36 @@ static bool xz_write_uncompressed_chunk(p8 address_to src, positive n, bool rese
 
 static bool xz_write_block_header(p8 dict_prop)
 {
-        p8 header[12];
-        p32 crc;
+        p8 header[12] = {2, 0, 0x21, 1, dict_prop};
 
-        header[0] = 2;
-        header[1] = 0;
-        header[2] = 0x21;
-        header[3] = 1;
-        header[4] = dict_prop;
-        header[5] = 0;
-        header[6] = 0;
-        header[7] = 0;
-        crc = ~hash_crc32(0xffffffffu, header, 8);
-        header[8] = (p8)crc;
-        header[9] = (p8)(crc >> 8);
-        header[10] = (p8)(crc >> 16);
-        header[11] = (p8)(crc >> 24);
-        {
-                positive at;
-
-                for (at = 0; at < 12; at++)
-                        if (!xz_put(header[at]))
-                                return false;
-        }
+        memory_store_unaligned(p32, header + 8,
+                               ~hash_crc32(0xffffffffu, header, 8));
+        if (!xz_put_span(header, sizeof(header)))
+                return false;
         xz_block_unpadded = 12;
         return true;
 }
 
 static bool xz_write_index_footer(void)
 {
-        p8 index[512];
-        positive n = 0;
-        positive at;
-        p32 crc;
-        p32 back;
-        p8 flags[2];
-        p8 body[6];
+        p8 index[32];
+        p8 footer[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, xz_check, 'Y', 'Z'};
+        positive n = 1;
 
-        index[n++] = 0;
+        index[0] = 0;
+        n += xz_vli_put(index + n, xz_index_n);
+        if (xz_index_n)
         {
-                p64 rec = xz_index_n;
-                p8 tmp[10];
-                p8 tn = 0;
-
-                do
-                {
-                        tmp[tn++] = (p8)(rec & 0x7f);
-                        rec >>= 7;
-                } while (rec);
-                for (at = 0; at + 1 < tn; at++)
-                        index[n++] = tmp[at] | 0x80;
-                index[n++] = tmp[tn - 1];
-        }
-        for (at = 0; at < xz_index_n; at++)
-        {
-                p64 v = xz_index_unpadded[at];
-                p8 tmp[10];
-                p8 tn = 0;
-                p8 k;
-
-                do
-                {
-                        tmp[tn++] = (p8)(v & 0x7f);
-                        v >>= 7;
-                } while (v);
-                for (k = 0; k + 1 < tn; k++)
-                        index[n++] = tmp[k] | 0x80;
-                index[n++] = tmp[tn - 1];
-                v = xz_index_unpacked[at];
-                tn = 0;
-                do
-                {
-                        tmp[tn++] = (p8)(v & 0x7f);
-                        v >>= 7;
-                } while (v);
-                for (k = 0; k + 1 < tn; k++)
-                        index[n++] = tmp[k] | 0x80;
-                index[n++] = tmp[tn - 1];
+                n += xz_vli_put(index + n, xz_index_unpadded);
+                n += xz_vli_put(index + n, xz_index_unpacked);
         }
         while (n & 3)
                 index[n++] = 0;
-        crc = ~hash_crc32(0xffffffffu, index, n);
-        for (at = 0; at < n; at++)
-                if (!xz_put(index[at]))
-                        return false;
-        if (!xz_put32(crc))
-                return false;
-        back = n / 4;
-        if (!back)
-                back = 1;
-        flags[0] = 0;
-        flags[1] = xz_check;
-        body[0] = (p8)back;
-        body[1] = (p8)(back >> 8);
-        body[2] = (p8)(back >> 16);
-        body[3] = (p8)(back >> 24);
-        body[4] = flags[0];
-        body[5] = flags[1];
-        if (!xz_put32(~hash_crc32(0xffffffffu, body, 6)) ||
-            !xz_put32(back) || !xz_put(flags[0]) || !xz_put(flags[1]) ||
-            !xz_put('Y') || !xz_put('Z'))
-                return false;
-        return xz_out_flush();
+        memory_store_unaligned(p32, index + n, ~hash_crc32(0xffffffffu, index, n));
+        memory_store_unaligned(p32, footer + 4, max(n / 4, (positive)1));
+        memory_store_unaligned(p32, footer, ~hash_crc32(0xffffffffu, footer + 4, 6));
+        return xz_put_span(index, n + 4) && xz_put_span(footer, sizeof(footer)) &&
+               xz_out_flush();
 }
 
 static fn xz_dict_push(p8 byte)
@@ -1818,13 +1694,6 @@ static fn xz_enc_repeat(positive which, positive len)
         xz_state = xz_state < 7 ? 8 : 11;
 }
 
-static p16 xz_chunk_hash(p8 address_to p)
-{
-        p32 h = ((p32)p[0] << 16) ^ ((p32)p[1] << 8) ^ p[2];
-
-        h *= 0x1e35a7bdu;
-        return (p16)(h >> 16);
-}
 
 static bool xz_lzma_chunk(p8 address_to src, positive n)
 {
@@ -1886,7 +1755,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
 
                 if (pos + 3 <= n)
                 {
-                        p16 h = xz_chunk_hash(src + pos);
+                        p16 h = compression_hash3(src + pos);
                         p32 old = xz_head[h];
                         positive chain = old;
                         positive tries = xz_level <= 1 ? 4 : xz_level <= 3 ? 8 : 32;
@@ -1942,7 +1811,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                         {
                                 if (pos + k + 3 <= n)
                                 {
-                                        p16 hh = xz_chunk_hash(src + pos + k);
+                                        p16 hh = compression_hash3(src + pos + k);
 
                                         p32 old = xz_head[hh];
                                         xz_prev[(xz_match_abs + pos + k) & (XZ_ENC_DICT - 1)] = old;
@@ -1972,15 +1841,13 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                 xz_enc_have_lzma = false;
                 return xz_write_uncompressed_chunk(src, n, reset >= 3);
         }
-        if (!xz_put((p8)(0x80 | (reset << 5) | ((n - 1) >> 16))) ||
-            !xz_put((p8)((n - 1) >> 8)) || !xz_put((p8)(n - 1)) ||
-            !xz_put((p8)((xz_rc_n - 1) >> 8)) ||
-            !xz_put((p8)(xz_rc_n - 1)) ||
-            (reset >= 2 && !xz_put(0x5d)))
+        p8 control[6] = {(p8)(0x80 | (reset << 5) | ((n - 1) >> 16)),
+                         (p8)((n - 1) >> 8), (p8)(n - 1),
+                         (p8)((xz_rc_n - 1) >> 8), (p8)(xz_rc_n - 1), 0x5d};
+
+        if (!xz_put_span(control, reset >= 2 ? 6 : 5) ||
+            !xz_put_span(xz_rc_buf, xz_rc_n))
                 return false;
-        for (at = 0; at < xz_rc_n; at++)
-                if (!xz_put(xz_rc_buf[at]))
-                        return false;
         xz_block_unpadded += 5 + (reset >= 2 ? 1 : 0) + xz_rc_n;
         xz_block_unpacked += n;
         xz_enc_have_lzma = true;
@@ -2056,12 +1923,9 @@ static bool xz_flush_pending(bool last)
                                 return false;
                         xz_block_unpadded += 8;
                 }
-                if (xz_index_n < 32)
-                {
-                        xz_index_unpadded[xz_index_n] = xz_block_unpadded;
-                        xz_index_unpacked[xz_index_n] = xz_block_unpacked;
-                        xz_index_n++;
-                }
+                xz_index_unpadded = xz_block_unpadded;
+                xz_index_unpacked = xz_block_unpacked;
+                xz_index_n = 1;
         }
         return !xz_out_failed;
 }

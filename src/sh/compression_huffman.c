@@ -5,6 +5,15 @@
 #ifndef COMPRESSION_HUFFMAN_INCLUDED
 #define COMPRESSION_HUFFMAN_INCLUDED
 
+/* The match finders' hash of the three bytes at a position: 16 bits. */
+static inline INLINE p16 compression_hash3(p8 address_to bytes)
+{
+        p32 h = ((p32)bytes[0] << 16) ^ ((p32)bytes[1] << 8) ^ bytes[2];
+
+        h *= 0x1e35a7bdu;
+        return (p16)(h >> 16);
+}
+
 typedef struct
 {
         p32 freq;

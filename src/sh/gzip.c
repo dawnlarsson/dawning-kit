@@ -94,11 +94,6 @@ static p32 gzip_head[GZIP_HASH_SIZE];
 static p32 gzip_prev[GZIP_WINDOW];
 static p8 gzip_level;
 
-static p32 gzip_crc_byte(p32 crc, p8 byte)
-{
-        return hash_crc32_tab[(crc ^ byte) & 255] ^ (crc >> 8);
-}
-
 static bool gzip_fail(string_address why)
 {
         gzip_why = why;
@@ -116,6 +111,21 @@ static bipolar gzip_in_byte(void)
         if (gzip_input.at >= gzip_input.have && !gzip_in_need())
                 return -1;
         return gzip_in_buf[gzip_input.at++];
+}
+
+/* A little-endian word, read a byte at a time across refills. */
+static bool gzip_in_word(p32 address_to word)
+{
+        address_to word = 0;
+        for (positive at = 0; at < 32; at += 8)
+        {
+                bipolar byte = gzip_in_byte();
+
+                if (byte < 0)
+                        return false;
+                address_to word |= (p32)byte << at;
+        }
+        return true;
 }
 
 static bool gzip_align(void)
@@ -195,7 +205,7 @@ static bool gzip_emit(p8 byte)
 {
         gzip_window[gzip_wpos & GZIP_WMASK] = byte;
         gzip_wpos++;
-        gzip_crc = gzip_crc_byte(gzip_crc, byte);
+        gzip_crc = hash_crc32(gzip_crc, address_of byte, 1);
         gzip_isize++;
         gzip_out_buf[gzip_out_fill++] = byte;
         if (!gzip_pull && gzip_out_fill >= GZIP_OUT)
@@ -247,6 +257,19 @@ static bool gzip_emit_match(positive dist, positive length)
         return true;
 }
 
+static p16 gzip_revbits(p16 code, p8 len)
+{
+        p16 reversed = 0;
+
+        while (len)
+        {
+                reversed = (p16)((reversed << 1) | (code & 1));
+                code >>= 1;
+                len--;
+        }
+        return reversed;
+}
+
 static fn gzip_quick_table(p16 address_to count, p16 address_to symbol,
                            p16 address_to table, positive bits)
 {
@@ -261,11 +284,9 @@ static fn gzip_quick_table(p16 address_to count, p16 address_to symbol,
 
                 while (index < stop)
                 {
-                        positive reversed = 0;
                         positive k;
-                        positive v = code++;
-                        for (k = 0; k < len; k++)
-                                reversed = (reversed << 1) | (v & 1), v >>= 1;
+                        positive reversed = gzip_revbits((p16)code++, (p8)len);
+
                         for (k = reversed; k < ((positive)1 << bits);
                              k += (positive)1 << len)
                                 table[k] = (p16)((len << 9) | symbol[index]);
@@ -275,30 +296,41 @@ static fn gzip_quick_table(p16 address_to count, p16 address_to symbol,
         }
 }
 
+/* Count code lengths into count. The code space still unused, -1 for a
+   length past limit, -2 for lengths that over-subscribe the space. */
+static bipolar gzip_code_space(p8 address_to length, positive n, p8 limit,
+                               p16 address_to count)
+{
+        bipolar left = 1;
+
+        memory_fill(count, 0, (GZIP_MAXBITS + 1) * sizeof(p16));
+        for (positive at = 0; at < n; at++)
+                if (length[at] > limit)
+                        return -1;
+                else
+                        count[length[at]]++;
+        count[0] = 0;
+        for (positive len = 1; len <= limit; len++)
+        {
+                left <<= 1;
+                if (left < count[len])
+                        return -2;
+                left -= count[len];
+        }
+        return left;
+}
+
 static bool gzip_huffman(p8 address_to length, positive n,
                          p16 address_to count, p16 address_to symbol)
 {
         positive len;
-        positive left;
         positive at;
         p16 offs[GZIP_MAXBITS + 1];
+        bipolar left = gzip_code_space(length, n, GZIP_MAXBITS, count);
 
-        memory_fill(count, 0, (GZIP_MAXBITS + 1) * sizeof(p16));
-        for (at = 0; at < n; at++)
-                if (length[at] > GZIP_MAXBITS)
-                        return gzip_fail("gzip Huffman length");
-                else
-                        count[length[at]]++;
-
-        count[0] = 0;
-        left = 1;
-        for (len = 1; len <= GZIP_MAXBITS; len++)
-        {
-                left <<= 1;
-                if (left < count[len])
-                        return gzip_fail("gzip Huffman over-subscribed");
-                left -= count[len];
-        }
+        if (left < 0)
+                return gzip_fail(left == -1 ? "gzip Huffman length"
+                                            : "gzip Huffman over-subscribed");
 
         offs[1] = 0;
         for (len = 1; len < GZIP_MAXBITS; len++)
@@ -468,25 +500,19 @@ static bool gzip_dynamic(void)
         return true;
 }
 
+static p8 gzip_fixed_lit_len[GZIP_MAXLIT];
+static p16 gzip_fixed_lit_code[GZIP_MAXLIT];
+static p8 gzip_fixed_dist_len[GZIP_MAXDIST];
+static p16 gzip_fixed_dist_code[GZIP_MAXDIST];
+static bool gzip_fixed_codes;
+static fn gzip_fixed_init(void);
+
 static bool gzip_fixed(void)
 {
-        p8 lengths[GZIP_MAXLIT];
-        p8 dist[GZIP_MAXDIST];
-        positive at;
-
-        for (at = 0; at <= 143; at++)
-                lengths[at] = 8;
-        for (; at <= 255; at++)
-                lengths[at] = 9;
-        for (; at <= 279; at++)
-                lengths[at] = 7;
-        for (; at <= 287; at++)
-                lengths[at] = 8;
-        for (at = 0; at < GZIP_MAXDIST; at++)
-                dist[at] = 5;
-        if (!gzip_huffman(lengths, GZIP_MAXLIT, gzip_lit_count, gzip_lit_symbol))
-                return false;
-        return gzip_huffman(dist, GZIP_MAXDIST, gzip_dist_count,
+        gzip_fixed_init();
+        return gzip_huffman(gzip_fixed_lit_len, GZIP_MAXLIT, gzip_lit_count,
+                            gzip_lit_symbol) &&
+               gzip_huffman(gzip_fixed_dist_len, GZIP_MAXDIST, gzip_dist_count,
                             gzip_dist_symbol);
 }
 
@@ -775,24 +801,8 @@ static bool gzip_member(void)
                 return true;
         gzip_align();
 
-        got_crc = 0;
-        got_size = 0;
-        for (at = 0; at < 4; at++)
-        {
-                bipolar byte = gzip_in_byte();
-
-                if (byte < 0)
-                        return gzip_fail("gzip truncated trailer");
-                got_crc |= (p32)(p8)byte << (8 * at);
-        }
-        for (at = 0; at < 4; at++)
-        {
-                bipolar byte = gzip_in_byte();
-
-                if (byte < 0)
-                        return gzip_fail("gzip truncated trailer");
-                got_size |= (p32)(p8)byte << (8 * at);
-        }
+        if (!gzip_in_word(address_of got_crc) || !gzip_in_word(address_of got_size))
+                return gzip_fail("gzip truncated trailer");
 
         expect = ~gzip_crc;
         if (got_crc != expect)
@@ -856,19 +866,6 @@ static bipolar gzip_inflate_mem(p8 address_to src, positive src_len,
         gzip_input.mem = null;
         gzip_output.bytes = null;
         return ok ? (bipolar)gzip_output.used : -1;
-}
-
-static p16 gzip_revbits(p16 code, p8 len)
-{
-        p16 reversed = 0;
-
-        while (len)
-        {
-                reversed = (p16)((reversed << 1) | (code & 1));
-                code >>= 1;
-                len--;
-        }
-        return reversed;
 }
 
 static __attribute__((always_inline)) inline bool gzip_put(p32 value, p8 n)
@@ -939,27 +936,8 @@ static fn gzip_lengths_to_codes(p8 address_to length, positive n,
 static bool gzip_lengths_ok(p8 address_to length, positive n, p8 limit)
 {
         p16 count[GZIP_MAXBITS + 1];
-        positive left;
-        positive len;
-        positive at;
 
-        memory_fill(count, 0, sizeof(count));
-        for (at = 0; at < n; at++)
-        {
-                if (length[at] > limit)
-                        return false;
-                count[length[at]]++;
-        }
-        count[0] = 0;
-        left = 1;
-        for (len = 1; len <= limit; len++)
-        {
-                left <<= 1;
-                if (left < count[len])
-                        return false;
-                left -= count[len];
-        }
-        return left == 0;
+        return gzip_code_space(length, n, limit, count) == 0;
 }
 
 static bool gzip_used_coded(p32 address_to freq, p8 address_to length, positive n)
@@ -1125,14 +1103,6 @@ static bool gzip_enc_pull(void)
         return true;
 }
 
-static p16 gzip_hash3(p8 address_to bytes)
-{
-        p32 h = ((p32)bytes[0] << 16) ^ ((p32)bytes[1] << 8) ^ bytes[2];
-
-        h *= 0x1e35a7bdu;
-        return (p16)(h >> (32 - GZIP_HASH_BITS));
-}
-
 static positive gzip_match_at(positive pos, positive chain, positive nice,
                               positive best, positive address_to dist)
 {
@@ -1185,17 +1155,12 @@ static fn gzip_insert(positive pos)
 
         if (pos + 2 >= gzip_src_fill)
                 return;
-        h = gzip_hash3(gzip_src_hold + pos);
+        h = compression_hash3(gzip_src_hold + pos);
         prev = gzip_head[h];
         gzip_prev[(gzip_src_abs + pos) & GZIP_WMASK] = prev;
         gzip_head[h] = gzip_src_abs + pos;
 }
 
-static p8 gzip_fixed_lit_len[GZIP_MAXLIT];
-static p16 gzip_fixed_lit_code[GZIP_MAXLIT];
-static p8 gzip_fixed_dist_len[GZIP_MAXDIST];
-static p16 gzip_fixed_dist_code[GZIP_MAXDIST];
-static bool gzip_fixed_codes;
 
 static fn gzip_fixed_init(void)
 {
@@ -1593,7 +1558,7 @@ static bool gzip_deflate_pump(bool finish)
                            the accepted match) owns that position. Inserting
                            twice makes its predecessor point to itself. */
                         next_match = gzip_match_at(
-                            pos + 1, gzip_head[gzip_hash3(gzip_src_hold + pos + 1)],
+                            pos + 1, gzip_head[compression_hash3(gzip_src_hold + pos + 1)],
                             nice, match, address_of next_dist);
                         if (next_match > match)
                         {
