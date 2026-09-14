@@ -71976,47 +71976,237 @@ static fn floor_huffman(void)
         memory_free(input, 3 * 4096); memory_free(output, 3 * 4096);
 }
 
+#define FLOOR_PAGE 4096
+
+/* One-bit codes over all-zero input: code 0 is the symbol, code 1 unused. */
+static fn floor_deflate_one_bit(p32 address_to lit, p32 lit_cell, p32 address_to dist, p32 dist_cell)
+{
+        for (positive i = 0; i < 2048; i++)
+                lit[i] = (i & 1) ? GZIP_CELL_EXCEPTIONAL : lit_cell;
+        for (positive i = 0; i < 256; i++)
+                dist[i] = (i & 1) ? GZIP_CELL_EXCEPTIONAL : dist_cell;
+}
+
 static fn floor_deflate(void)
 {
         p8 address_to input = floor_pages(3);
         p8 address_to output = floor_pages(11);
-        static p16 lit[2048], dist[256];
+        static p32 lit[GZIP_LITLEN_CELLS], dist[GZIP_OFFSET_CELLS];
+        static p8 before[2 * GZIP_SPAN_OUT];
         check("deflate guarded mappings", input && output);
         if (!input || !output) return;
-        memory_fill(input + 4096, 0, 4096);
-        for (positive i = 4096; i < 10 * 4096; i++) output[i] = (p8)(i * 13 + i / 29);
+        check("deflate span ABI", sizeof(gzip_decode_job) == 80 &&
+              __builtin_offsetof(gzip_decode_job, window) == 48 &&
+              __builtin_offsetof(gzip_decode_job, status) == 72);
+        p8 address_to stop = input + 2 * FLOOR_PAGE;
+        p8 address_to guard = output + 10 * FLOOR_PAGE;
+        memory_fill(input + FLOOR_PAGE, 0, FLOOR_PAGE);
+        for (positive i = FLOOR_PAGE; i < 10 * FLOOR_PAGE; i++) output[i] = (p8)(i * 13 + i / 29);
         for (positive l = 0; l < 29; l++)
                 for (positive d = 0; d < 30; d++)
                         for (positive residue = 0; residue < 8; residue++)
                         {
-                                for (positive i = 0; i < 2048; i++) lit[i] = (i & 1) ? 0 : (1 << 9) | (257 + l);
-                                for (positive i = 0; i < 256; i++) dist[i] = (i & 1) ? 0 : (1 << 9) | d;
-                                p8 address_to dst = output + 10 * 4096 - 258 - residue;
+                                floor_deflate_one_bit(lit, gzip_cell(1, 257 + l, 1), dist, gzip_cell(2, d, 1));
+                                p8 address_to dst = guard - GZIP_SPAN_OUT - residue;
+                                p8 address_to next = stop - GZIP_SPAN_IN - residue;
                                 p8 want[258];
                                 positive distance = gzip_dist_base[d], length = gzip_len_base[l];
+                                positive used = 2 + gzip_len_extra[l] + gzip_dist_extra[d];
                                 for (positive i = 0; i < length; i++)
-                                        want[i] = i < distance ? *(dst + i - distance) : want[i - distance];
-                                gzip_decode_job job = {0,0,input + 8192 - 8,input + 8192,
-                                        dst,dst + 258,distance,lit,dist,gzip_length_info,gzip_distance_info};
+                                        want[i] = i < distance ? dst[(bipolar)i - (bipolar)distance] : want[i - distance];
+                                gzip_decode_job job = {0, 0, next, stop, dst, guard, dst - distance, lit, dist, 5};
                                 deflate_decode_span(address_of job);
-                                check("deflate length/distance/alignment, exact input page end",
-                                      job.out == dst + length && !memory_compare(dst,want,length) &&
-                                      job.next <= job.limit && job.count < 64);
-                                job = (gzip_decode_job){0,0,input + 8192 - 8,input + 8192,
-                                        dst,dst + 258,distance - 1,lit,dist,gzip_length_info,gzip_distance_info};
+                                check("deflate length/distance/alignment at both guards, exact bit handoff",
+                                      job.status == 0 && job.out == dst + length &&
+                                      !memory_compare(dst, want, length) && job.next <= stop &&
+                                      job.count < 64 && !(job.bits >> job.count) &&
+                                      (positive)(job.next - next) * 8 - job.count == used);
+                                memory_copy_apart(before, dst, GZIP_SPAN_OUT + residue);
+                                job = (gzip_decode_job){0, 0, next, stop, dst, guard, dst - distance + 1, lit, dist, 0};
                                 deflate_decode_span(address_of job);
-                                check("deflate invalid distance leaves token and output untouched",
-                                      job.out == dst && job.count == 56 && job.bits == 0);
+                                check("deflate distance past the window stops before writing",
+                                      job.status == 4 && job.out == dst &&
+                                      !memory_compare(dst, before, GZIP_SPAN_OUT + residue));
                         }
-        for (positive n = 0; n < 8; n++)
+        p8 address_to dst = guard - GZIP_SPAN_OUT;
+        for (positive n = 0; n < GZIP_SPAN_IN; n++)
         {
-                p8 address_to dst = output + 10 * 4096 - 258;
-                gzip_decode_job job = {0,0,input + 8192 - n,input + 8192,
-                        dst,dst + 258,0,lit,dist,gzip_length_info,gzip_distance_info};
+                gzip_decode_job job = {0, 0, stop - n, stop, dst, guard, dst, lit, dist, 5};
                 deflate_decode_span(address_of job);
-                check("deflate short lookahead never crosses input guard", job.out == dst && job.next == input + 8192 - n);
+                check("deflate short lookahead consumes nothing and never crosses the input guard",
+                      job.status == 0 && job.out == dst && job.next == stop - n && job.count == 0);
         }
-        memory_free(input,3*4096);memory_free(output,11*4096);
+        for (positive n = 0; n < GZIP_SPAN_OUT; n++)
+        {
+                gzip_decode_job job = {0, 0, stop - 64, stop, guard - n, guard, dst, lit, dist, 5};
+                deflate_decode_span(address_of job);
+                check("deflate short output room writes nothing",
+                      job.status == 0 && job.out == guard - n && job.next == stop - 64 && job.count == 0);
+        }
+        floor_deflate_one_bit(lit, GZIP_CELL_EXCEPTIONAL, dist, gzip_cell(2, 0, 1));
+        gzip_decode_job bad = {0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, 0};
+        deflate_decode_span(address_of bad);
+        check("deflate unused literal/length code stops", bad.status == 2 && bad.out == dst);
+        floor_deflate_one_bit(lit, gzip_cell(1, 286, 1), dist, gzip_cell(2, 0, 1));
+        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, 0};
+        deflate_decode_span(address_of bad);
+        check("deflate length symbol 286 stops", bad.status == 2 && bad.out == dst);
+        floor_deflate_one_bit(lit, gzip_cell(1, 257, 1), dist, gzip_cell(2, 30, 1));
+        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst - 1, lit, dist, 0};
+        deflate_decode_span(address_of bad);
+        check("deflate distance symbol 30 stops", bad.status == 3 && bad.out == dst);
+        floor_deflate_one_bit(lit, gzip_cell(1, 256, 1), dist, gzip_cell(2, 0, 1));
+        bad = (gzip_decode_job){0, 0, stop - 64, stop, dst, guard, dst, lit, dist, 0};
+        deflate_decode_span(address_of bad);
+        check("deflate stop of block is consumed",
+              bad.status == 1 && bad.out == dst && (positive)(bad.next - (stop - 64)) * 8 - bad.count == 1);
+        for (positive residue = 0; residue < 8; residue++)
+        {
+                floor_deflate_one_bit(lit, gzip_cell(1, 0x5a, 1), dist, gzip_cell(2, 0, 1));
+                p8 address_to from = guard - GZIP_SPAN_OUT - residue - 4000;
+                gzip_decode_job run = {0, 0, input + FLOOR_PAGE, stop, from, guard, from, lit, dist, 0};
+                deflate_decode_span(address_of run);
+                bool same = run.status == 0 && run.out >= guard - 300 && run.out <= guard - 298 &&
+                            (positive)(run.next - (input + FLOOR_PAGE)) * 8 - run.count == (positive)(run.out - from);
+                for (p8 address_to at = from; same && at < run.out; at++)
+                        same = *at == 0x5a;
+                check("deflate literal runs stop within the output room", same);
+        }
+        memory_free(input, 3 * FLOOR_PAGE);
+        memory_free(output, 11 * FLOOR_PAGE);
+}
+
+/* Random tokens under skewed complete codes up to 15 bits, so subtables and
+   every extra-bit width appear; the kernel must stop on a token boundary
+   with exactly that token prefix written and exactly its bits consumed. */
+static fn floor_deflate_codes(void)
+{
+        static p32 freq[GZIP_MAXLIT + GZIP_MAXDIST];
+        static p8 lens[GZIP_MAXLIT + GZIP_MAXDIST];
+        static p32 revs[GZIP_MAXLIT + GZIP_MAXDIST];
+        static p32 lit[GZIP_LITLEN_CELLS], dist[GZIP_OFFSET_CELLS];
+        static p8 packed[24 * FLOOR_PAGE];
+        static p8 full[32768 + 24 * FLOOR_PAGE + 300];
+        static positive boundary_bits[24 * FLOOR_PAGE], boundary_out[24 * FLOOR_PAGE];
+        p8 address_to input = floor_pages(26);
+        p8 address_to output = floor_pages(30);
+        check("deflate code mappings", input && output);
+        if (!input || !output) return;
+        p8 address_to stop = input + 25 * FLOOR_PAGE;
+        p8 address_to guard = output + 29 * FLOOR_PAGE;
+        p32 random = 0x2545f491u;
+        for (positive trial = 0; trial < 16; trial++)
+        {
+                memory_fill(freq, 0, sizeof(freq));
+                p32 a = 1, b = 1;
+                for (positive i = 0; i < GZIP_MAXLIT + 30; i++) freq[i] = 1;
+                for (positive i = 0; i < 24; i++)
+                {
+                        freq[(i * 7 + trial * 13) % 256] += a;
+                        freq[GZIP_MAXLIT + (i + trial) % 30] += a;
+                        p32 next = a + b; a = b; b = next;
+                }
+                freq[256 + trial % 30] += 100000;
+                /* Stale subtable pointers from an earlier table must not survive. */
+                for (positive i = 0; i < GZIP_LITLEN_CELLS; i++)
+                        lit[i] = GZIP_CELL_EXCEPTIONAL | GZIP_CELL_SUBTABLE | (p32)((i * 37) % 4000) << 16 | 0x0400;
+                for (positive i = 0; i < GZIP_OFFSET_CELLS; i++)
+                        dist[i] = GZIP_CELL_EXCEPTIONAL | GZIP_CELL_SUBTABLE | (p32)((i * 29) % 3000) << 16 | 0x0700;
+                bool built = compression_build_lengths(freq, GZIP_MAXLIT, lens, 15) &&
+                             compression_build_lengths(freq + GZIP_MAXLIT, 30, lens + GZIP_MAXLIT, 15);
+                lens[GZIP_MAXLIT + 30] = lens[GZIP_MAXLIT + 31] = 0;
+                built = built && gzip_huffman_cells(lit, lens, GZIP_MAXLIT, GZIP_LITLEN_ROOT, 1) == 0 &&
+                        gzip_huffman_cells(dist, lens + GZIP_MAXLIT, 30, GZIP_OFFSET_ROOT, 2) == 0;
+                positive deepest = 0;
+                for (positive i = 0; i < GZIP_MAXLIT + 30; i++) deepest = lens[i] > deepest ? lens[i] : deepest;
+                check("deflate differential codes build with subtables", built && deepest > GZIP_LITLEN_ROOT);
+                if (!built) break;
+                for (positive part = 0; part < 2; part++)
+                {
+                        p8 address_to l = lens + (part ? GZIP_MAXLIT : 0);
+                        positive n = part ? 30 : GZIP_MAXLIT;
+                        p32 rev = 0;
+                        for (positive len = 1; len <= GZIP_MAXBITS; len++)
+                                for (positive s = 0; s < n; s++)
+                                        if (l[s] == len)
+                                        {
+                                                revs[(part ? GZIP_MAXLIT : 0) + s] = rev;
+                                                rev = gzip_revnext(rev, len);
+                                        }
+                }
+                positive room = 3 * FLOOR_PAGE + trial * 3701;
+                positive target = (trial & 1) ? room + 20000 : room / 2;
+                p8 address_to dst = guard - room;
+                for (positive i = 0; i < 32768; i++) full[i] = (p8)(i * 7 + (i >> 9) + trial);
+                memory_copy_apart(dst - 32768, full, 32768);
+                p64 acc = 0;
+                positive held = 0, bytes = 0, bits = 0, made = 0, tokens = 0;
+                while (made < target && bytes + 8 < sizeof(packed))
+                {
+                        random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+                        positive mode = (trial >> 1) % 4;
+                        bool literal = mode == 0 ? (random & 7) != 0 : mode == 1 ? (random & 7) == 0 : (random & 1);
+                        if (literal)
+                        {
+                                positive s = (random >> 8) & 255;
+                                acc |= (p64)revs[s] << held; held += lens[s]; bits += lens[s];
+                                full[32768 + made++] = (p8)s;
+                        }
+                        else
+                        {
+                                positive ls = (random >> 8) % 29, ds = (random >> 16) % 30;
+                                if (mode == 3) ds %= 4;
+                                random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+                                positive le = random & ((1u << gzip_len_extra[ls]) - 1);
+                                positive de = (random >> 8) & ((1u << gzip_dist_extra[ds]) - 1);
+                                positive length = gzip_len_base[ls] + le, distance = gzip_dist_base[ds] + de;
+                                acc |= (p64)revs[257 + ls] << held; held += lens[257 + ls];
+                                acc |= (p64)le << held; held += gzip_len_extra[ls];
+                                while (held >= 8) { packed[bytes++] = (p8)acc; acc >>= 8; held -= 8; }
+                                acc |= (p64)revs[GZIP_MAXLIT + ds] << held; held += lens[GZIP_MAXLIT + ds];
+                                acc |= (p64)de << held; held += gzip_dist_extra[ds];
+                                bits += lens[257 + ls] + gzip_len_extra[ls] + lens[GZIP_MAXLIT + ds] + gzip_dist_extra[ds];
+                                for (positive i = 0; i < length; i++, made++)
+                                        full[32768 + made] = full[32768 + made - distance];
+                        }
+                        while (held >= 8) { packed[bytes++] = (p8)acc; acc >>= 8; held -= 8; }
+                        boundary_bits[tokens] = bits;
+                        boundary_out[tokens++] = made;
+                }
+                if (held) packed[bytes++] = (p8)acc;
+                p8 address_to next = stop - bytes;
+                memory_copy_apart(next, packed, bytes);
+                gzip_decode_job job = {0, 0, next, stop, dst, guard, dst - 32768, lit, dist, 0};
+                deflate_decode_span(address_of job);
+                positive out = (positive)(job.out - dst);
+                positive consumed = (positive)(job.next - next) * 8 - job.count;
+                positive k = 0;
+                while (k < tokens && boundary_out[k] < out) k++;
+                bool same = job.status == 0 && k < tokens && boundary_out[k] == out &&
+                            boundary_bits[k] == consumed && !memory_compare(dst, full + 32768, out) &&
+                            ((trial & 1) ? out + 300 >= room : stop - job.next <= 32);
+                check("deflate kernel stops on a token boundary with exactly its bytes and bits", same);
+#ifndef FLOOR_NATIVE
+                /* The scalar decoder over the same cells, token by token. */
+                gzip_inflater address_to z = gzip_inflater_new();
+                check("deflate scalar decoder maps", z != null);
+                if (!z) break;
+                memory_copy_apart(z->litlen, lit, sizeof(lit));
+                memory_copy_apart(z->offset, dist, sizeof(dist));
+                byte_input_open_memory(address_of z->input, packed, bytes, z->input.buf, GZIP_DECODE_IN);
+                memory_copy_apart(z->out - 32768, full, 32768);
+                z->flushed = 32768;
+                bool scalar = true;
+                for (positive i = 0; scalar && i < tokens; i++)
+                        scalar = gzip_inflate_token(z) == 0 && z->fill == boundary_out[i] &&
+                                 z->input.at * 8 - z->count == boundary_bits[i];
+                check("deflate scalar decoder agrees token by token, bytes and bits",
+                      scalar && !z->why && !memory_compare(z->out, full + 32768, made));
+                memory_free(z, GZIP_INFLATER_SIZE);
+#endif
+        }
+        memory_free(input, 26 * FLOOR_PAGE);
+        memory_free(output, 30 * FLOOR_PAGE);
 }
 
 #ifndef FLOOR_PAGE
@@ -72542,6 +72732,7 @@ b32 main(void)
         floor_range();
         floor_huffman();
         floor_deflate();
+        floor_deflate_codes();
         return test_report(null);
 }
 #endif

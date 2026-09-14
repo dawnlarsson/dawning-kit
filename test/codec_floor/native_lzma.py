@@ -102,9 +102,11 @@ def lift(start, end):
 head+=lift('#define memory_load_unaligned(type, source)', '#define memory_cast(type, value)')
 head+=lift('typedef struct\n{\n        p8 address_to bytes;\n        positive room;\n        positive used;\n} byte_store;', '/* Stable storage owns')
 head+=lift('typedef struct\n{\n        bipolar fd;', '/* Read no more than maximum bytes')
-for name,source in [('gzip_len_base',gz),('gzip_dist_base',gz)]:
- head+=re.search(r'static const p16 '+name+r'\[.*?};',source,re.S).group(0)+'\n'
-a=gz.index('static const p32 gzip_length_info');b=gz.index('} gzip_decode_job;',a)+len('} gzip_decode_job;');head+=gz[a:b]+'\n'
+head+=gz[gz.index('#define GZIP_MAGIC0'):gz.index('static const p8 gzip_len_extra')]
+for name in ('gzip_len_extra','gzip_len_base','gzip_dist_extra','gzip_dist_base'):
+ head+=re.search(r'static const p(?:8|16) '+name+r'\[.*?};',gz,re.S).group(0)+'\n'
+head+=re.search(r'static bipolar gzip_code_space\(.*?\n}\n',gz,re.S).group(0)
+a=gz.index('#define GZIP_CELL_LITERAL');b=gz.index('/* End of the span kernel contract. */',a);head+=gz[a:b]+'\n'
 head+='#define XZ_CORE_ONLY\n'+xz+'\n'
 a=lib.index('#define ASM_CRC_BASIS(bit)');b=lib.index('__asm__(',a);head+=lib[a:b]
 for name in ('hash_crc32_tab','hash_crc64_tab'):
