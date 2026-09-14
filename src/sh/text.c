@@ -3625,9 +3625,8 @@ static const argument_option wc_options[] = {
         The name is the file the counts came from, "total" for the last row,
         or nothing at all when the counts came from standard input.
 
-        -m and -c are two columns holding the same number: this file counts
-        bytes for both, so a character is a byte here and the two flags
-        differ only in whether their column appears.
+        -m and -c are two columns: the same number in a single-byte locale,
+        and in a UTF-8 one -m counts the characters instead.
 */
 static bool wc_want_lines;
 static bool wc_want_words;
@@ -3650,10 +3649,10 @@ static const string_address wc_totals[4] = {
     (string_address) "auto", (string_address) "always",
     (string_address) "only", (string_address) "never"};
 
-static fn wc_row(positive lines, positive words, positive bytes,
+static fn wc_row(positive lines, positive words, positive chars, positive bytes,
                  positive longest, positive width, string_address name)
 {
-        positive counted[5] = {lines, words, bytes, bytes, longest};
+        positive counted[5] = {lines, words, chars, bytes, longest};
         bool wanted[5] = {wc_want_lines, wc_want_words, wc_want_chars,
                           wc_want_bytes, wc_want_longest};
         bool leading = true;
@@ -3677,6 +3676,645 @@ static fn wc_row(positive lines, positive words, positive bytes,
         }
 
         text_put_character('\n');
+}
+
+/*
+        The display width of every code point past ASCII that is not one
+        column wide, as wc -L measures it in a UTF-8 locale: glibc's wcwidth
+        for a printable character and nought for anything iswprint refuses,
+        unassigned code points included. Generated from glibc 2.44 on the
+        reference machine; each row packs first << 32 | last << 2 | width,
+        sorted, so a binary search on the first code point finds a row.
+*/
+#define WC_WIDTH_ROWS 1044
+static const p64 wc_width_rows[WC_WIDTH_ROWS] = {
+    0x800000027c, 0x30000000dbc, 0x37800000de4, 0x38000000e0c, 0x38b00000e2c,
+    0x38d00000e34, 0x3a200000e88, 0x48300001224, 0x530000014c0, 0x55700001560,
+    0x58b00001630, 0x590000016f4, 0x5bf000016fc, 0x5c100001708, 0x5c400001714,
+    0x5c70000173c, 0x5eb000017b8, 0x5f5000017fc, 0x61000001868, 0x61c00001870,
+    0x64b0000197c, 0x670000019c0, 0x6d600001b70, 0x6df00001b90, 0x6e700001ba0,
+    0x6ea00001bb4, 0x70e00001c38, 0x71100001c44, 0x73000001d30, 0x7a600001ec0,
+    0x7b200001efc, 0x7eb00001fcc, 0x7fb00001ff4, 0x81600002064, 0x81b0000208c,
+    0x8250000209c, 0x829000020bc, 0x83f000020fc, 0x85900002174, 0x85f0000217c,
+    0x86b000021bc, 0x8920000227c, 0x8ca00002384, 0x8e300002408, 0x93a000024e8,
+    0x93c000024f0, 0x94100002520, 0x94d00002534, 0x9510000255c, 0x9620000258c,
+    0x98100002604, 0x98400002610, 0x98d00002638, 0x99100002648, 0x9a9000026a4,
+    0x9b1000026c4, 0x9b3000026d4, 0x9ba000026f0, 0x9c100002718, 0x9c900002728,
+    0x9cd00002734, 0x9cf00002758, 0x9d80000276c, 0x9de00002778, 0x9e200002794,
+    0x9fe00002808, 0xa0400002810, 0xa0b00002838, 0xa1100002848, 0xa29000028a4,
+    0xa31000028c4, 0xa34000028d0, 0xa37000028dc, 0xa3a000028f4, 0xa4100002960,
+    0xa5d00002974, 0xa5f00002994, 0xa70000029c4, 0xa75000029d4, 0xa7700002a08,
+    0xa8400002a10, 0xa8e00002a38, 0xa9200002a48, 0xaa900002aa4, 0xab100002ac4,
+    0xab400002ad0, 0xaba00002af0, 0xac100002b20, 0xaca00002b28, 0xacd00002b3c,
+    0xad100002b7c, 0xae200002b94, 0xaf200002be0, 0xafa00002c04, 0xb0400002c10,
+    0xb0d00002c38, 0xb1100002c48, 0xb2900002ca4, 0xb3100002cc4, 0xb3400002cd0,
+    0xb3a00002cf0, 0xb3f00002cfc, 0xb4100002d18, 0xb4900002d28, 0xb4d00002d58,
+    0xb5800002d6c, 0xb5e00002d78, 0xb6200002d94, 0xb7800002e08, 0xb8400002e10,
+    0xb8b00002e34, 0xb9100002e44, 0xb9600002e60, 0xb9b00002e6c, 0xb9d00002e74,
+    0xba000002e88, 0xba500002e9c, 0xbab00002eb4, 0xbba00002ef4, 0xbc000002f00,
+    0xbc300002f14, 0xbc900002f24, 0xbcd00002f3c, 0xbd100002f58, 0xbd800002f94,
+    0xbfb00003000, 0xc0400003010, 0xc0d00003034, 0xc1100003044, 0xc29000030a4,
+    0xc3a000030f0, 0xc3e00003100, 0xc450000315c, 0xc5b0000316c, 0xc5e0000317c,
+    0xc6200003194, 0xc70000031d8, 0xc8100003204, 0xc8d00003234, 0xc9100003244,
+    0xca9000032a4, 0xcb4000032d0, 0xcba000032f0, 0xcbf000032fc, 0xcc500003318,
+    0xcc900003324, 0xccc00003350, 0xcd70000336c, 0xcdf0000337c, 0xce200003394,
+    0xcf0000033c0, 0xcf400003404, 0xd0d00003434, 0xd1100003444, 0xd3b000034f0,
+    0xd4100003514, 0xd4900003524, 0xd4d00003534, 0xd500000354c, 0xd6200003594,
+    0xd8000003604, 0xd8400003610, 0xd9700003664, 0xdb2000036c8, 0xdbc000036f0,
+    0xdbe000036fc, 0xdc700003738, 0xdd20000375c, 0xde000003794, 0xdf0000037c4,
+    0xdf500003800, 0xe31000038c4, 0xe34000038f8, 0xe4700003938, 0xe5c00003a00,
+    0xe8300003a0c, 0xe8500003a14, 0xe8b00003a2c, 0xea400003a90, 0xea600003a98,
+    0xeb100003ac4, 0xeb400003af0, 0xebe00003afc, 0xec500003b14, 0xec700003b3c,
+    0xeda00003b6c, 0xee000003bfc, 0xf1800003c64, 0xf3500003cd4, 0xf3700003cdc,
+    0xf3900003ce4, 0xf4800003d20, 0xf6d00003df8, 0xf8000003e10, 0xf8600003e1c,
+    0xf8d00003ef4, 0xfc600003f18, 0xfcd00003f34, 0xfdb00003ffc, 0x102d000040c0,
+    0x1032000040dc, 0x1039000040e8, 0x103d000040f8, 0x105800004164, 0x105e00004180,
+    0x1071000041d0, 0x108200004208, 0x108500004218, 0x108d00004234, 0x109d00004274,
+    0x10c600004318, 0x10c800004330, 0x10ce0000433c, 0x11000000457e, 0x1160000047fc,
+    0x124900004924, 0x124e0000493c, 0x12570000495c, 0x125900004964, 0x125e0000497c,
+    0x128900004a24, 0x128e00004a3c, 0x12b100004ac4, 0x12b600004adc, 0x12bf00004afc,
+    0x12c100004b04, 0x12c600004b1c, 0x12d700004b5c, 0x131100004c44, 0x131600004c5c,
+    0x135b00004d7c, 0x137d00004dfc, 0x139a00004e7c, 0x13f600004fdc, 0x13fe00004ffc,
+    0x169d00005a7c, 0x16f900005bfc, 0x171200005c50, 0x171600005c78, 0x173200005ccc,
+    0x173700005cfc, 0x175200005d7c, 0x176d00005db4, 0x177100005dfc, 0x17b400005ed4,
+    0x17b700005ef4, 0x17c600005f18, 0x17c900005f4c, 0x17dd00005f7c, 0x17ea00005fbc,
+    0x17fa00005ffc, 0x180b0000603c, 0x181a0000607c, 0x1879000061fc, 0x188500006218,
+    0x18a9000062a4, 0x18ab000062bc, 0x18f6000063fc, 0x191f00006488, 0x1927000064a0,
+    0x192c000064bc, 0x1932000064c8, 0x1939000064fc, 0x19410000650c, 0x196e000065bc,
+    0x1975000065fc, 0x19ac000066bc, 0x19ca0000673c, 0x19db00006774, 0x1a1700006860,
+    0x1a1b00006874, 0x1a5600006958, 0x1a5800006980, 0x1a6200006988, 0x1a65000069b0,
+    0x1a73000069fc, 0x1a8a00006a3c, 0x1a9a00006a7c, 0x1aae00006c0c, 0x1b3400006cd0,
+    0x1b3600006ce8, 0x1b3c00006cf0, 0x1b4200006d08, 0x1b4d00006d34, 0x1b6b00006dcc,
+    0x1b8000006e04, 0x1ba200006e94, 0x1ba800006ea4, 0x1bab00006eb4, 0x1be600006f98,
+    0x1be800006fa4, 0x1bed00006fb4, 0x1bef00006fc4, 0x1bf400006fec, 0x1c2c000070cc,
+    0x1c36000070e8, 0x1c4a00007130, 0x1c8b0000723c, 0x1cbb000072f0, 0x1cc800007348,
+    0x1cd400007380, 0x1ce2000073a0, 0x1ced000073b4, 0x1cf4000073d0, 0x1cf8000073e4,
+    0x1cfb000073fc, 0x1dc0000077fc, 0x1f1600007c5c, 0x1f1e00007c7c, 0x1f4600007d1c,
+    0x1f4e00007d3c, 0x1f5800007d60, 0x1f5a00007d68, 0x1f5c00007d70, 0x1f5e00007d78,
+    0x1f7e00007dfc, 0x1fb500007ed4, 0x1fc500007f14, 0x1fd400007f54, 0x1fdc00007f70,
+    0x1ff000007fc4, 0x1ff500007fd4, 0x1fff00007ffc, 0x200b0000803c, 0x2028000080b8,
+    0x2060000081bc, 0x2072000081cc, 0x208f0000823c, 0x209d0000827c, 0x20c2000083fc,
+    0x218c0000863c, 0x231a00008c6e, 0x232900008caa, 0x23e900008fb2, 0x23f000008fc2,
+    0x23f300008fce, 0x242a000090fc, 0x244b0000917c, 0x25fd000097fa, 0x261400009856,
+    0x2630000098de, 0x26480000994e, 0x267f000099fe, 0x268a00009a3e, 0x269300009a4e,
+    0x26a100009a86, 0x26aa00009aae, 0x26bd00009afa, 0x26c400009b16, 0x26ce00009b3a,
+    0x26d400009b52, 0x26ea00009baa, 0x26f200009bce, 0x26f500009bd6, 0x26fa00009bea,
+    0x26fd00009bf6, 0x270500009c16, 0x270a00009c2e, 0x272800009ca2, 0x274c00009d32,
+    0x274e00009d3a, 0x275300009d56, 0x275700009d5e, 0x279500009e5e, 0x27b000009ec2,
+    0x27bf00009efe, 0x2b1b0000ac72, 0x2b500000ad42, 0x2b550000ad56, 0x2b740000add4,
+    0x2cef0000b3c4, 0x2cf40000b3e0, 0x2d260000b498, 0x2d280000b4b0, 0x2d2e0000b4bc,
+    0x2d680000b5b8, 0x2d710000b5fc, 0x2d970000b67c, 0x2da70000b69c, 0x2daf0000b6bc,
+    0x2db70000b6dc, 0x2dbf0000b6fc, 0x2dc70000b71c, 0x2dcf0000b73c, 0x2dd70000b75c,
+    0x2ddf0000b7fc, 0x2e5e0000b9fc, 0x2e800000ba66, 0x2e9a0000ba68, 0x2e9b0000bbce,
+    0x2ef40000bbfc, 0x2f000000bf56, 0x2fd60000bfbc, 0x2ff00000c0a6, 0x302a0000c0b4,
+    0x302e0000c0fa, 0x30400000c100, 0x30410000c25a, 0x30970000c268, 0x309b0000c3fe,
+    0x31000000c410, 0x31050000c4be, 0x31300000c4c0, 0x31310000c58e, 0x31640000c590,
+    0x31650000c63a, 0x318f0000c63c, 0x31900000c796, 0x31e60000c7b8, 0x31ef0000c87a,
+    0x321f0000c87c, 0x322000029232, 0xa48d0002923c, 0xa4900002931a, 0xa4c70002933c,
+    0xa62c000298fc, 0xa66f000299c8, 0xa674000299f4, 0xa69e00029a7c, 0xa6f000029bc4,
+    0xa6f800029bfc, 0xa7dd00029fc0, 0xa8020002a008, 0xa8060002a018, 0xa80b0002a02c,
+    0xa8250002a098, 0xa82c0002a0bc, 0xa83a0002a0fc, 0xa8780002a1fc, 0xa8c40002a334,
+    0xa8da0002a3c4, 0xa8ff0002a3fc, 0xa9260002a4b4, 0xa9470002a544, 0xa9540002a578,
+    0xa9600002a5f2, 0xa97d0002a608, 0xa9b30002a6cc, 0xa9b60002a6e4, 0xa9bc0002a6f4,
+    0xa9ce0002a738, 0xa9da0002a774, 0xa9e50002a794, 0xa9ff0002a7fc, 0xaa290002a8b8,
+    0xaa310002a8c8, 0xaa350002a8fc, 0xaa430002a90c, 0xaa4c0002a930, 0xaa4e0002a93c,
+    0xaa5a0002a96c, 0xaa7c0002a9f0, 0xaab00002aac0, 0xaab20002aad0, 0xaab70002aae0,
+    0xaabe0002aafc, 0xaac10002ab04, 0xaac30002ab68, 0xaaec0002abb4, 0xaaf60002ac00,
+    0xab070002ac20, 0xab0f0002ac40, 0xab170002ac7c, 0xab270002ac9c, 0xab2f0002acbc,
+    0xab6c0002adbc, 0xabe50002af94, 0xabe80002afa0, 0xabed0002afbc, 0xabfa0002affc,
+    0xac0000035e8e, 0xd7a400035ffc, 0xf9000003e9b6, 0xfa6e0003e9bc, 0xfa700003eb66,
+    0xfada0003ebfc, 0xfb070003ec48, 0xfb180003ec70, 0xfb1e0003ec78, 0xfb370003ecdc,
+    0xfb3d0003ecf4, 0xfb3f0003ecfc, 0xfb420003ed08, 0xfb450003ed14, 0xfdd00003f7bc,
+    0xfe000003f83c, 0xfe100003f866, 0xfe1a0003f8bc, 0xfe300003f94a, 0xfe530003f94c,
+    0xfe540003f99a, 0xfe670003f99c, 0xfe680003f9ae, 0xfe6c0003f9bc, 0xfe750003f9d4,
+    0xfefd0003fc00, 0xff010003fd82, 0xffa00003fe80, 0xffbf0003ff04, 0xffc80003ff24,
+    0xffd00003ff44, 0xffd80003ff64, 0xffdd0003ff7c, 0xffe00003ff9a, 0xffe70003ff9c,
+    0xffef0003ffe0, 0xfffe0003fffc, 0x1000c00040030, 0x100270004009c, 0x1003b000400ec,
+    0x1003e000400f8, 0x1004e0004013c, 0x1005e000401fc, 0x100fb000403fc, 0x1010300040418,
+    0x10134000404d8, 0x1018f0004063c, 0x1019d0004067c, 0x101a10004073c, 0x101fd000409fc,
+    0x1029d00040a7c, 0x102d100040b80, 0x102fc00040bfc, 0x1032400040cb0, 0x1034b00040d3c,
+    0x1037600040dfc, 0x1039e00040e78, 0x103c400040f1c, 0x103d600040ffc, 0x1049e0004127c,
+    0x104aa000412bc, 0x104d40004135c, 0x104fc000413fc, 0x10528000414bc, 0x10564000415b8,
+    0x1057b000415ec, 0x1058b0004162c, 0x105930004164c, 0x1059600041658, 0x105a200041688,
+    0x105b2000416c8, 0x105ba000416e8, 0x105bd000416fc, 0x105f4000417fc, 0x1073700041cfc,
+    0x1075600041d7c, 0x1076800041dfc, 0x1078600041e18, 0x107b100041ec4, 0x107bb00041ffc,
+    0x108060004201c, 0x1080900042024, 0x10836000420d8, 0x10839000420ec, 0x1083d000420f8,
+    0x1085600042158, 0x1089f00042298, 0x108b00004237c, 0x108f3000423cc, 0x108f6000423e8,
+    0x1091c00042478, 0x1093a000424f8, 0x1095a000425fc, 0x109b8000426ec, 0x109d000042744,
+    0x10a010004283c, 0x10a1400042850, 0x10a1800042860, 0x10a36000428fc, 0x10a490004293c,
+    0x10a590004297c, 0x10aa000042afc, 0x10ae500042ba8, 0x10af700042bfc, 0x10b3600042ce0,
+    0x10b5600042d5c, 0x10b7300042ddc, 0x10b9200042e60, 0x10b9d00042ea0, 0x10bb000042ffc,
+    0x10c49000431fc, 0x10cb3000432fc, 0x10cf3000433e4, 0x10d24000434bc, 0x10d3a000434fc,
+    0x10d66000435b4, 0x10d8600043634, 0x10d900004397c, 0x10e7f000439fc, 0x10eaa00043ab0,
+    0x10eae00043abc, 0x10eb200043b04, 0x10ec800043b3c, 0x10ed900043bfc, 0x10f2800043cbc,
+    0x10f4600043d40, 0x10f5a00043dbc, 0x10f8200043e14, 0x10f8a00043ebc, 0x10fcc00043f7c,
+    0x10ff700043ffc, 0x1100100044004, 0x1103800044118, 0x1104e00044144, 0x11070000441c0,
+    0x11073000441d0, 0x1107600044204, 0x110b3000442d8, 0x110b9000442e8, 0x110c200044330,
+    0x110ce0004433c, 0x110e9000443bc, 0x110fa00044408, 0x11127000444ac, 0x1112d000444d4,
+    0x111480004453c, 0x11173000445cc, 0x1117700044604, 0x111b6000446f8, 0x111c900044730,
+    0x111cf0004473c, 0x111e000044780, 0x111f5000447fc, 0x1121200044848, 0x1122f000448c4,
+    0x11234000448d0, 0x11236000448dc, 0x1123e000448f8, 0x11241000449fc, 0x1128700044a1c,
+    0x1128900044a24, 0x1128e00044a38, 0x1129e00044a78, 0x112aa00044abc, 0x112df00044b7c,
+    0x112e300044bbc, 0x112fa00044c04, 0x1130400044c10, 0x1130d00044c38, 0x1131100044c48,
+    0x1132900044ca4, 0x1133100044cc4, 0x1133400044cd0, 0x1133a00044cf0, 0x1134000044d00,
+    0x1134500044d18, 0x1134900044d28, 0x1134e00044d3c, 0x1135100044d58, 0x1135800044d70,
+    0x1136400044dfc, 0x1138a00044e28, 0x1138c00044e34, 0x1138f00044e3c, 0x113b600044ed8,
+    0x113bb00044f04, 0x113c300044f10, 0x113c600044f18, 0x113cb00044f2c, 0x113ce00044f38,
+    0x113d000044f40, 0x113d200044f48, 0x113d600044f58, 0x113d900044ffc, 0x11438000450fc,
+    0x1144200045110, 0x1144600045118, 0x1145c00045170, 0x1145e00045178, 0x11462000451fc,
+    0x114b3000452e0, 0x114ba000452e8, 0x114bf00045300, 0x114c20004530c, 0x114c80004533c,
+    0x114da000455fc, 0x115b2000456dc, 0x115bc000456f4, 0x115bf00045700, 0x115dc000457fc,
+    0x11633000458e8, 0x1163d000458f4, 0x1163f00045900, 0x116450004593c, 0x1165a0004597c,
+    0x1166d000459fc, 0x116ab00045aac, 0x116ad00045ab4, 0x116b000045ad4, 0x116b700045adc,
+    0x116ba00045afc, 0x116ca00045b3c, 0x116e400045bfc, 0x1171b00045c74, 0x1171f00045c7c,
+    0x1172200045c94, 0x1172700045cbc, 0x1174700045ffc, 0x1182f000460dc, 0x11839000460e8,
+    0x1183c0004627c, 0x118f3000463f8, 0x1190700046420, 0x1190a0004642c, 0x1191400046450,
+    0x119170004645c, 0x11936000464d8, 0x11939000464f0, 0x1193e000464f8, 0x119430004650c,
+    0x119470004653c, 0x1195a0004667c, 0x119a8000466a4, 0x119d40004676c, 0x119e000046780,
+    0x119e5000467fc, 0x11a0100046828, 0x11a33000468e0, 0x11a3b000468f8, 0x11a470004693c,
+    0x11a5100046958, 0x11a590004696c, 0x11a8a00046a58, 0x11a9800046a64, 0x11aa300046abc,
+    0x11af900046bfc, 0x11b0a00046d80, 0x11b6200046d90, 0x11b6600046d98, 0x11b6800046efc,
+    0x11be200046fbc, 0x11bfa00046ffc, 0x11c0900047024, 0x11c30000470f4, 0x11c3f000470fc,
+    0x11c460004713c, 0x11c6d000471bc, 0x11c90000472a0, 0x11caa000472c0, 0x11cb2000472cc,
+    0x11cb5000473fc, 0x11d070004741c, 0x11d0a00047428, 0x11d3100047514, 0x11d470004753c,
+    0x11d5a0004757c, 0x11d6600047598, 0x11d69000475a4, 0x11d8f00047648, 0x11d9500047654,
+    0x11d970004765c, 0x11d990004767c, 0x11daa000476bc, 0x11ddc0004777c, 0x11dea00047b7c,
+    0x11ef300047bd0, 0x11ef900047c04, 0x11f1100047c44, 0x11f3600047cf4, 0x11f4000047d00,
+    0x11f4200047d08, 0x11f5a00047ebc, 0x11fb100047efc, 0x11ff200047ff8, 0x1239a00048ffc,
+    0x1246f000491bc, 0x12475000491fc, 0x125440004be3c, 0x12ff30004bffc, 0x134400004d100,
+    0x134470004d17c, 0x143fb00050ffc, 0x14647000583fc, 0x1611e000584a4, 0x1612d000584bc,
+    0x1613a00059ffc, 0x16a390005a8fc, 0x16a5f0005a97c, 0x16a6a0005a9b4, 0x16abf0005aafc,
+    0x16aca0005ab3c, 0x16aee0005abd0, 0x16af60005abfc, 0x16b300005acd8, 0x16b460005ad3c,
+    0x16b5a0005ad68, 0x16b620005ad88, 0x16b780005adf0, 0x16b900005b4fc, 0x16d7a0005b8fc,
+    0x16e9b0005ba7c, 0x16eb90005bae8, 0x16ed40005bbfc, 0x16f4b0005bd3c, 0x16f880005be48,
+    0x16fa00005bf7c, 0x16fe00005bf8e, 0x16fe40005bfbc, 0x16ff00005bfda, 0x16ff70005bffc,
+    0x1700000063356, 0x18cd6000633f8, 0x18cff0006347a, 0x18d1f000635fc, 0x18d80000637ca,
+    0x18df30006bfbc, 0x1aff00006bfce, 0x1aff40006bfd0, 0x1aff50006bfee, 0x1affc0006bff0,
+    0x1affd0006bffa, 0x1afff0006bffc, 0x1b0000006c48a, 0x1b1230006c4c4, 0x1b1320006c4ca,
+    0x1b1330006c53c, 0x1b1500006c54a, 0x1b1530006c550, 0x1b1550006c556, 0x1b1560006c58c,
+    0x1b1640006c59e, 0x1b1680006c5bc, 0x1b1700006cbee, 0x1b2fc0006effc, 0x1bc6b0006f1bc,
+    0x1bc7d0006f1fc, 0x1bc890006f23c, 0x1bc9a0006f26c, 0x1bc9d0006f278, 0x1bca000072ffc,
+    0x1ccfd000733fc, 0x1ceb400073ae4, 0x1ced100073b7c, 0x1cef100073d3c, 0x1cfc400073ffc,
+    0x1d0f6000743fc, 0x1d127000744a0, 0x1d167000745a4, 0x1d17300074608, 0x1d1850007462c,
+    0x1d1aa000746b4, 0x1d1eb000747fc, 0x1d24200074910, 0x1d24600074afc, 0x1d2d400074b7c,
+    0x1d2f400074bfc, 0x1d30000074d5a, 0x1d35700074d7c, 0x1d36000074dda, 0x1d37900074ffc,
+    0x1d45500075154, 0x1d49d00075274, 0x1d4a000075284, 0x1d4a300075290, 0x1d4a7000752a0,
+    0x1d4ad000752b4, 0x1d4ba000752e8, 0x1d4bc000752f0, 0x1d4c400075310, 0x1d50600075418,
+    0x1d50b00075430, 0x1d51500075454, 0x1d51d00075474, 0x1d53a000754e8, 0x1d53f000754fc,
+    0x1d54500075514, 0x1d54700075524, 0x1d55100075544, 0x1d6a600075a9c, 0x1d7cc00075f34,
+    0x1da00000768d8, 0x1da3b000769b0, 0x1da75000769d4, 0x1da8400076a10, 0x1da8c00077bfc,
+    0x1df1f00077c90, 0x1df2b000780bc, 0x1e06e000783fc, 0x1e12d000784d8, 0x1e13e000784fc,
+    0x1e14a00078534, 0x1e15000078a3c, 0x1e2ae00078afc, 0x1e2ec00078bbc, 0x1e2fa00078bf8,
+    0x1e3000007933c, 0x1e4ec000793bc, 0x1e4fa0007973c, 0x1e5ee000797bc, 0x1e5fb000797f8,
+    0x1e60000079afc, 0x1e6df00079b7c, 0x1e6e300079b8c, 0x1e6e600079b98, 0x1e6ee00079bbc,
+    0x1e6f500079bf4, 0x1e70000079f7c, 0x1e7e700079f9c, 0x1e7ec00079fb0, 0x1e7ef00079fbc,
+    0x1e7ff00079ffc, 0x1e8c50007a318, 0x1e8d00007a3fc, 0x1e9440007a528, 0x1e94c0007a53c,
+    0x1e95a0007a574, 0x1e9600007b1c0, 0x1ecb50007b400, 0x1ed3e0007b7fc, 0x1ee040007b810,
+    0x1ee200007b880, 0x1ee230007b88c, 0x1ee250007b898, 0x1ee280007b8a0, 0x1ee330007b8cc,
+    0x1ee380007b8e0, 0x1ee3a0007b8e8, 0x1ee3c0007b904, 0x1ee430007b918, 0x1ee480007b920,
+    0x1ee4a0007b928, 0x1ee4c0007b930, 0x1ee500007b940, 0x1ee530007b94c, 0x1ee550007b958,
+    0x1ee580007b960, 0x1ee5a0007b968, 0x1ee5c0007b970, 0x1ee5e0007b978, 0x1ee600007b980,
+    0x1ee630007b98c, 0x1ee650007b998, 0x1ee6b0007b9ac, 0x1ee730007b9cc, 0x1ee780007b9e0,
+    0x1ee7d0007b9f4, 0x1ee7f0007b9fc, 0x1ee8a0007ba28, 0x1ee9c0007ba80, 0x1eea40007ba90,
+    0x1eeaa0007baa8, 0x1eebc0007bbbc, 0x1eef20007bffc, 0x1f0040007c012, 0x1f02c0007c0bc,
+    0x1f0940007c27c, 0x1f0af0007c2c0, 0x1f0c00007c300, 0x1f0cf0007c33e, 0x1f0d00007c340,
+    0x1f0f60007c3fc, 0x1f18e0007c63a, 0x1f1910007c66a, 0x1f1ae0007c794, 0x1f2000007c80a,
+    0x1f2030007c83c, 0x1f2100007c8ee, 0x1f23c0007c8fc, 0x1f2400007c922, 0x1f2490007c93c,
+    0x1f2500007c946, 0x1f2520007c97c, 0x1f2600007c996, 0x1f2660007cbfc, 0x1f3000007cc82,
+    0x1f32d0007ccd6, 0x1f3370007cdf2, 0x1f37e0007ce4e, 0x1f3a00007cf2a, 0x1f3cf0007cf4e,
+    0x1f3e00007cfc2, 0x1f3f40007cfd2, 0x1f3f80007d0fa, 0x1f4400007d102, 0x1f4420007d3f2,
+    0x1f4ff0007d4f6, 0x1f54b0007d53a, 0x1f5500007d59e, 0x1f57a0007d5ea, 0x1f5950007d65a,
+    0x1f5a40007d692, 0x1f5fb0007d93e, 0x1f6800007db16, 0x1f6cc0007db32, 0x1f6d00007db4a,
+    0x1f6d50007db62, 0x1f6d90007db6c, 0x1f6dc0007db7e, 0x1f6eb0007dbb2, 0x1f6ed0007dbbc,
+    0x1f6f40007dbf2, 0x1f6fd0007dbfc, 0x1f7da0007df7c, 0x1f7e00007dfae, 0x1f7ec0007dfbc,
+    0x1f7f00007dfc2, 0x1f7f10007dffc, 0x1f80c0007e03c, 0x1f8480007e13c, 0x1f85a0007e17c,
+    0x1f8880007e23c, 0x1f8ae0007e2bc, 0x1f8bc0007e2fc, 0x1f8c20007e33c, 0x1f8d90007e3fc,
+    0x1f90c0007e4ea, 0x1f93c0007e516, 0x1f9470007e7fe, 0x1fa580007e97c, 0x1fa6e0007e9bc,
+    0x1fa700007e9f2, 0x1fa7d0007e9fc, 0x1fa800007ea2a, 0x1fa8b0007ea34, 0x1fa8e0007eb1a,
+    0x1fac70007eb1c, 0x1fac80007eb22, 0x1fac90007eb30, 0x1facd0007eb72, 0x1fadd0007eb78,
+    0x1fadf0007ebaa, 0x1faeb0007ebb8, 0x1faef0007ebe2, 0x1faf90007ebfc, 0x1fb930007ee4c,
+    0x1fbfb0007fffc, 0x20000000a9b7e, 0x2a6e0000a9bfc, 0x2a700000ae076, 0x2b81e000ae07c,
+    0x2b820000b3ab6, 0x2ceae000b3abc, 0x2ceb0000baf82, 0x2ebe1000bafbc, 0x2ebf0000bb976,
+    0x2ee5e000bdffc, 0x2f800000be876, 0x2fa1e000bfffc, 0x30000000c4d2a, 0x3134b000c4d3c,
+    0x31350000cd1e6, 0x3347a003bfffc, 0xffffe003ffffc, 0x10fffe0043fffc,
+};
+
+static positive wc_width(p32 code)
+{
+        positive low = 0;
+        positive high = WC_WIDTH_ROWS;
+
+        while (low < high)
+        {
+                positive middle = (low + high) / 2;
+
+                if ((p32)(wc_width_rows[middle] >> 32) <= code)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        if (!low)
+                return 1;
+
+        p64 row = wc_width_rows[low - 1];
+
+        return code <= (p32)((row >> 2) & 0x3fffffff) ? (positive)(row & 3) : 1;
+}
+
+/*
+        What the locale says a character is, as GNU's wc hears it: LC_ALL,
+        then LC_CTYPE, then LANG, the first one set and not empty. A UTF-8
+        codeset is the one multibyte encoding here; C, POSIX and every other
+        name are a byte a character. GNU also falls back to bytes for a UTF-8
+        name the system has no locale for, which a name alone cannot see.
+*/
+static bool text_locale_utf8()
+{
+        string_address locale = file_environment((string_address) "LC_ALL");
+
+        if (!locale || !locale[0])
+                locale = file_environment((string_address) "LC_CTYPE");
+        if (!locale || !locale[0])
+                locale = file_environment((string_address) "LANG");
+        if (!locale || !locale[0])
+                return false;
+
+        string_address code = string_first_of(locale, '.');
+
+        if (!code || byte_to_lower(code[1]) != 'u' || byte_to_lower(code[2]) != 't' ||
+            byte_to_lower(code[3]) != 'f')
+                return false;
+
+        code += 4;
+        code += *code == '-';
+        return code[0] == '8' && (!code[1] || code[1] == '@');
+}
+
+/*
+        Word separators past ASCII in a UTF-8 locale: glibc's iswspace, which
+        leaves the no-break spaces out, and the no-break spaces GNU's wc adds
+        back unless POSIXLY_CORRECT is set -- U+00A0 is one in the C locale
+        too, as the byte 0xa0.
+*/
+static bool wc_wide_space(p32 code, bool posix)
+{
+        switch (code)
+        {
+        case 0x1680:
+        case 0x2028:
+        case 0x2029:
+        case 0x205f:
+        case 0x3000:
+                return true;
+        case 0xa0:
+        case 0x2007:
+        case 0x202f:
+        case 0x2060:
+                return !posix;
+        }
+
+        return (code >= 0x2000 && code <= 0x2006) || (code >= 0x2008 && code <= 0x200a);
+}
+
+enum
+{
+        WC_INVALID,
+        WC_VALID,
+        WC_SHORT,
+};
+
+/*
+        One UTF-8 sequence, strictly: no overlong forms, no surrogates, nothing
+        past U+10FFFF. A byte that cannot begin or continue one is a byte on
+        its own, as mbrtowc's refusal is to GNU; a sequence the span ends in
+        the middle of is short, and waits for the next read.
+*/
+static p8 wc_utf8_decode(const p8 address_to at, positive size, p32 address_to code,
+                         positive address_to length)
+{
+        p8 lead = at[0];
+        p8 low = 0x80;
+        p8 high = 0xbf;
+        positive need;
+        p32 value;
+
+        address_to length = 1;
+        address_to code = lead;
+
+        if (lead < 0x80)
+                return WC_VALID;
+
+        if (lead < 0xc2 || lead > 0xf4)
+                return WC_INVALID;
+
+        if (lead <= 0xdf)
+        {
+                need = 2;
+                value = lead & 0x1f;
+        }
+        else if (lead <= 0xef)
+        {
+                need = 3;
+                value = lead & 0x0f;
+                low = lead == 0xe0 ? 0xa0 : 0x80;
+                high = lead == 0xed ? 0x9f : 0xbf;
+        }
+        else
+        {
+                need = 4;
+                value = lead & 0x07;
+                low = lead == 0xf0 ? 0x90 : 0x80;
+                high = lead == 0xf4 ? 0x8f : 0xbf;
+        }
+
+        for (positive i = 1; i < need; i++)
+        {
+                if (i == size)
+                        return WC_SHORT;
+
+                p8 byte = at[i];
+
+                if (byte < (i == 1 ? low : 0x80) || byte > (i == 1 ? high : 0xbf))
+                        return WC_INVALID;
+
+                value = value << 6 | (byte & 0x3f);
+        }
+
+        address_to code = value;
+        address_to length = need;
+        return WC_VALID;
+}
+
+typedef struct
+{
+        positive chars, words, longest, column;
+        p8 carry[4];
+        positive carried;
+        bool inside, posix, want_words, want_longest;
+} wc_utf8;
+
+static const b8 text_set_ascii[STRING_SET_BYTES] = {[0 ... 127] = 1};
+
+static fn wc_utf8_step(wc_utf8 address_to state, bool valid, p32 code)
+{
+        state->chars += valid;
+
+        if (state->want_longest && valid)
+        {
+                if (code == '\n' || code == '\r' || code == '\f')
+                {
+                        if (state->column > state->longest)
+                                state->longest = state->column;
+
+                        state->column = 0;
+                }
+                else if (code == '\t')
+                        state->column += 8 - state->column % 8;
+                else if (code >= 0x20 && code < 0x7f)
+                        state->column++;
+                else if (code >= 0x80)
+                        state->column += wc_width(code);
+        }
+
+        if (state->want_words)
+        {
+                bool space = valid && (code < 0x80 ? byte_is_space((p8)code)
+                                                   : wc_wide_space(code, state->posix));
+
+                if (space)
+                        state->inside = false;
+                else if (!state->inside)
+                {
+                        state->inside = true;
+                        state->words++;
+                }
+        }
+}
+
+/*
+        A read's worth of bytes in a UTF-8 locale. A sequence the last read
+        ended inside is finished from the front of this one first. Without
+        -L, a run of ASCII is characters by its length and words by the same
+        pass the single-byte count uses; only the rest is decoded.
+*/
+static fn wc_utf8_block(wc_utf8 address_to state, const p8 address_to at, positive size)
+{
+        positive p = 0;
+
+        while (state->carried && p < size)
+        {
+                p8 joined[8];
+                positive have = state->carried;
+                positive take = size - p < 4 ? size - p : 4;
+                p32 code;
+                positive length;
+
+                memory_copy(joined, state->carry, have);
+                memory_copy(joined + have, at + p, take);
+
+                p8 answer = wc_utf8_decode(joined, have + take, address_of code,
+                                           address_of length);
+
+                if (answer == WC_SHORT)
+                {
+                        memory_copy(state->carry + have, at + p, take);
+                        state->carried = have + take;
+                        return;
+                }
+
+                wc_utf8_step(state, answer == WC_VALID, code);
+
+                if (length <= have)
+                {
+                        memory_copy(state->carry, state->carry + length, have - length);
+                        state->carried = have - length;
+                }
+                else
+                {
+                        p += length - have;
+                        state->carried = 0;
+                }
+        }
+
+        while (p < size)
+        {
+                /*
+                        With -L every byte moves the column, so ASCII is taken
+                        here a byte at a time with no call per byte, the same
+                        work the single-byte loop does, and only a byte past
+                        ASCII goes to the decoder.
+                */
+                if (state->want_longest)
+                {
+                        positive column = state->column;
+                        positive longest = state->longest;
+                        positive words = state->words;
+                        bool inside = state->inside;
+                        bool want_words = state->want_words;
+                        positive start = p;
+
+                        while (p < size && at[p] < 0x80)
+                        {
+                                p8 character = at[p++];
+
+                                if (character >= 0x20 && character < 0x7f)
+                                        column++;
+                                else if (character == '\n' || character == '\r' ||
+                                         character == '\f')
+                                {
+                                        if (column > longest)
+                                                longest = column;
+
+                                        column = 0;
+                                }
+                                else if (character == '\t')
+                                        column += 8 - column % 8;
+
+                                if (want_words)
+                                {
+                                        if (byte_is_space(character))
+                                                inside = false;
+                                        else if (!inside)
+                                        {
+                                                inside = true;
+                                                words++;
+                                        }
+                                }
+                        }
+
+                        state->chars += p - start;
+                        state->column = column;
+                        state->longest = longest;
+                        state->words = words;
+                        state->inside = inside;
+
+                        if (p == size)
+                                break;
+                }
+                else
+                {
+                        positive run = string_span_max(at + p, size - p, text_set_ascii);
+
+                        if (run)
+                        {
+                                state->chars += run;
+
+                                if (state->want_words)
+                                {
+                                        positive2 counted = memory_count_words(
+                                            at + p, run, state->inside);
+
+                                        state->words += counted.x;
+                                        state->inside = (bool)counted.y;
+                                }
+
+                                p += run;
+
+                                if (p == size)
+                                        break;
+                        }
+                }
+
+                p32 code;
+                positive length;
+                p8 answer = wc_utf8_decode(at + p, size - p, address_of code,
+                                           address_of length);
+
+                if (answer == WC_SHORT)
+                {
+                        state->carried = size - p;
+                        memory_copy(state->carry, at + p, state->carried);
+                        return;
+                }
+
+                wc_utf8_step(state, answer == WC_VALID, code);
+                p += length;
+        }
+}
+
+// What the input ended in the middle of is bytes, each on its own.
+static fn wc_utf8_finish(wc_utf8 address_to state)
+{
+        for (positive i = 0; i < state->carried; i++)
+                wc_utf8_step(state, false, 0);
+
+        state->carried = 0;
+}
+
+/*
+        -L in a single-byte locale, and whatever else was asked beside it,
+        a byte at a time. Its own function so the loop keeps its registers
+        whatever else text_wc grows.
+*/
+static fn wc_bytes_general(const p8 address_to at, positive left, bool want_lines,
+                           bool want_words, bool posix, positive address_to lines_out,
+                           positive address_to words_out, positive address_to longest_out,
+                           positive address_to column_out, bool address_to inside_out)
+{
+        positive lines = address_to lines_out;
+        positive words = address_to words_out;
+        positive longest = address_to longest_out;
+        positive column = address_to column_out;
+        bool inside = address_to inside_out;
+
+        for (positive c = 0; c < left; c++)
+        {
+                p8 character = at[c];
+
+                if (want_lines && character == '\n')
+                        lines++;
+
+                /*
+                        -L is a width on a terminal rather
+                        than a count of bytes. A tab reaches
+                        the next stop eight columns apart; a
+                        return or a form feed starts the line
+                        over without being a line for the
+                        purpose of counting them; and a byte
+                        that would not show takes no room at
+                        all, which is why a line of control
+                        characters is nought columns wide and
+                        not as many as it has bytes.
+                */
+                if (character == '\n' || character == '\r' ||
+                    character == '\f')
+                {
+                        if (column > longest)
+                                longest = column;
+
+                        column = 0;
+                }
+                else if (character == '\t')
+                {
+                        column += 8 - column % 8;
+                }
+                else if (character >= 0x20 && character < 0x7f)
+                {
+                        column++;
+                }
+
+                if (want_words)
+                {
+                        if (byte_is_space(character) ||
+                            (character == 0xa0 && !posix))
+                        {
+                                inside = false;
+                        }
+                        else if (!inside)
+                        {
+                                inside = true;
+                                words++;
+                        }
+                }
+        }
+
+
+        address_to lines_out = lines;
+        address_to words_out = words;
+        address_to longest_out = longest;
+        address_to column_out = column;
+        address_to inside_out = inside;
 }
 
 static b32 text_wc()
@@ -3715,7 +4353,8 @@ static b32 text_wc()
         bool want_chars = (flags & FILE_FLAG('m')) != 0;
         bool want_longest = (flags & FILE_FLAG('L')) != 0;
         positive total_mode = WC_TOTAL_AUTO;
-        positive total_lines = 0, total_words = 0, total_bytes = 0, total_longest = 0;
+        positive total_lines = 0, total_words = 0, total_chars = 0, total_bytes = 0;
+        positive total_longest = 0;
         positive width = 1;
         positive known = 0;
         bool unknown = false;
@@ -3741,6 +4380,10 @@ static b32 text_wc()
         wc_want_bytes = want_bytes;
         wc_want_chars = want_chars;
         wc_want_longest = want_longest;
+
+        // The environment cannot change while wc runs, so both are asked once.
+        bool utf8 = (want_chars || want_words || want_longest) && text_locale_utf8();
+        bool posix = file_environment((string_address) "POSIXLY_CORRECT") != null;
 
         if (total_mode != WC_TOTAL_ONLY && (selected > 1 || inputs > 1))
         {
@@ -3790,6 +4433,8 @@ static b32 text_wc()
                 positive lines = 0, words = 0, bytes = 0;
                 positive longest = 0, column = 0;
                 bool inside = false;
+                wc_utf8 wide = {.posix = posix, .want_words = want_words,
+                                .want_longest = want_longest};
 
                 if (!text_open(name))
                         continue;
@@ -3813,8 +4458,8 @@ static b32 text_wc()
                         already -- a pipe has no size at all and
                         text_regular_size says so by refusing.
                 */
-                if ((want_bytes || want_chars) && !want_lines && !want_words &&
-                    !want_longest)
+                if ((want_bytes || want_chars) && !(want_chars && utf8) &&
+                    !want_lines && !want_words && !want_longest)
                 {
                         positive size = 0;
 
@@ -3839,6 +4484,16 @@ static b32 text_wc()
 
                         bytes += left;
 
+                        if (utf8)
+                        {
+                                if (want_lines)
+                                        lines += memory_count(at, left, '\n');
+
+                                wc_utf8_block(address_of wide, at, left);
+                                text_input.position = text_input.filled;
+                                continue;
+                        }
+
                         /*
                                 wc -l on its own, which is most of what wc is
                                 asked for, needs nothing carried from one byte
@@ -3861,68 +4516,48 @@ static b32 text_wc()
                                 if (want_lines)
                                         lines += memory_count(at, left, '\n');
 
+                                /*
+                                        A byte 0xa0 is U+00A0, a no-break
+                                        space, which GNU's wc splits words
+                                        at in the C locale unless
+                                        POSIXLY_CORRECT is set. The counting
+                                        pass knows only ASCII white space, so
+                                        a read holding one is counted between
+                                        them, the word state ending at each.
+                                */
                                 if (want_words)
                                 {
-                                        positive2 counted_words =
-                                            memory_count_words(at, left, inside);
+                                        p8 address_to from = at;
+                                        p8 address_to past = at + left;
 
-                                        words += counted_words.x;
-                                        inside = (bool)counted_words.y;
+                                        for (;;)
+                                        {
+                                                p8 address_to stop = posix ? null
+                                                    : (p8 address_to)memory_first_of(
+                                                          from, 0xa0, (positive)(past - from));
+                                                positive run = (positive)((stop ? stop : past) - from);
+                                                positive2 counted_words =
+                                                    memory_count_words(from, run, inside);
+
+                                                words += counted_words.x;
+                                                inside = (bool)counted_words.y;
+
+                                                if (!stop)
+                                                        break;
+
+                                                inside = false;
+                                                from = stop + 1;
+                                        }
                                 }
 
                                 text_input.position = text_input.filled;
                                 continue;
                         }
 
-                        for (positive c = 0; c < left; c++)
-                        {
-                                p8 character = at[c];
-
-                                if (want_lines && character == '\n')
-                                        lines++;
-
-                                /*
-                                        -L is a width on a terminal rather
-                                        than a count of bytes. A tab reaches
-                                        the next stop eight columns apart; a
-                                        return or a form feed starts the line
-                                        over without being a line for the
-                                        purpose of counting them; and a byte
-                                        that would not show takes no room at
-                                        all, which is why a line of control
-                                        characters is nought columns wide and
-                                        not as many as it has bytes.
-                                */
-                                if (character == '\n' || character == '\r' ||
-                                    character == '\f')
-                                {
-                                        if (column > longest)
-                                                longest = column;
-
-                                        column = 0;
-                                }
-                                else if (character == '\t')
-                                {
-                                        column += 8 - column % 8;
-                                }
-                                else if (character >= 0x20 && character < 0x7f)
-                                {
-                                        column++;
-                                }
-
-                                if (want_words)
-                                {
-                                        if (byte_is_space(character))
-                                        {
-                                                inside = false;
-                                        }
-                                        else if (!inside)
-                                        {
-                                                inside = true;
-                                                words++;
-                                        }
-                                }
-                        }
+                        wc_bytes_general(at, left, want_lines, want_words, posix,
+                                         address_of lines, address_of words,
+                                         address_of longest, address_of column,
+                                         address_of inside);
 
                         text_input.position = text_input.filled;
                 }
@@ -3930,18 +4565,30 @@ static b32 text_wc()
         counted:
                 text_close();
 
+                positive chars = bytes;
+
+                if (utf8)
+                {
+                        wc_utf8_finish(address_of wide);
+                        chars = wide.chars;
+                        words = wide.words;
+                        longest = wide.longest;
+                        column = wide.column;
+                }
+
                 if (column > longest)
                         longest = column;
 
                 total_lines += lines;
                 total_words += words;
+                total_chars += chars;
                 total_bytes += bytes;
 
                 if (longest > total_longest)
                         total_longest = longest;
 
                 if (total_mode != WC_TOTAL_ONLY)
-                        wc_row(lines, words, bytes, longest, width, name);
+                        wc_row(lines, words, chars, bytes, longest, width, name);
         }
 
         bool total = total_mode == WC_TOTAL_ALWAYS ||
@@ -3952,7 +4599,7 @@ static b32 text_wc()
         {
                 // The total of the longest lines is the longest of them, not
                 // their sum, which is the one column here that does not add up.
-                wc_row(total_lines, total_words, total_bytes, total_longest,
+                wc_row(total_lines, total_words, total_chars, total_bytes, total_longest,
                        total_mode == WC_TOTAL_ONLY ? 1 : width,
                        total_mode == WC_TOTAL_ONLY ? null
                                                    : (string_address) "total");

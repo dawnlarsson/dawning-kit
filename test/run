@@ -3862,7 +3862,19 @@ lane_differential_oracle()
         return "$oracle_status"
 }
 
-lane_text()       { differential_domain text; }
+lane_text()
+{
+        differential_domain text || return $?
+
+        #       wc's characters, words and widths follow LC_CTYPE. Its pinned
+        #       rows are answers in the C locale, so the UTF-8 walk pins none,
+        #       and it stays at singles -- every input, every option alone and
+        #       the multibyte files -- where GNU's --debug line, which names the
+        #       machine's vector extension, never meets a pure line count.
+        python3 test/differential.py "$farm" --domain text --utility wc \
+                --locale C.UTF-8 --no-pinned --budget singles \
+                --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}"
+}
 lane_files()
 {
         differential_ready || return $?
