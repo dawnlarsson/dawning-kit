@@ -167,10 +167,7 @@ static bool tar_size_fits(p64 size)
 static fn tar_field_text(p8 address_to field, positive width,
                          p8 address_to into, positive room)
 {
-        positive keep = 0;
-
-        while (keep < width && field[keep])
-                keep++;
+        positive keep = string_length_max((string_address)field, width);
 
         if (keep >= room)
                 keep = room ? room - 1 : 0;
@@ -404,45 +401,37 @@ static bool tar_pax_apply(tar_pax_state address_to state,
 
 static p8 tar_pack_from_name(string_address name)
 {
-        positive n;
+        static const struct { string_address suffix; p8 pack; } suffixes[] = {
+            {".gz", TAR_PACK_GZIP}, {".tgz", TAR_PACK_GZIP},
+            {".xz", TAR_PACK_XZ}, {".txz", TAR_PACK_XZ},
+            {".zst", TAR_PACK_ZSTD}, {".tzst", TAR_PACK_ZSTD},
+            {".bz2", TAR_PACK_BZIP2}, {".tbz2", TAR_PACK_BZIP2},
+            {".tbz", TAR_PACK_BZIP2}, {".Z", TAR_PACK_COMPRESS}};
+        positive n = name ? string_length(name) : 0;
 
-        if (!name || string_equals(name, "-"))
-                return TAR_PACK_NONE;
-        n = string_length(name);
-        if (n >= 3 && !memory_compare(name + n - 3, ".gz", 3))
-                return TAR_PACK_GZIP;
-        if (n >= 4 && !memory_compare(name + n - 4, ".tgz", 4))
-                return TAR_PACK_GZIP;
-        if (n >= 3 && !memory_compare(name + n - 3, ".xz", 3))
-                return TAR_PACK_XZ;
-        if (n >= 4 && !memory_compare(name + n - 4, ".txz", 4))
-                return TAR_PACK_XZ;
-        if (n >= 4 && !memory_compare(name + n - 4, ".zst", 4))
-                return TAR_PACK_ZSTD;
-        if (n >= 5 && !memory_compare(name + n - 5, ".tzst", 5))
-                return TAR_PACK_ZSTD;
-        if ((n >= 4 && !memory_compare(name + n - 4, ".bz2", 4)) ||
-            (n >= 5 && !memory_compare(name + n - 5, ".tbz2", 5)) ||
-            (n >= 4 && !memory_compare(name + n - 4, ".tbz", 4)))
-                return TAR_PACK_BZIP2;
-        if (n >= 2 && !memory_compare(name + n - 2, ".Z", 2))
-                return TAR_PACK_COMPRESS;
+        for (positive at = 0; at < array_count(suffixes); at++)
+        {
+                positive length = string_length(suffixes[at].suffix);
+
+                if (n >= length &&
+                    !memory_compare(name + n - length, suffixes[at].suffix, length))
+                        return suffixes[at].pack;
+        }
         return TAR_PACK_NONE;
 }
 
 static p8 tar_pack_from_magic(p8 address_to magic, positive n)
 {
-        if (n >= 2 && magic[0] == 0x1f && magic[1] == 0x8b)
+        if (n >= 2 && memory_is_2(magic, 0x1f, 0x8b))
                 return TAR_PACK_GZIP;
-        if (n >= 6 && magic[0] == 0xfd && magic[1] == 0x37 && magic[2] == 0x7a &&
-            magic[3] == 0x58 && magic[4] == 0x5a && magic[5] == 0)
+        if (n >= 6 && memory_is_4(magic, 0xfd, 0x37, 0x7a, 0x58) &&
+            memory_is_2(magic + 4, 0x5a, 0))
                 return TAR_PACK_XZ;
-        if (n >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f &&
-            magic[3] == 0xfd)
+        if (n >= 4 && memory_is_4(magic, 0x28, 0xb5, 0x2f, 0xfd))
                 return TAR_PACK_ZSTD;
-        if (n >= 3 && magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h')
+        if (n >= 3 && memory_is_2(magic, 'B', 'Z') && magic[2] == 'h')
                 return TAR_PACK_BZIP2;
-        if (n >= 2 && magic[0] == 0x1f && magic[1] == 0x9d)
+        if (n >= 2 && memory_is_2(magic, 0x1f, 0x9d))
                 return TAR_PACK_COMPRESS;
         return TAR_PACK_NONE;
 }
@@ -491,6 +480,7 @@ static const tar_codec tar_codecs[] = {
         zstd_encode_end, address_of zstd_why},
 };
 
+/* All zero and never written: the source of padding and the end marker. */
 static p8 tar_block[TAR_BLOCK];
 /* Extended headers carry more than names: GNU stores xattrs and ACLs there. */
 #define TAR_PAX_BODY (1024 * 1024)
@@ -897,15 +887,6 @@ static bool tar_codec_begin_read(bipolar handle, p8 address_to magic, positive n
         return true;
 }
 
-static bool tar_bytes_zero(p8 address_to bytes, positive count)
-{
-        p8 combined = 0;
-
-        for (positive at = 0; at < count; at++)
-                combined |= bytes[at];
-        return combined == 0;
-}
-
 static fn tar_codec_end_read(bipolar handle)
 {
         bool ok = true;
@@ -926,7 +907,7 @@ static fn tar_codec_end_read(bipolar handle)
 
                 if (trailing > TAR_TRAILING_LIMIT)
                         excess = true;
-                else if (!tar_bytes_zero(tar_record + tar_at, trailing))
+                else if (memory_span_byte(tar_record + tar_at, 0, trailing) != trailing)
                         nonzero = true;
 
                 while (!excess && !nonzero)
@@ -939,7 +920,7 @@ static fn tar_codec_end_read(bipolar handle)
                         got = tar_read_bytes(handle, tar_record, ask);
                         if (got <= 0)
                                 break;
-                        if (!tar_bytes_zero(tar_record, (positive)got))
+                        if (memory_span_byte(tar_record, 0, (positive)got) != (positive)got)
                         {
                                 nonzero = true;
                                 break;
@@ -1112,7 +1093,9 @@ static bool tar_rewind_unread(bipolar handle)
         return true;
 }
 
-static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
+/* Member data to a descriptor, into memory, or (out < 0, no into) nowhere. */
+static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable,
+                       p8 address_to into)
 {
         p64 left = size;
 
@@ -1121,7 +1104,7 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
                 positive have;
                 positive take;
 
-                if (left >= TAR_RECORD && !tar_packed() &&
+                if (!into && left >= TAR_RECORD && !tar_packed() &&
                     tar_rewind_unread(archive))
                 {
                         if (out >= 0 && !tar_copy_out(archive, out, left))
@@ -1147,9 +1130,14 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
                 }
 
                 take = have > left ? (positive)left : have;
-                if (out >= 0 &&
-                    system_write_all((positive)out, tar_record + tar_at,
-                                     take) != take)
+                if (into)
+                {
+                        memory_copy(into, tar_record + tar_at, take);
+                        into += take;
+                }
+                else if (out >= 0 &&
+                         system_write_all((positive)out, tar_record + tar_at,
+                                          take) != take)
                         return false;
 
                 tar_at += take;
@@ -1161,30 +1149,13 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
 
 static bool tar_deliver(bipolar archive, bipolar out, p64 size, bool seekable)
 {
-        return tar_copy_n(archive, out, size, seekable) &&
+        return tar_copy_n(archive, out, size, seekable, null) &&
                tar_skip(archive, tar_padded(size) - size, seekable);
 }
 
-static bool tar_write_zeros(bipolar out, p64 size)
+static bool tar_write_hole(bipolar out, p64 size)
 {
-        p8 zero[TAR_BLOCK];
-
-        if (out < 0)
-                return true;
-
-        memory_fill(zero, 0, sizeof(zero));
-        while (size)
-        {
-                positive take = size > sizeof(zero) ? sizeof(zero)
-                                                    : (positive)size;
-
-                if (system_write_all((positive)out, zero, take) != take)
-                        return false;
-
-                size -= take;
-        }
-
-        return true;
+        return out < 0 || system_seek(out, (bipolar)size, FILE_SEEK_CUR) >= 0;
 }
 
 #define TAR_SPARSE_HEADER 4
@@ -1305,14 +1276,16 @@ static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
 
         for (at = 0; at < tar_sparse_used; at++)
         {
-                if (!tar_write_zeros(out, tar_sparse[at].offset - cursor) ||
-                    !tar_copy_n(archive, out, tar_sparse[at].bytes, seekable))
+                if (!tar_write_hole(out, tar_sparse[at].offset - cursor) ||
+                    !tar_copy_n(archive, out, tar_sparse[at].bytes, seekable, null))
                         return false;
 
                 cursor = tar_sparse[at].offset + tar_sparse[at].bytes;
         }
 
-        return tar_write_zeros(out, tar_sparse_real - cursor) &&
+        return (out < 0 ||
+                system_call_2(syscall(ftruncate), (positive)out,
+                              tar_sparse_real) >= 0) &&
                tar_skip(archive, tar_padded(size) - size, seekable);
 }
 
@@ -1359,25 +1332,7 @@ static bool tar_write_block(bipolar handle, p8 address_to block)
 
 static bool tar_write_padding(bipolar handle, p64 size)
 {
-        positive pad = tar_padded(size) - (positive)size;
-
-        while (pad)
-        {
-                positive take;
-
-                if (tar_at == TAR_RECORD && !tar_flush(handle))
-                        return false;
-
-                take = TAR_RECORD - tar_at;
-                if (take > pad)
-                        take = pad;
-
-                memory_fill(tar_record + tar_at, 0, take);
-                tar_at += take;
-                pad -= take;
-        }
-
-        return true;
+        return tar_put(handle, tar_block, tar_padded(size) - (positive)size);
 }
 
 static bool tar_put_file(bipolar archive, bipolar in, p64 size)
@@ -1417,41 +1372,14 @@ static bool tar_put_file(bipolar archive, bipolar in, p64 size)
 static bool tar_read_payload(bipolar handle, p64 size, p8 address_to into,
                              positive room, bool seekable)
 {
-        p64 left = size;
-        p8 address_to dst = into;
-
         if (size >= room)
         {
                 tar_refuse("member name is too long");
                 tar_skip(handle, tar_padded(size), seekable);
                 return false;
         }
-
-        while (left)
-        {
-                positive have;
-                positive take;
-
-                if (tar_at >= tar_have && !tar_fill(handle))
-                {
-                        tar_refuse("unexpected EOF in archive");
-                        return false;
-                }
-
-                have = tar_have - tar_at;
-                if (!have)
-                {
-                        tar_refuse("unexpected EOF in archive");
-                        return false;
-                }
-
-                take = have > left ? (positive)left : have;
-                memory_copy(dst, tar_record + tar_at, take);
-                tar_at += take;
-                dst += take;
-                left -= take;
-        }
-
+        if (!tar_copy_n(handle, -1, size, seekable, into))
+                return false;
         into[size] = end;
         return tar_skip(handle, tar_padded(size) - size, seekable);
 }
@@ -1860,8 +1788,7 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
 
 static bool tar_header_gnu_old(p8 address_to block)
 {
-        return !memory_compare(block + 257, "ustar ", 6) &&
-               block[263] == ' ' && !block[264];
+        return !memory_compare(block + 257, "ustar  ", 8);
 }
 
 static bool tar_member_name(p8 address_to block, p8 address_to into)
@@ -1955,9 +1882,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 if (got < 0)
                 {
                         tar_refuse("cannot read archive");
-                        if (handle > 0)
-                                system_close(handle);
-                        return tar_status;
+                        goto abandoned;
                 }
                 if (tar_pack == TAR_PACK_NONE || tar_pack == TAR_PACK_AUTO)
                 {
@@ -1966,20 +1891,12 @@ static b32 tar_read_archive(struct tar_options address_to options)
                         tar_pack = sniffed;
                 }
                 if (tar_refuse_pack(tar_pack))
-                {
-                        if (handle > 0)
-                                system_close(handle);
-                        return tar_status;
-                }
+                        goto abandoned;
                 if (tar_packed())
                 {
                         seekable = false;
                         if (!tar_codec_begin_read(handle, magic, (positive)got))
-                        {
-                                if (handle > 0)
-                                        system_close(handle);
-                                return tar_status;
-                        }
+                                goto abandoned;
                 }
                 else if (got > 0 && (positive)got <= sizeof(magic))
                 {
@@ -2002,10 +1919,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 {
                         tar_fail(options->directory, moved);
                         tar_codec_end_read(handle);
-                        if (handle > 0)
-                                system_close(handle);
-
-                        return tar_status;
+                        goto abandoned;
                 }
         }
 
@@ -2198,6 +2112,11 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 tar_refuse("the requested members were not in the archive");
 
         log_flush();
+        return tar_status;
+
+abandoned:
+        if (handle > 0)
+                system_close(handle);
         return tar_status;
 }
 
@@ -2575,8 +2494,7 @@ static b32 tar_write_archive(struct tar_options address_to options)
                         if (looked < 0)
                         {
                                 tar_fail(options->archive, looked);
-                                file_staged_name_abort(address_of output_stage);
-                                return tar_status;
+                                goto abandoned;
                         }
                         tar_output_stage_known = true;
                 }
@@ -2592,22 +2510,12 @@ static b32 tar_write_archive(struct tar_options address_to options)
                 tar_fail(options->archive ? options->archive
                                           : (string_address)"-",
                          looked);
-                if (managed_output)
-                        file_staged_name_abort(address_of output_stage);
-                else if (handle > 2)
-                        system_close(handle);
-                return tar_status;
+                goto abandoned;
         }
         tar_output_known = true;
         tar_advise(handle);
         if (!tar_codec_begin_write(handle))
-        {
-                if (managed_output)
-                        file_staged_name_abort(address_of output_stage);
-                else if (handle > 2)
-                        system_close(handle);
-                return tar_status;
-        }
+                goto abandoned;
 
         if (options->directory)
         {
@@ -2617,12 +2525,7 @@ static b32 tar_write_archive(struct tar_options address_to options)
                 {
                     tar_fail(options->directory, moved);
                     tar_codec_end_write();
-                    if (managed_output)
-                            file_staged_name_abort(address_of output_stage);
-                    else if (handle > 2)
-                            system_close(handle);
-
-                    return tar_status;
+                    goto abandoned;
                 }
         }
 
@@ -2630,7 +2533,6 @@ static b32 tar_write_archive(struct tar_options address_to options)
                 tar_add_path(handle, program_argument((b32)at),
                              options->verbose);
 
-        memory_fill(tar_block, 0, TAR_BLOCK);
         if (tar_status != 2)
         {
                 tar_write_block(handle, tar_block);
@@ -2655,6 +2557,13 @@ static b32 tar_write_archive(struct tar_options address_to options)
         }
 
         log_flush();
+        return tar_status;
+
+abandoned:
+        if (managed_output)
+                file_staged_name_abort(address_of output_stage);
+        else if (handle > 2)
+                system_close(handle);
         return tar_status;
 }
 
