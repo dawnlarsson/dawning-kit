@@ -1151,27 +1151,17 @@ static string_address parse_here_skip_bodies(string_address line,
                         and a cat operand, and the closer `EOF EOF` does
                         not end the document.
                 */
-                if (!document->continued && delimiter_length &&
-                    length >= delimiter_length &&
+                if (shell_bash_compat && !document->continued &&
+                    delimiter_length && length > delimiter_length &&
+                    string_is(line + delimiter_length, ')') &&
                     !memory_compare(line, delimiter, delimiter_length))
                 {
-                        if (length == delimiter_length)
-                        {
-                                parse_here_close();
-                                at = string_get(line_end) ? line_end + 1
-                                                          : line_end;
-                                continue;
-                        }
-
-                        if (shell_bash_compat &&
-                            string_is(line + delimiter_length, ')'))
-                        {
-                                parse_here_close();
-                                at = line + delimiter_length;
-                                break;
-                        }
+                        parse_here_close();
+                        at = line + delimiter_length;
+                        break;
                 }
 
+                // The exact delimiter closes the document in the span taker.
                 if (!parse_here_take_span(at, (positive)(line_end - at),
                                           false))
                         goto leave;
@@ -1838,16 +1828,10 @@ static bool parse_take_redirect(b32 index)
         }
 
         slot = parse_redirect_used++;
-        parse_redirects[slot].op = op;
-        parse_redirects[slot].fd = descriptor;
-        parse_redirects[slot].var = brace_name;
-        parse_redirects[slot].var_length = brace_length;
-        parse_redirects[slot].kept = false;
-        parse_redirects[slot].raw = false;
-        parse_redirects[slot].body = 0;
-        parse_redirects[slot].body_length = 0;
-        parse_redirects[slot].text = delimiter;
-        parse_redirects[slot].text_length = string_length(delimiter);
+        parse_redirects[slot] = (parse_redirect){
+            .op = op, .fd = descriptor, .var = brace_name,
+            .var_length = brace_length, .text = delimiter,
+            .text_length = string_length(delimiter)};
 
         if (op == OP_DLESS)
         {
@@ -2278,38 +2262,21 @@ static PURE bool parse_at_compound(b32 ahead)
 static PURE bool parse_word_is_assignment(b32 ahead)
 {
         parse_token address_to token = parse_look(ahead);
-        string_address text;
-        positive length;
-        positive equal;
-        positive name_length;
-        positive at;
+        string_address equal;
 
         if (token->kind != PT_WORD || !token->length)
                 return false;
 
-        text = token->text;
-        length = token->length;
-        for (equal = 0; equal < length && text[equal] != '='; equal++)
-                ;
-
-        if (equal >= length)
+        equal = memory_first_of(token->text, '=', token->length);
+        if (!equal)
                 return false;
 
-        name_length = equal;
-        if (shell_bash_compat && name_length && text[name_length - 1] == '+')
-                name_length--;
-
-        if (!name_length || (text[0] >= '0' && text[0] <= '9'))
+        // lex_assignment_head reads NAME+ as NAME, which dash has no word for.
+        if (!shell_bash_compat && equal > token->text && equal[-1] == '+')
                 return false;
 
-        at = string_span_max(text, name_length, string_set_name);
-        if (!at)
-                return false;
-        if (at == name_length)
-                return true;
-
-        return text[at] == '[' && text[name_length - 1] == ']' &&
-               name_length - at > 2;
+        return lex_assignment_head(token->text,
+                                   (positive)(equal - token->text));
 }
 
 static b32 parse_function(bool keyword)
@@ -2493,16 +2460,9 @@ static bool parse_merge_streams(b32 index)
         }
 
         slot = parse_redirect_used++;
-        parse_redirects[slot].op = OP_GREATAND;
-        parse_redirects[slot].fd = 2;
-        parse_redirects[slot].var = null;
-        parse_redirects[slot].var_length = 0;
-        parse_redirects[slot].kept = false;
-        parse_redirects[slot].raw = false;
-        parse_redirects[slot].body = 0;
-        parse_redirects[slot].body_length = 0;
-        parse_redirects[slot].text = (string_address) "1";
-        parse_redirects[slot].text_length = 1;
+        parse_redirects[slot] = (parse_redirect){
+            .op = OP_GREATAND, .fd = 2, .text = (string_address) "1",
+            .text_length = 1};
 
         if (!parse_nodes[index].redirect_count)
                 parse_nodes[index].redirect = slot;

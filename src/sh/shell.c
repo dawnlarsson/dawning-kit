@@ -1170,42 +1170,16 @@ static p8 shell_assignment_kind(string_address word,
         }
 
         /* A subscript is part of the name being assigned to. a[i+1]=v and
-           m[a key]=v each name one element, and what follows the closing
-           bracket is what says whether this is an assignment at all. */
+           m[a key]=v each name one element. The lexer's walk says where it
+           closes -- a ] held in quotes or a substitution closes nothing --
+           and whether = or += follows. An empty subscript names nothing. */
         if (string_get(word + length) == '[')
         {
-                positive depth = 1;
-                positive at = length + 1;
+                string_address stop =
+                    lex_assignment_subscript_end(word + length + 1);
 
-                while (string_get(word + at) && depth)
-                {
-                        p8 value = string_get(word + at);
-
-                        // A bracket inside quoting closes nothing: m["a]b"]
-                        // is one subscript and not a broken one.
-                        if (value == '\\' && string_get(word + at + 1))
-                                at++;
-                        else if (value == '\'' || value == '"')
-                        {
-                                at++;
-
-                                while (string_get(word + at) &&
-                                       string_get(word + at) != value)
-                                        at++;
-
-                                if (!string_get(word + at))
-                                        break;
-                        }
-                        else if (value == '[')
-                                depth++;
-                        else if (value == ']')
-                                depth--;
-
-                        at++;
-                }
-
-                if (!depth && at > length + 2)
-                        length = at;
+                if (stop && stop - (word + length) > 2)
+                        length = (positive)(stop - word);
         }
 
         if (name_length)
@@ -1571,10 +1545,7 @@ static bipolar shell_spawn_tool_preflighted(
 bipolar shell_spawn_tool(string_address address_to arguments,
                          b32 output, bool quiet)
 {
-        positive count = 0;
-
-        while (arguments[count])
-                count++;
+        positive count = pointer_vector_count(arguments);
 
         if (floodlight_launch_decide(null, arguments, count, true,
                                      false, false, null) !=
@@ -1587,13 +1558,12 @@ bipolar shell_spawn_tool(string_address address_to arguments,
 fn shell_execute_command()
 {
         bipolar child = -1;
-        positive count = 0;
+        positive count;
         b32 policy;
 
         log_flush();
 
-        while (shell_argv[count])
-                count++;
+        count = pointer_vector_count(shell_argv);
         policy = floodlight_launch_decide(shell_argv[0], shell_argv, count,
                                           false, false, false, null);
 
