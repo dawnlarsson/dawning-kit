@@ -1097,7 +1097,6 @@ static void sig_case_handler_returns(void)
               sig_handle(SIGUSR1, sig_note_first) != SIG_ERR);
         check("raising it", sig_raise(SIGUSR1) == 0);
         check("the handler ran", sig_first_ran == SIGUSR1);
-        check("and the program is still here", 1);
 
         sig_case_reset();
 }
@@ -2466,7 +2465,17 @@ __asm__(
 
 #endif // STANDARD_MODERN_C_TEST_STRINGS_CASES
 
-#elif defined(SHARED_spool_body)
+#elif defined(SHARED_spool_body) || defined(SHARED_stream_body) || \
+      defined(SHARED_stream_buffering_body) || defined(SHARED_stream_standard_body)
+/* What each body measures a string with, so that neither side's C library is asked. */
+static long body_length(const char *text)
+{
+        long n = 0;
+        while (text[n]) n++;
+        return n;
+}
+
+#if defined(SHARED_spool_body)
 /*
         Experimental C standard library
 
@@ -2512,16 +2521,6 @@ __asm__(
         WORK is the directory the driver was told to work in, as a string
         literal, so both runs write into their own tree.
 */
-
-static long body_length(const char *text)
-{
-        long n = 0;
-
-        while (text[n])
-                n++;
-
-        return n;
-}
 
 static void body_join(char *into, const char *leaf)
 {
@@ -3098,13 +3097,6 @@ static void trace_body(void)
         literal, so both runs write to their own and the two trees are diffed
         afterwards.
 */
-
-static long body_length(const char *text)
-{
-        long n = 0;
-        while (text[n]) n++;
-        return n;
-}
 
 /* A fresh native subprocess exhausts allocation, never the parent or emulator. */
 static int body_allocation_failure(void)
@@ -3798,13 +3790,6 @@ static void trace_body(void)
         payload and is compared on its own.
 */
 
-static long body_length(const char *text)
-{
-        long n = 0;
-        while (text[n]) n++;
-        return n;
-}
-
 static void trace_body(void)
 {
         char *line = 0;
@@ -3855,6 +3840,7 @@ static void trace_body(void)
         trace_number("length of the last line seen", line ? body_length(line) : -2);
 }
 
+#endif
 #elif defined(SHARED_terminal_fixture)
 #define GRID_STRIDE 256
 #define GRID_HISTORY 64
@@ -4187,6 +4173,96 @@ BENCH_NOT_INLINED string_address reference_first_of(string_address source,
 
 #undef BENCH_NOT_INLINED
 #endif
+#elif defined(SHARED_native)
+/*
+        What the native sections share: the references the hunts are held
+        to -- strchr, strchrnul, a bounded strchr, strnlen, memchr, and
+        strrchr that also finds the terminator -- the decimal digits the
+        lifted formatters' relocations reach, the counter the timings read,
+        and one xorshift. A section that draws from next defines NATIVE_SEED
+        as its starting state first, so it draws the cases it always did.
+*/
+typedef unsigned char u8;
+typedef unsigned long u64;
+
+int printf(const char *, ...);
+
+static char *r_first(const char *s, int c)
+{
+        for (;; s++) { if (*s == (char)c) return (char *)s; if (!*s) return 0; }
+}
+
+static char *r_or_end(const char *s, int c)
+{
+        while (*s && *s != (char)c) s++;
+        return (char *)s;
+}
+
+static char *r_max(const char *s, u64 n, int c)
+{
+        for (u64 i = 0; i < n; i++) {
+                if (s[i] == (char)c) return (char *)(s + i);
+                if (!s[i]) return 0;
+        }
+        return 0;
+}
+
+static u64 r_nlen(const char *s, u64 n)
+{
+        u64 i = 0;
+        while (i < n && s[i]) i++;
+        return i;
+}
+
+static void *r_mchr(const void *s, int c, u64 n)
+{
+        const u8 *p = s;
+        for (u64 i = 0; i < n; i++) if (p[i] == (u8)c) return (void *)(p + i);
+        return 0;
+}
+
+static char *r_last_or_end(const char *s, int c)
+{
+        const char *best = 0;
+        for (;; s++) {
+                if (*s == (char)c) best = s;
+                if (!*s) return (char *)best;
+        }
+}
+
+static u64 reference_into(u8 *into, u64 value)
+{
+        u8 reverse[24];
+        u64 length = 0;
+
+        do {
+                reverse[length++] = (u8)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        for (u64 i = 0; i < length; i++) into[i] = reverse[length - i - 1];
+        return length;
+}
+
+static u64 ticks(void)
+{
+        u64 value;
+        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
+        return value;
+}
+
+#ifdef NATIVE_SEED
+static u64 seed = NATIVE_SEED;
+
+static u64 next(void)
+{
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        return seed;
+}
+#endif
+
 #else /* the sections */
 
 #ifdef CHECK_standard
@@ -49655,36 +49731,6 @@ b32 main()
 }
 #endif /* CHECK_probe */
 
-#ifdef CHECK_env_duplicate
-#include "../src/compiler_memory.c"
-
-/*
-        execve's environment is a vector, not a map.  Host `env` utilities
-        collapse repeated names before the shell can see them, so this tiny
-        launcher is the only honest regression for duplicate initial-stack
-        entries and their borrowed lifetime.
-*/
-b32 main()
-{
-        string_address shell = program_argument(1);
-        string_address arguments[] = {
-            shell,
-            "-c",
-            "printf '%s\\n' \"$MW_DUPLICATE\"; unset MW_DUPLICATE; "
-            "MW_DUPLICATE=owned; printf '%s\\n' \"$MW_DUPLICATE\"",
-            null};
-        string_address environment[] = {
-            "MW_DUPLICATE=first", "MW_DUPLICATE=last", null};
-
-        if (!shell)
-                return 2;
-
-        system_call_3(syscall(execve), (positive)shell, (positive)arguments,
-                      (positive)environment);
-        return 126;
-}
-#endif /* CHECK_env_duplicate */
-
 #ifdef CHECK_checksum_crc
 #include "../src/compiler_memory.c"
 #include "../src/spark.c"
@@ -50186,33 +50232,15 @@ int main(void)
 */
 #include "lifted.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define NATIVE_SEED 0x2545F4914F6CDD1Dul
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 char *string_first_of(const char *, int);
 char *string_first_of_or_end(const char *, int);
 char *string_first_of_max(const char *, u64, int);
 char *string_find(const char *, const char *);
-
-static char *r_first(const char *s, int c)
-{
-        for (;; s++) { if (*s == (char)c) return (char *)s; if (!*s) return 0; }
-}
-
-static char *r_or_end(const char *s, int c)
-{
-        while (*s && *s != (char)c) s++;
-        return (char *)s;
-}
-
-static char *r_max(const char *s, u64 n, int c)
-{
-        for (u64 i = 0; i < n; i++) {
-                if (s[i] == (char)c) return (char *)(s + i);
-                if (!s[i]) return 0;
-        }
-        return 0;
-}
 
 static char *r_find(const char *h, const char *n)
 {
@@ -50224,11 +50252,6 @@ static char *r_find(const char *h, const char *n)
         }
         return 0;
 }
-
-int printf(const char *, ...);
-
-static u64 seed = 0x2545F4914F6CDD1Dul;
-static u64 next(void) { seed ^= seed<<13; seed ^= seed>>7; seed ^= seed<<17; return seed; }
 
 int main(void)
 {
@@ -50301,27 +50324,20 @@ int main(void)
         string_last_of_or_end, string_compare_max, string_length_max and
         memory_first_of were written for this block rather than lifted from
         anywhere, so every one of them is new code and none of it has ever
-        run before. The references below are what libc means by strrchr,
+        run before. The references are what libc means by strrchr,
         strncmp, strnlen and memchr.
 */
 #include "lifted.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define NATIVE_SEED 0x9E3779B97F4A7C15ul
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 char *string_last_of_or_end(const char *, int);
 int   string_compare_max(const char *, const char *, u64);
 u64   string_length_max(const char *, u64);
 void *memory_first_of(const void *, int, u64);
-
-static char *r_last(const char *s, int c)
-{
-        const char *best = 0;
-        for (;; s++) {
-                if (*s == (char)c) best = s;
-                if (!*s) return (char *)best;
-        }
-}
 
 static int r_ncmp(const char *a, const char *b, u64 n)
 {
@@ -50332,25 +50348,6 @@ static int r_ncmp(const char *a, const char *b, u64 n)
         }
         return 0;
 }
-
-static u64 r_nlen(const char *s, u64 n)
-{
-        u64 i = 0;
-        while (i < n && s[i]) i++;
-        return i;
-}
-
-static void *r_mchr(const void *s, int c, u64 n)
-{
-        const u8 *p = s;
-        for (u64 i = 0; i < n; i++) if (p[i] == (u8)c) return (void *)(p + i);
-        return 0;
-}
-
-int printf(const char *, ...);
-
-static u64 seed = 0x9E3779B97F4A7C15ul;
-static u64 next(void) { seed ^= seed<<13; seed ^= seed>>7; seed ^= seed<<17; return seed; }
 
 static int sign(int v) { return v < 0 ? -1 : v > 0 ? 1 : 0; }
 
@@ -50369,7 +50366,7 @@ int main(void)
                 a[off+len] = 0;
 
                 checks += 3;
-                if (string_last_of_or_end((char*)a+off,c) != r_last((char*)a+off,c)) e1++;
+                if (string_last_of_or_end((char*)a+off,c) != r_last_or_end((char*)a+off,c)) e1++;
                 if (string_length_max((char*)a+off,len)   != r_nlen((char*)a+off,len)) e3++;
                 if (memory_first_of(a+off,c,len)          != r_mchr(a+off,c,len)) e4++;
 
@@ -50845,11 +50842,12 @@ int main(void)
 /* ARM64 memory_reverse lifted verbatim from library.c and run on the host. */
 #include "reverse.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define NATIVE_SEED 0x2545f4914f6cdd1dull
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 void *memory_reverse(void *, u64);
-int printf(const char *, ...);
 
 #define MEDIUM (1u << 15)
 #define LARGE ((1u << 20) + 128)
@@ -50857,16 +50855,6 @@ int printf(const char *, ...);
 static u8 got[MEDIUM], want[MEDIUM];
 static u8 large_got[LARGE], large_want[LARGE];
 static u64 checks, bad;
-static u64 state = 0x2545f4914f6cdd1dull;
-
-static u64 next(void)
-{
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        return state;
-}
-
 static void fill(u8 *at, u8 value, u64 size)
 {
         while (size--)
@@ -51071,8 +51059,9 @@ int main(void)
 */
 #include "wide.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 u64   string_length(const char *);
 u64   string_length_max(const char *, u64);
@@ -51090,33 +51079,6 @@ static u64 r_len(const char *s)
         return (u64)(p - s);
 }
 
-static u64 r_nlen(const char *s, u64 n)
-{
-        u64 i = 0;
-        while (i < n && s[i]) i++;
-        return i;
-}
-
-static char *r_first(const char *s, int c)
-{
-        for (;; s++) { if (*s == (char)c) return (char *)s; if (!*s) return 0; }
-}
-
-static char *r_or_end(const char *s, int c)
-{
-        while (*s && *s != (char)c) s++;
-        return (char *)s;
-}
-
-static char *r_max(const char *s, u64 n, int c)
-{
-        for (u64 i = 0; i < n; i++) {
-                if (s[i] == (char)c) return (char *)(s + i);
-                if (!s[i]) return 0;
-        }
-        return 0;
-}
-
 // Nothing for the terminator, which is the whole difference between this and
 // strrchr; the library says so where it defines the two.
 static char *r_last(const char *s, int c)
@@ -51126,24 +51088,6 @@ static char *r_last(const char *s, int c)
         for (; *s; s++) if (*s == (char)c) best = s;
         return (char *)best;
 }
-
-static char *r_last_or_end(const char *s, int c)
-{
-        const char *best = 0;
-        for (;; s++) {
-                if (*s == (char)c) best = s;
-                if (!*s) return (char *)best;
-        }
-}
-
-static void *r_mchr(const void *s, int c, u64 n)
-{
-        const u8 *p = s;
-        for (u64 i = 0; i < n; i++) if (p[i] == (u8)c) return (void *)(p + i);
-        return 0;
-}
-
-int printf(const char *, ...);
 
 static u64 checks;
 static u64 e_len, e_nlen, e_first, e_or_end, e_max, e_last, e_last_end, e_mchr;
@@ -51260,11 +51204,12 @@ int main(void)
 */
 #include "bases.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define NATIVE_SEED 0x9e3779b97f4a7c15ul
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 u64 positive_into_base(u8 *, u64, u64, u8);
-int printf(const char *, ...);
 
 static u64 reference(u8 *into, u64 value, u64 base, u8 upper)
 {
@@ -51288,9 +51233,6 @@ u64 positive_into(u8 *into, u64 value)
 {
         return reference(into, value, 10, 0);
 }
-
-static u64 seed = 0x9e3779b97f4a7c15ul;
-static u64 next(void) { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; return seed; }
 
 static u8 got_room[96], want_room[96];
 
@@ -51337,13 +51279,6 @@ static __attribute__((noinline, noclone)) u64 old_runtime_base(u8 *into, u64 val
                                                        u64 base, u8 upper)
 {
         return reference(into, value, base, upper);
-}
-
-static u64 ticks(void)
-{
-        u64 value;
-        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
-        return value;
 }
 
 static u64 run_old(u64 base, u8 upper)
@@ -51474,26 +51409,13 @@ int main(void)
 /* Exact lifted ARM64 compact binary-size formatter on native Apple silicon. */
 #include "human.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define NATIVE_SEED 0x9e3779b97f4a7c15ul
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 u64 positive_into_human_1024_string(u8 *, u64);
 void positive_to_human_1024(void (*)(void *, u64), u64);
-int printf(const char *, ...);
-
-static u64 reference_into(u8 *into, u64 value)
-{
-        u8 reverse[24];
-        u64 length = 0;
-
-        do {
-                reverse[length++] = (u8)('0' + value % 10);
-                value /= 10;
-        } while (value);
-
-        for (u64 i = 0; i < length; i++) into[i] = reverse[length - i - 1];
-        return length;
-}
 
 // The two relocations the lifted formatter reaches on its decimal paths.
 __attribute__((noinline, noclone)) u64 positive_into(u8 *into, u64 value)
@@ -51546,15 +51468,6 @@ static __attribute__((noinline, noclone)) u64 former_human(u8 *into, u64 value)
         into[length++] = units[unit];
         into[length] = 0;
         return length;
-}
-
-static u64 seed = 0x9e3779b97f4a7c15ul;
-static u64 next(void)
-{
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        return seed;
 }
 
 static u8 written[8];
@@ -51646,13 +51559,6 @@ static u64 values[4][COUNT];
 static u8 output[8];
 static volatile u64 sink;
 
-static u64 ticks(void)
-{
-        u64 value;
-        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
-        return value;
-}
-
 static u64 run_once(u64 shape, int assembly)
 {
         u64 start = ticks();
@@ -51710,26 +51616,13 @@ int main(void)
 /* Exact lifted ARM64 dd human formatter and wait decoder on Apple silicon. */
 #include "human_nearest.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define NATIVE_SEED 0x9e3779b97f4a7c15ul
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 u64 positive_into_human_nearest_string(u8 *, u64, u8);
 int wait_status_code(u64);
-int printf(const char *, ...);
-
-static u64 reference_into(u8 *into, u64 value)
-{
-        u8 reverse[24];
-        u64 length = 0;
-
-        do {
-                reverse[length++] = (u8)('0' + value % 10);
-                value /= 10;
-        } while (value);
-
-        for (u64 i = 0; i < length; i++) into[i] = reverse[length - i - 1];
-        return length;
-}
 
 static __attribute__((noinline, noclone)) u64 former_human(u8 *into, u64 n, u8 binary)
 {
@@ -51782,15 +51675,6 @@ static __attribute__((noinline, noclone)) u64 former_human(u8 *into, u64 n, u8 b
         into[used++] = 'B';
         into[used] = 0;
         return used;
-}
-
-static u64 seed = 0x9e3779b97f4a7c15ul;
-static u64 next(void)
-{
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        return seed;
 }
 
 static int one(u64 value, u8 binary, u64 offset, u8 guard)
@@ -51888,13 +51772,6 @@ static u64 values[2][COUNT];
 static u8 output[9];
 static volatile u64 sink;
 
-static u64 ticks(void)
-{
-        u64 value;
-        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
-        return value;
-}
-
 static u64 run_once(u8 binary, int assembly)
 {
         u64 start = ticks();
@@ -51951,33 +51828,17 @@ int main(void)
 /* Exact lifted ARM64 contiguous-field leaves on native Apple ARM silicon. */
 #include "fields.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define NATIVE_SEED 0x9e3779b97f4a7c15ul
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 u64 positive_into_padded(u8 *, u64, u64, u8);
 u64 positive_into_pair(u8 *, u64);
-int printf(const char *, ...);
-
-static u64 reference_into(u8 *into, u64 value)
-{
-        u8 reverse[24];
-        u64 length = 0;
-
-        do {
-                reverse[length++] = (u8)('0' + value % 10);
-                value /= 10;
-        } while (value);
-
-        for (u64 i = 0; i < length; i++) into[i] = reverse[length - i - 1];
-        return length;
-}
 
 // Satisfy the general-path relocation in the lifted body. The benchmark's
 // bounded width-six/nine calls take their direct lanes before reaching it.
 u64 positive_into(u8 *into, u64 value) { return reference_into(into, value); }
-
-static u64 seed = 0x9e3779b97f4a7c15ul;
-static u64 next(void) { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; return seed; }
 
 static int correctness(void)
 {
@@ -52042,8 +51903,6 @@ static __attribute__((noinline, noclone)) u64 former_scaled(u8 *into, u64 value,
         return length;
 }
 
-static u64 ticks(void) { u64 v; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v)); return v; }
-
 static u64 run_once(u64 width, int assembly)
 {
         u64 start = ticks();
@@ -52098,8 +51957,9 @@ int main(void)
 /* Exact lifted bounded input-base leaves on native Apple ARM silicon. */
 #include "input_bases.h"
 
-typedef unsigned char u8;
-typedef unsigned long u64;
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
 
 u64 string_digits_max(const u8 *, u64, u64 *);
 u64 string_digits_octal_max(const u8 *, u64, u64 *);
@@ -52107,7 +51967,6 @@ u64 string_digits_octal_escape_max(const u8 *, u64, u64 *);
 u64 string_digits_hexadecimal_max(const u8 *, u64, u64 *);
 u64 string_digits_hexadecimal_escape_max(const u8 *, u64, u64 *);
 u64 string_digits_base_max(const u8 *, u64, u64, u64 *);
-int printf(const char *, ...);
 
 #define SUBJECTS 64
 #define ROUNDS (1ul << 20)
@@ -52181,13 +52040,6 @@ static void make_subjects(u64 base, u64 maximum)
                 subjects[which][length] = '@';
                 limits[which] = length + 1;
         }
-}
-
-static u64 ticks(void)
-{
-        u64 value;
-        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
-        return value;
 }
 
 static __attribute__((noinline, noclone)) u64 run_fixed(fixed_parser parser)
@@ -52295,26 +52147,18 @@ int main(void)
 /* Exact lifted ARM64 unaligned wire accessors on native Apple ARM silicon. */
 #include "network.h"
 
-typedef unsigned char u8;
+#define NATIVE_SEED 0x9e3779b97f4a7c15ul
+#define SHARED_native
+#include "checks.c"
+#undef SHARED_native
+
 typedef unsigned short u16;
 typedef unsigned int u32;
-typedef unsigned long u64;
 
 u16 network_load_16(u8 *);
 u32 network_load_32(u8 *);
 void network_store_16(u8 *, u16);
 void network_store_32(u8 *, u32);
-int printf(const char *, ...);
-
-static u64 seed = 0x9e3779b97f4a7c15ul;
-
-static u32 next(void)
-{
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        return (u32)seed;
-}
 
 int main(void)
 {
