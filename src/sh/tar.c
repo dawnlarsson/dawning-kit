@@ -1327,11 +1327,177 @@ static fn tar_reset(void)
         tar_materialized_index_slots = 0;
 }
 
+/*
+        Decoding beside extraction.  A compressed archive's codec runs on a
+        thread of its own and hands 128 KiB spans through a ring of eight to
+        tar on the calling thread, which does everything it did before:
+        headers, files, links and every message.  The spans are mapped once.
+        count is the futex word both sides wait on, and the caller ends a
+        producer it no longer wants by making count negative.  A span's
+        length is what the codec's read answered, so the end (0) and a
+        failure (-1) arrive where they happened in the stream, and read_end
+        runs on the codec's thread once its stream is done.  With no second
+        thread the codec reads inline, as it always did.
+*/
+#if defined(LIBRARY_THREAD_RUNTIME)
+#define TAR_RING_SPANS 8
+#define TAR_RING_SPAN ((positive)1 << 17)
+#define TAR_RING_QUIT ((b32)-(1 << 20))
+
+typedef struct
+{
+        const tar_codec address_to codec;
+        p8 address_to storage;
+        bipolar length[TAR_RING_SPANS];
+        positive head;
+        positive tail;
+        positive taken;
+        b32 count;
+        bool end_ok;
+        bool running;
+} tar_ring;
+
+static tar_ring tar_ring_state;
+
+/* A codec that failed once is not asked again: its error stays the one it
+   first gave, as the ring's producer stops at it. */
+static bool tar_decoder_failed;
+
+static fn tar_ring_produce(address_any context, positive index)
+{
+        tar_ring address_to const ring = context;
+
+        (void)index;
+        for (;;)
+        {
+                b32 now;
+                bipolar got;
+
+                while ((now = atomic_load(address_of ring->count)) == TAR_RING_SPANS)
+                        thread_wait(address_of ring->count, now);
+                if (now < 0)
+                        break;
+                got = ring->codec->read(ring->storage + ring->head * TAR_RING_SPAN,
+                                        TAR_RING_SPAN);
+                ring->length[ring->head] = got;
+                ring->head = (ring->head + 1) % TAR_RING_SPANS;
+                now = atomic_add(address_of ring->count, 1);
+                if (now < 0)
+                        break;
+                if (now == 0)
+                        thread_wake(address_of ring->count, 1);
+                if (got <= 0)
+                        break;
+        }
+        ring->end_ok = ring->codec->read_end();
+}
+
+/* Up to n decoded bytes, waiting for spans as a read waits for a pipe;
+   the end or a failure answers once nothing is left before it. */
+static bipolar tar_ring_read(tar_ring address_to ring, p8 address_to into,
+                             positive n)
+{
+        positive copied = 0;
+
+        while (copied < n)
+        {
+                bipolar length;
+                positive take;
+
+                while (atomic_load(address_of ring->count) == 0)
+                        thread_wait(address_of ring->count, 0);
+                length = ring->length[ring->tail];
+                if (length <= 0)
+                        return copied ? (bipolar)copied : length;
+                take = (positive)length - ring->taken;
+                if (take > n - copied)
+                        take = n - copied;
+                memory_copy_apart(into + copied,
+                                  ring->storage + ring->tail * TAR_RING_SPAN + ring->taken,
+                                  take);
+                copied += take;
+                ring->taken += take;
+                if (ring->taken == (positive)length)
+                {
+                        ring->taken = 0;
+                        ring->tail = (ring->tail + 1) % TAR_RING_SPANS;
+                        if (atomic_sub(address_of ring->count, 1) == TAR_RING_SPANS)
+                                thread_wake(address_of ring->count, 1);
+                }
+        }
+        return (bipolar)copied;
+}
+
+/* The codec's read_end, from whichever thread ran it: a producer still
+   decoding is told to quit and joined first. */
+static bool tar_ring_finish(const tar_codec address_to codec)
+{
+        tar_ring address_to const ring = address_of tar_ring_state;
+
+        if (!ring->running)
+                return codec->read_end();
+        atomic_exchange(address_of ring->count, TAR_RING_QUIT);
+        thread_wake(address_of ring->count, 1);
+        parallel_beside_wait();
+        ring->running = false;
+        return ring->end_ok;
+}
+
+static fn tar_ring_start(const tar_codec address_to codec)
+{
+        tar_ring address_to const ring = address_of tar_ring_state;
+
+        if (ring->running)
+                tar_ring_finish(ring->codec);
+        if (!ring->storage)
+        {
+                p8 address_to const at = memory(TAR_RING_SPANS * TAR_RING_SPAN);
+
+                if (!at || system_failed(at))
+                        return;
+                ring->storage = at;
+        }
+        tar_decoder_failed = false;
+        ring->codec = codec;
+        ring->head = 0;
+        ring->tail = 0;
+        ring->taken = 0;
+        ring->count = 0;
+        ring->end_ok = false;
+        ring->running = parallel_beside(tar_ring_produce, ring);
+}
+
+static bipolar tar_read_bytes(bipolar handle, p8 address_to into, positive n)
+{
+        bipolar got;
+
+        if (tar_ring_state.running)
+                return tar_ring_read(address_of tar_ring_state, into, n);
+        if (!tar_decoder)
+                return system_read_retry((positive)handle, into, n);
+        if (tar_decoder_failed)
+                return -1;
+        got = tar_decoder->read(into, n);
+        tar_decoder_failed = got < 0;
+        return got;
+}
+#else
+static fn tar_ring_start(const tar_codec address_to codec)
+{
+        (void)codec;
+}
+
+static bool tar_ring_finish(const tar_codec address_to codec)
+{
+        return codec->read_end();
+}
+
 static bipolar tar_read_bytes(bipolar handle, p8 address_to into, positive n)
 {
         return tar_decoder ? tar_decoder->read(into, n)
                            : system_read_retry((positive)handle, into, n);
 }
+#endif
 
 static bool tar_write_bytes(bipolar handle, p8 address_to bytes, positive n)
 {
@@ -1357,6 +1523,7 @@ static bool tar_codec_begin_read(bipolar handle, p8 address_to magic, positive n
                 return false;
         }
         tar_decoder = codec;
+        tar_ring_start(codec);
         return true;
 }
 
@@ -1415,7 +1582,7 @@ static fn tar_codec_end_read(bipolar handle)
                         ok = false;
         }
 
-        ok = tar_decoder->read_end() && ok;
+        ok = tar_ring_finish(tar_decoder) && ok;
         if (excess)
                 tar_refuse("compressed archive padding exceeds limit");
         else if (nonzero)

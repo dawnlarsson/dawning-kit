@@ -46503,6 +46503,59 @@ static fn pull_block_shapes(void)
         }
 }
 
+/* A frame cut into jobs is the same bytes at every pool width: five MiB at
+   level 1 is three 2 MiB jobs, each with the tail of the one before as its
+   history, built in its own output and written in order. */
+static fn job_widths(void)
+{
+        static p8 src[5 << 20];
+        static p8 first[6 << 20];
+        static p8 again[6 << 20];
+        static p8 back[5 << 20];
+        const positive widths[] = {1, 2, 3, 8};
+        positive first_n = 0;
+        p32 random = 0x6d2b79f5u;
+        zstd_params params;
+
+        for (positive i = 0; i < sizeof(src); i++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                src[i] = i >= 3000 && (random & 3) ? src[i - 3000 + (random >> 20) % 8]
+                                                   : (p8)('a' + (random >> 8) % 20);
+        }
+        for (positive w = 0; w < array_count(widths); w++)
+        {
+                p8 address_to const into = w ? again : first;
+                bool ok;
+
+                parallel_reset(widths[w]);
+                zstd_output.bytes = into;
+                zstd_output.room = sizeof(first);
+                zstd_output.used = 0;
+                zstd_out_fd = -1;
+                zstd_level_params(1, 0, 0, address_of params);
+                ok = zstd_encode_start(address_of params, true) &&
+                     zstd_encode_write(src, sizeof(src)) && zstd_encode_end();
+                zstd_output.bytes = null;
+                if (!w)
+                {
+                        first_n = zstd_output.used;
+                        check("five MiB at level 1 is a frame of three jobs",
+                              ok && zstd_jobs.count == 3 && first_n > 0);
+                }
+                else
+                        check("the jobs' frame is the same bytes at a wider pool",
+                              ok && zstd_output.used == first_n &&
+                                  !memory_compare(again, first, first_n));
+        }
+        parallel_reset(0);
+        check("the jobs' frame decodes to its input",
+              zstd_inflate(first, first_n, back, sizeof(back)) == (bipolar)sizeof(src) &&
+                  !memory_compare(back, src, sizeof(src)));
+}
+
 b32 main(void)
 {
         pull_block_shapes();
@@ -46512,6 +46565,7 @@ b32 main(void)
         sequence_capacity();
         huffman_exact_end();
         roundtrip();
+        job_widths();
         return test_report(null);
 }
 #endif /* CHECK_zstd */

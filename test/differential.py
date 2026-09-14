@@ -24165,6 +24165,64 @@ def harness_compression(argv):
                     check(label + '/zstd/ratio/-' + level,
                           sizes['-' + level] <= reference_size * slack,
                           '%d bytes against the reference %d' % (sizes['-' + level], reference_size))
+
+                # Jobs and tar's codec thread never change a byte with the
+                # CPUs: a frame cut into jobs is one frame on one CPU, every
+                # CPU and -T2, tar --zstd one archive, and an extraction the
+                # same tree, status and messages, whole or cut short.
+                one_cpu = set(sorted(os.sched_getaffinity(0))[:1])
+
+                def narrow(cmd, data=None):
+                    return subprocess.run(cmd, input=data, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, timeout=120,
+                                          preexec_fn=lambda: os.sched_setaffinity(0, one_cpu))
+
+                # A run of one byte opens every MiB, so each job's first
+                # sequence is a match one byte back: a job that assumed the
+                # frame's first repeat offsets would code it as a repeat the
+                # decoder, fresh from the job before, does not hold.
+                jobs_text = bytearray((text * 10)[:5 << 20])
+                for at in range(1 << 20, len(jobs_text), 1 << 20):
+                    jobs_text[at - 1:at] = b'#'
+                    jobs_text[at:at + 64] = b'z' * 64
+                jobs_text = bytes(jobs_text)
+                for argv in (['-1'], ['-2'], ['--fast=2']):
+                    wide = call(ours_zstd + argv + ['-c'], jobs_text)
+                    single = narrow(ours_zstd + argv + ['-c'], jobs_text)
+                    capped = call(ours_zstd + argv + ['-T2', '-c'], jobs_text)
+                    back = call([refs['zstd'], '-dc'], wide.stdout)
+                    check(label + '/zstd/jobs/' + ' '.join(argv) + ' is one frame on one CPU, every CPU and -T2',
+                          wide.returncode == single.returncode == capped.returncode == back.returncode == 0 and
+                          wide.stdout == single.stdout == capped.stdout and back.stdout == jobs_text,
+                          (wide.stderr + single.stderr + back.stderr).decode(errors='replace'))
+                ring_source = root / ('ring-source-' + label)
+                (ring_source / 'part').mkdir(parents=True)
+                (ring_source / 'part' / 'one').write_bytes((text * 16)[:9 << 20])
+                (ring_source / 'two').write_bytes((text[::-1] * 16)[:9 << 20])
+                ours_tar = runner + [str(farms[label] / 'tar')]
+                wide_archive = root / ('ring-wide-' + label + '.tzst')
+                narrow_archive = root / ('ring-narrow-' + label + '.tzst')
+                made_wide = call(ours_tar + ['--zstd', '-cf', str(wide_archive), '-C', str(ring_source), '.'])
+                made_narrow = narrow(ours_tar + ['--zstd', '-cf', str(narrow_archive), '-C', str(ring_source), '.'])
+                check(label + '/tar/jobs/tar --zstd is one archive on one CPU and every CPU',
+                      made_wide.returncode == made_narrow.returncode == 0 and
+                      wide_archive.read_bytes() == narrow_archive.read_bytes(),
+                      (made_wide.stderr + made_narrow.stderr).decode(errors='replace'))
+                for flag, suffix in (('-z', 'tgz'), ('-J', 'txz'), ('--zstd', 'tzst')):
+                    whole = root / ('ring-' + label + '.' + suffix)
+                    subprocess.run([refs['tar'], flag, '-cf', str(whole), '-C', str(ring_source), '.'], check=True)
+                    cut = root / ('ring-cut-' + label + '.' + suffix)
+                    cut.write_bytes(whole.read_bytes()[:whole.stat().st_size // 2])
+                    for shape, archive in (('whole', whole), ('cut short', cut)):
+                        states = []
+                        for mode, run in (('narrow', narrow), ('wide', call)):
+                            into = root / ('ring-' + label + '-' + suffix + '-' + shape.replace(' ', '-') + '-' + mode)
+                            into.mkdir()
+                            done = run(ours_tar + ['-xf', str(archive), '-C', str(into)])
+                            states.append((done.returncode, done.stderr, tree_state(into)))
+                        check(label + '/tar/ring/' + suffix + ' ' + shape + ' extracts alike on one CPU and every CPU',
+                              states[0] == states[1] and (states[0][0] == 0) == (shape == 'whole'),
+                              states[0][1].decode(errors='replace') + ' / ' + states[1][1].decode(errors='replace'))
         print('compression: %d checks, %d failures' % (report['checks'], len(report['failures'])), flush=True)
     if opts.output:
         opts.output.parent.mkdir(parents=True, exist_ok=True)
