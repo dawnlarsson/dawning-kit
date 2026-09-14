@@ -26100,9 +26100,573 @@ static fn table_tree_checks(void)
         ul_lsblk = saved;
 }
 
+/*
+        Generated tables against an independent renderer. The oracle keeps
+        the layout rules and spells every byte on its own: the class from the
+        byte's value rather than the assembly's table, a width by counting, a
+        field's line by walking from the field's start, JSON from a per-byte
+        choice. The tables mix multi-line fields, controls, clipped and
+        wrapped widths, pairs, fixed widths, reordered and repeated columns,
+        rows wider than the row's held fields and scratch-backed cells, whose
+        scratch is rewritten whole on every projection so a stale span shows.
+*/
+enum { TABLE_GENERATED_COLUMNS = 6, TABLE_GENERATED_ROWS = 5, TABLE_GENERATED_SHOWN = 20 };
+
+typedef struct
+{
+        p8 text[TABLE_GENERATED_ROWS * TABLE_GENERATED_COLUMNS][96];
+        positive length[TABLE_GENERATED_ROWS * TABLE_GENERATED_COLUMNS];
+        p8 heading[TABLE_GENERATED_COLUMNS][12], name[TABLE_GENERATED_COLUMNS][12];
+        positive heading_length[TABLE_GENERATED_COLUMNS], name_length[TABLE_GENERATED_COLUMNS];
+        positive minimum[TABLE_GENERATED_COLUMNS];
+        p8 flags[TABLE_GENERATED_COLUMNS], escape[TABLE_GENERATED_COLUMNS], json[TABLE_GENERATED_COLUMNS];
+        positive rows, columns;
+        bool scratch;
+} table_generated;
+
+static p8 table_generated_output[1 << 20], table_oracle_output[1 << 20];
+static positive table_generated_used, table_oracle_used;
+static bool table_generated_overflow, table_oracle_overflow;
+
+static fn table_generated_capture(address_any bytes, positive length)
+{
+        if (length > sizeof(table_generated_output) - table_generated_used)
+        {
+                table_generated_overflow = true;
+                return;
+        }
+        memory_copy_apart(table_generated_output + table_generated_used, bytes, length);
+        table_generated_used += length;
+}
+
+static fn table_oracle_put(address_any bytes, positive length)
+{
+        p8 address_to from = bytes;
+        for (positive at = 0; at < length; at++)
+                if (table_oracle_used < sizeof(table_oracle_output))
+                        table_oracle_output[table_oracle_used++] = from[at];
+                else
+                        table_oracle_overflow = true;
+}
+
+static fn table_oracle_spaces(positive count)
+{
+        while (count--)
+                table_oracle_put(" ", 1);
+}
+
+static table_cell table_generated_cell(address_any context, positive row,
+                                       positive column, p8 address_to scratch)
+{
+        table_generated address_to table = context;
+        bool heading = row == TABLE_HEADING, name = row == TABLE_NAME;
+        positive at = heading || name ? 0 : row * TABLE_GENERATED_COLUMNS + column;
+        p8 address_to text = heading ? table->heading[column] : name ? table->name[column]
+                                                           : table->text[at];
+        positive length = heading ? table->heading_length[column]
+            : name ? table->name_length[column] : table->length[at];
+        if (table->scratch)
+        {
+                memory_copy_apart(scratch, text, length);
+                memory_fill(scratch + length, (p8)(0xa0 + row + column), 96 - length);
+                text = scratch;
+        }
+        return (table_cell){.text = {text, length}, .minimum = table->minimum[column],
+            .escape = table->escape[column], .json = table->json[column],
+            .flags = heading || name ? table->flags[column] & ~TABLE_LINES
+                                     : table->flags[column]};
+}
+
+static positive table_generated_write(writer output, address_any context,
+                                      positive row, positive column)
+{
+        p8 scratch[96];
+        table_cell cell = table_generated_cell(context, row, column, scratch);
+        if (cell.text.length)
+                output(cell.text.bytes, cell.text.length);
+        return cell.text.length;
+}
+
+static bool table_oracle_escapes(p8 byte, p8 policy)
+{
+        if (policy & 64)
+                return byte < ' ' || byte == '"' || byte == '\\';
+        return ((policy & HEX_CONTROL) && ((byte < ' ' && byte != '\t') || byte == 127)) ||
+               ((policy & HEX_TAB) && byte == '\t') ||
+               ((policy & HEX_SPACE) && byte == ' ') ||
+               ((policy & HEX_QUOTE) && byte == '"') ||
+               ((policy & HEX_SLASH) && byte == '\\') ||
+               ((policy & HEX_HIGH) && byte >= 128);
+}
+
+static positive table_oracle_width(p8 address_to bytes, positive length, p8 policy)
+{
+        positive width = 0;
+        for (positive at = 0; at < length; at++)
+                width += policy && table_oracle_escapes(bytes[at], policy) ? 4 : 1;
+        return width;
+}
+
+static fn table_oracle_hex(p8 address_to bytes, positive length, p8 policy, positive limit)
+{
+        for (positive at = 0; at < length && limit; at++)
+        {
+                p8 spelled[4] = {bytes[at]};
+                positive size = 1;
+                if (policy && table_oracle_escapes(bytes[at], policy))
+                {
+                        spelled[0] = '\\';
+                        spelled[1] = 'x';
+                        spelled[2] = table_hex_digit(bytes[at] >> 4);
+                        spelled[3] = table_hex_digit(bytes[at] & 15);
+                        size = 4;
+                }
+                positive kept = min(size, limit);
+                table_oracle_put(spelled, kept);
+                limit -= kept;
+        }
+}
+
+static fn table_oracle_json(p8 address_to bytes, positive length, bool lower, bool short_escapes)
+{
+        table_oracle_put("\"", 1);
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = bytes[at], spelled[6] = {'\\', byte};
+                positive size = 2;
+                if (byte < ' ')
+                {
+                        p8 letter = byte == '\b' ? 'b' : byte == '\f' ? 'f' : byte == '\n' ? 'n'
+                            : byte == '\r' ? 'r' : byte == '\t' ? 't' : 0;
+                        if (short_escapes && letter)
+                                spelled[1] = letter;
+                        else
+                        {
+                                spelled[1] = 'u';
+                                spelled[2] = spelled[3] = '0';
+                                spelled[4] = table_hex_digit(byte >> 4);
+                                spelled[5] = table_hex_digit(byte & 15);
+                                size = 6;
+                        }
+                }
+                else if (byte != '"' && byte != '\\')
+                {
+                        spelled[0] = lower && byte >= 'A' && byte <= 'Z' ? byte + 32 : byte;
+                        size = 1;
+                }
+                table_oracle_put(spelled, size);
+        }
+        table_oracle_put("\"", 1);
+}
+
+static positive table_oracle_index(const table_view address_to view, positive shown)
+{
+        if (!view->order)
+                return shown;
+        return view->order_size == 1 ? ((p8 address_to)view->order)[shown]
+                                     : ((positive address_to)view->order)[shown];
+}
+
+static byte_span table_oracle_part(table_cell cell, positive width, positive part)
+{
+        p8 address_to bytes = cell.text.bytes;
+        positive length = cell.text.length;
+        if (cell.flags & TABLE_TRUNCATE)
+                return (byte_span){bytes, part ? 0 : min(length, width)};
+        if (cell.flags & TABLE_WRAP)
+                return part * width < length
+                    ? (byte_span){bytes + part * width, min(width, length - part * width)}
+                    : (byte_span){bytes, 0};
+        if (!(cell.flags & TABLE_LINES))
+                return (byte_span){bytes, part ? 0 : length};
+        positive start = 0, seen = 0, stop;
+        for (positive at = 0; at < length && seen < part; at++)
+                if (bytes[at] == '\n')
+                {
+                        seen++;
+                        start = at + 1;
+                }
+        if (seen < part)
+                return (byte_span){bytes, 0};
+        for (stop = start; stop < length && bytes[stop] != '\n'; stop++)
+                ;
+        return (byte_span){bytes + start, stop - start};
+}
+
+static positive table_oracle_cell_width(table_cell cell)
+{
+        if (cell.flags & TABLE_WIDTH_BYTES)
+                return cell.text.length;
+        positive widest = 0, width = 0;
+        for (positive at = 0; at < cell.text.length; at++)
+                if (cell.text.bytes[at] == '\n' && (cell.flags & TABLE_LINES))
+                {
+                        widest = max(widest, width);
+                        width = 0;
+                }
+                else
+                        width += table_oracle_width(cell.text.bytes + at, 1, cell.escape);
+        return max(widest, width);
+}
+
+static fn table_oracle_measure(const table_view address_to view, positive rows,
+    bool headings, bool declared, bool free_widths, positive all_columns,
+    positive address_to widths, positive address_to second)
+{
+        positive fields = all_columns ? all_columns : view->count;
+        for (positive shown = 0; shown < fields; shown++)
+        {
+                positive col = all_columns ? shown : table_oracle_index(view, shown);
+                p8 scratch[96];
+                table_cell heading = table_generated_cell(view->context, TABLE_HEADING, col, scratch);
+                widths[col] = max(declared ? heading.minimum : 0,
+                                  headings ? table_oracle_cell_width(heading) : 0);
+                if (second)
+                        second[col] = 0;
+        }
+        for (positive row = 0; row < rows; row++)
+                for (positive shown = 0; shown < fields; shown++)
+                {
+                        positive col = all_columns ? shown : table_oracle_index(view, shown);
+                        p8 scratch[96];
+                        table_cell cell = table_generated_cell(view->context, row, col, scratch);
+                        positive length = table_oracle_cell_width(cell);
+                        if (length > widths[col])
+                        {
+                                if (second)
+                                        second[col] = widths[col];
+                                widths[col] = length;
+                        }
+                        else if (second)
+                                second[col] = max(second[col], length);
+                        if (!headings && !free_widths && length)
+                                widths[col] = max(widths[col], cell.minimum);
+                }
+}
+
+static fn table_oracle_row(const table_view address_to view, positive row,
+                           positive address_to widths)
+{
+        positive parts = 1;
+        for (positive shown = 0; widths && view->multipart && shown < view->count; shown++)
+        {
+                positive col = table_oracle_index(view, shown), have = 1;
+                p8 scratch[96];
+                table_cell cell = table_generated_cell(view->context, row, col, scratch);
+                if (cell.flags & TABLE_LINES)
+                        for (positive at = 0; at < cell.text.length; at++)
+                                have += cell.text.bytes[at] == '\n';
+                else if ((cell.flags & TABLE_WRAP) && widths[col] && cell.text.length)
+                        have = (cell.text.length + widths[col] - 1) / widths[col];
+                parts = max(parts, have);
+        }
+        for (positive part = 0; part < parts; part++)
+        {
+                for (positive shown = 0; shown < view->count; shown++)
+                {
+                        positive col = table_oracle_index(view, shown);
+                        bool last = shown + 1 == view->count;
+                        bool measured = widths || view->fixed_widths;
+                        p8 scratch[96];
+                        table_cell cell = table_generated_cell(view->context, row, col, scratch);
+                        positive width = widths ? widths[col] : view->fixed_widths ? cell.minimum : 0;
+                        byte_span text = widths && (parts > 1 ||
+                            (cell.flags & (TABLE_WRAP | TABLE_TRUNCATE)))
+                            ? table_oracle_part(cell, width, part) : cell.text;
+                        positive length = measured
+                            ? table_oracle_width(text.bytes, text.length, cell.escape) : 0;
+                        positive limit = measured && (cell.flags & TABLE_CLIP_OUTPUT) && !last
+                            ? width : positive_max;
+                        length = min(length, limit);
+                        positive pad = width > length ? width - length : 0;
+                        if (last && !view->pad_last &&
+                            (!(cell.flags & TABLE_RIGHT) || (!length && !view->pad_empty)))
+                                pad = 0;
+                        if (last && view->pad_last && row != TABLE_HEADING)
+                                pad = width + view->pad_extra > length
+                                    ? width + view->pad_extra - length : 0;
+                        if (view->pairs)
+                        {
+                                p8 name_scratch[96];
+                                table_cell name = table_generated_cell(view->context,
+                                    TABLE_HEADING, col, name_scratch);
+                                table_oracle_put(name.text.bytes, name.text.length);
+                                table_oracle_put("=\"", 2);
+                        }
+                        if (cell.flags & TABLE_RIGHT)
+                                table_oracle_spaces(pad);
+                        if (view->write)
+                                table_generated_write(table_oracle_put, view->context, row, col);
+                        else
+                                table_oracle_hex(text.bytes, text.length, cell.escape, limit);
+                        if (!(cell.flags & TABLE_RIGHT))
+                                table_oracle_spaces(pad);
+                        if (view->pairs)
+                                table_oracle_put("\"", 1);
+                        if (last)
+                                continue;
+                        positive separator = 0;
+                        while (view->separator[separator])
+                                separator++;
+                        if ((cell.flags & TABLE_OVERFLOW) && !(cell.flags & TABLE_RIGHT) &&
+                            length > width)
+                        {
+                                table_oracle_put("\n", 1);
+                                for (positive prior = 0; prior <= shown; prior++)
+                                {
+                                        if (prior)
+                                                table_oracle_put(view->separator, separator);
+                                        table_oracle_spaces(widths[table_oracle_index(view, prior)]);
+                                }
+                        }
+                        table_oracle_put(view->separator, separator);
+                }
+                table_oracle_put("\n", 1);
+        }
+}
+
+static fn table_oracle_json_table(const table_view address_to view, positive rows,
+                                  bool column_style)
+{
+        table_oracle_put("{\n   ", 5);
+        table_oracle_json((p8 address_to)"generated", 9, false, column_style);
+        table_oracle_put(": [", 3);
+        for (positive row = 0; row < rows; row++)
+        {
+                table_oracle_put(row ? ",{\n" : "\n      {\n", row ? 3 : 9);
+                for (positive field = 0; field < view->count; field++)
+                {
+                        positive col = table_oracle_index(view, field);
+                        p8 scratch[96];
+                        if (field)
+                                table_oracle_put(",\n", 2);
+                        table_oracle_put("         ", 9);
+                        table_cell key = table_generated_cell(view->context, TABLE_NAME, col, scratch);
+                        table_oracle_json(key.text.bytes, key.text.length, column_style, column_style);
+                        table_oracle_put(": ", 2);
+                        table_cell cell = table_generated_cell(view->context, row, col, scratch);
+                        p8 address_to value = cell.text.bytes;
+                        positive length = cell.text.length;
+                        if ((cell.json == TABLE_NULL_STRING || cell.json == TABLE_NULL_NUMBER) && !length)
+                                table_oracle_put("null", 4);
+                        else if (cell.json == TABLE_BOOLEAN)
+                        {
+                                bool no = (length == 1 && value[0] == '0') ||
+                                          (length == 2 && value[0] == 'n' && value[1] == 'o');
+                                table_oracle_put(no ? "false" : "true", no ? 5 : 4);
+                        }
+                        else if (cell.json == TABLE_NUMBER || cell.json == TABLE_NULL_NUMBER)
+                                table_oracle_put(value, length);
+                        else
+                                table_oracle_json(value, length, false, column_style);
+                }
+                if (view->count || !column_style)
+                        table_oracle_put("\n", 1);
+                table_oracle_put("      }", 7);
+        }
+        if (!rows)
+                table_oracle_put("\n", 1);
+        table_oracle_put("\n   ]\n}\n", 8);
+}
+
+static positive table_generated_random = 0x2545f4914f6cdd1dull;
+
+static positive table_generated_next(void)
+{
+        table_generated_random ^= table_generated_random << 13;
+        table_generated_random ^= table_generated_random >> 7;
+        table_generated_random ^= table_generated_random << 17;
+        return table_generated_random;
+}
+
+/* Bytes for a generated field: shape 0 dense controls and quotes, 1 literal
+   and replacement alternating, 2 literal runs either side of the scan's
+   hand-back, 3 newlines packed, otherwise mostly letters with a few. */
+static fn table_generated_bytes(p8 address_to into, positive length, positive shape)
+{
+        static const p8 unusual[] = {'\n', '\t', 1, 27, 127, 0xc3, 0xa9, ' ', '"', '\\',
+                                     '\b', '\f', '\r', 0, 0x80, 0xff};
+        static const p8 letters[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.:";
+        positive run = 14 + table_generated_next() % 5, since = 0;
+        for (positive at = 0; at < length; at++)
+        {
+                positive pick = table_generated_next();
+                p8 odd = unusual[(pick >> 8) % sizeof(unusual)];
+                p8 plain = letters[(pick >> 16) % (sizeof(letters) - 1)];
+                into[at] = shape == 0 ? ((pick & 3) ? odd : plain)
+                    : shape == 1 ? (at & 1 ? odd : plain)
+                    : shape == 2 ? (since++ == run ? (since = 0, odd) : plain)
+                    : shape == 3 ? ((pick & 1) ? '\n' : plain)
+                    : ((pick & 15) ? plain : odd);
+        }
+}
+
+static fn table_generated_checks(void)
+{
+        static table_generated table;
+        static const p8 policies[] = {0, HEX_CONTROL | HEX_TAB, HEX_HIGH, 63,
+            HEX_CONTROL | HEX_TAB | HEX_SLASH | HEX_HIGH | HEX_SPACE, HEX_CONTROL,
+            HEX_TAB | HEX_QUOTE};
+        static const string_address separators[] = {" ", "  ", "|", " | ", ""};
+        for (positive round = 0; round < 3000; round++)
+        {
+                bool wide = !(table_generated_next() % 5);
+                positive longest = wide ? 32 : 95;
+                table.rows = table_generated_next() % (wide ? 3 : TABLE_GENERATED_ROWS + 1);
+                table.columns = 1 + table_generated_next() % TABLE_GENERATED_COLUMNS;
+                table.scratch = table_generated_next() & 1;
+                for (positive col = 0; col < table.columns; col++)
+                {
+                        table.flags[col] = (p8)(table_generated_next() & 127);
+                        if (table_generated_next() & 1)
+                                table.flags[col] &= TABLE_RIGHT | TABLE_LINES | TABLE_CLIP_OUTPUT;
+                        table.minimum[col] = table_generated_next() % 14;
+                        table.escape[col] = policies[table_generated_next() % sizeof(policies)];
+                        table.json[col] = (p8)(table_generated_next() % 5);
+                        table.heading_length[col] = table_generated_next() % 12;
+                        table.name_length[col] = table_generated_next() % 12;
+                        table_generated_bytes(table.heading[col], table.heading_length[col], 4);
+                        table_generated_bytes(table.name[col], table.name_length[col], 4);
+                }
+                for (positive row = 0; row < table.rows; row++)
+                        for (positive col = 0; col < table.columns; col++)
+                        {
+                                positive at = row * TABLE_GENERATED_COLUMNS + col;
+                                positive shape = table_generated_next() % 6;
+                                positive size = table_generated_next() % 4;
+                                positive length = size == 0 ? 0 : size == 1
+                                    ? table_generated_next() % (longest + 1)
+                                    : table_generated_next() % 24;
+                                if (shape == 3)
+                                        length = min(length, 32);
+                                table.length[at] = min(length, longest);
+                                table_generated_bytes(table.text[at], table.length[at], shape);
+                        }
+                positive shown = wide ? 7 + table_generated_next() % 14
+                                      : 1 + table_generated_next() % 8;
+                p8 order8[TABLE_GENERATED_SHOWN];
+                positive order64[TABLE_GENERATED_SHOWN];
+                for (positive at = 0; at < shown; at++)
+                        order8[at] = (p8)(order64[at] = table_generated_next() % table.columns);
+                bool wide_order = table_generated_next() & 1;
+                bool identity = !wide && !(table_generated_next() % 4);
+                table_view view = {.output = table_generated_capture, .context = &table,
+                    .cell = table_generated_cell,
+                    .order = identity ? null : wide_order ? (address_any)order64 : (address_any)order8,
+                    .order_size = wide_order ? sizeof(order64[0]) : 1,
+                    .count = identity ? table.columns : shown,
+                    .separator = separators[table_generated_next() % 5],
+                    .pad_last = table_generated_next() & 1, .pad_empty = table_generated_next() & 1,
+                    .pairs = !(table_generated_next() % 4),
+                    .multipart = wide || (table_generated_next() & 1),
+                    .fixed_widths = !(table_generated_next() % 4),
+                    .pad_extra = table_generated_next() % 3};
+                if (!(table_generated_next() % 6))
+                        view.write = table_generated_write;
+                positive mode = table_generated_next() & 255;
+                bool headings = mode & 1, same_widths = true;
+                table_generated_used = table_oracle_used = 0;
+                table_generated_overflow = table_oracle_overflow = false;
+                if (mode & 32)
+                {
+                        table_json(&view, (byte_span){(p8 address_to)"generated", 9},
+                                   table.rows, (mode & 64) != 0);
+                        table_oracle_json_table(&view, table.rows, (mode & 64) != 0);
+                }
+                else if (mode & 16)
+                {
+                        // Overflow lines index the widths, which a direct row has none of.
+                        for (positive col = 0; col < table.columns; col++)
+                                table.flags[col] &= ~TABLE_OVERFLOW;
+                        if (headings)
+                        {
+                                table_row(&view, TABLE_HEADING, null);
+                                table_oracle_row(&view, TABLE_HEADING, null);
+                        }
+                        for (positive row = 0; row < table.rows; row++)
+                        {
+                                table_row(&view, row, null);
+                                table_oracle_row(&view, row, null);
+                        }
+                }
+                else
+                {
+                        // Columns no shown field names are left alone by both.
+                        positive widths[TABLE_GENERATED_COLUMNS] = {0}, second[TABLE_GENERATED_COLUMNS] = {0};
+                        positive wanted[TABLE_GENERATED_COLUMNS] = {0}, wanted_second[TABLE_GENERATED_COLUMNS] = {0};
+                        positive all = mode & 8 ? table.columns : 0;
+                        table_measure(&view, table.rows, headings, mode & 2, mode & 4, all,
+                                      widths, mode & 128 ? second : null);
+                        table_oracle_measure(&view, table.rows, headings, mode & 2, mode & 4, all,
+                                             wanted, mode & 128 ? wanted_second : null);
+                        positive shrink = table_generated_next();
+                        for (positive col = 0; col < table.columns; col++)
+                        {
+                                same_widths &= widths[col] == wanted[col] &&
+                                    (!(mode & 128) || second[col] == wanted_second[col]);
+                                // Narrower columns wrap and truncate, never below eight.
+                                if ((shrink >> col) & 1 && widths[col] > 8)
+                                        widths[col] = wanted[col] =
+                                            8 + (widths[col] - 8) * ((shrink >> (col + 8)) & 3) / 4;
+                        }
+                        if (headings)
+                        {
+                                table_row(&view, TABLE_HEADING, widths);
+                                table_oracle_row(&view, TABLE_HEADING, wanted);
+                        }
+                        for (positive row = 0; row < table.rows; row++)
+                        {
+                                table_row(&view, row, widths);
+                                table_oracle_row(&view, row, wanted);
+                        }
+                }
+                bool same = same_widths && !table_generated_overflow && !table_oracle_overflow &&
+                    table_generated_used == table_oracle_used &&
+                    !memory_compare(table_generated_output, table_oracle_output, table_oracle_used);
+                if (!same)
+                        string_format(log, "generated table round=%p mode=%p widths=%p got=%p wanted=%p prefix=%p\n",
+                                      round, mode, (positive)same_widths, table_generated_used,
+                                      table_oracle_used,
+                                      memory_common_prefix(table_generated_output, table_oracle_output,
+                                                           min(table_generated_used, table_oracle_used)));
+                check("generated tables match the independent renderer", same);
+        }
+
+        static p8 span[720];
+        for (positive round = 0; round < 4000; round++)
+        {
+                positive length = table_generated_next() % sizeof(span);
+                table_generated_bytes(span, length, table_generated_next() % 5);
+                p8 policy = (p8)(table_generated_next() % 64);
+                byte_span text = {span, length};
+                check("generated hex widths count every replacement",
+                      memory_hex_width(text, policy) == table_oracle_width(span, length, policy));
+                positive limit = table_generated_next() % 3 ? positive_max
+                    : table_generated_next() % (table_oracle_width(span, length, policy) + 2);
+                table_generated_used = table_oracle_used = 0;
+                writer_hex_span(table_generated_capture, text, policy, limit);
+                table_oracle_hex(span, length, policy, limit);
+                check("generated hex spans match the byte-at-a-time spelling",
+                      table_generated_used == table_oracle_used &&
+                      !memory_compare(table_generated_output, table_oracle_output, table_oracle_used));
+                bool lower = table_generated_next() & 1, short_escapes = table_generated_next() & 1;
+                table_generated_used = table_oracle_used = 0;
+                writer_json_span(table_generated_capture, text, lower, short_escapes);
+                table_oracle_json(span, length, lower, short_escapes);
+                bool same = table_generated_used == table_oracle_used &&
+                    !memory_compare(table_generated_output, table_oracle_output, table_oracle_used);
+                if (!same)
+                        string_format(log, "generated JSON round=%p lower=%p short=%p got=%p wanted=%p\n",
+                                      round, (positive)lower, (positive)short_escapes,
+                                      table_generated_used, table_oracle_used);
+                check("generated JSON spans match in every dialect", same);
+        }
+}
+
 b32 main(void)
 {
         table_layout_checks();
+        table_generated_checks();
         table_fixed_callers();
         table_tree_checks();
         name_list_checks();

@@ -2293,41 +2293,64 @@ static fn writer_json_span(writer output, byte_span value, bool lower, bool shor
             ['\b'] = 'b', ['\f'] = 'f', ['\n'] = 'n',
             ['\r'] = 'r', ['\t'] = 't',
         };
-        output("\"", 1);
-        positive at = 0;
+        /* Quotes, lowered literals and escapes gather in one bounded store: a
+           short field crosses the writer once, an unlowered run too long for
+           the store goes straight through, and a run of escapes is spelled
+           from the class table without a call per byte. */
+        p8 store[256];
+        positive used = 1, at = 0;
+        store[0] = '"';
         while (at < value.length)
         {
-                positive plain = memory_escape_index(value.bytes + at,
-                    lower ? min(value.length - at, 256) : value.length - at, 64);
-                if (plain)
+                positive plain = memory_escape_index(value.bytes + at, value.length - at, 64);
+                p8 address_to from = value.bytes + at;
+                at += plain;
+                if (plain && !lower && plain > sizeof(store) - used)
                 {
-                        if (lower)
-                        {
-                                p8 lowered[256];
-                                plain = min(plain, sizeof(lowered));
-                                memory_copy(lowered, value.bytes + at, plain);
-                                memory_to_lower_ascii(lowered, plain);
-                                output(lowered, plain);
-                        }
-                        else
-                                output(value.bytes + at, plain);
-                        at += plain;
+                        output(store, used);
+                        output(from, plain);
+                        used = 0;
                         continue;
                 }
-                p8 character = value.bytes[at++], escaped[6];
-                positive length;
-                if (short_escapes && character < 32 && short_escape[character])
+                while (plain)
                 {
-                        escaped[0] = '\\';
-                        escaped[1] = short_escape[character];
-                        length = 2;
+                        if (used == sizeof(store)) { output(store, used); used = 0; }
+                        positive take = min(plain, sizeof(store) - used);
+                        memory_copy(store + used, from, take);
+                        if (lower) memory_to_lower_ascii(store + used, take);
+                        used += take; from += take; plain -= take;
                 }
-                else
-                        length = memory_into_escaped(escaped, &character, 1,
-                                                      sizeof(escaped), 64).y;
-                output(escaped, length);
+                /* From an escape the table walks on, literals included, until
+                   sixteen literals in a row hand the rest back to the scan. */
+                for (positive run = 0; at < value.length && run < 16; )
+                {
+                        if (used > sizeof(store) - 6) { output(store, used); used = 0; }
+                        p8 character = value.bytes[at++];
+                        if (!(escape_categories[character] & 64))
+                        {
+                                store[used++] = lower && (p8)(character - 'A') < 26
+                                    ? character + 32 : character;
+                                run++;
+                                continue;
+                        }
+                        run = 0;
+                        store[used] = '\\';
+                        if (character >= ' ')
+                                store[used + 1] = character, used += 2;
+                        else if (short_escapes && short_escape[character])
+                                store[used + 1] = short_escape[character], used += 2;
+                        else
+                        {
+                                memory_copy(store + used + 1, "u00", 3);
+                                store[used + 4] = "0123456789abcdef"[character >> 4];
+                                store[used + 5] = "0123456789abcdef"[character & 15];
+                                used += 6;
+                        }
+                }
         }
-        output("\"", 1);
+        if (used == sizeof(store)) { output(store, used); used = 0; }
+        store[used++] = '"';
+        output(store, used);
 }
 
 #ifndef KERNEL_MODE // the kernel writes no JSON
@@ -2374,15 +2397,28 @@ static inline INLINE positive table_index(const table_view address_to view, posi
             : ((positive address_to)view->order)[shown];
 }
 
-static inline INLINE positive memory_hex_width(byte_span text, p8 policy)
+/* Width as written with \xNN replacements, every byte before at literal. The
+   scan skips literal runs; from an escape the class table walks on until
+   sixteen literals in a row hand the rest back, so a field of controls costs
+   a table load a byte rather than a call. */
+static inline INLINE positive memory_hex_width_from(byte_span text, p8 policy, positive at)
 {
-        positive width = text.length, at = 0;
-        while (policy && at < text.length)
+        positive width = text.length;
+        while (at < text.length)
         {
-                at += memory_escape_index(text.bytes + at, text.length - at, policy);
-                if (at < text.length) { width += 3; at++; }
+                for (positive run = 0; at < text.length && run < 16; at++)
+                        if (escape_categories[text.bytes[at]] & policy) width += 3, run = 0;
+                        else run++;
+                if (at < text.length)
+                        at += memory_escape_index(text.bytes + at, text.length - at, policy);
         }
         return width;
+}
+
+static inline INLINE positive memory_hex_width(byte_span text, p8 policy)
+{
+        return policy ? memory_hex_width_from(text, policy,
+            memory_escape_index(text.bytes, text.length, policy)) : text.length;
 }
 
 /* The clipping bound is in emitted bytes, including a partial final escape. */
@@ -2479,12 +2515,26 @@ static inline INLINE fn table_measure(const table_view address_to view, positive
 static inline INLINE fn table_row(const table_view address_to view, positive row,
                      positive address_to widths)
 {
-        positive parts = 1;
+        /* Measured once a row; a row of one field writes no separator. */
+        positive separator = view->count > 1 ? string_length(view->separator) : 0;
+        /* A multi-part row holds its first fields, each over its own scratch,
+           from the pass that counts the parts: a field is projected once a row
+           rather than once a part, and a field of L lines resumes where its
+           previous line ended instead of being rescanned from its start for
+           every line. Fields past the store are projected per part and walked
+           by table_part. */
+        enum { TABLE_ROW_HELD = 16 };
+        table_cell held[TABLE_ROW_HELD];
+        p8 held_scratch[TABLE_ROW_HELD * 96];
+        positive line_at[TABLE_ROW_HELD], holding = 0, parts = 1;
         for (positive shown = 0; widths && view->multipart && shown < view->count; shown++)
         {
                 positive col = table_index(view, shown);
                 p8 scratch[96];
-                table_cell cell = view->cell(view->context, row, col, scratch);
+                bool hold = shown < TABLE_ROW_HELD;
+                table_cell cell = view->cell(view->context, row, col,
+                                             hold ? held_scratch + shown * 96 : scratch);
+                if (hold) held[shown] = cell, line_at[shown] = 0, holding = shown + 1;
                 positive have = cell.flags & TABLE_LINES
                     ? memory_count(cell.text.bytes, cell.text.length, '\n') + 1
                     : (cell.flags & TABLE_WRAP) && widths[col] && cell.text.length
@@ -2497,16 +2547,32 @@ static inline INLINE fn table_row(const table_view address_to view, positive row
                 {
                         positive col = table_index(view, shown);
                         bool last = shown + 1 == view->count;
+                        bool measured = widths || view->fixed_widths;
                         p8 scratch[96], name_scratch[96];
-                        table_cell cell = view->cell(view->context, row, col, scratch);
+                        table_cell cell = shown < holding ? held[shown]
+                            : view->cell(view->context, row, col, scratch);
                         positive width = widths ? widths[col] : view->fixed_widths ? cell.minimum : 0;
-                        byte_span text = widths && (parts > 1 ||
-                            (cell.flags & (TABLE_WRAP | TABLE_TRUNCATE)))
-                            ? table_part(cell, width, part) : cell.text;
-                        positive length = widths || view->fixed_widths
-                            ? memory_hex_width(text, cell.escape) : 0;
-                        positive limit = (widths || view->fixed_widths) &&
-                            (cell.flags & TABLE_CLIP_OUTPUT) && !last
+                        byte_span text = cell.text;
+                        if (widths && (parts > 1 || (cell.flags & (TABLE_WRAP | TABLE_TRUNCATE))))
+                        {
+                                if (shown >= holding ||
+                                    (cell.flags & (TABLE_LINES | TABLE_WRAP | TABLE_TRUNCATE)) != TABLE_LINES)
+                                        text = table_part(cell, width, part);
+                                else
+                                {
+                                        text.bytes += line_at[shown];
+                                        text.length -= line_at[shown];
+                                        positive line = memory_span_without_byte(text.bytes, '\n', text.length);
+                                        line_at[shown] += min(line + 1, text.length);
+                                        text.length = line;
+                                }
+                        }
+                        /* One scan answers the width and, for a literal field, the write. */
+                        positive plain = measured && cell.escape
+                            ? memory_escape_index(text.bytes, text.length, cell.escape) : text.length;
+                        positive length = !measured ? 0 : plain == text.length ? text.length
+                            : memory_hex_width_from(text, cell.escape, plain);
+                        positive limit = measured && (cell.flags & TABLE_CLIP_OUTPUT) && !last
                             ? width : positive_max;
                         length = min(length, limit);
                         positive pad = difference_or_zero(width, length);
@@ -2522,21 +2588,26 @@ static inline INLINE fn table_row(const table_view address_to view, positive row
                         }
                         if (cell.flags & TABLE_RIGHT) writer_fill_bulk(view->output, pad, ' ');
                         if (view->write) view->write(view->output, view->context, row, col);
+                        else if (measured && plain == text.length)
+                        {
+                                if (text.length && limit) view->output(text.bytes, min(text.length, limit));
+                        }
                         else writer_hex_span(view->output, text, cell.escape, limit);
                         if (!(cell.flags & TABLE_RIGHT)) writer_fill_bulk(view->output, pad, ' ');
                         if (view->pairs) view->output("\"", 1);
                         if (!last)
                         {
-                                if ((cell.flags & TABLE_OVERFLOW) && !(cell.flags & TABLE_RIGHT) && length > width)
+                                if (widths && (cell.flags & TABLE_OVERFLOW) && !(cell.flags & TABLE_RIGHT) &&
+                                    length > width)
                                 {
                                         view->output("\n", 1);
                                         for (positive prior = 0; prior <= shown; prior++)
                                         {
-                                                if (prior) view->output(view->separator, string_length(view->separator));
+                                                if (prior) view->output(view->separator, separator);
                                                 writer_fill_bulk(view->output, widths[table_index(view, prior)], ' ');
                                         }
                                 }
-                                view->output(view->separator, string_length(view->separator));
+                                view->output(view->separator, separator);
                         }
                 }
                 view->output("\n", 1);
