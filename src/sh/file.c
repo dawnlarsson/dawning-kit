@@ -2923,6 +2923,16 @@ static bipolar walk_enter(walk address_to walker, positive flags)
         return handle;
 }
 
+// Back out of the directory walk_enter just entered, as if it had not been:
+// no name in it has been handed out and nothing is left to leave.
+static fn walk_abandon(walk address_to walker)
+{
+        walk_level address_to level = address_of walker->levels[--walker->depth];
+
+        walker->records_used = level->listing;
+        system_close(level->handle);
+}
+
 // Close whatever a walk stopped early left open, and give its store back.
 static fn walk_end(walk address_to walker)
 {
@@ -3024,7 +3034,7 @@ static walk_batch_item address_to walk_batch_add(walk_batch address_to batch,
         kept->event = item->event;
         kept->type = item->type;
         kept->mark = mark;
-        kept->spare = item->path != null;
+        kept->spare = 0;
         kept->result = 0;
         kept->name = batch->text_used;
         memory_copy_apart(batch->text + batch->text_used, item->name, name_bytes);
@@ -22789,6 +22799,389 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         return complete;
 }
 
+/*
+        rm -r of a directory when nothing asks a question or reports a name,
+        in batches over the walk.
+
+        The walk enters directories, and a name the listing calls plain is an
+        unlink for a pool job through the directory handle the walk holds.
+        Each batch is then read back in walk order: a name that would not go
+        is reported once, where it was met, and every directory above it is
+        known to stay, so no removal of those is tried or reported -- the
+        reference rm says what it could not remove and nothing about the
+        directories that therefore still hold it. A directory is removed once
+        everything read out of it is gone, through its name where nobody but
+        the caller and root can write its parent, and pinned anywhere else.
+*/
+enum
+{
+        RM_UNLINK = 1,
+        RM_ENTER,
+        RM_FAILED,
+        RM_RMDIR,
+};
+
+enum
+{
+        RM_FAILED_LONG = 1,
+        RM_FAILED_REMOVE,
+        RM_FAILED_READ,
+        RM_FAILED_DEEP,
+        RM_FAILED_ROOT,
+};
+
+static walk rm_walker;
+static walk_batch rm_batch;
+static p32 rm_user;
+
+// The walk's side: each entered directory's facts and whether its entries
+// can be exchanged by anyone else.
+static struct
+{
+        file_facts facts;
+        bool trusted;
+} rm_entered[WALK_LEVELS];
+
+// The replay's side: whether something under a directory stayed.
+static bool rm_kept[WALK_LEVELS];
+
+static fn rm_unlink_job(address_any context, positive index)
+{
+        walk_batch address_to batch = (walk_batch address_to)context;
+        walk_batch_item address_to item = batch->items + index;
+
+        if (item->mark == RM_UNLINK)
+                item->result = (b32)system_remove_at(
+                    item->directory, (string_address)batch->text + item->name, 0);
+}
+
+static walk_batch_item address_to rm_failed(walk_batch address_to batch,
+                                            walk_item address_to item,
+                                            p8 why, bipolar code)
+{
+        walk_batch_item address_to kept = walk_batch_add(batch, item, RM_FAILED);
+
+        if (kept)
+        {
+                kept->spare = why;
+                kept->result = (b32)code;
+        }
+        return kept;
+}
+
+/* An operand spelled with a trailing slash reaches the directory a link
+   names, and is read through it; but the name removed is the link's, which
+   no directory removal takes. The kernel says ENOTDIR, and so does rm. */
+static bool rm_through_link(string_address path)
+{
+        p8 bare[FILE_PATH_MAX];
+        positive length = string_length(path);
+        file_facts facts;
+
+        if (!length || length >= sizeof(bare) || path[length - 1] != '/')
+                return false;
+        while (length > 1 && path[length - 1] == '/')
+                length--;
+        memory_copy_apart(bare, path, length);
+        bare[length] = end;
+
+        return file_look(AT_FDCWD, bare, AT_SYMLINK_NOFOLLOW, address_of facts) &&
+               (facts.mode & MODE_FORMAT) == MODE_LINK;
+}
+
+static fn rm_stays(positive depth)
+{
+        for (positive above = 0; above < depth; above++)
+                rm_kept[above] = true;
+}
+
+static fn rm_batch_replay(walk_batch address_to batch)
+{
+        for (positive index = 0; index < batch->count; index++)
+        {
+                walk_batch_item address_to item = batch->items + index;
+                string_address name = (string_address)batch->text + item->name;
+                string_address shown = (string_address)batch->text + item->path;
+                positive depth = item->depth;
+                bipolar code = item->result;
+
+                if (item->mark == RM_ENTER)
+                {
+                        rm_kept[depth] = false;
+                        continue;
+                }
+
+                if (item->mark == RM_UNLINK && code == 0)
+                {
+                        if (rm_loud)
+                                string_format(log, "removed '%w'\n",
+                                              writer_terminal_quoted_name, shown);
+                        continue;
+                }
+
+                /*      A directory that would not open is removed if it is
+                        empty, as the reference rm does; if it is not, what
+                        is reported is why it could not be read into. */
+                if (item->mark == RM_FAILED && item->spare == RM_FAILED_READ &&
+                    !(rm_force && code == -ERROR_NO_ENTRY))
+                {
+                        file_facts facts;
+                        bipolar gone = file_look_code(item->directory, name,
+                                                      AT_SYMLINK_NOFOLLOW,
+                                                      address_of facts);
+
+                        if (gone >= 0 && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                                gone = file_remove_same(item->directory, name,
+                                                        AT_REMOVEDIR,
+                                                        address_of facts);
+                        else if (gone >= 0)
+                                gone = -ERROR_NOT_DIRECTORY;
+                        if (gone == 0)
+                        {
+                                if (rm_loud)
+                                        string_format(log, "removed directory '%w'\n",
+                                                      writer_terminal_quoted_name, shown);
+                                continue;
+                        }
+                        item->spare = RM_FAILED_REMOVE;
+                }
+
+                if (item->mark == RM_RMDIR)
+                {
+                        if (code < 0)
+                        {
+                                string_format(log_error, "rm: cannot read '%w': %s\n",
+                                              writer_terminal_quoted_name, shown,
+                                              file_reason(code));
+                                rm_status = 1;
+                                rm_kept[depth] = true;
+                        }
+                        if (rm_kept[depth])
+                        {
+                                rm_stays(depth);
+                                continue;
+                        }
+
+                        code = item->spare
+                                   ? system_remove_at(item->directory, name,
+                                                      AT_REMOVEDIR)
+                                   : !depth && rm_through_link(name)
+                                   ? -ERROR_NOT_DIRECTORY
+                                   : file_remove_same(item->directory, name,
+                                                      AT_REMOVEDIR,
+                                                      batch->facts + index);
+                        if (code == 0)
+                        {
+                                if (rm_loud)
+                                        string_format(log, "removed directory '%w'\n",
+                                                      writer_terminal_quoted_name, shown);
+                                continue;
+                        }
+                }
+
+                if (item->mark == RM_FAILED && item->spare == RM_FAILED_LONG)
+                        string_format(log_error, "rm: cannot remove '%w/%w': %s\n",
+                                      writer_terminal_quoted_name, shown,
+                                      writer_terminal_quoted_name, name,
+                                      file_reason(-ERROR_NAME_TOO_LONG));
+                else if (item->mark == RM_FAILED && item->spare == RM_FAILED_DEEP)
+                        string_format(log_error, "rm: '%w' is nested too deep\n",
+                                      writer_terminal_quoted_name, shown);
+                else if (item->mark == RM_FAILED && item->spare == RM_FAILED_ROOT)
+                        string_format(log_error, "rm: refusing to read '%w': preserved root directory\n",
+                                      writer_terminal_quoted_name, shown);
+                else
+                {
+                        // -f forgives only a name that is not there, and a
+                        // name that is not there holds nothing up.
+                        if (rm_force && code == -ERROR_NO_ENTRY)
+                                continue;
+
+                        if (item->mark == RM_UNLINK)
+                        {
+                                file_facts facts;
+                                bipolar looked = file_look_code(item->directory, name,
+                                                                AT_SYMLINK_NOFOLLOW,
+                                                                address_of facts);
+
+                                if (looked < 0)
+                                        code = looked;
+                        }
+
+                        string_format(log_error,
+                                      item->mark == RM_FAILED &&
+                                              item->spare == RM_FAILED_READ
+                                          ? "rm: cannot read '%w': %s\n"
+                                          : "rm: cannot remove '%w': %s\n",
+                                      writer_terminal_quoted_name, shown,
+                                      file_reason(code));
+                }
+
+                rm_status = 1;
+                rm_stays(item->mark == RM_RMDIR || item->mark == RM_UNLINK ||
+                                 item->mark == RM_FAILED
+                             ? depth
+                             : 0);
+        }
+}
+
+static fn rm_batched(string_address root, file_facts address_to facts)
+{
+        walk address_to walker = address_of rm_walker;
+        walk_batch address_to batch = address_of rm_batch;
+        walk_item address_to item;
+
+        rm_user = (p32)system_call(syscall(geteuid));
+        walk_start(walker, root, true);
+        item = walk_next(walker);
+
+        bipolar opened = walk_enter(walker, O_NOFOLLOW);
+        file_facts inside;
+        bipolar looked = opened < 0 ? opened
+                                    : file_look_code(opened, (string_address)"",
+                                                     AT_EMPTY_PATH, address_of inside);
+
+        if (looked >= 0 &&
+            (!file_same_identity(facts, address_of inside) ||
+             (inside.mode & MODE_FORMAT) != MODE_DIRECTORY))
+                looked = -ERROR_AGAIN;
+        if (looked < 0)
+        {
+                if (opened >= 0)
+                        walk_abandon(walker);
+                if (rm_force && looked == -ERROR_NO_ENTRY)
+                        return;
+                if (looked != -ERROR_AGAIN &&
+                    file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
+                {
+                        if (rm_loud)
+                                string_format(log, "removed directory '%w'\n",
+                                              writer_terminal_quoted_name, root);
+                        return;
+                }
+                string_format(log_error, "rm: cannot remove '%w': %s\n",
+                              writer_terminal_quoted_name, root,
+                              file_reason(looked));
+                rm_status = 1;
+                return;
+        }
+
+        rm_entered[0].facts = inside;
+        rm_entered[0].trusted = (inside.owner == rm_user || inside.owner == 0) &&
+                                !(inside.mode & 0022);
+        rm_kept[0] = false;
+
+        bool walking = true;
+
+        while (walking)
+        {
+                item = null;
+
+                while (!walk_batch_full(walker, batch) && (item = walk_next(walker)))
+                {
+                        positive depth = item->depth;
+                        walk_batch_item address_to kept = null;
+
+                        if (item->event == WALK_LEAVE)
+                        {
+                                kept = walk_batch_add(batch, item, RM_RMDIR);
+                                if (kept)
+                                {
+                                        kept->result = (b32)item->error;
+                                        kept->spare = depth ? rm_entered[depth - 1].trusted : 0;
+                                        batch->facts[batch->count - 1] = rm_entered[depth].facts;
+                                }
+                        }
+                        else if (!item->path)
+                                kept = rm_failed(batch, item, RM_FAILED_LONG, 0);
+                        else if (item->type != DT_DIR && item->type != 0)
+                                kept = walk_batch_add(batch, item, RM_UNLINK);
+                        else
+                        {
+                                //      A kind the listing would not give is
+                                //      unlinked here first, as a serial rm
+                                //      does: for a file that is all of it.
+                                bipolar tried = -ERROR_IS_DIRECTORY;
+                                file_facts entry;
+
+                                if (item->type == 0)
+                                {
+                                        tried = system_remove_at(item->directory,
+                                                                 item->name, 0);
+                                        if (tried == 0)
+                                                continue;
+
+                                        bipolar seen = file_look_code(
+                                            item->directory, item->name,
+                                            AT_SYMLINK_NOFOLLOW, address_of entry);
+
+                                        if (seen < 0 ||
+                                            (entry.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                                        {
+                                                kept = rm_failed(batch, item, RM_FAILED_REMOVE,
+                                                                 seen < 0 ? seen : tried);
+                                                if (kept && rm_force && tried == -ERROR_NO_ENTRY)
+                                                        kept->result = -ERROR_NO_ENTRY;
+                                                goto added;
+                                        }
+                                }
+
+                                if (depth >= FILE_MAX_DEPTH)
+                                {
+                                        kept = rm_failed(batch, item, RM_FAILED_DEEP, 0);
+                                        goto added;
+                                }
+
+                                bipolar entered = walk_enter(walker, O_NOFOLLOW);
+                                bipolar seen = entered < 0
+                                                   ? entered
+                                                   : file_look_code(entered, (string_address)"",
+                                                                    AT_EMPTY_PATH,
+                                                                    address_of entry);
+
+                                if (seen < 0)
+                                {
+                                        if (entered >= 0)
+                                                walk_abandon(walker);
+                                        kept = rm_failed(batch, item, RM_FAILED_READ, seen);
+                                        goto added;
+                                }
+
+                                if (rm_preserve_root &&
+                                    file_same_identity(address_of entry, address_of rm_root))
+                                {
+                                        walk_abandon(walker);
+                                        kept = rm_failed(batch, item, RM_FAILED_ROOT, 0);
+                                        goto added;
+                                }
+
+                                rm_entered[depth].facts = entry;
+                                rm_entered[depth].trusted =
+                                    (entry.owner == rm_user || entry.owner == 0) &&
+                                    !(entry.mode & 0022);
+                                kept = walk_batch_add(batch, item, RM_ENTER);
+                        }
+added:
+                        if (!kept)
+                        {
+                                log_error("rm: out of memory while walking the tree\n", 0);
+                                rm_status = 1;
+                                walking = false;
+                                break;
+                        }
+                }
+
+                if (!item)
+                        walking = false;
+
+                walk_batch_run(batch, rm_unlink_job, batch);
+                rm_batch_replay(batch);
+                walk_batch_next(walker, batch);
+        }
+
+        walk_end(walker);
+}
+
 static const argument_option rm_options[] = {
     {"dir", 'd'},
     {"force", 'f', 0, ARGUMENT_SELECT(rm_selection, collision) | ARGUMENT_SELECT(rm_selection, prompt)},
@@ -23010,9 +23403,13 @@ static b32 file_rm()
                 rm_device_major = facts.device_major;
                 rm_device_minor = facts.device_minor;
 
-                rm_tree(AT_FDCWD, path, path, FILE_MAX_DEPTH);
+                if (here && rm_recursive && !rm_ask && !rm_one_system)
+                        rm_batched(path, address_of facts);
+                else
+                        rm_tree(AT_FDCWD, path, path, FILE_MAX_DEPTH);
         }
 
+        walk_batch_end(address_of rm_batch);
         log_flush();
 
         return rm_status;
