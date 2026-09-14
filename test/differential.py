@@ -22788,6 +22788,32 @@ int main(void)
         check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
               'plain() accepts exactly the safe bytes: ' + ran.stdout.strip().replace(chr(10), '; '))
 
+    #   Threads are not a spawn. The thread runtime in library.c starts a
+    #   thread with clone, stacks it with mmap and mprotect, blocks its
+    #   signals, parks it on a futex word and sizes the pool from
+    #   sched_getaffinity; a confined applet (awk, script, setarch) runs the
+    #   same pool as any other applet. So none of those calls may be in the
+    #   refused list, and the filter must stay a deny list whose fall-through
+    #   is ALLOW -- an allow list would refuse them all by omission.
+    builtin_text = (ROOT / 'src/sh/builtin.c').read_text()
+    apply_at = builtin_text.index('static bool floodlight_apply(')
+    apply_body = builtin_text[apply_at:builtin_text.index('\n}\n', apply_at)]
+    refused_calls = set(re.findall(r'refused\[count\+\+\]\s*=\s*\(p32\)syscall\((\w+)\)',
+                                   apply_body))
+    thread_calls = {'clone', 'clone3', 'futex', 'mmap', 'mprotect', 'munmap',
+                    'rt_sigprocmask', 'sched_getaffinity', 'sched_yield', 'exit',
+                    'exit_group', 'gettid', 'nanosleep'}
+    check('execve' in refused_calls and not (refused_calls & thread_calls),
+          'a confined applet can still start, park and join threads: refused %s'
+          % sorted(refused_calls & thread_calls))
+    confine_at = builtin_text.index('static bool floodlight_confine(')
+    confine_body = builtin_text[confine_at:builtin_text.index('\n}\n', confine_at)]
+    check(re.search(r'\{BPF_RETURN, 0, 0, SECCOMP_RET_ALLOW\};\s*'
+                    r'filter\[at\+\+\] = \(floodlight_instruction\)'
+                    r'\{BPF_RETURN, 0, 0, SECCOMP_RET_ERRNO_EPERM\};\s*'
+                    r'program\.count', confine_body) is not None,
+          'the confinement filter is a deny list whose fall-through allows')
+
     return check.verdict('floodlight', 'floodlight')
 
 

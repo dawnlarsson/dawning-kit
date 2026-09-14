@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        302 routines (290 public, 12 local), 301 of them on all three and 1 local to one.
+        310 routines (298 public, 12 local), 309 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -152,6 +152,9 @@
           library_close                  public  yes     yes     yes
           library_get                    public  yes     yes     yes
           library_open                   public  yes     yes     yes
+          lock_release                   public  yes     yes     yes
+          lock_take                      public  yes     yes     yes
+          lock_try                       public  yes     yes     yes
           log                            public  yes     yes     yes
           log_direct                     public  yes     yes     yes
           log_error                      public  yes     yes     yes
@@ -359,6 +362,11 @@
           system_write_all               public  yes     yes     yes
           system_write_all_checked       public  yes     yes     yes
           term_size                      public  yes     yes     yes
+          thread_exit                    public  yes     yes     yes
+          thread_join                    public  yes     yes     yes
+          thread_start                   public  yes     yes     yes
+          thread_wait                    public  yes     yes     yes
+          thread_wake                    public  yes     yes     yes
           wait_status_code               public  yes     yes     yes
           wait_status_code_base          public  yes     yes     yes
           working_directory_get          public  yes     yes     yes
@@ -32731,18 +32739,19 @@ fn memory_release(address_any address_to held, positive address_to have,
 //      printf check is one -- has no such C to jump to and fails at the link
 //      with an undefined allocator_take_slow. compiler_memory.c defines this
 //      before it includes library.c, so the test is answerable here.
-#if !defined(KERNEL_MODE) && defined(STANDARD_MODERN_C_COMPILER_MEMORY)
-extern address_any allocator_free_list[];
+#if !defined(KERNEL_MODE) && defined(STANDARD_MODERN_C_COMPILER_MEMORY) && \
+        defined(LIBRARY_THREAD_RUNTIME)
 ALLOCATES ALLOCATES_SIZE(1) address_any memory_take(positive bytes);
 fn memory_give(address_any block);
 address_any allocator_take_slow(positive bytes);
 fn allocator_give_slow(address_any block);
+fn allocator_thread_retire(thread address_to it);
 
-__asm__(
-    ASM_HIDDEN_BSS_OBJECT_BEGIN(allocator_free_list, 16)
-    ASM_ZERO(416)
-    ASM_OBJECT_END(allocator_free_list)
-);
+//      The shelf heads are the calling thread's, at a fixed offset from the
+//      thread register (platform/linux.inc). The bodies below spell the
+//      offset as 64.
+_Static_assert(THREAD_OFFSET_SHELVES == 64 && THREAD_SHELVES == 52,
+               "memory_take and memory_give reach the shelves at 64(tp)");
 
 //
 //      A whole line, not the sixteen bytes ASM_FUNC gives every routine. The
@@ -32815,17 +32824,26 @@ __asm__(
     "lea -0x1(%rdx,%rcx,4), %esi\n"
     "cmp $0x33, %esi\n   jg 8f\n"
     //
-    //   The base goes in r8, not rdi as the compiler had it: the request has
-    //   to survive to the jump at 9, which is reached from here when the
-    //   shelf is empty. The compiler could clobber rdi because its own slow
-    //   paths were inline and had the value spilled.
+    //   The shelf is the calling thread's. The base still goes in r8, now
+    //   loaded from the block's self word at fs:0, and the shelf is sixty
+    //   four past it. Addressing the shelf through fs directly --
+    //   fs:64(,rsi,8) for the load and the store, one instruction fewer --
+    //   measured 21.44 ticks a pair against 20.65 for the .bss array on the
+    //   9950X, alternating runs; this form measured 20.86, and the array
+    //   padded to this form's length 20.58, so it was the segment override on
+    //   an indexed address and not the layout. On a quieter box the pair is
+    //   19.33 against 19.13, one percent; loading the self word at the entry
+    //   instead, beside the class arithmetic, measured 20.05, and padding
+    //   the pop by one to five bytes moved nothing. rdi is left alone: the request
+    //   has to survive to the jump at 9, reached from here when the shelf is
+    //   empty.
     //
-    "2:  lea allocator_free_list(%rip), %r8\n"
-    "mov (%r8,%rsi,8), %r9\n"
+    "2:  mov %fs:0, %r8\n"
+    "mov 64(%r8,%rsi,8), %r9\n"
     "test %r9, %r9\n   je 8f\n"
     "mov (%r9), %rax\n"
     "mov %rsi, -0x8(%r9)\n"
-    "mov %rax, (%r8,%rsi,8)\n"
+    "mov %rax, 64(%r8,%rsi,8)\n"
     "mov 0x30(%rsp), %rbp\n"
     "mov %r9, %rax\n"
     "add $0x38, %rsp\n"
@@ -32855,9 +32873,9 @@ __asm__(
     "cmp $51, %rax\n   ja 9f\n"
     "lea 54(%rax), %rdx\n"
     "mov %rdx, -8(%rdi)\n"
-    "lea allocator_free_list(%rip), %rdx\n"
-    "mov (%rdx,%rax,8), %rcx\n"
-    "mov %rdi, (%rdx,%rax,8)\n"
+    "mov %fs:0, %rdx\n"
+    "mov 64(%rdx,%rax,8), %rcx\n"
+    "mov %rdi, 64(%rdx,%rax,8)\n"
     "mov %rcx, (%rdi)\n"
     "8:\n"
     ASM_RET
@@ -32881,7 +32899,7 @@ __asm__(
     "add w1, w6, w7, lsl #2\n   sub w1, w1, #1\n"
     "b 2f\n"
     "1:  add x1, x0, #7\n   lsr x1, x1, #4\n"
-    "2:  adrp x8, allocator_free_list\n   add x8, x8, :lo12:allocator_free_list\n"
+    "2:  mrs x8, tpidr_el0\n   add x8, x8, #64\n"
     "ldr x10, [x8, x1, lsl #3]\n   cbz x10, 9f\n"
     "ldr x11, [x10]\n"
     "stur x1, [x10, #-8]\n"
@@ -32898,7 +32916,7 @@ __asm__(
     "cmp x1, #51\n   b.hi 9f\n"
     "add x2, x1, #54\n"
     "stur x2, [x0, #-8]\n"
-    "adrp x3, allocator_free_list\n   add x3, x3, :lo12:allocator_free_list\n"
+    "mrs x3, tpidr_el0\n   add x3, x3, #64\n"
     "ldr x4, [x3, x1, lsl #3]\n"
     "str x0, [x3, x1, lsl #3]\n"
     "str x4, [x0]\n"
@@ -32935,12 +32953,11 @@ __asm__(
     "addw a1, a5, a6\n"
     "j 2f\n"
     "1:  addi a1, a0, 7\n   srli a1, a1, 4\n"
-    "2:  lla a6, allocator_free_list\n"
-    "slli a5, a1, 3\n   add a6, a6, a5\n"
-    "ld a5, 0(a6)\n   beqz a5, 9f\n"
+    "2:  slli a5, a1, 3\n   add a6, tp, a5\n"
+    "ld a5, 64(a6)\n   beqz a5, 9f\n"
     "ld a4, 0(a5)\n"
     "sd a1, -8(a5)\n"
-    "sd a4, 0(a6)\n"
+    "sd a4, 64(a6)\n"
     "mv a0, a5\n"
     ASM_RET
     //
@@ -32964,10 +32981,9 @@ __asm__(
     "li a5, 51\n   bltu a5, a1, 9f\n"
     "addi a2, a1, 54\n"
     "sd a2, -8(a0)\n"
-    "lla a3, allocator_free_list\n"
-    "slli a4, a1, 3\n   add a3, a3, a4\n"
-    "ld a4, 0(a3)\n"
-    "sd a0, 0(a3)\n"
+    "slli a4, a1, 3\n   add a3, tp, a4\n"
+    "ld a4, 64(a3)\n"
+    "sd a0, 64(a3)\n"
     "sd a4, 0(a0)\n"
     "8:\n"
     ASM_RET
@@ -32976,6 +32992,300 @@ __asm__(
     ASM_END(memory_give)
 );
 #endif
+/*
+        thread_start, thread_join, thread_exit.
+
+        thread_start(entry, argument) maps THREAD_MAPPING_BYTES of stack with
+        a guard page at the bottom and the thread block at the top, and clones
+        a thread whose stack starts just below the block and whose thread
+        register is the block. It answers the block, which is the thread's
+        handle, or null with nothing left behind. The new thread calls
+        entry(argument) and leaves through thread_exit when it returns.
+
+        The clone flags are what glibc's NPTL passes: VM, FS, FILES, SIGHAND,
+        THREAD and SYSVSEM make it a thread of this process -- qemu-user
+        refuses the set without SYSVSEM, which CHECK_lock found -- and SETTLS,
+        PARENT_SETTID and CHILD_CLEARTID are the three this adds to the
+        trampoline that lane used to carry. SETTLS installs the block.
+        PARENT_SETTID writes the thread id into the block before clone
+        returns, so a join can never read a zero that means "not started yet".
+        CHILD_CLEARTID has the kernel zero the same word and wake it when the
+        thread is gone -- after its last instruction, which is what makes
+        freeing its stack in thread_join safe.
+
+        Signals: every signal is blocked across the clone, so the child starts
+        with all of them blocked and stays that way; the parent restores its
+        own mask before it returns. Asynchronous signals therefore reach the
+        first thread, which is where this library's handlers and the
+        shell's live. Faults are synchronous and still kill the process.
+
+        threads_live goes up before the clone and back down after the
+        reaping, which is the ordering the lock elision in linux.inc needs.
+
+        thread_join(it) sleeps on the identity word until the kernel has
+        zeroed it. The wait is the shared futex, not the private one the
+        locks use: the kernel's CHILD_CLEARTID wake is keyed as shared, and a
+        private wait on the same address sits in another queue and is never
+        woken. Then it hands the thread's allocator shelves to the shared
+        depot, unmaps the stack, and takes the thread out of the count.
+
+        thread_exit ends the calling thread. Never the first thread's: that
+        would leave the process running without the thread its signals go to.
+        exit is exit_group, so a return from main ends every thread.
+*/
+thread address_to thread_start(fn(address_to entry)(address_any),
+                               address_any argument);
+fn thread_join(thread address_to it);
+DEAD_END fn thread_exit(void);
+
+#define THREAD_TEXT_INNER(value) #value
+#define THREAD_TEXT(value) THREAD_TEXT_INNER(value)
+//      VM|FS|FILES|SIGHAND|THREAD|SYSVSEM|SETTLS|PARENT_SETTID|CHILD_CLEARTID
+#define THREAD_CLONE_FLAGS 0x3d0f00
+//      MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE|MAP_STACK, the same on all three
+#define THREAD_MAP_FLAGS 0x24022
+_Static_assert(THREAD_MAPPING_BYTES == 8388608 && THREAD_BLOCK_BYTES == 512 &&
+               THREAD_OFFSET_IDENTITY == 12 && THREAD_OFFSET_REGION == 16 &&
+               THREAD_OFFSET_ENTRY == 32 && THREAD_OFFSET_ARGUMENT == 40,
+               "thread_start spells these numbers out");
+
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(thread_start)
+    "push %rbx\n   push %r12\n   push %r13\n   sub $16, %rsp\n"
+    "mov %rdi, %r12\n   mov %rsi, %r13\n"
+    "xor %edi, %edi\n   mov $8388608, %esi\n   mov $3, %edx\n"
+    "mov $" THREAD_TEXT(THREAD_MAP_FLAGS) ", %r10d\n   mov $-1, %r8\n   xor %r9d, %r9d\n"
+    "mov $" THREAD_TEXT(syscall(mmap)) ", %eax\n   syscall\n"
+    "cmp $-4096, %rax\n   ja .Lthread_start_x64_refused\n"
+    "mov %rax, %rbx\n"
+    "mov %rax, %rdi\n   mov $4096, %esi\n   xor %edx, %edx\n"
+    "mov $" THREAD_TEXT(syscall(mprotect)) ", %eax\n   syscall\n"
+    "test %rax, %rax\n   jnz .Lthread_start_x64_unmap\n"
+    "lea 8388096(%rbx), %rax\n"
+    "mov %rbx, 16(%rax)\n   mov %rax, %rbx\n   mov %rbx, (%rbx)\n"
+    "mov %r12, 32(%rbx)\n   mov %r13, 40(%rbx)\n"
+    "lock incq threads_live(%rip)\n"
+    "movq $-1, (%rsp)\n   mov $2, %edi\n   mov %rsp, %rsi\n"
+    "lea 8(%rsp), %rdx\n   mov $8, %r10d\n"
+    "mov $" THREAD_TEXT(syscall(rt_sigprocmask)) ", %eax\n   syscall\n"
+    //  clone(flags, stack, parent_tid, child_tid, tls) in rdi rsi rdx r10 r8.
+    "mov $" THREAD_TEXT(THREAD_CLONE_FLAGS) ", %edi\n   mov %rbx, %rsi\n"
+    "lea 12(%rbx), %rdx\n   mov %rdx, %r10\n   mov %rbx, %r8\n"
+    "mov $" THREAD_TEXT(syscall(clone)) ", %eax\n   syscall\n"
+    "test %rax, %rax\n   jz .Lthread_start_x64_child\n"
+    "mov %rax, %r12\n"
+    "mov $2, %edi\n   lea 8(%rsp), %rsi\n   xor %edx, %edx\n   mov $8, %r10d\n"
+    "mov $" THREAD_TEXT(syscall(rt_sigprocmask)) ", %eax\n   syscall\n"
+    "test %r12, %r12\n   js .Lthread_start_x64_failed\n"
+    "mov %rbx, %rax\n"
+    ".Lthread_start_x64_return:\n"
+    "add $16, %rsp\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ".Lthread_start_x64_failed:\n"
+    "lock decq threads_live(%rip)\n   mov 16(%rbx), %rbx\n"
+    ".Lthread_start_x64_unmap:\n"
+    "mov %rbx, %rdi\n   mov $8388608, %esi\n"
+    "mov $" THREAD_TEXT(syscall(munmap)) ", %eax\n   syscall\n"
+    ".Lthread_start_x64_refused:\n"
+    "xor %eax, %eax\n   jmp .Lthread_start_x64_return\n"
+    //  The child: rsp is the block, sixteen aligned, and rbx is still the
+    //  block because clone copies every register but rax and rsp.
+    ".Lthread_start_x64_child:\n"
+    "xor %ebp, %ebp\n   mov 40(%rbx), %rdi\n   mov 32(%rbx), %rax\n"
+    ASM_CALL("rax")
+    "jmp thread_exit\n"
+    ASM_END(thread_start)
+
+    ASM_FUNC(thread_join)
+    "push %rbx\n   mov %rdi, %rbx\n"
+    ".Lthread_join_x64_wait:\n"
+    "mov 12(%rbx), %edx\n   test %edx, %edx\n   jz .Lthread_join_x64_gone\n"
+    "lea 12(%rbx), %rdi\n   xor %esi, %esi\n   xor %r10d, %r10d\n"
+    "mov $" THREAD_TEXT(syscall(futex)) ", %eax\n   syscall\n"
+    "jmp .Lthread_join_x64_wait\n"
+    ".Lthread_join_x64_gone:\n"
+    "mov %rbx, %rdi\n   call allocator_thread_retire\n"
+    "mov 16(%rbx), %rdi\n   mov $8388608, %esi\n"
+    "mov $" THREAD_TEXT(syscall(munmap)) ", %eax\n   syscall\n"
+    "lock decq threads_live(%rip)\n"
+    "pop %rbx\n"
+    ASM_RET
+    ASM_END(thread_join)
+
+    ASM_FUNC(thread_exit)
+    "xor %edi, %edi\n"
+    "mov $" THREAD_TEXT(syscall(exit)) ", %eax\n   syscall\n   ud2\n"
+    ASM_END(thread_exit)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(thread_start)
+    "stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n"
+    "mov x0, xzr\n   mov x1, #0x800000\n   mov x2, #3\n"
+    "mov x3, #0x4022\n   movk x3, #2, lsl #16\n   mov x4, #-1\n   mov x5, xzr\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(mmap)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "cmn x0, #4095\n   b.hs .Lthread_start_arm64_refused\n"
+    "mov x21, x0\n"
+    "mov x1, #4096\n   mov x2, xzr\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(mprotect)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "cbnz x0, .Lthread_start_arm64_unmap\n"
+    "add x9, x21, #0x800, lsl #12\n   sub x9, x9, #512\n"
+    "str x9, [x9]\n   str x21, [x9, #16]\n"
+    "str x19, [x9, #32]\n   str x20, [x9, #40]\n   mov x19, x9\n"
+    "adrp x10, threads_live\n   add x10, x10, :lo12:threads_live\n"
+    ".Lthread_start_arm64_count:\n"
+    "ldxr x11, [x10]\n   add x11, x11, #1\n   stxr w12, x11, [x10]\n"
+    "cbnz w12, .Lthread_start_arm64_count\n"
+    "mov x0, #-1\n   str x0, [sp, #48]\n"
+    "mov x0, #2\n   add x1, sp, #48\n   add x2, sp, #56\n   mov x3, #8\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(rt_sigprocmask)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    //  clone(flags, stack, parent_tid, tls, child_tid) in x0..x4.
+    "mov x0, #0x0f00\n   movk x0, #0x3d, lsl #16\n"
+    "mov x1, x19\n   add x2, x19, #12\n   mov x3, x19\n   add x4, x19, #12\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(clone)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "cbz x0, .Lthread_start_arm64_child\n"
+    "mov x20, x0\n"
+    "mov x0, #2\n   add x1, sp, #56\n   mov x2, xzr\n   mov x3, #8\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(rt_sigprocmask)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "tbnz x20, #63, .Lthread_start_arm64_failed\n"
+    "mov x0, x19\n"
+    ".Lthread_start_arm64_return:\n"
+    "ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #64\n"
+    ASM_RET
+    ".Lthread_start_arm64_failed:\n"
+    "adrp x10, threads_live\n   add x10, x10, :lo12:threads_live\n"
+    ".Lthread_start_arm64_uncount:\n"
+    "ldxr x11, [x10]\n   sub x11, x11, #1\n   stxr w12, x11, [x10]\n"
+    "cbnz w12, .Lthread_start_arm64_uncount\n"
+    "ldr x21, [x19, #16]\n"
+    ".Lthread_start_arm64_unmap:\n"
+    "mov x0, x21\n   mov x1, #0x800000\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(munmap)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    ".Lthread_start_arm64_refused:\n"
+    "mov x0, xzr\n   b .Lthread_start_arm64_return\n"
+    //  The child: sp is the block and x19 still holds it.
+    ".Lthread_start_arm64_child:\n"
+    "mov x29, xzr\n   mov x30, xzr\n"
+    "ldr x0, [x19, #40]\n   ldr x9, [x19, #32]\n"
+    ASM_CALL("x9")
+    "b thread_exit\n"
+    ASM_END(thread_start)
+
+    ASM_FUNC(thread_join)
+    "stp x29, x30, [sp, #-32]!\n   mov x29, sp\n   str x19, [sp, #16]\n"
+    "mov x19, x0\n"
+    ".Lthread_join_arm64_wait:\n"
+    "ldr w2, [x19, #12]\n   cbz w2, .Lthread_join_arm64_gone\n"
+    "add x0, x19, #12\n   mov x1, xzr\n   mov x3, xzr\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(futex)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "b .Lthread_join_arm64_wait\n"
+    ".Lthread_join_arm64_gone:\n"
+    "mov x0, x19\n   bl allocator_thread_retire\n"
+    "ldr x0, [x19, #16]\n   mov x1, #0x800000\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(munmap)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "adrp x10, threads_live\n   add x10, x10, :lo12:threads_live\n"
+    ".Lthread_join_arm64_uncount:\n"
+    "ldxr x11, [x10]\n   sub x11, x11, #1\n   stxr w12, x11, [x10]\n"
+    "cbnz w12, .Lthread_join_arm64_uncount\n"
+    "ldr x19, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
+    ASM_RET
+    ASM_END(thread_join)
+
+    ASM_FUNC(thread_exit)
+    "mov x0, xzr\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" THREAD_TEXT(syscall(exit)) "\n"
+    SYSCALL_INSTRUCTION "\n   brk #0\n"
+    ASM_END(thread_exit)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(thread_start)
+    "addi sp, sp, -48\n"
+    "sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n   sd s2, 16(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n"
+    "li a0, 0\n   li a1, 8388608\n   li a2, 3\n   li a3, " THREAD_TEXT(THREAD_MAP_FLAGS) "\n"
+    "li a4, -1\n   li a5, 0\n"
+    "li a7, " THREAD_TEXT(syscall(mmap)) "\n   ecall\n"
+    "li t0, -4096\n   bltu t0, a0, .Lthread_start_riscv64_refused\n"
+    "mv s2, a0\n"
+    "li a1, 4096\n   li a2, 0\n"
+    "li a7, " THREAD_TEXT(syscall(mprotect)) "\n   ecall\n"
+    "bnez a0, .Lthread_start_riscv64_unmap\n"
+    "li t0, 8388096\n   add t1, s2, t0\n"
+    "sd t1, 0(t1)\n   sd s2, 16(t1)\n   sd s0, 32(t1)\n   sd s1, 40(t1)\n"
+    "mv s0, t1\n"
+    "lla t2, threads_live\n   li t3, 1\n   amoadd.d t4, t3, (t2)\n"
+    "li t0, -1\n   sd t0, 0(sp)\n"
+    "li a0, 2\n   mv a1, sp\n   addi a2, sp, 8\n   li a3, 8\n"
+    "li a7, " THREAD_TEXT(syscall(rt_sigprocmask)) "\n   ecall\n"
+    //  clone(flags, stack, parent_tid, tls, child_tid) in a0..a4.
+    "li a0, " THREAD_TEXT(THREAD_CLONE_FLAGS) "\n   mv a1, s0\n   addi a2, s0, 12\n"
+    "mv a3, s0\n   addi a4, s0, 12\n"
+    "li a7, " THREAD_TEXT(syscall(clone)) "\n   ecall\n"
+    "beqz a0, .Lthread_start_riscv64_child\n"
+    "mv s1, a0\n"
+    "li a0, 2\n   addi a1, sp, 8\n   li a2, 0\n   li a3, 8\n"
+    "li a7, " THREAD_TEXT(syscall(rt_sigprocmask)) "\n   ecall\n"
+    "bltz s1, .Lthread_start_riscv64_failed\n"
+    "mv a0, s0\n"
+    ".Lthread_start_riscv64_return:\n"
+    "ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n   ld s2, 16(sp)\n"
+    "addi sp, sp, 48\n"
+    ASM_RET
+    ".Lthread_start_riscv64_failed:\n"
+    "lla t2, threads_live\n   li t3, -1\n   amoadd.d t4, t3, (t2)\n"
+    "ld s2, 16(s0)\n"
+    ".Lthread_start_riscv64_unmap:\n"
+    "mv a0, s2\n   li a1, 8388608\n"
+    "li a7, " THREAD_TEXT(syscall(munmap)) "\n   ecall\n"
+    ".Lthread_start_riscv64_refused:\n"
+    "li a0, 0\n   j .Lthread_start_riscv64_return\n"
+    //  The child: sp is the block, tp the block, s0 the block.
+    ".Lthread_start_riscv64_child:\n"
+    "li ra, 0\n   ld a0, 40(s0)\n   ld t0, 32(s0)\n"
+    ASM_CALL("t0")
+    "tail thread_exit\n"
+    ASM_END(thread_start)
+
+    ASM_FUNC(thread_join)
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n   sd s0, 0(sp)\n   mv s0, a0\n"
+    ".Lthread_join_riscv64_wait:\n"
+    "lw a2, 12(s0)\n   beqz a2, .Lthread_join_riscv64_gone\n"
+    "addi a0, s0, 12\n   li a1, 0\n   li a3, 0\n"
+    "li a7, " THREAD_TEXT(syscall(futex)) "\n   ecall\n"
+    "j .Lthread_join_riscv64_wait\n"
+    ".Lthread_join_riscv64_gone:\n"
+    "mv a0, s0\n   call allocator_thread_retire\n"
+    "ld a0, 16(s0)\n   li a1, 8388608\n"
+    "li a7, " THREAD_TEXT(syscall(munmap)) "\n   ecall\n"
+    "lla t2, threads_live\n   li t3, -1\n   amoadd.d t4, t3, (t2)\n"
+    "ld ra, 8(sp)\n   ld s0, 0(sp)\n   addi sp, sp, 16\n"
+    ASM_RET
+    ASM_END(thread_join)
+
+    ASM_FUNC(thread_exit)
+    "li a0, 0\n"
+    "li a7, " THREAD_TEXT(syscall(exit)) "\n   ecall\n   ebreak\n"
+    ASM_END(thread_exit)
+);
+#endif
+
+#undef THREAD_TEXT
+#undef THREAD_TEXT_INNER
 #endif // KERNEL_MODE
 
 /*

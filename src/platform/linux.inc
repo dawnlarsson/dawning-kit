@@ -34,6 +34,168 @@ bipolar system_wait4_retry(bipolar process, address_any status,
 bipolar file_slurp(string_address path, p8 address_to into, positive capacity);
 positive program_initial_identity(void);
 
+/*
+        THE THREAD BLOCK
+
+        Every thread of a program built on this library, the first one
+        included, has one of these, and the architecture's thread register
+        points at it: fs on x86_64, tpidr_el0 on arm64, tp on riscv64. The
+        first thread's is thread_main in .bss, installed by _start before
+        anything else runs; thread_start maps one at the top of every new
+        thread's stack and hands it to clone as the TLS word.
+
+        Why an explicit block and not __thread. The two compile to the same
+        instruction -- a load at a fixed offset from the thread register -- so
+        access cost does not choose between them. Everything around the load
+        does. A __thread object needs .tdata and .tbss rules in spark.ld, an
+        initial image copied into every new thread, and three conventions for
+        where the register points relative to the data: x86_64 keeps the
+        data below fs, arm64 sixteen bytes above tpidr_el0, riscv64 at tp.
+        Hand-written assembly would reach it through a different
+        linker-computed relocation on each machine. This block sits at
+        positive offsets from the register on all three, written down once
+        below, reachable from assembly as a constant and from C through
+        __builtin_thread_pointer(), and a new thread's copy is a zeroed
+        mapping with four words stored into it. spark.ld discards .tdata and
+        .tbss, so a __thread object -- which would read some other field of
+        this block -- fails at the link instead of at run time.
+
+        What a program that never starts a thread pays for it: one
+        arch_prctl(ARCH_SET_FS) trap in x86_64 _start and one register write
+        on the other two. errno and the allocator's shelves live here, and a
+        load through fs or tp is the same single instruction the plain .bss
+        objects were.
+
+        self points at the block because x86_64 GCC spells
+        __builtin_thread_pointer() as a load of %fs:0. identity is the thread
+        id word that clone's PARENT_SETTID fills and CHILD_CLEARTID zeroes
+        when the thread has gone; thread_join sleeps on it. region is the
+        base of the thread's mapping, zero for the first thread. run is the
+        parallel run the thread is working inside, if any, which is how a
+        nested call knows to run inline. slot is the thread's pool slot, zero
+        for the first thread. shelves are the allocator's free-list heads,
+        one per size class: memory_take and memory_give reach them at
+        THREAD_OFFSET_SHELVES, so a thread allocates and frees without a lock.
+*/
+#define THREAD_OFFSET_ERROR 8
+#define THREAD_OFFSET_IDENTITY 12
+#define THREAD_OFFSET_REGION 16
+#define THREAD_OFFSET_RUN 24
+#define THREAD_OFFSET_ENTRY 32
+#define THREAD_OFFSET_ARGUMENT 40
+#define THREAD_OFFSET_SLOT 48
+#define THREAD_OFFSET_SHELVES 64
+#define THREAD_SHELVES 52
+#define THREAD_BLOCK_BYTES 512
+
+/* A thread's whole mapping: a guard page at the bottom, the stack above it,
+   and the block at the top where the stack starts. Eight megabytes of
+   address, the stack a Linux main thread gets by default, committed only as
+   it is touched. */
+#define THREAD_MAPPING_BYTES 8388608
+#define THREAD_GUARD_BYTES 4096
+
+typedef struct thread
+{
+        struct thread address_to self;
+        b32 error_number;
+        b32 identity;
+        address_any region;
+        address_any run;
+        fn(address_to entry)(address_any);
+        address_any argument;
+        positive slot;
+        positive spare;
+        address_any shelves[THREAD_SHELVES];
+        positive reserved[4];
+} thread;
+
+_Static_assert(__builtin_offsetof(thread, error_number) == THREAD_OFFSET_ERROR &&
+               __builtin_offsetof(thread, identity) == THREAD_OFFSET_IDENTITY &&
+               __builtin_offsetof(thread, region) == THREAD_OFFSET_REGION &&
+               __builtin_offsetof(thread, run) == THREAD_OFFSET_RUN &&
+               __builtin_offsetof(thread, entry) == THREAD_OFFSET_ENTRY &&
+               __builtin_offsetof(thread, argument) == THREAD_OFFSET_ARGUMENT &&
+               __builtin_offsetof(thread, slot) == THREAD_OFFSET_SLOT &&
+               __builtin_offsetof(thread, shelves) == THREAD_OFFSET_SHELVES &&
+               sizeof(thread) == THREAD_BLOCK_BYTES,
+               "the thread block offsets the assembly spells out");
+
+//      The first thread's block, and the number of threads thread_start has
+//      made that thread_join has not yet reaped. Zero is one thread.
+extern thread thread_main;
+extern positive threads_live;
+
+#define thread_self() ((thread address_to)__builtin_thread_pointer())
+
+/*
+        A lock is one 32 bit word: 0 free, 1 held, 2 held with somebody
+        possibly asleep on it. Zero is free, so a lock in .bss needs no
+        initialiser. The shared spellings for a lock two processes hold over a
+        MAP_SHARED page are in standard.c.
+*/
+#define LIBRARY_THREAD_RUNTIME 1
+#define LOCK_FREE 0
+#define LOCK_HELD 1
+#define LOCK_WAITED 2
+
+typedef struct
+{
+        b32 word;
+} lock;
+
+fn lock_take(lock address_to it);
+fn lock_release(lock address_to it);
+bool lock_try(lock address_to it);
+bipolar thread_wait(b32 address_to word, b32 expected);
+bipolar thread_wake(b32 address_to word, b32 count);
+
+#define atomic_load(address) __atomic_load_n(address, __ATOMIC_SEQ_CST)
+
+/*
+        WHAT A SECOND THREAD MAY TOUCH
+
+        The shared-state audit of library.c, library.common.c and standard.c
+        made when threads arrived (2026-09-14). Utilities never start threads
+        themselves; they hand jobs to the pool, and a job runs on a worker.
+
+        Safe from any thread:
+          - every pure library.c leaf: memory_*, string_*, the hashes, the
+            codec and crypto cores whose state lives in a caller's struct;
+          - memory and memory_free (the mmap and munmap traps),
+            memory_growth, memory_reserve and memory_release on storage one
+            thread owns at a time;
+          - malloc, free, calloc, realloc and the aligned forms: per-thread
+            shelves, with the shared chunk and depot behind allocator_lock;
+          - errno, which is the calling thread's;
+          - lock_take, lock_release, lock_try, thread_wait, thread_wake,
+            the atomic_* builtins and raw system calls;
+          - memory_arena_take and memory_vector_grow over an arena the job
+            owns;
+          - reading cpu_has_*, program_stack_base, program_entry_identity and
+            program_words, which _start and main write once before any
+            thread exists.
+
+        First thread only, by the same rule glibc gives its non-reentrant
+        interfaces -- one shared cell each, and no lock:
+          - log, log_error, log_flush, string_format(log, ...) and the
+            diagnostics built on them (log_writer_buffer in any.inc);
+          - buffered_write, buffered_reserve and buffered_flush on a buffer
+            more than one thread can reach (a job's own buffer is fine);
+          - working_directory and its setters, and text_token_place, the
+            strtok position;
+          - in standard.c: the environment (getenv, setenv, putenv,
+            environ), atexit/at_quick_exit and exit, rand/random state, every
+            FILE stream (no per-stream lock), the static buffers behind
+            strerror's unknown text, asctime/ctime/gmtime/localtime, tmpnam,
+            basename/dirname, getopt, and the popen/pclose spool table;
+          - src/sh/file.c's utility_arena and its take/grow/read_all wrappers:
+            the mapping is safe, the bump state is one static.
+
+        A worker's output reaches a descriptor only through the pool's
+        ordered writer, whose sink runs on the first thread.
+*/
+
 #define LINUX_RUNTIME_TEXT_INNER(value) #value
 #define LINUX_RUNTIME_TEXT(value) LINUX_RUNTIME_TEXT_INNER(value)
 
@@ -178,7 +340,7 @@ __asm__(
 
     ASM_FUNC(exit)
     "movslq %edi, %rdi\n"
-    "mov $" LINUX_RUNTIME_TEXT(syscall(exit)) ", %eax\n   syscall\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(exit_group)) ", %eax\n   syscall\n"
     ASM_RET
     ASM_END(exit)
 
@@ -193,6 +355,12 @@ __asm__(
     ASM_FUNC(_start)
     "xor %ebp, %ebp\n   mov %rsp, program_stack_base(%rip)\n"
     "and $-16, %rsp\n"
+    /* The first thread's block goes in before anything can read errno or
+       pop an allocator shelf. r12-r14 still carry the Spark handoff, and the
+       trap spends only rax, rcx and r11. */
+    "lea thread_main(%rip), %rsi\n   mov %rsi, (%rsi)\n"
+    "mov $0x1002, %edi\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(arch_prctl)) ", %eax\n   syscall\n"
     /* A Spark loader supplies the already enabled CPU feature set.  Keep the
        complete detector as the stock-kernel/ELF fallback rather than making
        the runtime depend on Moonwater merely to start. */
@@ -320,7 +488,7 @@ __asm__(
 
     ASM_FUNC(exit)
     "sxtw x0, w0\n"
-    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(exit)) "\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(exit_group)) "\n"
     SYSCALL_INSTRUCTION "\n"
     ASM_RET
     ASM_END(exit)
@@ -336,6 +504,9 @@ __asm__(
 
     ASM_FUNC(_start)
     "mov x29, #0\n   mov x30, #0\n   mov x0, sp\n"
+    /* The first thread's block: tpidr_el0 is a register EL0 may write. */
+    "adrp x1, thread_main\n   add x1, x1, :lo12:thread_main\n"
+    "str x1, [x1]\n   msr tpidr_el0, x1\n"
     "adrp x1, program_stack_base\n   str x0, [x1, :lo12:program_stack_base]\n"
     "movz x1, #0x4152\n   movk x1, #0x5354, lsl #16\n"
     "movk x1, #0x524b, lsl #32\n   movk x1, #0x5350, lsl #48\n"
@@ -453,7 +624,7 @@ __asm__(
 
     ASM_FUNC(exit)
     "sext.w a0, a0\n"
-    "li a7, " LINUX_RUNTIME_TEXT(syscall(exit)) "\n   ecall\n"
+    "li a7, " LINUX_RUNTIME_TEXT(syscall(exit_group)) "\n   ecall\n"
     ASM_RET
     ASM_END(exit)
 
@@ -475,6 +646,8 @@ __asm__(
     "lla gp, __global_pointer$\n"
     ".option pop\n"
     "li s0, 0\n   li ra, 0\n   mv a0, sp\n"
+    /* The first thread's block: tp is an ordinary register here. */
+    "lla tp, thread_main\n   sd tp, 0(tp)\n"
     "lla t0, program_stack_base\n   sd a0, 0(t0)\n"
     "li t1, " LINUX_RUNTIME_TEXT(SPARK_START_MAGIC) "\n"
     "bne s2, t1, .Lstart_riscv64_detect\n"
@@ -493,6 +666,268 @@ __asm__(
 );
 #else
 #error "no _start defined for this architecture"
+#endif
+
+/*
+        The lock, the futex word, and the two objects every thread reaches.
+
+        threads_live counts the threads thread_start has made and thread_join
+        has not yet reaped, and zero -- a process of one thread -- is the
+        whole of the lock elision. While it reads zero a take is a load, a
+        branch and a plain store of 1, and a release the same with 0: no
+        bus-locked instruction and no exclusive pair. The store is kept, not
+        skipped, so that a thread started while the lock is held finds it
+        held. The two paths mix safely in both directions. A word stored
+        plainly reads 1 to the next compare-and-swap. A word a waiter left at
+        2 is released by a plain store of 0 once that waiter has been joined,
+        when there is nobody left to wake. thread_start increments the count
+        before its clone, so no second thread runs while it reads zero, and
+        only the last thread standing can see it return to zero.
+
+        Taking, with threads about: one compare-and-swap of 0 to 1. Losing
+        it, exchange 2 in and sleep on the word for as long as the exchange
+        keeps answering non-zero. This is Drepper's three-state lock, which
+        standard.c carried in C until it moved here; its note on why the slow
+        path exchanges rather than tests is still beside the shared
+        spellings. Releasing: exchange 0 in, and wake one sleeper only when
+        the word said 2.
+
+        The futex is the private one, keyed by address space, because every
+        lock here belongs to threads of one process. A lock that lives in a
+        MAP_SHARED page between processes must use lock_take_shared in
+        standard.c, which never elides and keys its futex by page.
+
+        thread_wait and thread_wake are the bare private futex word. wait
+        sleeps only while the word still holds expected and may return early
+        for any reason at all, so every caller reads the word again; wake
+        answers how many sleepers it woke.
+
+        Measured on the 9950X before this existed: an uncontended take and
+        release through the C compare-and-swap pair cost 7.57 ns against
+        1.70 ns for the malloc and free it would have wrapped.
+*/
+__asm__(
+    ASM_BSS_OBJECT_BEGIN(thread_main, 64)
+    ASM_ZERO(THREAD_BLOCK_BYTES)
+    ASM_OBJECT_END(thread_main)
+    ASM_BSS_OBJECT_BEGIN(threads_live, 8)
+    ".zero 8\n"
+    ASM_OBJECT_END(threads_live)
+);
+
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(lock_take)
+    "cmpq $0, threads_live(%rip)\n   jne .Llock_take_x64_shared\n"
+    "movl $1, (%rdi)\n"
+    ASM_RET
+    ".Llock_take_x64_shared:\n"
+    "xor %eax, %eax\n   mov $1, %edx\n"
+    "lock cmpxchg %edx, (%rdi)\n   jne .Llock_take_x64_contended\n"
+    ASM_RET
+    ".Llock_take_x64_contended:\n"
+    "mov $2, %edx\n   xchg %edx, (%rdi)\n   test %edx, %edx\n"
+    "jz .Llock_take_x64_done\n"
+    "mov $128, %esi\n   mov $2, %edx\n   xor %r10d, %r10d\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(futex)) ", %eax\n   syscall\n"
+    "jmp .Llock_take_x64_contended\n"
+    ".Llock_take_x64_done:\n"
+    ASM_RET
+    ASM_END(lock_take)
+
+    ASM_FUNC(lock_release)
+    "cmpq $0, threads_live(%rip)\n   jne .Llock_release_x64_shared\n"
+    "movl $0, (%rdi)\n"
+    ASM_RET
+    ".Llock_release_x64_shared:\n"
+    "xor %eax, %eax\n   xchg %eax, (%rdi)\n   cmp $1, %eax\n"
+    "jne .Llock_release_x64_wake\n"
+    ASM_RET
+    ".Llock_release_x64_wake:\n"
+    "mov $129, %esi\n   mov $1, %edx\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(futex)) ", %eax\n   syscall\n"
+    ASM_RET
+    ASM_END(lock_release)
+
+    ASM_FUNC(lock_try)
+    "cmpq $0, threads_live(%rip)\n   jne .Llock_try_x64_shared\n"
+    "xor %eax, %eax\n   cmpl $0, (%rdi)\n   jne .Llock_try_x64_done\n"
+    "movl $1, (%rdi)\n   mov $1, %eax\n"
+    ".Llock_try_x64_done:\n"
+    ASM_RET
+    ".Llock_try_x64_shared:\n"
+    "xor %eax, %eax\n   mov $1, %edx\n   lock cmpxchg %edx, (%rdi)\n"
+    "sete %al\n   movzbl %al, %eax\n"
+    ASM_RET
+    ASM_END(lock_try)
+
+    ASM_FUNC(thread_wait)
+    "mov %esi, %edx\n   mov $128, %esi\n   xor %r10d, %r10d\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(futex)) ", %eax\n   syscall\n"
+    ASM_RET
+    ASM_END(thread_wait)
+
+    ASM_FUNC(thread_wake)
+    "mov %esi, %edx\n   mov $129, %esi\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(futex)) ", %eax\n   syscall\n"
+    ASM_RET
+    ASM_END(thread_wake)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    //      Exclusive pairs rather than LSE's cas, which armv8.0 does not have.
+    ASM_FUNC(lock_take)
+    "adrp x1, threads_live\n   ldr x1, [x1, :lo12:threads_live]\n"
+    "cbnz x1, .Llock_take_arm64_shared\n"
+    "mov w1, #1\n   str w1, [x0]\n"
+    ASM_RET
+    ".Llock_take_arm64_shared:\n"
+    "mov w1, #1\n"
+    ".Llock_take_arm64_claim:\n"
+    "ldxr w2, [x0]\n   cbnz w2, .Llock_take_arm64_lost\n"
+    "stxr w3, w1, [x0]\n   cbnz w3, .Llock_take_arm64_claim\n"
+    ASM_RET
+    ".Llock_take_arm64_lost:\n"
+    "clrex\n"
+    ".Llock_take_arm64_contended:\n"
+    "mov w1, #2\n"
+    ".Llock_take_arm64_exchange:\n"
+    "ldxr w2, [x0]\n   stxr w3, w1, [x0]\n"
+    "cbnz w3, .Llock_take_arm64_exchange\n"
+    "cbz w2, .Llock_take_arm64_done\n"
+    "mov x4, x0\n   mov x1, #128\n   mov x2, #2\n   mov x3, xzr\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(futex)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "mov x0, x4\n   b .Llock_take_arm64_contended\n"
+    ".Llock_take_arm64_done:\n"
+    ASM_RET
+    ASM_END(lock_take)
+
+    ASM_FUNC(lock_release)
+    "adrp x1, threads_live\n   ldr x1, [x1, :lo12:threads_live]\n"
+    "cbnz x1, .Llock_release_arm64_shared\n"
+    "str wzr, [x0]\n"
+    ASM_RET
+    ".Llock_release_arm64_shared:\n"
+    "ldxr w2, [x0]\n   stxr w3, wzr, [x0]\n"
+    "cbnz w3, .Llock_release_arm64_shared\n"
+    "cmp w2, #1\n   b.ne .Llock_release_arm64_wake\n"
+    ASM_RET
+    ".Llock_release_arm64_wake:\n"
+    "mov x1, #129\n   mov x2, #1\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(futex)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    ASM_RET
+    ASM_END(lock_release)
+
+    ASM_FUNC(lock_try)
+    "adrp x1, threads_live\n   ldr x1, [x1, :lo12:threads_live]\n"
+    "cbnz x1, .Llock_try_arm64_shared\n"
+    "ldr w2, [x0]\n   cbnz w2, .Llock_try_arm64_busy\n"
+    "mov w2, #1\n   str w2, [x0]\n   mov w0, #1\n"
+    ASM_RET
+    ".Llock_try_arm64_busy:\n"
+    "mov w0, #0\n"
+    ASM_RET
+    ".Llock_try_arm64_shared:\n"
+    "mov w1, #1\n"
+    ".Llock_try_arm64_claim:\n"
+    "ldxr w2, [x0]\n   cbnz w2, .Llock_try_arm64_lost\n"
+    "stxr w3, w1, [x0]\n   cbnz w3, .Llock_try_arm64_claim\n"
+    "mov w0, #1\n"
+    ASM_RET
+    ".Llock_try_arm64_lost:\n"
+    "clrex\n   mov w0, #0\n"
+    ASM_RET
+    ASM_END(lock_try)
+
+    ASM_FUNC(thread_wait)
+    "mov w2, w1\n   mov x1, #128\n   mov x3, xzr\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(futex)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    ASM_RET
+    ASM_END(thread_wait)
+
+    ASM_FUNC(thread_wake)
+    "mov w2, w1\n   mov x1, #129\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(futex)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    ASM_RET
+    ASM_END(thread_wake)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    //      lr.w/sc.w for the compare-and-swap and amoswap.w for the exchange:
+    //      the A extension is part of the documented floor.
+    ASM_FUNC(lock_take)
+    "lla t0, threads_live\n   ld t0, 0(t0)\n"
+    "bnez t0, .Llock_take_riscv64_shared\n"
+    "li t1, 1\n   sw t1, 0(a0)\n"
+    ASM_RET
+    ".Llock_take_riscv64_shared:\n"
+    "li t1, 1\n"
+    ".Llock_take_riscv64_claim:\n"
+    "lr.w t2, (a0)\n   bnez t2, .Llock_take_riscv64_contended\n"
+    "sc.w t3, t1, (a0)\n   bnez t3, .Llock_take_riscv64_claim\n"
+    ASM_RET
+    ".Llock_take_riscv64_contended:\n"
+    "li t1, 2\n   amoswap.w t2, t1, (a0)\n"
+    "beqz t2, .Llock_take_riscv64_done\n"
+    "mv t4, a0\n   li a1, 128\n   li a2, 2\n   li a3, 0\n"
+    "li a7, " LINUX_RUNTIME_TEXT(syscall(futex)) "\n   ecall\n"
+    "mv a0, t4\n   j .Llock_take_riscv64_contended\n"
+    ".Llock_take_riscv64_done:\n"
+    ASM_RET
+    ASM_END(lock_take)
+
+    ASM_FUNC(lock_release)
+    "lla t0, threads_live\n   ld t0, 0(t0)\n"
+    "bnez t0, .Llock_release_riscv64_shared\n"
+    "sw zero, 0(a0)\n"
+    ASM_RET
+    ".Llock_release_riscv64_shared:\n"
+    "amoswap.w t2, zero, (a0)\n   li t1, 1\n"
+    "bne t2, t1, .Llock_release_riscv64_wake\n"
+    ASM_RET
+    ".Llock_release_riscv64_wake:\n"
+    "li a1, 129\n   li a2, 1\n"
+    "li a7, " LINUX_RUNTIME_TEXT(syscall(futex)) "\n   ecall\n"
+    ASM_RET
+    ASM_END(lock_release)
+
+    ASM_FUNC(lock_try)
+    "lla t0, threads_live\n   ld t0, 0(t0)\n"
+    "bnez t0, .Llock_try_riscv64_shared\n"
+    "lw t2, 0(a0)\n   bnez t2, .Llock_try_riscv64_busy\n"
+    "li t1, 1\n   sw t1, 0(a0)\n   li a0, 1\n"
+    ASM_RET
+    ".Llock_try_riscv64_busy:\n"
+    "li a0, 0\n"
+    ASM_RET
+    ".Llock_try_riscv64_shared:\n"
+    "li t1, 1\n"
+    ".Llock_try_riscv64_claim:\n"
+    "lr.w t2, (a0)\n   bnez t2, .Llock_try_riscv64_busy\n"
+    "sc.w t3, t1, (a0)\n   bnez t3, .Llock_try_riscv64_claim\n"
+    "li a0, 1\n"
+    ASM_RET
+    ASM_END(lock_try)
+
+    ASM_FUNC(thread_wait)
+    "mv a2, a1\n   li a1, 128\n   li a3, 0\n"
+    "li a7, " LINUX_RUNTIME_TEXT(syscall(futex)) "\n   ecall\n"
+    ASM_RET
+    ASM_END(thread_wait)
+
+    ASM_FUNC(thread_wake)
+    "mv a2, a1\n   li a1, 129\n"
+    "li a7, " LINUX_RUNTIME_TEXT(syscall(futex)) "\n   ecall\n"
+    ASM_RET
+    ASM_END(thread_wake)
+);
 #endif
 
 #undef LINUX_RUNTIME_TEXT

@@ -112,6 +112,22 @@ cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short
       'an awk workload rather than in a dedicated harness, so no isolated '
       'timing row is claimed here')
 
+cover('direct_benchmark', 'test/checks.c#BENCH_lock', 'lock_take lock_release lock_try',
+      'take/release pairs alone (the threads_live elision) and with a parked '
+      'thread alive (the atomic path), against two stores and the inline C '
+      'compare-and-swap pair they replaced; lock_try shares the take body. '
+      'CHECK_lock proves exclusion and sleeping across eight threads on three '
+      'machines, and test/hardware_floor.c has the same two rows',
+      anchors={'lock_try': 'lock_take'})
+
+cover('correctness_only', 'test/checks.c#CHECK_lock', '''
+thread_start thread_join thread_exit thread_wait thread_wake
+''', 'start/join storms with the mapping count before and after, per-thread '
+     'blocks and errno, blocked signal masks, fork and exit_group behaviour, '
+     'futex gates; a thread start is a clone and an mmap, measured in '
+     'microseconds, not a floor claim',
+      anchors={'thread_exit': 'thread_start'})
+
 cover('direct_benchmark', 'test/checks.c#BENCH_allocator', 'memory_take memory_give',
       'malloc/free pair timing against an empty ABI control and a free-list '
       'traffic floor that pops and pushes the same words; the shelf-hit path '

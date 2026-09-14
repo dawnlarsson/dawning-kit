@@ -83,6 +83,13 @@ SECTIONS
         /* Nothing else is loadable: the format has no section table, no
            dynamic linking and no unwind information. */
         /DISCARD/ : {
+                /* A __thread object would be reached at a link-time offset
+                   from the thread register, and the register points at the
+                   explicit thread block in platform/linux.inc, not at a TLS
+                   image. Discarding the sections turns any such object into a
+                   link error naming it, instead of a store into another
+                   field of the block. */
+                *(.tdata .tdata.* .tbss .tbss.*)
                 *(.comment)
                 *(.note .note.*)
                 *(.eh_frame .eh_frame_hdr)

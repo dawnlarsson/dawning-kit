@@ -11,7 +11,7 @@
             Darwin (lifted ARM64 bodies):
                 python3 test/differential.py --harness native_extract \
                     src/library.c $NAMES > /tmp/lifted.h
-                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_FIELD -DSKIP_AES -DSKIP_HEX \
+                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_FIELD -DSKIP_AES -DSKIP_HEX -DSKIP_LOCK \
                     -DSKIP_ITOA -I/tmp test/hardware_floor.c -o /tmp/hwfloor
 
             Darwin names (sha256/ghash/field/aes/hex/itoa skipped: Mach-O :lo12: tables
@@ -271,6 +271,16 @@ unsigned long positive_into(char *, unsigned long);
 unsigned long string_to_positive(const char *);
 void *memory_copy_end(void *, const void *, unsigned long);
 void *memory_copy_apart_end(void *, const void *, unsigned long);
+#endif
+
+/* The lock is Linux runtime assembly (platform/linux.inc) and only the
+   outlined library carries it. threads_live is forced to one around the
+   company row to time the atomic path in this single-threaded harness. */
+#if defined(USE_OURS) && !defined(SKIP_LOCK)
+typedef struct { int word; } floor_lock;
+void lock_take(floor_lock *);
+void lock_release(floor_lock *);
+extern unsigned long threads_live;
 #endif
 
 enum { ROOM = 1 << 20 };
@@ -561,6 +571,45 @@ static void bsd16_w(unsigned long size, unsigned long rounds)
 }
 
 #ifndef SKIP_SHA256
+#if defined(USE_OURS) && !defined(SKIP_LOCK)
+static floor_lock lock_word;
+
+static void lock_pair_w(unsigned long size, unsigned long rounds)
+{
+        unsigned long i;
+        (void)size;
+        for (i = 0; i < rounds; i++) {
+                lock_take(&lock_word);
+                sink += (unsigned long)lock_word.word;
+                lock_release(&lock_word);
+        }
+}
+
+/* The traffic of an uncontended pair: the word goes to 1 and back to 0. */
+static void lock_store_w(unsigned long size, unsigned long rounds)
+{
+        unsigned long i;
+        (void)size;
+        for (i = 0; i < rounds; i++) {
+                lock_word.word = 1;
+                sink += (unsigned long)lock_word.word;
+                lock_word.word = 0;
+        }
+}
+
+/* What standard.c's C lock was: an inline compare-and-swap and exchange. */
+static void lock_atomic_w(unsigned long size, unsigned long rounds)
+{
+        unsigned long i;
+        (void)size;
+        for (i = 0; i < rounds; i++) {
+                __sync_bool_compare_and_swap(&lock_word.word, 0, 1);
+                sink += (unsigned long)lock_word.word;
+                __atomic_exchange_n(&lock_word.word, 0, __ATOMIC_SEQ_CST);
+        }
+}
+#endif
+
 static void sha_w(unsigned long size, unsigned long rounds)
 {
         unsigned long i;
@@ -1205,6 +1254,14 @@ int main(void)
 
 #ifndef SKIP_SHA256
         row("sha256_compress", "block", "compute", 64, sha_w, floor_one_w, 20);
+#endif
+#if defined(USE_OURS) && !defined(SKIP_LOCK)
+        /* Alone: the threads_live elision against the two stores it makes.
+           Company: the atomic path against the inline C pair it replaced. */
+        row("lock_take", "pair_alone", "latency", 0, lock_pair_w, lock_store_w, 2);
+        threads_live = 1;
+        row("lock_take", "pair_company", "latency", 0, lock_pair_w, lock_atomic_w, 8);
+        threads_live = 0;
 #endif
 #ifndef SKIP_FIELD
         row("p256_multiply", "field", "compute", 32, p256_mul_w, p256_mul_c_w, 8);

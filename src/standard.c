@@ -589,7 +589,20 @@
         initializer.
 */
 
+/*
+        And then something did install the block (2026-09-14). _start in
+        platform/linux.inc points the thread register at thread_main, and
+        thread_start gives every new thread a block of its own, so on Linux
+        errno is a field of the calling thread's block: a thread's failures
+        are its own, as the standard wants. It is still not __thread. The
+        block is at a fixed offset the assembly shares, and spark.ld discards
+        .tdata and .tbss so the probe above now fails at the link rather than
+        at run time. CONST stays true: the answer depends only on which
+        thread asks, which is what glibc's own declaration assumes.
+*/
+#if !defined(LIBRARY_THREAD_RUNTIME)
 static b32 error_number_storage;
+#endif
 
 /*
         The accessor, spelled the way the platform ABI spells it.
@@ -604,7 +617,11 @@ pub CONST RETURNS_NONNULL b32 address_to __errno_location(void);
 
 CONST RETURNS_NONNULL b32 address_to __errno_location(void)
 {
+#if defined(LIBRARY_THREAD_RUNTIME)
+        return address_of thread_self()->error_number;
+#else
         return address_of error_number_storage;
+#endif
 }
 
 #undef errno
@@ -1504,9 +1521,11 @@ ERROR_ENTRY(sync, b32, (void),
 /*
         The three states, named rather than spelled as numbers at eight sites.
 */
+#ifndef LIBRARY_THREAD_RUNTIME
 #define LOCK_FREE 0
 #define LOCK_HELD 1
 #define LOCK_WAITED 2
+#endif
 
 /*
         futex's two operations and the flag that says the word is private to
@@ -1546,15 +1565,20 @@ ERROR_ENTRY(sync, b32, (void),
         Zero is unlocked, so a lock in .bss is ready without an initialiser
         and lock_start is only needed where a local one is being written down.
 */
+#ifndef LIBRARY_THREAD_RUNTIME
 typedef struct
 {
         b32 word;
 } lock;
 
+#endif
+
+#ifndef lock_start
 #define lock_start \
         {          \
                 LOCK_FREE  \
         }
+#endif
 
 /*
         The two traps, which are the only place this file touches the kernel.
@@ -1647,11 +1671,13 @@ static fn lock_release_private(lock address_to it, b32 private)
         cannot afford to block -- a signal handler, a diagnostic path -- has
         to use instead of take.
 */
+#ifndef LIBRARY_THREAD_RUNTIME
 static bool lock_try(lock address_to it)
 {
         return atomic_compare_exchange(address_of it->word, LOCK_FREE,
                                        LOCK_HELD) != 0;
 }
+#endif
 
 //      Whether anybody holds it. A read of a word that another thread may be
 //      writing, so it is a fact about the past and useful only for assertions
@@ -1663,8 +1689,16 @@ static b32 lock_state(lock address_to it)
 
 //      The two threads-in-one-process spellings, which is the case this
 //      library will meet first.
+/*
+        On Linux the private spellings are the assembly in platform/linux.inc,
+        which carries the threads_live elision this note used to put off:
+        nothing started a thread then, and thread_start now owns the count.
+        What stays here is the lock two processes share, which cannot elide.
+*/
+#ifndef LIBRARY_THREAD_RUNTIME
 #define lock_take(it) lock_take_private((it), LOCK_FUTEX_PRIVATE)
 #define lock_release(it) lock_release_private((it), LOCK_FUTEX_PRIVATE)
+#endif
 
 //      The two across-processes spellings, for a lock that lives in a
 //      MAP_SHARED page. Same algorithm, different futex key; see the note

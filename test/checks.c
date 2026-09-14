@@ -37393,8 +37393,10 @@ int main(void)
 /*
         Experimental C standard library
 
-        the lock: that it excludes, that it sleeps, and what it costs when
-        nobody is contending for it
+        threads and the lock: that threads start, keep their own errno and
+        block, block signals and give their stacks back; that the lock
+        excludes and sleeps; that the allocator survives churn across threads;
+        and what the lock and the allocator cost with and without company
 
         Dawn Larsson - Apache-2.0 license
         github.com/dawnlarsson/dawning-kit
@@ -37403,50 +37405,38 @@ int main(void)
 */
 
 /*
-        This lane exists to answer one question the tree has been putting off:
-        what would it cost to make the allocator, errno and the streams safe
-        for a second thread. Three families say in their own comments that
-        they are not, and none of those comments carries a number.
+        This lane began as the answer to one question -- what would it cost
+        to make the allocator, errno and the streams safe for a second thread
+        -- and carried its own clone trampoline to ask it, because nothing in
+        the tree made threads. thread_start in library.c does now, with the
+        thread block, CHILD_CLEARTID and a guard-paged stack, so the lane
+        uses it and proves it instead.
 
-        So this does four things, in the order of how much they are worth.
+        What it proves, in order:
 
-        First it proves the lock excludes, with two real threads incrementing
-        one counter a hundred thousand times each. Without a lock that
-        arithmetic loses increments on every machine here; with it the total
-        is exact, every run.
+        The thread runtime. Every thread's register points at its own block;
+        errno is the block's and one thread's failures never show through in
+        another; a started thread has every asynchronous signal blocked while
+        the first thread's mask is untouched; threads_live counts exactly the
+        threads started and not joined; and a storm of starts and joins gives
+        every stack back, which is read off /proc/self/maps.
 
-        Second it proves the slow path is real. A lock that spins would pass
-        the first test and would be a different thing entirely, so one thread
-        holds the lock across a sleep while another blocks on it, and the
-        blocked thread's own observation -- that the holder's flag was already
-        set when it got in -- is what says it waited rather than spun through.
+        The lock. Eight threads incrementing one counter lose nothing under
+        it and, as a printed control, lose increments without it. A waiter
+        really waits. The elided single-thread path moves the word through
+        the same states. The shared spelling works across two processes over
+        a MAP_SHARED page.
 
-        Third it proves the same algorithm works across processes over a
-        MAP_SHARED page, which is a second implementation of the same idea and
-        catches anything that depended on one address space.
+        The allocator. Eight threads allocate, fill, verify and free across
+        the whole range of classes and mappings, and pass blocks between them
+        so that one thread frees what another took. The first thread
+        allocates cleanly afterwards from what the joined threads left.
 
-        Fourth it measures. That is the deliverable: an uncontended
-        take-and-release pair against the cost of the malloc and free it would
-        wrap. The numbers are printed rather than checked, because a timing is
-        not a pass or a fail, and only the number from a native run means
-        anything -- qemu-user does not model a bus lock and makes an atomic
-        look almost free.
+        The process. A forked child of a threaded parent starts at zero
+        threads, and a return from main with a thread still running ends the
+        whole process, because exit is exit_group.
 
-        THE TRAMPOLINE, WHICH IS WHY THERE IS ASSEMBLY HERE
-
-        A thread is a clone with CLONE_VM and a stack, and the child cannot
-        return into C from the syscall that made it: the kernel gives it the
-        stack pointer that was asked for, and the C frame the caller was in
-        the middle of building is behind the old one. Every threading library
-        solves this the same way, with a per-architecture stub that lands on
-        the new stack, picks up an entry point and an argument from the top of
-        it, calls, and traps exit when the call returns.
-
-        It is in the test and not in src/standard/lock.c on purpose.
-        src/standard is ordinary C by rule and this cannot be; when threads
-        are really shipped this belongs in src/platform beside the other
-        three-way code. CHECK_wait_retry has the same shape for the same
-        reason -- a signal restorer it needs and no shipped family should own.
+        The timing is BENCH_lock's: sh test/run bench lock.
 */
 #include "../src/compiler_memory.c"
 
@@ -37458,294 +37448,9 @@ int main(void)
 #include "checks.c"
 #undef SHARED_counted
 
-#define LOCK_TEXT_INNER(value) #value
-#define LOCK_TEXT(value) LOCK_TEXT_INNER(value)
+#define LOCK_THREADS 8
 
-/*
-        The flags that make a thread rather than a process.
-
-        CLONE_VM is the one that matters -- one address space, so the lock
-        word both sides touch is the same memory. SIGHAND and THREAD are what
-        make it a thread of this process rather than a sibling: THREAD
-        requires SIGHAND, SIGHAND requires VM, and together they mean the
-        child shares the process id and is not waitable. FS and FILES are
-        there so that the child sees this process's working directory and
-        descriptors, which is what a thread is expected to have.
-
-        Deliberately no CLONE_SETTLS. Nothing the child runs touches a
-        __thread object, and installing a thread block is a separate question
-        this lane does not answer; the errno probe that does is elsewhere.
-*/
-#define LOCK_CLONE_VM 0x00000100
-#define LOCK_CLONE_FS 0x00000200
-#define LOCK_CLONE_FILES 0x00000400
-#define LOCK_CLONE_SIGHAND 0x00000800
-#define LOCK_CLONE_THREAD 0x00010000
-#define LOCK_CLONE_SYSVSEM 0x00040000
-
-/*
-        SYSVSEM is in the set for a reason found by running this: the flags
-        the kernel accepts and the flags qemu-user accepts are not the same
-        set. Linux is happy with VM|FS|FILES|SIGHAND|THREAD and makes a thread
-        of it. qemu-user refuses that combination with EINVAL, because its
-        do_fork tests the flags for exact equality against the set glibc's
-        NPTL uses, and NPTL always passes CLONE_SYSVSEM as well -- it shares
-        the System V semaphore undo list, which threads of one process are
-        supposed to.
-
-        So the flag that made two of the three targets work is one the native
-        machine did not need. On Linux it is correct rather than merely
-        tolerated: a thread that does not share the undo list would have its
-        semaphore adjustments undone when it exits, which is not what a thread
-        means. Getting it right for the emulator got it right for the kernel.
-*/
-#define LOCK_CLONE_THREAD_FLAGS                                     \
-        (LOCK_CLONE_VM | LOCK_CLONE_FS | LOCK_CLONE_FILES |         \
-         LOCK_CLONE_SIGHAND | LOCK_CLONE_THREAD | LOCK_CLONE_SYSVSEM)
-
-/*
-        lock_thread_spawn(entry, argument, stack_top)
-
-        Writes entry and argument into the top sixteen bytes of the stack,
-        clones onto what is left, and in the child pulls both back out and
-        calls. Returns the child's thread id in the parent, or the kernel's
-        negative answer; the child never returns from here at all.
-
-        stack_top must be sixteen byte aligned, which every one of the three
-        wants and two of them fault without.
-*/
-bipolar lock_thread_spawn(fn(address_to entry)(address_any),
-                          address_any argument, address_any stack_top);
-
-#if X64
-__asm__(
-    ASM_SECTION
-    ASM_FUNC(lock_thread_spawn)
-    //  rdi entry, rsi argument, rdx stack top.
-    "sub $16, %rdx\n"
-    "mov %rdi, 0(%rdx)\n"
-    "mov %rsi, 8(%rdx)\n"
-    //  clone(flags, stack, parent_tid, child_tid, tls) with rdi rsi rdx r10 r8.
-    "mov %rdx, %rsi\n"
-    "mov $" LOCK_TEXT(LOCK_CLONE_THREAD_FLAGS) ", %edi\n"
-    "xor %edx, %edx\n"
-    "xor %r10d, %r10d\n"
-    "xor %r8d, %r8d\n"
-    "mov $" LOCK_TEXT(syscall(clone)) ", %eax\n"
-    "syscall\n"
-    "test %rax, %rax\n"
-    "jnz 1f\n"
-    //  The child lands here with rsp at the two words written above.
-    "pop %rax\n"
-    "pop %rdi\n"
-    "call *%rax\n"
-    "xor %edi, %edi\n"
-    "mov $" LOCK_TEXT(syscall(exit)) ", %eax\n"
-    "syscall\n"
-    "1:\n"
-    ASM_RET
-    ASM_END(lock_thread_spawn)
-);
-#elif ARM64
-__asm__(
-    ASM_SECTION
-    ASM_FUNC(lock_thread_spawn)
-    //  x0 entry, x1 argument, x2 stack top.
-    "sub x2, x2, #16\n"
-    "str x0, [x2]\n"
-    "str x1, [x2, #8]\n"
-    //  clone(flags, stack, parent_tid, tls, child_tid) with x0..x4.
-    "mov x1, x2\n"
-    "movz x0, #0x0f00\n"
-    "movk x0, #0x0005, lsl #16\n"
-    "mov x2, #0\n"
-    "mov x3, #0\n"
-    "mov x4, #0\n"
-    "mov x8, #" LOCK_TEXT(syscall(clone)) "\n"
-    "svc #0\n"
-    "cbnz x0, 1f\n"
-    "ldr x9, [sp]\n"
-    "ldr x0, [sp, #8]\n"
-    "add sp, sp, #16\n"
-    "blr x9\n"
-    "mov x0, #0\n"
-    "mov x8, #" LOCK_TEXT(syscall(exit)) "\n"
-    "svc #0\n"
-    "1:\n"
-    ASM_RET
-    ASM_END(lock_thread_spawn)
-);
-#else
-__asm__(
-    ASM_SECTION
-    ASM_FUNC(lock_thread_spawn)
-    //  a0 entry, a1 argument, a2 stack top.
-    "addi a2, a2, -16\n"
-    "sd a0, 0(a2)\n"
-    "sd a1, 8(a2)\n"
-    //  clone(flags, stack, parent_tid, tls, child_tid) with a0..a4.
-    "mv a1, a2\n"
-    "li a0, " LOCK_TEXT(LOCK_CLONE_THREAD_FLAGS) "\n"
-    "li a2, 0\n"
-    "li a3, 0\n"
-    "li a4, 0\n"
-    "li a7, " LOCK_TEXT(syscall(clone)) "\n"
-    "ecall\n"
-    "bnez a0, 1f\n"
-    "ld t0, 0(sp)\n"
-    "ld a0, 8(sp)\n"
-    "addi sp, sp, 16\n"
-    "jalr t0\n"
-    "li a0, 0\n"
-    "li a7, " LOCK_TEXT(syscall(exit)) "\n"
-    "ecall\n"
-    "1:\n"
-    ASM_RET
-    ASM_END(lock_thread_spawn)
-);
-#endif
-
-/*
-        Sixty-four kilobytes of stack per thread, in .bss, sixteen byte
-        aligned because two of the three fault otherwise.
-
-        Static rather than mapped because a test that allocates its own thread
-        stacks is testing the allocator as well, and the allocator is one of
-        the things this lane is measuring.
-*/
-#define LOCK_THREADS 2
-#define LOCK_STACK_BYTES 65536
-
-static p8 lock_stacks[LOCK_THREADS][LOCK_STACK_BYTES]
-        __attribute__((aligned(16)));
-
-static address_any lock_stack_top(positive which)
-{
-        return (address_any)(lock_stacks[which] + LOCK_STACK_BYTES);
-}
-
-/*
-        A join, which a CLONE_THREAD child cannot be given by the kernel:
-        wait4 refuses a thread of the same group with ECHILD, because the
-        parent is not its parent, it is its sibling. So the child sets a flag
-        as the last thing it does and this spins on it, yielding rather than
-        burning, which is exactly what a real join does underneath before it
-        has a futex to wait on.
-
-        volatile because the compiler is entitled to assume a plain global
-        does not change inside a loop that does not write it, and would hoist
-        the load out and spin forever.
-*/
-static fn lock_join(volatile positive address_to done, positive wanted)
-{
-        while (address_to done < wanted)
-                system_call(syscall(sched_yield));
-}
-
-//      -- what the threads run --------------------------------------------
-
-static lock lock_guard = lock_start;
-static volatile positive lock_finished = 0;
-
-/*
-        volatile, and it is not decoration.
-
-        A plain positive here would be kept in a register for the whole of a
-        hundred thousand iterations and written back once, which turns the
-        unlocked control below into a single store and makes it lose nothing
-        -- the test would then be proving that the compiler optimised the race
-        away rather than that the lock prevented one. Written volatile, every
-        turn is a real load, add and store, which is what a shared counter is
-        and what the lock has to make atomic.
-*/
-static volatile positive lock_counter = 0;
-
-/*
-        A gate, so that both threads are running before either starts
-        counting.
-
-        Without it the unlocked control serialises by accident: spawning the
-        second thread takes longer than the first thread's whole unlocked loop,
-        so the two never overlap and the count comes out exact for a reason
-        that has nothing to do with correctness. The gate costs one flag and
-        makes the control mean what it says.
-*/
-static volatile positive lock_go = 0;
-
-static fn lock_wait_for_go(void)
-{
-        while (lock_go == 0)
-                system_call(syscall(sched_yield));
-}
-
-#define LOCK_TURNS 100000
-
-/*
-        The control, which is what keeps the test above from being vacuous.
-
-        Two threads incrementing one counter without a lock lose increments,
-        because a read-modify-write of a plain object is three instructions
-        and a second thread fits between any two of them. Running it proves
-        that the counting test is measuring the lock and not merely measuring
-        that two threads happened not to overlap.
-
-        It is printed and not checked. Losing an increment is overwhelmingly
-        likely and it is not certain: an unlucky schedule where the two
-        threads never overlap would give the exact total, and a lane that
-        failed on that would fail for being right.
-*/
-static fn lock_racing_thread(address_any argument)
-{
-        positive turn = 0;
-
-        (void)argument;
-
-        lock_wait_for_go();
-
-        while (turn < LOCK_TURNS)
-        {
-                lock_counter++;
-                turn++;
-        }
-
-        atomic_add(address_of lock_finished, 1);
-}
-
-static fn lock_counting_thread(address_any argument)
-{
-        positive turn = 0;
-
-        (void)argument;
-
-        lock_wait_for_go();
-
-        while (turn < LOCK_TURNS)
-        {
-                lock_take(address_of lock_guard);
-                lock_counter++;
-                lock_release(address_of lock_guard);
-                turn++;
-        }
-
-        atomic_add(address_of lock_finished, 1);
-}
-
-/*
-        The sleep test.
-
-        The holder takes the lock, says so, sleeps long enough that the waiter
-        cannot plausibly still be running, and releases. The waiter takes the
-        lock and records what the holder's flag said at the moment it got in.
-        A lock that excluded would give 1; a lock that did not would usually
-        give 0, because the waiter would have gone straight through while the
-        holder slept.
-
-        The nap is fifty milliseconds, which is long against a context switch
-        and short against a test run.
-*/
-static volatile positive lock_holder_inside = 0;
-static volatile positive lock_waiter_saw = 0;
-static volatile positive lock_waiter_ran = 0;
+//      -- small helpers ----------------------------------------------------
 
 static fn lock_nap(positive nanoseconds)
 {
@@ -37756,39 +37461,6 @@ static fn lock_nap(positive nanoseconds)
 
         system_call_2(syscall(nanosleep), (positive)address_of duration, 0);
 }
-
-static fn lock_holding_thread(address_any argument)
-{
-        (void)argument;
-
-        lock_take(address_of lock_guard);
-        lock_holder_inside = 1;
-        lock_nap(50000000);
-        lock_holder_inside = 2;
-        lock_release(address_of lock_guard);
-
-        atomic_add(address_of lock_finished, 1);
-}
-
-static fn lock_waiting_thread(address_any argument)
-{
-        (void)argument;
-
-        //      Let the holder get in first. Without this the waiter may take
-        //      the lock before the holder ever tries and the test would be
-        //      measuring nothing.
-        while (lock_holder_inside == 0)
-                system_call(syscall(sched_yield));
-
-        lock_take(address_of lock_guard);
-        lock_waiter_saw = lock_holder_inside;
-        lock_release(address_of lock_guard);
-
-        lock_waiter_ran = 1;
-        atomic_add(address_of lock_finished, 1);
-}
-
-//      -- the clock, for the measurement ----------------------------------
 
 #define LOCK_CLOCK_MONOTONIC 1
 
@@ -37802,124 +37474,624 @@ static positive lock_now(void)
         return when[0] * 1000000000ULL + when[1];
 }
 
-//      Somewhere for the measured loops to put their answers, so that nothing
-//      in them is dead code the optimiser is entitled to delete.
-static volatile positive lock_sink = 0;
-
-/*
-        The measurement.
-
-        Three loops over the same count. The first is malloc and free of one
-        size class, which after a warm-up hits the free list every time and is
-        the allocator's fast path and nothing else -- a loop that grew the
-        heap would be measuring mmap. The second is the same loop with an
-        uncontended take and release around it, which is exactly what a
-        thread-safe allocator would do. The third is the pair on its own, so
-        the cost can be quoted without the allocator in front of it.
-
-        Printed, not checked. A timing that failed a lane would fail it on a
-        busy machine.
-*/
-#ifndef LOCK_MEASURE_TURNS
-#define LOCK_MEASURE_TURNS 300000
-#endif
-
-#define LOCK_MEASURE_SIZE 64
-
-static fn lock_measure(void)
+//      The number of lines in /proc/self/maps: one per mapping, near enough
+//      for a leak of eight megabyte stacks to show.
+static positive lock_mappings(void)
 {
-        positive turn;
-        positive started;
-        positive bare;
-        positive wrapped;
-        positive alone;
-        lock quiet = lock_start;
+        static p8 text[1 << 16];
+        bipolar got = file_slurp((string_address)"/proc/self/maps", text,
+                                 sizeof(text));
+        positive lines = 0;
+        positive at;
 
-        //      Warm the class so that every timed iteration is a free list
-        //      pop and a free list push.
-        turn = 0;
+        if (got <= 0)
+                return 0;
 
-        while (turn < 1000)
-        {
-                address_any block = malloc(LOCK_MEASURE_SIZE);
+        for (at = 0; at < (positive)got; at++)
+                lines += text[at] == '\n';
 
-                lock_sink += (positive)block;
-                free(block);
-                turn++;
-        }
-
-        started = lock_now();
-        turn = 0;
-
-        while (turn < LOCK_MEASURE_TURNS)
-        {
-                address_any block = malloc(LOCK_MEASURE_SIZE);
-
-                lock_sink += (positive)block;
-                free(block);
-                turn++;
-        }
-
-        bare = lock_now() - started;
-
-        started = lock_now();
-        turn = 0;
-
-        while (turn < LOCK_MEASURE_TURNS)
-        {
-                address_any block;
-
-                lock_take(address_of quiet);
-                block = malloc(LOCK_MEASURE_SIZE);
-                lock_sink += (positive)block;
-                free(block);
-                lock_release(address_of quiet);
-                turn++;
-        }
-
-        wrapped = lock_now() - started;
-
-        started = lock_now();
-        turn = 0;
-
-        while (turn < LOCK_MEASURE_TURNS)
-        {
-                lock_take(address_of quiet);
-                lock_sink++;
-                lock_release(address_of quiet);
-                turn++;
-        }
-
-        alone = lock_now() - started;
-
-        string_format(log, "  measure: %p turns of malloc+free\n",
-                      (positive)LOCK_MEASURE_TURNS);
-        string_format(log, "  measure: bare      %p ns total, %p ps each\n",
-                      bare, bare * 1000 / LOCK_MEASURE_TURNS);
-        string_format(log, "  measure: locked    %p ns total, %p ps each\n",
-                      wrapped, wrapped * 1000 / LOCK_MEASURE_TURNS);
-        string_format(log, "  measure: lock only %p ns total, %p ps each\n",
-                      alone, alone * 1000 / LOCK_MEASURE_TURNS);
-
-        if (bare)
-                string_format(log,
-                              "  measure: the lock adds %p percent to malloc+free\n",
-                              wrapped > bare ? (wrapped - bare) * 100 / bare : 0);
+        return lines;
 }
 
-//      -- the cross-process half ------------------------------------------
+//      A gate so that every thread is running before any of them counts.
+static volatile b32 lock_go = 0;
 
-/*
-        The same algorithm over a page two processes share.
+static fn lock_wait_for_go(void)
+{
+        while (atomic_load(address_of lock_go) == 0)
+                thread_wait(address_of lock_go, 0);
+}
 
-        MAP_SHARED with MAP_ANONYMOUS gives a page that survives a fork and is
-        one object in both processes, which is what a futex needs to be keyed
-        by inode rather than by address space. The lock taken here is the
-        shared spelling for that reason, and mixing the two is the mistake
-        src/standard/lock.c warns about: a private futex on this page would
-        put the two processes in different wait queues and neither would ever
-        wake the other.
-*/
+static fn lock_open_gate(void)
+{
+        atomic_exchange(address_of lock_go, 1);
+        thread_wake(address_of lock_go, 1 << 30);
+}
+
+//      -- the runtime -------------------------------------------------------
+
+typedef struct
+{
+        positive index;
+        thread address_to handle_seen;
+        positive self_right;
+        b32 address_to errno_address;
+        b32 errno_kept;
+        positive mask;
+        positive ran;
+} lock_identity;
+
+static fn lock_identity_thread(address_any argument)
+{
+        lock_identity address_to it = argument;
+        positive turn;
+        positive mask[1] = {0};
+
+        it->handle_seen = thread_self();
+        it->self_right = thread_self()->self == thread_self() &&
+                         thread_self() != address_of thread_main;
+        it->errno_address = address_of errno;
+        errno = (b32)(1000 + it->index);
+
+        lock_wait_for_go();
+
+        it->errno_kept = 1;
+
+        for (turn = 0; turn < 20000; turn++)
+        {
+                if (errno != (b32)(1000 + it->index))
+                        it->errno_kept = 0;
+
+                errno = (b32)(1000 + it->index);
+
+                if ((turn & 1023) == 0)
+                        system_call(syscall(sched_yield));
+        }
+
+        system_call_4(syscall(rt_sigprocmask), 0, 0, (positive)address_of mask, 8);
+        it->mask = mask[0];
+        it->ran = 1;
+}
+
+#define LOCK_SIGNAL_BIT(number) (1ull << ((number) - 1))
+
+static fn lock_runtime(void)
+{
+        lock_identity identity[LOCK_THREADS];
+        thread address_to handles[LOCK_THREADS];
+        positive main_mask_before[1] = {0};
+        positive main_mask_after[1] = {0};
+        positive started = 0;
+        positive i;
+        bool distinct = true;
+        bool own = true;
+        bool kept = true;
+        bool blocked = true;
+
+        check("a process that started no thread counts none", threads_live == 0);
+        check("the first thread's register is thread_main",
+              thread_self() == address_of thread_main);
+        check("thread_main points at itself", thread_main.self == address_of thread_main);
+
+        system_call_4(syscall(rt_sigprocmask), 0, 0,
+                      (positive)address_of main_mask_before, 8);
+
+        errno = 7;
+        atomic_exchange(address_of lock_go, 0);
+
+        for (i = 0; i < LOCK_THREADS; i++)
+        {
+                identity[i] = (lock_identity){.index = i};
+                handles[i] = thread_start(lock_identity_thread, address_of identity[i]);
+                started += handles[i] != null;
+        }
+
+        check("eight threads started", started == LOCK_THREADS);
+        check("threads_live counts the eight", threads_live == started);
+
+        system_call_4(syscall(rt_sigprocmask), 0, 0,
+                      (positive)address_of main_mask_after, 8);
+        check("starting threads left the first thread's signal mask alone",
+              main_mask_before[0] == main_mask_after[0]);
+
+        lock_open_gate();
+
+        for (i = 0; i < LOCK_THREADS; i++)
+                if (handles[i])
+                        thread_join(handles[i]);
+
+        check("every joined thread is out of the count", threads_live == 0);
+
+        for (i = 0; i < LOCK_THREADS; i++)
+        {
+                positive j;
+
+                //      Read from what the thread recorded: a joined block is
+                //      unmapped, so the handle is only an address now.
+                own = own && handles[i] && identity[i].handle_seen == handles[i] &&
+                      identity[i].self_right;
+                kept = kept && identity[i].ran && identity[i].errno_kept;
+                blocked = blocked &&
+                          (identity[i].mask & LOCK_SIGNAL_BIT(2)) &&
+                          (identity[i].mask & LOCK_SIGNAL_BIT(10)) &&
+                          (identity[i].mask & LOCK_SIGNAL_BIT(15)) &&
+                          (identity[i].mask & LOCK_SIGNAL_BIT(17));
+
+                for (j = 0; j < i; j++)
+                        distinct = distinct && identity[i].errno_address !=
+                                                       identity[j].errno_address;
+
+                distinct = distinct && identity[i].errno_address != address_of errno;
+        }
+
+        check("each thread's register is its own block", own);
+        check("each thread's errno is at its own address", distinct);
+        check("no thread saw another's errno", kept);
+        check("the first thread's errno survived eight others", errno == 7);
+        check("a started thread blocks SIGINT, SIGUSR1, SIGTERM and SIGCHLD", blocked);
+}
+
+//      Starts and joins in rounds, and the mapping count after is the one
+//      before: every stack went back.
+static volatile positive lock_storm_ran = 0;
+
+static fn lock_storm_thread(address_any argument)
+{
+        (void)argument;
+        atomic_add(address_of lock_storm_ran, 1);
+}
+
+static fn lock_storm(void)
+{
+        thread address_to handles[LOCK_THREADS];
+        positive before;
+        positive after;
+        positive round;
+        positive i;
+        positive wanted = 0;
+        bool all = true;
+
+        //      Warm: the first round maps allocator chunks the rest reuse.
+        for (i = 0; i < LOCK_THREADS; i++)
+                handles[i] = thread_start(lock_storm_thread, null);
+        for (i = 0; i < LOCK_THREADS; i++)
+                if (handles[i])
+                        thread_join(handles[i]), wanted++;
+
+        before = lock_mappings();
+
+        for (round = 0; round < 40; round++)
+        {
+                for (i = 0; i < LOCK_THREADS; i++)
+                {
+                        handles[i] = thread_start(lock_storm_thread, null);
+                        all = all && handles[i];
+                }
+
+                for (i = 0; i < LOCK_THREADS; i++)
+                        if (handles[i])
+                                thread_join(handles[i]), wanted++;
+        }
+
+        after = lock_mappings();
+
+        check("forty rounds of eight starts all started", all);
+        check("every started thread ran its entry", lock_storm_ran == wanted);
+        check("the storm left no thread counted", threads_live == 0);
+        check("the storm gave every stack back", before && after <= before);
+
+        string_format(log, "  storm: %p threads, mappings %p before and %p after\n",
+                      wanted, before, after);
+}
+
+//      -- the lock ----------------------------------------------------------
+
+static lock lock_guard = lock_start;
+static volatile positive lock_counter = 0;
+
+#define LOCK_TURNS 40000
+
+static fn lock_racing_thread(address_any argument)
+{
+        positive turn = 0;
+
+        (void)argument;
+        lock_wait_for_go();
+
+        while (turn < LOCK_TURNS)
+        {
+                lock_counter++;
+                turn++;
+        }
+}
+
+static fn lock_counting_thread(address_any argument)
+{
+        positive turn = 0;
+
+        (void)argument;
+        lock_wait_for_go();
+
+        while (turn < LOCK_TURNS)
+        {
+                lock_take(address_of lock_guard);
+                lock_counter++;
+                lock_release(address_of lock_guard);
+                turn++;
+        }
+}
+
+static positive lock_count_with(fn(address_to entry)(address_any))
+{
+        thread address_to handles[LOCK_THREADS];
+        positive i;
+        positive started = 0;
+
+        lock_counter = 0;
+        atomic_exchange(address_of lock_go, 0);
+
+        for (i = 0; i < LOCK_THREADS; i++)
+        {
+                handles[i] = thread_start(entry, null);
+                started += handles[i] != null;
+        }
+
+        lock_open_gate();
+
+        for (i = 0; i < LOCK_THREADS; i++)
+                if (handles[i])
+                        thread_join(handles[i]);
+
+        return started == LOCK_THREADS ? lock_counter : 0;
+}
+
+static volatile positive lock_holder_inside = 0;
+static volatile positive lock_waiter_saw = 0;
+
+static fn lock_holding_thread(address_any argument)
+{
+        (void)argument;
+
+        lock_take(address_of lock_guard);
+        lock_holder_inside = 1;
+        lock_nap(50000000);
+        lock_holder_inside = 2;
+        lock_release(address_of lock_guard);
+}
+
+static fn lock_waiting_thread(address_any argument)
+{
+        (void)argument;
+
+        while (lock_holder_inside == 0)
+                system_call(syscall(sched_yield));
+
+        lock_take(address_of lock_guard);
+        lock_waiter_saw = lock_holder_inside;
+        lock_release(address_of lock_guard);
+}
+
+//      A thread that sleeps on a word until told to go, so that a test can
+//      have another thread alive for as long as it needs one.
+static volatile b32 lock_parked_release = 0;
+
+static fn lock_parked_thread(address_any argument)
+{
+        (void)argument;
+
+        while (atomic_load(address_of lock_parked_release) == 0)
+                thread_wait(address_of lock_parked_release, 0);
+}
+
+static thread address_to lock_park(void)
+{
+        atomic_exchange(address_of lock_parked_release, 0);
+        return thread_start(lock_parked_thread, null);
+}
+
+static fn lock_unpark(thread address_to parked)
+{
+        atomic_exchange(address_of lock_parked_release, 1);
+        thread_wake(address_of lock_parked_release, 1 << 30);
+
+        if (parked)
+                thread_join(parked);
+}
+
+//      check() wants a literal name, so the label is pasted rather than
+//      chosen at run time.
+#define lock_states(label)                                                    \
+        do                                                                    \
+        {                                                                     \
+                lock quiet = lock_start;                                      \
+                                                                              \
+                check(label ": a fresh lock is free",                         \
+                      lock_state(address_of quiet) == LOCK_FREE);             \
+                check(label ": try on a free lock succeeds",                  \
+                      lock_try(address_of quiet));                            \
+                check(label ": a tried lock reads held",                      \
+                      lock_state(address_of quiet) == LOCK_HELD);             \
+                check(label ": try on a held lock fails",                     \
+                      !lock_try(address_of quiet));                           \
+                lock_release(address_of quiet);                               \
+                check(label ": release frees it",                             \
+                      lock_state(address_of quiet) == LOCK_FREE);             \
+                lock_take(address_of quiet);                                  \
+                check(label ": take holds it",                                \
+                      lock_state(address_of quiet) == LOCK_HELD);             \
+                lock_release(address_of quiet);                               \
+                check(label ": release after take frees it",                  \
+                      lock_state(address_of quiet) == LOCK_FREE);             \
+                /* A word a waiter left at 2 and then left is released. */    \
+                quiet.word = LOCK_WAITED;                                     \
+                lock_release(address_of quiet);                               \
+                check(label ": a waited word releases to free",               \
+                      lock_state(address_of quiet) == LOCK_FREE);             \
+        } while (0)
+
+static fn lock_exclusion(void)
+{
+        thread address_to parked;
+        thread address_to holder;
+        thread address_to waiter;
+        positive counted;
+
+        lock_states("alone");
+
+        parked = lock_park();
+        check("a parked thread started", parked != null);
+        lock_states("with company");
+        lock_unpark(parked);
+
+        counted = lock_count_with(lock_counting_thread);
+        check("eight threads lost no increments under the lock",
+              counted == LOCK_TURNS * LOCK_THREADS);
+        check("the lock came back free", lock_state(address_of lock_guard) == LOCK_FREE);
+        string_format(log, "  counted %p of %p under the lock\n", counted,
+                      (positive)(LOCK_TURNS * LOCK_THREADS));
+
+        counted = lock_count_with(lock_racing_thread);
+        string_format(log, "  counted %p of %p with no lock at all\n", counted,
+                      (positive)(LOCK_TURNS * LOCK_THREADS));
+
+        lock_holder_inside = 0;
+        lock_waiter_saw = 0;
+        holder = thread_start(lock_holding_thread, null);
+        waiter = thread_start(lock_waiting_thread, null);
+
+        if (holder)
+                thread_join(holder);
+        if (waiter)
+                thread_join(waiter);
+
+        check("the waiter got in only after the holder left",
+              holder && waiter && lock_waiter_saw == 2);
+}
+
+//      -- the allocator -----------------------------------------------------
+
+#define LOCK_CHURN_TURNS 30000
+#define LOCK_CHURN_LIVE 48
+#define LOCK_HANDOFF 64
+
+static lock lock_handoff_guard = lock_start;
+static address_any lock_handoff[LOCK_HANDOFF];
+static positive lock_handoff_size[LOCK_HANDOFF];
+static positive lock_handoff_count;
+static volatile positive lock_churn_bad = 0;
+static volatile positive lock_churn_failed = 0;
+
+static p8 lock_churn_byte(positive size)
+{
+        return (p8)(size * 31 + (size >> 7));
+}
+
+static bool lock_churn_intact(address_any block, positive size)
+{
+        p8 address_to bytes = block;
+        p8 want = lock_churn_byte(size);
+
+        return bytes[0] == want && bytes[size / 2] == want && bytes[size - 1] == want;
+}
+
+static fn lock_churn_thread(address_any argument)
+{
+        positive seed = 0x9e3779b97f4a7c15ull * ((positive)argument + 1);
+        address_any live[LOCK_CHURN_LIVE] = {0};
+        positive sizes[LOCK_CHURN_LIVE] = {0};
+        positive turn;
+
+        lock_wait_for_go();
+
+        for (turn = 0; turn < LOCK_CHURN_TURNS; turn++)
+        {
+                positive slot;
+                positive size;
+
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+
+                slot = seed % LOCK_CHURN_LIVE;
+                size = (seed >> 8) % 4000 + 1;
+
+                if ((seed >> 20) % 512 == 0)
+                        size = 300000 + (seed >> 30) % 100000;
+
+                if (live[slot])
+                {
+                        if (!lock_churn_intact(live[slot], sizes[slot]))
+                                atomic_add(address_of lock_churn_bad, 1);
+
+                        //      Every eighth block is handed to whichever
+                        //      thread comes next, which frees what it takes.
+                        if ((seed >> 40) % 8 == 0)
+                        {
+                                address_any taken = null;
+                                positive taken_size = 0;
+
+                                lock_take(address_of lock_handoff_guard);
+
+                                if (lock_handoff_count)
+                                {
+                                        lock_handoff_count--;
+                                        taken = lock_handoff[lock_handoff_count];
+                                        taken_size = lock_handoff_size[lock_handoff_count];
+                                }
+
+                                if (lock_handoff_count < LOCK_HANDOFF)
+                                {
+                                        lock_handoff[lock_handoff_count] = live[slot];
+                                        lock_handoff_size[lock_handoff_count] = sizes[slot];
+                                        lock_handoff_count++;
+                                        live[slot] = null;
+                                }
+
+                                lock_release(address_of lock_handoff_guard);
+
+                                if (taken)
+                                {
+                                        if (!lock_churn_intact(taken, taken_size))
+                                                atomic_add(address_of lock_churn_bad, 1);
+                                        free(taken);
+                                }
+                        }
+
+                        if (live[slot])
+                                free(live[slot]);
+                }
+
+                live[slot] = malloc(size);
+                sizes[slot] = size;
+
+                if (!live[slot])
+                {
+                        atomic_add(address_of lock_churn_failed, 1);
+                        continue;
+                }
+
+                memory_fill(live[slot], lock_churn_byte(size), size);
+        }
+
+        for (turn = 0; turn < LOCK_CHURN_LIVE; turn++)
+                if (live[turn])
+                {
+                        if (!lock_churn_intact(live[turn], sizes[turn]))
+                                atomic_add(address_of lock_churn_bad, 1);
+                        free(live[turn]);
+                }
+}
+
+static fn lock_allocator(void)
+{
+        thread address_to handles[LOCK_THREADS];
+        address_any again[256];
+        positive i;
+        positive started = 0;
+        bool fine = true;
+
+        atomic_exchange(address_of lock_go, 0);
+
+        for (i = 0; i < LOCK_THREADS; i++)
+        {
+                handles[i] = thread_start(lock_churn_thread, (address_any)i);
+                started += handles[i] != null;
+        }
+
+        lock_open_gate();
+
+        for (i = 0; i < LOCK_THREADS; i++)
+                if (handles[i])
+                        thread_join(handles[i]);
+
+        while (lock_handoff_count)
+        {
+                lock_handoff_count--;
+                if (!lock_churn_intact(lock_handoff[lock_handoff_count],
+                                       lock_handoff_size[lock_handoff_count]))
+                        lock_churn_bad++;
+                free(lock_handoff[lock_handoff_count]);
+        }
+
+        check("eight churning threads started", started == LOCK_THREADS);
+        check("no block was overwritten by another thread", lock_churn_bad == 0);
+        check("no allocation failed under churn", lock_churn_failed == 0);
+
+        //      The first thread, alone again, takes from what they left.
+        for (i = 0; i < 256; i++)
+        {
+                positive size = 16 + i * 13;
+
+                again[i] = malloc(size);
+                fine = fine && again[i];
+                if (again[i])
+                        memory_fill(again[i], lock_churn_byte(size), size);
+        }
+
+        for (i = 0; i < 256; i++)
+                if (again[i])
+                {
+                        fine = fine && lock_churn_intact(again[i], 16 + i * 13);
+                        free(again[i]);
+                }
+
+        check("the first thread allocates cleanly after the joins", fine);
+}
+
+//      -- the process -------------------------------------------------------
+
+static fn lock_process(void)
+{
+        thread address_to parked = lock_park();
+        b32 child;
+        b32 raw = 0;
+        positive started;
+
+        check("a thread is alive across the fork", parked && threads_live == 1);
+
+        log_flush();
+        child = fork();
+
+        if (child == 0)
+                _exit(threads_live == 0 ? 0 : 1);
+
+        if (child > 0)
+        {
+                system_wait4_retry(child, address_of raw, 0, null);
+                check("a forked child of a threaded parent counts no threads",
+                      (raw & 0x7f) == 0 && ((raw >> 8) & 0xff) == 0);
+        }
+        else
+                check("the fork happened", false);
+
+        lock_unpark(parked);
+
+        //      exit is exit_group: a child whose thread is still asleep for ten
+        //      seconds returns from main and is gone at once.
+        log_flush();
+        started = lock_now();
+        child = fork();
+
+        if (child == 0)
+        {
+                atomic_exchange(address_of lock_parked_release, 0);
+                if (!thread_start(lock_parked_thread, null))
+                        _exit(9);
+                lock_nap(1000000);
+                exit(5);
+        }
+
+        raw = 0;
+        if (child > 0)
+                system_wait4_retry(child, address_of raw, 0, null);
+
+        check("exit ends a process whose other thread is still asleep",
+              child > 0 && (raw & 0x7f) == 0 && ((raw >> 8) & 0xff) == 5 &&
+              lock_now() - started < 5000000000ull);
+}
+
+//      -- across processes --------------------------------------------------
+
 #define LOCK_MAP_SHARED 1
 #define LOCK_MAP_ANONYMOUS 0x20
 #define LOCK_PROTECT_READ_WRITE 3
@@ -37935,7 +38107,7 @@ static fn lock_across_processes(void)
 {
         lock_shared_page address_to page;
         b32 child;
-        positive raw = 0;
+        b32 raw = 0;
         positive turn;
 
         page = (lock_shared_page address_to)mmap(
@@ -37952,7 +38124,6 @@ static fn lock_across_processes(void)
         page->counter = 0;
 
         log_flush();
-
         child = fork();
 
         if (child < 0)
@@ -37964,148 +38135,44 @@ static fn lock_across_processes(void)
 
         if (child == 0)
         {
-                turn = 0;
-
-                while (turn < LOCK_SHARED_TURNS)
+                for (turn = 0; turn < LOCK_SHARED_TURNS; turn++)
                 {
                         lock_take_shared(address_of page->guard);
                         page->counter++;
                         lock_release_shared(address_of page->guard);
-                        turn++;
                 }
 
                 _exit(0);
         }
 
-        turn = 0;
-
-        while (turn < LOCK_SHARED_TURNS)
+        for (turn = 0; turn < LOCK_SHARED_TURNS; turn++)
         {
                 lock_take_shared(address_of page->guard);
                 page->counter++;
                 lock_release_shared(address_of page->guard);
-                turn++;
         }
 
         system_wait4_retry(child, address_of raw, 0, null);
 
         check("two processes lost no increments",
               page->counter == LOCK_SHARED_TURNS * 2);
-        check("the shared lock came back free",
-              page->guard.word == LOCK_FREE);
+        check("the shared lock came back free", page->guard.word == LOCK_FREE);
 
         munmap((address_any)page, 4096);
 }
 
-//      -- the lane --------------------------------------------------------
+//      -- the lane ----------------------------------------------------------
 
 b32 main(void)
 {
-        bipolar first;
-        bipolar second;
-
-        //
-        //      The state machine, with nobody else in the process.
-        //
-        {
-                lock quiet = lock_start;
-
-                check("a fresh lock is free", lock_state(address_of quiet) == LOCK_FREE);
-                check("try on a free lock succeeds", lock_try(address_of quiet));
-                check("a taken lock reads held",
-                      lock_state(address_of quiet) == LOCK_HELD);
-                check("try on a held lock fails", !lock_try(address_of quiet));
-                lock_release(address_of quiet);
-                check("a released lock is free again",
-                      lock_state(address_of quiet) == LOCK_FREE);
-
-                lock_take(address_of quiet);
-                check("take leaves it held",
-                      lock_state(address_of quiet) == LOCK_HELD);
-                lock_release(address_of quiet);
-                check("release leaves it free",
-                      lock_state(address_of quiet) == LOCK_FREE);
-        }
-
-        //
-        //      Two threads, one counter.
-        //
-        lock_finished = 0;
-        lock_counter = 0;
-        lock_go = 0;
-
-        first = lock_thread_spawn(lock_counting_thread, null, lock_stack_top(0));
-        second = lock_thread_spawn(lock_counting_thread, null, lock_stack_top(1));
-        lock_go = 1;
-
-        check("the first thread started", first > 0);
-        check("the second thread started", second > 0);
-        check("the two threads have different identities", first != second);
-
-        if (first > 0 && second > 0)
-        {
-                lock_join(address_of lock_finished, 2);
-
-                check("two threads lost no increments",
-                      lock_counter == LOCK_TURNS * 2);
-                check("the lock came back free",
-                      lock_state(address_of lock_guard) == LOCK_FREE);
-
-                string_format(log, "  counted %p of %p under the lock\n",
-                              lock_counter, (positive)(LOCK_TURNS * 2));
-        }
-
-        //
-        //      The same two threads with the lock taken away, so that the
-        //      number above means something.
-        //
-        lock_finished = 0;
-        lock_counter = 0;
-        lock_go = 0;
-
-        first = lock_thread_spawn(lock_racing_thread, null, lock_stack_top(0));
-        second = lock_thread_spawn(lock_racing_thread, null, lock_stack_top(1));
-        lock_go = 1;
-
-        if (first > 0 && second > 0)
-        {
-                lock_join(address_of lock_finished, 2);
-
-                string_format(log, "  counted %p of %p with no lock at all\n",
-                              lock_counter, (positive)(LOCK_TURNS * 2));
-        }
-
-        //
-        //      That a waiter really waits.
-        //
-        lock_finished = 0;
-        lock_holder_inside = 0;
-        lock_waiter_saw = 0;
-        lock_waiter_ran = 0;
-
-        first = lock_thread_spawn(lock_holding_thread, null, lock_stack_top(0));
-        second = lock_thread_spawn(lock_waiting_thread, null, lock_stack_top(1));
-
-        if (first > 0 && second > 0)
-        {
-                lock_join(address_of lock_finished, 2);
-
-                check("the waiter ran", lock_waiter_ran == 1);
-                check("the waiter got in only after the holder left",
-                      lock_waiter_saw == 2);
-        }
-        else
-                check("both threads started for the sleep test", false);
-
-        //
-        //      The same algorithm across two address spaces.
-        //
+        lock_runtime();
+        lock_storm();
+        lock_exclusion();
+        lock_allocator();
+        lock_process();
         lock_across_processes();
 
-        //
-        //      And what it costs when there is nobody to wait for.
-        //
-        lock_measure();
+        check("nothing is left counted at the end", threads_live == 0);
 
         return test_report((string_address) "\n");
 }
@@ -59840,6 +59907,154 @@ b32 main(void)
         return 0;
 }
 #endif /* BENCH_allocator */
+
+#ifdef BENCH_lock
+/* The lock's uncontended take/release pair. Alone is the threads_live
+   elision; company is the same pair with a parked thread alive, which is the
+   atomic path. Every subject is reached through a volatile pointer so the
+   floors pay the same call: two plain stores are the traffic floor, and the
+   inline compare-and-swap and exchange standard.c used to be are the
+   before. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define LOCK_BENCH_ROUNDS (1u << 24)
+#define LOCK_BENCH_TRIES 7
+
+typedef fn (*lock_bench_call)(lock address_to);
+
+static volatile positive lock_bench_sink;
+static lock lock_bench_word;
+static volatile b32 lock_bench_parked;
+
+static __attribute__((noinline, noclone)) fn
+lock_bench_store_take(lock address_to it)
+{
+        it->word = LOCK_HELD;
+}
+
+static __attribute__((noinline, noclone)) fn
+lock_bench_store_release(lock address_to it)
+{
+        it->word = LOCK_FREE;
+}
+
+static __attribute__((noinline, noclone)) fn
+lock_bench_atomic_take(lock address_to it)
+{
+        __sync_bool_compare_and_swap(address_of it->word, LOCK_FREE, LOCK_HELD);
+}
+
+static __attribute__((noinline, noclone)) fn
+lock_bench_atomic_release(lock address_to it)
+{
+        if (__atomic_exchange_n(address_of it->word, LOCK_FREE,
+                                __ATOMIC_SEQ_CST) == LOCK_WAITED)
+                lock_bench_sink++;
+}
+
+static lock_bench_call volatile lock_bench_take_call;
+static lock_bench_call volatile lock_bench_release_call;
+
+static fn lock_bench_pairs()
+{
+        for (positive i = 0; i < LOCK_BENCH_ROUNDS; i++)
+        {
+                lock_bench_take_call(address_of lock_bench_word);
+                lock_bench_sink += (positive)lock_bench_word.word;
+                lock_bench_release_call(address_of lock_bench_word);
+        }
+}
+
+static fn lock_bench_parked_thread(address_any argument)
+{
+        (void)argument;
+
+        while (atomic_load(address_of lock_bench_parked) == 0)
+                thread_wait(address_of lock_bench_parked, 0);
+}
+
+static fn lock_bench_use(string_address name)
+{
+        lock_bench_take_call = lock_take;
+        lock_bench_release_call = lock_release;
+
+        if (string_compare(name, (string_address)"floor") == 0)
+        {
+                lock_bench_take_call = lock_bench_store_take;
+                lock_bench_release_call = lock_bench_store_release;
+        }
+        else if (string_compare(name, (string_address)"atomic") == 0)
+        {
+                lock_bench_take_call = lock_bench_atomic_take;
+                lock_bench_release_call = lock_bench_atomic_release;
+        }
+}
+
+b32 main(void)
+{
+        thread address_to parked;
+
+        if (program_argument_count() > 1)
+        {
+                string_address name = program_argument(1);
+
+                if (string_compare(name, (string_address)"floor") != 0 &&
+                    string_compare(name, (string_address)"atomic") != 0 &&
+                    string_compare(name, (string_address)"alone") != 0 &&
+                    string_compare(name, (string_address)"company") != 0)
+                        return 2;
+
+                parked = string_compare(name, (string_address)"company") == 0
+                                 ? thread_start(lock_bench_parked_thread, null)
+                                 : null;
+                lock_bench_use(name);
+                lock_bench_pairs();
+
+                if (parked)
+                {
+                        atomic_exchange(address_of lock_bench_parked, 1);
+                        thread_wake(address_of lock_bench_parked, 1);
+                        thread_join(parked);
+                }
+
+                return 0;
+        }
+
+        string_format(log, "lock take/release pair, best of %p (%p pairs)\n",
+                      (positive)LOCK_BENCH_TRIES, (positive)LOCK_BENCH_ROUNDS);
+
+        lock_bench_use((string_address)"floor");
+        bench_report((string_address)"two plain stores (floor)", lock_bench_pairs,
+                     LOCK_BENCH_TRIES, LOCK_BENCH_ROUNDS, (string_address)"pair");
+        lock_bench_use((string_address)"atomic");
+        bench_report((string_address)"inline C compare-and-swap pair (before)",
+                     lock_bench_pairs, LOCK_BENCH_TRIES, LOCK_BENCH_ROUNDS,
+                     (string_address)"pair");
+        lock_bench_use((string_address)"alone");
+        bench_report((string_address)"lock_take + lock_release, alone",
+                     lock_bench_pairs, LOCK_BENCH_TRIES, LOCK_BENCH_ROUNDS,
+                     (string_address)"pair");
+
+        parked = thread_start(lock_bench_parked_thread, null);
+        bench_report((string_address)"lock_take + lock_release, with company",
+                     lock_bench_pairs, LOCK_BENCH_TRIES, LOCK_BENCH_ROUNDS,
+                     (string_address)"pair");
+
+        if (parked)
+        {
+                atomic_exchange(address_of lock_bench_parked, 1);
+                thread_wake(address_of lock_bench_parked, 1);
+                thread_join(parked);
+        }
+
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_lock */
 
 #ifdef BENCH_reserve
 /* Run a fresh process per sample: ru_maxrss is a lifetime high-water mark.

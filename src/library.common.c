@@ -1459,7 +1459,22 @@ static inline INLINE bool system_signal_install(
                       (positive)(set), (positive)(previous),                 \
                       (positive)(set_bytes))
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/* The child of a fork is one thread whatever its parent was, so it takes its
+   copy of the count back to zero -- or every lock it holds from then on would
+   wait for threads that were never copied. Only when the copy is not zero
+   already: a store to that page in every child would copy the page. */
+#define system_fork()                                                         \
+        ({                                                                    \
+                bipolar system_fork_answer =                                  \
+                        system_call_2(syscall(clone), SIGCHLD, 0);            \
+                if_rare(system_fork_answer == 0 && threads_live)              \
+                        threads_live = 0;                                     \
+                system_fork_answer;                                           \
+        })
+#else
 #define system_fork() system_call_2(syscall(clone), SIGCHLD, 0)
+#endif
 
 /* The common moving byte store.  Naming the three words once also names the
    only correct reserve/release argument order; subsystems keep semantic
@@ -3298,21 +3313,25 @@ static COLD b32 argument_exclusive_refuse(
 
         THREADS
 
-        There are none. This allocator is single threaded and there is no lock
-        anywhere in it: two threads calling malloc at the same time will
-        corrupt the free lists, and two threads calling free on blocks of the
-        same class will lose one of them. That is a deliberate choice for now
-        and not an oversight -- nothing in the tree runs a second thread
-        through it, and an atomic on every allocation is a real cost to pay
-        for a case that does not exist yet.
+        Every thread pops and pushes its own shelves. The heads live in the
+        thread block (platform/linux.inc), so memory_take and memory_give are
+        the same load and store they always were, through fs or tp instead of
+        a .bss array, and neither takes a lock. A block freed on a thread
+        other than the one that took it simply joins the freeing thread's
+        shelf: blocks of a class are interchangeable.
 
-        When it does exist, the whole of the mutable state is the six file
-        scope objects declared below: the free list array, the bump pointer,
-        what is left beside it, and the next chunk size. Every one of them is
-        touched only inside allocator_take and memory_give. A single lock
-        taken at the top of those two, or a per class list made atomic with a
-        tagged head, is the whole of the work, and the layout above does not
-        change either way.
+        What threads share is the bump pointer, what is left beside it, the
+        chunk schedule, and a depot of whole free chains that joined threads
+        left behind. allocator_lock covers exactly those, and only the slow
+        path touches them. While threads_live reads zero the lock is a load
+        and a store (its elision), so a program that never starts a thread
+        pays nothing it did not pay before. A thread among others cuts a
+        small batch into its own shelf while it holds the lock, so the next
+        few allocations of that class need no lock at all.
+
+        thread_join hands the joined thread's shelves to the depot, where the
+        next thread whose shelf runs dry -- the first thread included --
+        takes a whole chain back before cutting anything new.
 
         WHAT IS NEVER GIVEN BACK
 
@@ -3459,8 +3478,12 @@ static const positive allocator_class_size[ALLOCATOR_CLASSES] = {
 //      only routine that pops one on the path that matters. What is here is
 //      the rest of the family reaching the same object. The two literals that
 //      assembly spells out are checked against this file's constants below.
-_Static_assert(ALLOCATOR_CLASSES == 52,
-               "library.c reserves 52 shelf heads for allocator_free_list");
+_Static_assert(ALLOCATOR_CLASSES == THREAD_SHELVES,
+               "a thread block carries one shelf head per class");
+
+//      The calling thread's shelves, which is what the name always meant in
+//      a process of one thread.
+#define allocator_free_list (thread_self()->shelves)
 _Static_assert(ALLOCATOR_LARGEST - ALLOCATOR_HEADER == 262136,
                "library.c's memory_take compares the request against 262136");
 
@@ -3473,6 +3496,14 @@ static positive allocator_bump_left;
 //      has been asked for yet, which is what a program that never allocates
 //      pays: three words of bss and no syscall.
 static positive allocator_chunk_next;
+
+//      What threads share, and the lock that covers it: the three words
+//      above, and the depot of free chains joined threads handed back.
+#define ALLOCATOR_DEPOT_SLOTS 8
+#define ALLOCATOR_BATCH 8
+static lock allocator_lock;
+static address_any allocator_depot[ALLOCATOR_CLASSES][ALLOCATOR_DEPOT_SLOTS];
+static p8 allocator_depot_count[ALLOCATOR_CLASSES];
 
 //      The address of the tag, and of the second word the two wide kinds put
 //      in front of it. Written as functions returning the address rather than
@@ -3630,54 +3661,14 @@ static fn allocator_spend_remainder(void)
         that asks, and the only thing it does with a false is zero the block
         it would otherwise have had to zero anyway.
 */
-static address_any allocator_take(positive bytes, bool address_to fresh)
+/*
+        Cutting a fresh block of a class from the current chunk, asking the
+        kernel for the next chunk when this one is spent. The shared half of
+        the allocator: under allocator_lock whenever another thread exists.
+*/
+static inline __attribute__((always_inline)) address_any
+allocator_cut(b32 class, bool address_to fresh)
 {
-        if (fresh)
-                address_to fresh = 0;
-
-        if (bytes >= ALLOCATOR_LIMIT)
-                return null;
-
-        b32 class = allocator_class_of(bytes + ALLOCATOR_HEADER);
-
-        //      Too big for any shelf: its own mapping, and the length written
-        //      down in front of the tag because munmap will want it back.
-        if (class >= ALLOCATOR_CLASSES)
-        {
-                positive whole =
-                        allocator_page_round(bytes + ALLOCATOR_HEADER_WIDE);
-                positive got = (positive)memory(whole);
-
-                //      memory() is the raw trap and returns the kernel's
-                //      answer unchanged, so a failure is a small negative
-                //      number wearing an unsigned hat.
-                if (!got || system_failed(got))
-                        return null;
-
-                address_any block = (address_any)(got + ALLOCATOR_HEADER_WIDE);
-
-                address_to allocator_tag(block) = ALLOCATOR_MAPPED;
-                address_to allocator_extra(block) = whole;
-
-                if (fresh)
-                        address_to fresh = 1;
-
-                return block;
-        }
-
-        if (allocator_free_list[class])
-        {
-                address_any block = allocator_free_list[class];
-
-                allocator_free_list[class] = address_to allocator_link(block);
-
-                //      Back from the freed band to the plain shelf number,
-                //      which is what says this block is live.
-                address_to allocator_tag(block) = (positive)class;
-
-                return block;
-        }
-
         positive size = allocator_class_size[class];
 
         if (allocator_bump_left < size)
@@ -3728,6 +3719,107 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
 }
 
 /*
+        The slow path with company, or with chains waiting in the depot.
+*/
+static COLD __attribute__((noinline)) address_any
+allocator_take_shared(b32 class, bool address_to fresh)
+{
+        address_any block;
+
+        lock_take(address_of allocator_lock);
+
+        if (allocator_depot_count[class])
+        {
+                block = allocator_depot[class][--allocator_depot_count[class]];
+                lock_release(address_of allocator_lock);
+
+                allocator_free_list[class] = address_to allocator_link(block);
+                address_to allocator_tag(block) = (positive)class;
+
+                return block;
+        }
+
+        block = allocator_cut(class, fresh);
+
+        if (block && threads_live)
+        {
+                positive size = allocator_class_size[class];
+                positive more = ALLOCATOR_BATCH;
+
+                while (more-- && allocator_bump_left >= size)
+                {
+                        address_any extra =
+                                (address_any)(allocator_bump + ALLOCATOR_HEADER);
+
+                        allocator_bump += size;
+                        allocator_bump_left -= size;
+
+                        address_to allocator_tag(extra) = ALLOCATOR_FREED + class;
+                        address_to allocator_link(extra) = allocator_free_list[class];
+                        allocator_free_list[class] = extra;
+                }
+        }
+
+        lock_release(address_of allocator_lock);
+
+        return block;
+}
+
+static address_any allocator_take(positive bytes, bool address_to fresh)
+{
+        if (fresh)
+                address_to fresh = 0;
+
+        if (bytes >= ALLOCATOR_LIMIT)
+                return null;
+
+        b32 class = allocator_class_of(bytes + ALLOCATOR_HEADER);
+
+        //      Too big for any shelf: its own mapping, and the length written
+        //      down in front of the tag because munmap will want it back.
+        if (class >= ALLOCATOR_CLASSES)
+        {
+                positive whole =
+                        allocator_page_round(bytes + ALLOCATOR_HEADER_WIDE);
+                positive got = (positive)memory(whole);
+
+                //      memory() is the raw trap and returns the kernel's
+                //      answer unchanged, so a failure is a small negative
+                //      number wearing an unsigned hat.
+                if (!got || system_failed(got))
+                        return null;
+
+                address_any block = (address_any)(got + ALLOCATOR_HEADER_WIDE);
+
+                address_to allocator_tag(block) = ALLOCATOR_MAPPED;
+                address_to allocator_extra(block) = whole;
+
+                if (fresh)
+                        address_to fresh = 1;
+
+                return block;
+        }
+
+        if (allocator_free_list[class])
+        {
+                address_any block = allocator_free_list[class];
+
+                allocator_free_list[class] = address_to allocator_link(block);
+
+                //      Back from the freed band to the plain shelf number,
+                //      which is what says this block is live.
+                address_to allocator_tag(block) = (positive)class;
+
+                return block;
+        }
+
+        if_rare(threads_live | allocator_depot_count[class])
+                return allocator_take_shared(class, fresh);
+
+        return allocator_cut(class, fresh);
+}
+
+/*
         malloc.
 
         A request of zero is a request for a block: the standard allows null
@@ -3754,6 +3846,44 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
 pub address_any allocator_take_slow(positive bytes)
 {
         return allocator_take(bytes, null);
+}
+
+//      thread_join's call, made after the kernel has cleared the thread's id
+//      and before its block is unmapped: the thread is gone, so reading its
+//      shelves races with nothing. Each non-empty shelf goes to the depot
+//      whole; a full depot slot has the chain spliced in front of it.
+pub fn allocator_thread_retire(thread address_to it)
+{
+        b32 class;
+
+        lock_take(address_of allocator_lock);
+
+        for (class = 0; class < ALLOCATOR_CLASSES; class++)
+        {
+                address_any head = it->shelves[class];
+
+                if (!head)
+                        continue;
+
+                it->shelves[class] = null;
+
+                if (allocator_depot_count[class] < ALLOCATOR_DEPOT_SLOTS)
+                {
+                        allocator_depot[class][allocator_depot_count[class]++] = head;
+                        continue;
+                }
+
+                address_any tail = head;
+
+                while (address_to allocator_link(tail))
+                        tail = address_to allocator_link(tail);
+
+                address_to allocator_link(tail) =
+                        allocator_depot[class][ALLOCATOR_DEPOT_SLOTS - 1];
+                allocator_depot[class][ALLOCATOR_DEPOT_SLOTS - 1] = head;
+        }
+
+        lock_release(address_of allocator_lock);
 }
 
 /*
