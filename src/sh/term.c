@@ -2213,7 +2213,10 @@ static fn term_focus(b32 in)
         if (!focus_events)
                 return;
 
-        emit_literal(in ? "\x1b[I" : "\x1b[O");
+        if (in)
+                emit_literal("\x1b[I");
+        else
+                emit_literal("\x1b[O");
 }
 
 #endif

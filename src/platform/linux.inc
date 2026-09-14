@@ -25,8 +25,8 @@ struct linux_dirent64
 
 positive2 term_size();
 typedef struct { positive bytes; bipolar error; } system_write_result;
-positive system_write_all(positive handle, address_any data, positive length);
-system_write_result system_write_all_checked(positive handle, address_any data,
+positive system_write_all(positive handle, const address_any data, positive length);
+system_write_result system_write_all_checked(positive handle, const address_any data,
                                              positive length);
 bipolar system_read_retry(positive handle, address_any data, positive length);
 bipolar system_wait4_retry(bipolar process, address_any status,
