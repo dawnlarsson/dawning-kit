@@ -375,20 +375,12 @@ static bool net_link_line(netlink_header address_to header, address_any context)
                                              : (string_address) "DOWN");
 }
 
-typedef struct
-{
-        b32 handle;
-        p32 index;
-        p8 name[IFNAME_SIZE];
-} net_naming;
-
 //      An address line wants the interface's name, and the address dump gives
 //      only its index, so the name is looked up once per line rather than the
 //      whole link table being held.
 static bool net_address_line(netlink_header address_to header, address_any context)
 {
         netlink_address address_to body;
-        net_naming address_to naming = (net_naming address_to)context;
         positive size = 0;
         positive label_size = 0;
         p8 address_to held;
@@ -418,7 +410,7 @@ static bool net_address_line(netlink_header address_to header, address_any conte
                       writer_terminal_name, label ? label : (string_address) "?",
                       net_host_text(written, host), (positive)body->prefix);
 
-        (void)naming;
+        (void)context;
 
         return true;
 }
@@ -489,28 +481,13 @@ static bool net_route_line(netlink_header address_to header, address_any context
         return string_report(net_out, true, "\n");
 }
 
-//      Whatever this machine calls its interface, without being told.
-static bipolar net_index_of(b32 handle, string_address name, p8 address_to into)
+//      The index of the link the user named.
+static bipolar net_index_of(b32 handle, string_address name)
 {
-        netlink_search search;
-        bipolar status;
+        netlink_search search = {.wanted = name};
+        bipolar status = netlink_link_find(handle, address_of search);
 
-        memory_fill(address_of search, 0, sizeof search);
-
-        if (name)
-                search.wanted = name;
-        else
-                search.skip_loopback = true;
-
-        status = netlink_link_find(handle, address_of search);
-
-        if (status < 0)
-                return status;
-
-        if (into)
-                string_copy_max_end(into, search.name, IFNAME_SIZE - 1);
-
-        return (bipolar)search.index;
+        return status < 0 ? status : (bipolar)search.index;
 }
 
 
@@ -612,8 +589,8 @@ static b32 net_fetch(void)
         p8 name[256];
         http_buffer body = {0};
         string_address path;
-        p16 port = 80;
-        bool tls = false;
+        p16 port;
+        bool tls;
         p32 host = 0;
         bipolar server;
         bipolar status;
@@ -784,8 +761,8 @@ static b32 net_wget(void)
         p8 name[256];
         p8 leaf[256];
         string_address path;
-        p16 port = 80;
-        bool tls = false;
+        p16 port;
+        bool tls;
         bool quiet;
         bool check_cert;
         bipolar dest = -1;
@@ -1875,7 +1852,7 @@ static b32 net_ip(void)
                 else if (net_word_is(verb, "set", 3) && net_words() == 5 &&
                          net_word_is(net_word(4), "up", 2))
                 {
-                        bipolar index = net_index_of((b32)handle, net_word(3), null);
+                        bipolar index = net_index_of((b32)handle, net_word(3));
 
                         if (index < 0)
                                 status = net_refused((string_address) "link set", index);
@@ -1918,7 +1895,7 @@ static b32 net_ip(void)
                                 net_flush();
                                 status = 1;
                         }
-                        else if ((index = net_index_of((b32)handle, net_word(5), null)) < 0)
+                        else if ((index = net_index_of((b32)handle, net_word(5))) < 0)
                                 status = net_refused((string_address) "addr add", index);
                         else
                         {
@@ -1965,7 +1942,7 @@ static b32 net_ip(void)
                                 status = 1;
                         }
                         else if (net_words() == 8 &&
-                                 (index = net_index_of((b32)handle, net_word(7), null)) < 0)
+                                 (index = net_index_of((b32)handle, net_word(7))) < 0)
                                 status = net_refused((string_address) "route add", index);
                         else
                         {

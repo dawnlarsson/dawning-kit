@@ -41,7 +41,6 @@
 #define HTTP_NO_ROUTE (-3)
 #define HTTP_NO_REPLY (-4)
 #define HTTP_MALFORMED (-5)
-#define HTTP_NOT_PLAIN (-6)
 #define HTTP_TLS (-7)
 #define HTTP_REDIRECTS (-8)
 #define HTTP_DOWNGRADE (-9)
@@ -152,14 +151,6 @@ static bipolar http_origin_form(string_address path, p8 address_to into,
                 *into++ = '/';
         memory_copy_end(into, path, length);
         return HTTP_OK;
-}
-
-static bipolar http_split(string_address url, p8 address_to host, positive room,
-                          p16 address_to port, string_address address_to path)
-{
-        bool tls = false;
-
-        return http_split_into(url, host, room, port, path, address_of tls);
 }
 
 //      Where the header ends: the blank line, in either spelling.
@@ -604,9 +595,7 @@ static bipolar http_link_read_until(
                                       deadline)
                            ? HTTP_NO_REPLY : HTTP_OK;
 
-        n = deadline ? network_stream_read_some_until(
-                           link->handle, into, room, deadline)
-                     : system_read_retry((positive)link->handle, into, room);
+        n = network_stream_read_some_until(link->handle, into, room, deadline);
         if (n < 0)
                 return HTTP_NO_REPLY;
         address_to got = (positive)n;
@@ -683,7 +672,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         p8 head[HTTP_HEAD_MAX];
         http_link link;
         positive header = 0;
-        bipolar status = HTTP_MALFORMED;
+        bipolar status;
         positive length = 0;
         positive used = 0;
         http_response response;
@@ -1262,8 +1251,8 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 p8 host[256];
                 p8 head[HTTP_HEAD_MAX];
                 string_address path;
-                p16 port = 80;
-                bool tls = false;
+                p16 port;
+                bool tls;
                 p32 ip;
                 http_link link;
                 http_body body = {0};

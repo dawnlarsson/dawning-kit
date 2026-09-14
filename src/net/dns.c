@@ -53,7 +53,6 @@
 
 #define DNS_TYPE_A 1
 #define DNS_TYPE_CNAME 5
-#define DNS_TYPE_AAAA 28
 #define DNS_CLASS_IN 1
 
 #define DNS_FLAG_RESPONSE 0x8000
@@ -416,7 +415,7 @@ static bipolar dns_reply_result(
 }
 
 static bipolar dns_stream_connect_until(
-    const socket_address_internet address_to where,
+    socket_address_internet address_to where,
     const network_deadline address_to deadline)
 {
         bipolar handle = socket_new(
@@ -451,7 +450,7 @@ failed:
 }
 
 static bipolar dns_retry_tcp(
-    const socket_address_internet address_to where,
+    socket_address_internet address_to where,
     p8 address_to request, positive request_length, p16 id,
     positive question_length, p32 address_to found,
     const network_deadline address_to deadline)

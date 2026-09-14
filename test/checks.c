@@ -39378,10 +39378,11 @@ static fn fetching(void)
         p8 name[64];
         string_address path;
         p16 port;
+        bool tls;
 
         check("a plain url splits",
-              http_split((string_address) "http://dawning.dev/index.html", name,
-                         sizeof name, address_of port, address_of path) == HTTP_OK);
+              http_split_into((string_address) "http://dawning.dev/index.html", name,
+                         sizeof name, address_of port, address_of path, address_of tls) == HTTP_OK);
         check("the host comes out", memory_compare(name, "dawning.dev", 12) == 0);
         check("the port defaults to 80", port == 80);
         check("the path comes out", string_equals(path, (string_address) "/index.html"));
@@ -39395,42 +39396,41 @@ static fn fetching(void)
                 {
                         input[at] = byte;
                         check("HTTP refuses raw whitespace and controls in host and path",
-                              http_split(input, name, sizeof name, &port, &path) == HTTP_BAD_URL);
+                              http_split_into(input, name, sizeof name, &port, &path, &tls) == HTTP_BAD_URL);
                         input[at] = at == 7 ? 'h' : 'x';
                 }
         }
         check("HTTP keeps percent-encoded path bytes unchanged",
-              http_split("http://h/%20%0d%0a%7f", name, sizeof name, &port, &path) == HTTP_OK &&
+              http_split_into("http://h/%20%0d%0a%7f", name, sizeof name, &port, &path, &tls) == HTTP_OK &&
               string_equals(path, "/%20%0d%0a%7f"));
 
         check("a port is taken",
-              http_split((string_address) "http://127.0.0.1:8080/x", name, sizeof name,
-                         address_of port, address_of path) == HTTP_OK);
+              http_split_into((string_address) "http://127.0.0.1:8080/x", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_OK);
         check("the port is read", port == 8080);
         check("the path after a port", string_equals(path, (string_address) "/x"));
 
         check("a bare host gets a slash",
-              http_split((string_address) "http://dawning.dev", name, sizeof name,
-                         address_of port, address_of path) == HTTP_OK);
+              http_split_into((string_address) "http://dawning.dev", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_OK);
         check("which is the root", string_equals(path, (string_address) "/"));
         check("a fragment after a bare authority is not part of the host",
-              http_split((string_address) "http://dawning.dev#private", name,
-                         sizeof name, address_of port, address_of path) ==
+              http_split_into((string_address) "http://dawning.dev#private", name,
+                         sizeof name, address_of port, address_of path, address_of tls) ==
                       HTTP_OK &&
                   string_equals(name, (string_address) "dawning.dev") &&
                   string_equals(path, (string_address) "/"));
         check("a bare query remains available as a request target",
-              http_split((string_address) "http://dawning.dev?q=one#private",
+              http_split_into((string_address) "http://dawning.dev?q=one#private",
                          name, sizeof name, address_of port,
-                         address_of path) == HTTP_OK &&
+                         address_of path, address_of tls) == HTTP_OK &&
                   string_equals(path, (string_address) "?q=one#private"));
 
         check("https splits as TLS",
-              http_split((string_address) "https://dawning.dev/", name, sizeof name,
-                         address_of port, address_of path) == HTTP_OK);
+              http_split_into((string_address) "https://dawning.dev/", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_OK);
         check("https defaults to 443", port == 443);
         {
-                bool tls = false;
                 check("https marks TLS",
                       http_split_into((string_address) "https://dawning.dev/x", name,
                                       sizeof name, address_of port, address_of path,
@@ -39444,24 +39444,24 @@ static fn fetching(void)
                           !tls && port == 80);
         }
         check("an empty host is refused",
-              http_split((string_address) "http:///x", name, sizeof name,
-                         address_of port, address_of path) == HTTP_BAD_URL);
+              http_split_into((string_address) "http:///x", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_BAD_URL);
         check("a port that is not a number is refused",
-              http_split((string_address) "http://h:80x/", name, sizeof name,
-                         address_of port, address_of path) == HTTP_BAD_URL);
+              http_split_into((string_address) "http://h:80x/", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_BAD_URL);
         check("an empty port is refused",
-              http_split((string_address) "http://h:/", name, sizeof name,
-                         address_of port, address_of path) == HTTP_BAD_URL);
+              http_split_into((string_address) "http://h:/", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_BAD_URL);
         check("the largest port is accepted",
-              http_split((string_address) "http://h:65535/", name, sizeof name,
-                         address_of port, address_of path) == HTTP_OK && port == 65535);
+              http_split_into((string_address) "http://h:65535/", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_OK && port == 65535);
         check("a port above the wire field is refused",
-              http_split((string_address) "http://h:65536/", name, sizeof name,
-                         address_of port, address_of path) == HTTP_BAD_URL);
+              http_split_into((string_address) "http://h:65536/", name, sizeof name,
+                         address_of port, address_of path, address_of tls) == HTTP_BAD_URL);
         check("a wrapping port is refused",
-              http_split((string_address) "http://h:18446744073709551696/",
+              http_split_into((string_address) "http://h:18446744073709551696/",
                          name, sizeof name, address_of port,
-                         address_of path) == HTTP_BAD_URL);
+                         address_of path, address_of tls) == HTTP_BAD_URL);
 
         for (positive length = 1; length < 52; length++)
                 for (positive ending = 0; ending < 3; ending++)
@@ -39473,7 +39473,7 @@ static fn fetching(void)
                                 memory_fill(input, byte, length);
                                 string_copy(input + length, tails[ending]);
                                 memory_fill(name, 0x5a, sizeof name);
-                                bipolar result = http_split(input, name, capacity, &port, &path);
+                                bipolar result = http_split_into(input, name, capacity, &port, &path, &tls);
                                 bool fits = length + 1 < capacity, intact = true;
                                 for (positive at = 0; at < sizeof name; at++)
                                         intact &= name[at] == (fits && at <= length

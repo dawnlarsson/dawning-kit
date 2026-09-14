@@ -40,20 +40,17 @@
         answers with EINVAL and no explanation.
 */
 
-#define NETLINK_ALIGN 4
 #define NETLINK_HEADER 16
 #define NETLINK_DATAGRAM_MAX (16u * 1024u * 1024u)
 #define NETLINK_TRANSACTION_SECONDS 10
 
 #define NLM_REQUEST 0x0001
-#define NLM_MULTI 0x0002
 #define NLM_ACK 0x0004
 #define NLM_DUMP 0x0300
 #define NLM_DUMP_INTERRUPTED 0x0010
 #define NLM_REPLACE 0x0100
 #define NLM_EXCLUSIVE 0x0200
 #define NLM_CREATE 0x0400
-#define NLM_CAPPED 0x0100
 
 #define NLMSG_IS_NOOP 1
 #define NLMSG_IS_ERROR 2
@@ -663,11 +660,6 @@ static p32 netlink_sequence_take(void)
         netlink_sequence_next++;
         if (!netlink_sequence_next)
                 netlink_sequence_next = 1;
-        if (!sequence)
-        {
-                sequence = 1;
-                netlink_sequence_next = 2;
-        }
 
         return sequence;
 }
