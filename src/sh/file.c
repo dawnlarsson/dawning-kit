@@ -2725,6 +2725,7 @@ typedef struct
         positive stop;
         positive at;
         bipolar error;
+        bool borrowed;
 } walk_level;
 
 typedef struct
@@ -2808,7 +2809,8 @@ static walk_item address_to walk_next(walk address_to walker)
                 {
                         walker->depth--;
                         walker->records_used = level->listing;
-                        walk_close_level(walker, level->handle);
+                        if (!level->borrowed)
+                                walk_close_level(walker, level->handle);
                         walker->path[level->path_length] = end;
                         item->event = WALK_LEAVE;
                         item->type = DT_DIR;
@@ -2866,6 +2868,8 @@ static walk_item address_to walk_next(walk address_to walker)
         return null;
 }
 
+static fn walk_read_listing(walk address_to walker, walk_level address_to level);
+
 /* Enter the directory walk_next just named, opened through its parent with
    flags (O_NOFOLLOW, or 0 to follow), and read the whole of it. A name
    whose path does not fit is not entered: nothing below it could be shown. */
@@ -2891,6 +2895,16 @@ static bipolar walk_enter(walk address_to walker, positive flags)
         level->parent = item->directory;
         level->path_length = item->path_length;
         level->name_at = item->depth ? item->path_length - string_length(item->name) : 0;
+        level->borrowed = false;
+        walk_read_listing(walker, level);
+        return handle;
+}
+
+// Read the whole of a level's directory onto the top of the store.
+static fn walk_read_listing(walk address_to walker, walk_level address_to level)
+{
+        bipolar handle = level->handle;
+
         level->listing = walker->records_used;
         level->error = 0;
 
@@ -2920,7 +2934,33 @@ static bipolar walk_enter(walk address_to walker, positive flags)
         level->stop = walker->records_used;
         level->at = level->listing;
         walker->depth++;
-        return handle;
+}
+
+/* Walk what is in a directory the caller already holds, shown as path. The
+   handle stays the caller's; its WALK_LEAVE comes at depth 0 like a root's. */
+static bool walk_start_borrowed(walk address_to walker, bipolar handle,
+                                string_address path, bool hold)
+{
+        positive length = string_length(path);
+        walk_level address_to level = address_of walker->levels[0];
+
+        walker->depth = 0;
+        walker->root = path;
+        walker->root_pending = false;
+        walker->root_fits = length < FILE_PATH_MAX;
+        walker->hold = hold;
+        walker->records_used = 0;
+        if (!walker->root_fits)
+                return false;
+
+        memory_copy_apart(walker->path, path, length + 1);
+        level->handle = handle;
+        level->parent = AT_FDCWD;
+        level->path_length = length;
+        level->name_at = 0;
+        level->borrowed = true;
+        walk_read_listing(walker, level);
+        return true;
 }
 
 // Back out of the directory walk_enter just entered, as if it had not been:
@@ -2930,14 +2970,20 @@ static fn walk_abandon(walk address_to walker)
         walk_level address_to level = address_of walker->levels[--walker->depth];
 
         walker->records_used = level->listing;
-        system_close(level->handle);
+        if (!level->borrowed)
+                system_close(level->handle);
 }
 
 // Close whatever a walk stopped early left open, and give its store back.
 static fn walk_end(walk address_to walker)
 {
         while (walker->depth)
-                system_close(walker->levels[--walker->depth].handle);
+        {
+                walk_level address_to level = address_of walker->levels[--walker->depth];
+
+                if (!level->borrowed)
+                        system_close(level->handle);
+        }
         walk_release(walker);
         walker->root_pending = false;
         array_store_release(walker->records, walker->records_room,
@@ -2983,6 +3029,10 @@ typedef struct
         p8 mark;
         p8 spare;
         b32 result;
+        //      A second directory and a second string, for a tool that works
+        //      a name into another tree.
+        bipolar target;
+        positive extra;
 } walk_batch_item;
 
 typedef struct
@@ -3003,10 +3053,15 @@ static positive walk_held(walk address_to walker)
         return walker->held_used + walker->depth;
 }
 
+static bool walk_batch_full_at(walk address_to walker, walk_batch address_to batch,
+                               positive handles)
+{
+        return batch->count >= WALK_BATCH || walk_held(walker) >= handles;
+}
+
 static bool walk_batch_full(walk address_to walker, walk_batch address_to batch)
 {
-        return batch->count >= WALK_BATCH ||
-               walk_held(walker) >= WALK_BATCH_HANDLES;
+        return walk_batch_full_at(walker, batch, WALK_BATCH_HANDLES);
 }
 
 // The item walk_next handed out, kept under mark; null when out of memory.
@@ -3042,8 +3097,26 @@ static walk_batch_item address_to walk_batch_add(walk_batch address_to batch,
         kept->path = batch->text_used;
         memory_copy_apart(batch->text + batch->text_used, shown, path_bytes);
         batch->text_used += path_bytes;
+        kept->target = -1;
+        kept->extra = kept->path;
         batch->count++;
         return kept;
+}
+
+// A string kept beside the batch's names; positive_max when out of memory.
+static positive walk_batch_text(walk_batch address_to batch, p8 address_to text,
+                                positive length)
+{
+        if (!array_store_reserve(batch->text, batch->text_room, batch->text_used,
+                                 batch->text_used + length + 1, 1 << 18))
+                return positive_max;
+
+        positive at = batch->text_used;
+
+        memory_copy_apart(batch->text + at, text, length);
+        batch->text[at + length] = end;
+        batch->text_used += length + 1;
+        return at;
 }
 
 static fn walk_batch_run(walk_batch address_to batch, parallel_job job,
@@ -3896,6 +3969,32 @@ static bipolar file_send_range_once(bipolar in, p64 address_to in_offset,
 #define FILE_TRANSFER_SIZE (FILE_BLOCK * 32)
 static p8 file_transfer[FILE_TRANSFER_SIZE];
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/* A copy that falls back to reading and writing inside a pool job gets a
+   buffer of its own thread's; the caller's slot is the shared one, because
+   nothing else on the calling thread runs while it works a batch. */
+static p8 address_to file_transfer_slots[PARALLEL_WORKERS_MAX + 2];
+
+static p8 address_to file_transfer_buffer(void)
+{
+        positive slot = parallel_slot();
+
+        if (!slot || slot >= sizeof(file_transfer_slots) / sizeof(file_transfer_slots[0]))
+                return file_transfer;
+        if (!file_transfer_slots[slot])
+        {
+                address_any made = memory(FILE_TRANSFER_SIZE);
+
+                if (!made || system_failed(made))
+                        return null;
+                file_transfer_slots[slot] = (p8 address_to)made;
+        }
+        return file_transfer_slots[slot];
+}
+#else
+#define file_transfer_buffer() file_transfer
+#endif
+
 static bool file_copy_range_fallback(bipolar result)
 {
         return result == -ERROR_NOT_PERMITTED || result == -ERROR_CROSS_DEVICE ||
@@ -3949,18 +4048,23 @@ static inline INLINE bool file_copy_stream(
              system_seek(out, offsets[1], FILE_SEEK_SET) < 0))
                 return false;
 
+        p8 address_to transfer = file_transfer_buffer();
+
+        if (!transfer)
+                return false;
+
         while (!bounded || length)
         {
-                positive ask = !bounded || length > sizeof(file_transfer)
-                                   ? sizeof(file_transfer) : (positive)length;
-                bipolar taken = system_read_retry((positive)in, file_transfer,
+                positive ask = !bounded || length > FILE_TRANSFER_SIZE
+                                   ? FILE_TRANSFER_SIZE : (positive)length;
+                bipolar taken = system_read_retry((positive)in, transfer,
                                                    ask);
 
                 if (taken < 0)
                         return false;
                 if (!taken)
                         return !bounded;
-                if (system_write_all((positive)out, file_transfer,
+                if (system_write_all((positive)out, transfer,
                                      (positive)taken) != (positive)taken)
                         return false;
 
@@ -20736,6 +20840,351 @@ static bipolar file_copy_publish(
         return published;
 }
 
+
+/*
+        cp -r below a directory cp made itself, in batches over the walk.
+
+        The walk makes each directory as it enters it, as the ordinary copy
+        does: the source is opened first, the destination made fresh beside
+        it. A plain file is a job -- opened, created with O_EXCL under its
+        creation mode, copied, given what -p keeps, closed -- and a job that
+        cannot finish removes what it made. Each batch is read back in walk
+        order: -v's lines, the directories that could not be made, and every
+        name a job did not finish or that is not a plain file, which the
+        ordinary one-name copy then takes in its place and reports in its own
+        words. A directory gets its mode once the walk has left it.
+*/
+enum
+{
+        CP_FILE = 1,
+        CP_SERIAL,
+        CP_DIR,
+        CP_DIR_FAILED,
+        CP_DIR_DONE,
+        CP_TOP_DONE,
+        CP_LONG,
+};
+
+#define CP_BATCH_HANDLES 64
+
+static bool file_copy_one(bipolar source_directory, string_address source,
+                          string_address source_shown,
+                          bipolar destination_directory,
+                          string_address destination,
+                          string_address destination_shown,
+                          positive depth, bool named, bool moving,
+                          bool remove_source,
+                          file_facts address_to known_source,
+                          bipolar known_source_handle, positive how);
+
+static walk cp_walker;
+static walk_batch cp_batch;
+static struct
+{
+        bipolar handle;
+        file_facts facts;
+} cp_made[WALK_LEVELS];
+
+static fn cp_copy_job(address_any context, positive index)
+{
+        walk_batch address_to batch = (walk_batch address_to)context;
+        walk_batch_item address_to item = batch->items + index;
+
+        if (item->mark != CP_FILE)
+                return;
+
+        string_address name = (string_address)batch->text + item->name;
+        file_facts address_to facts = batch->facts + index;
+        bipolar in = system_open_at(item->directory, name,
+                                    FILE_READ | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+
+        if (in < 0)
+        {
+                item->result = (b32)in;
+                return;
+        }
+
+        bipolar looked = file_look_code(in, (string_address)"", AT_EMPTY_PATH, facts);
+
+        if (looked < 0 || (facts->mode & MODE_FORMAT) != MODE_FILE)
+        {
+                system_close(in);
+                item->result = (b32)(looked < 0 ? looked : -ERROR_AGAIN);
+                return;
+        }
+
+        bipolar out = file_copy_destination_open(
+            item->target, name, file_copy_creation_mode(facts), false, facts, true);
+
+        if (out < 0)
+        {
+                system_close(in);
+                item->result = (b32)out;
+                return;
+        }
+
+        bool copied = file_copy_handles_known(in, out, facts);
+
+        system_close(in);
+
+        bipolar kept = copied && cp_preserve
+                           ? file_keep_handle(out, -1, null, facts) : 0;
+        bipolar closed = system_close(out);
+
+        if (!copied || kept < 0 || closed < 0)
+        {
+                (void)system_remove_at(item->target, name, 0);
+                item->result = -ERROR_INPUT_OUTPUT;
+                return;
+        }
+        item->result = 0;
+}
+
+static bool cp_batch_replay(walk_batch address_to batch, positive depth)
+{
+        bool complete = true;
+
+        for (positive index = 0; index < batch->count; index++)
+        {
+                walk_batch_item address_to item = batch->items + index;
+                string_address name = (string_address)batch->text + item->name;
+                string_address from = (string_address)batch->text + item->path;
+                string_address to = (string_address)batch->text + item->extra;
+
+                switch (item->mark)
+                {
+                case CP_FILE:
+                        if (item->result == 0)
+                        {
+                                if (cp_loud)
+                                        string_format(log, "'%w' -> '%w'\n",
+                                                      writer_terminal_quoted_name, from,
+                                                      writer_terminal_quoted_name, to);
+                                break;
+                        }
+                        //      fall through: the ordinary copy says why.
+                case CP_SERIAL:
+                        if (!file_copy_one(item->directory, name, from, item->target,
+                                           name, to, depth - item->depth, false,
+                                           false, false, null, -1, FILE_COPY_FRESH))
+                                complete = false;
+                        break;
+                case CP_DIR:
+                        if (cp_loud)
+                                string_format(log, "'%w' -> '%w'\n",
+                                              writer_terminal_quoted_name, from,
+                                              writer_terminal_quoted_name, to);
+                        break;
+                case CP_DIR_FAILED:
+                        string_format(log_error, "cp: cannot open directory '%w': %s\n",
+                                      writer_terminal_quoted_name, to,
+                                      file_reason(item->result));
+                        complete = false;
+                        break;
+                case CP_LONG:
+                        string_format(log_error, "cp: cannot copy '%w/%w': %s\n",
+                                      writer_terminal_quoted_name, from,
+                                      writer_terminal_quoted_name, name,
+                                      file_reason(-ERROR_NAME_TOO_LONG));
+                        complete = false;
+                        break;
+                case CP_DIR_DONE:
+                case CP_TOP_DONE:
+                {
+                        if (item->result < 0)
+                        {
+                                string_format(log_error, "cp: cannot read directory '%w': %s\n",
+                                              writer_terminal_quoted_name, from,
+                                              file_reason(item->result));
+                                complete = false;
+                        }
+                        if (item->mark == CP_TOP_DONE)
+                                break;
+
+                        file_facts address_to facts = batch->facts + index;
+                        bipolar attributed = cp_preserve
+                                                 ? file_keep_handle(item->target, -1, null, facts)
+                                                 : file_change_mode_handle(
+                                                       item->target,
+                                                       file_copy_creation_mode(facts));
+
+                        if (attributed < 0)
+                        {
+                                string_format(log_error,
+                                              "cp: cannot preserve attributes for '%w': %s\n",
+                                              writer_terminal_quoted_name, to,
+                                              file_reason(attributed));
+                                complete = false;
+                        }
+                        system_close(item->target);
+                        break;
+                }
+                }
+        }
+        return complete;
+}
+
+/* The copy of what is in source_handle into destination_handle, a directory
+   this cp made; false when anything below could not be copied. */
+static bool cp_tree_batched(bipolar source_handle, string_address source_shown,
+                            bipolar destination_handle,
+                            string_address destination_shown, positive depth)
+{
+        walk address_to walker = address_of cp_walker;
+        walk_batch address_to batch = address_of cp_batch;
+        positive source_length = string_length(source_shown);
+        positive source_separator = source_length && source_shown[source_length - 1] != '/';
+        positive destination_length = string_length(destination_shown);
+        positive destination_separator =
+            destination_length && destination_shown[destination_length - 1] != '/';
+        bool complete = true;
+        bool walking = true;
+        p8 to[FILE_PATH_MAX];
+
+        if (!walk_start_borrowed(walker, source_handle, source_shown, true))
+                return false;
+        cp_made[0].handle = destination_handle;
+
+        while (walking)
+        {
+                walk_item address_to item = null;
+
+                while (!walk_batch_full_at(walker, batch, CP_BATCH_HANDLES) &&
+                       (item = walk_next(walker)))
+                {
+                        positive level = item->depth;
+                        walk_batch_item address_to kept = null;
+                        positive to_length = 0;
+
+                        //      Where the name lands: the destination, then the
+                        //      part of the source path below the source.
+                        if (item->path)
+                        {
+                                string_address below = item->path + source_length +
+                                                       (level ? source_separator : 0);
+                                positive below_length = string_length(below);
+
+                                to_length = destination_length +
+                                            (below_length ? destination_separator : 0) +
+                                            below_length;
+                                if (to_length < FILE_PATH_MAX)
+                                {
+                                        memory_copy_apart(to, destination_shown, destination_length);
+                                        if (below_length && destination_separator)
+                                                to[destination_length] = '/';
+                                        memory_copy_apart(to + destination_length +
+                                                              (below_length ? destination_separator : 0),
+                                                          below, below_length + 1);
+                                }
+                        }
+
+                        if (item->event == WALK_LEAVE)
+                        {
+                                kept = walk_batch_add(batch, item, level ? CP_DIR_DONE : CP_TOP_DONE);
+                                if (kept)
+                                {
+                                        kept->result = (b32)item->error;
+                                        kept->target = cp_made[level].handle;
+                                        batch->facts[batch->count - 1] = cp_made[level].facts;
+                                }
+                                goto added;
+                        }
+
+                        if (!item->path || to_length >= FILE_PATH_MAX)
+                        {
+                                //      Named by the directory above and the
+                                //      name, as the ordinary copy names it.
+                                string_address parent = item->path ? item->path : item->parent;
+                                positive parent_length = item->path
+                                                             ? item->path_length - string_length(item->name) -
+                                                                   (level > 1 || source_separator ? 1 : 0)
+                                                             : string_length(item->parent);
+
+                                kept = walk_batch_add(batch, item, CP_LONG);
+                                if (kept)
+                                {
+                                        kept->path = walk_batch_text(batch, (p8 address_to)parent,
+                                                                     parent_length);
+                                        if (kept->path == positive_max)
+                                                kept = null;
+                                }
+                                goto added;
+                        }
+
+                        if (item->type == DT_REG)
+                                kept = walk_batch_add(batch, item, CP_FILE);
+                        else if (item->type == DT_DIR && level < depth)
+                        {
+                                bipolar entered = walk_enter(walker, O_NOFOLLOW);
+                                file_facts facts;
+                                bipolar looked = entered < 0
+                                                     ? entered
+                                                     : file_look_code(entered, (string_address)"",
+                                                                      AT_EMPTY_PATH, address_of facts);
+
+                                if (looked >= 0 && (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                                        looked = -ERROR_AGAIN;
+                                if (looked < 0)
+                                {
+                                        if (entered >= 0)
+                                                walk_abandon(walker);
+                                        kept = walk_batch_add(batch, item, CP_SERIAL);
+                                        goto targeted;
+                                }
+
+                                bipolar made = file_copy_directory_fresh(
+                                    cp_made[level - 1].handle, item->name);
+
+                                if (made < 0)
+                                {
+                                        walk_abandon(walker);
+                                        kept = walk_batch_add(batch, item, CP_DIR_FAILED);
+                                        if (kept)
+                                                kept->result = (b32)made;
+                                        goto targeted;
+                                }
+
+                                cp_made[level].handle = made;
+                                cp_made[level].facts = facts;
+                                kept = walk_batch_add(batch, item, CP_DIR);
+                        }
+                        else
+                                kept = walk_batch_add(batch, item, CP_SERIAL);
+targeted:
+                        if (kept)
+                        {
+                                kept->target = cp_made[level - 1].handle;
+                                kept->extra = walk_batch_text(batch, to, to_length);
+                                if (kept->extra == positive_max)
+                                        kept = null;
+                        }
+added:
+                        if (!kept)
+                        {
+                                log_error("cp: out of memory while walking the tree\n", 0);
+                                complete = false;
+                                walking = false;
+                                break;
+                        }
+                }
+
+                if (!item)
+                        walking = false;
+
+                walk_batch_run(batch, cp_copy_job, batch);
+                if (!cp_batch_replay(batch, depth))
+                        complete = false;
+                walk_batch_next(walker, batch);
+        }
+
+        //      A walk that stopped early still holds directories it made.
+        for (positive level = walker->depth; level > 1; level--)
+                system_close(cp_made[level - 1].handle);
+        walk_end(walker);
+        walk_batch_next(walker, batch);
+        return complete;
+}
+
 /* cp and cross-device mv copy the same object graph. Only source removal,
    dereferencing, overwrite policy and metadata policy differ. */
 static bool file_copy_one(bipolar source_directory, string_address source,
@@ -21214,7 +21663,18 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         positive skipped = 0;
         struct linux_dirent64 address_to child;
 
-        while ((child = file_walk_next(address_of walk)))
+        /*      A directory cp made in its own stage is filled in batches; the
+                ones below it, and every other kind of copy, name by name. */
+        if (staged && !moving && !cp_hard && !cp_symbolic && !cp_attributes_only)
+        {
+                complete = cp_tree_batched(walk.handle, source_shown,
+                                           destination_handle, destination_shown,
+                                           depth);
+                walk.have = walk.at = 0;
+        }
+
+        while (!(staged && !moving && !cp_hard && !cp_symbolic && !cp_attributes_only) &&
+               (child = file_walk_next(address_of walk)))
         {
                 if (file_is_dot(child->d_name))
                         continue;
