@@ -456,6 +456,90 @@ static const p32 zstd_ml_base[53] = {
         A lone RLE symbol lives in cell 0 with no FSE step, so the same
         load serves both the compressed tables and a constant one.
 */
+/*
+        A compressed sequence stream's table in one pass, as libzstd builds
+        it: the symbols spread across the table by the fixed step (laid down
+        eight bytes a store and scattered two at a time when no symbol is
+        below one, the one-at-a-time spread otherwise), then every cell takes
+        its next state and bit count with the symbol's baseline and extra
+        bits already folded in, which zstd_seq_fuse did in a second pass.
+        zstd_fse_read's counts sum to the table; the sum is checked anyway.
+*/
+static bool zstd_seq_build(zstd_fse address_to table, const bipolar address_to norm,
+                           positive max_sym, p8 log, p8 kind)
+{
+        positive const size = (positive)1 << log;
+        positive const mask = size - 1;
+        positive const step = (size >> 1) + (size >> 3) + 3;
+        p16 next[64];
+        p8 symbol[ZSTD_FSE_MAX];
+        p8 spread[ZSTD_FSE_MAX + 8];
+        positive total = 0;
+        bool below_one = false;
+
+        if (log < 5 || log > 9 || max_sym > 52)
+                return zstd_fail("zstd FSE table log");
+        for (positive s = 0; s <= max_sym; s++)
+        {
+                next[s] = (p16)(norm[s] < 0 ? 1 : norm[s]);
+                below_one |= norm[s] < 0;
+                total += next[s];
+        }
+        if (total != size)
+                return zstd_fail("zstd FSE counts do not sum");
+        if (!below_one)
+        {
+                p64 value = 0;
+                positive at = 0;
+                positive position = 0;
+
+                for (positive s = 0; s <= max_sym; s++, value += 0x0101010101010101ull)
+                {
+                        memory_store_unaligned(p64, spread + at, value);
+                        for (bipolar i = 8; i < norm[s]; i += 8)
+                                memory_store_unaligned(p64, spread + at + (positive)i, value);
+                        at += (positive)norm[s];
+                }
+                for (positive u = 0; u < size; u += 2)
+                {
+                        symbol[position] = spread[u];
+                        symbol[(position + step) & mask] = spread[u + 1];
+                        position = (position + 2 * step) & mask;
+                }
+        }
+        else if (!zstd_fse_spread(symbol, norm, max_sym, log))
+                return zstd_fail("zstd FSE table did not fill");
+        for (positive u = 0; u < size; u++)
+        {
+                p8 const sym = symbol[u];
+                p16 const n = next[sym]++;
+                p8 const bits = (p8)(log - zstd_highbit32(n));
+
+                table->cell[u].bits = bits;
+                table->cell[u].next = (p16)((n << bits) - size);
+                if (kind == 1)
+                {
+                        table->cell[u].extra = sym;
+                        table->cell[u].base =
+                            (p32)(sym < 2 ? (positive)sym : ((positive)1 << sym) - 3);
+                }
+                else if (kind == 0)
+                {
+                        table->cell[u].extra = zstd_ll_extra[sym];
+                        table->cell[u].base = zstd_ll_base[sym];
+                }
+                else
+                {
+                        table->cell[u].extra = zstd_ml_extra[sym];
+                        table->cell[u].base = zstd_ml_base[sym];
+                }
+        }
+        table->log = log;
+        table->rle = 0;
+        table->valid = true;
+        return true;
+}
+
 static bool zstd_seq_fuse(zstd_fse address_to table, p8 kind)
 {
         const p8 address_to extra;
@@ -714,6 +798,7 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
                                    positive provided)
 {
         p32 rank[13];
+        p32 first_cell[13];
         positive sum = 0;
         positive s;
         p8 max_bits;
@@ -754,36 +839,39 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
 
         /* Built at eleven bits whatever the depth: a depth-L cell repeats
            1 << (11 - L) times, so every table takes the four-stream
-           walker, which indexes by the top eleven bits. */
+           walker, which indexes by the top eleven bits.  Cells run by
+           weight, then by symbol; the ranks say where each weight's cells
+           begin, and one pass over the symbols fills them. */
         huff->max_bits = 11;
         start = 0;
         for (w = 1; w <= 12; w++)
         {
-                p8 bits = (p8)(max_bits + 1 - w);
-                positive span = (positive)1 << (w - 1 + 11 - max_bits);
-
-                if (w > max_bits + 1)
-                        continue;
-                for (s = 0; s <= provided; s++)
-                {
-                        positive i;
-
-                        if (weight[s] != w)
-                                continue;
-                        if (start + span > ((positive)1 << 11))
-                                return zstd_fail("zstd Huffman table overflow");
-                        for (i = 0; i < span; i++)
-                                /* nbits in the low byte, symbol in the high
-                                   byte: Facebook's 4X1 walker shifts by the
-                                   cell itself, and x86 can store %ah. */
-                                huff->cell[start + i] =
-                                    (p16)bits | ((p16)s << 8);
-                        start += span;
-                }
+                first_cell[w] = (p32)start;
+                if (w <= max_bits)
+                        start += (positive)rank[w] << (w - 1 + 11 - max_bits);
         }
-
         if (start != ((positive)1 << 11))
                 return zstd_fail("zstd Huffman table did not fill");
+        for (s = 0; s <= provided; s++)
+        {
+                p8 const weight_s = weight[s];
+                positive at;
+                positive stop;
+                p16 cell;
+
+                if (!weight_s)
+                        continue;
+                if (weight_s > max_bits)
+                        return zstd_fail("zstd Huffman table overflow");
+                /* nbits in the low byte, symbol in the high byte: Facebook's
+                   4X1 walker shifts by the cell itself, and x86 can store %ah. */
+                cell = (p16)(max_bits + 1 - weight_s) | (p16)((p16)s << 8);
+                at = first_cell[weight_s];
+                stop = at + ((positive)1 << (weight_s - 1 + 11 - max_bits));
+                first_cell[weight_s] = (p32)stop;
+                for (; at < stop; at++)
+                        huff->cell[at] = cell;
+        }
         huff->valid = true;
         return true;
 }
@@ -1042,10 +1130,10 @@ static bool zstd_seq_table(zstd_fse address_to table, zstd_fse address_to prev,
                 if (!zstd_fse_read(src, src_len, address_of ncount, norm, max_sym,
                                    address_of log, max_log))
                         return false;
-                if (!zstd_fse_build(table, norm, max_sym, log))
+                if (!zstd_seq_build(table, norm, max_sym, log, kind))
                         return false;
                 address_to used = ncount;
-                return zstd_seq_fuse(table, kind);
+                return true;
         }
         if (mode == 3)
         {
