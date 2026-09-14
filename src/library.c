@@ -19300,50 +19300,216 @@ __asm__(
     ASM_RET
     ASM_END(zstd_huffman_stream)
 
+    /* Four Huffman streams, interleaved.  Each stream's bits sit in a
+       left-justified container with a sentinel one below the bits still
+       unread, so a symbol is five instructions and no branch: the index is
+       the container shifted right by 64 less the table log, the cell holds
+       the length in its low byte and the symbol in its high byte, and LSLV
+       takes the count mod 64, so shifting the container by the whole cell
+       consumes exactly the length.  A round decodes five symbols from each
+       of the four streams, whose containers are independent chains, and
+       refills each from the trailing zero count (rbit, clz).  Rounds run
+       while every stream has eight bytes of input per round left and the
+       last stream room for five symbols a round; a cell minus one is ORed
+       into w6, whose bit 7 then says a zero-length cell was used.  The
+       rest of each stream, and all of a stream shorter than eight bytes,
+       decodes in the tail, which is the single-stream loop with its
+       zero-padded reads near the stream start and its 64-bit limit.
+       Frame: 96 table and log; per stream k from 112 + 56k: output,
+       output end, raw container, consumed, pointer, start, end. */
+#define ZSTD_HUF4_ARM64_SYM(bits, op) \
+    "lsr x9, " bits ", x5\n   ldrh w9, [x4, x9, lsl #1]\n" \
+    "lsl " bits ", " bits ", x9\n   sub w10, w9, #1\n   orr w6, w6, w10\n" \
+    "lsr w9, w9, #8\n   strb w9, [" op "], #1\n"
+#define ZSTD_HUF4_ARM64_RELOAD(bits, ip) \
+    "rbit x9, " bits "\n   clz x9, x9\n   lsr x10, x9, #3\n" \
+    "sub " ip ", " ip ", x10\n   ldr " bits ", [" ip "]\n" \
+    "orr " bits ", " bits ", #1\n   and x9, x9, #7\n" \
+    "lsl " bits ", " bits ", x9\n"
+#define ZSTD_HUF4_ARM64_ROUND \
+    ZSTD_HUF4_ARM64_SYM("x19", "x0") ZSTD_HUF4_ARM64_SYM("x20", "x1") \
+    ZSTD_HUF4_ARM64_SYM("x21", "x2") ZSTD_HUF4_ARM64_SYM("x22", "x3")
+#define ZSTD_HUF4_ARM64_TAIL(base) \
+    "ldr x19, [sp, #" base "]\n" \
+    "ldr x20, [sp, #" base "+8]\n   sub x20, x20, x19\n" \
+    "ldp x23, x24, [sp, #" base "+16]\n   ldr x25, [sp, #" base "+32]\n" \
+    "ldp x26, x27, [sp, #" base "+40]\n   add x28, x26, #8\n" \
+    "bl .Lzstd_huff4_arm64_tail\n   cbnz x0, .Lzstd_huff4_arm64_fail\n"
+#define ZSTD_HUF4_ARM64_STREAM(base) \
+    "bl .Lzstd_huff4_arm64_init\n   cbnz x0, .Lzstd_huff4_arm64_fail\n" \
+    "stp x23, x24, [sp, #" base "+16]\n   str x25, [sp, #" base "+32]\n" \
+    "add x11, x9, x10\n   stp x9, x11, [sp, #" base "+40]\n"
+
     ASM_FUNC(zstd_huffman_4x)
     "cbz x1, .Lzstd_huff4_arm64_ok0\n"
     "cmp x3, #10\n   b.lo .Lzstd_huff4_arm64_bad0\n"
-    "stp x19, x20, [sp, #-96]!\n   stp x21, x22, [sp, #16]\n"
-    "stp x23, x24, [sp, #32]\n   stp x25, x26, [sp, #48]\n"
-    "stp x27, x28, [sp, #64]\n   str x30, [sp, #80]\n"
-    "mov x19, x0\n   add x8, x1, #3\n   lsr x20, x8, #2\n"
-    "add x9, x20, x20, lsl #1\n   sub x28, x1, x9\n"
-    "mov x21, x4\n   mov x22, x5\n"
-    "ldrh w24, [x2]\n   ldrh w25, [x2, #2]\n   ldrh w26, [x2, #4]\n"
-    "cbz w24, .Lzstd_huff4_arm64_fail\n   cbz w25, .Lzstd_huff4_arm64_fail\n"
-    "cbz w26, .Lzstd_huff4_arm64_fail\n"
-    "add w8, w24, w25\n   add w8, w8, w26\n   add w8, w8, #6\n"
-    "cmp x3, x8\n   b.lo .Lzstd_huff4_arm64_fail\n"
-    "sub w27, w3, w8\n   cbz w27, .Lzstd_huff4_arm64_fail\n"
-    "add x23, x2, #6\n"
-    "mov x0, x19\n   mov x1, x20\n   mov x2, x23\n   mov x3, x24\n"
-    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
-    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
-    "add x19, x19, x20\n   add x23, x23, x24\n"
-    "mov x0, x19\n   mov x1, x20\n   mov x2, x23\n   mov x3, x25\n"
-    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
-    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
-    "add x19, x19, x20\n   add x23, x23, x25\n"
-    "mov x0, x19\n   mov x1, x20\n   mov x2, x23\n   mov x3, x26\n"
-    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
-    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
-    "add x19, x19, x20\n   add x23, x23, x26\n"
-    "mov x0, x19\n   mov x1, x28\n   mov x2, x23\n   mov x3, x27\n"
-    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
-    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
+    "stp x29, x30, [sp, #-352]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "stp x27, x28, [sp, #80]\n   stp x4, x5, [sp, #96]\n"
+    "ldrh w20, [x2]\n   ldrh w21, [x2, #2]\n   ldrh w22, [x2, #4]\n"
+    "cbz w20, .Lzstd_huff4_arm64_fail\n   cbz w21, .Lzstd_huff4_arm64_fail\n"
+    "cbz w22, .Lzstd_huff4_arm64_fail\n"
+    "add x9, x20, x21\n   add x9, x9, x22\n   add x9, x9, #6\n"
+    "cmp x3, x9\n   b.ls .Lzstd_huff4_arm64_fail\n"
+    "sub x28, x3, x9\n"
+    "mov x26, x0\n   mov x27, x1\n"
+    /* Three outputs of (need + 3) / 4 and the rest for the fourth. */
+    "add x14, x27, #3\n   lsr x14, x14, #2\n"
+    "str x26, [sp, #112]\n   add x15, x26, x14\n   str x15, [sp, #120]\n"
+    "str x15, [sp, #168]\n   add x15, x15, x14\n   str x15, [sp, #176]\n"
+    "str x15, [sp, #224]\n   add x15, x15, x14\n   str x15, [sp, #232]\n"
+    "str x15, [sp, #280]\n   add x16, x26, x27\n"
+    "cmp x16, x15\n   b.lo .Lzstd_huff4_arm64_fail\n   str x16, [sp, #288]\n"
+    "add x9, x2, #6\n   mov x10, x20\n"
+    ZSTD_HUF4_ARM64_STREAM("112")
+    "mov x9, x11\n   mov x10, x21\n"
+    ZSTD_HUF4_ARM64_STREAM("168")
+    "mov x9, x11\n   mov x10, x22\n"
+    ZSTD_HUF4_ARM64_STREAM("224")
+    "mov x9, x11\n   mov x10, x28\n"
+    /* A fourth stream with no symbols is never opened, as the one-stream
+       routine returns before it looks at a stream it has nothing to take
+       from; it parks at its start and the tail returns at once. */
+    "ldp x15, x16, [sp, #280]\n   cmp x15, x16\n"
+    "b.ne .Lzstd_huff4_arm64_open4\n"
+    "add x11, x9, x10\n   stp x9, x11, [sp, #320]\n"
+    "stp xzr, xzr, [sp, #296]\n   str x9, [sp, #312]\n"
+    "b .Lzstd_huff4_arm64_opened\n"
+    ".Lzstd_huff4_arm64_open4:\n"
+    ZSTD_HUF4_ARM64_STREAM("280")
+    ".Lzstd_huff4_arm64_opened:\n"
+    "cmp x20, #8\n   b.lo .Lzstd_huff4_arm64_tails\n"
+    "cmp x21, #8\n   b.lo .Lzstd_huff4_arm64_tails\n"
+    "cmp x22, #8\n   b.lo .Lzstd_huff4_arm64_tails\n"
+    "cmp x28, #8\n   b.lo .Lzstd_huff4_arm64_tails\n"
+    "ldp x4, x5, [sp, #96]\n   mov x9, #64\n   sub x5, x9, x5\n"
+    "mov w6, #0\n"
+    "ldr x0, [sp, #112]\n   ldr x1, [sp, #168]\n"
+    "ldr x2, [sp, #224]\n   ldr x3, [sp, #280]\n"
+    "ldp x9, x10, [sp, #128]\n   orr x19, x9, #1\n   lsl x19, x19, x10\n   ldr x23, [sp, #144]\n"
+    "ldp x9, x10, [sp, #184]\n   orr x20, x9, #1\n   lsl x20, x20, x10\n   ldr x24, [sp, #200]\n"
+    "ldp x9, x10, [sp, #240]\n   orr x21, x9, #1\n   lsl x21, x21, x10\n   ldr x25, [sp, #256]\n"
+    "ldp x9, x10, [sp, #296]\n   orr x22, x9, #1\n   lsl x22, x22, x10\n   ldr x26, [sp, #312]\n"
+    ".Lzstd_huff4_arm64_outer:\n"
+    "ldr x9, [sp, #152]\n   sub x9, x23, x9\n   lsr x7, x9, #3\n"
+    "ldr x9, [sp, #208]\n   sub x9, x24, x9\n   lsr x9, x9, #3\n"
+    "cmp x9, x7\n   csel x7, x9, x7, lo\n"
+    "ldr x9, [sp, #264]\n   sub x9, x25, x9\n   lsr x9, x9, #3\n"
+    "cmp x9, x7\n   csel x7, x9, x7, lo\n"
+    "ldr x9, [sp, #320]\n   sub x9, x26, x9\n   lsr x9, x9, #3\n"
+    "cmp x9, x7\n   csel x7, x9, x7, lo\n"
+    "ldr x9, [sp, #288]\n   sub x9, x9, x3\n   mov x10, #5\n   udiv x9, x9, x10\n"
+    "cmp x9, x7\n   csel x7, x9, x7, lo\n"
+    "cbz x7, .Lzstd_huff4_arm64_exit\n"
+    ".balign 32\n"
+    ".Lzstd_huff4_arm64_inner:\n"
+    ZSTD_HUF4_ARM64_ROUND
+    ZSTD_HUF4_ARM64_ROUND
+    ZSTD_HUF4_ARM64_ROUND
+    ZSTD_HUF4_ARM64_ROUND
+    ZSTD_HUF4_ARM64_ROUND
+    ZSTD_HUF4_ARM64_RELOAD("x19", "x23")
+    ZSTD_HUF4_ARM64_RELOAD("x20", "x24")
+    ZSTD_HUF4_ARM64_RELOAD("x21", "x25")
+    ZSTD_HUF4_ARM64_RELOAD("x22", "x26")
+    "subs x7, x7, #1\n   b.ne .Lzstd_huff4_arm64_inner\n"
+    "tst w6, #0x80\n   b.ne .Lzstd_huff4_arm64_fail\n"
+    "b .Lzstd_huff4_arm64_outer\n"
+    /* Back to the single-stream state: the sentinel's position is what
+       is consumed, and the raw container reloads from the pointer. */
+    ".Lzstd_huff4_arm64_exit:\n"
+    "tst w6, #0x80\n   b.ne .Lzstd_huff4_arm64_fail\n"
+    "rbit x9, x19\n   clz x9, x9\n   ldr x10, [x23]\n"
+    "str x0, [sp, #112]\n   stp x10, x9, [sp, #128]\n   str x23, [sp, #144]\n"
+    "rbit x9, x20\n   clz x9, x9\n   ldr x10, [x24]\n"
+    "str x1, [sp, #168]\n   stp x10, x9, [sp, #184]\n   str x24, [sp, #200]\n"
+    "rbit x9, x21\n   clz x9, x9\n   ldr x10, [x25]\n"
+    "str x2, [sp, #224]\n   stp x10, x9, [sp, #240]\n   str x25, [sp, #256]\n"
+    "rbit x9, x22\n   clz x9, x9\n   ldr x10, [x26]\n"
+    "str x3, [sp, #280]\n   stp x10, x9, [sp, #296]\n   str x26, [sp, #312]\n"
+    ".Lzstd_huff4_arm64_tails:\n"
+    "ldp x21, x22, [sp, #96]\n"
+    ZSTD_HUF4_ARM64_TAIL("112")
+    ZSTD_HUF4_ARM64_TAIL("168")
+    ZSTD_HUF4_ARM64_TAIL("224")
+    ZSTD_HUF4_ARM64_TAIL("280")
     "mov x0, xzr\n"
     ".Lzstd_huff4_arm64_done:\n"
-    "ldr x30, [sp, #80]\n"
-    "ldp x27, x28, [sp, #64]\n   ldp x25, x26, [sp, #48]\n"
-    "ldp x23, x24, [sp, #32]\n   ldp x21, x22, [sp, #16]\n"
-    "ldp x19, x20, [sp], #96\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x25, x26, [sp, #64]\n"
+    "ldp x27, x28, [sp, #80]\n"
+    "ldp x29, x30, [sp], #352\n"
     ASM_RET
     ".Lzstd_huff4_arm64_fail:\n   mov x0, #-1\n   b .Lzstd_huff4_arm64_done\n"
     ".Lzstd_huff4_arm64_ok0:\n   mov x0, xzr\n"
     ASM_RET
     ".Lzstd_huff4_arm64_bad0:\n   mov x0, #-1\n"
     ASM_RET
+
+    /* Stream start (x9) and size (x10) to raw container x23, consumed
+       x24 and pointer x25, as the single-stream routine opens them. */
+    ".Lzstd_huff4_arm64_init:\n"
+    "add x11, x9, x10\n   ldrb w12, [x11, #-1]\n"
+    "cbz w12, .Lzstd_huff4_arm64_initbad\n"
+    "clz w13, w12\n   mov w14, #31\n   sub w13, w14, w13\n"
+    "mov w14, #8\n   sub w24, w14, w13\n"
+    "cmp x10, #8\n   b.lo .Lzstd_huff4_arm64_initsmall\n"
+    "sub x25, x11, #8\n   ldr x23, [x25]\n   mov x0, xzr\n   ret\n"
+    ".Lzstd_huff4_arm64_initsmall:\n"
+    "mov x23, xzr\n   mov x12, xzr\n"
+    ".Lzstd_huff4_arm64_initbyte:\n"
+    "ldrb w13, [x9, x12]\n   lsl x14, x12, #3\n   lsl x13, x13, x14\n"
+    "orr x23, x23, x13\n   add x12, x12, #1\n   cmp x12, x10\n"
+    "b.lo .Lzstd_huff4_arm64_initbyte\n"
+    "mov w13, #8\n   sub w13, w13, w10\n   lsl w13, w13, #3\n   add w24, w24, w13\n"
+    "mov x25, x9\n   mov x0, xzr\n   ret\n"
+    ".Lzstd_huff4_arm64_initbad:\n   mov x0, #-1\n   ret\n"
+
+    /* The single-stream loop on x19 output, x20 count, x21 table, w22
+       log, x23 container, w24 consumed, x25 pointer, x26 start, x27 end,
+       x28 start + 8. */
+    ".Lzstd_huff4_arm64_tail:\n"
+    "cbz x20, .Lzstd_huff4_arm64_tailok\n"
+    ".Lzstd_huff4_arm64_tailloop:\n"
+    "mov w9, #64\n   sub w9, w9, w22\n   cmp w24, w9\n"
+    "b.ls .Lzstd_huff4_arm64_look\n"
+    "cmp w24, #64\n   b.hi .Lzstd_huff4_arm64_tailbad\n"
+    "cmp x25, x28\n   b.hs .Lzstd_huff4_arm64_tailfast\n"
+    "cmp x25, x26\n   b.eq .Lzstd_huff4_arm64_look\n"
+    "lsr w9, w24, #3\n   sub x10, x25, x9\n"
+    "cmp x10, x26\n   b.hs .Lzstd_huff4_arm64_reok\n"
+    "sub x9, x25, x26\n   mov x10, x26\n"
+    ".Lzstd_huff4_arm64_reok:\n"
+    "mov x25, x10\n   lsl w9, w9, #3\n   sub w24, w24, w9\n"
+    "sub x10, x27, x25\n   cmp x10, #8\n   b.lo .Lzstd_huff4_arm64_part\n"
+    "ldr x23, [x25]\n   b .Lzstd_huff4_arm64_look\n"
+    ".Lzstd_huff4_arm64_tailfast:\n"
+    "lsr x9, x24, #3\n   sub x25, x25, x9\n   and w24, w24, #7\n"
+    "ldr x23, [x25]\n   b .Lzstd_huff4_arm64_look\n"
+    ".Lzstd_huff4_arm64_part:\n"
+    "mov x23, xzr\n   mov x9, xzr\n"
+    ".Lzstd_huff4_arm64_parti:\n"
+    "cmp x9, x10\n   b.hs .Lzstd_huff4_arm64_look\n"
+    "ldrb w11, [x25, x9]\n   lsl x12, x9, #3\n   lsl x11, x11, x12\n"
+    "orr x23, x23, x11\n   add x9, x9, #1\n"
+    "b .Lzstd_huff4_arm64_parti\n"
+    ".Lzstd_huff4_arm64_look:\n"
+    "cmp w24, #64\n   b.hs .Lzstd_huff4_arm64_tailbad\n"
+    "lsl x0, x23, x24\n   mov x1, #64\n   sub x1, x1, x22\n   lsr x0, x0, x1\n"
+    "ldrh w0, [x21, x0, lsl #1]\n   and w1, w0, #255\n"
+    "cbz w1, .Lzstd_huff4_arm64_tailbad\n"
+    "lsr w0, w0, #8\n   strb w0, [x19], #1\n   add w24, w24, w1\n"
+    "subs x20, x20, #1\n   b.ne .Lzstd_huff4_arm64_tailloop\n"
+    ".Lzstd_huff4_arm64_tailok:\n   mov x0, xzr\n   ret\n"
+    ".Lzstd_huff4_arm64_tailbad:\n   mov x0, #-1\n   ret\n"
     ASM_END(zstd_huffman_4x)
+
+#undef ZSTD_HUF4_ARM64_SYM
+#undef ZSTD_HUF4_ARM64_RELOAD
+#undef ZSTD_HUF4_ARM64_ROUND
+#undef ZSTD_HUF4_ARM64_TAIL
+#undef ZSTD_HUF4_ARM64_STREAM
 
     /* See the x86_64 body for the design.  Here everything is a register:
        x19 the bit container shifted left by what is consumed (w20), x21
