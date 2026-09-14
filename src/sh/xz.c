@@ -1654,7 +1654,6 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
 {
         positive pos;
         p8 reset;
-        positive at;
         bool raw = false;
 
         if (!n)
@@ -1721,8 +1720,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                                 positive d = xz_match_abs + pos - there;
                                 if (d > XZ_ENC_DICT) break;
                                 p8 address_to candidate = src + pos - d;
-                                if (d <= XZ_ENC_DICT &&
-                                    src[pos] == candidate[0] &&
+                                if (src[pos] == candidate[0] &&
                                     (!match || src[pos + match] == candidate[match]))
                                 {
                                         positive k = memory_common_prefix(src + pos,
