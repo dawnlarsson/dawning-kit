@@ -49931,16 +49931,17 @@ static void reference_row(const struct target *t,const struct shape *s,int x,int
                           const struct window_cell *cells,int used,int first,int last) {
     for(int c=first;c<last;c++) {
         unsigned ch=c<used?cells[c].character:0;
-        u32 ink=c<used?canvas_terminal[cells[c].ink&15]|t->opaque:0;
-        u32 paper=canvas_terminal[c<used?cells[c].paper&15:0]|t->opaque;
+        u32 ink=c<used?canvas_terminal[cells[c].ink]|t->opaque:0;
+        u32 paper=canvas_terminal[c<used?cells[c].paper:0]|t->opaque;
         for(int dy=0;dy<canvas_cell_h;dy++)for(int dx=0;dx<canvas_cell_w;dx++) {
             int px=x+c*canvas_cell_w+dx,py=y+dy;
             if(px<max(t->clip.x1,0)||px>=min(t->clip.x2,t->width)||
                py<max(t->clip.y1,0)||py>=min(t->clip.y2,t->height))continue;
             int inset=round_inset(py-s->y,s->h,s->radius);
             if(px>=s->x+inset && px<s->x+s->w-inset)t->pixels[py*t->pitch+px]=paper;
-            if(ch>' ' && ch<=126 &&
-               (font_bits[ch*16+dy/desktop.scale]&(0x80>>(dx/desktop.scale))))
+            // Past ASCII, a character nothing is drawn for shows the font's '?'.
+            if(ch>' ' &&
+               (font_bits[(ch>126?'?':ch)*16+dy/desktop.scale]&(0x80>>(dx/desktop.scale))))
                 t->pixels[py*t->pitch+px]=ink;
         }
     }
