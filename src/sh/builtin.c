@@ -417,8 +417,8 @@ static fn exec_ps4_dash_block(bool on);
 
 static bool shell_pipe_status_wanted(const_string name, positive length)
 {
-        if (!shell_bash_compat || length != 10 ||
-            memory_compare((address_any)name, "PIPESTATUS", 10))
+        if (!shell_bash_compat ||
+            !memory_is_word((address_any)name, length, "PIPESTATUS"))
                 return false;
 
         exec_pipe_status_wanted();
@@ -7146,9 +7146,8 @@ static PURE bool env_bash_readonly_name(const_string name, positive length)
                 return false;
         if (memory_is_word((address_any)name, length, "UID"))
                 return true;
-        if (length == 4 &&
-            (!memory_compare((address_any)name, "EUID", 4) ||
-             !memory_compare((address_any)name, "PPID", 4)))
+        if (memory_is_word((address_any)name, length, "EUID") ||
+            memory_is_word((address_any)name, length, "PPID"))
                 return true;
         if (memory_is_word((address_any)name, length, "BASH_VERSINFO"))
                 return true;
@@ -8537,7 +8536,8 @@ static fn shell_ansi_quoted(writer write, string_address text, bool high)
 
 static fn shell_declare_quoted(writer write, string_address value)
 {
-        if (string_get(value + string_span(value, shell_quote_printable)))
+        if (string_get(value + memory_escape_index(value, string_length(value),
+                                              HEX_CONTROL | HEX_TAB | HEX_HIGH)))
                 return shell_ansi_quoted(write, value, true);
 
         write("\"", 1);
@@ -8825,7 +8825,8 @@ static COLD PURE bool shell_listing_quoted(string_address value)
 static COLD fn shell_listing_value(writer write, string_address value)
 {
         if (!shell_posix_on() &&
-            string_get(value + string_span(value, shell_quote_printable)))
+            string_get(value + memory_escape_index(value, string_length(value),
+                                              HEX_CONTROL | HEX_TAB | HEX_HIGH)))
                 shell_declare_quoted(write, value);
         else if (shell_listing_quoted(value))
                 shell_quoted(write, value);
@@ -10907,7 +10908,8 @@ static COLD PURE bool printf_quote_wanted(p8 value)
 COLD fn printf_reusable(writer write, string_address text)
 {
         string_address step = text;
-        bool control = string_get(text + string_span(text, shell_quote_value));
+        bool control = string_get(text + memory_escape_index(
+            text, string_length(text), HEX_CONTROL | HEX_TAB));
 
         if (!string_get(text))
                 return write("''", 2);
