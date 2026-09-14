@@ -556,7 +556,7 @@ static bool expand_parameter_name(string_address name, positive length)
                             first == '-'))
                 return true;
 
-        numeric = first >= '0' && first <= '9';
+        numeric = byte_is_digit(first);
 
         if (!numeric && !expand_assignable_name(name))
                 return false;
@@ -622,8 +622,7 @@ static positive expand_base_positive(string_address address_to at,
                 step += 2;
                 base = 16;
         }
-        else if (string_is(step, '0') && string_get(step + 1) >= '0' &&
-                 string_get(step + 1) <= '9')
+        else if (string_is(step, '0') && byte_is_digit(string_get(step + 1)))
         {
                 step++;
                 base = 8;
@@ -1707,7 +1706,7 @@ static string_address expand_value_of(expand_reference reference, p8 address_to 
                 return value;
         }
 
-        if (first >= '0' && first <= '9')
+        if (byte_is_digit(first))
         {
                 positive which = string_digits(name, null);
 
@@ -1851,8 +1850,8 @@ static string_address expand_value_of(expand_reference reference, p8 address_to 
                 // A simple command's one-element PIPESTATUS is deferred by
                 // the executor. Materialize it only for the exact scalar
                 // read; array forms already pass through dynamic_wanted.
-                if (shell_bash_compat && answer.y == 10 &&
-                    !memory_compare(name, "PIPESTATUS", 10))
+                if (shell_bash_compat &&
+                    memory_is_word(name, answer.y, "PIPESTATUS"))
                         shell_dynamic_wanted(name, answer.y);
 
                 value = env_get_hashed_span(name, answer.y, answer.x,
@@ -2748,7 +2747,7 @@ static bipolar arith_based(string_address hash)
                 p8 seen = string_get(arith_at);
                 positive digit;
 
-                if (seen >= '0' && seen <= '9')
+                if (byte_is_digit(seen))
                         digit = (positive)(seen - '0');
                 else if (seen >= 'a' && seen <= 'z')
                         digit = (positive)(seen - 'a') + 10;
@@ -2903,7 +2902,7 @@ static bipolar arith_primary()
                 return value;
         }
 
-        if (string_get(arith_at) >= '0' && string_get(arith_at) <= '9')
+        if (byte_is_digit(string_get(arith_at)))
         {
                 bool valid;
                 string_address scan = arith_at;
@@ -3218,7 +3217,7 @@ static bool arith_plain_natural(string_address address_to at,
         {
                 p8 next = string_get(step + 1);
 
-                if ((next >= '0' && next <= '9') || next == 'x' ||
+                if (byte_is_digit(next) || next == 'x' ||
                     next == 'X' || next == '#' ||
                     expand_name_character(next))
                         return false;
@@ -3240,7 +3239,7 @@ static bool arith_plain_natural(string_address address_to at,
                 held = held * 10 + digit;
                 step++;
                 seen = string_get(step);
-        } while (seen >= '0' && seen <= '9');
+        } while (byte_is_digit(seen));
 
         if (expand_name_character(seen))
                 return false;
@@ -3838,8 +3837,8 @@ static bipolar expand_tool_direct(string_address command, b32 output)
                 if (descriptor->kind == LEX_WORD && descriptor->length == 1 &&
                     string_is(descriptor->text, '2') &&
                     redirect->kind == LEX_OPERATOR && redirect->op == OP_GREAT &&
-                    target->kind == LEX_WORD && target->length == 9 &&
-                    !memory_compare(target->text, "/dev/null", 9) &&
+                    target->kind == LEX_WORD &&
+                    memory_is_word(target->text, target->length, "/dev/null") &&
                     descriptor->at + descriptor->length == redirect->at &&
                     redirect->at + redirect->length == target->at)
                 {
@@ -7834,7 +7833,7 @@ static string_address expand_simple(string_address step, bool quoted)
 
         if (seen == '?' || seen == '#' || seen == '$' || seen == '!' ||
             seen == '-' || seen == '@' || seen == '*' ||
-            (seen >= '0' && seen <= '9'))
+            byte_is_digit(seen))
         {
                 p8 special[2];
 

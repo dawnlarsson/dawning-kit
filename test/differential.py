@@ -11040,7 +11040,7 @@ def shell_lang_brace_expansion(rng):
                           "{a..e}", "{e..a}", "{a..g..2}", "{1..a}", "{a..1}", "{01..10}", "{-01..2}", "{1..1200}",
                           "\"{a,b}\"", "\\{a,b\\}", "'{a,b}'", "{$x,c}", "{a,$(echo s)}", "{a,b}$x", "${x}{a,b}",
                           "{a..c}{1..2}", "{,,}", "{a,,b}", "{a,{b,{c,d}}}", "pre{a,b}post", "{ a,b}", "{a, b}",
-                          "{1..3}{a..b}", "{{a,b},c}", "{a}{b}", "{a,b}}", "{{a,b}", "{1..3.5}", "{x..y..z}"))
+                          "{-0000000000000000000000000000000000001..1}", "{{a,b},c}", "{a}{b}", "{a,b}}", "{{a,b}", "{1..3.5}", "{x..y..z}"))
     braceexpand = rng.choice(("", "", "set +B", "set -B", "set +o braceexpand"))
     context = rng.choice(("count", "observe", "for", "assign", "case", "redirect"))
     if context == "count":
