@@ -40367,6 +40367,118 @@ static fn tls_closure_boundaries(void)
                         socket_close(pair[1]);
                 }
         }
+
+        /*
+                More records than one receive holds, written by a child so the
+                socket never has to hold them all: many arrive per receive,
+                one straddles each refill and moves to the front, and rooms
+                from one byte to more than a record cut spans across record
+                edges. Lengths and bytes are both functions of the index.
+        */
+        #define TLS_BATCH_RECORDS 48
+        #define TLS_BATCH_LENGTH(at) ((at) * 7919 % 16384 + 1)
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                check("TLS batched-record socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                        if (!child)
+                        {
+                                tls_conn sender = {0};
+                                p8 record[16384];
+                                p8 alert[] = {1, 0};
+                                bool sent = true;
+
+                                socket_close(pair[0]);
+                                sender.handle = pair[1];
+                                for (positive at = 0;
+                                     at < TLS_BATCH_RECORDS && sent; at++)
+                                {
+                                        positive length = TLS_BATCH_LENGTH(at);
+
+                                        for (positive byte = 0; byte < length;
+                                             byte++)
+                                                record[byte] =
+                                                    (p8)(at * 31 + byte);
+                                        sent = tls_send_enc(address_of sender,
+                                                            TLS_CT_APP, record,
+                                                            length) == TLS_OK;
+                                }
+                                sent = sent &&
+                                       tls_send_enc(address_of sender,
+                                                    TLS_CT_ALERT, alert,
+                                                    sizeof alert) == TLS_OK;
+                                system_call_1(syscall(exit_group), sent ? 0 : 1);
+                        }
+                        check("TLS batched-record writer starts", child > 0);
+                        socket_close(pair[1]);
+                        if (child > 0)
+                        {
+                                static const positive rooms[] = {7, 4096, 16384,
+                                                                 65536, 1};
+                                tls_conn receiver = {0};
+                                p8 into[65536];
+                                positive record_at = 0;
+                                positive offset = 0;
+                                positive turn = 0;
+                                positive got = 0;
+                                positive raw = 0;
+                                bipolar status = TLS_OK;
+                                bool intact = true;
+
+                                receiver.handle = pair[0];
+                                receiver.encrypted = true;
+                                receiver.application = true;
+                                for (;;)
+                                {
+                                        status = tls_read(
+                                            address_of receiver, into,
+                                            rooms[turn++ % 5], address_of got);
+                                        if (status || !got)
+                                                break;
+                                        for (positive byte = 0; byte < got;
+                                             byte++)
+                                        {
+                                                while (record_at <
+                                                           TLS_BATCH_RECORDS &&
+                                                       offset ==
+                                                           TLS_BATCH_LENGTH(
+                                                               record_at))
+                                                {
+                                                        record_at++;
+                                                        offset = 0;
+                                                }
+                                                intact &= record_at <
+                                                              TLS_BATCH_RECORDS &&
+                                                          into[byte] ==
+                                                              (p8)(record_at * 31 +
+                                                                   offset);
+                                                offset++;
+                                        }
+                                }
+                                check("TLS records past one receive arrive whole and in order",
+                                      status == TLS_OK && !got && intact &&
+                                          record_at == TLS_BATCH_RECORDS - 1 &&
+                                          offset == TLS_BATCH_LENGTH(
+                                                        TLS_BATCH_RECORDS - 1));
+                                socket_close(pair[0]);
+                                check("TLS batched-record writer finishes",
+                                      system_wait4_retry((b32)child,
+                                                         address_of raw, 0,
+                                                         null) == child &&
+                                          wait_status_code(raw) == 0);
+                        }
+                        else
+                                socket_close(pair[0]);
+                }
+        }
+        #undef TLS_BATCH_LENGTH
+        #undef TLS_BATCH_RECORDS
 }
 
 static fn tls_sensitive_state_erasure(void)
@@ -40423,18 +40535,20 @@ static fn tls_sensitive_state_erasure(void)
                 p8 output[2] = {0};
                 positive got = 0;
 
-                memory_copy(connection.leftover, "seal", 4);
-                connection.leftover_used = 4;
+                memory_copy(connection.receive + 7, "seal", 4);
+                connection.plain_at = 7;
+                connection.plain_used = 4;
                 check("TLS retained plaintext remains readable",
                       tls_read(address_of connection, output, sizeof output,
                                address_of got) == TLS_OK &&
                           got == sizeof output &&
                           !memory_compare(output, "se", sizeof output));
-                check("TLS consumed plaintext is erased after compaction",
-                      connection.leftover_used == 2 &&
-                          connection.leftover[0] == 'a' &&
-                          connection.leftover[1] == 'l' &&
-                          !connection.leftover[2] && !connection.leftover[3]);
+                check("TLS retained plaintext is handed out in order",
+                      tls_read(address_of connection, output, sizeof output,
+                               address_of got) == TLS_OK &&
+                          got == sizeof output &&
+                          !memory_compare(output, "al", sizeof output) &&
+                          !connection.plain_used);
         }
 
         {
@@ -41318,6 +41432,7 @@ static fn crypto_private_scalar_probe(
         p64 y[CRYPTO_FE_MAX];
         p64 scalar[CRYPTO_FE_MAX];
         p64 complement[CRYPTO_FE_MAX];
+        p64 zero[CRYPTO_FE_MAX];
         p64 random = 0x243f6a8885a308d3ull;
         crypto_point base;
         crypto_point public_result;
@@ -41330,6 +41445,7 @@ static fn crypto_private_scalar_probe(
         memory_fill(y, 0, sizeof y);
         memory_fill(scalar, 0, sizeof scalar);
         memory_fill(complement, 0, sizeof complement);
+        memory_fill(zero, 0, sizeof zero);
         crypto_fe_load_be(x, gx, limbs);
         crypto_fe_load_be(y, gy, limbs);
         crypto_point_set_xy(address_of base, x, y, field);
@@ -41343,7 +41459,8 @@ static fn crypto_private_scalar_probe(
                 complement[i] = ~random;
         }
 
-        crypto_point_scalar(address_of public_result, address_of base, scalar);
+        crypto_point_double_scalar(address_of public_result, address_of base,
+                                   scalar, address_of base, zero);
         crypto_point_scalar_private(address_of private_result,
                                     address_of base, scalar,
                                     address_of first);
@@ -41356,8 +41473,8 @@ static fn crypto_private_scalar_probe(
                 !memory_compare(public_result.z, private_result.z,
                                 limbs * sizeof(p64));
 
-        crypto_point_scalar(address_of public_result, address_of base,
-                            complement);
+        crypto_point_double_scalar(address_of public_result, address_of base,
+                                   zero, address_of base, complement);
         crypto_point_scalar_private(address_of private_result,
                                     address_of base, complement,
                                     address_of second);
@@ -41375,10 +41492,10 @@ static fn crypto_private_scalar_probe(
             !memory_compare(address_of first, address_of second,
             sizeof first) &&
             first.bits == limbs * 64 &&
-            first.point_adds == first.bits &&
-            first.point_doubles == first.bits &&
-            first.conditional_swaps == first.bits * 2 &&
-            first.conditional_selects == first.bits * 2;
+            first.point_adds == 13 + first.bits / 4 &&
+            first.point_doubles == 1 + first.bits - 4 &&
+            first.conditional_swaps == 0 &&
+            first.conditional_selects == 13 * 2 + first.bits / 4 * 17;
 
         crypto_forget(x, sizeof x);
         crypto_forget(y, sizeof y);

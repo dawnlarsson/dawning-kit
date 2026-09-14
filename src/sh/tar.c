@@ -167,7 +167,10 @@ static bool tar_size_fits(p64 size)
 static fn tar_field_text(p8 address_to field, positive width,
                          p8 address_to into, positive room)
 {
-        positive keep = string_length_max((string_address)field, width);
+        positive keep = 0;
+
+        while (keep < width && field[keep])
+                keep++;
 
         if (keep >= room)
                 keep = room ? room - 1 : 0;
@@ -296,9 +299,16 @@ typedef struct
         p8 path[TAR_PATH];
         p8 link[TAR_PATH];
         p64 size;
+        p32 user;
+        p32 group;
+        b64 seconds;
+        p32 nanoseconds;
         bool has_path;
         bool has_link;
         bool has_size;
+        bool has_user;
+        bool has_group;
+        bool has_time;
 } tar_pax_state;
 
 static tar_pax_state tar_pax_global;
@@ -309,8 +319,76 @@ static fn tar_pax_clear(tar_pax_state address_to state)
         state->has_path = false;
         state->has_link = false;
         state->has_size = false;
+        state->has_user = false;
+        state->has_group = false;
+        state->has_time = false;
         state->path[0] = end;
         state->link[0] = end;
+}
+
+/* A pax id is plain decimal.  One that is not, or that does not fit, is
+   ignored rather than refusing the archive. */
+static bool tar_pax_number(p8 address_to text, positive length,
+                           p64 address_to into)
+{
+        p64 number = 0;
+
+        if (!length)
+                return false;
+        for (positive at = 0; at < length; at++)
+        {
+                if (text[at] < '0' || text[at] > '9' ||
+                    number > 0xffffffffull / 10)
+                        return false;
+                number = number * 10 + (p64)(text[at] - '0');
+        }
+        if (number > 0xffffffffull)
+                return false;
+        address_to into = number;
+        return true;
+}
+
+/* Seconds since the epoch, perhaps negative, with a fraction whose first
+   nine digits become nanoseconds: -1.25 is two seconds before the epoch
+   plus 750000000 nanoseconds.  A malformed time restores nothing. */
+static bool tar_pax_time(p8 address_to text, positive length,
+                         b64 address_to seconds, p32 address_to nanoseconds)
+{
+        bool negative = length && text[0] == '-';
+        positive at = negative;
+        p64 whole = 0;
+        p32 fraction = 0;
+        positive digits = 0;
+
+        if (at >= length || text[at] < '0' || text[at] > '9')
+                return false;
+        while (at < length && text[at] >= '0' && text[at] <= '9')
+        {
+                if (whole >= 922337203685477580ull)
+                        return false;
+                whole = whole * 10 + (p64)(text[at++] - '0');
+        }
+        if (at < length && text[at] == '.')
+                for (at++; at < length && text[at] >= '0' && text[at] <= '9';
+                     at++)
+                        if (digits < 9)
+                        {
+                                fraction = fraction * 10 +
+                                           (p32)(text[at] - '0');
+                                digits++;
+                        }
+        if (at != length)
+                return false;
+        for (; digits < 9; digits++)
+                fraction *= 10;
+        if (negative && fraction)
+        {
+                whole++;
+                fraction = 1000000000u - fraction;
+        }
+        address_to seconds = negative ? -(b64)whole : (b64)whole;
+        address_to nanoseconds = fraction;
+        return true;
 }
 
 static bool tar_pax_apply(tar_pax_state address_to state,
@@ -392,6 +470,28 @@ static bool tar_pax_apply(tar_pax_state address_to state,
                         state->size = parsed;
                         state->has_size = true;
                 }
+                else if (key == 5 && !memory_compare(mark + 1, "mtime", 5))
+                        state->has_time = tar_pax_time(
+                            equal + 1, value, address_of state->seconds,
+                            address_of state->nanoseconds);
+                else if (key == 3 && (!memory_compare(mark + 1, "uid", 3) ||
+                                      !memory_compare(mark + 1, "gid", 3)))
+                {
+                        p64 number = 0;
+                        bool good = tar_pax_number(equal + 1, value,
+                                                   address_of number);
+
+                        if (mark[1] == 'u')
+                        {
+                                state->user = (p32)number;
+                                state->has_user = good;
+                        }
+                        else
+                        {
+                                state->group = (p32)number;
+                                state->has_group = good;
+                        }
+                }
 
                 at += rest;
         }
@@ -401,37 +501,45 @@ static bool tar_pax_apply(tar_pax_state address_to state,
 
 static p8 tar_pack_from_name(string_address name)
 {
-        static const struct { string_address suffix; p8 pack; } suffixes[] = {
-            {".gz", TAR_PACK_GZIP}, {".tgz", TAR_PACK_GZIP},
-            {".xz", TAR_PACK_XZ}, {".txz", TAR_PACK_XZ},
-            {".zst", TAR_PACK_ZSTD}, {".tzst", TAR_PACK_ZSTD},
-            {".bz2", TAR_PACK_BZIP2}, {".tbz2", TAR_PACK_BZIP2},
-            {".tbz", TAR_PACK_BZIP2}, {".Z", TAR_PACK_COMPRESS}};
-        positive n = name ? string_length(name) : 0;
+        positive n;
 
-        for (positive at = 0; at < array_count(suffixes); at++)
-        {
-                positive length = string_length(suffixes[at].suffix);
-
-                if (n >= length &&
-                    !memory_compare(name + n - length, suffixes[at].suffix, length))
-                        return suffixes[at].pack;
-        }
+        if (!name || string_equals(name, "-"))
+                return TAR_PACK_NONE;
+        n = string_length(name);
+        if (n >= 3 && !memory_compare(name + n - 3, ".gz", 3))
+                return TAR_PACK_GZIP;
+        if (n >= 4 && !memory_compare(name + n - 4, ".tgz", 4))
+                return TAR_PACK_GZIP;
+        if (n >= 3 && !memory_compare(name + n - 3, ".xz", 3))
+                return TAR_PACK_XZ;
+        if (n >= 4 && !memory_compare(name + n - 4, ".txz", 4))
+                return TAR_PACK_XZ;
+        if (n >= 4 && !memory_compare(name + n - 4, ".zst", 4))
+                return TAR_PACK_ZSTD;
+        if (n >= 5 && !memory_compare(name + n - 5, ".tzst", 5))
+                return TAR_PACK_ZSTD;
+        if ((n >= 4 && !memory_compare(name + n - 4, ".bz2", 4)) ||
+            (n >= 5 && !memory_compare(name + n - 5, ".tbz2", 5)) ||
+            (n >= 4 && !memory_compare(name + n - 4, ".tbz", 4)))
+                return TAR_PACK_BZIP2;
+        if (n >= 2 && !memory_compare(name + n - 2, ".Z", 2))
+                return TAR_PACK_COMPRESS;
         return TAR_PACK_NONE;
 }
 
 static p8 tar_pack_from_magic(p8 address_to magic, positive n)
 {
-        if (n >= 2 && memory_is_2(magic, 0x1f, 0x8b))
+        if (n >= 2 && magic[0] == 0x1f && magic[1] == 0x8b)
                 return TAR_PACK_GZIP;
-        if (n >= 6 && memory_is_4(magic, 0xfd, 0x37, 0x7a, 0x58) &&
-            memory_is_2(magic + 4, 0x5a, 0))
+        if (n >= 6 && magic[0] == 0xfd && magic[1] == 0x37 && magic[2] == 0x7a &&
+            magic[3] == 0x58 && magic[4] == 0x5a && magic[5] == 0)
                 return TAR_PACK_XZ;
-        if (n >= 4 && memory_is_4(magic, 0x28, 0xb5, 0x2f, 0xfd))
+        if (n >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f &&
+            magic[3] == 0xfd)
                 return TAR_PACK_ZSTD;
-        if (n >= 3 && memory_is_2(magic, 'B', 'Z') && magic[2] == 'h')
+        if (n >= 3 && magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h')
                 return TAR_PACK_BZIP2;
-        if (n >= 2 && memory_is_2(magic, 0x1f, 0x9d))
+        if (n >= 2 && magic[0] == 0x1f && magic[1] == 0x9d)
                 return TAR_PACK_COMPRESS;
         return TAR_PACK_NONE;
 }
@@ -452,6 +560,8 @@ struct tar_options
         bool verbose;
         bool absolute;
         bipolar permissions;
+        bipolar owner;
+        bool touch;
         positive first;
 };
 
@@ -480,22 +590,27 @@ static const tar_codec tar_codecs[] = {
         zstd_encode_end, address_of zstd_why},
 };
 
-/* All zero and never written: the source of padding and the end marker. */
 static p8 tar_block[TAR_BLOCK];
-/* Extended headers carry more than names: GNU stores xattrs and ACLs there. */
-#define TAR_PAX_BODY (1024 * 1024)
-static p8 tar_pax_body[TAR_PAX_BODY];
 static p8 tar_name[TAR_PATH];
 static p8 tar_link[TAR_PATH];
 static b32 tar_status;
 static bool tar_preserve;
 
-/* Path-keyed records: an arena of spellings behind a hashed index kept below
-   half full, whose stored indexes survive growth of both. Extraction keeps
-   two. Directories wait for the last member to get their final mode, deepest
-   first. A hard-link header names another archive member, not whatever
-   exists below the root, so each non-directory member this run materialized
-   keeps its identity, replaced when a later member overwrites the path. */
+/* Directory permissions are an end-of-extraction property.  Applying an
+   archived mode such as 0000 while later members still need to traverse the
+   directory makes a valid archive extract differently according to member
+   order.  Keep the inode identity and final mode, then revisit deepest first
+   after the last member. */
+/* What a member restores besides its bytes and mode. */
+typedef struct
+{
+        p32 user;
+        p32 group;
+        b64 seconds;
+        p32 nanoseconds;
+        bool timed;
+} tar_member_meta;
+
 typedef struct
 {
         positive path_at;
@@ -503,24 +618,40 @@ typedef struct
         positive depth;
         positive mode;
         file_facts facts;
-} tar_path_record;
+        tar_member_meta meta;
+} tar_directory_mode;
 
-typedef struct
-{
-        tar_path_record address_to records;
-        positive count, room;
-        p8 address_to paths;
-        positive paths_used, paths_room;
-        positive address_to index;
-        positive slots, index_room;
-} tar_path_store;
-
-static tar_path_store tar_directories;
-static tar_path_store tar_materialized;
+static tar_directory_mode address_to tar_directories;
+static positive tar_directory_count;
+static positive tar_directory_room;
+static p8 address_to tar_directory_paths;
+static positive tar_directory_paths_used;
+static positive tar_directory_paths_room;
 static positive address_to tar_directory_order;
 static positive tar_directory_order_room;
 static positive address_to tar_directory_spare;
 static positive tar_directory_spare_room;
+
+/* A hard-link header names another archive member, not an arbitrary object
+   that happened to exist below the extraction root.  Retain the identity of
+   each non-directory member this run successfully materialized, replacing a
+   path's record when a later member overwrites it. */
+typedef struct
+{
+        positive path_at;
+        positive path_hash;
+        file_facts facts;
+} tar_materialized_file;
+
+static tar_materialized_file address_to tar_materialized;
+static positive tar_materialized_count;
+static positive tar_materialized_room;
+static p8 address_to tar_materialized_paths;
+static positive tar_materialized_paths_used;
+static positive tar_materialized_paths_room;
+static positive address_to tar_materialized_index;
+static positive tar_materialized_index_slots;
+static positive tar_materialized_index_room;
 
 /*
         GNU default blocking is twenty 512-byte blocks (10 KiB). One 64 KiB
@@ -536,7 +667,6 @@ static p8 tar_record[TAR_RECORD];
 static positive tar_have;
 static positive tar_at;
 static p8 tar_pack;
-static p64 tar_archive_end;
 static const tar_codec address_to tar_decoder;
 static const tar_codec address_to tar_encoder;
 static file_facts tar_output_facts;
@@ -601,138 +731,524 @@ static bool tar_refuse_pack(p8 pack)
         return false;
 }
 
-static bool tar_store_index_prepare(tar_path_store address_to store,
-                                    positive wanted)
+/* Keep this table below one-half full.  Stored indexes survive growth of both
+   the record array and path arena, and the spelling comparison remains the
+   proof after the hash rejects unlike paths. */
+static bool tar_materialized_index_prepare(positive wanted)
 {
-        if (store->slots && wanted <= store->slots / 2)
+        if (tar_materialized_index_slots &&
+            wanted <= tar_materialized_index_slots / 2)
                 return true;
 
-        positive larger = store->slots ? store->slots : 64;
+        positive larger = tar_materialized_index_slots
+                              ? tar_materialized_index_slots : 64;
         while (wanted > larger / 2)
         {
                 if (larger > positive_max / 2)
                         return false;
                 larger *= 2;
         }
-        if (!shell_array_room(store->index, store->index_room, larger))
+        if (!shell_array_room(tar_materialized_index,
+                              tar_materialized_index_room, larger))
                 return false;
 
-        memory_fill(store->index, 0, larger * sizeof(store->index[0]));
-        for (positive at = 0; at < store->count; at++)
+        memory_fill(tar_materialized_index, 0,
+                    larger * sizeof(tar_materialized_index[0]));
+        for (positive at = 0; at < tar_materialized_count; at++)
         {
-                positive slot = store->records[at].path_hash & (larger - 1);
-                while (store->index[slot])
+                positive slot =
+                    tar_materialized[at].path_hash & (larger - 1);
+                while (tar_materialized_index[slot])
                         slot = (slot + 1) & (larger - 1);
-                store->index[slot] = at + 1;
+                tar_materialized_index[slot] = at + 1;
         }
-        store->slots = larger;
+        tar_materialized_index_slots = larger;
         return true;
 }
 
-static tar_path_record address_to tar_store_find(tar_path_store address_to store,
-                                                 string_address path,
-                                                 positive hash)
+static tar_materialized_file address_to tar_materialized_find_hashed(
+    string_address path, positive hash)
 {
-        if (!store->slots)
+        if (!tar_materialized_index_slots)
                 return null;
 
-        positive slot = hash & (store->slots - 1);
-        while (store->index[slot])
+        positive slot = hash & (tar_materialized_index_slots - 1);
+        while (tar_materialized_index[slot])
         {
-                tar_path_record address_to kept =
-                    store->records + store->index[slot] - 1;
+                tar_materialized_file address_to kept =
+                    tar_materialized + tar_materialized_index[slot] - 1;
                 if (kept->path_hash == hash &&
-                    string_equals(store->paths + kept->path_at, path))
+                    string_equals(tar_materialized_paths + kept->path_at,
+                                  path))
                         return kept;
-                slot = (slot + 1) & (store->slots - 1);
+                slot = (slot + 1) & (tar_materialized_index_slots - 1);
         }
         return null;
 }
 
-/* The record for path, added when absent; null when memory runs out. */
-static tar_path_record address_to tar_store_remember(
-    tar_path_store address_to store, string_address path)
-{
-        positive2 named = string_hash_33_length(path);
-        tar_path_record address_to kept = tar_store_find(store, path, named.x);
-        positive length = named.y + 1;
-
-        if (kept)
-                return kept;
-        if (!tar_store_index_prepare(store, store->count + 1) ||
-            named.y == positive_max ||
-            length > positive_max - store->paths_used ||
-            !shell_array_room(store->records, store->room, store->count + 1) ||
-            !shell_array_room(store->paths, store->paths_room,
-                              store->paths_used + length))
-                return null;
-
-        kept = store->records + store->count;
-        kept->path_at = store->paths_used;
-        kept->path_hash = named.x;
-        memory_copy(store->paths + store->paths_used, path, length);
-        store->paths_used += length;
-        positive slot = named.x & (store->slots - 1);
-        while (store->index[slot])
-                slot = (slot + 1) & (store->slots - 1);
-        store->index[slot] = ++store->count;
-        return kept;
-}
-
-/* Forget every record; the next index prepare zeroes the slots. */
-static fn tar_store_clear(tar_path_store address_to store)
-{
-        store->count = 0;
-        store->paths_used = 0;
-        store->slots = 0;
-}
-
 static file_facts address_to tar_materialized_find(string_address path)
 {
-        tar_path_record address_to kept = tar_store_find(
-            address_of tar_materialized, path, string_hash_33_length(path).x);
+        positive2 named = string_hash_33_length(path);
+        tar_materialized_file address_to kept =
+            tar_materialized_find_hashed(path, named.x);
         return kept ? address_of kept->facts : null;
 }
 
 static bipolar tar_materialized_remember(string_address path,
                                          file_facts address_to facts)
 {
-        if ((facts->mask & STATX_BASIC) != STATX_BASIC)
+        if ((facts->mask & STATX_BASIC) != STATX_BASIC &&
+            (facts->mask || (facts->mode & MODE_FORMAT) != MODE_LINK))
                 return -ERROR_INPUT_OUTPUT;
 
-        tar_path_record address_to kept =
-            tar_store_remember(address_of tar_materialized, path);
-        if (!kept)
+        positive2 named = string_hash_33_length(path);
+        tar_materialized_file address_to kept =
+            tar_materialized_find_hashed(path, named.x);
+        if (kept)
+        {
+                kept->facts = *facts;
+                return 0;
+        }
+
+        if (!tar_materialized_index_prepare(tar_materialized_count + 1))
                 return -ERROR_NO_MEMORY;
-        kept->facts = address_to facts;
+
+        positive length = named.y + 1;
+        if (named.y == positive_max ||
+            length > positive_max - tar_materialized_paths_used ||
+            !shell_array_room(tar_materialized, tar_materialized_room,
+                              tar_materialized_count + 1) ||
+            !shell_array_room(tar_materialized_paths,
+                              tar_materialized_paths_room,
+                              tar_materialized_paths_used + length))
+                return -ERROR_NO_MEMORY;
+
+        kept = tar_materialized + tar_materialized_count;
+        kept->path_at = tar_materialized_paths_used;
+        kept->path_hash = named.x;
+        kept->facts = *facts;
+        memory_copy(tar_materialized_paths + tar_materialized_paths_used,
+                    path, length);
+        tar_materialized_paths_used += length;
+        positive slot = named.x & (tar_materialized_index_slots - 1);
+        while (tar_materialized_index[slot])
+                slot = (slot + 1) & (tar_materialized_index_slots - 1);
+        tar_materialized_index[slot] = ++tar_materialized_count;
         return 0;
 }
 
-static bool tar_directory_remember(string_address path, positive mode,
-                                   file_facts address_to facts)
+static positive tar_path_depth(string_address path)
 {
-        tar_path_record address_to kept =
-            tar_store_remember(address_of tar_directories, path);
+        positive depth = 0;
+        bool component = false;
 
-        if (!kept)
+        while (*path)
+        {
+                if (*path == '/')
+                        component = false;
+                else if (!component)
+                {
+                        component = true;
+                        depth++;
+                }
+                path++;
+        }
+        return depth;
+}
+
+/* An extraction reads its principal once and clears the process mask for
+   its whole length, so every creation lands with exactly the mode it asks
+   for and no member pays to ask again.  The mask comes back when the
+   archive is finished. */
+static p32 tar_user;
+static positive tar_session_mask;
+static bool tar_restore_owner;
+static bool tar_touch;
+
+/* A parent used by a later member must remain outside another principal's
+   rename control.  A trusted sticky directory is acceptable because the
+   next opened entry is independently required to have a trusted owner. */
+static bool tar_extract_directory_trusted(bipolar handle)
+{
+        file_facts facts;
+        bipolar looked = file_look_code(
+            handle, (string_address)"", AT_EMPTY_PATH, address_of facts);
+
+        return looked >= 0 && (facts.mask & STATX_BASIC) == STATX_BASIC &&
+               (facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+               (facts.owner == tar_user || facts.owner == 0) &&
+               (!(facts.mode & 0002) || (facts.mode & MODE_STICKY));
+}
+
+/* Archives keep a directory's members together, so the parents of one
+   member are nearly always the parents of the last.  Every directory
+   descriptor opened on the way down stays here with the path that reached
+   it: a later member reuses the shared prefix and opens, makes and checks
+   only the components past it.  A held descriptor is the directory that
+   was checked whatever later happens to its name, and no member can take
+   a name the stack holds, since a non-directory never replaces a
+   directory. */
+#define TAR_STACK_DEPTH 48
+
+typedef struct
+{
+        bipolar handle;
+        positive stop;
+        bool made;
+} tar_stack_entry;
+
+static tar_stack_entry tar_stack[TAR_STACK_DEPTH];
+static positive tar_stack_used;
+static positive tar_stack_matched;
+static p8 tar_stack_path[TAR_PATH];
+static bipolar tar_stack_root = -1;
+
+static fn tar_stack_close_from(positive depth)
+{
+        while (tar_stack_used > depth)
+                (void)system_close(tar_stack[--tar_stack_used].handle);
+        if (tar_stack_matched > depth)
+                tar_stack_matched = depth;
+}
+
+static fn tar_stack_release(void)
+{
+        tar_stack_close_from(0);
+        if (tar_stack_root >= 0)
+                (void)system_close(tar_stack_root);
+        tar_stack_root = -1;
+}
+
+static bipolar tar_stack_base(void)
+{
+        if (tar_stack_root >= 0)
+                return tar_stack_root;
+
+        bipolar root = system_open_at(AT_FDCWD, (string_address)".",
+                                      O_PATH | O_DIRECTORY | O_CLOEXEC);
+        if (root >= 0 && !tar_extract_directory_trusted(root))
+        {
+                (void)system_close(root);
+                root = -ERROR_ACCESS;
+        }
+        if (root >= 0)
+                tar_stack_root = root;
+        return root;
+}
+
+/* Hold handle as the child named leaf of the directory the last lookup
+   matched.  False leaves handle with the caller. */
+static bool tar_stack_push(bipolar handle, string_address leaf,
+                           positive length, bool made)
+{
+        positive depth = tar_stack_matched;
+        positive start = depth ? tar_stack[depth - 1].stop + 1 : 0;
+
+        if (depth >= TAR_STACK_DEPTH ||
+            start + length >= sizeof(tar_stack_path))
+                return false;
+
+        tar_stack_close_from(depth);
+        if (depth)
+                tar_stack_path[start - 1] = '/';
+        memory_copy(tar_stack_path + start, leaf, length);
+        tar_stack[depth].handle = handle;
+        tar_stack[depth].stop = start + length;
+        tar_stack[depth].made = made;
+        tar_stack_used = depth + 1;
+        tar_stack_matched = depth + 1;
+        return true;
+}
+
+/* The entry, if the stack already holds leaf below the matched parent. */
+static tar_stack_entry address_to tar_stack_child(string_address leaf,
+                                                  positive length)
+{
+        positive depth = tar_stack_matched;
+        positive start = depth ? tar_stack[depth - 1].stop + 1 : 0;
+
+        if (depth >= tar_stack_used ||
+            tar_stack[depth].stop - start != length ||
+            memory_compare(tar_stack_path + start, leaf, length))
+                return null;
+        return tar_stack + depth;
+}
+
+static bipolar tar_parent_walk(string_address path, p8 address_to leaf,
+                               positive room, bool address_to owned)
+{
+        bipolar parent = system_open_parent_nofollow_checked(
+            AT_FDCWD, path, true, 0700, leaf, room,
+            tar_extract_directory_trusted);
+
+        address_to owned = parent >= 0;
+        return parent;
+}
+
+/* The parent of path and its last component.  The stack lends its
+   descriptor; *owned says the component walk handed over one the caller
+   closes.  Absolute names and paths deeper than the stack take that walk,
+   which is what every member took before the stack existed. */
+static bipolar tar_stack_parent(string_address path, p8 address_to leaf,
+                                positive room, bool address_to owned)
+{
+        positive length = string_length(path);
+        positive cut = length;
+
+        address_to owned = false;
+        while (cut && path[cut - 1] != '/')
+                cut--;
+        if (!length || path[0] == '/' || cut == length)
+                return tar_parent_walk(path, leaf, room, owned);
+        if (length - cut >= room)
+                return -ERROR_NAME_TOO_LONG;
+
+        positive parent_length = cut ? cut - 1 : 0;
+        bipolar held = tar_stack_base();
+        if (held < 0)
+                return held;
+
+        positive depth = 0;
+        positive at = 0;
+        while (depth < tar_stack_used)
+        {
+                positive stop = tar_stack[depth].stop;
+
+                if (stop > parent_length ||
+                    (stop < parent_length && path[stop] != '/') ||
+                    memory_compare(tar_stack_path + at, path + at, stop - at))
+                        break;
+                held = tar_stack[depth].handle;
+                at = stop + 1;
+                depth++;
+        }
+        tar_stack_matched = depth;
+
+        while (at < parent_length)
+        {
+                positive stop = at;
+                p8 component[256];
+
+                while (stop < parent_length && path[stop] != '/')
+                        stop++;
+                if (stop - at >= sizeof(component))
+                        return -ERROR_NAME_TOO_LONG;
+                memory_copy(component, path + at, stop - at);
+                component[stop - at] = end;
+
+                bool made = false;
+                bipolar next = system_open_at(
+                    held, component,
+                    O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+                if (next == -ERROR_NO_ENTRY)
+                {
+                        bipolar created = system_make_directory_at(
+                            held, component, 0700);
+
+                        made = created >= 0;
+                        next = created < 0 && created != -ERROR_EXISTS
+                                   ? created
+                                   : system_open_at(
+                                         held, component,
+                                         O_PATH | O_DIRECTORY | O_NOFOLLOW |
+                                             O_CLOEXEC);
+                }
+                if (next >= 0 && !made &&
+                    !tar_extract_directory_trusted(next))
+                {
+                        (void)system_close(next);
+                        next = -ERROR_ACCESS;
+                }
+                if (next < 0)
+                        return next;
+                if (!tar_stack_push(next, component, stop - at, made))
+                {
+                        (void)system_close(next);
+                        return tar_parent_walk(path, leaf, room, owned);
+                }
+                held = next;
+                at = stop + 1;
+        }
+
+        memory_copy(leaf, path + cut, length - cut);
+        leaf[length - cut] = end;
+        return held;
+}
+
+#define TAR_RESOLVE_NO_MAGICLINKS 0x02
+#define TAR_RESOLVE_NO_SYMLINKS 0x04
+#define TAR_RESOLVE_BENEATH 0x08
+
+/* Reopen a name this run made.  openat2 resolves it below the extraction
+   root in one call and refuses a symlink anywhere on the way, which is
+   the component walk's promise without a descriptor per component; an
+   absolute name, a kernel without openat2 or a resolution that raced a
+   rename takes the walk. */
+static bipolar tar_open_beneath(string_address path, positive flags)
+{
+        if (path[0] != '/')
+        {
+                bipolar root = tar_stack_base();
+                if (root < 0)
+                        return root;
+
+                struct
+                {
+                        p64 flags;
+                        p64 mode;
+                        p64 resolve;
+                } how = {flags | O_NOFOLLOW | O_CLOEXEC, 0,
+                         TAR_RESOLVE_BENEATH | TAR_RESOLVE_NO_SYMLINKS |
+                             TAR_RESOLVE_NO_MAGICLINKS};
+                bipolar opened = system_call_4(
+                    syscall(openat2), (positive)root, (positive)path,
+                    (positive)address_of how, sizeof(how));
+                if (opened != -ERROR_NO_SYSTEM_CALL &&
+                    opened != -ERROR_AGAIN)
+                        return opened;
+        }
+
+        p8 leaf[TAR_PATH];
+        bipolar parent = system_open_parent_nofollow(
+            AT_FDCWD, path, false, 0, leaf, sizeof(leaf));
+        if (parent < 0)
+                return parent;
+        bipolar opened = system_open_at(parent, leaf,
+                                        flags | O_NOFOLLOW | O_CLOEXEC);
+        (void)system_close(parent);
+        return opened;
+}
+
+static bipolar tar_open_beneath_same(string_address path,
+                                     file_facts address_to expected,
+                                     positive flags)
+{
+        file_facts found;
+        bipolar handle = tar_open_beneath(path, flags);
+        bipolar looked = handle < 0 ? handle :
+                         file_look_code(handle, (string_address)"",
+                                        AT_EMPTY_PATH, address_of found);
+
+        if (looked < 0 || !file_same_identity(expected, address_of found) ||
+            (expected->mode & MODE_FORMAT) != (found.mode & MODE_FORMAT))
+        {
+                if (handle >= 0)
+                        (void)system_close(handle);
+                return looked < 0 ? looked : -ERROR_AGAIN;
+        }
+        return handle;
+}
+
+/* A symlink member is remembered by kind alone.  A hard link to it names
+   only the link itself, which the archive could have written anyway, so
+   its identity would buy nothing and cost a statx per link. */
+static bool tar_materialized_same(file_facts address_to authorized,
+                                  file_facts address_to found)
+{
+        if ((found->mode & MODE_FORMAT) != (authorized->mode & MODE_FORMAT))
+                return false;
+        return authorized->mask ? file_same_identity(found, authorized)
+                                : (found->mode & MODE_FORMAT) == MODE_LINK;
+}
+
+/* Owner first, since a change of owner clears the set-id bits; then the
+   mode that puts them back; the modification time last, so nothing after
+   it moves the clock.  whole asks for the mode even without special bits,
+   for an object that was not born with its final mode. */
+static bipolar tar_member_settle(bipolar handle, positive mode,
+                                 tar_member_meta address_to meta, bool whole)
+{
+        bipolar settled = 0;
+
+        if (tar_restore_owner)
+                settled = system_call_3(syscall(fchown), (positive)handle,
+                                        (positive)meta->user,
+                                        (positive)meta->group);
+        if (settled >= 0 && (whole || (mode & 07000)))
+                settled = system_call_2(syscall(fchmod), (positive)handle,
+                                        mode);
+        if (settled >= 0 && meta->timed && !tar_touch)
+        {
+                p64 times[4] = {0, UTIME_OMIT, (p64)meta->seconds,
+                                meta->nanoseconds};
+
+                settled = system_update_times_at(handle, 0, times, 0);
+        }
+        return settled;
+}
+
+static bipolar tar_member_settle_at(bipolar directory, string_address name,
+                                    positive mode,
+                                    tar_member_meta address_to meta,
+                                    bool link)
+{
+        bipolar settled = 0;
+
+        if (tar_restore_owner)
+                settled = system_change_owner_at(directory, name, meta->user,
+                                                 meta->group,
+                                                 AT_SYMLINK_NOFOLLOW);
+        if (settled >= 0 && !link)
+                settled = system_change_mode_at(directory, name, mode);
+        if (settled >= 0 && meta->timed && !tar_touch)
+        {
+                p64 times[4] = {0, UTIME_OMIT, (p64)meta->seconds,
+                                meta->nanoseconds};
+
+                settled = system_update_times_at(directory, name, times,
+                                                 AT_SYMLINK_NOFOLLOW);
+        }
+        return settled;
+}
+
+static bool tar_directory_remember(string_address path, positive mode,
+                                   file_facts address_to facts,
+                                   tar_member_meta address_to meta)
+{
+        positive2 named = string_hash_33_length(path);
+
+        for (positive at = 0; at < tar_directory_count; at++)
+        {
+                tar_directory_mode address_to kept = tar_directories + at;
+                if (kept->path_hash == named.x &&
+                    string_equals(tar_directory_paths + kept->path_at, path))
+                {
+                        kept->mode = mode;
+                        kept->facts = *facts;
+                        kept->meta = *meta;
+                        return true;
+                }
+        }
+
+        positive length = named.y + 1;
+        if (length > positive_max - tar_directory_paths_used ||
+            !shell_array_room(tar_directories, tar_directory_room,
+                              tar_directory_count + 1) ||
+            !shell_array_room(tar_directory_paths, tar_directory_paths_room,
+                              tar_directory_paths_used + length))
         {
                 tar_refuse("out of memory while retaining directory metadata");
                 return false;
         }
-        /* A safe path joins its components with single slashes. */
-        kept->depth = path[0] == '/' && !path[1]
-                          ? 0
-                          : memory_count(path, string_length(path), '/') +
-                                (path[0] != '/');
+
+        tar_directory_mode address_to kept =
+            tar_directories + tar_directory_count++;
+        kept->path_at = tar_directory_paths_used;
+        kept->path_hash = named.x;
+        kept->depth = tar_path_depth(path);
         kept->mode = mode;
-        kept->facts = address_to facts;
+        kept->facts = *facts;
+        kept->meta = *meta;
+        memory_copy(tar_directory_paths + tar_directory_paths_used,
+                    path, length);
+        tar_directory_paths_used += length;
         return true;
 }
 
 static bipolar tar_directory_index_order(positive left, positive right)
 {
-        positive one = tar_directories.records[left].depth;
-        positive two = tar_directories.records[right].depth;
+        positive one = tar_directories[left].depth;
+        positive two = tar_directories[right].depth;
 
         if (one != two)
                 return one > two ? -1 : 1;
@@ -741,53 +1257,47 @@ static bipolar tar_directory_index_order(positive left, positive right)
 
 static fn tar_directories_finish(void)
 {
-        positive count = tar_directories.count;
-
-        if (!count)
+        if (!tar_directory_count)
                 return;
 
         if (!shell_array_room(tar_directory_order, tar_directory_order_room,
-                              count) ||
+                              tar_directory_count) ||
             !shell_array_room(tar_directory_spare, tar_directory_spare_room,
-                              count))
+                              tar_directory_count))
         {
                 tar_refuse("out of memory while restoring directory metadata");
-                tar_store_clear(address_of tar_directories);
+                tar_directory_count = 0;
+                tar_directory_paths_used = 0;
                 return;
         }
 
-        for (positive at = 0; at < count; at++)
+        for (positive at = 0; at < tar_directory_count; at++)
                 tar_directory_order[at] = at;
         positive address_to order = array_merge_sort(
-            tar_directory_order, tar_directory_spare, count,
+            tar_directory_order, tar_directory_spare, tar_directory_count,
             tar_directory_index_order);
 
-        for (positive at = 0; at < count; at++)
+        for (positive at = 0; at < tar_directory_count; at++)
         {
-                tar_path_record address_to kept =
-                    tar_directories.records + order[at];
-                string_address path = tar_directories.paths + kept->path_at;
-                p8 leaf[TAR_PATH];
-                bipolar parent = system_open_parent_nofollow(
-                    AT_FDCWD, path, false, 0, leaf, sizeof(leaf));
-                bipolar opened = parent < 0
-                    ? parent
-                    : file_open_same(parent, leaf, address_of kept->facts,
-                                     FILE_READ | O_DIRECTORY | O_NOFOLLOW);
+                tar_directory_mode address_to kept =
+                    tar_directories + order[at];
+                string_address path = tar_directory_paths + kept->path_at;
+                bipolar opened = tar_open_beneath_same(
+                    path, address_of kept->facts,
+                    FILE_READ | O_DIRECTORY);
                 bipolar changed = opened < 0
                     ? opened
-                    : system_call_2(syscall(fchmod), (positive)opened,
-                                    kept->mode);
+                    : tar_member_settle(opened, kept->mode,
+                                        address_of kept->meta, true);
 
                 if (opened >= 0)
                         system_close(opened);
-                if (parent >= 0)
-                        system_close(parent);
                 if (changed < 0)
                         tar_fail(path, changed);
         }
 
-        tar_store_clear(address_of tar_directories);
+        tar_directory_count = 0;
+        tar_directory_paths_used = 0;
 }
 
 static fn tar_reset(void)
@@ -801,8 +1311,11 @@ static fn tar_reset(void)
         tar_output_known = false;
         tar_output_target_known = false;
         tar_output_stage_known = false;
-        tar_store_clear(address_of tar_directories);
-        tar_store_clear(address_of tar_materialized);
+        tar_directory_count = 0;
+        tar_directory_paths_used = 0;
+        tar_materialized_count = 0;
+        tar_materialized_paths_used = 0;
+        tar_materialized_index_slots = 0;
 }
 
 static bipolar tar_read_bytes(bipolar handle, p8 address_to into, positive n)
@@ -838,6 +1351,15 @@ static bool tar_codec_begin_read(bipolar handle, p8 address_to magic, positive n
         return true;
 }
 
+static bool tar_bytes_zero(p8 address_to bytes, positive count)
+{
+        p8 combined = 0;
+
+        for (positive at = 0; at < count; at++)
+                combined |= bytes[at];
+        return combined == 0;
+}
+
 static fn tar_codec_end_read(bipolar handle)
 {
         bool ok = true;
@@ -858,7 +1380,7 @@ static fn tar_codec_end_read(bipolar handle)
 
                 if (trailing > TAR_TRAILING_LIMIT)
                         excess = true;
-                else if (memory_span_byte(tar_record + tar_at, 0, trailing) != trailing)
+                else if (!tar_bytes_zero(tar_record + tar_at, trailing))
                         nonzero = true;
 
                 while (!excess && !nonzero)
@@ -871,7 +1393,7 @@ static fn tar_codec_end_read(bipolar handle)
                         got = tar_read_bytes(handle, tar_record, ask);
                         if (got <= 0)
                                 break;
-                        if (memory_span_byte(tar_record, 0, (positive)got) != (positive)got)
+                        if (!tar_bytes_zero(tar_record, (positive)got))
                         {
                                 nonzero = true;
                                 break;
@@ -926,7 +1448,11 @@ static fn tar_advise(bipolar handle)
                       TAR_ADVISE_SEQUENTIAL);
 }
 
-static bool tar_fill(bipolar handle)
+/* One read into the compacted record: the bytes it added, 0 at the end of
+   the archive, or -1 once the read error is reported.  A pipe or a slow
+   writer hands over whatever it has, so one read is never a promise of a
+   whole block; callers that need one loop. */
+static bipolar tar_fill(bipolar handle)
 {
         bipolar got;
 
@@ -941,22 +1467,26 @@ static bool tar_fill(bipolar handle)
         if (got < 0)
         {
                 tar_refuse("cannot read archive");
-                return false;
+                return -1;
         }
 
-        if (!got)
-                return tar_have > 0;
-
         tar_have += (positive)got;
-        return true;
+        return got;
 }
 
 static p8 address_to tar_next_block(bipolar handle)
 {
         p8 address_to block;
 
-        if (tar_at + TAR_BLOCK > tar_have && !tar_fill(handle))
-                return null;
+        while (tar_at + TAR_BLOCK > tar_have)
+        {
+                bipolar got = tar_fill(handle);
+
+                if (got < 0)
+                        return null;
+                if (!got)
+                        break;
+        }
 
         if (tar_at + TAR_BLOCK > tar_have)
         {
@@ -989,16 +1519,9 @@ static bool tar_skip(bipolar handle, p64 bytes, bool seekable)
         bytes -= have;
         tar_at = 0;
         tar_have = 0;
-        bipolar reached = seekable && !tar_packed()
-                              ? system_seek(handle, (bipolar)bytes, FILE_SEEK_CUR)
-                              : -1;
-        if (reached >= 0)
-        {
-                if ((p64)reached <= tar_archive_end)
-                        return true;
-                tar_refuse("unexpected EOF in archive");
-                return false;
-        }
+        if (seekable && !tar_packed() &&
+            system_seek(handle, (bipolar)bytes, FILE_SEEK_CUR) >= 0)
+                return true;
 
         while (bytes)
         {
@@ -1044,9 +1567,7 @@ static bool tar_rewind_unread(bipolar handle)
         return true;
 }
 
-/* Member data to a descriptor, into memory, or (out < 0, no into) nowhere. */
-static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable,
-                       p8 address_to into)
+static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
 {
         p64 left = size;
 
@@ -1055,7 +1576,7 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable,
                 positive have;
                 positive take;
 
-                if (!into && left >= TAR_RECORD && !tar_packed() &&
+                if (left >= TAR_RECORD && !tar_packed() &&
                     tar_rewind_unread(archive))
                 {
                         if (out >= 0 && !tar_copy_out(archive, out, left))
@@ -1067,7 +1588,7 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable,
                         return true;
                 }
 
-                if (tar_at >= tar_have && !tar_fill(archive))
+                if (tar_at >= tar_have && tar_fill(archive) <= 0)
                 {
                         tar_refuse("unexpected EOF in archive");
                         return false;
@@ -1081,14 +1602,9 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable,
                 }
 
                 take = have > left ? (positive)left : have;
-                if (into)
-                {
-                        memory_copy(into, tar_record + tar_at, take);
-                        into += take;
-                }
-                else if (out >= 0 &&
-                         system_write_all((positive)out, tar_record + tar_at,
-                                          take) != take)
+                if (out >= 0 &&
+                    system_write_all((positive)out, tar_record + tar_at,
+                                     take) != take)
                         return false;
 
                 tar_at += take;
@@ -1100,13 +1616,30 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable,
 
 static bool tar_deliver(bipolar archive, bipolar out, p64 size, bool seekable)
 {
-        return tar_copy_n(archive, out, size, seekable, null) &&
+        return tar_copy_n(archive, out, size, seekable) &&
                tar_skip(archive, tar_padded(size) - size, seekable);
 }
 
-static bool tar_write_hole(bipolar out, p64 size)
+static bool tar_write_zeros(bipolar out, p64 size)
 {
-        return out < 0 || system_seek(out, (bipolar)size, FILE_SEEK_CUR) >= 0;
+        p8 zero[TAR_BLOCK];
+
+        if (out < 0)
+                return true;
+
+        memory_fill(zero, 0, sizeof(zero));
+        while (size)
+        {
+                positive take = size > sizeof(zero) ? sizeof(zero)
+                                                    : (positive)size;
+
+                if (system_write_all((positive)out, zero, take) != take)
+                        return false;
+
+                size -= take;
+        }
+
+        return true;
 }
 
 #define TAR_SPARSE_HEADER 4
@@ -1136,7 +1669,7 @@ static bool tar_sparse_add(p64 offset, p64 bytes)
         if (!bytes)
                 return true;
 
-        if (offset > (p64)-1 - bytes)
+        if (bytes && offset > (p64)-1 - bytes)
                 return false;
 
         if (tar_sparse_used >= TAR_SPARSE_MAX)
@@ -1219,7 +1752,7 @@ static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
         p64 cursor = 0;
         positive at;
 
-        if (tar_sparse_payload() != size)
+        if (!tar_sparse_active || tar_sparse_payload() != size)
         {
                 tar_refuse("invalid sparse archive");
                 return false;
@@ -1227,16 +1760,15 @@ static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
 
         for (at = 0; at < tar_sparse_used; at++)
         {
-                if (!tar_write_hole(out, tar_sparse[at].offset - cursor) ||
-                    !tar_copy_n(archive, out, tar_sparse[at].bytes, seekable, null))
+                if (tar_sparse[at].offset < cursor ||
+                    !tar_write_zeros(out, tar_sparse[at].offset - cursor) ||
+                    !tar_copy_n(archive, out, tar_sparse[at].bytes, seekable))
                         return false;
 
                 cursor = tar_sparse[at].offset + tar_sparse[at].bytes;
         }
 
-        return (out < 0 ||
-                system_call_2(syscall(ftruncate), (positive)out,
-                              tar_sparse_real) >= 0) &&
+        return tar_write_zeros(out, tar_sparse_real - cursor) &&
                tar_skip(archive, tar_padded(size) - size, seekable);
 }
 
@@ -1283,7 +1815,25 @@ static bool tar_write_block(bipolar handle, p8 address_to block)
 
 static bool tar_write_padding(bipolar handle, p64 size)
 {
-        return tar_put(handle, tar_block, tar_padded(size) - (positive)size);
+        positive pad = tar_padded(size) - (positive)size;
+
+        while (pad)
+        {
+                positive take;
+
+                if (tar_at == TAR_RECORD && !tar_flush(handle))
+                        return false;
+
+                take = TAR_RECORD - tar_at;
+                if (take > pad)
+                        take = pad;
+
+                memory_fill(tar_record + tar_at, 0, take);
+                tar_at += take;
+                pad -= take;
+        }
+
+        return true;
 }
 
 static bool tar_put_file(bipolar archive, bipolar in, p64 size)
@@ -1323,14 +1873,41 @@ static bool tar_put_file(bipolar archive, bipolar in, p64 size)
 static bool tar_read_payload(bipolar handle, p64 size, p8 address_to into,
                              positive room, bool seekable)
 {
+        p64 left = size;
+        p8 address_to dst = into;
+
         if (size >= room)
         {
                 tar_refuse("member name is too long");
                 tar_skip(handle, tar_padded(size), seekable);
                 return false;
         }
-        if (!tar_copy_n(handle, -1, size, seekable, into))
-                return false;
+
+        while (left)
+        {
+                positive have;
+                positive take;
+
+                if (tar_at >= tar_have && tar_fill(handle) <= 0)
+                {
+                        tar_refuse("unexpected EOF in archive");
+                        return false;
+                }
+
+                have = tar_have - tar_at;
+                if (!have)
+                {
+                        tar_refuse("unexpected EOF in archive");
+                        return false;
+                }
+
+                take = have > left ? (positive)left : have;
+                memory_copy(dst, tar_record + tar_at, take);
+                tar_at += take;
+                dst += take;
+                left -= take;
+        }
+
         into[size] = end;
         return tar_skip(handle, tar_padded(size) - size, seekable);
 }
@@ -1385,22 +1962,6 @@ static bipolar tar_extract_destination(
         return 0;
 }
 
-/* A parent used by a later member must remain outside another principal's
-   rename control.  A trusted sticky directory is acceptable because the
-   next opened entry is independently required to have a trusted owner. */
-static bool tar_extract_directory_trusted(bipolar handle)
-{
-        file_facts facts;
-        bipolar looked = file_look_code(
-            handle, (string_address)"", AT_EMPTY_PATH, address_of facts);
-        p32 effective = (p32)system_call(syscall(geteuid));
-
-        return looked >= 0 && (facts.mask & STATX_BASIC) == STATX_BASIC &&
-               (facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
-               (facts.owner == effective || facts.owner == 0) &&
-               (!(facts.mode & 0002) || (facts.mode & MODE_STICKY));
-}
-
 /* -C establishes the root for every later AT_FDCWD member operation.  Open
    and pin the complete directory walk first so a writable ancestor cannot
    exchange one component for a symlink during privileged extraction. */
@@ -1416,35 +1977,15 @@ static bipolar tar_change_directory(string_address path)
         return changed;
 }
 
-/* Intermediate components are private extraction workspaces too.  Clear the
-   process mask only around the contained walk so a restrictive caller umask
-   cannot turn requested 0700 into an untraversable directory. */
-static bipolar tar_extract_parent(string_address path, bool create,
-                                  p8 address_to leaf, positive room)
-{
-        bipolar mask = system_call_1(syscall(umask), 0);
-        if (mask < 0)
-                return mask;
-
-        bipolar parent = system_open_parent_nofollow_checked(
-            AT_FDCWD, path, create, 0700, leaf, room,
-            tar_extract_directory_trusted);
-        bipolar restored = system_call_1(syscall(umask), (positive)mask);
-        if (restored < 0 && parent >= 0)
-        {
-                system_close(parent);
-                parent = restored;
-        }
-        return parent < 0 ? parent : restored < 0 ? restored : parent;
-}
-
-/* Resolve each parent once and keep its descriptor until the member is
-   finished. Name checks alone cannot stop a directory from being replaced
-   by a symlink between stat and open, and hard-link sources need the same
-   resolution as destinations. */
-static bool tar_extract_regular(bipolar archive, bipolar directory,
-                                string_address leaf, string_address path,
-                                p64 size, positive mode, bool seekable)
+/* A name that already exists takes the staged transaction: a complete
+   object is published over the destination only if that name still
+   identifies the object observed before staging began, and a
+   non-directory member never removes a directory tree. */
+static bool tar_extract_regular_staged(bipolar archive, bipolar directory,
+                                       string_address leaf,
+                                       string_address path, p64 size,
+                                       positive mode, bool seekable,
+                                       tar_member_meta address_to meta)
 {
         system_path_stage protected;
         file_facts materialized;
@@ -1479,7 +2020,7 @@ static bool tar_extract_regular(bipolar archive, bipolar directory,
                 return false;
         }
 
-        bipolar changed = system_call_2(syscall(fchmod), (positive)made, mode);
+        bipolar changed = tar_member_settle(made, mode, meta, true);
         bipolar published_handle = -1;
         bipolar published = file_stage_publish_protected_keep_at(
             address_of protected, directory, leaf, made, changed, false,
@@ -1505,13 +2046,149 @@ static bool tar_extract_regular(bipolar archive, bipolar directory,
         return published >= 0;
 }
 
+/* A regular member is created under its own name with O_EXCL and
+   O_NOFOLLOW, in a parent the stack pinned: the name did not exist, so
+   nothing planted there is followed and no other object is touched, and
+   the bytes go straight in.  Only a name that exists pays for the staged
+   transaction.  A member that fails part way is removed through the
+   descriptor that made it. */
+static bool tar_extract_regular(bipolar archive, bipolar directory,
+                                string_address leaf, string_address path,
+                                p64 size, positive mode, bool seekable,
+                                tar_member_meta address_to meta)
+{
+        file_facts materialized;
+        bipolar made = system_open_at_mode(
+            directory, leaf,
+            FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
+            mode & 0777);
+
+        if (made == -ERROR_EXISTS)
+                return tar_extract_regular_staged(archive, directory, leaf,
+                                                  path, size, mode, seekable,
+                                                  meta);
+        if (made < 0)
+        {
+                tar_fail(path, made);
+                return tar_skip(archive, tar_padded(size), seekable);
+        }
+
+        if ((tar_sparse_active &&
+             !tar_deliver_sparse(archive, made, size, seekable)) ||
+            (!tar_sparse_active &&
+             !tar_deliver(archive, made, size, seekable)))
+        {
+                (void)system_path_remove_opened_at(directory, leaf, made, 0);
+                (void)system_close(made);
+                tar_fail(path, -ERROR_INPUT_OUTPUT);
+                return false;
+        }
+
+        bipolar settled = tar_member_settle(made, mode, meta, false);
+        if (settled >= 0)
+                settled = file_look_code(made, (string_address)"",
+                                         AT_EMPTY_PATH,
+                                         address_of materialized);
+        if (settled >= 0 &&
+            (materialized.mask & STATX_BASIC) != STATX_BASIC)
+                settled = -ERROR_INPUT_OUTPUT;
+        bipolar closed = system_close(made);
+        if (settled >= 0)
+                settled = closed;
+        if (settled >= 0)
+                settled = tar_materialized_remember(
+                    path, address_of materialized);
+        if (settled < 0)
+                tar_fail(path, settled);
+        return settled >= 0;
+}
+
+/* A directory this run made is private (0700, ours) until the archive is
+   finished and needs no checking; one that was already there gets the
+   owner, name-stability and traversal checks and the same private working
+   mode.  Either way its final mode, owner and time wait for the end,
+   applied deepest first to the inode seen here, and its descriptor joins
+   the stack for the members inside it. */
+static bipolar tar_extract_directory(bipolar parent, bool parent_owned,
+                                     string_address leaf,
+                                     string_address path,
+                                     positive final_mode,
+                                     tar_member_meta address_to meta)
+{
+        positive length = string_length(leaf);
+        tar_stack_entry address_to held =
+            parent_owned ? null : tar_stack_child(leaf, length);
+        bipolar exact;
+        bool ours;
+        bipolar made = 0;
+        file_facts facts;
+
+        if (held)
+        {
+                exact = held->handle;
+                ours = held->made;
+        }
+        else
+        {
+                made = system_make_directory_at(parent, leaf, 0700);
+                ours = made >= 0;
+                if (made == -ERROR_EXISTS)
+                        made = 0;
+                exact = made < 0 ? made : system_open_at(
+                    parent, leaf,
+                    O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+                if (exact < 0)
+                        return exact;
+        }
+
+        made = file_look_code(exact, (string_address)"", AT_EMPTY_PATH,
+                              address_of facts);
+        if (made >= 0 && ((facts.mask & STATX_BASIC) != STATX_BASIC ||
+                          (facts.mode & MODE_FORMAT) != MODE_DIRECTORY))
+                made = -ERROR_INPUT_OUTPUT;
+        if (made >= 0 && !ours &&
+            ((facts.owner != tar_user && facts.owner != 0) ||
+             !file_name_stable(parent, address_of facts)))
+                made = -ERROR_ACCESS;
+        if (made >= 0 &&
+            !tar_directory_remember(path, final_mode, address_of facts, meta))
+                made = -ERROR_NO_MEMORY;
+        if (made >= 0 && !ours)
+        {
+                /* Explicit directory entries remain private but traversable
+                   until all descendants have been created. The final
+                   archived mode is restored through the same inode later. */
+                bool changed;
+                positive old_mode;
+                bipolar opened = file_directory_real(
+                    exact, parent, leaf, address_of changed,
+                    address_of old_mode);
+
+                made = opened;
+                if (made >= 0 && (facts.mode & 07777) != 0700)
+                        made = system_call_2(syscall(fchmod),
+                                             (positive)opened, 0700);
+                if (opened >= 0)
+                        system_close(opened);
+        }
+
+        if (!held &&
+            (made < 0 || parent_owned ||
+             (!ours && !tar_extract_directory_trusted(exact)) ||
+             !tar_stack_push(exact, leaf, length, ours)))
+                system_close(exact);
+        return made;
+}
+
 static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                              string_address link, p64 size, p64 mode,
-                             p64 major, p64 minor, bool seekable, bool verbose)
+                             p64 major, p64 minor, bool seekable, bool verbose,
+                             tar_member_meta address_to meta)
 {
         positive final_mode = (positive)mode & (tar_preserve ? 07777 : 0777);
         bipolar made = 0;
         bipolar parent;
+        bool parent_owned;
         p8 leaf[TAR_PATH];
         string_address slash = string_last_of(path, '/');
         bool directory = type == '5' || (slash && !slash[1]);
@@ -1520,7 +2197,7 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
 
         if (!tar_preserve && (directory || regular ||
                               type == '3' || type == '4' || type == '6'))
-                final_mode &= ~file_umask();
+                final_mode &= ~tar_session_mask;
 
         if (verbose)
                 tar_name_line(log_error, path);
@@ -1537,7 +2214,8 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                 return;
         }
 
-        parent = tar_extract_parent(path, true, leaf, sizeof(leaf));
+        parent = tar_stack_parent(path, leaf, sizeof(leaf),
+                                  address_of parent_owned);
         if (parent < 0)
         {
                 tar_fail(path, parent);
@@ -1548,77 +2226,25 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         if (regular)
         {
                 tar_extract_regular(archive, parent, leaf, path, size,
-                                     final_mode, seekable);
-                system_close(parent);
+                                     final_mode, seekable, meta);
+                if (parent_owned)
+                        system_close(parent);
                 return;
         }
 
         if (directory)
-        {
-                made = system_make_directory_exact_at(parent, leaf, 0700);
-                if (made == -ERROR_EXISTS)
-                        made = 0;
-                if (!made)
-                {
-                        bipolar exact = system_open_at(
-                            parent, leaf,
-                            O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-
-                        if (exact < 0)
-                                made = exact;
-                        else
-                        {
-                                file_facts facts;
-                                made = file_look_code(
-                                    exact, (string_address)"", AT_EMPTY_PATH,
-                                    address_of facts);
-                                /* Explicit directory entries remain private
-                                   but traversable until all descendants have
-                                   been created. The final archived mode is
-                                   restored through the same inode later. */
-                                positive working = 0700;
-                                p32 effective =
-                                    (p32)system_call(syscall(geteuid));
-                                if (made >= 0 &&
-                                    ((facts.owner != effective &&
-                                      facts.owner != 0) ||
-                                     !file_name_stable(parent,
-                                                       address_of facts)))
-                                        made = -ERROR_ACCESS;
-                                if (made >= 0 &&
-                                    !tar_directory_remember(
-                                        path, final_mode, address_of facts))
-                                        made = -ERROR_NO_MEMORY;
-                                bool changed;
-                                positive old_mode;
-                                bipolar opened = made < 0
-                                    ? made
-                                    : file_directory_real(
-                                          exact, parent, leaf,
-                                          address_of changed,
-                                          address_of old_mode);
-                                if (made >= 0)
-                                        made = opened;
-                                if (made >= 0 &&
-                                    (facts.mode & 07777) != working)
-                                        made = system_call_2(
-                                            syscall(fchmod),
-                                            (positive)opened, working);
-                                if (opened >= 0)
-                                        system_close(opened);
-                                system_close(exact);
-                        }
-                }
-        }
+                made = tar_extract_directory(parent, parent_owned, leaf, path,
+                                             final_mode, meta);
         else
         {
                 system_path_stage protected;
                 file_facts materialized;
                 file_facts source_facts;
                 file_facts replaced;
-                bool replaced_known;
+                bool replaced_known = false;
                 bool materialized_known = false;
                 bool destination_satisfied = false;
+                bool finished = false;
                 bipolar source_handle = -1;
                 file_stage_expectation expected = {
                     .kind = type == '2' ? MODE_LINK : type == '6' ? MODE_PIPE :
@@ -1627,63 +2253,91 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                     .device_major = type == '6' ? 0 : (p32)major,
                     .device_minor = type == '6' ? 0 : (p32)minor,
                 };
-                made = tar_extract_destination(
-                    parent, leaf, address_of replaced,
-                    address_of replaced_known);
-                if (made >= 0 && type == '1')
+
+                /* Links are made under their own names first, as regular
+                   members are: linkat and symlinkat never follow or replace
+                   what is there, so only an existing name falls through to
+                   the destination checks and the staged transaction. */
+                if (type == '1')
                 {
-                        p8 source[TAR_PATH];
                         file_facts address_to authorized =
                             tar_materialized_find(link);
+
                         made = authorized ? 0 : -ERROR_ACCESS;
-                        bipolar source_parent = made < 0
-                            ? made
-                            : tar_extract_parent(
-                                  link, false, source, sizeof(source));
-                        if (made >= 0)
-                                made = source_parent;
                         if (made >= 0)
                         {
-                                source_handle = system_open_at(source_parent,
-                                    source, O_PATH | O_NOFOLLOW | O_CLOEXEC);
-                                system_close(source_parent);
+                                source_handle = tar_open_beneath(
+                                    link, O_PATH);
                                 made = source_handle < 0 ? source_handle :
                                     file_look_code(source_handle,
                                         (string_address)"", AT_EMPTY_PATH,
                                         address_of source_facts);
-                                if (made >= 0 &&
-                                    (source_facts.mask & STATX_BASIC) !=
-                                        STATX_BASIC)
-                                        made = -ERROR_INPUT_OUTPUT;
-                                if (made >= 0 &&
-                                    (!file_same_identity(
-                                         address_of source_facts, authorized) ||
-                                     (source_facts.mode & MODE_FORMAT) !=
-                                         (authorized->mode & MODE_FORMAT)))
-                                        made = -ERROR_ACCESS;
-                                if (made >= 0)
+                        }
+                        if (made >= 0 &&
+                            (source_facts.mask & STATX_BASIC) != STATX_BASIC)
+                                made = -ERROR_INPUT_OUTPUT;
+                        if (made >= 0 &&
+                            !tar_materialized_same(authorized,
+                                                   address_of source_facts))
+                                made = -ERROR_ACCESS;
+                        if (made >= 0)
+                        {
+                                expected.kind = source_facts.mode & MODE_FORMAT;
+                                expected.identity = address_of source_facts;
+                                bipolar linked = system_path_link_opened_at(
+                                    source_handle, parent, leaf);
+                                if (linked >= 0)
                                 {
-                                        expected.kind = source_facts.mode & MODE_FORMAT;
-                                        expected.identity = address_of source_facts;
-                                        destination_satisfied =
-                                            replaced_known &&
-                                            file_same_identity(
-                                                address_of source_facts,
-                                                address_of replaced);
-                                        if (destination_satisfied)
-                                                made =
-                                                    system_path_same_opened_at(
-                                                        source_handle, parent,
-                                                        leaf);
-                                        if (made >= 0 && destination_satisfied)
-                                        {
-                                                materialized = source_facts;
-                                                materialized_known = true;
-                                        }
+                                        materialized = source_facts;
+                                        materialized_known = true;
+                                        finished = true;
+                                }
+                                else if (linked != -ERROR_EXISTS)
+                                        made = linked;
+                        }
+                }
+                else if (type == '2')
+                {
+                        bipolar linked = system_symbolic_link_at(link, parent,
+                                                                 leaf);
+                        if (linked >= 0)
+                        {
+                                made = tar_member_settle_at(parent, leaf,
+                                                            final_mode, meta,
+                                                            true);
+                                memory_fill(address_of materialized, 0,
+                                            sizeof(materialized));
+                                materialized.mode = MODE_LINK;
+                                materialized_known = true;
+                                finished = true;
+                        }
+                        else if (linked != -ERROR_EXISTS)
+                                made = linked;
+                }
+
+                if (made >= 0 && !finished)
+                {
+                        made = tar_extract_destination(
+                            parent, leaf, address_of replaced,
+                            address_of replaced_known);
+                        if (made >= 0 && type == '1')
+                        {
+                                destination_satisfied =
+                                    replaced_known &&
+                                    file_same_identity(
+                                        address_of source_facts,
+                                        address_of replaced);
+                                if (destination_satisfied)
+                                        made = system_path_same_opened_at(
+                                            source_handle, parent, leaf);
+                                if (made >= 0 && destination_satisfied)
+                                {
+                                        materialized = source_facts;
+                                        materialized_known = true;
                                 }
                         }
                 }
-                if (made >= 0 && !destination_satisfied)
+                if (made >= 0 && !finished && !destination_satisfied)
                 {
                         bipolar handle = file_stage_claim_at(
                             address_of protected, parent, leaf, 0600,
@@ -1692,11 +2346,11 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                         if (handle >= 0)
                         {
                                 bipolar published_handle = -1;
-                                if (type != '1' && type != '2')
-                                        made = system_change_mode_at(
+                                if (type != '1')
+                                        made = tar_member_settle_at(
                                             protected.directory,
                                             SYSTEM_PATH_STAGE_LEAF,
-                                            final_mode);
+                                            final_mode, meta, type == '2');
                                 made = file_stage_publish_protected_keep_at(
                                     address_of protected, parent, leaf,
                                     handle, made, false,
@@ -1731,7 +2385,8 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                         system_close(source_handle);
         }
 
-        system_close(parent);
+        if (parent_owned)
+                system_close(parent);
         if (made < 0)
                 tar_fail(path, made);
         tar_skip(archive, tar_padded(size), seekable);
@@ -1739,7 +2394,8 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
 
 static bool tar_header_gnu_old(p8 address_to block)
 {
-        return !memory_compare(block + 257, "ustar  ", 8);
+        return !memory_compare(block + 257, "ustar ", 6) &&
+               block[263] == ' ' && !block[264];
 }
 
 static bool tar_member_name(p8 address_to block, p8 address_to into)
@@ -1812,28 +2468,33 @@ static b32 tar_read_archive(struct tar_options address_to options)
         }
 
         seekable = system_seek(handle, 0, FILE_SEEK_CUR) >= 0;
-        {
-                /* A seek skips member data without reading it, so only the
-                   size of a regular archive can say the data is not there. */
-                file_facts archive;
-
-                tar_archive_end =
-                    file_look(handle, (string_address)"", AT_EMPTY_PATH,
-                              address_of archive) &&
-                            (archive.mode & MODE_FORMAT) == MODE_FILE
-                        ? archive.size
-                        : (p64)-1;
-        }
         tar_advise(handle);
         {
                 p8 magic[6];
-                bipolar got = system_read_retry((positive)handle, magic,
-                                                sizeof(magic));
+                bipolar got = 0;
+
+                /* The sniff needs all six bytes a slow writer may split. */
+                while ((positive)got < sizeof(magic))
+                {
+                        bipolar more = system_read_retry(
+                            (positive)handle, magic + got,
+                            sizeof(magic) - (positive)got);
+
+                        if (more <= 0)
+                        {
+                                if (more < 0)
+                                        got = more;
+                                break;
+                        }
+                        got += more;
+                }
 
                 if (got < 0)
                 {
                         tar_refuse("cannot read archive");
-                        goto abandoned;
+                        if (handle > 0)
+                                system_close(handle);
+                        return tar_status;
                 }
                 if (tar_pack == TAR_PACK_NONE || tar_pack == TAR_PACK_AUTO)
                 {
@@ -1842,12 +2503,20 @@ static b32 tar_read_archive(struct tar_options address_to options)
                         tar_pack = sniffed;
                 }
                 if (tar_refuse_pack(tar_pack))
-                        goto abandoned;
+                {
+                        if (handle > 0)
+                                system_close(handle);
+                        return tar_status;
+                }
                 if (tar_packed())
                 {
                         seekable = false;
                         if (!tar_codec_begin_read(handle, magic, (positive)got))
-                                goto abandoned;
+                        {
+                                if (handle > 0)
+                                        system_close(handle);
+                                return tar_status;
+                        }
                 }
                 else if (got > 0 && (positive)got <= sizeof(magic))
                 {
@@ -1857,10 +2526,10 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 }
         }
         /* GNU: -p / root restores MODE_ALL; otherwise only 0777 & ~umask. */
+        tar_user = (p32)system_call(syscall(geteuid));
         tar_preserve = options->permissions < 0
                            ? false
-                           : (options->permissions > 0 ||
-                              system_call_1(syscall(geteuid), 0) == 0);
+                           : (options->permissions > 0 || tar_user == 0);
 
         if (options->directory)
         {
@@ -1870,8 +2539,27 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 {
                         tar_fail(options->directory, moved);
                         tar_codec_end_read(handle);
-                        goto abandoned;
+                        if (handle > 0)
+                                system_close(handle);
+
+                        return tar_status;
                 }
+        }
+
+        if (options->mode == TAR_EXTRACT)
+        {
+                bipolar mask = system_call_1(syscall(umask), 0);
+
+                tar_session_mask = mask < 0 ? 0 : (positive)mask & 0777;
+                tar_touch = options->touch;
+                /* GNU restores owners for root unless told otherwise, and
+                   always by number here: a bootstrap's ids are the ones its
+                   own passwd names, not what the host calls those names. */
+                tar_restore_owner = options->owner > 0 ||
+                                    (!options->owner && tar_user == 0);
+                tar_stack_used = 0;
+                tar_stack_matched = 0;
+                tar_stack_root = -1;
         }
 
         while ((block = tar_next_block(handle)))
@@ -1881,6 +2569,11 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 p64 mode = 0;
                 p64 major = 0;
                 p64 minor = 0;
+                p64 user = 0;
+                p64 group = 0;
+                p64 stamp = 0;
+                bool stamped;
+                tar_member_meta meta;
                 p8 kept[TAR_PATH];
                 p8 kept_link[TAR_PATH];
                 bool escaped;
@@ -1921,6 +2614,14 @@ static b32 tar_read_archive(struct tar_options address_to options)
                         break;
                 }
 
+                /* Owner and time are not worth refusing an archive over: a
+                   field that does not parse restores nothing. */
+                stamped = tar_field_value(block + 136, 12, address_of stamp);
+                if (!tar_field_value(block + 108, 8, address_of user))
+                        user = 0;
+                if (!tar_field_value(block + 116, 8, address_of group))
+                        group = 0;
+
                 tar_sparse_clear();
                 if (type == 'S' && !tar_sparse_load(handle, block))
                 {
@@ -1951,13 +2652,15 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
                 if (type == 'x' || type == 'g')
                 {
-                        if (!tar_read_payload(handle, size, tar_pax_body,
-                                              TAR_PAX_BODY, seekable) ||
+                        p8 body[TAR_PATH];
+
+                        if (!tar_read_payload(handle, size, body, TAR_PATH,
+                                              seekable) ||
                             !tar_pax_apply(
                                 type == 'g'
                                     ? address_of tar_pax_global
                                     : address_of tar_pax_local,
-                                tar_pax_body, (positive)size))
+                                body, (positive)size))
                         {
                                 tar_refuse("invalid extended header");
                                 break;
@@ -2045,9 +2748,31 @@ static b32 tar_read_archive(struct tar_options address_to options)
                         tar_skip(handle, tar_padded(size), seekable);
                 }
                 else
+                {
+                        tar_pax_state address_to said =
+                            tar_pax_local.has_user ? address_of tar_pax_local
+                                                   : address_of tar_pax_global;
+
+                        meta.user = said->has_user ? said->user : (p32)user;
+                        said = tar_pax_local.has_group
+                                   ? address_of tar_pax_local
+                                   : address_of tar_pax_global;
+                        meta.group = said->has_group ? said->group
+                                                     : (p32)group;
+                        said = tar_pax_local.has_time
+                                   ? address_of tar_pax_local
+                                   : address_of tar_pax_global;
+                        meta.seconds = said->has_time ? said->seconds
+                                                      : (b64)stamp;
+                        meta.nanoseconds = said->has_time ? said->nanoseconds
+                                                          : 0;
+                        meta.timed = said->has_time ||
+                                     (stamped &&
+                                      stamp <= 0x7fffffffffffffffull);
                         tar_extract_member(handle, type, kept, kept_link, size,
                                            mode, major, minor, seekable,
-                                           options->verbose);
+                                           options->verbose, address_of meta);
+                }
 
                 tar_pax_clear(address_of tar_pax_local);
         }
@@ -2057,17 +2782,16 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 system_close(handle);
 
         if (options->mode == TAR_EXTRACT)
+        {
                 tar_directories_finish();
+                tar_stack_release();
+                (void)system_call_1(syscall(umask), tar_session_mask);
+        }
 
         if (options->first < count && !listed && !tar_status)
                 tar_refuse("the requested members were not in the archive");
 
         log_flush();
-        return tar_status;
-
-abandoned:
-        if (handle > 0)
-                system_close(handle);
         return tar_status;
 }
 
@@ -2124,17 +2848,6 @@ static fn tar_header_ustar(p8 address_to block, string_address name,
 static bool tar_put_header(bipolar handle, string_address name, p8 type,
                            p64 size, p64 mode, p64 mtime, string_address link)
 {
-        positive link_length = link ? string_length(link) : 0;
-
-        /* A target the ustar field cannot hold travels whole in a GNU K
-           member ahead of its header, as GNU tar writes it. */
-        if (link_length >= TAR_NAME &&
-            (!tar_put_header(handle, "././@LongLink", 'K', link_length + 1,
-                             0644, 0, null) ||
-             !tar_put(handle, (p8 address_to)link, link_length + 1) ||
-             !tar_write_padding(handle, link_length + 1)))
-                return false;
-
         if (tar_at + TAR_BLOCK > TAR_RECORD && !tar_flush(handle))
                 return false;
 
@@ -2445,7 +3158,8 @@ static b32 tar_write_archive(struct tar_options address_to options)
                         if (looked < 0)
                         {
                                 tar_fail(options->archive, looked);
-                                goto abandoned;
+                                file_staged_name_abort(address_of output_stage);
+                                return tar_status;
                         }
                         tar_output_stage_known = true;
                 }
@@ -2461,12 +3175,22 @@ static b32 tar_write_archive(struct tar_options address_to options)
                 tar_fail(options->archive ? options->archive
                                           : (string_address)"-",
                          looked);
-                goto abandoned;
+                if (managed_output)
+                        file_staged_name_abort(address_of output_stage);
+                else if (handle > 2)
+                        system_close(handle);
+                return tar_status;
         }
         tar_output_known = true;
         tar_advise(handle);
         if (!tar_codec_begin_write(handle))
-                goto abandoned;
+        {
+                if (managed_output)
+                        file_staged_name_abort(address_of output_stage);
+                else if (handle > 2)
+                        system_close(handle);
+                return tar_status;
+        }
 
         if (options->directory)
         {
@@ -2476,7 +3200,12 @@ static b32 tar_write_archive(struct tar_options address_to options)
                 {
                     tar_fail(options->directory, moved);
                     tar_codec_end_write();
-                    goto abandoned;
+                    if (managed_output)
+                            file_staged_name_abort(address_of output_stage);
+                    else if (handle > 2)
+                            system_close(handle);
+
+                    return tar_status;
                 }
         }
 
@@ -2484,6 +3213,7 @@ static b32 tar_write_archive(struct tar_options address_to options)
                 tar_add_path(handle, program_argument((b32)at),
                              options->verbose);
 
+        memory_fill(tar_block, 0, TAR_BLOCK);
         if (tar_status != 2)
         {
                 tar_write_block(handle, tar_block);
@@ -2509,114 +3239,390 @@ static b32 tar_write_archive(struct tar_options address_to options)
 
         log_flush();
         return tar_status;
-
-abandoned:
-        if (managed_output)
-                file_staged_name_abort(address_of output_stage);
-        else if (handle > 2)
-                system_close(handle);
-        return tar_status;
 }
 
-/* Long-only rows borrow letters no short option uses. */
-static const argument_option tar_option_table[] = {
-    {"extract", 'x'}, {"list", 't'}, {"create", 'c'},
-    {"file", 'f', ARGUMENT_REQUIRED}, {"directory", 'C', ARGUMENT_REQUIRED},
-    {"verbose", 'v'}, {"absolute-names", 'P'},
-    {"preserve-permissions", 'p'}, {"same-permissions", 'p'},
-    {"no-same-permissions", 'N', ARGUMENT_LONG_ONLY},
-    {"gzip", 'z'}, {"gunzip", 'z'}, {"xz", 'J'},
-    {"zstd", 'Y', ARGUMENT_LONG_ONLY}, {"auto-compress", 'a'},
-    {"bzip2", 'j'}, {"compress", 'Z'},
-    {"use-compress-program", 'I', ARGUMENT_LONG_ONLY | ARGUMENT_OPTIONAL},
-    {"strip-components", 'S', ARGUMENT_LONG_ONLY | ARGUMENT_REQUIRED},
-    {"help", 'h', ARGUMENT_LONG_ONLY}, {"version", 'V', ARGUMENT_LONG_ONLY},
-    {null},
-};
-
-static struct tar_options tar_parsed;
-
-/* Apply one option. Help, version and the codecs this tar does not carry
-   end parsing. */
-static bool tar_option_seen(p8 letter, string_address value)
+static bool tar_compression_letter(p8 letter)
 {
-        struct tar_options address_to options = address_of tar_parsed;
-        positive used;
+        return letter == 'z' || letter == 'j' || letter == 'J' ||
+               letter == 'Z' || letter == 'a';
+}
 
-        switch (letter)
+static bool tar_cluster_letter(p8 letter)
+{
+        return letter == 'x' || letter == 't' || letter == 'c' ||
+               letter == 'f' || letter == 'v' || letter == 'C' ||
+               letter == 'P' || letter == 'p' || letter == 'm' ||
+               letter == 'o' || tar_compression_letter(letter);
+}
+
+static bool tar_is_cluster(string_address word)
+{
+        if (!word || !*word || string_is(word, '-'))
+                return false;
+
+        for (; *word; word++)
+                if (!tar_cluster_letter(*word))
+                        return false;
+
+        return true;
+}
+
+static bool tar_take_letter(struct tar_options address_to options, p8 letter,
+                            string_address address_to arguments,
+                            positive count, positive address_to at)
+{
+        if (letter == 'x' || letter == 't' || letter == 'c')
         {
-        case 'x': case 't': case 'c': options->mode = letter; break;
-        case 'f': options->archive = value; break;
-        case 'C': options->directory = value; break;
-        case 'v': options->verbose = true; break;
-        case 'P': options->absolute = true; break;
-        case 'p': options->permissions = 1; break;
-        case 'N': options->permissions = -1; break;
-        case 'z': options->pack = TAR_PACK_GZIP; break;
-        case 'J': options->pack = TAR_PACK_XZ; break;
-        case 'Y': options->pack = TAR_PACK_ZSTD; break;
-        case 'a': options->pack = TAR_PACK_AUTO; break;
-        case 'j': tar_refuse("bzip2 is not this tar"); return false;
-        case 'Z': tar_refuse("compress is not this tar"); return false;
-        case 'I': tar_refuse("use-compress-program is not this tar"); return false;
-        case 'S':
+                options->mode = letter;
+                return true;
+        }
+
+        if (letter == 'v')
+        {
+                options->verbose = true;
+                return true;
+        }
+
+        if (letter == 'P')
+        {
+                options->absolute = true;
+                return true;
+        }
+
+        if (letter == 'p')
+        {
+                options->permissions = 1;
+                return true;
+        }
+
+        if (letter == 'm')
+        {
+                options->touch = true;
+                return true;
+        }
+
+        if (letter == 'o')
+        {
+                options->owner = -1;
+                return true;
+        }
+
+        if (letter == 'z')
+        {
+                options->pack = TAR_PACK_GZIP;
+                return true;
+        }
+
+        if (letter == 'J')
+        {
+                options->pack = TAR_PACK_XZ;
+                return true;
+        }
+
+        if (letter == 'a')
+        {
+                options->pack = TAR_PACK_AUTO;
+                return true;
+        }
+
+        if (letter == 'j' || letter == 'Z')
+        {
+                tar_refuse(letter == 'j'
+                               ? "bzip2 is not this tar"
+                               : "compress is not this tar");
+                return false;
+        }
+
+        if (letter == 'f' || letter == 'C')
+        {
+                if (address_to at >= count)
+                {
+                        tar_refuse(letter == 'f' ? "option requires an argument -- 'f'"
+                                                 : "option requires an argument -- 'C'");
+                        return false;
+                }
+
+                if (letter == 'f')
+                        options->archive = arguments[address_to at];
+                else
+                        options->directory = arguments[address_to at];
+
+                address_to at += 1;
+                return true;
+        }
+
+        p8 shown[2];
+
+        shown[0] = letter;
+        shown[1] = end;
+        string_format(log_error, "tar: invalid option -- '%s'\n", shown);
+        tar_status = 2;
+        return false;
+}
+
+static bool tar_take_long(struct tar_options address_to options,
+                          string_address word, string_address address_to arguments,
+                          positive count, positive address_to at)
+{
+        string_address equal = string_first_of(word, '=');
+        string_address name = word + 2;
+        string_address value = equal ? equal + 1 : null;
+        positive name_length = equal ? (positive)(equal - name)
+                                     : string_length(name);
+
+        if (name_length == 4 && !memory_compare(name, "file", 4))
+        {
+                if (!value)
+                {
+                        if (address_to at >= count)
+                                return tar_refuse("option '--file' requires an argument"),
+                                       false;
+
+                        value = arguments[address_to at];
+                        address_to at += 1;
+                }
+
+                options->archive = value;
+                return true;
+        }
+
+        if (name_length == 9 && !memory_compare(name, "directory", 9))
+        {
+                if (!value)
+                {
+                        if (address_to at >= count)
+                                return tar_refuse("option '--directory' requires an argument"),
+                                       false;
+
+                        value = arguments[address_to at];
+                        address_to at += 1;
+                }
+
+                options->directory = value;
+                return true;
+        }
+
+        if (name_length == 16 && !memory_compare(name, "strip-components", 16))
+        {
+                positive used;
+
+                if (!value)
+                {
+                        if (address_to at >= count)
+                                return tar_refuse("option '--strip-components' requires an argument"),
+                                       false;
+
+                        value = arguments[address_to at];
+                        address_to at += 1;
+                }
+
                 options->strip = string_digits_max(value, positive_max,
                                                    address_of used);
                 if (!used || value[used])
                         return tar_refuse("invalid number of components"), false;
-                break;
-        case 'h': case 'V':
-                string_format(log, letter == 'h'
-                    ? "Usage: tar [-ctxzJa] [-f ARCHIVE] [-C DIR] [-p] "
-                      "[--gzip] [--xz] [--zstd] [--strip-components N] "
-                      "[FILE...]\n"
-                    : "tar from dawning-kit\n");
-                log_flush();
-                options->mode = 'h';
+
+                return true;
+        }
+
+        if (name_length == 7 && !memory_compare(name, "verbose", 7))
+        {
+                options->verbose = true;
+                return true;
+        }
+
+        if (name_length == 14 && !memory_compare(name, "absolute-names", 14))
+        {
+                options->absolute = true;
+                return true;
+        }
+
+        if ((name_length == 20 &&
+             !memory_compare(name, "preserve-permissions", 20)) ||
+            (name_length == 16 &&
+             !memory_compare(name, "same-permissions", 16)))
+        {
+                options->permissions = 1;
+                return true;
+        }
+
+        if (name_length == 19 &&
+            !memory_compare(name, "no-same-permissions", 19))
+        {
+                options->permissions = -1;
+                return true;
+        }
+
+        if (name_length == 5 && !memory_compare(name, "touch", 5))
+        {
+                options->touch = true;
+                return true;
+        }
+
+        if (name_length == 10 && !memory_compare(name, "same-owner", 10))
+        {
+                options->owner = 1;
+                return true;
+        }
+
+        if (name_length == 13 && !memory_compare(name, "no-same-owner", 13))
+        {
+                options->owner = -1;
+                return true;
+        }
+
+        /* Owners are only ever restored by number. */
+        if (name_length == 13 && !memory_compare(name, "numeric-owner", 13))
+                return true;
+
+        if ((name_length == 4 && !memory_compare(name, "gzip", 4)) ||
+            (name_length == 6 && !memory_compare(name, "gunzip", 6)))
+        {
+                options->pack = TAR_PACK_GZIP;
+                return true;
+        }
+
+        if (name_length == 2 && !memory_compare(name, "xz", 2))
+        {
+                options->pack = TAR_PACK_XZ;
+                return true;
+        }
+
+        if (name_length == 4 && !memory_compare(name, "zstd", 4))
+        {
+                options->pack = TAR_PACK_ZSTD;
+                return true;
+        }
+
+        if (name_length == 13 && !memory_compare(name, "auto-compress", 13))
+        {
+                options->pack = TAR_PACK_AUTO;
+                return true;
+        }
+
+        if ((name_length == 5 && !memory_compare(name, "bzip2", 5)) ||
+            (name_length == 8 && !memory_compare(name, "compress", 8)) ||
+            (name_length == 20 &&
+             !memory_compare(name, "use-compress-program", 20)))
+        {
+                tar_refuse(name_length == 5 ? "bzip2 is not this tar"
+                                            : name_length == 8
+                                                  ? "compress is not this tar"
+                                                  : "use-compress-program is not this tar");
                 return false;
         }
-        return true;
+
+        if (name_length == 7 && !memory_compare(name, "extract", 7))
+        {
+                options->mode = TAR_EXTRACT;
+                return true;
+        }
+
+        if (name_length == 4 && !memory_compare(name, "list", 4))
+        {
+                options->mode = TAR_LIST;
+                return true;
+        }
+
+        if (name_length == 6 && !memory_compare(name, "create", 6))
+        {
+                options->mode = TAR_CREATE;
+                return true;
+        }
+
+        if ((name_length == 4 && !memory_compare(name, "help", 4)) ||
+            (name_length == 7 && !memory_compare(name, "version", 7)))
+        {
+                if (name_length == 4)
+                        string_format(log, "Usage: tar [-ctxzJa] [-f ARCHIVE] [-C DIR] [-p] "
+                                           "[--gzip] [--xz] [--zstd] [--strip-components N] "
+                                           "[FILE...]\n");
+                else
+                        string_format(log, "tar from dawning-kit\n");
+
+                log_flush();
+                options->mode = 'h';
+                return true;
+        }
+
+        string_format(log_error, "tar: unrecognized option '%s'\n", word);
+        tar_status = 2;
+        return false;
 }
 
 static bool tar_parse(struct tar_options address_to options)
 {
-        file_taking taking = {.program = "tar", .options = tar_option_table,
-                              .seen = tar_option_seen};
         string_address address_to arguments = program_argument_list();
         positive count = (positive)program_argument_count();
-        string_address cluster = count > 1 ? arguments[1] : null;
         positive at = 1;
 
         memory_fill(options, 0, sizeof(*options));
+        options->mode = 0;
 
-        /* The old style: a first word of bare letters, whose values follow
-           it in the order the letters name them. */
-        if (cluster && *cluster && !string_first_of("-", *cluster))
+        if (count > 1 && tar_is_cluster(arguments[1]))
         {
-                string_address letter = cluster;
+                string_address cluster = arguments[1];
 
-                while (string_get(letter) &&
-                       string_first_of("xtcfvCPpzjJZa", string_get(letter)))
-                        letter++;
-                if (!string_get(letter))
-                        for (at = 2; *cluster; cluster++)
-                        {
-                                p8 named[3] = {'-', *cluster, end};
-                                bool valued = argument_option_mode(tar_option_table,
-                                                                   *cluster) &
-                                              ARGUMENT_REQUIRED;
-
-                                if (valued && at >= count)
-                                        return file_option_needs(address_of taking, named);
-                                if (!tar_option_seen(*cluster, valued ? arguments[at++] : null))
-                                        return false;
-                        }
+                at = 2;
+                for (; *cluster; cluster++)
+                        if (!tar_take_letter(options, *cluster, arguments,
+                                             count, address_of at))
+                                return false;
         }
 
-        if (!file_take_from(address_of taking, at))
-                return false;
+        while (at < count)
+        {
+                string_address word = arguments[at];
 
-        options->first = taking.first;
+                if (string_equals(word, "--"))
+                {
+                        at++;
+                        break;
+                }
+
+                if (string_length(word) > 2 && word[0] == '-' && word[1] == '-')
+                {
+                        at++;
+                        if (!tar_take_long(options, word, arguments, count,
+                                           address_of at))
+                                return false;
+
+                        if (options->mode == 'h')
+                                return true;
+
+                        continue;
+                }
+
+                if (word[0] == '-' && word[1])
+                {
+                        string_address letters = word + 1;
+
+                        at++;
+                        for (; *letters; letters++)
+                        {
+                                if ((*letters == 'f' || *letters == 'C') &&
+                                    letters[1])
+                                {
+                                        if (*letters == 'f')
+                                                options->archive = letters + 1;
+                                        else
+                                                options->directory = letters + 1;
+
+                                        break;
+                                }
+
+                                if (!tar_take_letter(options, *letters,
+                                                     arguments, count,
+                                                     address_of at))
+                                        return false;
+                        }
+
+                        continue;
+                }
+
+                break;
+        }
+
+        options->first = at;
         if (!options->mode)
         {
                 tar_refuse("you must specify one of the '-c', '-t', or '-x' options");
@@ -2628,17 +3634,19 @@ static bool tar_parse(struct tar_options address_to options)
 
 static b32 file_tar(void)
 {
-        tar_status = 0;
-        if (!tar_parse(address_of tar_parsed))
-                return tar_parsed.mode == 'h' ? 0 : tar_status ? tar_status : 2;
+        struct tar_options options;
 
-        if (tar_parsed.mode == 'h')
+        tar_status = 0;
+        if (!tar_parse(address_of options))
+                return tar_status ? tar_status : 2;
+
+        if (options.mode == 'h')
                 return 0;
 
-        if (tar_parsed.mode == TAR_CREATE)
-                return tar_write_archive(address_of tar_parsed);
+        if (options.mode == TAR_CREATE)
+                return tar_write_archive(address_of options);
 
-        return tar_read_archive(address_of tar_parsed);
+        return tar_read_archive(address_of options);
 }
 
 #endif /* TAR_PARSE_ONLY */

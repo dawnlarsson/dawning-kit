@@ -1650,8 +1650,14 @@ static fn crypto_point_double_formula(crypto_point address_to r,
         crypto_forget(z3, sizeof z3);
 }
 
+/* Public points only: infinity returns at once. */
 static fn crypto_point_double(crypto_point address_to r, crypto_point address_to p)
 {
+        if (crypto_fe_is_zero(p->z, p->n))
+        {
+                *r = *p;
+                return;
+        }
         crypto_point_double_formula(r, p);
 }
 
@@ -1720,11 +1726,11 @@ static fn crypto_point_add(crypto_point address_to r, crypto_point address_to p,
 }
 
 /* The ECDH multiplier cannot use the public-signature helpers above: their
-   exceptional-point branches and bit-conditional addition reveal a private
-   scalar to a branch or cache observer.  These helpers keep the ladder's
-   adjacent-point invariant and select its infinity cases with masks.  Field
-   reduction is likewise branchless, so each scalar bit follows the same
-   operations and addresses. */
+   exceptional-point branches and digit-conditional addition reveal a private
+   scalar to a branch or cache observer.  These helpers select infinity cases
+   with masks, and crypto_point_scalar_private says why no other exception
+   reaches them.  Field reduction is likewise branchless, so every scalar
+   follows the same operations and addresses. */
 static fn crypto_point_select(crypto_point address_to d,
                               const crypto_point address_to a,
                               const crypto_point address_to b, p64 choose_b)
@@ -1739,27 +1745,6 @@ static fn crypto_point_select(crypto_point address_to d,
         }
         d->n = a->n;
         d->field = a->field;
-        crypto_forget(address_of mask, sizeof mask);
-}
-
-static fn crypto_point_cswap(crypto_point address_to a,
-                             crypto_point address_to b, p64 swap)
-{
-        p64 mask = 0 - swap;
-
-        for (positive i = 0; i < CRYPTO_FE_MAX; i++)
-        {
-                p64 x = mask & (a->x[i] ^ b->x[i]);
-                p64 y = mask & (a->y[i] ^ b->y[i]);
-                p64 z = mask & (a->z[i] ^ b->z[i]);
-
-                a->x[i] ^= x;
-                b->x[i] ^= x;
-                a->y[i] ^= y;
-                b->y[i] ^= y;
-                a->z[i] ^= z;
-                b->z[i] ^= z;
-        }
         crypto_forget(address_of mask, sizeof mask);
 }
 
@@ -1814,10 +1799,10 @@ static fn crypto_point_add_private(crypto_point address_to r,
         crypto_fe_mul(tmp, p->z, q->z, f);
         crypto_fe_mul(sum.z, tmp, h, f);
 
-        /* Ladder operands differ by the fixed non-infinite input point.  The
-           generic formula therefore cannot see the equal-point exception;
-           opposite points already produce z=0.  Only the two fixed startup
-           infinity cases need masked selection. */
+        /* The window multiplier never adds equal points (see
+           crypto_point_scalar_private), and opposite points already produce
+           z=0.  Only the infinity cases need masked selection.  r may be
+           p: nothing is written through it before the last line. */
         p_infinity = crypto_fe_zero_bit(p->z, n);
         q_infinity = crypto_fe_zero_bit(q->z, n);
         crypto_point_select(address_of sum, address_of sum, p, q_infinity);
@@ -1851,74 +1836,193 @@ typedef struct
         positive conditional_selects;
 } crypto_scalar_schedule;
 
+/* k*P for a private k below the group order n, by 4-bit fixed windows.
+   The table 0P..15P comes from the public P alone; each window then doubles
+   four times and adds the entry its digit names, found by a masked scan of
+   all sixteen, so the operations, their order and every address are the
+   same for every k.  crypto_point_add_private selects its infinity cases
+   with masks, and no other exception can arise: before a window's addition
+   the accumulator is K*P, K being the integer value of k's higher windows
+   times 16, and the entry is d*P with d below 16.  K = d (mod n) with
+   K <= k < n holds only for K = d = 0, both infinity, and K = -d (mod n)
+   would need K + d = n, above k.  The table's own additions are (j-1)P + P
+   for j from 3, never equal points. */
 static fn crypto_point_scalar_private(
     crypto_point address_to r, const crypto_point address_to p,
     const p64 address_to k, crypto_scalar_schedule address_to schedule)
 {
-        crypto_point left;
-        crypto_point right = *p;
-        crypto_point sum;
-        crypto_point doubled;
+        crypto_point table[16];
+        crypto_point accumulator;
+        crypto_point chosen;
         positive bits = p->n * 64;
-        p64 bit = 0;
+        p64 digit = 0;
 
-        crypto_point_zero(address_of left, p->field);
         if (schedule)
                 memory_fill(schedule, 0, sizeof(*schedule));
 
-        for (positive at = bits; at; at--)
+        crypto_point_zero(address_of table[0], p->field);
+        table[1] = *p;
+        crypto_point_double_private(address_of table[2], p);
+        for (positive j = 3; j < 16; j++)
+                crypto_point_add_private(address_of table[j],
+                                         address_of table[j - 1], p);
+        if (schedule)
         {
-                bit = (k[(at - 1) / 64] >> ((at - 1) % 64)) & 1;
-                crypto_point_cswap(address_of left, address_of right, bit);
-                crypto_point_add_private(address_of sum, address_of left,
-                                         address_of right);
-                crypto_point_double_private(address_of doubled,
-                                             address_of left);
-                left = doubled;
-                right = sum;
-                crypto_point_cswap(address_of left, address_of right, bit);
+                schedule->point_doubles = 1;
+                schedule->point_adds = 13;
+                schedule->conditional_selects = 13 * 2;
+        }
+
+        crypto_point_zero(address_of accumulator, p->field);
+        for (positive at = bits; at;)
+        {
+                at -= 4;
+                if (at != bits - 4)
+                        for (positive i = 0; i < 4; i++)
+                                crypto_point_double_private(
+                                    address_of accumulator,
+                                    address_of accumulator);
+                digit = (k[at / 64] >> (at % 64)) & 15;
+                chosen = table[0];
+                for (p64 j = 1; j < 16; j++)
+                        crypto_point_select(address_of chosen,
+                                            address_of chosen,
+                                            address_of table[j],
+                                            ((j ^ digit) - 1) >> 63);
+                crypto_point_add_private(address_of accumulator,
+                                         address_of accumulator,
+                                         address_of chosen);
 
                 if (schedule)
                 {
-                        schedule->bits++;
+                        schedule->bits += 4;
+                        if (at != bits - 4)
+                                schedule->point_doubles += 4;
                         schedule->point_adds++;
-                        schedule->point_doubles++;
-                        schedule->conditional_swaps += 2;
-                        schedule->conditional_selects += 2;
+                        schedule->conditional_selects += 15 + 2;
                 }
         }
 
-        *r = left;
-        crypto_forget(address_of left, sizeof left);
-        crypto_forget(address_of right, sizeof right);
-        crypto_forget(address_of sum, sizeof sum);
-        crypto_forget(address_of doubled, sizeof doubled);
-        crypto_forget(address_of bit, sizeof bit);
+        *r = accumulator;
+        crypto_forget(table, sizeof table);
+        crypto_forget(address_of accumulator, sizeof accumulator);
+        crypto_forget(address_of chosen, sizeof chosen);
+        crypto_forget(address_of digit, sizeof digit);
 }
 
-static fn crypto_point_scalar(crypto_point address_to r, crypto_point address_to p,
-                              p64 address_to k)
+/* Width-5 non-adjacent form of a public scalar below 2^(64 limbs): each
+   digit is zero or odd in [-15, 15], a nonzero digit is followed by at least
+   four zeros, and the digits weighted by 2^i sum to k.  Returns how many
+   digits were written, at most 64 limbs + 1. */
+static positive crypto_wnaf(b8 address_to digits, const p64 address_to k,
+                            positive limbs)
 {
-        crypto_point n;
-        positive bits = p->n * 64;
-        positive i;
+        p64 v[CRYPTO_FE_MAX + 1];
+        positive count = 0;
 
-        crypto_point_zero(r, p->field);
-        n = *p;
-
-        for (i = 0; i < bits; i++)
+        memory_copy(v, k, limbs * 8);
+        v[limbs] = 0;
+        while (!crypto_fe_is_zero(v, limbs + 1))
         {
-                if ((k[i / 64] >> (i % 64)) & 1)
+                b8 digit = 0;
+
+                if (v[0] & 1)
                 {
-                        crypto_point t;
-                        crypto_point_add(address_of t, r, address_of n);
-                        *r = t;
+                        p64 low = v[0] & 31;
+
+                        if (low > 15)
+                        {
+                                p64 carry = 32 - low;
+
+                                digit = (b8)((bipolar)low - 32);
+                                for (positive i = 0; carry && i <= limbs; i++)
+                                {
+                                        v[i] += carry;
+                                        carry = v[i] < carry;
+                                }
+                        }
+                        else
+                        {
+                                digit = (b8)low;
+                                v[0] -= low;
+                        }
                 }
-                {
-                        crypto_point t;
-                        crypto_point_double(address_of t, address_of n);
-                        n = t;
-                }
+                digits[count++] = digit;
+                for (positive i = 0; i < limbs; i++)
+                        v[i] = (v[i] >> 1) | (v[i + 1] << 63);
+                v[limbs] >>= 1;
+        }
+
+        return count;
+}
+
+/* table[j] = (2j + 1) P for j below 8. */
+static fn crypto_point_odd_multiples(crypto_point address_to table,
+                                     crypto_point address_to p)
+{
+        crypto_point twice;
+
+        table[0] = *p;
+        crypto_point_double(address_of twice, p);
+        for (positive j = 1; j < 8; j++)
+                crypto_point_add(address_of table[j], address_of table[j - 1],
+                                 address_of twice);
+}
+
+static fn crypto_point_add_digit(crypto_point address_to r,
+                                 const crypto_point address_to table, b8 digit)
+{
+        crypto_point entry;
+        crypto_point sum;
+
+        if (digit > 0)
+                entry = table[digit >> 1];
+        else
+        {
+                p64 zero[CRYPTO_FE_MAX];
+
+                memory_fill(zero, 0, sizeof zero);
+                entry = table[(-digit) >> 1];
+                crypto_fe_sub(entry.y, zero, entry.y, entry.field);
+        }
+        crypto_point_add(address_of sum, r, address_of entry);
+        *r = sum;
+}
+
+/* u1 G + u2 Q for public scalars and points (below 2^(64 limbs)), in one
+   chain of doublings: each scalar's width-5 digits add a precomputed odd
+   multiple of its own point or its negation.  About bits doublings and
+   bits/3 additions against bits doublings and bits additions for two
+   separate binary multiplies.  Everything may branch; nothing is secret. */
+static fn crypto_point_double_scalar(crypto_point address_to r,
+                                     crypto_point address_to g,
+                                     const p64 address_to u1,
+                                     crypto_point address_to q,
+                                     const p64 address_to u2)
+{
+        b8 d1[CRYPTO_FE_MAX * 64 + 1];
+        b8 d2[CRYPTO_FE_MAX * 64 + 1];
+        crypto_point tg[8];
+        crypto_point tq[8];
+        crypto_point doubled;
+        positive n1 = crypto_wnaf(d1, u1, g->n);
+        positive n2 = crypto_wnaf(d2, u2, g->n);
+        positive at = n1 > n2 ? n1 : n2;
+
+        crypto_point_zero(r, g->field);
+        if (n1)
+                crypto_point_odd_multiples(tg, g);
+        if (n2)
+                crypto_point_odd_multiples(tq, q);
+        while (at)
+        {
+                at--;
+                crypto_point_double(address_of doubled, r);
+                *r = doubled;
+                if (at < n1 && d1[at])
+                        crypto_point_add_digit(r, tg, d1[at]);
+                if (at < n2 && d2[at])
+                        crypto_point_add_digit(r, tq, d2[at]);
         }
 }
 
@@ -2023,7 +2127,7 @@ static bool crypto_ecdsa_verify(p8 address_to hash, positive hash_length,
         p64 w[CRYPTO_FE_MAX], u1[CRYPTO_FE_MAX], u2[CRYPTO_FE_MAX];
         p64 gx_f[CRYPTO_FE_MAX], gy_f[CRYPTO_FE_MAX], qx_f[CRYPTO_FE_MAX],
             qy_f[CRYPTO_FE_MAX];
-        crypto_point g, q, p1, p2, rpoint;
+        crypto_point g, q, rpoint;
         positive limbs = field->n;
         p8 ehash[48];
 
@@ -2055,9 +2159,8 @@ static bool crypto_ecdsa_verify(p8 address_to hash, positive hash_length,
 
         crypto_point_set_xy(address_of g, gx_f, gy_f, field);
         crypto_point_set_xy(address_of q, qx_f, qy_f, field);
-        crypto_point_scalar(address_of p1, address_of g, u1);
-        crypto_point_scalar(address_of p2, address_of q, u2);
-        crypto_point_add(address_of rpoint, address_of p1, address_of p2);
+        crypto_point_double_scalar(address_of rpoint, address_of g, u1,
+                                   address_of q, u2);
         if (crypto_fe_is_zero(rpoint.z, limbs))
                 return false;
         crypto_point_affine(address_of rpoint);
