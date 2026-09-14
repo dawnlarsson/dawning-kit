@@ -764,6 +764,7 @@ static positive shell_syntax_generation;
 #define SHELL_PARSER_SOURCE_MEMORY 0
 #define SHELL_PARSER_SOURCE_SEALED_FILE 1
 #define SHELL_PARSER_SOURCE_REGULAR_FILE 2
+#define SHELL_PARSER_SOURCE_SOCKET 3
 #define SHELL_PARSER_SOURCE_MUTABLE 4
 #define SHELL_PARSER_SOURCE_AMBIGUOUS 5
 
@@ -967,8 +968,10 @@ static fn shell_parser_source_refresh()
                         shell_parser_source_kind =
                             SHELL_PARSER_SOURCE_REGULAR_FILE;
         }
+        else if ((facts.mode & MODE_FORMAT) == MODE_SOCKET)
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_SOCKET;
         else
-                /* Sockets, terminals, block devices and every other source
+                /* Terminals, block devices and every other concrete source
                    remain externally mutable while the shell streams later
                    parser bytes from them. A PTY's influencing master can be
                    held by an outside same-UID process, beyond this child's
