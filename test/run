@@ -10124,7 +10124,7 @@ counted
 #       absolute number that is not. A Linux host target runs directly.
 #
 
-benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator lock pool reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup shell tools awk find boot-time engines compression compression-floor"
+benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator lock pool tree reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup shell tools awk find boot-time engines compression compression-floor"
 
 #       One benchmark's section and one line about it. A name with no section
 #       is one of the drivers below, which time a whole binary against the
@@ -10211,6 +10211,8 @@ bench_about()
                  bench_line="random()'s draw against call/control and additive-ring floors" ;;
         allocator) bench_section=BENCH_allocator
                  bench_line="the malloc/free class fast path against its call and list floors" ;;
+        tree)    bench_section=BENCH_tree
+                 bench_line="parallel_tree as find and as du over a directory argument, at widths 1, 2, 4 ... the affinity width" ;;
         pool)    bench_section=BENCH_pool
                  bench_line="parallel_for over 256 MiB of hashing at widths 1, 2, 4 ... up to the affinity width" ;;
         lock)    bench_section=BENCH_lock

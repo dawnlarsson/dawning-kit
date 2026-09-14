@@ -4050,11 +4050,13 @@ pub address_any allocator_take_slow(positive bytes)
         return allocator_take(bytes, null);
 }
 
-//      thread_join's call, made after the kernel has cleared the thread's id
-//      and before its block is unmapped: the thread is gone, so reading its
-//      shelves races with nothing. Each non-empty shelf goes to the depot
-//      whole; a full depot slot has the chain spliced in front of it.
-pub fn allocator_thread_retire(thread address_to it)
+//      Every non-empty shelf of a thread goes to the depot whole; a full depot
+//      slot has the chain spliced in front of it. thread_join's call, made
+//      after the kernel has cleared the thread's id and before its block is
+//      unmapped, so reading its shelves races with nothing; and a consumer's
+//      own call, so blocks other threads allocated and it freed go back to
+//      where those threads look when their shelves run dry.
+static fn allocator_shelves_hand(thread address_to it)
 {
         b32 class;
 
@@ -4086,6 +4088,16 @@ pub fn allocator_thread_retire(thread address_to it)
         }
 
         lock_release(address_of allocator_lock);
+}
+
+pub fn allocator_thread_retire(thread address_to it)
+{
+        allocator_shelves_hand(it);
+}
+
+pub fn allocator_shelves_share(void)
+{
+        allocator_shelves_hand(thread_self());
 }
 
 /*
@@ -4577,6 +4589,9 @@ typedef struct
         p8 address_to bytes;
         positive room;
         positive used;
+        //      Grown with the allocator rather than mapped: a tree node's
+        //      output, of which there are many and most are small.
+        positive heap;
 } parallel_output;
 
 typedef fn(address_to parallel_emit_job)(address_any context, positive index,
@@ -4607,6 +4622,8 @@ typedef struct
         b32 waiting;
         b32 claimers_waiting;
         b32 spare;
+        //      A run that is not an index range brings its own participation.
+        fn(address_to work)(address_any run);
 } parallel_run;
 
 static struct
@@ -4704,10 +4721,30 @@ pub p8 address_to parallel_reserve(parallel_output address_to output,
                 return null;
         }
 
-        if (output->room - output->used < length &&
-            !memory_reserve((address_any address_to)address_of output->bytes,
-                            address_of output->room, output->used,
-                            output->used + length, 1, PARALLEL_OUTPUT_FIRST))
+        if (output->room - output->used < length && output->heap)
+        {
+                positive want = output->used + length;
+                positive room = output->room ? output->room * 2 : 256;
+                p8 address_to grown;
+
+                if (room < want)
+                        room = want;
+
+                grown = memory_resize(output->bytes, room);
+
+                if (!grown)
+                {
+                        parallel_stop();
+                        return null;
+                }
+
+                output->bytes = grown;
+                output->room = room;
+        }
+        else if (output->room - output->used < length &&
+                 !memory_reserve((address_any address_to)address_of output->bytes,
+                                 address_of output->room, output->used,
+                                 output->used + length, 1, PARALLEL_OUTPUT_FIRST))
         {
                 parallel_stop();
                 return null;
@@ -4842,7 +4879,12 @@ static fn parallel_worker(address_any argument)
                 if (run)
                 {
                         self->run = run;
-                        parallel_participate(run);
+
+                        if (run->work)
+                                run->work(run);
+                        else
+                                parallel_participate(run);
+
                         self->run = null;
                 }
 
@@ -5123,6 +5165,1026 @@ pub bool parallel_beside_wait(void)
         parallel_beside_state.handle = null;
 
         return !parallel_beside_state.run.stop;
+}
+
+/*
+        THE TREE
+
+        parallel_tree walks a directory tree on the pool and hands the bytes
+        its jobs write to the sink on the calling thread in preorder, whatever
+        order the jobs ran in. A node is one directory. enter reads it and
+        calls parallel_child for each subdirectory to walk, and a child's
+        whole subtree lands at the byte position of that call, so the order
+        of the output is the structure the jobs wrote and nothing else. leave,
+        when there is one, runs once every child has been left and its bytes
+        follow the last child.
+
+        RECORDS
+
+        Each node is a record: the caller's pointer, the name it was reached
+        by, its place among its siblings, the bytes enter and leave wrote, and
+        its handle. A record exists from parallel_child until the sink has
+        been told the node finished, and the calling thread frees it there, so
+        a record another thread might still read is never freed: a job
+        touches a node only before marking it complete, and the emitter frees
+        only after the mark. Freed records and outputs are handed back to the
+        allocator depot every PARALLEL_TREE_SHARE_EVERY frees, or the calling
+        thread's shelves would grow by everything the workers allocated.
+
+        SCHEDULING
+
+        Pending nodes sit on one list, and a node's children go on its front
+        in the order enter named them, so the next thread to claim takes the
+        first child: the walk runs close to the order it is emitted in. The
+        emitter keeps a stack of the nodes it is inside. When the node it
+        needs next has not run it runs that node itself; when that node is
+        running elsewhere it runs any pending node it has room for, and
+        otherwise sleeps on the progress word. Workers claim only while the
+        entered-but-unemitted nodes and their bytes are under the held limits,
+        and sleep on the room word past them; the emitter is never held back,
+        so the limits bound memory without being able to stall the walk.
+
+        HANDLES
+
+        The pool opens every directory but the root, which is the caller's.
+        A directory's handle is needed while it has children not yet opened
+        through it and while its leave has not run. At most cap of them are
+        open, a share of RLIMIT_NOFILE. Past the cap the least recently used
+        handle that nobody is using is closed, with its device and inode
+        written down, and it is opened again by name through its parent when
+        a child, a leaf or its leave needs it -- through the parent's own reopen,
+        recursively, if that was closed too -- and refused as ESTALE if it
+        is no longer the same directory. A job holds at most its own handle
+        and pins at most two others, so with no more than (cap - 1) / 3
+        threads in a run there is always an idle handle to close and nothing
+        ever waits for one.
+
+        LEAVES
+
+        parallel_leaf schedules a job that opens nothing: a file's work in a
+        large directory, say. Its bytes go where it was called, like a child's
+        subtree, and its job is handed the directory that called it, which
+        stays pinned open for exactly as long as the leaf runs. A leaf has no
+        children and no leave.
+*/
+#define PARALLEL_TREE_INLINE_NODES 32
+#define PARALLEL_TREE_HELD_NODES 4096
+#define PARALLEL_TREE_HELD_BYTES (64ull << 20)
+#define PARALLEL_TREE_SHARE_EVERY 1024
+#define PARALLEL_TREE_MAGIC 0x74726565u
+//      ESTALE, which standard.c names after this file.
+#define PARALLEL_TREE_STALE 116
+
+enum
+{
+        PARALLEL_TREE_PENDING = 0,
+        PARALLEL_TREE_ENTERING = 1,
+        PARALLEL_TREE_ENTERED = 2,
+        PARALLEL_TREE_COMPLETE = 3,
+};
+
+typedef fn(address_to parallel_node_job)(address_any context, address_any node,
+                                         bipolar directory,
+                                         parallel_output address_to output);
+typedef bool(address_to parallel_node_sink)(address_any context, address_any node,
+                                            address_any data, positive length,
+                                            bool finished);
+
+typedef struct parallel_tree_node
+{
+        parallel_output output;
+        parallel_output tail;
+        p32 magic;
+        b32 state;
+        address_any user;
+        struct parallel_tree_node address_to parent;
+        struct parallel_tree_node address_to first_child;
+        struct parallel_tree_node address_to last_child;
+        struct parallel_tree_node address_to sibling;
+        positive offset;
+        struct parallel_tree_node address_to pending_previous;
+        struct parallel_tree_node address_to pending_next;
+        struct parallel_tree_node address_to idle_previous;
+        struct parallel_tree_node address_to idle_next;
+        parallel_node_job job;
+        bipolar handle;
+        bipolar open_error;
+        positive unstarted;
+        positive unfinished;
+        positive using;
+        positive device;
+        positive inode;
+        b8 running;
+        b8 idle;
+        b8 left;
+        b8 held;
+        b8 leaf;
+        b8 spare[3];
+        p32 name_length;
+        p8 name[];
+} parallel_tree_node;
+
+typedef struct
+{
+        parallel_run base;
+        parallel_node_job enter;
+        parallel_node_job leave;
+        parallel_node_sink sink;
+        address_any context;
+        bipolar root_directory;
+        positive open_flags;
+        lock guard;
+        parallel_tree_node address_to pending;
+        parallel_tree_node address_to idle_newest;
+        parallel_tree_node address_to idle_oldest;
+        positive pending_count;
+        positive open_count;
+        positive open_most;
+        positive cap;
+        positive evictions;
+        positive reopens;
+        positive held_nodes;
+        positive held_bytes;
+        positive held_nodes_limit;
+        positive entered;
+        b32 seats;
+        b32 complete;
+        b32 progress_waiters;
+        b32 room_waiters;
+} parallel_tree_run;
+
+typedef struct
+{
+        parallel_tree_node address_to node;
+        parallel_tree_node address_to cursor;
+        positive offset;
+        positive stage;
+} parallel_tree_frame;
+
+//      What the last run on this process saw, for the checks.
+static struct
+{
+        positive cap;
+        positive open_most;
+        positive evictions;
+        positive reopens;
+        positive threads;
+} parallel_tree_last;
+
+static fn parallel_tree_wake_progress(parallel_tree_run address_to run)
+{
+        atomic_inc(address_of run->base.finished_word);
+
+        if (atomic_load(address_of run->progress_waiters))
+                thread_wake(address_of run->base.finished_word, 1 << 30);
+}
+
+static fn parallel_tree_wake_room(parallel_tree_run address_to run)
+{
+        atomic_inc(address_of run->base.limit_word);
+
+        if (atomic_load(address_of run->room_waiters))
+                thread_wake(address_of run->base.limit_word, 1 << 30);
+}
+
+static bool parallel_tree_room(parallel_tree_run address_to run)
+{
+        return atomic_load(address_of run->held_nodes) < run->held_nodes_limit &&
+               atomic_load(address_of run->held_bytes) < PARALLEL_TREE_HELD_BYTES;
+}
+
+//      -- handles, all under run->guard --------------------------------------
+
+static fn parallel_tree_idle_remove(parallel_tree_run address_to run,
+                                    parallel_tree_node address_to node)
+{
+        if (!node->idle)
+                return;
+
+        if (node->idle_previous)
+                node->idle_previous->idle_next = node->idle_next;
+        else
+                run->idle_newest = node->idle_next;
+
+        if (node->idle_next)
+                node->idle_next->idle_previous = node->idle_previous;
+        else
+                run->idle_oldest = node->idle_previous;
+
+        node->idle_previous = null;
+        node->idle_next = null;
+        node->idle = 0;
+}
+
+static fn parallel_tree_idle_push(parallel_tree_run address_to run,
+                                  parallel_tree_node address_to node)
+{
+        parallel_tree_idle_remove(run, node);
+
+        node->idle_next = run->idle_newest;
+
+        if (run->idle_newest)
+                run->idle_newest->idle_previous = node;
+        else
+                run->idle_oldest = node;
+
+        run->idle_newest = node;
+        node->idle = 1;
+}
+
+static fn parallel_tree_close(parallel_tree_run address_to run,
+                              parallel_tree_node address_to node)
+{
+        parallel_tree_idle_remove(run, node);
+        system_close(node->handle);
+        node->handle = -1;
+        run->open_count--;
+}
+
+//      A handle nobody is using is closed when nothing will need it again,
+//      and otherwise becomes the newest idle one.
+static fn parallel_tree_settle(parallel_tree_run address_to run,
+                               parallel_tree_node address_to node)
+{
+        if (!node->parent || node->handle < 0 || node->running || node->using)
+                return;
+
+        if (!atomic_load(address_of run->base.stop) &&
+            (node->unstarted || (run->leave && !node->left)))
+                parallel_tree_idle_push(run, node);
+        else
+                parallel_tree_close(run, node);
+}
+
+static fn parallel_tree_facts(bipolar handle, positive address_to device,
+                              positive address_to inode)
+{
+        positive facts[24] = {0};
+
+        system_call_2(syscall(fstat), (positive)handle, (positive)facts);
+        address_to device = facts[0];
+        address_to inode = facts[1];
+}
+
+//      Room for one more handle: a free place under the cap, or the oldest
+//      idle handle closed to make one.
+static fn parallel_tree_slot(parallel_tree_run address_to run)
+{
+        if (run->open_count >= run->cap && run->idle_oldest)
+        {
+                parallel_tree_node address_to victim = run->idle_oldest;
+
+                parallel_tree_facts(victim->handle, address_of victim->device,
+                                    address_of victim->inode);
+                parallel_tree_close(run, victim);
+                run->evictions++;
+        }
+
+        run->open_count++;
+
+        if (run->open_count > run->open_most)
+                run->open_most = run->open_count;
+}
+
+static fn parallel_tree_unpin(parallel_tree_run address_to run,
+                              parallel_tree_node address_to node)
+{
+        if (!node->parent)
+                return;
+
+        node->using--;
+        parallel_tree_settle(run, node);
+}
+
+//      A node's own handle, opened again if it was closed to make room, and
+//      marked in use until parallel_tree_unpin.
+static bipolar parallel_tree_pin(parallel_tree_run address_to run,
+                                 parallel_tree_node address_to node)
+{
+        bipolar through;
+        bipolar handle;
+
+        if (!node->parent)
+                return run->root_directory;
+
+        if (node->handle >= 0)
+        {
+                node->using++;
+                parallel_tree_idle_remove(run, node);
+                return node->handle;
+        }
+
+        if (node->open_error)
+                return node->open_error;
+
+        through = parallel_tree_pin(run, node->parent);
+
+        if (through < 0)
+                return through;
+
+        parallel_tree_slot(run);
+        handle = system_open_at(through, (string_address)node->name,
+                                FILE_READ | O_DIRECTORY | O_CLOEXEC | run->open_flags);
+        parallel_tree_unpin(run, node->parent);
+
+        if (handle >= 0)
+        {
+                positive device;
+                positive inode;
+
+                parallel_tree_facts(handle, address_of device, address_of inode);
+
+                if (device != node->device || inode != node->inode)
+                {
+                        system_close(handle);
+                        handle = -PARALLEL_TREE_STALE;
+                }
+        }
+
+        if (handle < 0)
+        {
+                run->open_count--;
+                node->open_error = handle;
+                return handle;
+        }
+
+        run->reopens++;
+        node->handle = handle;
+        node->using++;
+
+        return handle;
+}
+
+//      -- running nodes ------------------------------------------------------
+
+static parallel_tree_node address_to parallel_tree_claim(parallel_tree_run address_to run,
+                                                         parallel_tree_node address_to wanted)
+{
+        parallel_tree_node address_to node;
+
+        lock_take(address_of run->guard);
+
+        node = wanted ? (atomic_load(address_of wanted->state) == PARALLEL_TREE_PENDING
+                                 ? wanted
+                                 : null)
+                      : run->pending;
+
+        if (node)
+        {
+                if (node->pending_previous)
+                        node->pending_previous->pending_next = node->pending_next;
+                else
+                        run->pending = node->pending_next;
+
+                if (node->pending_next)
+                        node->pending_next->pending_previous = node->pending_previous;
+
+                node->pending_previous = null;
+                node->pending_next = null;
+                atomic_sub(address_of run->pending_count, 1);
+                atomic_exchange(address_of node->state, PARALLEL_TREE_ENTERING);
+        }
+
+        lock_release(address_of run->guard);
+
+        return node;
+}
+
+static fn parallel_tree_finish(parallel_tree_run address_to run,
+                               parallel_tree_node address_to node)
+{
+        thread address_to self = thread_self();
+        address_any outer = self->run;
+
+        for (;;)
+        {
+                parallel_tree_node address_to parent = node->parent;
+                bool last;
+
+                if (run->leave && !node->leaf)
+                {
+                        bipolar directory;
+
+                        lock_take(address_of run->guard);
+                        directory = parallel_tree_pin(run, node);
+                        lock_release(address_of run->guard);
+
+                        self->run = address_of run->base;
+
+                        if (!atomic_load(address_of run->base.stop))
+                                run->leave(run->context, node->user, directory,
+                                           address_of node->tail);
+
+                        self->run = outer;
+                        atomic_add(address_of run->held_bytes, node->tail.used);
+
+                        lock_take(address_of run->guard);
+                        node->left = 1;
+
+                        if (directory >= 0)
+                                parallel_tree_unpin(run, node);
+
+                        lock_release(address_of run->guard);
+                }
+
+                last = parent && __atomic_sub_fetch(address_of parent->unfinished, 1,
+                                                    __ATOMIC_SEQ_CST) == 0;
+
+                //      Nothing of the node is read after this: the emitter may
+                //      free it as soon as it sees the mark.
+                atomic_exchange(address_of node->state, PARALLEL_TREE_COMPLETE);
+                parallel_tree_wake_progress(run);
+
+                if (!last)
+                        return;
+
+                node = parent;
+        }
+}
+
+static fn parallel_tree_enter(parallel_tree_run address_to run,
+                              parallel_tree_node address_to node)
+{
+        thread address_to self = thread_self();
+        address_any outer = self->run;
+        parallel_tree_node address_to parent = node->parent;
+        bipolar directory;
+
+        atomic_add(address_of run->held_nodes, 1);
+        node->held = 1;
+
+        if (!parent)
+                directory = run->root_directory;
+        else if (node->leaf)
+        {
+                lock_take(address_of run->guard);
+                directory = parallel_tree_pin(run, parent);
+                parent->unstarted--;
+                node->running = 1;
+                lock_release(address_of run->guard);
+        }
+        else
+        {
+                bipolar through;
+
+                lock_take(address_of run->guard);
+                through = parallel_tree_pin(run, parent);
+
+                if (through >= 0)
+                        parallel_tree_slot(run);
+
+                lock_release(address_of run->guard);
+
+                directory = through >= 0
+                                    ? system_open_at(through, (string_address)node->name,
+                                                     FILE_READ | O_DIRECTORY | O_CLOEXEC |
+                                                             run->open_flags)
+                                    : through;
+
+                lock_take(address_of run->guard);
+                parent->unstarted--;
+
+                if (through >= 0)
+                {
+                        if (directory < 0)
+                                run->open_count--;
+
+                        parent->using--;
+                }
+
+                parallel_tree_settle(run, parent);
+                node->handle = directory >= 0 ? directory : -1;
+                node->open_error = directory < 0 ? directory : 0;
+                node->running = 1;
+                lock_release(address_of run->guard);
+        }
+
+        self->run = address_of run->base;
+
+        if (!atomic_load(address_of run->base.stop))
+                (node->leaf ? node->job : run->enter)(run->context, node->user, directory,
+                                                      address_of node->output);
+
+        self->run = outer;
+
+        atomic_add(address_of run->held_bytes, node->output.used);
+        atomic_add(address_of run->entered, 1);
+
+        lock_take(address_of run->guard);
+        node->running = 0;
+
+        if (node->leaf && directory >= 0)
+                parallel_tree_unpin(run, parent);
+        else if (node->leaf)
+                parallel_tree_settle(run, parent);
+
+        if (node->first_child)
+        {
+                parallel_tree_node address_to child;
+                parallel_tree_node address_to previous = null;
+
+                for (child = node->first_child; child; child = child->sibling)
+                {
+                        child->pending_previous = previous;
+                        child->pending_next = child->sibling;
+                        previous = child;
+                }
+
+                node->last_child->pending_next = run->pending;
+
+                if (run->pending)
+                        run->pending->pending_previous = node->last_child;
+
+                run->pending = node->first_child;
+                atomic_add(address_of run->pending_count, node->unstarted);
+        }
+
+        atomic_exchange(address_of node->state, PARALLEL_TREE_ENTERED);
+
+        if (parent && !node->leaf)
+                parallel_tree_settle(run, node);
+
+        lock_release(address_of run->guard);
+
+        if (node->first_child)
+                parallel_tree_wake_progress(run);
+        else
+                parallel_tree_finish(run, node);
+}
+
+static fn parallel_tree_work(address_any argument)
+{
+        parallel_tree_run address_to run = argument;
+
+        if (__atomic_sub_fetch(address_of run->seats, 1, __ATOMIC_SEQ_CST) < 0)
+        {
+                atomic_add(address_of run->seats, 1);
+                return;
+        }
+
+        for (;;)
+        {
+                parallel_tree_node address_to node;
+                b32 word;
+
+                if (atomic_load(address_of run->base.stop) ||
+                    atomic_load(address_of run->complete))
+                        break;
+
+                if (!parallel_tree_room(run))
+                {
+                        word = atomic_load(address_of run->base.limit_word);
+                        atomic_inc(address_of run->room_waiters);
+
+                        if (!parallel_tree_room(run) &&
+                            !atomic_load(address_of run->base.stop) &&
+                            !atomic_load(address_of run->complete))
+                                thread_wait(address_of run->base.limit_word, word);
+
+                        atomic_dec(address_of run->room_waiters);
+                        continue;
+                }
+
+                node = atomic_load(address_of run->pending_count)
+                               ? parallel_tree_claim(run, null)
+                               : null;
+
+                if (node)
+                {
+                        parallel_tree_enter(run, node);
+                        continue;
+                }
+
+                word = atomic_load(address_of run->base.finished_word);
+                atomic_inc(address_of run->progress_waiters);
+
+                if (!atomic_load(address_of run->pending_count) &&
+                    !atomic_load(address_of run->base.stop) &&
+                    !atomic_load(address_of run->complete))
+                        thread_wait(address_of run->base.finished_word, word);
+
+                atomic_dec(address_of run->progress_waiters);
+        }
+
+        atomic_add(address_of run->seats, 1);
+}
+
+static fn parallel_tree_publish_maybe(parallel_tree_run address_to run,
+                                      bool address_to published, bool caller_only)
+{
+        if (address_to published || caller_only ||
+            atomic_load(address_of run->entered) < PARALLEL_TREE_INLINE_NODES ||
+            !atomic_load(address_of run->pending_count))
+                return;
+
+        address_to published = true;
+
+        if (run->seats > 0 && parallel_ready())
+                parallel_publish(address_of run->base);
+}
+
+//      The emitter's wait for a node to reach a state, running what it can.
+static bool parallel_tree_await(parallel_tree_run address_to run,
+                                parallel_tree_node address_to node, b32 wanted,
+                                bool address_to published, bool caller_only)
+{
+        for (;;)
+        {
+                parallel_tree_node address_to other;
+                b32 word;
+
+                if (atomic_load(address_of node->state) >= wanted)
+                        return true;
+
+                if (atomic_load(address_of run->base.stop))
+                        return false;
+
+                if (atomic_load(address_of node->state) == PARALLEL_TREE_PENDING &&
+                    (other = parallel_tree_claim(run, node)) != null)
+                {
+                        parallel_tree_enter(run, other);
+                        parallel_tree_publish_maybe(run, published, caller_only);
+                        continue;
+                }
+
+                if (parallel_tree_room(run) && atomic_load(address_of run->pending_count) &&
+                    (other = parallel_tree_claim(run, null)) != null)
+                {
+                        parallel_tree_enter(run, other);
+                        parallel_tree_publish_maybe(run, published, caller_only);
+                        continue;
+                }
+
+                word = atomic_load(address_of run->base.finished_word);
+                atomic_inc(address_of run->progress_waiters);
+
+                if (atomic_load(address_of node->state) < wanted &&
+                    !atomic_load(address_of run->base.stop) &&
+                    !(parallel_tree_room(run) && atomic_load(address_of run->pending_count)))
+                        thread_wait(address_of run->base.finished_word, word);
+
+                atomic_dec(address_of run->progress_waiters);
+        }
+}
+
+static fn parallel_tree_release(parallel_tree_run address_to run,
+                                parallel_tree_node address_to node)
+{
+        if (node->handle >= 0 && node->parent)
+        {
+                lock_take(address_of run->guard);
+                parallel_tree_close(run, node);
+                lock_release(address_of run->guard);
+        }
+
+        if (node->held)
+        {
+                atomic_sub(address_of run->held_nodes, 1);
+                atomic_sub(address_of run->held_bytes,
+                           node->output.used + node->tail.used);
+        }
+
+        memory_give(node->output.bytes);
+        memory_give(node->tail.bytes);
+        memory_give(node);
+}
+
+static parallel_tree_node address_to parallel_tree_record(address_any user,
+                                                          string_address name,
+                                                          positive length)
+{
+        parallel_tree_node address_to node =
+                memory_take(sizeof(parallel_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(parallel_tree_node));
+        node->magic = PARALLEL_TREE_MAGIC;
+        node->user = user;
+        node->handle = -1;
+        node->output.heap = 1;
+        node->tail.heap = 1;
+        node->name_length = (p32)length;
+        memory_copy(node->name, name, length);
+        node->name[length] = 0;
+
+        return node;
+}
+
+static parallel_tree_node address_to parallel_tree_adopt(parallel_output address_to output,
+                                                         string_address name,
+                                                         address_any node)
+{
+        parallel_tree_node address_to parent = (parallel_tree_node address_to)(address_any)output;
+        parallel_tree_node address_to child;
+
+        if (parent->magic != PARALLEL_TREE_MAGIC || parent->leaf ||
+            atomic_load(address_of parent->state) != PARALLEL_TREE_ENTERING)
+                return null;
+
+        child = parallel_tree_record(node, name, string_length(name));
+
+        if (!child)
+        {
+                parallel_stop();
+                return null;
+        }
+
+        child->parent = parent;
+        child->offset = parent->output.used;
+
+        if (parent->last_child)
+                parent->last_child->sibling = child;
+        else
+                parent->first_child = child;
+
+        parent->last_child = child;
+        parent->unstarted++;
+        parent->unfinished++;
+
+        return child;
+}
+
+pub bool parallel_child(parallel_output address_to output, string_address name,
+                        address_any node)
+{
+        return parallel_tree_adopt(output, name, node) != null;
+}
+
+pub bool parallel_leaf(parallel_output address_to output, parallel_node_job job,
+                       address_any node)
+{
+        parallel_tree_node address_to leaf =
+                parallel_tree_adopt(output, (string_address)"", node);
+
+        if (!leaf)
+                return false;
+
+        leaf->leaf = 1;
+        leaf->job = job;
+
+        return true;
+}
+
+//      Every record below first and its siblings, children first, each
+//      finished to the sink so the caller can free its node.
+static fn parallel_tree_discard(parallel_tree_run address_to run,
+                                parallel_tree_node address_to first)
+{
+        parallel_tree_node address_to address_to stack = null;
+        positive room = 0;
+        positive used = 0;
+        parallel_tree_node address_to node;
+
+        for (node = first; node; node = node->sibling)
+        {
+                if (used == room)
+                {
+                        positive grown_room = room ? room * 2 : 64;
+                        parallel_tree_node address_to address_to grown =
+                                memory_resize(stack, grown_room * sizeof(address_any));
+
+                        if (!grown)
+                                break;
+
+                        stack = grown;
+                        room = grown_room;
+                }
+
+                stack[used++] = node;
+        }
+
+        while (used)
+        {
+                parallel_tree_node address_to top = stack[used - 1];
+
+                if (top->first_child)
+                {
+                        parallel_tree_node address_to child = top->first_child;
+
+                        top->first_child = null;
+
+                        for (; child; child = child->sibling)
+                        {
+                                if (used == room)
+                                {
+                                        positive grown_room = room * 2;
+                                        parallel_tree_node address_to address_to grown =
+                                                memory_resize(stack, grown_room * sizeof(address_any));
+
+                                        if (!grown)
+                                                break;
+
+                                        stack = grown;
+                                        room = grown_room;
+                                }
+
+                                stack[used++] = child;
+                        }
+
+                        continue;
+                }
+
+                used--;
+                run->sink(run->context, top->user, null, 0, true);
+                parallel_tree_release(run, top);
+        }
+
+        memory_give(stack);
+}
+
+pub bool parallel_tree(parallel_node_job enter, parallel_node_job leave,
+                       parallel_node_sink sink, address_any context,
+                       bipolar root_directory, address_any root_node,
+                       positive open_flags)
+{
+        parallel_tree_run run = {0};
+        parallel_tree_frame address_to frames = null;
+        positive frames_room = 0;
+        positive depth = 0;
+        positive limits[2] = {0, 0};
+        positive freed = 0;
+        positive threads;
+        thread address_to self = thread_self();
+        address_any outer = self->run;
+        bool caller_only = outer != null || parallel_width() == 1;
+        bool published = false;
+        parallel_tree_node address_to root;
+
+        run.base.work = parallel_tree_work;
+        run.enter = enter;
+        run.leave = leave;
+        run.sink = sink;
+        run.context = context;
+        run.root_directory = root_directory;
+        run.open_flags = open_flags;
+
+        system_call_4(syscall(prlimit64), 0, 7, 0, (positive)limits);
+        run.cap = limits[0] / 2;
+
+        if (run.cap < 16)
+                run.cap = 16;
+
+        if (run.cap > (1u << 20))
+                run.cap = 1u << 20;
+
+        threads = (run.cap - 1) / 3;
+
+        if (threads > parallel_width())
+                threads = parallel_width();
+
+        run.seats = (b32)(threads ? threads - 1 : 0);
+        run.held_nodes_limit = PARALLEL_TREE_HELD_NODES + 256 * parallel_width();
+
+        root = parallel_tree_record(root_node, (string_address)"", 0);
+
+        if (!root)
+                return false;
+
+        frames = memory_take(64 * sizeof(parallel_tree_frame));
+
+        if (!frames)
+        {
+                memory_give(root);
+                return false;
+        }
+
+        frames_room = 64;
+        root->state = PARALLEL_TREE_ENTERING;
+        frames[depth++] = (parallel_tree_frame){root, null, 0, 0};
+
+        self->run = address_of run.base;
+        parallel_tree_enter(address_of run, root);
+
+        while (depth && !atomic_load(address_of run.base.stop))
+        {
+                parallel_tree_frame address_to top = address_of frames[depth - 1];
+                parallel_tree_node address_to node = top->node;
+
+                if (top->stage == 0)
+                {
+                        if (!parallel_tree_await(address_of run, node, PARALLEL_TREE_ENTERED,
+                                                 address_of published, caller_only))
+                                break;
+
+                        top->cursor = node->first_child;
+                        top->offset = 0;
+                        top->stage = 1;
+                }
+
+                if (top->stage == 1)
+                {
+                        parallel_tree_node address_to child = top->cursor;
+                        positive until = child ? child->offset : node->output.used;
+
+                        if (atomic_load(address_of run.base.stop))
+                                break;
+
+                        if (until > top->offset &&
+                            !sink(context, node->user, node->output.bytes + top->offset,
+                                  until - top->offset, false))
+                        {
+                                parallel_run_stop(address_of run.base);
+                                break;
+                        }
+
+                        top->offset = until;
+
+                        if (child)
+                        {
+                                top->cursor = child->sibling;
+
+                                if (depth == frames_room)
+                                {
+                                        parallel_tree_frame address_to grown = memory_resize(
+                                                frames, frames_room * 2 * sizeof(parallel_tree_frame));
+
+                                        if (!grown)
+                                        {
+                                                //      The child is not on the stack yet: put
+                                                //      it back where the cleanup will find it.
+                                                top->cursor = child;
+                                                parallel_run_stop(address_of run.base);
+                                                break;
+                                        }
+
+                                        frames = grown;
+                                        frames_room *= 2;
+                                }
+
+                                frames[depth++] = (parallel_tree_frame){child, null, 0, 0};
+                                continue;
+                        }
+
+                        top->stage = 2;
+                }
+
+                if (!parallel_tree_await(address_of run, node, PARALLEL_TREE_COMPLETE,
+                                         address_of published, caller_only))
+                        break;
+
+                if (atomic_load(address_of run.base.stop))
+                        break;
+
+                if (node->tail.used &&
+                    !sink(context, node->user, node->tail.bytes, node->tail.used, false))
+                {
+                        parallel_run_stop(address_of run.base);
+                        break;
+                }
+
+                depth--;
+
+                if (!sink(context, node->user, null, 0, true))
+                        parallel_run_stop(address_of run.base);
+
+                parallel_tree_release(address_of run, node);
+                parallel_tree_wake_room(address_of run);
+
+                if (++freed % PARALLEL_TREE_SHARE_EVERY == 0 && threads_live)
+                        allocator_shelves_share();
+        }
+
+        atomic_exchange(address_of run.complete, 1);
+        parallel_tree_wake_progress(address_of run);
+        parallel_tree_wake_room(address_of run);
+
+        if (published && parallel_pool.run == address_of run.base)
+                parallel_withdraw();
+
+        self->run = address_of run.base;
+
+        //      A stopped walk: every record still standing is finished to the
+        //      sink, deepest first, so the caller can free what it gave.
+        while (depth)
+        {
+                parallel_tree_frame address_to top = address_of frames[--depth];
+                parallel_tree_node address_to node = top->node;
+                parallel_tree_node address_to rest =
+                        top->stage ? top->cursor
+                                   : (atomic_load(address_of node->state) >= PARALLEL_TREE_ENTERED
+                                              ? node->first_child
+                                              : null);
+
+                parallel_tree_discard(address_of run, rest);
+                sink(context, node->user, null, 0, true);
+                parallel_tree_release(address_of run, node);
+        }
+
+        self->run = outer;
+        memory_give(frames);
+
+        if (threads_live)
+                allocator_shelves_share();
+
+        parallel_tree_last.cap = run.cap;
+        parallel_tree_last.open_most = run.open_most;
+        parallel_tree_last.evictions = run.evictions;
+        parallel_tree_last.reopens = run.reopens;
+        parallel_tree_last.threads = published ? threads : 1;
+
+        return !atomic_load(address_of run.base.stop);
 }
 #endif // LIBRARY_THREAD_RUNTIME
 

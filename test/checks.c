@@ -37436,6 +37436,10 @@ int main(void)
         threads, and a return from main with a thread still running ends the
         whole process, because exit is exit_group.
 
+        The tree. parallel_tree's bytes equal a serial reference at every
+        width under 256 descriptors, over thousands of siblings and a chain
+        twelve hundred deep, with leaves, stops, nesting and removal.
+
         The pool. parallel_for runs every index once at every width;
         parallel_ordered's bytes do not move with the width; stops, a refusing
         sink, nesting, the beside job and a forked child behave as the sheet
@@ -38529,6 +38533,764 @@ static fn lock_pool(bool emulated)
         check("a reset pool leaves no thread counted", threads_live == 0);
 }
 
+//      -- the tree ----------------------------------------------------------
+
+/*
+        parallel_tree over a tree built for the purpose, under a soft
+        descriptor limit of 256: three thousand sibling directories with a
+        file and a subdirectory each, a chain twelve hundred deep with leaf
+        directories beside every level, a directory nobody may read, and a
+        symbolic link that must not be entered. The probe writes each entry
+        as it reads it and a subtree count in its leave, and hashes the
+        stream in the sink. The same bytes must come at widths 1, 2, 3 and 8,
+        and must equal a serial recursive reference that shares no code with
+        the pool. A leave's handle must be the directory its enter saw, which
+        is what proves the reopen after an eviction found the right one.
+*/
+#define TREE_WIDE 3000
+#define TREE_DEEP 1200
+
+typedef struct tree_probe
+{
+        struct tree_probe address_to parent;
+        positive own;
+        positive total;
+        positive depth;
+        positive device;
+        positive inode;
+        b32 opened;
+        b32 spare;
+} tree_probe;
+
+static volatile positive tree_probe_live = 0;
+static volatile positive tree_bad = 0;
+static volatile positive tree_stop_at_depth = positive_max;
+static volatile positive tree_leaves_run = 0;
+static bool tree_use_leaves = false;
+
+static fn tree_number(p8 address_to into, positive address_to at, positive value)
+{
+        p8 digits[24];
+        positive count = 0;
+
+        do
+        {
+                digits[count++] = (p8)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        while (count)
+                into[(address_to at)++] = digits[--count];
+}
+
+static fn tree_line(parallel_output address_to output, p8 mark, positive value)
+{
+        p8 line[32];
+        positive at = 0;
+
+        line[at++] = mark;
+        tree_number(line, address_of at, value);
+        line[at++] = '\n';
+        parallel_write(output, line, at);
+}
+
+static tree_probe address_to tree_probe_new(tree_probe address_to parent)
+{
+        tree_probe address_to probe = malloc(sizeof(tree_probe));
+
+        if (probe)
+        {
+                memory_fill(probe, 0, sizeof(tree_probe));
+                probe->parent = parent;
+                probe->depth = parent ? parent->depth + 1 : 0;
+                atomic_add(address_of tree_probe_live, 1);
+        }
+
+        return probe;
+}
+
+static fn tree_facts(bipolar handle, positive address_to device, positive address_to inode)
+{
+        positive facts[24] = {0};
+
+        system_call_2(syscall(fstat), (positive)handle, (positive)facts);
+        address_to device = facts[0];
+        address_to inode = facts[1];
+}
+
+//      A leaf: checks that the directory it was handed is its parent's, and
+//      writes the parent's inode's low digits so its bytes are its own.
+static fn tree_leaf_job(address_any context, address_any node, bipolar directory,
+                        parallel_output address_to output)
+{
+        tree_probe address_to probe = node;
+        positive device;
+        positive inode;
+
+        (void)context;
+        atomic_add(address_of tree_leaves_run, 1);
+        tree_facts(directory, address_of device, address_of inode);
+
+        if (directory < 0 || inode != probe->parent->inode)
+                atomic_add(address_of tree_bad, 1);
+
+        tree_line(output, 'F', probe->own);
+}
+
+static fn tree_probe_enter(address_any context, address_any node, bipolar directory,
+                           parallel_output address_to output)
+{
+        tree_probe address_to probe = node;
+        p8 records[8192];
+
+        (void)context;
+
+        if (directory < 0)
+        {
+                tree_line(output, 'E', (positive)-directory);
+                return;
+        }
+
+        probe->opened = 1;
+        tree_facts(directory, address_of probe->device, address_of probe->inode);
+
+        if (probe->depth == atomic_load(address_of tree_stop_at_depth))
+                parallel_stop();
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                {
+                        if (got < 0)
+                                tree_line(output, 'R', (positive)-got);
+                        break;
+                }
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                                (struct linux_dirent64 address_to)(records + at);
+                        positive length;
+
+                        at += record->d_reclen;
+
+                        if (record->d_name[0] == '.' &&
+                            (!record->d_name[1] ||
+                             (record->d_name[1] == '.' && !record->d_name[2])))
+                                continue;
+
+                        length = string_length(record->d_name);
+                        parallel_write(output, record->d_name, length);
+                        tree_line(output, '/', record->d_type);
+                        probe->own++;
+
+                        if (record->d_type == DT_DIR)
+                        {
+                                tree_probe address_to child = tree_probe_new(probe);
+
+                                if (!child || !parallel_child(output, record->d_name, child))
+                                {
+                                        if (child)
+                                        {
+                                                free(child);
+                                                atomic_sub(address_of tree_probe_live, 1);
+                                        }
+
+                                        atomic_add(address_of tree_bad, 1);
+                                }
+                        }
+                        else if (tree_use_leaves && record->d_type == DT_REG)
+                        {
+                                tree_probe address_to leaf = tree_probe_new(probe);
+
+                                if (leaf)
+                                        leaf->own = probe->own;
+
+                                if (!leaf || !parallel_leaf(output, tree_leaf_job, leaf))
+                                        atomic_add(address_of tree_bad, 1);
+                        }
+                }
+        }
+}
+
+static fn tree_probe_leave(address_any context, address_any node, bipolar directory,
+                           parallel_output address_to output)
+{
+        tree_probe address_to probe = node;
+        positive total = atomic_load(address_of probe->total) + probe->own;
+
+        (void)context;
+
+        if (probe->opened)
+        {
+                positive device;
+                positive inode;
+
+                tree_facts(directory, address_of device, address_of inode);
+
+                if (directory < 0 || device != probe->device || inode != probe->inode)
+                        atomic_add(address_of tree_bad, 1);
+        }
+
+        tree_line(output, 'L', total);
+
+        if (probe->parent)
+                atomic_add(address_of probe->parent->total, total);
+}
+
+typedef struct
+{
+        positive hash;
+        positive bytes;
+        positive nodes;
+        positive wrong;
+        positive after_stop;
+} tree_stream;
+
+static fn tree_hash(tree_stream address_to stream, p8 address_to bytes, positive length)
+{
+        positive at;
+
+        for (at = 0; at < length; at++)
+                stream->hash = (stream->hash ^ bytes[at]) * 0x100000001b3ull;
+
+        stream->bytes += length;
+}
+
+static bool tree_probe_sink(address_any context, address_any node, address_any data,
+                            positive length, bool finished)
+{
+        tree_stream address_to stream = context;
+
+        if (thread_self() != address_of thread_main)
+                stream->wrong++;
+
+        if (finished)
+        {
+                stream->nodes++;
+                free(node);
+                atomic_sub(address_of tree_probe_live, 1);
+                return true;
+        }
+
+        if (parallel_stopped())
+                stream->after_stop++;
+
+        tree_hash(stream, data, length);
+        return true;
+}
+
+//      The reference: the same lines from a plain recursion, holding a
+//      handle per level, run with the descriptor limit raised.
+static fn tree_reference_write(tree_stream address_to stream, p8 address_to line,
+                               positive length)
+{
+        tree_hash(stream, line, length);
+}
+
+static positive tree_reference(tree_stream address_to stream, bipolar directory,
+                               bool leaves)
+{
+        p8 address_to records = malloc(8192);
+        positive own = 0;
+        positive total = 0;
+        p8 line[48];
+        positive at;
+
+        if (!records)
+                return 0;
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, 8192);
+                bipolar offset = 0;
+
+                if (got <= 0)
+                {
+                        if (got < 0)
+                        {
+                                at = 0;
+                                line[at++] = 'R';
+                                tree_number(line, address_of at, (positive)-got);
+                                line[at++] = '\n';
+                                tree_reference_write(stream, line, at);
+                        }
+                        break;
+                }
+
+                while (offset < got)
+                {
+                        struct linux_dirent64 address_to record =
+                                (struct linux_dirent64 address_to)(records + offset);
+
+                        offset += record->d_reclen;
+
+                        if (record->d_name[0] == '.' &&
+                            (!record->d_name[1] ||
+                             (record->d_name[1] == '.' && !record->d_name[2])))
+                                continue;
+
+                        tree_reference_write(stream, record->d_name,
+                                             string_length(record->d_name));
+                        at = 0;
+                        line[at++] = '/';
+                        tree_number(line, address_of at, record->d_type);
+                        line[at++] = '\n';
+                        tree_reference_write(stream, line, at);
+                        own++;
+
+                        if (record->d_type == DT_DIR)
+                        {
+                                bipolar child = system_open_at(
+                                        directory, record->d_name,
+                                        FILE_READ | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+
+                                if (child < 0)
+                                {
+                                        at = 0;
+                                        line[at++] = 'E';
+                                        tree_number(line, address_of at, (positive)-child);
+                                        line[at++] = '\n';
+                                        tree_reference_write(stream, line, at);
+                                        tree_reference_write(stream, (p8 address_to)"L0\n", 3);
+                                }
+                                else
+                                {
+                                        total += tree_reference(stream, child, leaves);
+                                        system_close(child);
+                                }
+                        }
+                        else if (leaves && record->d_type == DT_REG)
+                        {
+                                at = 0;
+                                line[at++] = 'F';
+                                tree_number(line, address_of at, own);
+                                line[at++] = '\n';
+                                tree_reference_write(stream, line, at);
+                        }
+                }
+        }
+
+        free(records);
+
+        at = 0;
+        line[at++] = 'L';
+        tree_number(line, address_of at, own + total);
+        line[at++] = '\n';
+        tree_reference_write(stream, line, at);
+
+        return own + total;
+}
+
+static fn tree_limit(positive soft)
+{
+        positive now[2] = {0, 0};
+        positive want[2];
+
+        system_call_4(syscall(prlimit64), 0, 7, 0, (positive)address_of now);
+        want[0] = soft < now[1] ? soft : now[1];
+        want[1] = now[1];
+        system_call_4(syscall(prlimit64), 0, 7, (positive)address_of want, 0);
+}
+
+static positive tree_open_count(void)
+{
+        bipolar handle = system_open_at(AT_FDCWD, (string_address)"/proc/self/fd",
+                                        FILE_READ | O_DIRECTORY | O_CLOEXEC);
+        p8 records[8192];
+        positive count = 0;
+
+        if (handle < 0)
+                return 0;
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(handle, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                        break;
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                                (struct linux_dirent64 address_to)(records + at);
+
+                        at += record->d_reclen;
+                        count += record->d_name[0] != '.';
+                }
+        }
+
+        system_close(handle);
+        return count;
+}
+
+//      Building the tree, through handles all the way down.
+static fn tree_make_file(bipolar directory, string_address name)
+{
+        bipolar handle = system_open_at_mode(directory, name,
+                                             O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+
+        if (handle >= 0)
+                system_close(handle);
+}
+
+static bipolar tree_make_directory(bipolar directory, string_address name)
+{
+        system_call_3(syscall(mkdirat), (positive)directory, (positive)name, 0755);
+        return system_open_at(directory, name, FILE_READ | O_DIRECTORY | O_CLOEXEC);
+}
+
+static fn tree_build(bipolar base)
+{
+        bipolar wide = tree_make_directory(base, (string_address)"wide");
+        bipolar deep = tree_make_directory(base, (string_address)"deep");
+        p8 name[16];
+        positive i;
+
+        for (i = 0; i < TREE_WIDE && wide >= 0; i++)
+        {
+                positive at = 0;
+                bipolar member;
+
+                name[at++] = 'w';
+                tree_number(name, address_of at, i);
+                name[at] = 0;
+                member = tree_make_directory(wide, name);
+
+                if (member < 0)
+                        continue;
+
+                tree_make_file(member, (string_address)"f");
+                system_close(tree_make_directory(member, (string_address)"s"));
+
+                if (i == 17)
+                        system_call_4(syscall(fchmodat), (positive)member,
+                                      (positive)"s", 0, 0);
+
+                system_close(member);
+        }
+
+        system_call_4(syscall(symlinkat), (positive)".", (positive)base,
+                      (positive)"loop", 0);
+
+        for (i = 0; i < TREE_DEEP && deep >= 0; i++)
+        {
+                bipolar next;
+
+                //      The leaf directories first, so that on file systems
+                //      that list newest first the chain comes before them and
+                //      every level stays pinned while the chain is walked.
+                system_close(tree_make_directory(deep, (string_address)"e1"));
+                system_close(tree_make_directory(deep, (string_address)"e2"));
+                tree_make_file(deep, (string_address)"f");
+                next = tree_make_directory(deep, (string_address)"d");
+                system_close(deep);
+                deep = next;
+        }
+
+        if (deep >= 0)
+                system_close(deep);
+
+        if (wide >= 0)
+                system_close(wide);
+}
+
+//      And removing it with the pool: files in enter, emptied directories in
+//      the parent's leave, which is the rm -r shape.
+static fn tree_remove_enter(address_any context, address_any node, bipolar directory,
+                            parallel_output address_to output)
+{
+        p8 records[8192];
+
+        (void)context;
+        (void)node;
+
+        if (directory < 0)
+                return;
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                        break;
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                                (struct linux_dirent64 address_to)(records + at);
+
+                        at += record->d_reclen;
+
+                        if (record->d_name[0] == '.' &&
+                            (!record->d_name[1] ||
+                             (record->d_name[1] == '.' && !record->d_name[2])))
+                                continue;
+
+                        if (record->d_type == DT_DIR)
+                        {
+                                system_call_4(syscall(fchmodat), (positive)directory,
+                                              (positive)record->d_name, 0700, 0);
+                                parallel_child(output, record->d_name, null);
+                        }
+                        else
+                                system_call_3(syscall(unlinkat), (positive)directory,
+                                              (positive)record->d_name, 0);
+                }
+        }
+}
+
+static fn tree_remove_leave(address_any context, address_any node, bipolar directory,
+                            parallel_output address_to output)
+{
+        p8 records[8192];
+
+        (void)context;
+        (void)node;
+        (void)output;
+
+        if (directory < 0)
+                return;
+
+        system_call_3(syscall(lseek), (positive)directory, 0, 0);
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                        break;
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                                (struct linux_dirent64 address_to)(records + at);
+
+                        at += record->d_reclen;
+
+                        if (record->d_type == DT_DIR && record->d_name[0] != '.')
+                                system_call_3(syscall(unlinkat), (positive)directory,
+                                              (positive)record->d_name, 0x200);
+                }
+        }
+}
+
+static bool tree_quiet_sink(address_any context, address_any node, address_any data,
+                            positive length, bool finished)
+{
+        (void)context;
+        (void)node;
+        (void)data;
+        (void)length;
+        (void)finished;
+        return true;
+}
+
+typedef struct
+{
+        bipolar base;
+        positive hash;
+} tree_nested_context;
+
+static fn tree_nested_job(address_any context, positive index)
+{
+        tree_nested_context address_to nested = context;
+        tree_stream stream = {0xcbf29ce484222325ull, 0, 0, 0, 0};
+        bipolar wide = system_open_at(nested->base, (string_address)"wide/w5",
+                                      FILE_READ | O_DIRECTORY | O_CLOEXEC);
+        tree_probe address_to root = tree_probe_new(null);
+
+        (void)index;
+
+        if (wide >= 0 && root)
+                parallel_tree(tree_probe_enter, tree_probe_leave, tree_probe_sink,
+                              address_of stream, wide, root, O_NOFOLLOW);
+
+        if (wide >= 0)
+                system_close(wide);
+
+        nested->hash = stream.hash;
+}
+
+static fn lock_tree(void)
+{
+        static const positive widths[] = {1, 2, 3, 8};
+        p8 path[256];
+        positive at = 0;
+        string_address place = (string_address)getenv("TMPDIR");
+        bipolar base;
+        tree_stream reference = {0xcbf29ce484222325ull, 0, 0, 0, 0};
+        tree_stream leaf_reference = {0xcbf29ce484222325ull, 0, 0, 0, 0};
+        positive round;
+        bool same = true;
+        bool leaves_same = true;
+        bool within = true;
+        bool evicted = true;
+        bool alone = true;
+        positive handles_before;
+        positive limits[2] = {0, 0};
+
+        if (!place || !string_get(place) || string_length(place) > 180)
+                place = (string_address)"/tmp";
+
+        at = string_length(place);
+        memory_copy(path, place, at);
+        memory_copy(path + at, "/mt-tree-check-", 15);
+        at += 15;
+        tree_number(path, address_of at, (positive)system_call(syscall(getpid)));
+        path[at] = 0;
+
+        system_call_3(syscall(mkdirat), (positive)AT_FDCWD, (positive)path, 0700);
+        base = system_open_at(AT_FDCWD, path, FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        if (base < 0)
+        {
+                check("the tree's scratch directory could be made", false);
+                return;
+        }
+
+        tree_build(base);
+
+        //      The reference, with room for twelve hundred handles.
+        system_call_4(syscall(prlimit64), 0, 7, 0, (positive)address_of limits);
+        tree_limit(4096);
+        {
+                bipolar again = system_open_at(base, (string_address)".",
+                                               FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                bipolar twice = system_open_at(base, (string_address)".",
+                                               FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+                tree_reference(address_of reference, again, false);
+                tree_reference(address_of leaf_reference, twice, true);
+                system_close(again);
+                system_close(twice);
+        }
+
+        tree_limit(256);
+        handles_before = tree_open_count();
+
+        for (round = 0; round < sizeof(widths) / sizeof(widths[0]); round++)
+        {
+                tree_stream stream = {0xcbf29ce484222325ull, 0, 0, 0, 0};
+                tree_probe address_to root;
+                bipolar top;
+                bool answered;
+
+                parallel_reset(widths[round]);
+                top = system_open_at(base, (string_address)".",
+                                     FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                root = tree_probe_new(null);
+                tree_use_leaves = false;
+
+                answered = parallel_tree(tree_probe_enter, tree_probe_leave, tree_probe_sink,
+                                         address_of stream, top, root, O_NOFOLLOW);
+                system_close(top);
+
+                same = same && answered && stream.hash == reference.hash &&
+                       stream.bytes == reference.bytes;
+                alone = alone && stream.wrong == 0;
+                within = within && parallel_tree_last.open_most <= parallel_tree_last.cap;
+                evicted = evicted && parallel_tree_last.evictions > 0 &&
+                          parallel_tree_last.reopens > 0;
+
+                string_format(log, "  tree: width %p, %p nodes, %p bytes, handles at most %p of %p, %p evictions, %p reopens\n",
+                              widths[round], stream.nodes, stream.bytes,
+                              parallel_tree_last.open_most, parallel_tree_last.cap,
+                              parallel_tree_last.evictions, parallel_tree_last.reopens);
+
+                //      Leaves: every regular file becomes its own job.
+                stream = (tree_stream){0xcbf29ce484222325ull, 0, 0, 0, 0};
+                top = system_open_at(base, (string_address)".",
+                                     FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                root = tree_probe_new(null);
+                tree_use_leaves = true;
+                tree_leaves_run = 0;
+
+                answered = parallel_tree(tree_probe_enter, tree_probe_leave, tree_probe_sink,
+                                         address_of stream, top, root, O_NOFOLLOW);
+                system_close(top);
+                tree_use_leaves = false;
+
+                leaves_same = leaves_same && answered &&
+                              stream.hash == leaf_reference.hash &&
+                              stream.bytes == leaf_reference.bytes &&
+                              tree_leaves_run == TREE_WIDE + TREE_DEEP;
+                alone = alone && stream.wrong == 0;
+        }
+
+        check("tree bytes are the reference's at widths 1, 2, 3 and 8 under 256 descriptors", same);
+        check("tree bytes with a leaf per file are the reference's at every width", leaves_same);
+        check("every tree sink call was on the first thread", alone);
+        check("no tree job saw a wrong directory, reopened or pinned", tree_bad == 0);
+        check("the tree never held more handles than its cap", within);
+        check("a 1200-deep walk under 256 descriptors evicted and reopened handles", evicted);
+        check("every tree node was finished to the sink", tree_probe_live == 0);
+        check("a finished tree walk left no descriptor open",
+              tree_open_count() == handles_before);
+
+        //      A stop deep in the chain.
+        {
+                tree_stream stream = {0xcbf29ce484222325ull, 0, 0, 0, 0};
+                bipolar top = system_open_at(base, (string_address)".",
+                                             FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                tree_probe address_to root = tree_probe_new(null);
+
+                parallel_reset(8);
+                tree_stop_at_depth = 600;
+                check("a stopped tree walk answers false",
+                      !parallel_tree(tree_probe_enter, tree_probe_leave, tree_probe_sink,
+                                     address_of stream, top, root, O_NOFOLLOW));
+                tree_stop_at_depth = positive_max;
+                system_close(top);
+
+                //      The emitter reads the stop before every span it hands over;
+                //      a worker's stop landing between that read and the call
+                //      is one span already on its way, and nothing comes after.
+                check("at most one tree span reached the sink after the stop",
+                      stream.after_stop <= 1);
+                check("a stopped tree walk finished every node it made", tree_probe_live == 0);
+                check("a stopped tree walk left no descriptor open",
+                      tree_open_count() == handles_before);
+        }
+
+        //      Nested inside a job: runs on that thread, same bytes.
+        {
+                tree_nested_context nested = {base, 0};
+                tree_stream alone_stream = {0xcbf29ce484222325ull, 0, 0, 0, 0};
+                bipolar wide = system_open_at(base, (string_address)"wide/w5",
+                                              FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                tree_probe address_to root = tree_probe_new(null);
+
+                parallel_tree(tree_probe_enter, tree_probe_leave, tree_probe_sink,
+                              address_of alone_stream, wide, root, O_NOFOLLOW);
+                system_close(wide);
+
+                parallel_for(tree_nested_job, address_of nested, 1, PARALLEL_SPREAD);
+                check("a tree walk nested in a job gives the same bytes",
+                      nested.hash == alone_stream.hash && tree_probe_live == 0);
+        }
+
+        //      Remove it all with the pool.
+        {
+                parallel_reset(8);
+                parallel_tree(tree_remove_enter, tree_remove_leave, tree_quiet_sink, null,
+                              base, null, O_NOFOLLOW);
+                system_close(base);
+                check("the pool removed the tree it walked",
+                      system_call_3(syscall(unlinkat), (positive)AT_FDCWD,
+                                    (positive)path, 0x200) == 0);
+        }
+
+        tree_limit(limits[0]);
+        parallel_reset(0);
+}
+
 //      -- across processes --------------------------------------------------
 
 #define LOCK_MAP_SHARED 1
@@ -38611,6 +39373,7 @@ b32 main(void)
         lock_process();
         lock_pool(program_argument_count() > 1 &&
                   !string_compare(program_argument(1), (string_address)"--emulated"));
+        lock_tree();
         lock_across_processes();
 
         check("nothing is left counted at the end", threads_live == 0);
@@ -61180,6 +61943,261 @@ b32 main(void)
         return 0;
 }
 #endif /* BENCH_pool */
+
+#ifdef BENCH_tree
+/* parallel_tree as find and as du, over a directory named on the command
+   line (the Linux tree tree-mt measures by default), at widths 1, 2, 4, 8 up
+   to the affinity width, best of five, output written to standard output a
+   buffer at a time. find writes every path; du stats every entry through the
+   directory that holds it and writes each directory's total after its
+   subtree, from leave. Compare the numbers with GNU find and du on the same
+   cores. */
+#include "../src/compiler_memory.c"
+
+typedef struct bench_tree_node
+{
+        struct bench_tree_node address_to parent;
+        positive blocks;
+        positive total;
+        positive length;
+        p8 path[];
+} bench_tree_node;
+
+static p8 bench_tree_buffer[1 << 16];
+static positive bench_tree_used;
+static bipolar bench_tree_out = 1;
+static bool bench_tree_du;
+
+static bench_tree_node address_to bench_tree_new(bench_tree_node address_to parent,
+                                                 string_address name)
+{
+        positive name_length = string_length(name);
+        positive length = parent ? parent->length + 1 + name_length : name_length;
+        bench_tree_node address_to node = malloc(sizeof(bench_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        node->parent = parent;
+        node->blocks = 0;
+        node->total = 0;
+        node->length = length;
+
+        if (parent)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + 1, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+
+        node->path[length] = 0;
+        return node;
+}
+
+static positive bench_tree_blocks(bipolar directory, string_address name)
+{
+        p8 facts[256];
+
+        if (system_call_5(syscall(statx), (positive)directory, (positive)name,
+                          name[0] ? 0x100 : 0x1100, 0x400, (positive)facts) < 0)
+                return 0;
+
+        return address_to (positive address_to)(facts + 48);
+}
+
+static fn bench_tree_enter(address_any context, address_any node, bipolar directory,
+                           parallel_output address_to output)
+{
+        bench_tree_node address_to self = node;
+        p8 records[32768];
+
+        (void)context;
+
+        if (directory < 0)
+                return;
+
+        if (bench_tree_du)
+                self->blocks += bench_tree_blocks(directory, (string_address)"");
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                        break;
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                                (struct linux_dirent64 address_to)(records + at);
+                        positive length;
+
+                        at += record->d_reclen;
+
+                        if (record->d_name[0] == '.' &&
+                            (!record->d_name[1] ||
+                             (record->d_name[1] == '.' && !record->d_name[2])))
+                                continue;
+
+                        length = string_length(record->d_name);
+
+                        if (!bench_tree_du)
+                        {
+                                p8 address_to line = parallel_reserve(output, self->length + length + 2);
+
+                                if (line)
+                                {
+                                        memory_copy(line, self->path, self->length);
+                                        line[self->length] = '/';
+                                        memory_copy(line + self->length + 1, record->d_name, length);
+                                        line[self->length + 1 + length] = '\n';
+                                }
+                        }
+                        else if (record->d_type != DT_DIR)
+                                self->blocks += bench_tree_blocks(directory, record->d_name);
+
+                        if (record->d_type == DT_DIR)
+                        {
+                                bench_tree_node address_to child = bench_tree_new(self, record->d_name);
+
+                                if (child)
+                                        parallel_child(output, record->d_name, child);
+                        }
+                }
+        }
+}
+
+static fn bench_tree_leave(address_any context, address_any node, bipolar directory,
+                           parallel_output address_to output)
+{
+        bench_tree_node address_to self = node;
+        positive total = atomic_load(address_of self->total) + self->blocks;
+        p8 digits[24];
+        positive count = 0;
+        positive value = total / 2;
+        p8 address_to line;
+
+        (void)context;
+        (void)directory;
+
+        do
+        {
+                digits[count++] = (p8)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        line = parallel_reserve(output, count + 2 + self->length);
+
+        if (line)
+        {
+                positive at = 0;
+
+                while (count)
+                        line[at++] = digits[--count];
+
+                line[at++] = '\t';
+                memory_copy(line + at, self->path, self->length);
+                line[at + self->length] = '\n';
+        }
+
+        if (self->parent)
+                atomic_add(address_of self->parent->total, total);
+}
+
+static bool bench_tree_sink(address_any context, address_any node, address_any data,
+                            positive length, bool finished)
+{
+        (void)context;
+
+        if (finished)
+        {
+                free(node);
+                return true;
+        }
+
+        buffered_write((positive)bench_tree_out, bench_tree_buffer,
+                       sizeof(bench_tree_buffer), address_of bench_tree_used,
+                       data, length);
+        return true;
+}
+
+static positive bench_tree_clock(void)
+{
+        positive when[2] = {0, 0};
+
+        system_call_2(syscall(clock_gettime), 1, (positive)address_of when);
+        return when[0] * 1000000000ull + when[1];
+}
+
+b32 main(void)
+{
+        string_address root = program_argument_count() > 1
+                                      ? program_argument(1)
+                                      : (string_address)"/home/dawn/tree-mt/data/linux-7.2";
+        positive limit;
+        positive width;
+        positive mode;
+
+        //      The walk's bytes go to /dev/null through write(2), so the
+        //      timing lines on standard output stay readable.
+        bench_tree_out = system_open_at(AT_FDCWD, (string_address)"/dev/null",
+                                        O_WRONLY | O_CLOEXEC);
+
+        if (bench_tree_out < 0)
+                return 1;
+
+        parallel_reset(0);
+        limit = parallel_width();
+
+        for (mode = 0; mode < 2; mode++)
+        {
+                bench_tree_du = mode == 1;
+
+                for (width = 1;; width = width * 2 > limit ? limit : width * 2)
+                {
+                        positive best = positive_max;
+                        positive round;
+
+                        parallel_reset(width);
+
+                        for (round = 0; round < 5; round++)
+                        {
+                                bipolar top = system_open_at(AT_FDCWD, root,
+                                                             FILE_READ | O_DIRECTORY | O_CLOEXEC);
+                                bench_tree_node address_to node = bench_tree_new(null, root);
+                                positive started = bench_tree_clock();
+
+                                if (top < 0 || !node)
+                                        return 1;
+
+                                parallel_tree(bench_tree_enter, bench_tree_du ? bench_tree_leave : null,
+                                              bench_tree_sink, null, top, node, O_NOFOLLOW);
+                                buffered_flush((positive)bench_tree_out, bench_tree_buffer,
+                                               address_of bench_tree_used);
+                                started = bench_tree_clock() - started;
+                                system_close(top);
+
+                                if (started < best)
+                                        best = started;
+                        }
+
+                        string_format(log, "%s width %p  %p us\n",
+                                      bench_tree_du ? (string_address)"du  " : (string_address)"find",
+                                      width, best / 1000);
+                        log_flush();
+
+                        if (width == limit)
+                                break;
+                }
+        }
+
+        parallel_reset(0);
+        return 0;
+}
+#endif /* BENCH_tree */
 
 #ifdef BENCH_reserve
 /* Run a fresh process per sample: ru_maxrss is a lifetime high-water mark.
