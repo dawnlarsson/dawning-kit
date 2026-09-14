@@ -22984,6 +22984,7 @@ def harness_compression(argv):
     import statistics
     import subprocess
     import tempfile
+    import threading
     import time
     from pathlib import Path
 
@@ -23750,6 +23751,80 @@ def harness_compression(argv):
                     scratch.mkdir()
                     extract_pair(label, raw, codec, cell + '/' + (codec or 'ustar'),
                                  scratch)
+
+        # A pipe hands tar whatever its writer has managed so far, so a read
+        # can end inside a header, a payload, its padding or a codec frame.
+        # Seeded uneven writes, with a pause now and then so the reader
+        # drains the pipe, must extract the tree the reference extracts from
+        # the same bytes written the same way.
+        def feed_unevenly(cmd, blob, seed):
+            steps = random.Random(seed)
+            child = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, bufsize=0)
+            said = {}
+            drains = [threading.Thread(target=lambda key=key, stream=stream:
+                                       said.__setitem__(key, stream.read()))
+                      for key, stream in (('out', child.stdout), ('err', child.stderr))]
+            for drain in drains:
+                drain.start()
+            at = 0
+            try:
+                while at < len(blob):
+                    step = steps.choice((1, 2, 7, 100, 511, 512, 513, 1000, 4095, 70001))
+                    child.stdin.write(blob[at:at + step])
+                    at += step
+                    if not steps.randrange(24):
+                        time.sleep(0.001)
+                child.stdin.close()
+            except BrokenPipeError:
+                pass
+            for drain in drains:
+                drain.join()
+            try:
+                child.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+            return child.returncode, said['out'], said['err']
+
+        piped = root / 'piped-source'
+        (piped / 'tree' / 'deep' / 'deeper').mkdir(parents=True)
+        payloads = random.Random(0x51A7E)
+        for index, size in enumerate((0, 1, 511, 512, 513, 1023, 1024, 1025,
+                                      10240, 65535, 65536, 65537, 200001)):
+            place = piped / 'tree' / ('deep' if index % 2 else 'deep/deeper')
+            (place / ('member-%02d' % index)).write_bytes(payloads.randbytes(size))
+        (piped / 'tree' / ('long-' + 'n' * 120)).write_bytes(b'long name\n')
+        os.symlink('deep/member-01', piped / 'tree' / 'symbolic')
+        os.link(piped / 'tree' / 'deep' / 'member-01', piped / 'tree' / 'hard')
+        made = call([refs['tar'], '-cf', '-', '-C', str(piped), 'tree'])
+        check('tar-pipe/build', made.returncode == 0, made.stderr.decode(errors='replace'))
+        for label, _ in binaries:
+            our_tar = runner + [str(farms[label] / 'tar')]
+            for codec in ('', 'gz', 'xz', 'zst'):
+                packed = wrap_codec(made.stdout, codec)
+                flag = {'': [], 'gz': ['-z'], 'xz': ['-J'], 'zst': ['--zstd']}[codec]
+                for seed in range(3):
+                    cell = label + '/tar-pipe/' + (codec or 'ustar') + '/' + str(seed)
+                    ours_dir = root / ('pipe-ours-' + label + '-' + (codec or 'ustar') + str(seed))
+                    refs_dir = root / ('pipe-ref-' + label + '-' + (codec or 'ustar') + str(seed))
+                    ours_dir.mkdir()
+                    refs_dir.mkdir()
+                    ours = feed_unevenly(our_tar + ['-xf', '-', '-C', str(ours_dir)], packed, seed)
+                    reference = feed_unevenly([refs['tar']] + flag + ['-xf', '-', '-C', str(refs_dir)],
+                                              packed, seed)
+                    check(cell, ours[0] == reference[0] == 0 and
+                          tree_state(ours_dir) == tree_state(refs_dir) and
+                          len(tree_state(ours_dir)) > 16,
+                          (ours[2] + reference[2]).decode(errors='replace'))
+                    listed = feed_unevenly(our_tar + ['-tf', '-'], packed, seed + 1000)
+                    known = feed_unevenly([refs['tar']] + flag + ['-tf', '-'], packed, seed + 1000)
+                    # Listing spells a directory without GNU's trailing
+                    # slash; that difference is not what this cell asks.
+                    check(cell + '/list', listed[0] == known[0] == 0 and
+                          sorted(name.rstrip(b'/') for name in listed[1].split()) ==
+                          sorted(name.rstrip(b'/') for name in known[1].split()),
+                          (listed[2] + known[2]).decode(errors='replace'))
         if opts.bench:
             # Include filesystem work and the streaming adapters in tar timings.
             # All decoders consume the same reference archive for each mode.

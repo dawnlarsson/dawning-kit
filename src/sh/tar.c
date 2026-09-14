@@ -990,7 +990,11 @@ static fn tar_advise(bipolar handle)
                       TAR_ADVISE_SEQUENTIAL);
 }
 
-static bool tar_fill(bipolar handle)
+/* One read into the compacted record: the bytes it added, 0 at the end of
+   the archive, or -1 once the read error is reported.  A pipe or a slow
+   writer hands over whatever it has, so one read is never a promise of a
+   whole block; callers that need one loop. */
+static bipolar tar_fill(bipolar handle)
 {
         bipolar got;
 
@@ -1005,22 +1009,26 @@ static bool tar_fill(bipolar handle)
         if (got < 0)
         {
                 tar_refuse("cannot read archive");
-                return false;
+                return -1;
         }
 
-        if (!got)
-                return tar_have > 0;
-
         tar_have += (positive)got;
-        return true;
+        return got;
 }
 
 static p8 address_to tar_next_block(bipolar handle)
 {
         p8 address_to block;
 
-        if (tar_at + TAR_BLOCK > tar_have && !tar_fill(handle))
-                return null;
+        while (tar_at + TAR_BLOCK > tar_have)
+        {
+                bipolar got = tar_fill(handle);
+
+                if (got < 0)
+                        return null;
+                if (!got)
+                        break;
+        }
 
         if (tar_at + TAR_BLOCK > tar_have)
         {
@@ -1122,7 +1130,7 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
                         return true;
                 }
 
-                if (tar_at >= tar_have && !tar_fill(archive))
+                if (tar_at >= tar_have && tar_fill(archive) <= 0)
                 {
                         tar_refuse("unexpected EOF in archive");
                         return false;
@@ -1422,7 +1430,7 @@ static bool tar_read_payload(bipolar handle, p64 size, p8 address_to into,
                 positive have;
                 positive take;
 
-                if (tar_at >= tar_have && !tar_fill(handle))
+                if (tar_at >= tar_have && tar_fill(handle) <= 0)
                 {
                         tar_refuse("unexpected EOF in archive");
                         return false;
@@ -1927,8 +1935,23 @@ static b32 tar_read_archive(struct tar_options address_to options)
         tar_advise(handle);
         {
                 p8 magic[6];
-                bipolar got = system_read_retry((positive)handle, magic,
-                                                sizeof(magic));
+                bipolar got = 0;
+
+                /* The sniff needs all six bytes a slow writer may split. */
+                while ((positive)got < sizeof(magic))
+                {
+                        bipolar more = system_read_retry(
+                            (positive)handle, magic + got,
+                            sizeof(magic) - (positive)got);
+
+                        if (more <= 0)
+                        {
+                                if (more < 0)
+                                        got = more;
+                                break;
+                        }
+                        got += more;
+                }
 
                 if (got < 0)
                 {
