@@ -2146,7 +2146,6 @@ static bool env_export_mark_span(const_string name, positive length,
         return true;
 }
 
-
 static bool env_export_mark(string_address name)
 {
         return env_export_mark_span(name, string_length(name), false);
@@ -3640,7 +3639,6 @@ write_value:
         return answer;
 }
 
-
 #define shell_scalar_assign(name, length, hash, value, append, binding) \
         shell_scalar_assign_destination(name, length, hash, value, append, binding, null, true)
 
@@ -3728,7 +3726,6 @@ static bool shell_array_set_destination(
             located.keyed ? key : null, located.keyed ? key_length : 0,
             value, string_length(env_reading(value)));
 }
-
 
 COLD bool shell_array_set(const_string name, positive length, const_string key,
                      positive key_length, const_string value, bool append)
@@ -3841,7 +3838,6 @@ static COLD bool shell_array_replace(
 
         return true;
 }
-
 
 COLD bool shell_array_words(const_string name, positive length,
                              string_address address_to words, positive count)
