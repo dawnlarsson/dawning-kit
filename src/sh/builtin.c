@@ -14235,13 +14235,13 @@ COLD fn shell_unalias(writer write, string_address input)
         is asked to echo only under bash.
 */
 static bool shell_verbose_eval_lines;
+static bool shell_argv_joined(positive from, byte_store address_to store);
+
 COLD fn shell_eval(writer write, string_address input)
 {
-        p8 address_to eval_storage = null;
-        positive eval_room = 0;
-        positive used = 0;
+        byte_store joined = {null, 0, 0};
+        string_address eval_storage;
         positive index = 1;
-        bool room = true;
         positive syntax = shell_syntax_generation;
 
         if (shell_argc < 2)
@@ -14269,38 +14269,10 @@ COLD fn shell_eval(writer write, string_address input)
                         return shell_answer(0);
         }
 
-        while (index < shell_argc)
+        if (!shell_argv_joined(index, address_of joined))
         {
-                positive length = string_length(shell_argv[index]);
-                positive wanted;
-
-                if (used > positive_max - 2 ||
-                    length > positive_max - used - 2)
-                {
-                        room = false;
-                        break;
-                }
-
-                wanted = used + length + 2;
-
-                if (!shell_array_room(eval_storage, eval_room, wanted))
-                {
-                        room = false;
-                        break;
-                }
-
-                if (used)
-                        eval_storage[used++] = ' ';
-
-                memory_copy(eval_storage + used, shell_argv[index], length);
-                used += length;
-                index++;
-        }
-
-        if (!room)
-        {
-                if (eval_storage)
-                        memory_free(eval_storage, eval_room);
+                if (joined.bytes)
+                        memory_free(joined.bytes, joined.room);
 
                 shell_answer(string_report(log_error, 2, "%s: no room\n", "eval"));
                 shell_stop_when_scripted(2);
@@ -14308,7 +14280,7 @@ COLD fn shell_eval(writer write, string_address input)
                 return;
         }
 
-        eval_storage[used] = end;
+        eval_storage = (string_address)joined.bytes;
 
         /* The nested line gets independent lexer storage and parser marks. */
         {
@@ -14350,7 +14322,7 @@ COLD fn shell_eval(writer write, string_address input)
                 shell_eval_lineno_base = saved_base;
         }
 
-        memory_free(eval_storage, eval_room);
+        memory_free(joined.bytes, joined.room);
 
         {
                 b32 failed = (b32)(shell_syntax_generation - syntax);
@@ -17435,6 +17407,31 @@ static fn shell_background_reaped(bipolar pid, positive status)
 
 static fn job_child_changed(bipolar pid, positive status);
 
+/* wait4 as only a caught signal may cut it short, wait being the one command
+   POSIX lets a trap interrupt: -4 comes back only with a trap waiting. */
+static bipolar job_wait_call(bipolar pid, positive address_to raw,
+                             positive flags)
+{
+        bipolar got;
+
+        trap_wait_restarting(false);
+        do
+                got = system_call_4(syscall(wait4), (positive)pid,
+                                    (positive)raw, flags, 0);
+        while (got == -4 && !trap_waiting());
+        trap_wait_restarting(true);
+
+        return got;
+}
+
+// What a wait the trap cut short answers: 128 and the signal.
+static b32 job_wait_interrupted()
+{
+        bipolar signal = trap_pending_number();
+
+        return signal > 0 ? 128 + (b32)signal : 129;
+}
+
 static bipolar shell_wait_call(bipolar pid, positive address_to status)
 {
         bipolar got;
@@ -17443,25 +17440,8 @@ static bipolar shell_wait_call(bipolar pid, positive address_to status)
            zombie unmarked, so wait-all would later collect a Terminated job
            and drop the line lima keeps for `jobs`. Anyone else who dies is
            the same news job_reap already files, just heard while we sit. */
-        trap_wait_restarting(false);
-        while (true)
-        {
-                got = system_call_4(syscall(wait4), (positive)-1,
-                                    (positive)status, 0, 0);
-                if (got == -4)
-                {
-                        if (trap_waiting())
-                                break;
-
-                        continue;
-                }
-
-                if (got <= 0 || got == pid)
-                        break;
-
+        while ((got = job_wait_call(-1, status, 0)) > 0 && got != pid)
                 job_child_changed(got, address_to status);
-        }
-        trap_wait_restarting(true);
 
         return got;
 }
@@ -17510,17 +17490,12 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted, bool forget,
 
                 if (!(entry->flags & SHELL_WAIT_DONE))
                 {
-                        do
-                                got = shell_wait_call(entry->pid,
-                                                      address_of raw);
-                        while (got == -4 && !trap_waiting());
+                        got = shell_wait_call(entry->pid, address_of raw);
 
-                        if (got == -4 && trap_waiting())
+                        if (got == -4)
                         {
-                                bipolar signal = trap_pending_number();
-
                                 address_to interrupted = true;
-                                return signal > 0 ? 128 + (b32)signal : 129;
+                                return job_wait_interrupted();
                         }
 
                         if (got < 0)
