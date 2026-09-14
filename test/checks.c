@@ -2465,6 +2465,489 @@ __asm__(
 
 #endif // STANDARD_MODERN_C_TEST_STRINGS_CASES
 
+#elif defined(SHARED_format_differential_body)
+/*
+        Experimental C standard library
+
+        printf's decimal floats, generated, written once and compiled twice
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        The pinned floats in CHECK_format are the corners somebody thought of.
+        This is the rest of the surface. A case is drawn from its index alone,
+        so a range of indices is the same cases on any machine and in any
+        order, and one digest of every byte snprintf wrote and every length it
+        answered is printed for each block of 65536 indices.
+        CHECK_format_differential puts this tree's snprintf underneath and
+        CHECK_format_differential_reference the machine's glibc; the format
+        lane of test/run compares the digests on x86_64, arm64 and riscv64 and
+        runs a block that disagrees again with one line per case.
+
+        Neither library is asked to make a number. The doubles come from
+        integers: bit patterns, integer conversions, one correctly rounded
+        division, products of exact powers of ten, and exponent edits. IEEE
+        arithmetic gives each of those exactly one answer, and none of them is
+        a multiply followed by an add a compiler could fuse into an operation
+        that answers differently on another machine.
+
+        The families are where float formatting goes wrong: any pattern at
+        all, NaNs and infinities with it; every exponent; subnormals with
+        short mantissas; integers of every width; exact decimal ties -- an odd
+        integer over a power of two, whose last decimal place is a five --
+        with the precision that rounds exactly there; decimal looking
+        quotients; the neighbours of both a few units away in the last place;
+        powers of two; doubles near every power of ten; runs of nines that
+        carry; and the ends of the range. Each case then draws one of
+        %f %F %e %E %g %G, any of the five flags in a rotated order, a width
+        or none, and a precision or none, most of them below forty six and a
+        few of them up to eleven hundred.
+*/
+
+typedef unsigned long long fd_word;
+
+#define FD_SIGN (1ull << 63)
+#define FD_MANTISSA ((1ull << 52) - 1)
+
+static const fd_word fd_tens[20] = {
+    1ull, 10ull, 100ull, 1000ull, 10000ull, 100000ull, 1000000ull,
+    10000000ull, 100000000ull, 1000000000ull, 10000000000ull,
+    100000000000ull, 1000000000000ull, 10000000000000ull,
+    100000000000000ull, 1000000000000000ull, 10000000000000000ull,
+    100000000000000000ull, 1000000000000000000ull,
+    10000000000000000000ull};
+
+static const double fd_exact_tens[23] = {
+    1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+
+static fd_word fd_next(fd_word *state)
+{
+        fd_word z;
+
+        *state += 0x9E3779B97F4A7C15ull;
+        z = *state;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+}
+
+static fd_word fd_bits(double value)
+{
+        union
+        {
+                double value;
+                fd_word bits;
+        } view;
+
+        view.value = value;
+        return view.bits;
+}
+
+static double fd_double(fd_word bits)
+{
+        union
+        {
+                double value;
+                fd_word bits;
+        } view;
+
+        view.bits = bits;
+        return view.value;
+}
+
+//      A normal double times two to the minus places, by its exponent field.
+static fd_word fd_scale_down(fd_word bits, fd_word places)
+{
+        fd_word raw = (bits >> 52) & 0x7ff;
+
+        if (raw <= places)
+                return bits;
+
+        return (bits & ~(0x7ffull << 52)) | ((raw - places) << 52);
+}
+
+static fd_word fd_nudge(fd_word *state, fd_word bits, fd_word reach)
+{
+        return bits + fd_next(state) % (2 * reach + 1) - reach;
+}
+
+//      Some double near ten to a power anywhere in the range: a product of
+//      exact powers, each step correctly rounded, so a few units from the
+//      nearest and the same few units on every machine.
+static fd_word fd_near_ten(fd_word *state)
+{
+        long power = (long)(fd_next(state) % 632) - 323;
+        double value = 1.0;
+
+        while (power >= 22)
+        {
+                value = value * 1e22;
+                power -= 22;
+        }
+
+        while (power <= -22)
+        {
+                value = value / 1e22;
+                power += 22;
+        }
+
+        if (power >= 0)
+                value = value * fd_exact_tens[power];
+        else
+                value = value / fd_exact_tens[-power];
+
+        return fd_bits(value);
+}
+
+static fd_word fd_tie(fd_word a, fd_word b, long *hint)
+{
+        fd_word places = 1 + b % 64;
+        fd_word odd = ((a >> (23 + (b >> 8) % 41)) << 1) | 1;
+
+        *hint = (long)places - 1;
+        return fd_scale_down(fd_bits((double)odd), places);
+}
+
+static fd_word fd_quotient(fd_word a, fd_word b, long *hint)
+{
+        fd_word digits = 1 + b % 17;
+        fd_word places = (b >> 8) % 23;
+
+        *hint = (long)places - 1 + (long)((b >> 16) % 3);
+        return fd_bits((double)(a % fd_tens[digits]) / fd_exact_tens[places]);
+}
+
+static fd_word fd_value(fd_word *state, long *hint)
+{
+        static const fd_word ends[12] = {
+            0x7FEFFFFFFFFFFFFFull, 0x0010000000000000ull,
+            0x000FFFFFFFFFFFFFull, 0x0000000000000001ull,
+            0x0000000000000000ull, 0x7FF0000000000000ull,
+            0x7FF8000000000000ull, 0x7FF0000000000001ull,
+            0x7FFFFFFFFFFFFFFFull, 0x3FF0000000000000ull,
+            0x3FEFFFFFFFFFFFFFull, 0x3FB999999999999Aull};
+        fd_word sign = fd_next(state) & FD_SIGN;
+        fd_word pick = fd_next(state);
+        fd_word a = fd_next(state);
+        fd_word b = fd_next(state);
+        fd_word bits;
+
+        *hint = -1;
+
+        switch (pick % 16)
+        {
+        case 0:
+                return a;
+        case 1:
+        case 2:
+                return sign | (a & FD_MANTISSA) | ((b % 2047) << 52);
+        case 3:
+                return sign | (a >> (12 + b % 52));
+        case 4:
+                return sign | fd_bits((double)(a >> (b % 64)));
+        case 5:
+        case 6:
+                return sign | fd_tie(a, b, hint);
+        case 7:
+        case 8:
+                return sign | fd_quotient(a, b, hint);
+        case 9:
+                return fd_nudge(state, sign | fd_tie(a, b, hint), 2);
+        case 10:
+                return fd_nudge(state, sign | fd_quotient(a, b, hint), 3);
+        case 11:
+                return sign | ((b & 1) ? (a % 2047) << 52
+                                       : (fd_word)1 << (a % 52));
+        case 12:
+                *hint = (long)(b % 20);
+                return sign | fd_nudge(state, fd_near_ten(state), 2);
+        case 13:
+        {
+                fd_word digits = 1 + b % 17;
+                fd_word places = (b >> 8) % 23;
+
+                *hint = (long)digits - 2 + (long)((b >> 16) % 3);
+                bits = fd_bits((double)(fd_tens[digits] - 1) /
+                               fd_exact_tens[places]);
+                return fd_nudge(state, sign | bits, 1);
+        }
+        case 14:
+                bits = ends[a % 12];
+
+                if ((b & 1) && ((bits >> 52) & 0x7ff) != 0x7ff && bits > 2)
+                        bits = fd_nudge(state, bits, 2);
+
+                return sign | bits;
+        default:
+                return sign | (a & FD_MANTISSA) |
+                       (((b & 1) ? (b >> 1) % 64 : 2046 - (b >> 1) % 64)
+                        << 52);
+        }
+}
+
+static long fd_decimal(char *into, fd_word value)
+{
+        char scratch[24];
+        long length = 0;
+        long at = 0;
+
+        do
+        {
+                scratch[length++] = (char)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        while (length)
+                into[at++] = scratch[--length];
+
+        return at;
+}
+
+static long fd_hex(char *into, fd_word value)
+{
+        long at;
+
+        for (at = 0; at < 16; at++)
+                into[at] = "0123456789abcdef"[(value >> (60 - 4 * at)) & 15];
+
+        return 16;
+}
+
+static fd_word fd_parse(const char *text)
+{
+        fd_word value = 0;
+
+        while (*text >= '0' && *text <= '9')
+                value = value * 10 + (fd_word)(*text++ - '0');
+
+        return value;
+}
+
+typedef struct
+{
+        char flags[6];
+        long width;      // -1 for none
+        long precision;  // -1 for none, -2 for a bare point
+        char conversion;
+} fd_spec;
+
+static void fd_render(const fd_spec *spec, char *format)
+{
+        long at = 0;
+        long i;
+
+        format[at++] = '%';
+
+        for (i = 0; spec->flags[i]; i++)
+                format[at++] = spec->flags[i];
+
+        if (spec->width >= 0)
+                at += fd_decimal(format + at, (fd_word)spec->width);
+
+        if (spec->precision == -2)
+        {
+                format[at++] = '.';
+        }
+        else if (spec->precision >= 0)
+        {
+                format[at++] = '.';
+                at += fd_decimal(format + at, (fd_word)spec->precision);
+        }
+
+        format[at++] = spec->conversion;
+        format[at] = 0;
+}
+
+//      The specification and the double of one case, from its index.
+static fd_word fd_case(fd_word index, fd_spec *spec)
+{
+        static const char flags[5] = {'-', '+', ' ', '#', '0'};
+        fd_word state = index * 0xD1B54A32D192ED03ull + 0x8CB92BA72F3D8DD7ull;
+        long hint;
+        fd_word bits = fd_value(&state, &hint);
+        fd_word a = fd_next(&state);
+        fd_word b = fd_next(&state);
+        long at = 0;
+        long i;
+
+        for (i = 0; i < 5; i++)
+                if (((a >> (i * 2)) & 3) == 0)
+                        spec->flags[at++] = flags[(i + b % 5) % 5];
+
+        spec->flags[at] = 0;
+        spec->width = ((a >> 10) & 1) ? 1 + (long)((a >> 11) % 40) : -1;
+
+        if (hint >= 0 && hint < 1100 && ((a >> 20) & 1))
+        {
+                spec->precision = hint;
+        }
+        else
+        {
+                fd_word roll = (a >> 21) % 100;
+                fd_word spread = b >> 8;
+
+                if (roll < 8)
+                        spec->precision = -1;
+                else if (roll < 12)
+                        spec->precision = -2;
+                else if (roll < 72)
+                        spec->precision = (long)(spread % 21);
+                else if (roll < 90)
+                        spec->precision = 21 + (long)(spread % 25);
+                else if (roll < 97)
+                        spec->precision = 46 + (long)(spread % 355);
+                else
+                        spec->precision = 401 + (long)(spread % 700);
+        }
+
+        spec->conversion = "fFeEgG"[(b >> 40) % 6];
+        return bits;
+}
+
+/*
+        The one glibc bug the reference is corrected for, which src/standard.c
+        names beside format_run. When %g with the # flag first settles on
+        the fixed shape with no places left after the point, and rounding then
+        carries into a new power of ten, glibc switches to the exponent shape
+        but keeps the fixed shape's count of zero places: "%#.6g" of
+        999999.9999 is "1.e+06" where C asks for "1.00000e+06". The two agree
+        whenever the precision is one. So on the reference side, and only
+        there, a %#g answer with a point directly before its exponent and
+        more than one significant digit asked for is written again as %#e at
+        one place fewer, which is the answer C gives and which glibc's %e
+        gets right. Applied to this tree's side it could hide the same bug
+        arriving here, so it is not.
+*/
+static int fd_format(char *out, long room, fd_spec *spec, double value)
+{
+        char format[48];
+        int answer;
+
+        fd_render(spec, format);
+        answer = snprintf(out, room, format, value);
+
+#ifdef FD_REFERENCE
+        if ((spec->conversion == 'g' || spec->conversion == 'G') &&
+            answer > 0 && answer < room)
+        {
+                long significant = spec->precision == -1 ? 6
+                                   : spec->precision <= 0 ? 1
+                                                          : spec->precision;
+                int alternate = 0;
+                int point = 0;
+                long i;
+
+                for (i = 0; spec->flags[i]; i++)
+                        alternate |= spec->flags[i] == '#';
+
+                for (i = 0; i + 1 < answer; i++)
+                        point |= out[i] == '.' && (out[i + 1] | 0x20) == 'e';
+
+                if (alternate && point && significant > 1)
+                {
+                        fd_spec standard = *spec;
+
+                        standard.conversion = spec->conversion == 'g' ? 'e' : 'E';
+                        standard.precision = significant - 1;
+                        fd_render(&standard, format);
+                        answer = snprintf(out, room, format, value);
+                }
+        }
+#endif
+
+        return answer;
+}
+
+static void format_differential_run(fd_word first, fd_word count, int detail)
+{
+        static char out[2048];
+        static char line[2600];
+        char format[48];
+        fd_spec spec;
+        fd_word hash = 0xCBF29CE484222325ull;
+        fd_word index;
+
+        for (index = first; index < first + count; index++)
+        {
+                fd_word bits = fd_case(index, &spec);
+                int answer = fd_format(out, sizeof(out), &spec, fd_double(bits));
+
+                fd_render(&spec, format);
+                long length = answer < 0                   ? 0
+                              : answer >= (int)sizeof(out) ? (long)sizeof(out) - 1
+                                                           : answer;
+                long at;
+                long i;
+
+                if (detail)
+                {
+                        at = fd_decimal(line, index);
+                        line[at++] = ' ';
+
+                        for (i = 0; format[i]; i++)
+                                line[at++] = format[i];
+
+                        line[at++] = ' ';
+                        at += fd_hex(line + at, bits);
+                        line[at++] = ' ';
+
+                        if (answer < 0)
+                                line[at++] = '-';
+
+                        at += fd_decimal(line + at,
+                                         (fd_word)(answer < 0 ? -(long)answer
+                                                              : answer));
+                        line[at++] = ' ';
+                        line[at++] = '[';
+
+                        for (i = 0; i < length; i++)
+                                line[at++] = out[i];
+
+                        line[at++] = ']';
+                        line[at++] = '\n';
+                        line[at] = 0;
+                        fd_text(line);
+                        continue;
+                }
+
+                for (i = 0; i < length; i++)
+                        hash = (hash ^ (unsigned char)out[i]) * 0x100000001B3ull;
+
+                hash = (hash ^ (fd_word)(unsigned)answer) * 0x100000001B3ull;
+
+                if ((index + 1) % 65536 == 0 || index + 1 == first + count)
+                {
+                        at = 0;
+                        line[at++] = 'b';
+                        line[at++] = 'l';
+                        line[at++] = 'o';
+                        line[at++] = 'c';
+                        line[at++] = 'k';
+                        line[at++] = ' ';
+                        at += fd_decimal(line + at, index / 65536);
+                        line[at++] = ' ';
+                        at += fd_hex(line + at, hash);
+                        line[at++] = '\n';
+                        line[at] = 0;
+                        fd_text(line);
+                        hash = 0xCBF29CE484222325ull;
+                }
+        }
+}
+
+//      first, count, and "detail" for a line per case instead of digests.
+static void format_differential_main(const char *first, const char *count,
+                                     const char *detail)
+{
+        format_differential_run(fd_parse(first), fd_parse(count),
+                                detail[0] == 'd');
+}
+
 #elif defined(SHARED_spool_body) || defined(SHARED_stream_body) || \
       defined(SHARED_stream_buffering_body) || defined(SHARED_stream_standard_body)
 /* What each body measures a string with, so that neither side's C library is asked. */
@@ -37282,6 +37765,85 @@ b32 main(void)
         return test_report(null);
 }
 #endif /* CHECK_format */
+
+#ifdef CHECK_format_differential
+/*
+        Experimental C standard library
+
+        printf's decimal floats, generated, over this tree's own
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        The digests go through log, library.c's own buffered writer on
+        descriptor one, rather than through the stdio family whose formatter
+        is the thing being measured.
+*/
+#include "../src/compiler_memory.c"
+
+static void fd_text(const char *text)
+{
+        string_format(log, "%s", (string_address)text);
+}
+
+#define SHARED_format_differential_body
+#include "checks.c"
+#undef SHARED_format_differential_body
+
+b32 main(void)
+{
+        positive arguments = program_argument_count();
+
+        format_differential_main(
+            arguments > 1 ? (const char *)program_argument(1) : "0",
+            arguments > 2 ? (const char *)program_argument(2) : "65536",
+            arguments > 3 ? (const char *)program_argument(3) : "");
+        log_flush();
+        return 0;
+}
+#endif /* CHECK_format_differential */
+
+#ifdef CHECK_format_differential_reference
+/*
+        Experimental C standard library
+
+        the same generated floats, over the machine's glibc
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+/*
+        Built by the host compiler in the ordinary way, links glibc, and is
+        the answer key for CHECK_format_differential.
+*/
+#include <stdio.h>
+
+static void fd_text(const char *text)
+{
+        fputs(text, stdout);
+}
+
+#define FD_REFERENCE
+#define SHARED_format_differential_body
+#include "checks.c"
+#undef SHARED_format_differential_body
+
+int main(int argc, char **argv)
+{
+        format_differential_main(argc > 1 ? argv[1] : "0",
+                                 argc > 2 ? argv[2] : "65536",
+                                 argc > 3 ? argv[3] : "");
+        fflush(stdout);
+        return 0;
+}
+#endif /* CHECK_format_differential_reference */
 
 #ifdef CHECK_scan
 #include "../src/compiler_memory.c"

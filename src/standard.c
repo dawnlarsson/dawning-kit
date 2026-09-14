@@ -16100,6 +16100,364 @@ static fn format_round(format_number address_to number, bipolar keep)
         number->exponent++;
 }
 
+/*
+        THE SHORT ROAD, WHEN THE WHOLE ANSWER FITS IN A REGISTER
+
+        Everything above expands the whole double and then throws most of it
+        away. Most calls ask for a handful of digits of an ordinary number, and
+        those digits -- together with the one fact rounding needs about the
+        rest -- come exactly out of sixty four and a hundred and twenty eight
+        bit integers, with no estimate anywhere.
+
+        Write the double as m * 2^e with m below 2^53. Every conversion wants
+        R = round(v * 10^s) for a whole number of places s: the precision for
+        %f, and for %e and %g the places counted from the leading digit, which
+        is s = P - 1 - D for P significant digits and a decimal exponent D. The
+        floor of v * 10^s and the class of what the floor dropped -- nothing,
+        under a half, exactly a half, over a half -- decide R with round half
+        to even, and a tie is a real tie because nothing was estimated.
+
+        When s is not negative, v * 10^s = m * 5^s * 2^(e+s). Five to the
+        twenty seventh is below 2^63, so up to twenty seven places m * 5^s is
+        below 2^116 and exact in a p128. What is left is a power of two: a
+        shift left when e + s is not negative, which drops nothing, and a
+        shift right otherwise, where the dropped bits are a mask and the half
+        is one bit of it.
+
+        When s is negative the value is at least 10^-s and the question is a
+        division. Below 2^64 the integer part divides by 10^-s in one machine
+        division, the remainder compares with half the divisor, and the binary
+        fraction under the point can only push a remainder of exactly a half
+        upward. That is exact too.
+
+        D comes without a logarithm. With b the exponent of the leading bit,
+        floor(b * log10 2) is (b * 78913) >> 18 for every b a double has --
+        checked against exact powers of two and ten over [-1080, 1029] -- and
+        D is that or one more, so the scaled floor has P or P + 1 digits. When
+        it has P + 1 the last digit folds into the class and D goes up by one.
+
+        Outside those budgets -- more than eighteen significant digits, more
+        than twenty seven places, or a floor too wide for a register -- the
+        answer is false and the conversion takes the long road, which is exact
+        as well.
+*/
+
+#define FORMAT_TAIL_ZERO 0
+#define FORMAT_TAIL_BELOW 1
+#define FORMAT_TAIL_HALF 2
+#define FORMAT_TAIL_ABOVE 3
+//      A floor below this leaves room for its round up in the register.
+#define FORMAT_SHORT_LIMIT ((positive)-1)
+
+static const positive format_five_powers[28] = {
+    1ull,
+    5ull,
+    25ull,
+    125ull,
+    625ull,
+    3125ull,
+    15625ull,
+    78125ull,
+    390625ull,
+    1953125ull,
+    9765625ull,
+    48828125ull,
+    244140625ull,
+    1220703125ull,
+    6103515625ull,
+    30517578125ull,
+    152587890625ull,
+    762939453125ull,
+    3814697265625ull,
+    19073486328125ull,
+    95367431640625ull,
+    476837158203125ull,
+    2384185791015625ull,
+    11920928955078125ull,
+    59604644775390625ull,
+    298023223876953125ull,
+    1490116119384765625ull,
+    7450580596923828125ull};
+
+static const positive format_ten_powers[20] = {
+    1ull,
+    10ull,
+    100ull,
+    1000ull,
+    10000ull,
+    100000ull,
+    1000000ull,
+    10000000ull,
+    100000000ull,
+    1000000000ull,
+    10000000000ull,
+    100000000000ull,
+    1000000000000ull,
+    10000000000000ull,
+    100000000000000ull,
+    1000000000000000ull,
+    10000000000000000ull,
+    100000000000000000ull,
+    1000000000000000000ull,
+    10000000000000000000ull};
+
+static inline INLINE positive format_tail_up(p32 tail, positive whole)
+{
+        return tail == FORMAT_TAIL_ABOVE ||
+               (tail == FORMAT_TAIL_HALF && (whole & 1));
+}
+
+//      floor(mantissa * 2^power * 10^scale) and the class of what it dropped,
+//      or false when either is out of the budget above. The mantissa is below
+//      2^53 and may be zero.
+static bool format_scaled(positive mantissa, bipolar power, bipolar scale,
+                          positive address_to whole, p32 address_to tail)
+{
+        if (scale >= 0)
+        {
+                bipolar shift = -(power + scale);
+                p128 product;
+                p128 floor;
+                p128 half;
+                p128 rest;
+
+                if (scale > 27)
+                        return false;
+
+                product = (p128)mantissa * format_five_powers[scale];
+
+                if (shift <= 0)
+                {
+                        if (shift < -63 || (product >> (64 + shift)) != 0)
+                                return false;
+
+                        address_to whole = (positive)product << -shift;
+                        address_to tail = FORMAT_TAIL_ZERO;
+
+                        return address_to whole < FORMAT_SHORT_LIMIT;
+                }
+
+                //      The product is below 2^116, so past this shift it is
+                //      under a half of one unit.
+                if (shift > 127)
+                {
+                        address_to whole = 0;
+                        address_to tail =
+                            product ? FORMAT_TAIL_BELOW : FORMAT_TAIL_ZERO;
+                        return true;
+                }
+
+                floor = product >> shift;
+
+                if (floor >= FORMAT_SHORT_LIMIT)
+                        return false;
+
+                half = (p128)1 << (shift - 1);
+                rest = product & ((half << 1) - 1);
+
+                address_to whole = (positive)floor;
+                address_to tail = rest == 0     ? FORMAT_TAIL_ZERO
+                                  : rest < half ? FORMAT_TAIL_BELOW
+                                  : rest == half ? FORMAT_TAIL_HALF
+                                                 : FORMAT_TAIL_ABOVE;
+                return true;
+        }
+
+        {
+                positive places = (positive)-scale;
+                positive integer;
+                positive below = 0;
+                positive divisor;
+                positive remainder;
+
+                if (places > 19 || power > 11 || power < -63)
+                        return false;
+
+                if (power >= 0)
+                {
+                        integer = mantissa << power;
+                }
+                else
+                {
+                        integer = mantissa >> -power;
+                        below = mantissa & (((positive)1 << -power) - 1);
+                }
+
+                divisor = format_ten_powers[places];
+                address_to whole = integer / divisor;
+                remainder = integer - address_to whole * divisor;
+
+                if (remainder < divisor / 2)
+                        address_to tail = (remainder | below) ? FORMAT_TAIL_BELOW
+                                                              : FORMAT_TAIL_ZERO;
+                else if (remainder > divisor / 2 || below)
+                        address_to tail = FORMAT_TAIL_ABOVE;
+                else
+                        address_to tail = FORMAT_TAIL_HALF;
+
+                return true;
+        }
+}
+
+/*
+        The rounded digits of a finite double, straight into the shape
+        format_expand and format_round leave behind, or false.
+
+        The style is f, e or g in lower case and the precision is the one the
+        caller settled on. A true answer is already rounded; the digit run has
+        no leading zero, and for g no trailing one either, since %g reads the
+        run's length to decide which zeros it keeps.
+*/
+static bool format_short(p64 bits, p8 style, bipolar precision,
+                         format_number address_to number)
+{
+        positive mantissa = (positive)(bits & (((p64)1 << 52) - 1));
+        bipolar raw = (bipolar)((bits >> 52) & 0x7ff);
+        bipolar power = raw - 1075;
+        positive whole;
+        positive length;
+        p32 tail;
+
+        if (raw == 0)
+        {
+                if (mantissa == 0)
+                {
+                        number->count = 0;
+                        number->exponent = 1;
+                        return true;
+                }
+
+                //      A subnormal is brought up to fifty three bits so that
+                //      every bound above holds for it as well.
+                power = -1074;
+
+                while (!(mantissa >> 52))
+                {
+                        mantissa <<= 1;
+                        power--;
+                }
+        }
+        else
+        {
+                mantissa |= (positive)1 << 52;
+        }
+
+        if (style == 'f')
+        {
+                positive integer;
+
+                //      At 2^64 and past it every place count is too wide.
+                if (power > 11)
+                        return false;
+
+                if (format_scaled(mantissa, power, precision, address_of whole,
+                                  address_of tail))
+                {
+                        whole += format_tail_up(tail, whole);
+
+                        if (whole == 0)
+                        {
+                                number->count = 0;
+                                number->exponent = 1;
+                                return true;
+                        }
+
+                        length = positive_into(number->digit, whole);
+                        number->count = length;
+                        number->exponent = (bipolar)length - precision;
+                        return true;
+                }
+
+                //      Too wide as one number. An integer below 2^64 is its
+                //      own digits and every place after the point is a zero.
+                if (power >= 0)
+                {
+                        length = positive_into(number->digit, mantissa << power);
+                        number->count = length;
+                        number->exponent = (bipolar)length;
+                        return true;
+                }
+
+                //      Otherwise the integer part is below 2^53 and the
+                //      places are rounded on the fraction alone, which is
+                //      below one, so a carry out of it is one more unit.
+                if (power < -52 || precision > 19)
+                        return false;
+
+                integer = mantissa >> -power;
+
+                if (!format_scaled(mantissa & (((positive)1 << -power) - 1),
+                                   power, precision, address_of whole,
+                                   address_of tail))
+                        return false;
+
+                whole += format_tail_up(tail, whole);
+
+                if (whole == format_ten_powers[precision])
+                {
+                        integer++;
+                        whole = 0;
+                }
+
+                length = positive_into(number->digit, integer);
+
+                if (precision)
+                        length += positive_into_padded(number->digit + length,
+                                                       whole,
+                                                       (positive)precision, '0');
+
+                number->count = length;
+                number->exponent = (bipolar)length - precision;
+                return true;
+        }
+
+        {
+                bipolar significant =
+                    style == 'e' ? precision + 1 : precision ? precision : 1;
+                bipolar decade = ((power + 52) * 78913) >> 18;
+
+                if (significant > 18)
+                        return false;
+
+                if (!format_scaled(mantissa, power, significant - 1 - decade,
+                                   address_of whole, address_of tail))
+                        return false;
+
+                if (whole >= format_ten_powers[significant])
+                {
+                        positive last = whole % 10;
+
+                        whole /= 10;
+                        decade++;
+
+                        if (last > 5 || (last == 5 && tail != FORMAT_TAIL_ZERO))
+                                tail = FORMAT_TAIL_ABOVE;
+                        else if (last == 5)
+                                tail = FORMAT_TAIL_HALF;
+                        else if (last || tail != FORMAT_TAIL_ZERO)
+                                tail = FORMAT_TAIL_BELOW;
+                }
+
+                whole += format_tail_up(tail, whole);
+
+                if (whole == format_ten_powers[significant])
+                {
+                        whole = format_ten_powers[significant - 1];
+                        decade++;
+                }
+
+                length = positive_into(number->digit, whole);
+
+                if (style == 'g')
+                        while (number->digit[length - 1] == '0')
+                                length--;
+
+                number->count = length;
+                number->exponent = decade + 1;
+                return true;
+        }
+}
+
 static inline INLINE p8 format_number_sign(p64 bits,
                                             format_spec address_to spec)
 {
@@ -16139,6 +16497,7 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
         positive spaces = 0;
         positive run;
         bool point;
+        bool rounded;
         bool upper = style == 'E' || style == 'F' || style == 'G' || style == 'A';
 
         view.value = value;
@@ -16177,17 +16536,24 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
         if (precision < 0)
                 precision = 6;
 
-        format_expand(value, address_of number);
-
         if (style == 'F')
                 style = 'f';
+
+        //      The short road answers already rounded, or not at all, and
+        //      then the whole expansion is made and rounded below.
+        rounded = format_short(view.bits, style | 0x20, precision,
+                               address_of number);
+
+        if (!rounded)
+                format_expand(value, address_of number);
 
         if (style == 'g' || style == 'G')
         {
                 bipolar significant = precision == 0 ? 1 : precision;
                 bipolar shown;
 
-                format_round(address_of number, significant);
+                if (!rounded)
+                        format_round(address_of number, significant);
 
                 shown = number.exponent - 1;
 
@@ -16222,9 +16588,10 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
         }
         else if (style == 'e' || style == 'E')
         {
-                format_round(address_of number, precision + 1);
+                if (!rounded)
+                        format_round(address_of number, precision + 1);
         }
-        else
+        else if (!rounded)
         {
                 format_round(address_of number, number.exponent + precision);
         }
