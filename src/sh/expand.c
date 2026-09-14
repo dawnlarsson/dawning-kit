@@ -2002,6 +2002,98 @@ static bool expand_sort_names(string_address address_to names, positive count);
 // The word of ${x:=word} and ${x:?word}: text, with a leading tilde expanded
 // first, as POSIX asks of every word a parameter form can substitute.
 #define EXPAND_CAPTURE_WORD 3
+// The right-hand side of [[ string =~ regex ]].
+#define EXPAND_CAPTURE_REGEX 4
+
+/* Glob and ERE operands preserve quoted metacharacters with the same encoder.
+   Two machine-word sets keep membership constant-time without a callback or
+   a 256-byte table; ERE adds to the four metacharacters glob already owns. */
+static CONST bool expand_quoted_metacharacter(p8 value, bool regex)
+{
+        const p64 common_low = ((p64)1 << '*') | ((p64)1 << '?');
+        const p64 common_high = ((p64)1 << ('[' - 64)) |
+                                ((p64)1 << ('\\' - 64));
+        //      A hyphen and a close bracket are special inside a bracket
+        //      expression and nowhere else, which is enough: [a\\-c] is the
+        //      three members a, hyphen and c to both references where [a-c]
+        //      is the range. They are the pattern language's alone -- a
+        //      backslash before either in an ERE is not defined -- so the
+        //      regex right-hand side does not take them from here.
+        const p64 glob_low = ((p64)1 << '-');
+        const p64 glob_high = ((p64)1 << (']' - 64));
+        const p64 regex_low = ((p64)1 << '$') | ((p64)1 << '(') |
+                              ((p64)1 << ')') | ((p64)1 << '+') |
+                              ((p64)1 << '.');
+        const p64 regex_high = ((p64)1 << (']' - 64)) |
+                               ((p64)1 << ('^' - 64)) |
+                               ((p64)1 << ('{' - 64)) |
+                               ((p64)1 << ('|' - 64)) |
+                               ((p64)1 << ('}' - 64));
+        p64 bit;
+
+        if (value >= 128)
+                return false;
+
+        bit = (p64)1 << (value & 63);
+
+        if (bit & (value < 64 ? common_low : common_high))
+                return true;
+
+        if (!regex && (bit & (value < 64 ? glob_low : glob_high)))
+                return true;
+
+        return regex && (bit & (value < 64 ? regex_low : regex_high));
+}
+
+static inline INLINE PURE bool expand_lift_escaped(positive step, b32 mode)
+{
+        p8 value = expand_text[step];
+
+        if (expand_mark[step] != MARK_QUOTED)
+                return false;
+        if (mode == EXPAND_CAPTURE_REPLACEMENT)
+                return value == '&';
+        return (mode == EXPAND_CAPTURE_PATTERN || mode == EXPAND_CAPTURE_REGEX) &&
+               expand_quoted_metacharacter(value, mode == EXPAND_CAPTURE_REGEX);
+}
+
+/*
+        The working buffer from start on, lifted out as one string in the
+        store: empty marks dropped, and a backslash kept in front of each
+        quoted byte the consumer would otherwise read as syntax. Null when
+        it does not fit.
+*/
+static p8 address_to expand_lift(positive start, b32 mode)
+{
+        positive room = 1;
+        positive used = 0;
+        positive step;
+        p8 address_to into;
+
+        for (step = start; step < expand_length; step++)
+        {
+                if (expand_mark[step] == MARK_EMPTY)
+                        continue;
+                if (room > positive_max - 2)
+                        return null;
+                room += 1 + expand_lift_escaped(step, mode);
+        }
+
+        if (!(into = shell_store_take(address_of expand_store, room)))
+                return null;
+
+        for (step = start; step < expand_length; step++)
+        {
+                if (expand_mark[step] == MARK_EMPTY)
+                        continue;
+                if (expand_lift_escaped(step, mode))
+                        into[used++] = '\\';
+                into[used++] = expand_text[step];
+        }
+
+        into[used] = end;
+        return into;
+}
 
 // The word of ${x-word} and ${x:+word}, expanded in place: a leading tilde
 // first, unless the whole form sits inside double quotes.
@@ -2020,9 +2112,6 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
         bool held = expand_quoted_seen;
         bool held_name_at = expand_name_at_empty;
         bool held_explicit = expand_explicit_empty;
-        positive room = 1;
-        positive step;
-        positive used = 0;
         p8 address_to into;
 
         if (mode == EXPAND_CAPTURE_WORD && !quoted && string_is(text, '~'))
@@ -2030,62 +2119,14 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
 
         expand_into(text, quoted, MARK_PLAIN, false);
 
-        for (step = at; step < expand_length; step++)
-        {
-                p8 value = expand_text[step];
-
-                if (expand_mark[step] == MARK_EMPTY)
-                        continue;
-
-                if (room == positive_max)
-                        break;
-
-                room++;
-
-                if (expand_mark[step] == MARK_QUOTED &&
-                    ((mode == EXPAND_CAPTURE_PATTERN &&
-                      (value == '*' || value == '?' || value == '[' || value == '\\' ||
-                       value == '-' || value == ']')) ||
-                     (mode == EXPAND_CAPTURE_REPLACEMENT && value == '&')))
-                        room++;
-        }
-
-        if (step != expand_length || !(into = shell_store_take(address_of expand_store,
-                                                                room)))
-        {
+        if (!(into = expand_lift(at, mode)))
                 expand_fail_state();
-                expand_length = at;
-                expand_empty_count = held_empty;
-                expand_quoted_seen = held;
-                expand_name_at_empty = held_name_at;
-                expand_explicit_empty = held_explicit;
-                return null;
-        }
 
-        for (step = at; step < expand_length; step++)
-        {
-                p8 value = expand_text[step];
-
-                if (expand_mark[step] == MARK_EMPTY)
-                        continue;
-
-                if (expand_mark[step] == MARK_QUOTED &&
-                    ((mode == EXPAND_CAPTURE_PATTERN &&
-                      (value == '*' || value == '?' || value == '[' || value == '\\' ||
-                       value == '-' || value == ']')) ||
-                     (mode == EXPAND_CAPTURE_REPLACEMENT && value == '&')))
-                        into[used++] = '\\';
-
-                into[used++] = value;
-        }
-
-        into[used] = end;
         expand_length = at;
         expand_empty_count = held_empty;
         expand_quoted_seen = held;
         expand_name_at_empty = held_name_at;
         expand_explicit_empty = held_explicit;
-
         return into;
 }
 
@@ -9857,100 +9898,22 @@ RETURNS_NONNULL string_address shell_expand_assignment(string_address word, posi
         literal metacharacter, so preserving that distinction needs no second
         pattern language.
 */
-/* Glob and ERE operands preserve quoted metacharacters with the same encoder.
-   Two machine-word sets keep membership constant-time without a callback or
-   a 256-byte table; ERE adds to the four metacharacters glob already owns. */
-static CONST bool expand_quoted_metacharacter(p8 value, bool regex)
-{
-        const p64 common_low = ((p64)1 << '*') | ((p64)1 << '?');
-        const p64 common_high = ((p64)1 << ('[' - 64)) |
-                                ((p64)1 << ('\\' - 64));
-        //      A hyphen and a close bracket are special inside a bracket
-        //      expression and nowhere else, which is enough: [a\\-c] is the
-        //      three members a, hyphen and c to both references where [a-c]
-        //      is the range. They are the pattern language's alone -- a
-        //      backslash before either in an ERE is not defined -- so the
-        //      regex right-hand side does not take them from here.
-        const p64 glob_low = ((p64)1 << '-');
-        const p64 glob_high = ((p64)1 << (']' - 64));
-        const p64 regex_low = ((p64)1 << '$') | ((p64)1 << '(') |
-                              ((p64)1 << ')') | ((p64)1 << '+') |
-                              ((p64)1 << '.');
-        const p64 regex_high = ((p64)1 << (']' - 64)) |
-                               ((p64)1 << ('^' - 64)) |
-                               ((p64)1 << ('{' - 64)) |
-                               ((p64)1 << ('|' - 64)) |
-                               ((p64)1 << ('}' - 64));
-        p64 bit;
-
-        if (value >= 128)
-                return false;
-
-        bit = (p64)1 << (value & 63);
-
-        if (bit & (value < 64 ? common_low : common_high))
-                return true;
-
-        if (!regex && (bit & (value < 64 ? glob_low : glob_high)))
-                return true;
-
-        return regex && (bit & (value < 64 ? regex_low : regex_high));
-}
-
 static RETURNS_NONNULL string_address shell_expand_quoted(
     string_address word, bool regex)
 {
-        positive room = 1;
-        positive at;
-        positive used = 0;
-        p8 address_to result;
+        string_address result;
 
         if (!expand_word_ready(word))
                 return (string_address) "";
 
-        for (at = 0; at < expand_length; at++)
-        {
-                if (expand_mark[at] == MARK_EMPTY)
-                        continue;
-
-                if (room == positive_max)
-                        break;
-
-                room++;
-
-                if (expand_mark[at] == MARK_QUOTED &&
-                    expand_quoted_metacharacter(expand_text[at], regex))
-                {
-                        if (room == positive_max)
-                                break;
-
-                        room++;
-                }
-        }
-
-        if (at != expand_length ||
-            !(result = shell_store_take(address_of expand_store, room)))
+        if (!(result = expand_lift(0, regex ? EXPAND_CAPTURE_REGEX
+                                            : EXPAND_CAPTURE_PATTERN)))
         {
                 expand_overflow = true;
                 expand_fatal_status(string_report(writer_stderr_once, 2, "Expansion too long: %s\n", word));
                 return (string_address) "";
         }
 
-        for (at = 0; at < expand_length; at++)
-        {
-                p8 value = expand_text[at];
-
-                if (expand_mark[at] == MARK_EMPTY)
-                        continue;
-
-                if (expand_mark[at] == MARK_QUOTED &&
-                    expand_quoted_metacharacter(value, regex))
-                        result[used++] = '\\';
-
-                result[used++] = value;
-        }
-
-        result[used] = end;
         return result;
 }
 
