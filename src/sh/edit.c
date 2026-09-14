@@ -4192,7 +4192,6 @@ static bool edit_write_file()
         bipolar handle;
         file_facts staged;
         p8 address_to block;
-        p8 temporary[EDIT_PATH_MAX];
         positive length = 0;
         positive wrote;
         bipolar changed;
@@ -4208,10 +4207,10 @@ static bool edit_write_file()
         if (!block)
                 return false;
 
-        handle = file_temporary_open_at(
-            edit_file_directory, edit_file_leaf, temporary,
-            sizeof(temporary), (string_address)".moonwater-edit-", 16,
-            system_nonce(), 64, 0600);
+        system_path_stage protected;
+        handle = file_stage_file_open_at(
+            address_of protected, edit_file_directory,
+            edit_file_leaf, 0600);
 
         if (handle < 0)
         {
@@ -4226,31 +4225,32 @@ static bool edit_write_file()
                       ? -1
                       : edit_file_existed
                             ? file_preserve_owner_mode(
-                                  handle, address_of edit_file_facts)
-                            : system_call_2(syscall(fchmod),
-                                  (positive)handle, 0666 & ~file_umask());
+                                  handle, protected.directory,
+                                  SYSTEM_PATH_STAGE_LEAF,
+                                  address_of edit_file_facts,
+                                  file_replacement_mode(
+                                      edit_file_facts.mode))
+                            : file_change_mode_handle(
+                                  handle, 0666 & ~file_umask());
         result = changed >= 0
                      ? file_look_code(handle, (string_address)"",
                                       AT_EMPTY_PATH, address_of staged)
                      : -1;
         if (result >= 0)
                 result = system_call_1(syscall(fsync), (positive)handle);
-        if (result >= 0)
-                result = file_temporary_publish_decided_at(
-                    edit_file_directory, temporary, edit_file_leaf,
-                    handle, !edit_file_existed,
-                    edit_file_existed ? address_of edit_file_facts : null);
+        bipolar new_original = -1;
+        result = file_stage_publish_protected_keep_at(
+            address_of protected, edit_file_directory, edit_file_leaf,
+            handle, result, !edit_file_existed,
+            edit_file_existed ? address_of edit_file_facts : null,
+            0, address_of new_original, false);
 
         if (result < 0)
-        {
-                (void)file_stage_close_at(edit_file_directory, temporary,
-                                          handle, result, 0);
                 return false;
-        }
 
         if (edit_file_original >= 0)
                 system_close(edit_file_original);
-        edit_file_original = handle;
+        edit_file_original = new_original;
         edit_file_facts = staged;
         edit_file_existed = true;
         return true;

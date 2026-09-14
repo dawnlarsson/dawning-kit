@@ -195,6 +195,13 @@ typedef struct
 
 _Static_assert(sizeof(file_facts) == 256, "statx writes 256 bytes");
 
+/* Replacing regular-file content has the authority semantics of truncating
+   it: ordinary permissions survive, set-ID execution authority does not. */
+static CONST positive file_replacement_mode(positive mode)
+{
+        return mode & 0777;
+}
+
 typedef struct
 {
         b64 type;
@@ -705,7 +712,8 @@ static bool path_walk_join(p8 address_to into, positive room,
 }
 
 CONST RETURNS_NONNULL string_address file_reason(bipolar code);
-/* Claim an exclusive temporary beside the destination for atomic publish. */
+/* Claim an exclusive temporary beside the destination for callers which
+   still publish through their own descriptor-bound transaction. */
 static COLD bipolar file_temporary_open_at(bipolar directory,
                                         string_address path, p8 address_to into,
                                         positive room, string_address marker,
@@ -727,6 +735,30 @@ static COLD bipolar file_temporary_open_at(bipolar directory,
 
         return -ERROR_EXISTS;
 }
+
+static bipolar file_stage_close_at(bipolar directory,
+                                   string_address temporary,
+                                   bipolar handle, bipolar result,
+                                   positive remove_flags);
+static bipolar file_stage_file_open_at(
+    system_path_stage address_to stage, bipolar directory,
+    string_address destination, positive mode);
+static bipolar file_change_mode_handle(
+    bipolar destination, positive mode);
+static bipolar file_directory_real(
+    bipolar exact, bipolar parent, string_address leaf,
+    bool address_to changed, positive address_to old_mode);
+static bipolar file_stage_publish_protected_at(
+    system_path_stage address_to stage, bipolar destination_directory,
+    string_address destination, bipolar writer, bipolar result,
+    bool no_clobber, file_facts address_to replaced,
+    positive remove_flags);
+static bipolar file_stage_publish_protected_keep_at(
+    system_path_stage address_to stage, bipolar destination_directory,
+    string_address destination, bipolar writer, bipolar result,
+    bool no_clobber, file_facts address_to replaced,
+    positive remove_flags, bipolar address_to published_handle,
+    bool retain_failure);
 
 typedef struct
 {
@@ -757,6 +789,20 @@ typedef struct
         b32 (*run)(bipolar, bipolar, bool, p8);
 } file_codec_cli;
 
+/* A named codec output is written privately and published only after the
+   stream succeeds.  The destination decision is pinned to the inode seen
+   before encoding, so neither an alias of the input nor a concurrent name
+   exchange can make a forced output truncate or replace its source. */
+typedef struct
+{
+        system_path_file target;
+        file_facts input;
+        file_facts replaced;
+        bool replaced_known;
+        positive mode;
+        system_path_stage protected;
+} file_codec_output;
+
 #define FILE_CODEC_COMPRESS_OPTION 1
 #define FILE_CODEC_OUTPUT_OPTION 2
 #define FILE_CODEC_REMOVE_OPTION 4
@@ -764,6 +810,200 @@ typedef struct
 #define FILE_CODEC_LEVEL_WORDS 16
 #define FILE_CODEC_NO_NAME 32
 #define FILE_CODEC_SHORT_VERSION 64
+
+static fn file_codec_output_reset(file_codec_output address_to output)
+{
+        system_path_file_reset(address_of output->target);
+        memory_fill(address_of output->input, 0, sizeof(output->input));
+        memory_fill(address_of output->replaced, 0, sizeof(output->replaced));
+        output->replaced_known = false;
+        output->mode = 0;
+        system_path_stage_reset(address_of output->protected);
+}
+
+static bipolar file_codec_output_open_in(
+    file_codec_output address_to output, bipolar directory,
+    bool owns_directory, string_address leaf, bipolar input, bool replace)
+{
+        positive length = string_length(leaf);
+        bipolar looked;
+
+        file_codec_output_reset(output);
+        if (!length || length >= sizeof(output->target.leaf) ||
+            (length == 1 && leaf[0] == '.') ||
+            (length == 2 && leaf[0] == '.' && leaf[1] == '.'))
+        {
+                looked = -ERROR_INVALID;
+                goto failed;
+        }
+
+        memory_copy_end(output->target.leaf, leaf, length);
+        output->target.directory = directory;
+        output->target.owns_directory = owns_directory;
+
+        looked = file_look_code(
+            input, (string_address)"", AT_EMPTY_PATH, address_of output->input);
+        if (looked < 0)
+                goto failed;
+        if ((output->input.mask & STATX_BASIC) != STATX_BASIC)
+        {
+                looked = -ERROR_INPUT_OUTPUT;
+                goto failed;
+        }
+
+        looked = file_look_code(directory, output->target.leaf,
+                                AT_SYMLINK_NOFOLLOW,
+                                address_of output->replaced);
+        if (looked >= 0)
+        {
+                if ((output->replaced.mask & STATX_BASIC) != STATX_BASIC)
+                {
+                        looked = -ERROR_INPUT_OUTPUT;
+                        goto failed;
+                }
+                if (file_same_identity(address_of output->input,
+                                       address_of output->replaced))
+                {
+                        looked = -ERROR_INVALID;
+                        goto failed;
+                }
+                if (!replace)
+                {
+                        looked = -ERROR_EXISTS;
+                        goto failed;
+                }
+
+                positive kind = output->replaced.mode & MODE_FORMAT;
+                if (kind != MODE_FILE)
+                {
+                        looked = kind == MODE_LINK
+                                     ? -ERROR_LOOP
+                                     : kind == MODE_DIRECTORY
+                                           ? -ERROR_IS_DIRECTORY
+                                           : -ERROR_NOT_SUPPORTED;
+                        goto failed;
+                }
+                output->replaced_known = true;
+                output->mode = file_replacement_mode(
+                    output->replaced.mode);
+        }
+        else if (looked != -ERROR_NO_ENTRY)
+                goto failed;
+        else
+                output->mode = 0666 & ~file_umask();
+
+        output->target.handle = file_stage_file_open_at(
+            address_of output->protected, directory,
+            output->target.leaf, 0600);
+        if (output->target.handle < 0)
+        {
+                looked = output->target.handle;
+                goto failed;
+        }
+        return output->target.handle;
+
+failed:
+        if (owns_directory && directory >= 0)
+                system_close(directory);
+        file_codec_output_reset(output);
+        return looked;
+}
+
+static bipolar file_codec_output_open(
+    file_codec_output address_to output, string_address path,
+    bipolar input, bool replace)
+{
+        p8 leaf[SYSTEM_PATH_LEAF_ROOM];
+        bipolar directory = system_open_parent_pinned(
+            AT_FDCWD, path, leaf, sizeof(leaf));
+
+        if (directory < 0)
+        {
+                file_codec_output_reset(output);
+                return directory;
+        }
+        return file_codec_output_open_in(
+            output, directory, true, leaf, input, replace);
+}
+
+static bipolar file_codec_output_open_sibling(
+    file_codec_output address_to output, bipolar directory,
+    string_address leaf, bipolar input, bool replace)
+{
+        return file_codec_output_open_in(
+            output, directory, false, leaf, input, replace);
+}
+
+static bipolar file_codec_output_finish(
+    file_codec_output address_to output, bool success)
+{
+        bipolar result = success ? 0 : -ERROR_INPUT_OUTPUT;
+
+        if (result >= 0)
+        {
+                file_facts current;
+                bipolar found = file_look_code(
+                    output->target.directory, output->target.leaf,
+                    AT_SYMLINK_NOFOLLOW, address_of current);
+                if (output->replaced_known)
+                {
+                        result = found;
+                        if (result >= 0 &&
+                            ((current.mask & STATX_BASIC) != STATX_BASIC ||
+                             !file_same_identity(address_of output->replaced,
+                                                 address_of current) ||
+                             (current.mode & MODE_FORMAT) != MODE_FILE))
+                                result = -ERROR_AGAIN;
+                        if (result >= 0 &&
+                            file_same_identity(address_of output->input,
+                                               address_of current))
+                                result = -ERROR_INVALID;
+                }
+                else
+                {
+                        if (found >= 0)
+                                result =
+                                    (current.mask & STATX_BASIC) != STATX_BASIC
+                                        ? -ERROR_INPUT_OUTPUT
+                                        : file_same_identity(
+                                              address_of output->input,
+                                              address_of current)
+                                              ? -ERROR_INVALID
+                                              : -ERROR_EXISTS;
+                        else if (found != -ERROR_NO_ENTRY)
+                                result = found;
+                }
+        }
+        if (result < 0)
+                result = file_stage_publish_protected_at(
+                    address_of output->protected,
+                    output->target.directory, output->target.leaf,
+                    output->target.handle, result, true, null, 0);
+        else
+        {
+                if (output->replaced_known)
+                        result = system_call_3(
+                            syscall(fchown),
+                            (positive)output->target.handle,
+                            output->replaced.owner,
+                            output->replaced.group);
+                if (result >= 0)
+                        result = file_change_mode_handle(
+                            output->target.handle, output->mode);
+                result = file_stage_publish_protected_at(
+                    address_of output->protected,
+                    output->target.directory,
+                    output->target.leaf,
+                    output->target.handle, result,
+                    !output->replaced_known,
+                    output->replaced_known
+                        ? address_of output->replaced : null,
+                    0);
+        }
+        output->target.handle = -1;
+        system_path_file_release(address_of output->target);
+        return result;
+}
 
 static string_address file_called_name(string_address fallback)
 {
@@ -995,14 +1235,17 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
         for (positive at = first; at < count && !*codec->status; at++)
         {
                 string_address path = program_argument((b32)at);
-                system_path_file input, output;
+                system_path_file input, passthrough;
+                file_codec_output output;
                 p8 output_leaf[SYSTEM_PATH_LEAF_ROOM];
                 string_address output_display = null;
                 bipolar in = 0;
                 bipolar out = codec->test ? -1 : 1;
+                bool named_output = false;
 
                 system_path_file_reset(address_of input);
-                system_path_file_reset(address_of output);
+                system_path_file_reset(address_of passthrough);
+                file_codec_output_reset(address_of output);
                 if (!string_equals(path, "-"))
                 {
                         in = system_path_file_open(address_of input, path, false,
@@ -1021,9 +1264,9 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
 
                                 if (named)
                                 {
-                                        out = system_path_file_open(
-                                            address_of output, named, true,
-                                            codec->replace, 0666);
+                                        out = file_codec_output_open(
+                                            address_of output, named, in,
+                                            codec->replace);
                                         output_display = named;
                                 }
                                 else if (!file_codec_name(
@@ -1050,10 +1293,10 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
                                 else
                                 {
                                         output_display = (string_address)output_name;
-                                        out = system_path_file_open_sibling(
+                                        out = file_codec_output_open_sibling(
                                             address_of output, input.directory,
-                                            (string_address)output_leaf,
-                                            codec->replace, 0666);
+                                            (string_address)output_leaf, in,
+                                            codec->replace);
                                 }
 
                                 if (out < 0)
@@ -1065,19 +1308,39 @@ static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
                                         system_path_file_release(address_of input);
                                         break;
                                 }
+                                named_output = true;
                         }
                 }
 
                 bool had_input = input.handle >= 0;
                 codec->run(in, out, codec->decompress, codec->level);
-                bipolar finished = system_path_file_finish(
-                    address_of input, address_of output, !*codec->status,
-                    codec->remove_source && had_input);
+                bipolar finished;
+                string_address finish_display = path;
+
+                if (named_output)
+                {
+                        bipolar output_finished = file_codec_output_finish(
+                            address_of output, !*codec->status);
+                        finished = output_finished;
+                        if (output_finished >= 0 && !*codec->status &&
+                            codec->remove_source && had_input)
+                                finished = system_path_file_remove(
+                                    address_of input);
+                        (void)system_path_file_close_handle(address_of input);
+                        system_path_file_release(address_of input);
+                        if (output_finished < 0 && !*codec->status)
+                                finish_display = output_display;
+                }
+                else
+                        finished = system_path_file_finish(
+                            address_of input, address_of passthrough,
+                            !*codec->status,
+                            codec->remove_source && had_input);
 
                 if (finished < 0 && !*codec->status)
                 {
                         string_format(log_error, "%s: %w: %s\n", codec->name, writer_terminal_name,
-                                      path, file_reason(finished));
+                                      finish_display, file_reason(finished));
                         *codec->status = 1;
                 }
                 codec->output_path = null;
@@ -1114,10 +1377,18 @@ static b32 file_codec_main(file_codec_cli address_to codec)
 
 bipolar file_link_text(string_address path, p8 address_to into, positive limit)
 {
-        bipolar length = system_read_link_at(AT_FDCWD, path, into, limit - 1);
+        if (!into || !limit)
+                return -ERROR_INVALID;
+
+        /* Give readlink the whole object.  Equality then proves truncation;
+           one byte less leaves room for the terminator without rejecting a
+           valid maximum-length target. */
+        bipolar length = system_read_link_at(AT_FDCWD, path, into, limit);
 
         if (length < 0)
                 return length;
+        if ((positive)length >= limit)
+                return -ERROR_NAME_TOO_LONG;
 
         into[length] = end;
 
@@ -1247,11 +1518,14 @@ static bool file_resolve_as(string_address path, p8 address_to into,
                         if (follow && looked == 0 &&
                             (facts.mode & MODE_FORMAT) == MODE_LINK)
                                 seen = system_read_link_at(
-                                    AT_FDCWD, into, link, FILE_PATH_MAX - 1);
+                                    AT_FDCWD, into, link, sizeof(link));
                 }
                 else if (follow)
                         seen = system_read_link_at(AT_FDCWD, into, link,
-                                                   FILE_PATH_MAX - 1);
+                                                   sizeof(link));
+
+                if (seen >= (bipolar)sizeof(link))
+                        return false;
 
                 if (seen <= 0)
                 {
@@ -3446,7 +3720,8 @@ static bipolar file_copy_destination_open(
                         FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
                     mode);
 
-        positive flags = (FILE_WRITE & ~(FILE_CREATE | O_TRUNC)) | O_CLOEXEC;
+        positive flags = (FILE_WRITE & ~(FILE_CREATE | O_TRUNC)) |
+                         O_NOFOLLOW | O_CLOEXEC;
         if ((expected->mode & MODE_FORMAT) == MODE_FILE)
                 flags |= O_NONBLOCK;
 
@@ -3465,25 +3740,8 @@ static bipolar file_copy_destination_open(
 #define FILE_RENAME_NOREPLACE 1
 #define FILE_RENAME_EXCHANGE 2
 
-/* Detach a name atomically and prove which inode was detached.  Keeping the
-   temporary name lets overwrite decisions publish or restore without a
-   check-to-rename window. */
-static bipolar file_detach_same(bipolar directory, string_address name,
-                                file_facts address_to expected,
-                                p8 address_to temporary)
-{
-        bipolar handle = file_open_same(directory, name, expected,
-                                        O_PATH | O_NOFOLLOW);
-        if (handle < 0)
-                return handle;
-
-        bipolar detached = system_path_detach_opened_at(
-            directory, name, handle, temporary, FILE_PATH_MAX);
-        system_close(handle);
-        return detached;
-}
-
-/* Detach a name atomically, prove the detached inode, then remove it. */
+/* Move a name under a private directory, prove the staged inode, then remove
+   it only through that held directory descriptor. */
 static bipolar file_remove_same(bipolar directory, string_address name,
                                 positive flags,
                                 file_facts address_to expected)
@@ -3511,127 +3769,142 @@ static bipolar file_remove_path_same(string_address path, positive flags,
         return removed;
 }
 
-static bipolar file_exchange_decided_at(
+static bipolar file_replace_decided_at(
     bipolar from_directory, string_address from,
     bipolar to_directory, string_address to,
     file_facts address_to from_facts, file_facts address_to replaced);
-static bipolar file_temporary_name_publish_at(
-    bipolar directory, string_address temporary, string_address destination,
-    bipolar handle, positive flags);
 
-/* Publish the inode behind handle, rather than trusting its staging name.
-   The private directory protects the exact fd alias even after metadata
-   preservation gives the staged inode to another user. */
-static bipolar file_temporary_link_publish_at(
-    bipolar directory, string_address temporary, string_address destination,
-    bipolar handle, file_facts address_to staged, bool no_clobber,
-    file_facts address_to replaced)
+/* Create a regular output inside its private transaction from the first
+   syscall.  No public temporary name exists for another directory writer to
+   rename or hard-link before bytes or privileged metadata are applied. */
+static bipolar file_stage_file_open_at(
+    system_path_stage address_to stage, bipolar directory,
+    string_address destination, positive mode)
 {
-        if (no_clobber && replaced)
-                return -ERROR_EXISTS;
+        bipolar begun = system_path_stage_begin_at(
+            stage, directory, destination);
+        if (begun < 0)
+                return begun;
 
-        p8 alias_name[FILE_PATH_MAX];
-        bipolar alias = system_path_alias_opened_at(
-            directory, destination, handle, alias_name, sizeof(alias_name));
-        bool exact_unavailable = alias == -ERROR_NO_ENTRY ||
-                                 alias == -ERROR_NOT_PERMITTED ||
-                                 alias == -ERROR_NOT_SUPPORTED ||
-                                 alias == -ERROR_NO_SYSTEM_CALL ||
-                                 alias == -ERROR_CROSS_DEVICE ||
-                                 alias == -ERROR_INVALID;
-
-        /* Filesystems or older kernels may provide neither fd-link form.  A
-           name fallback is safe only while the publisher still owns the
-           stage: in a sticky directory no other uid can exchange it, and a
-           same-uid process is already the same security principal. */
-        if (alias < 0 && exact_unavailable &&
-            staged->owner == (positive)system_call(syscall(geteuid)))
-                return replaced
-                           ? file_exchange_decided_at(
-                                 directory, temporary, directory,
-                                 destination, staged, replaced)
-                           : file_temporary_name_publish_at(
-                                 directory, temporary, destination, handle,
-                                 no_clobber ? FILE_RENAME_NOREPLACE : 0);
-        if (alias < 0)
-                return alias;
-
-        bipolar published = replaced
-            ? file_exchange_decided_at(
-                  alias, SYSTEM_PATH_ALIAS_LEAF, directory, destination,
-                  staged, replaced)
-            : system_rename_at(
-                  alias, SYSTEM_PATH_ALIAS_LEAF, directory, destination,
-                  no_clobber ? FILE_RENAME_NOREPLACE : 0);
-        if (published >= 0)
-                published = system_path_same_opened_at(
-                    handle, directory, destination);
-
-        if (published < 0)
-                (void)system_path_remove_opened_at(
-                    alias, SYSTEM_PATH_ALIAS_LEAF, handle, 0);
-
-        (void)system_path_remove_opened_at(
-            directory, alias_name, alias, AT_REMOVEDIR);
-        system_close(alias);
-        if (published >= 0)
-                (void)system_path_remove_opened_at(
-                    directory, temporary, handle, 0);
-        return published;
+        bipolar handle = system_open_at_mode(
+            stage->directory, SYSTEM_PATH_STAGE_LEAF,
+            FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC,
+            mode);
+        bipolar bound = handle < 0 ? handle
+                                   : system_path_stage_bind_opened(
+                                         stage, handle);
+        if (bound < 0)
+        {
+                if (handle >= 0)
+                {
+                        (void)system_path_remove_opened_at(
+                            stage->directory, SYSTEM_PATH_STAGE_LEAF,
+                            handle, 0);
+                        system_close(handle);
+                }
+                system_path_stage_release(stage);
+                return bound;
+        }
+        return handle;
 }
 
-/* Directories cannot be hard-linked by descriptor.  Their staging roots stay
-   publisher-owned and mode 0700 until this identity-checked rename.  This is
-   also the compatibility path for publisher-owned filesystems without links. */
-static bipolar file_temporary_name_publish_at(
-    bipolar directory, string_address temporary, string_address destination,
-    bipolar handle, positive flags)
+/* Finish one protected output transaction.  The writable descriptor is
+   closed before the namespace changes, while an O_PATH descriptor retains
+   the exact source identity.  Thus delayed writeback/close errors leave the
+   old destination intact, and a failed transaction never re-exposes an
+   object whose ownership or mode may already have changed. */
+static bipolar file_stage_publish_protected_keep_at(
+    system_path_stage address_to stage, bipolar destination_directory,
+    string_address destination, bipolar writer, bipolar result,
+    bool no_clobber, file_facts address_to replaced,
+    positive remove_flags, bipolar address_to published_handle,
+    bool retain_failure)
 {
-        bipolar same = system_path_same_opened_at(
-            handle, directory, temporary);
-        if (same < 0)
-                return same;
+        file_facts facts;
+        bipolar identity = -1;
 
-        bipolar moved = system_rename_at(
-            directory, temporary, directory, destination, flags);
-        if (moved < 0)
-                return moved;
+        if (published_handle)
+                address_to published_handle = -1;
 
-        same = system_path_same_opened_at(handle, directory, destination);
-        if (same < 0)
-                (void)system_rename_at(directory, destination, directory,
-                                       temporary, FILE_RENAME_NOREPLACE);
-        return same;
+        if (result >= 0)
+                result = file_look_code(
+                    writer, (string_address)"", AT_EMPTY_PATH,
+                    address_of facts);
+        if (result >= 0 && (facts.mask & STATX_BASIC) != STATX_BASIC)
+                result = -ERROR_INPUT_OUTPUT;
+        if (result >= 0)
+                identity = file_open_same(
+                    stage->directory, SYSTEM_PATH_STAGE_LEAF,
+                    address_of facts, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        if (result >= 0 && identity < 0)
+                result = identity;
+
+        if (result < 0)
+        {
+                if (retain_failure)
+                {
+                        (void)system_close(writer);
+                        stage->opened = -1;
+                        return result;
+                }
+                (void)system_path_stage_discard(stage, remove_flags);
+                (void)system_close(writer);
+                return result;
+        }
+
+        bipolar closed = system_close(writer);
+        stage->opened = identity;
+        if (closed < 0)
+                result = closed;
+
+        /* Absence is an exact decision too.  Never turn a missing snapshot
+           into an unbound overwrite. */
+        if (result >= 0 && !replaced)
+                result = system_path_stage_publish_at(
+                    stage, destination_directory, destination,
+                    FILE_RENAME_NOREPLACE);
+        else if (result >= 0 && no_clobber)
+                result = -ERROR_EXISTS;
+        else if (result >= 0)
+        {
+                bool same = file_same_identity(address_of facts, replaced);
+                result = file_replace_decided_at(
+                    stage->directory, SYSTEM_PATH_STAGE_LEAF,
+                    destination_directory, destination,
+                    address_of facts, replaced);
+                if (result >= 0)
+                {
+                        if (same)
+                                result = system_path_stage_discard(
+                                    stage, remove_flags);
+                        else
+                                system_path_stage_release(stage);
+                }
+        }
+
+        if (result < 0 && stage->verified && !retain_failure)
+                (void)system_path_stage_discard(stage, remove_flags);
+        if (result >= 0 && published_handle)
+        {
+                address_to published_handle = identity;
+                identity = -1;
+        }
+        if (identity >= 0)
+                system_close(identity);
+        if (result < 0 && retain_failure)
+                stage->opened = -1;
+        return result;
 }
 
-static bipolar file_temporary_publish_decided_at(
-    bipolar directory, string_address temporary, string_address destination,
-    bipolar handle, bool no_clobber, file_facts address_to replaced)
+static bipolar file_stage_publish_protected_at(
+    system_path_stage address_to stage, bipolar destination_directory,
+    string_address destination, bipolar writer, bipolar result,
+    bool no_clobber, file_facts address_to replaced,
+    positive remove_flags)
 {
-        file_facts staged;
-        bipolar looked = file_look_code(handle, (string_address)"",
-                                        AT_EMPTY_PATH, address_of staged);
-        if (looked < 0)
-                return looked;
-
-        if ((staged.mode & MODE_FORMAT) != MODE_DIRECTORY)
-                return file_temporary_link_publish_at(
-                    directory, temporary, destination, handle,
-                    address_of staged, no_clobber, replaced);
-
-        if (!replaced)
-                return file_temporary_name_publish_at(
-                    directory, temporary, destination, handle,
-                    no_clobber ? FILE_RENAME_NOREPLACE : 0);
-
-        bipolar same = system_path_same_opened_at(
-            handle, directory, temporary);
-        if (same < 0)
-                return same;
-
-        return file_exchange_decided_at(
-            directory, temporary, directory, destination,
-            address_of staged, replaced);
+        return file_stage_publish_protected_keep_at(
+            stage, destination_directory, destination, writer, result,
+            no_clobber, replaced, remove_flags, null, false);
 }
 
 static bipolar file_stage_close_at(bipolar directory,
@@ -3646,6 +3919,14 @@ static bipolar file_stage_close_at(bipolar directory,
         return result < 0 ? result : closed;
 }
 
+static bool file_name_stable(bipolar directory,
+                             file_facts address_to entry);
+static bool file_direct_endpoint_authorized(
+    bipolar directory, file_facts address_to entry);
+static bipolar file_direct_endpoint_open(
+    bipolar directory, string_address name,
+    file_facts address_to entry, positive flags);
+
 /* One regular-file output transaction shared by utilities that must never
    truncate a public name before their complete output is ready. */
 typedef struct
@@ -3653,32 +3934,94 @@ typedef struct
         bipolar directory;
         bipolar handle;
         positive mode;
+        bool direct;
+        bool prepared;
+        bool replaced_known;
+        file_facts replaced;
+        system_path_stage protected;
         p8 leaf[FILE_PATH_MAX];
-        p8 temporary[FILE_PATH_MAX];
 } file_staged_name;
+
+#define FILE_STAGED_STREAM_SPECIAL 1
 
 static bipolar file_staged_name_open(file_staged_name address_to stage,
                                      string_address path, positive mode,
-                                     string_address marker,
-                                     positive marker_length)
+                                     positive behavior)
 {
         stage->directory = file_parent_open(path, stage->leaf);
         stage->handle = -1;
-        stage->mode = mode & 0777;
-        stage->temporary[0] = end;
+        stage->mode = mode & 07777;
+        stage->direct = false;
+        stage->prepared = false;
+        stage->replaced_known = false;
+        system_path_stage_reset(address_of stage->protected);
         if (stage->directory < 0)
                 return stage->directory;
 
         file_facts existing;
-        if (file_look(stage->directory, stage->leaf, AT_SYMLINK_NOFOLLOW,
-                      address_of existing) &&
-            (existing.mode & MODE_FORMAT) == MODE_FILE)
-                stage->mode = existing.mode & 0777;
+        bipolar looked = file_look_code(
+            stage->directory, stage->leaf, AT_SYMLINK_NOFOLLOW,
+            address_of existing);
+        if (looked >= 0)
+        {
+                if ((existing.mask & STATX_BASIC) != STATX_BASIC)
+                {
+                        system_close(stage->directory);
+                        stage->directory = -1;
+                        return -ERROR_INPUT_OUTPUT;
+                }
+                stage->replaced = existing;
+                stage->replaced_known = true;
+                if ((existing.mode & MODE_FORMAT) == MODE_FILE)
+                        /* New bytes must not inherit execution authority.
+                           This matches truncating a regular file, where the
+                           kernel clears set-ID bits after content changes. */
+                        stage->mode = file_replacement_mode(existing.mode);
+                else if (behavior & FILE_STAGED_STREAM_SPECIAL)
+                {
+                        positive kind = existing.mode & MODE_FORMAT;
 
-        stage->handle = file_temporary_open_at(
-            stage->directory, stage->leaf, stage->temporary,
-            sizeof(stage->temporary), marker, marker_length,
-            system_nonce(), 128, 0600);
+                        /* Stream compatibility applies only to the named FIFO
+                           or device itself. A link becomes an ordinary staged
+                           replacement; it is never followed to a stream or a
+                           regular victim. */
+                        if (kind == MODE_DIRECTORY)
+                        {
+                                system_close(stage->directory);
+                                stage->directory = -1;
+                                return -ERROR_IS_DIRECTORY;
+                        }
+                        if (kind != MODE_LINK)
+                        {
+                                positive open_flags =
+                                    (FILE_WRITE &
+                                     ~(FILE_CREATE | O_TRUNC)) |
+                                    O_CLOEXEC;
+                                stage->handle = file_direct_endpoint_open(
+                                    stage->directory, stage->leaf,
+                                    address_of existing, open_flags);
+                                if (stage->handle < 0)
+                                {
+                                        bipolar reason = stage->handle;
+                                        system_close(stage->directory);
+                                        stage->directory = -1;
+                                        return reason;
+                                }
+                                stage->direct = true;
+                                return stage->handle;
+                        }
+                }
+        }
+        else if (looked != -ERROR_NO_ENTRY)
+        {
+                system_close(stage->directory);
+                stage->directory = -1;
+                return looked;
+        }
+
+        stage->handle = file_stage_file_open_at(
+            address_of stage->protected, stage->directory,
+            stage->leaf, 0600);
         if (stage->handle < 0)
         {
                 bipolar reason = stage->handle;
@@ -3686,28 +4029,59 @@ static bipolar file_staged_name_open(file_staged_name address_to stage,
                 stage->directory = -1;
                 return reason;
         }
+
         return stage->handle;
+}
+
+static bipolar file_staged_name_prepare(file_staged_name address_to stage)
+{
+        if (stage->direct || stage->prepared)
+                return 0;
+
+        bipolar result = 0;
+        if (stage->replaced_known &&
+            (stage->replaced.mode & MODE_FORMAT) == MODE_FILE)
+                result = system_call_3(
+                    syscall(fchown), (positive)stage->handle,
+                    stage->replaced.owner, stage->replaced.group);
+        if (result >= 0)
+                result = system_call_2(
+                    syscall(fchmod), (positive)stage->handle,
+                    stage->mode);
+        if (result >= 0)
+                stage->prepared = true;
+        return result;
 }
 
 static bipolar file_staged_name_finish(file_staged_name address_to stage,
                                        bool publish, positive flags)
 {
-        bipolar result = publish
-                             ? system_call_2(
-                                   syscall(fchmod), (positive)stage->handle,
-                                   stage->mode)
-                             : -ERROR_INPUT_OUTPUT;
+        bipolar result = publish ? 0 : -ERROR_INPUT_OUTPUT;
+        if (stage->direct)
+        {
+                bipolar closed = system_close(stage->handle);
+                bipolar directory_closed = system_close(stage->directory);
+                stage->handle = -1;
+                stage->directory = -1;
+                stage->direct = false;
+                return result < 0 ? result
+                                  : closed < 0 ? closed : directory_closed;
+        }
+
         if (result >= 0)
-                result = file_temporary_publish_decided_at(
-                    stage->directory, stage->temporary, stage->leaf, stage->handle,
-                    (flags == FILE_RENAME_NOREPLACE), null);
-        result = file_stage_close_at(
-            stage->directory, stage->temporary, stage->handle, result, 0);
-        bipolar closed = system_close(stage->directory);
+                result = file_staged_name_prepare(stage);
+        result = file_stage_publish_protected_at(
+            address_of stage->protected, stage->directory, stage->leaf,
+            stage->handle, result,
+            !stage->replaced_known || (flags == FILE_RENAME_NOREPLACE),
+            stage->replaced_known ? address_of stage->replaced : null, 0);
+        /* Publication is committed once the protected rename succeeds.  A
+           later close of this read-only directory cannot make the name
+           unpublished, so keep cleanup from changing the transaction result. */
+        (void)system_close(stage->directory);
         stage->directory = -1;
         stage->handle = -1;
-        stage->temporary[0] = end;
-        return result < 0 ? result : closed;
+        return result;
 }
 
 static fn file_staged_name_abort(file_staged_name address_to stage)
@@ -3738,11 +4112,65 @@ static bipolar file_directory_empty_same(bipolar directory,
         return walk.error < 0 ? walk.error : empty;
 }
 
-static bipolar file_exchange_decided_at(
+/* A rename can bind the destination atomically, but Linux has no matching
+   "rename this open source inode" condition.  An exact source-name decision
+   is therefore usable only while that parent is controlled by this process's
+   security principal (or by the host root), with sticky-directory ownership
+   protecting an entry in an otherwise shared parent. */
+static bool file_name_stable(bipolar directory,
+                             file_facts address_to entry)
+{
+        file_facts parent;
+        p32 effective = (p32)system_call(syscall(geteuid));
+
+        if (!entry || (entry->mask & STATX_BASIC) != STATX_BASIC ||
+            !file_look(directory, (string_address)"", AT_EMPTY_PATH,
+                       address_of parent) ||
+            (parent.mask & STATX_BASIC) != STATX_BASIC ||
+            (parent.mode & MODE_FORMAT) != MODE_DIRECTORY ||
+            (parent.owner != effective && parent.owner != 0))
+                return false;
+
+        if (!(parent.mode & 0022))
+                return true;
+
+        return (parent.mode & MODE_STICKY) && entry &&
+               (entry->owner == effective || entry->owner == 0);
+}
+
+/* Direct stream and append destinations bypass private staging by design.
+   Bind that exception to an endpoint owned by the effective principal (or
+   by root for shared host devices such as /dev/null), and require a parent
+   in which another principal cannot exchange the approved name. */
+static bool file_direct_endpoint_authorized(
+    bipolar directory, file_facts address_to entry)
+{
+        p32 effective = (p32)system_call(syscall(geteuid));
+
+        return entry && (entry->mask & STATX_BASIC) == STATX_BASIC &&
+               (entry->owner == effective || entry->owner == 0) &&
+               file_name_stable(directory, entry);
+}
+
+static bipolar file_direct_endpoint_open(
+    bipolar directory, string_address name,
+    file_facts address_to entry, positive flags)
+{
+        if (!file_direct_endpoint_authorized(directory, entry))
+                return -ERROR_ACCESS;
+        return file_open_same(directory, name, entry,
+                              flags | O_NOFOLLOW | O_CLOEXEC);
+}
+
+static bipolar file_replace_decided_at(
     bipolar from_directory, string_address from,
     bipolar to_directory, string_address to,
     file_facts address_to from_facts, file_facts address_to replaced)
 {
+        if ((from_facts->mask & STATX_BASIC) != STATX_BASIC ||
+            (replaced->mask & STATX_BASIC) != STATX_BASIC)
+                return -ERROR_INPUT_OUTPUT;
+
         bool staged_directory =
             (from_facts->mode & MODE_FORMAT) == MODE_DIRECTORY;
         bool replaced_directory =
@@ -3759,231 +4187,402 @@ static bipolar file_exchange_decided_at(
                         return empty < 0 ? empty : -ERROR_NOT_EMPTY;
         }
 
-        bipolar exchanged = system_rename_at(
-            from_directory, from, to_directory, to,
-            FILE_RENAME_EXCHANGE);
-        if (exchanged < 0)
-                return exchanged;
+        if (file_same_identity(from_facts, replaced))
+                return 0;
 
-        file_facts displaced;
-        file_facts published;
-        bool right = file_look(from_directory, from, AT_SYMLINK_NOFOLLOW,
-                               address_of displaced) &&
-                     file_look(to_directory, to, AT_SYMLINK_NOFOLLOW,
-                               address_of published) &&
-                     file_same_identity(replaced, address_of displaced) &&
-                     file_same_identity(from_facts, address_of published) &&
-                     (replaced->mode & MODE_FORMAT) ==
-                         (displaced.mode & MODE_FORMAT);
-        if (!right)
+        /* Preserve rename's atomic namespace contract.  In a parent another
+           principal can mutate, there is no kernel primitive that combines
+           that contract with fd-bound source and destination identities, so
+           fail before moving either name. */
+        if (!file_name_stable(from_directory, from_facts) ||
+            !file_name_stable(to_directory, replaced))
+                return -ERROR_ACCESS;
+
+        bipolar from_handle = file_open_same(
+            from_directory, from, from_facts,
+            O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        if (from_handle < 0)
+                return from_handle;
+
+        bipolar replaced_handle = file_open_same(
+            to_directory, to, replaced,
+            O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        if (replaced_handle < 0)
         {
-                (void)system_rename_at(from_directory, from, to_directory, to,
-                                       FILE_RENAME_EXCHANGE);
-                return -ERROR_AGAIN;
+                system_close(from_handle);
+                return replaced_handle;
         }
 
-        return file_remove_same(from_directory, from,
-                                replaced_directory ? AT_REMOVEDIR : 0,
-                                replaced);
+        bipolar result = system_rename_at(
+            from_directory, from, to_directory, to, 0);
+
+        system_close(replaced_handle);
+        system_close(from_handle);
+        return result;
 }
 
 static bipolar file_rename_decided_at(
     bipolar source_directory, string_address source,
     bipolar destination_directory, string_address destination,
-    file_facts address_to source_facts, bool no_clobber,
+    bipolar source_handle, file_facts address_to source_facts,
+    bool no_clobber,
     file_facts address_to replaced)
 {
-        return replaced
-                   ? file_exchange_decided_at(
-                         source_directory, source, destination_directory,
-                         destination, source_facts, replaced)
-                   : system_rename_at(
-                         source_directory, source, destination_directory,
-                         destination,
-                         no_clobber ? FILE_RENAME_NOREPLACE : 0);
+        if ((source_facts->mask & STATX_BASIC) != STATX_BASIC)
+                return -ERROR_INPUT_OUTPUT;
+
+        if (replaced)
+                return file_replace_decided_at(
+                    source_directory, source, destination_directory,
+                    destination, source_facts, replaced);
+
+        if (!file_name_stable(source_directory, source_facts))
+                return -ERROR_ACCESS;
+
+        bipolar same = system_path_same_opened_at(
+            source_handle, source_directory, source);
+        return same < 0 ? same : system_rename_at(
+            source_directory, source, destination_directory, destination,
+            no_clobber ? FILE_RENAME_NOREPLACE : 0);
 }
 
 static bipolar file_copy_directory_open(
-    bipolar directory, string_address name, positive mode, bool exists,
-    file_facts address_to expected, bool stage, p8 address_to temporary)
+    system_path_stage address_to protected, bipolar directory,
+    string_address name, bool exists, file_facts address_to expected,
+    bool stage)
 {
         if (exists && !stage)
                 return file_open_same(directory, name, expected,
                                       FILE_READ | O_DIRECTORY);
+        if (!stage)
+                return -ERROR_INVALID;
 
-        positive process = system_nonce();
-        for (positive attempt = 0; attempt < 128; attempt++)
+        bipolar begun = system_path_stage_begin_at(
+            protected, directory, name);
+        if (begun < 0)
+                return begun;
+        bipolar made = system_make_directory_exact_at(
+            protected->directory, SYSTEM_PATH_STAGE_LEAF, 0700);
+        if (made < 0)
         {
-                if (!system_temporary_name(name, temporary, FILE_PATH_MAX,
-                                           (string_address)".moonwater-copy-", 16,
-                                           process + attempt))
-                        return -ERROR_INVALID;
-
-                bipolar made = system_make_directory_at(directory, temporary,
-                                                         mode);
-                if (made == -ERROR_EXISTS)
-                        continue;
-                if (made < 0)
-                        return made;
-
-                bipolar handle = system_open_at(
-                    directory, temporary,
-                    FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-                if (handle < 0)
-                        return handle;
-
-                bipolar same = system_path_same_opened_at(
-                    handle, directory, temporary);
-                if (same < 0)
-                {
-                        (void)file_stage_close_at(
-                            directory, temporary, handle, same,
-                            AT_REMOVEDIR);
-                        return same;
-                }
-
-                bipolar published = stage ? 0 : file_temporary_publish_decided_at(
-                    directory, temporary, name, handle,
-                    true, null);
-                if (published < 0)
-                {
-                        (void)file_stage_close_at(
-                            directory, temporary, handle, published,
-                            AT_REMOVEDIR);
-                        return published;
-                }
-                if (!stage)
-                        temporary[0] = end;
-                return handle;
+                system_path_stage_release(protected);
+                return made;
         }
-        return -ERROR_EXISTS;
+
+        bipolar handle = system_open_at(
+            protected->directory, SYSTEM_PATH_STAGE_LEAF,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        bipolar bound = handle < 0 ? handle
+                                   : system_path_stage_bind_opened(
+                                         protected, handle);
+        if (bound < 0)
+        {
+                if (handle >= 0)
+                {
+                        (void)system_path_remove_opened_at(
+                            protected->directory, SYSTEM_PATH_STAGE_LEAF,
+                            handle, AT_REMOVEDIR);
+                        system_close(handle);
+                }
+                system_path_stage_release(protected);
+                return bound;
+        }
+        return handle;
 }
-/*
-        Every component of a path, made in turn.
+/* Open a just-created object and bind that descriptor back to its directory
+   entry before any caller applies metadata.  Creation syscalls do not return
+   descriptors; this is the narrow validation available after mkdirat or
+   mknodat.  Exact mode checks cover the permission bits the umask controls;
+   a directory may additionally inherit setgid from its parent. */
+static bipolar file_created_open_at(bipolar directory, string_address name,
+                                    positive kind, positive mode,
+                                    bool exact_mode, bool created)
+{
+        positive flags = O_PATH | O_NOFOLLOW | O_CLOEXEC;
+        if (kind == MODE_DIRECTORY)
+                flags |= O_DIRECTORY;
 
-        `told` is called with each component this actually created, which is
-        what mkdir -v reports -- a component that was already there is not a
-        creation and is not named. On failure the component that could not be
-        made is copied into `failed`, because that is the name the reference
-        quotes and not the whole path it was given.
-*/
-/*
-        What the reference says about a component that is already there.
+        bipolar handle = system_open_at(directory, name, flags);
+        file_facts facts;
+        bipolar same = handle < 0 ? handle : system_path_same_opened_at(
+            handle, directory, name);
+        bipolar looked = same < 0 ? same : file_look_code(
+            handle, (string_address)"", AT_EMPTY_PATH, address_of facts);
 
-        mkdir answers EEXIST and the walk then asks what the name is: a
-        directory is the component already made and nothing to report, a name
-        that can be looked at and is not a directory is Not a directory, and
-        a name that cannot be looked at at all -- a symbolic link pointing at
-        nothing -- keeps the EEXIST the kernel gave, because there is
-        something there whatever it points at.
-*/
-static bipolar file_exists_as(string_address work)
+        if (looked >= 0 &&
+            ((facts.mask & STATX_BASIC) != STATX_BASIC ||
+             (facts.mode & MODE_FORMAT) != kind ||
+             (exact_mode && (facts.mode & 0777) != (mode & 0777))))
+                looked = -ERROR_INPUT_OUTPUT;
+        if (looked < 0)
+        {
+                if (handle >= 0)
+                {
+                        if (created)
+                                (void)system_path_remove_opened_at(
+                                    directory, name, handle,
+                                    kind == MODE_DIRECTORY ? AT_REMOVEDIR : 0);
+                        system_close(handle);
+                }
+                else if (created &&
+                         system_path_parent_cleanup_safe(directory))
+                        (void)system_remove_at(
+                            directory, name,
+                            kind == MODE_DIRECTORY ? AT_REMOVEDIR : 0);
+                return looked;
+        }
+        return handle;
+}
+
+/* Linux applies the permission bits passed to mkdirat but may discard
+   requested set-ID bits.  Complete those bits through a real descriptor and
+   preserve setgid inherited from the parent, matching mkdir's directory
+   inheritance contract without returning to the public pathname. */
+static bipolar file_created_directory_mode_at(
+    bipolar directory, string_address name, bipolar exact, positive mode)
 {
         file_facts facts;
+        bipolar looked = file_look_code(
+            exact, (string_address)"", AT_EMPTY_PATH, address_of facts);
+        if (looked < 0 || (facts.mask & STATX_BASIC) != STATX_BASIC ||
+            (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return looked < 0 ? looked : -ERROR_INPUT_OUTPUT;
 
-        if (file_look(AT_FDCWD, work, 0, address_of facts))
-                return (facts.mode & MODE_FORMAT) == MODE_DIRECTORY
-                           ? 0
-                           : -ERROR_NOT_DIRECTORY;
+        positive wanted = (mode & 07777) |
+                          (facts.mode & MODE_SET_GROUP);
+        if ((facts.mode & 07777) == wanted)
+                return 0;
 
-        return -ERROR_EXISTS;
+        bool prepared;
+        positive old_mode;
+        bipolar real = file_directory_real(
+            exact, directory, name, address_of prepared,
+            address_of old_mode);
+        if (real < 0)
+                return real;
+
+        bipolar changed = file_change_mode_handle(real, wanted);
+        bipolar verified = changed < 0 ? changed : file_look_code(
+            real, (string_address)"", AT_EMPTY_PATH, address_of facts);
+        if (verified >= 0 &&
+            ((facts.mask & STATX_BASIC) != STATX_BASIC ||
+             (facts.mode & MODE_FORMAT) != MODE_DIRECTORY ||
+             (facts.mode & 07777) != wanted))
+                verified = -ERROR_INPUT_OUTPUT;
+        if (verified >= 0)
+                verified = system_path_same_opened_at(
+                    exact, directory, name);
+        system_close(real);
+        return verified;
 }
 
-static bipolar file_make_parents_walk(string_address path, positive mode,
-                                      fn(address_to told)(string_address),
-                                      p8 address_to failed, bool address_to created)
+static fn file_path_prefix(p8 address_to into, string_address path,
+                           positive length)
+{
+        memory_copy_apart(into, path, length);
+        into[length] = end;
+}
+
+/* Make a directory path while every namespace operation is relative to the
+   directory descriptor obtained for the preceding component.  O_NOFOLLOW
+   prevents an intermediate symbolic link from redirecting the walk.  The
+   returned O_PATH descriptor is the exact final directory and remains owned
+   by the caller; install uses it for ownership and mode changes.
+
+   Parent modes and explicit leaf modes are installed with a cleared umask,
+   so neither a later pathname chmod nor a window with broader permissions is
+   needed.  An ordinary mkdir leaf still lets the kernel apply the process
+   mask and any inherited default ACL. */
+static bipolar file_make_directories_open(
+    string_address path, positive parent_mode, positive leaf_mode,
+    bool leaf_exact, bool parents,
+    fn(address_to told)(string_address),
+    p8 address_to failed, bool address_to created,
+    bipolar address_to leaf_parent, p8 address_to leaf_name)
 {
         p8 work[FILE_PATH_MAX];
+        p8 component[SYSTEM_PATH_LEAF_ROOM];
         positive length = string_length(path);
+        positive flags = O_PATH | O_DIRECTORY | O_CLOEXEC |
+                         (parents ? O_NOFOLLOW : 0);
 
         if (created)
                 address_to created = false;
-
+        if (leaf_parent)
+                address_to leaf_parent = -1;
+        if (leaf_name)
+                leaf_name[0] = end;
+        if (failed)
+                failed[0] = end;
+        if (!length)
+                return -ERROR_NO_ENTRY;
         if (length >= FILE_PATH_MAX)
                 return -ERROR_NAME_TOO_LONG;
 
         memory_copy_apart_end(work, path, length);
+        bipolar held = system_open_at(
+            AT_FDCWD, path[0] == '/' ? (string_address)"/"
+                                     : (string_address)".",
+            flags);
+        if (held < 0)
+                return held;
 
-        //      A trailing run of slashes names the same directory as the
-        //      name without them, so it is not a component of its own: the
-        //      whole path, slashes and all, is what the last step makes and
-        //      what -v then names.
-        positive components = length;
+        positive at = 0;
+        while (at < length && work[at] == '/')
+                at++;
 
-        while (components > 1 && work[components - 1] == '/')
-                components--;
-
-        for (positive i = 1; i < components; i++)
+        /* A path made only of slashes already names the held root. */
+        if (at == length)
         {
-                if (work[i] != '/')
-                        continue;
-
-                work[i] = end;
-
-                bipolar made = system_make_directory_at(AT_FDCWD, work, mode);
-                bipolar already = made == -ERROR_EXISTS ? file_exists_as(work) : 0;
-
-                if (made < 0 && (made != -ERROR_EXISTS || already))
+                if (!parents)
                 {
-                        if (failed)
-                                string_copy(failed, work);
-
-                        work[i] = '/';
-
-                        return made == -ERROR_EXISTS ? already : made;
+                        system_close(held);
+                        return -ERROR_EXISTS;
                 }
-
-                //      The reference walks into each component it has made
-                //      or found before making the next one, so a directory
-                //      it cannot search is named here rather than the child
-                //      that could not be reached through it.
-                if (system_access_at(AT_FDCWD, work, 1) < 0)
-                {
-                        if (failed)
-                                string_copy(failed, work);
-
-                        work[i] = '/';
-
-                        return -ERROR_ACCESS;
-                }
-
-                if (!made && told)
-                        told(work);
-
-                work[i] = '/';
+                return held;
         }
 
-        bipolar made = system_make_directory_at(AT_FDCWD, work, mode);
-
-        if (!made)
+        while (at < length)
         {
-                if (created)
-                        address_to created = true;
+                positive start = at;
+                while (at < length && work[at] != '/')
+                        at++;
+                positive stop = at;
+                while (at < length && work[at] == '/')
+                        at++;
+                bool last = at == length;
+                positive named = stop - start;
 
-                if (told)
-                        told(work);
+                if (named >= sizeof(component))
+                {
+                        if (failed)
+                                file_path_prefix(failed, work,
+                                                 last ? length : stop);
+                        system_close(held);
+                        return -ERROR_NAME_TOO_LONG;
+                }
+                memory_copy_apart(component, work + start, named);
+                component[named] = end;
 
-                return 0;
+                bipolar next = system_open_at(held, component, flags);
+                bool made_here = false;
+
+                if (next < 0)
+                {
+                        file_facts entry;
+                        bipolar found = file_look_code(
+                            held, component, AT_SYMLINK_NOFOLLOW,
+                            address_of entry);
+
+                        if (found >= 0)
+                        {
+                                /* The last component preserves mkdir's
+                                   EEXIST answer for every non-directory
+                                   entry, including a symbolic link. */
+                                next = last ? -ERROR_EXISTS
+                                            : -ERROR_NOT_DIRECTORY;
+                        }
+                        else if (found != -ERROR_NO_ENTRY)
+                                next = found;
+                        else if (!last && !parents)
+                                next = -ERROR_NO_ENTRY;
+                        else if (!system_path_parent_cleanup_safe(held))
+                                next = -ERROR_ACCESS;
+                        else
+                        {
+                                positive wanted = last ? leaf_mode
+                                                       : parent_mode;
+                                bool exact = !last || leaf_exact;
+                                bipolar made = exact
+                                                   ? system_make_directory_exact_at(
+                                                         held, component,
+                                                         wanted)
+                                                   : system_make_directory_at(
+                                                         held, component,
+                                                         wanted);
+                                if (made < 0 && made != -ERROR_EXISTS)
+                                        next = made;
+                                else
+                                {
+                                        made_here = made >= 0;
+                                        next = file_created_open_at(
+                                            held, component, MODE_DIRECTORY,
+                                            wanted,
+                                            made_here && exact, made_here);
+                                        if (next >= 0 && made_here && last &&
+                                            leaf_exact)
+                                        {
+                                                bipolar completed =
+                                                    file_created_directory_mode_at(
+                                                        held, component, next,
+                                                        wanted);
+                                                if (completed < 0)
+                                                {
+                                                        (void)system_path_remove_opened_at(
+                                                            held, component,
+                                                            next, AT_REMOVEDIR);
+                                                        system_close(next);
+                                                        next = completed;
+                                                }
+                                        }
+                                }
+                        }
+                }
+                else if (parents)
+                {
+                        bipolar same = system_path_same_opened_at(
+                            next, held, component);
+                        if (same < 0)
+                        {
+                                system_close(next);
+                                next = same;
+                        }
+                }
+
+                if (next < 0 || (last && !parents && !made_here))
+                {
+                        bipolar answer = next < 0 ? next : -ERROR_EXISTS;
+                        if (failed)
+                                file_path_prefix(failed, work,
+                                                 last ? length : stop);
+                        if (next >= 0)
+                                system_close(next);
+                        system_close(held);
+                        return answer;
+                }
+
+                if (made_here && told)
+                {
+                        if (last)
+                                told(path);
+                        else
+                        {
+                                p8 saved = work[stop];
+                                work[stop] = end;
+                                told(work);
+                                work[stop] = saved;
+                        }
+                }
+
+                if (last)
+                {
+                        if (created)
+                                address_to created = made_here;
+                        if (leaf_parent && leaf_name)
+                        {
+                                address_to leaf_parent = held;
+                                memory_copy_end(leaf_name, component, named);
+                        }
+                        else
+                                system_close(held);
+                        return next;
+                }
+                system_close(held);
+                held = next;
         }
 
-        //      The last component is the one that was asked for, and the
-        //      reference reports the kernel's own word about it: a name that
-        //      is there and is not a directory is File exists here, where the
-        //      same name in the middle of a path is Not a directory.
-        if (made == -ERROR_EXISTS && !file_exists_as(work))
-                return 0;
-
-        if (failed)
-                string_copy(failed, work);
-
-        return made;
-}
-
-
-
-bool file_make_parents(string_address path, positive mode)
-{
-        return file_make_parents_walk(path, mode, null, null, null) == 0;
+        system_close(held);
+        return -ERROR_INVALID;
 }
 
 /*
@@ -4770,16 +5369,13 @@ static bool ls_block_size_read(string_address text, positive address_to unit,
 
         suffix[suffix_length] = end;
 
-        positive scale = 1;
+        p64 scaled;
+        if (!size_scale_power_checked(
+                number, base, (p8)power, (p64)positive_max,
+                address_of scaled))
+                return false;
 
-        for (positive i = 0; i < power; i++)
-        {
-                if (scale > positive_max / base)
-                        return false;
-                scale *= base;
-        }
-
-        address_to unit = number * scale;
+        address_to unit = (positive)scaled;
         return true;
 }
 
@@ -7275,58 +7871,9 @@ static b32 file_vdir()
 // Running a command ------------------------------------------------
 /* find -exec runs a child through PATH with the current exported vector. */
 
-// Tries every PATH candidate and returns the kernel error if none replaced us.
-// The name is separate from words[0], because env -a changes argv[0] without
-// changing the file it asks execve to run.
-static bipolar file_exec_path_try_in(string_address name,
-                                     string_address address_to words,
-                                     string_address address_to environment,
-                                     string_address path)
-{
-        p8 candidate[FILE_PATH_MAX];
-        bool denied = false;
-        path_walk walk = {path, null, 0, false};
-
-        if (string_first_of(name, '/'))
-        {
-                bipolar answer = system_execute(name, words, environment);
-
-                return answer;
-        }
-
-        if (!path)
-                walk.at = "/bin:/usr/bin:/";
-
-        // An empty PATH component is the current directory. That includes a
-        // completely empty PATH and the component after a trailing colon.
-        while (path_walk_next(address_of walk))
-        {
-                if (!path_walk_join(candidate, FILE_PATH_MAX, walk.segment,
-                                    walk.length, name, "."))
-                        continue;
-
-                bipolar answer = system_execute(candidate, words, environment);
-
-                if (answer == -ERROR_ARGUMENT_LIST)
-                        return answer;
-
-                if (answer == -ERROR_ACCESS)
-                        denied = true;
-        }
-
-        return denied ? -ERROR_ACCESS : -ERROR_NO_ENTRY;
-}
-
-// This only returns in a child process.
-static bipolar file_exec_path_try(string_address address_to words)
-{
-        string_address path = env_get("PATH");
-
-        if (!path)
-                path = file_environment("PATH");
-
-        return file_exec_path_try_in(words[0], words, file_environment_all(), path);
-}
+/* The policy-aware implementation lives beside shell_exec_file in
+   builtin.c.  Keeping only one nested-exec route prevents find, xargs, env
+   and the process wrappers from drifting away from ordinary shell launch. */
 
 // Replaces this process, and only ever called in a child of it.
 //      Why a command could not be run, in the words the reference uses.
@@ -7435,7 +7982,7 @@ static fn file_exec_path(string_address address_to words)
 }
 
 // Forks, runs, waits, and answers with what came back.
-static b32 file_run(string_address address_to words)
+static b32 file_run(string_address address_to words, bipolar directory)
 {
         positive status = 0;
 
@@ -7444,7 +7991,24 @@ static b32 file_run(string_address address_to words)
         bipolar child = system_fork();
 
         if (child == 0)
+        {
+                if (directory >= 0)
+                {
+                        bipolar changed = system_call_1(
+                            syscall(fchdir), (positive)directory);
+                        system_close(directory);
+                        if (changed < 0)
+                        {
+                                string_format(
+                                    log_error,
+                                    "find: cannot change to -execdir directory: %s\n",
+                                    file_reason(changed));
+                                log_flush();
+                                exit(125);
+                        }
+                }
                 file_exec_path(words);
+        }
 
         if (child < 0)
                 return 127;
@@ -7710,6 +8274,7 @@ typedef struct
 typedef struct
 {
         b32 node;
+        bipolar directory;
         positive words;
         positive used;
         string_address word[FIND_BATCH_WORDS + 1];
@@ -7778,6 +8343,31 @@ static bipolar find_parent;
 static string_address find_entry;
 static bool find_facts_known;
 static bool find_facts_follow;
+
+/* -execdir changes into a directory controlled by the walk.  A relative or
+   empty PATH component would consequently let a matching directory replace
+   the command itself. */
+static bool find_execdir_path_safe()
+{
+        string_address path = env_get("PATH");
+
+        if (!path)
+                path = file_environment("PATH");
+        if (!path)
+                return true;
+
+        path_walk walk = {path, null, 0, false};
+        while (path_walk_next(address_of walk))
+                if (!walk.length || walk.segment[0] != '/')
+                {
+                        log_error(
+                            "find: the current directory is included in PATH, "
+                            "which is insecure with -execdir\n",
+                            0);
+                        return false;
+                }
+        return true;
+}
 
 /*
         Name/path predicates and printing need no inode facts at all; -type
@@ -8354,6 +8944,9 @@ static b32 find_parse_primary()
                              : find_is(word, "-ok")     ? 'o'
                              : find_is(word, "-okdir")  ? 'O'
                                                         : 0;
+                if ((node->mode == 'd' || node->mode == 'O') &&
+                    !find_execdir_path_safe())
+                        goto bad;
                 node->number = (b64)find_at;
 
                 /*
@@ -8369,7 +8962,8 @@ static b32 find_parse_primary()
                         if (find_is(find_word(), ";"))
                                 break;
 
-                        if (find_is(find_word(), "+") &&
+                        if (node->mode != 'o' && node->mode != 'O' &&
+                            find_is(find_word(), "+") &&
                             (b64)find_at > node->number &&
                             find_is(program_argument((b32)(find_at - 1)), "{}"))
                                 break;
@@ -8410,7 +9004,8 @@ static b32 find_parse_primary()
                                 log_error("find: out of memory while reading -exec\n", 0);
                                 goto bad;
                         }
-                        find_batches[find_batch_have] = (find_batch){.node = index};
+                        find_batches[find_batch_have] = (find_batch){
+                            .node = index, .directory = -1};
                         node->unit = (b32)find_batch_have++;
                 }
                 break;
@@ -8635,12 +9230,81 @@ static b32 find_parse_or()
 
 // Running it --------------------------------------------------------
 
+static string_address find_exec_subject(find_node address_to node,
+                                        p8 address_to into);
+
+static bipolar find_directory_hold(bipolar directory)
+{
+        if (directory == AT_FDCWD)
+                return system_open_at(
+                    AT_FDCWD, (string_address)".",
+                    FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        /* F_DUPFD_CLOEXEC is 1030 on every Linux architecture supported by
+           this image.  The batch can outlive the walk frame which supplied
+           the original descriptor. */
+        return system_call_3(
+            syscall(fcntl), (positive)directory, 1030, 3);
+}
+
+/* Descendants already carry their pinned parent descriptor.  A command-line
+   root is addressed from AT_FDCWD, so hold the directory containing that
+   spelling before the child changes directory. */
+static bipolar find_exec_directory_hold()
+{
+        if (find_parent != AT_FDCWD)
+                return find_directory_hold(find_parent);
+
+        if (string_equals(find_path, (string_address)"."))
+                return system_open_at(
+                    AT_FDCWD, (string_address)".",
+                    FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        positive length = string_length(find_path);
+        p8 trimmed[FILE_PATH_MAX];
+        if (length >= sizeof(trimmed))
+                return -ERROR_NAME_TOO_LONG;
+        memory_copy_apart(trimmed, find_path, length);
+        while (length > 1 && trimmed[length - 1] == '/')
+                length--;
+        trimmed[length] = end;
+
+        if (length == 1 && trimmed[0] == '/')
+                return system_open_at(
+                    AT_FDCWD, (string_address)"/",
+                    FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        p8 leaf[FILE_PATH_MAX];
+        return file_parent_open(trimmed, leaf);
+}
+
+static bool find_directories_same(bipolar one, bipolar two)
+{
+        file_facts first;
+        file_facts second;
+
+        return file_look(one, (string_address)"", AT_EMPTY_PATH,
+                         address_of first) &&
+               file_look(two, (string_address)"", AT_EMPTY_PATH,
+                         address_of second) &&
+               (first.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+               (second.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+               file_same_identity(address_of first, address_of second);
+}
+
 static fn find_batch_run(positive slot)
 {
         find_batch address_to batch = address_of find_batches[slot];
 
         if (!batch->words)
+        {
+                if (batch->directory >= 0)
+                {
+                        system_close(batch->directory);
+                        batch->directory = -1;
+                }
                 return;
+        }
 
         find_node address_to node = address_of find_nodes[batch->node];
         positive have = 0;
@@ -8652,6 +9316,11 @@ static fn find_batch_run(positive slot)
                 find_status = 1;
                 batch->words = 0;
                 batch->used = 0;
+                if (batch->directory >= 0)
+                {
+                        system_close(batch->directory);
+                        batch->directory = -1;
+                }
                 return;
         }
 
@@ -8663,9 +9332,14 @@ static fn find_batch_run(positive slot)
 
         find_exec_words[have] = null;
 
-        if (file_run(find_exec_words) != 0)
+        if (file_run(find_exec_words, batch->directory) != 0)
                 find_status = 1;
 
+        if (batch->directory >= 0)
+        {
+                system_close(batch->directory);
+                batch->directory = -1;
+        }
         batch->words = 0;
         batch->used = 0;
 }
@@ -8673,14 +9347,46 @@ static fn find_batch_run(positive slot)
 static fn find_batch_add(find_node address_to node, string_address path)
 {
         find_batch address_to batch = address_of find_batches[node->unit];
-        positive length = string_length(path);
+        bool in_directory = node->mode == 'd' || node->mode == 'O';
+        p8 beside[FILE_PATH_MAX];
+        string_address subject = in_directory
+                                     ? find_exec_subject(node, beside)
+                                     : path;
+        positive length = string_length(subject);
         positive room = (b32)node->extra - (b32)node->number;
+
+        bipolar directory = -1;
+        if (in_directory)
+        {
+                directory = find_exec_directory_hold();
+                if (directory < 0)
+                {
+                        string_format(
+                            log_error,
+                            "find: cannot hold -execdir directory: %s\n",
+                            file_reason(directory));
+                        find_status = 1;
+                        return;
+                }
+
+                if (batch->words &&
+                    !find_directories_same(batch->directory, directory))
+                        find_batch_run(node->unit);
+        }
 
         if (batch->words + room + 2 > FIND_BATCH_WORDS ||
             batch->used + length + 1 > FIND_BATCH_BYTES)
                 find_batch_run(node->unit);
 
-        memory_copy_end(batch->text + batch->used, path, length);
+        if (in_directory && batch->directory < 0)
+        {
+                batch->directory = directory;
+                directory = -1;
+        }
+        if (directory >= 0)
+                system_close(directory);
+
+        memory_copy_end(batch->text + batch->used, subject, length);
         batch->word[batch->words++] = batch->text + batch->used;
         batch->used += length + 1;
 }
@@ -8765,15 +9471,32 @@ static bool find_exec_once(find_node address_to node)
         string_address subject = find_exec_subject(node, beside);
         positive path_length = string_length(subject);
         positive words = (positive)(node->extra - node->number);
+        bool in_directory = node->mode == 'd' || node->mode == 'O';
+        bipolar directory = in_directory ? find_exec_directory_hold() : -1;
+
+        if (in_directory && directory < 0)
+        {
+                string_format(log_error,
+                              "find: cannot hold -execdir directory: %s\n",
+                              file_reason(directory));
+                find_status = 1;
+                return false;
+        }
 
         if ((node->mode == 'o' || node->mode == 'O') &&
             !find_exec_asked(node, subject))
+        {
+                if (directory >= 0)
+                        system_close(directory);
                 return false;
+        }
 
         if (!shell_array_room(find_exec_words, find_exec_word_room, words + 1))
         {
                 log_error("find: out of memory while building -exec arguments\n", 0);
                 find_status = 1;
+                if (directory >= 0)
+                        system_close(directory);
                 return false;
         }
 
@@ -8788,6 +9511,8 @@ static bool find_exec_once(find_node address_to node)
                 {
                         log_error("find: -exec arguments are too large\n", 0);
                         find_status = 1;
+                        if (directory >= 0)
+                                system_close(directory);
                         return false;
                 }
                 needed += length;
@@ -8797,6 +9522,8 @@ static bool find_exec_once(find_node address_to node)
         {
                 log_error("find: out of memory while expanding -exec arguments\n", 0);
                 find_status = 1;
+                if (directory >= 0)
+                        system_close(directory);
                 return false;
         }
 
@@ -8810,7 +9537,10 @@ static bool find_exec_once(find_node address_to node)
 
         find_exec_words[have] = null;
 
-        return file_run(find_exec_words) == 0;
+        bool complete = file_run(find_exec_words, directory) == 0;
+        if (directory >= 0)
+                system_close(directory);
+        return complete;
 }
 
 /*
@@ -9664,6 +10394,77 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
         }
 }
 
+/* Hold a command-line root's parent before any predicate is evaluated.  This
+   gives -execdir, -okdir and -delete the same descriptor-relative boundary
+   descendants already have, including absolute roots whose ancestors can be
+   renamed concurrently. */
+static fn find_walk_root(string_address root)
+{
+        p8 path[FILE_PATH_MAX];
+        p8 entry[FILE_PATH_MAX];
+        p8 name[FILE_PATH_MAX];
+        positive length = string_length(root);
+
+        if (!length || length >= sizeof(path))
+        {
+                string_format(log_error, "find: '%w': %s\n", writer_terminal_quoted_name, root,
+                              file_reason(length ? -ERROR_NAME_TOO_LONG : -ERROR_NO_ENTRY));
+                find_status = 1;
+                return;
+        }
+
+        memory_copy_apart(path, root, length);
+        bool trailing = length > 1 && path[length - 1] == '/';
+        while (length > 1 && path[length - 1] == '/')
+                length--;
+        path[length] = end;
+
+        bipolar parent;
+        if (string_equals(path, (string_address)"."))
+        {
+                parent = system_open_at(
+                    AT_FDCWD, (string_address)".",
+                    O_PATH | O_DIRECTORY | O_CLOEXEC);
+                memory_copy_end(entry, (string_address)".", 1);
+        }
+        else if (length == 1 && path[0] == '/')
+        {
+                parent = system_open_at(
+                    AT_FDCWD, (string_address)"/",
+                    O_PATH | O_DIRECTORY | O_CLOEXEC);
+                memory_copy_end(entry, (string_address)".", 1);
+        }
+        else
+                parent = file_parent_open(path, entry);
+
+        if (parent < 0)
+        {
+                string_format(log_error, "find: '%w': %s\n", writer_terminal_quoted_name, root,
+                              file_reason(parent));
+                find_status = 1;
+                return;
+        }
+
+        if (trailing)
+        {
+                positive leaf = string_length(entry);
+                if (leaf + 1 >= sizeof(entry))
+                {
+                        system_close(parent);
+                        string_format(log_error, "find: '%w': %s\n", writer_terminal_quoted_name,
+                                      root, file_reason(-ERROR_NAME_TOO_LONG));
+                        find_status = 1;
+                        return;
+                }
+                entry[leaf++] = '/';
+                entry[leaf] = end;
+        }
+
+        path_tail_copy(name, FILE_PATH_MAX, root);
+        find_walk(root, name, 0, true, parent, entry, 0);
+        system_close(parent);
+}
+
 static b32 file_find()
 {
         positive count = (positive)program_argument_count();
@@ -9793,18 +10594,15 @@ static b32 file_find()
         if (roots_last == roots_first)
         {
                 find_root_path = (string_address) ".";
-                find_walk((string_address) ".", (string_address) ".", 0, true,
-                          AT_FDCWD, (string_address) ".", 0);
+                find_walk_root((string_address)".");
         }
         else
                 for (positive i = roots_first; i < roots_last && !find_quit; i++)
                 {
                         string_address root = program_argument((b32)i);
-                        p8 name[FILE_PATH_MAX];
 
                         find_root_path = root;
-                        path_tail_copy(name, FILE_PATH_MAX, root);
-                        find_walk(root, name, 0, true, AT_FDCWD, root, 0);
+                        find_walk_root(root);
                 }
 
         for (positive i = 0; i < find_batch_have; i++)
@@ -14010,7 +14808,9 @@ static b32 file_mkdir()
                 return 1;
 
         positive index = taking.first;
+        positive mask = file_umask();
         positive mode = 0777;
+        positive parent_mode = (0777 & ~mask) | 0300;
         bool parents = (taking.flags & FILE_FLAG('p')) != 0;
         bool given_mode = (taking.flags & FILE_FLAG('m')) != 0;
         bool loud = (taking.flags & FILE_FLAG('v')) != 0;
@@ -14029,7 +14829,7 @@ static b32 file_mkdir()
         if (given_mode &&
             (!string_get(file_option_value(address_of taking, 'm')) ||
              !file_mode_masked(file_option_value(address_of taking, 'm'),
-                               0777, true, file_umask(),
+                               0777, true, mask,
                                address_of mode)))
         {
                 return string_report(log_error, 1, "mkdir: invalid mode '%s'\n",
@@ -14041,62 +14841,22 @@ static b32 file_mkdir()
         while (index < count)
         {
                 string_address path = program_argument((b32)index++);
-
-                if (parents)
-                {
-                        //      The parents are made with the default, and
-                        //      only the directory that was named gets the
-                        //      mode asked for. -v names each component this
-                        //      made and none that was already there, and a
-                        //      failure names the component that failed.
-                        p8 failed[FILE_PATH_MAX];
-                        bool made_it = false;
-
-                        failed[0] = end;
-
-                        bipolar made = file_make_parents_walk(
-                            path, 0777, loud ? mkdir_told : null, failed,
-                            address_of made_it);
-
-                        if (made < 0)
-                        {
-                                //      A name too long for the walk's buffer
-                                //      never became a component, so the whole
-                                //      operand is what failed and what the
-                                //      reference names.
-                                string_format(log_error, "mkdir: cannot create directory '%w': %s\n",
-                                              writer_terminal_quoted_name,
-                                              string_get(failed) ? failed : path,
-                                              file_reason(made));
-                                status = 1;
-                                continue;
-                        }
-
-                        //      -p over a directory that was already there
-                        //      leaves it as it was; -m names the mode of what
-                        //      this call makes.
-                        if (given_mode && made_it)
-                                system_change_mode_at(AT_FDCWD, path, mode);
-
-                        continue;
-                }
-
-                bipolar made = system_make_directory_at(AT_FDCWD, path, mode);
+                p8 failed[FILE_PATH_MAX];
+                bipolar made = file_make_directories_open(
+                    path, parent_mode, mode, given_mode, parents,
+                    loud ? mkdir_told : null, parents ? failed : null, null,
+                    null, null);
 
                 if (made < 0)
                 {
                         string_format(log_error, "mkdir: cannot create directory '%w': %s\n",
-                                      writer_terminal_quoted_name, path, file_reason(made));
+                                      writer_terminal_quoted_name,
+                                      parents && string_get(failed) ? failed : path,
+                                      file_reason(made));
                         status = 1;
                 }
-                else if (loud)
-                        string_format(log, "mkdir: created directory '%w'\n",
-                                      writer_terminal_quoted_name, path);
-
-                if (made >= 0 && given_mode)
-                        // mkdirat applies the umask; -m names the mode after
-                        // it, as the -p branch above already does.
-                        system_change_mode_at(AT_FDCWD, path, mode);
+                else
+                        system_close(made);
         }
 
         log_flush();
@@ -14108,9 +14868,9 @@ static b32 file_mkdir()
 /*
         Both interfaces are the same operation at the kernel floor.  Their
         explicit mode starts from a=rw; an omitted `who` is filtered through
-        the process umask, while a named class is not.  The creation syscall
-        applies the umask once more, so an explicit mode is restored after a
-        successful creation exactly as GNU does.
+        the process umask, while a named class is not.  An explicit mode is
+        installed by the creation syscall under a temporarily cleared umask,
+        so no pathname chmod can be redirected after creation.
 */
 static const argument_option file_node_arguments[] = {
     {"context", 'C', ARGUMENT_OPTIONAL | ARGUMENT_LONG_ONLY},
@@ -14131,8 +14891,44 @@ static b32 file_make_node(string_address program, string_address path,
                           positive kind, positive device, positive mode,
                           bool given_mode)
 {
-        bipolar made = system_call_4(syscall(mknodat), AT_FDCWD,
-                                     (positive)path, kind | mode, device);
+        p8 leaf[FILE_PATH_MAX];
+        bipolar directory = file_parent_open(path, leaf);
+        bipolar made = directory;
+
+        if (directory >= 0 && !system_path_parent_cleanup_safe(directory))
+                made = -ERROR_ACCESS;
+        else if (directory >= 0 && given_mode)
+        {
+                bipolar mask = system_call_1(syscall(umask), 0);
+                if (mask < 0)
+                        made = mask;
+                else
+                {
+                        made = system_call_4(
+                            syscall(mknodat), (positive)directory,
+                            (positive)leaf, kind | mode, device);
+                        bipolar restored = system_call_1(
+                            syscall(umask), (positive)mask);
+                        if (made >= 0 && restored < 0)
+                                made = restored;
+                }
+        }
+        else if (directory >= 0)
+                made = system_call_4(
+                    syscall(mknodat), (positive)directory,
+                    (positive)leaf, kind | mode, device);
+
+        if (made >= 0)
+        {
+                bipolar handle = file_created_open_at(
+                    directory, leaf, kind, mode, given_mode, true);
+                if (handle < 0)
+                        made = handle;
+                else
+                        system_close(handle);
+        }
+        if (directory >= 0)
+                system_close(directory);
 
         if (made < 0)
         {
@@ -14147,13 +14943,6 @@ static b32 file_make_node(string_address program, string_address path,
                                       path, file_reason(made));
                 }
                 return 1;
-        }
-
-        if (given_mode &&
-            system_change_mode_at(AT_FDCWD, path, mode) < 0)
-        {
-                return string_report(log_error, 1, "%s: cannot set permissions of '%w'\n", program,
-                              writer_terminal_quoted_name, path);
         }
 
         return 0;
@@ -14532,8 +15321,6 @@ typedef struct
         p8 name[FILE_PATH_MAX];
 } split_output;
 
-static PURE p8 file_size_power(p8 suffix, bool every_lower);
-
 static const argument_option split_options[] = {
     {"additional-suffix", 'S', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
     {"bytes", 'b', ARGUMENT_REQUIRED},
@@ -14556,19 +15343,20 @@ static bool split_size(string_address text, positive address_to out)
         if (!string_digits_checked(address_of at, 10, address_of value))
                 return false;
 
-        positive multiple = 1;
         p8 suffix = string_get(at);
 
         if (suffix == 'b' && !string_get(at + 1))
         {
-                multiple = 512;
+                if (value > positive_max / 512)
+                        return false;
+                value *= 512;
                 at++;
         }
         else if (suffix == 'B' && !string_get(at + 1))
                 at++;
         else if (suffix)
         {
-                positive power = file_size_power(suffix, true);
+                positive power = size_suffix_power(suffix, true);
 
                 if (!power || power > 8)
                         return false;
@@ -14589,18 +15377,18 @@ static bool split_size(string_address text, positive address_to out)
                 else if (string_get(at))
                         return false;
 
-                while (power--)
-                {
-                        if (multiple > positive_max / base)
-                                return false;
-                        multiple *= base;
-                }
+                p64 scaled;
+                if (!size_scale_power_checked(
+                        value, base, (p8)power, (p64)positive_max,
+                        address_of scaled))
+                        return false;
+                value = (positive)scaled;
         }
 
-        if (string_get(at) || !value || value > positive_max / multiple)
+        if (string_get(at) || !value)
                 return false;
 
-        address_to out = value * multiple;
+        address_to out = value;
         return true;
 }
 
@@ -14737,7 +15525,7 @@ static bool split_output_open(split_output address_to output)
 
         bipolar opened = file_staged_name_open(
             address_of output->stage, output->name, output->mode,
-            (string_address)".moonwater-split-", 17);
+            FILE_STAGED_STREAM_SPECIAL);
 
         if (opened < 0)
         {
@@ -15291,7 +16079,7 @@ static bool csplit_section(csplit_state address_to state, positive from,
         file_staged_name stage;
         bipolar out = file_staged_name_open(
             address_of stage, state->name, state->output_mode,
-            (string_address)".moonwater-csplit-", 18);
+            FILE_STAGED_STREAM_SPECIAL);
         if (out < 0)
         {
                 return string_report(log_error, false, "csplit: cannot open '%w': %s\n",
@@ -15822,33 +16610,6 @@ static const argument_option truncate_options[] = {
     {null},
 };
 
-/* The exponent is shared by dd, truncate and util-linux's strtosize. Their
-   surrounding grammars deliberately are not: callers keep their own accepted
-   case, range and trailing-unit rules. A direct ASCII table keeps this cold
-   parser smaller and branchless instead of spelling three switches. */
-static PURE p8 file_size_power(p8 suffix, bool every_lower)
-{
-        static const p8 powers['z' - 'A' + 1] = {
-            ['K' - 'A'] = 1, ['M' - 'A'] = 2, ['G' - 'A'] = 3,
-            ['T' - 'A'] = 4, ['P' - 'A'] = 5, ['E' - 'A'] = 6,
-            ['Z' - 'A'] = 7, ['Y' - 'A'] = 8, ['R' - 'A'] = 9,
-            ['Q' - 'A'] = 10,
-            ['k' - 'A'] = 1, ['m' - 'A'] = 2, ['g' - 'A'] = 3,
-            ['t' - 'A'] = 4, ['p' - 'A'] = 5, ['e' - 'A'] = 6,
-            ['z' - 'A'] = 7, ['y' - 'A'] = 8, ['r' - 'A'] = 9,
-            ['q' - 'A'] = 10,
-        };
-
-        if (suffix < 'A' || suffix > 'z')
-                return 0;
-
-        p8 power = powers[suffix - 'A'];
-
-        return suffix >= 'a' && !every_lower && power > 4
-                   ? 0
-                   : power;
-}
-
 /* GNU's SIZE grammar here is deliberately narrower than dd's: an integer,
    optionally followed by K..Q, with bare suffixes meaning one. A trailing B
    selects powers of 1000; no B or iB selects powers of 1024. */
@@ -15919,7 +16680,7 @@ static bool truncate_size(string_address text, b64 address_to out,
 
         text += digits;
 
-        positive power = file_size_power(string_get(text), false);
+        positive power = size_suffix_power(string_get(text), false);
 
         if (!digits && !power)
                 return false;
@@ -15940,15 +16701,12 @@ static bool truncate_size(string_address text, b64 address_to out,
                 else if (string_is(text, 'i') && string_is(text + 1, 'B'))
                         text += 2;
 
-                while (power--)
+                if (!size_scale_power_checked(
+                        magnitude, base, (p8)power, (p64)b64_max,
+                        address_of magnitude))
                 {
-                        if (magnitude > (p64)b64_max / base)
-                        {
-                                truncate_too_large = true;
-                                return false;
-                        }
-
-                        magnitude *= base;
+                        truncate_too_large = true;
+                        return false;
                 }
         }
 
@@ -18113,7 +18871,7 @@ static b32 file_shuf()
                 output.handle = file_staged_name_open(
                     address_of output.stage, output_name,
                     0666 & ~file_umask(),
-                    (string_address)".moonwater-shuf-", 16);
+                    FILE_STAGED_STREAM_SPECIAL);
                 output.opened = output.handle >= 0;
 
                 if (!output.opened)
@@ -18862,6 +19620,11 @@ static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
 static b32 cp_status;
+static bool cp_destination_decided;
+static bool cp_destination_existed;
+static bool cp_destination_entry_existed;
+static file_facts cp_destination_facts;
+static file_facts cp_destination_entry_facts;
 static bool mv_across_said;
 static bool mv_ask;
 static bool mv_never_clobber;
@@ -18886,9 +19649,10 @@ static positive cp_umask;
 
 /*
         Everything -p carries over, and everything a move across devices
-        carries over whether asked or not: owner, times and mode, each tried
-        and none insisted on, because an owner that cannot be given is not a
-        reason to leave the copy unmade.
+        carries over whether asked or not: owner, times and mode. A staged
+        copy is published only after all requested metadata succeeds; a
+        direct destination reports the same failure instead of claiming the
+        copy was fully preserved.
 */
 /*
         -b and --backup: what happens to what was already there.
@@ -18927,33 +19691,57 @@ static bool file_backup_control(string_address program, string_address word)
         return true;
 }
 
-// The numbered backups already beside a name say whether the next one is
-// numbered too, and which number it takes.
-static positive file_backup_number_at(bipolar directory,
-                                      string_address destination)
+/* Numbered backups use one more than the greatest existing suffix; gaps do
+   not reset the sequence, and --backup=existing selects numbered mode when
+   any numbered sibling exists.  Walk once to answer both questions. */
+static bipolar file_backup_number_at(
+    bipolar directory, string_address destination,
+    positive address_to next, bool address_to any)
 {
-        p8 candidate[FILE_PATH_MAX];
-        positive at = 1;
+        positive prefix = string_length(destination);
+        bipolar handle = system_open_at(
+            directory, (string_address)".",
+            FILE_READ | O_DIRECTORY | O_CLOEXEC);
 
-        for (;;)
+        address_to next = 1;
+        address_to any = false;
+        if (handle < 0)
+                return handle;
+
+        file_walk walk = {
+            .handle = handle, .error = 0, .have = 0, .at = 0};
+        struct linux_dirent64 address_to entry;
+        while ((entry = file_walk_next(address_of walk)))
         {
-                if (string_length(destination) + 16 >= FILE_PATH_MAX)
-                        return 0;
+                string_address name = (string_address)entry->d_name;
+                positive named = string_length(name);
+                if (named <= prefix + 3 ||
+                    memory_compare(name, destination, prefix) ||
+                    name[prefix] != '.' || name[prefix + 1] != '~')
+                        continue;
 
-                positive length = string_length(destination);
+                string_address at = name + prefix + 2;
+                positive number;
+                if (!string_digits_checked(address_of at, 10,
+                                           address_of number) ||
+                    !number || at[0] != '~' || at[1])
+                        continue;
 
-                memory_copy_apart(candidate, destination, length);
-                candidate[length++] = '.';
-                candidate[length++] = '~';
-                length += positive_into_string(candidate + length, at);
-                candidate[length++] = '~';
-                candidate[length] = end;
-
-                if (!file_exists(directory, candidate))
-                        return at;
-
-                at++;
+                address_to any = true;
+                if (number >= address_to next)
+                {
+                        if (number == positive_max)
+                        {
+                                walk.error = -ERROR_OUT_OF_RANGE;
+                                break;
+                        }
+                        address_to next = number + 1;
+                }
         }
+
+        bipolar result = walk.error;
+        file_walk_close(address_of walk);
+        return result;
 }
 
 static bool file_backup_made_at(string_address program, bipolar directory,
@@ -18974,18 +19762,39 @@ static bool file_backup_made_at(string_address program, bipolar directory,
                 return true;
 
         p8 kind = file_backup_kind;
+        positive next_number = 1;
+        bool any_numbered = false;
+        bipolar numbered = 0;
+        if (kind == 'e' || kind == 'n')
+                numbered = file_backup_number_at(
+                    directory, destination, address_of next_number,
+                    address_of any_numbered);
+        if (numbered < 0)
+        {
+                string_format(log_error, "%s: cannot backup '%w", program,
+                              writer_terminal_quoted_name, shown);
+                return string_report(log_error, false, "': %s\n",
+                                     file_reason(numbered));
+        }
 
         if (kind == 'e')
-                kind = file_backup_number_at(directory, destination) > 1
-                           ? 'n' : 's';
+                kind = any_numbered ? 'n' : 's';
+
+        positive extra = kind == 'n'
+                             ? 3 + sizeof(positive) * 3
+                             : string_length(file_backup_suffix);
+        if (length + extra >= FILE_PATH_MAX)
+        {
+                string_format(log_error, "%s: cannot backup '%w", program,
+                              writer_terminal_quoted_name, shown);
+                return string_report(log_error, false, "': %s\n",
+                                     file_reason(-ERROR_NAME_TOO_LONG));
+        }
 
         if (kind == 'n')
         {
-                positive at = file_backup_number_at(directory, destination);
+                positive at = next_number;
                 positive used = length;
-
-                if (length + 16 >= FILE_PATH_MAX)
-                        return true;
 
                 memory_copy_apart(kept, destination, length);
                 kept[used++] = '.';
@@ -18998,26 +19807,35 @@ static bool file_backup_made_at(string_address program, bipolar directory,
         {
                 positive suffix = string_length(file_backup_suffix);
 
-                if (length + suffix >= FILE_PATH_MAX)
-                        return true;
-
                 memory_copy_apart(kept, destination, length);
                 memory_copy_apart_end(kept + length, file_backup_suffix, suffix);
         }
 
-        p8 detached[FILE_PATH_MAX];
-        bipolar moved = file_detach_same(directory, destination,
-                                         address_of facts, detached);
-        if (moved >= 0)
-        {
-                positive flags = kind == 'n' ? FILE_RENAME_NOREPLACE : 0;
-                moved = system_rename_at(directory, detached, directory, kept,
-                                         flags);
-                if (moved < 0)
-                        (void)system_rename_at(
-                            directory, detached, directory, destination,
-                            FILE_RENAME_NOREPLACE);
-        }
+        bipolar original = file_open_same(
+            directory, destination, address_of facts,
+            O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        file_facts kept_facts;
+        bipolar kept_looked = file_look_code(
+            directory, kept, AT_SYMLINK_NOFOLLOW,
+            address_of kept_facts);
+        bool kept_exists = kept_looked >= 0;
+        bipolar moved = original < 0
+                            ? original
+                        : kept_looked < 0 && kept_looked != -ERROR_NO_ENTRY
+                            ? kept_looked
+                        : kept_exists &&
+                                  file_same_identity(address_of facts,
+                                                     address_of kept_facts)
+                            ? -ERROR_INVALID
+                        : kind == 'n' && kept_exists
+                            ? -ERROR_EXISTS
+                            : file_rename_decided_at(
+                                  directory, destination,
+                                  directory, kept, original,
+                                  address_of facts, !kept_exists,
+                                  kept_exists ? address_of kept_facts : null);
+        if (original >= 0)
+                system_close(original);
 
         if (moved < 0)
         {
@@ -19037,7 +19855,9 @@ static bool file_backup_taken(file_taking address_to taking, string_address prog
         (void)program;
         file_backup_suffix = file_option_value(taking, 'S');
 
-        if (!file_backup_suffix)
+        if (file_backup_suffix && !string_get(file_backup_suffix))
+                file_backup_suffix = (string_address) "~";
+        else if (!file_backup_suffix)
         {
                 file_backup_suffix = file_environment((string_address) "SIMPLE_BACKUP_SUFFIX");
 
@@ -19062,22 +19882,10 @@ static bool file_backup_taken(file_taking address_to taking, string_address prog
         return true;
 }
 
-/* Ownership and set-ID preservation are one invariant.  If fchown cannot
-   establish the requested owner, never make the caller-owned copy set-ID.
-   O_PATH special files use the descriptor-only fchmodat2 form. */
-static bipolar file_preserve_owner_mode(
-    bipolar destination, file_facts address_to facts)
+/* Ordinary fchmod handles writable files and directories. O_PATH special
+   files use the descriptor-only fchmodat2 form. */
+static bipolar file_change_mode_handle(bipolar destination, positive mode)
 {
-        bipolar owned = system_change_owner_at(
-            destination, (string_address)"", facts->owner, facts->group,
-            AT_EMPTY_PATH);
-        if ((facts->mode & MODE_FORMAT) == MODE_LINK)
-                return 0;
-
-        positive mode = facts->mode & 07777;
-        if (owned < 0)
-                mode &= ~(MODE_SET_USER | MODE_SET_GROUP);
-
         bipolar changed = system_call_2(
             syscall(fchmod), (positive)destination, mode);
         if (changed == -ERROR_BAD_DESCRIPTOR)
@@ -19087,14 +19895,59 @@ static bipolar file_preserve_owner_mode(
         return changed;
 }
 
-static fn file_keep_handle(bipolar destination, file_facts address_to facts)
+/* A plain copy creates an object owned by the caller. Never carry the
+   source's set-ID authority onto that new object. */
+static positive file_copy_creation_mode(file_facts address_to facts)
+{
+        return facts->mode & 07777 & ~cp_umask &
+               ~(MODE_SET_USER | MODE_SET_GROUP);
+}
+
+/* Ownership and set-ID preservation are one invariant. If fchown cannot
+   establish the requested owner, never make the caller-owned copy set-ID. */
+static bipolar file_preserve_owner_mode(
+    bipolar destination, bipolar directory, string_address name,
+    file_facts address_to facts, positive mode)
+{
+        bool named = directory >= 0 && name;
+        positive flags = (facts->mode & MODE_FORMAT) == MODE_LINK
+                             ? AT_SYMLINK_NOFOLLOW : 0;
+        bipolar owned = named
+                            ? system_change_owner_at(
+                                  directory, name, facts->owner, facts->group,
+                                  flags)
+                            : system_change_owner_at(
+                                  destination, (string_address)"",
+                                  facts->owner, facts->group, AT_EMPTY_PATH);
+        if ((facts->mode & MODE_FORMAT) == MODE_LINK)
+                return owned;
+
+        if (owned < 0)
+                mode &= ~(MODE_SET_USER | MODE_SET_GROUP);
+        bipolar changed = named
+                              ? system_change_mode_at(directory, name, mode)
+                              : file_change_mode_handle(destination, mode);
+        return owned < 0 ? owned : changed;
+}
+
+static bipolar file_keep_handle(
+    bipolar destination, bipolar directory, string_address name,
+    file_facts address_to facts)
 {
         p64 times[4];
 
         file_times_of(facts, times);
-        (void)file_preserve_owner_mode(destination, facts);
-        system_update_times_at(
-            destination, (string_address)"", times, AT_EMPTY_PATH);
+        bipolar kept = file_preserve_owner_mode(
+            destination, directory, name, facts, facts->mode & 07777);
+        positive flags = (facts->mode & MODE_FORMAT) == MODE_LINK
+                             ? AT_SYMLINK_NOFOLLOW : 0;
+        bipolar timed = directory >= 0 && name
+                            ? system_update_times_at(
+                                  directory, name, times, flags)
+                            : system_update_times_at(
+                                  destination, (string_address)"", times,
+                                  AT_EMPTY_PATH);
+        return kept < 0 ? kept : timed;
 }
 
 typedef struct
@@ -19162,37 +20015,58 @@ static bipolar file_stage_open_verified_at(
         return handle;
 }
 
-/* One exclusive-name retry loop for symlinks, hard links and special nodes.
-   Callers close source handles at their existing boundary, then bind the
-   claimed name with file_stage_open_verified_at before publication. */
+/* Symlinks, hard links and special nodes are born inside the private
+   transaction directory.  Their source permissions or device identity are
+   therefore never exposed through a predictable public staging name. */
 static bipolar file_stage_claim_at(
-    bipolar directory, string_address destination, p8 address_to temporary,
-    positive room, string_address marker, positive mode, bipolar source,
+    system_path_stage address_to stage, bipolar directory,
+    string_address destination, positive mode, bipolar source,
     file_stage_expectation address_to expected)
 {
-        positive nonce = system_nonce();
-        positive marker_length = string_length(marker);
-        bipolar made = -ERROR_EXISTS;
-        for (positive attempt = 0; attempt < 128 && made == -ERROR_EXISTS;
-             attempt++)
-        {
-                if (!system_temporary_name(destination, temporary, room,
-                                            marker, marker_length,
-                                            nonce + attempt))
-                        return -ERROR_INVALID;
-                made = source >= 0
-                           ? system_path_link_opened_at(source, directory,
-                                                         temporary)
+        bipolar begun = system_path_stage_begin_at(
+            stage, directory, destination);
+        if (begun < 0)
+                return begun;
+
+        bipolar made = source >= 0
+                           ? system_path_link_opened_at(
+                                 source, stage->directory,
+                                 SYSTEM_PATH_STAGE_LEAF)
                        : expected->link
-                           ? system_symbolic_link_at(expected->link, directory,
-                                                       temporary)
+                           ? system_symbolic_link_at(
+                                 expected->link, stage->directory,
+                                 SYSTEM_PATH_STAGE_LEAF)
                            : system_call_4(
-                                 syscall(mknodat), (positive)directory,
-                                 (positive)temporary, expected->kind | mode,
+                                 syscall(mknodat),
+                                 (positive)stage->directory,
+                                 (positive)SYSTEM_PATH_STAGE_LEAF,
+                                 expected->kind | mode,
                                  file_device(expected->device_major,
                                              expected->device_minor));
+        if (made < 0)
+        {
+                system_path_stage_release(stage);
+                return made;
         }
-        return made;
+
+        bipolar handle = file_stage_open_verified_at(
+            stage->directory, SYSTEM_PATH_STAGE_LEAF, expected);
+        bipolar bound = handle < 0 ? handle
+                                   : system_path_stage_bind_opened(
+                                         stage, handle);
+        if (bound < 0)
+        {
+                if (handle >= 0)
+                {
+                        (void)system_path_remove_opened_at(
+                            stage->directory, SYSTEM_PATH_STAGE_LEAF,
+                            handle, 0);
+                        system_close(handle);
+                }
+                system_path_stage_release(stage);
+                return bound;
+        }
+        return handle;
 }
 
 // -n, -i and -u are three ways of asking the same question about a
@@ -19239,6 +20113,7 @@ static bool cp_allowed(bipolar directory, string_address destination,
 // and it is what lands inside that is linked.
 static bool cp_linked(bipolar source_directory, string_address source,
                       string_address source_shown,
+                      bipolar known_source_handle,
                       bipolar destination_directory,
                       string_address destination,
                       string_address destination_shown,
@@ -19246,7 +20121,6 @@ static bool cp_linked(bipolar source_directory, string_address source,
                       bool destination_exists,
                       file_facts address_to destination_facts)
 {
-        p8 temporary[FILE_PATH_MAX];
         bipolar source_handle = -1;
 
         if (cp_symbolic)
@@ -19263,9 +20137,12 @@ static bool cp_linked(bipolar source_directory, string_address source,
         }
         else
         {
-                source_handle = file_open_same(
-                    source_directory, source, facts,
-                    O_PATH | (follow ? 0 : O_NOFOLLOW));
+                source_handle = known_source_handle >= 0
+                                    ? known_source_handle
+                                    : file_open_same(
+                                          source_directory, source, facts,
+                                          O_PATH |
+                                              (follow ? 0 : O_NOFOLLOW));
                 if (source_handle < 0)
                         return false;
         }
@@ -19275,11 +20152,11 @@ static bool cp_linked(bipolar source_directory, string_address source,
             .link = cp_symbolic ? source_shown : null,
             .identity = cp_symbolic ? null : facts,
         };
+        system_path_stage protected;
         bipolar made_handle = file_stage_claim_at(
-            destination_directory, destination, temporary, sizeof(temporary),
-            (string_address)".moonwater-copy-", 0, source_handle,
-            address_of expected);
-        if (source_handle >= 0)
+            address_of protected, destination_directory, destination,
+            0, source_handle, address_of expected);
+        if (source_handle >= 0 && known_source_handle < 0)
                 system_close(source_handle);
         if (made_handle < 0)
         {
@@ -19288,20 +20165,13 @@ static bool cp_linked(bipolar source_directory, string_address source,
                               file_reason(made_handle));
         }
 
-        made_handle = file_stage_open_verified_at(
-            destination_directory, temporary, address_of expected);
-        if (made_handle < 0)
-                return false;
-
         file_facts address_to approved =
-            cp_ask && destination_exists ? destination_facts : null;
+            destination_exists ? destination_facts : null;
         bool no_clobber = cp_never_clobber ||
                           (!cp_force && !cp_replace && !approved);
-        bipolar done = file_temporary_publish_decided_at(
-            destination_directory, temporary, destination, made_handle,
-            no_clobber, approved);
-        done = file_stage_close_at(destination_directory, temporary,
-                                   made_handle, done, 0);
+        bipolar done = file_stage_publish_protected_at(
+            address_of protected, destination_directory,
+            destination, made_handle, 0, no_clobber, approved, 0);
         if (done < 0)
         {
                 return string_report(log_error, false, "cp: cannot create link '%w': %s\n",
@@ -19397,21 +20267,22 @@ static bool file_move_remove(bipolar directory, string_address source,
 }
 
 static bipolar file_copy_publish(
-    bipolar directory, string_address temporary, string_address destination,
-    bipolar handle, bool moving, bool destination_exists,
-    file_facts address_to destination_facts)
+    system_path_stage address_to stage, bipolar directory,
+    string_address destination, bipolar handle, bipolar result,
+    bool moving, bool destination_exists,
+    file_facts address_to destination_facts, positive remove_flags)
 {
-        bool ask = moving ? mv_ask : cp_ask;
+        /* Publication consumes the destination decision already made by the
+           command.  A name which appears, disappears or changes inode while
+           bytes are copied is a collision, never an implicit new decision. */
         file_facts address_to approved =
-            ask && destination_exists ? destination_facts : null;
-        bool no_clobber = moving
-                              ? mv_never_clobber ||
-                                    (mv_ask && !destination_exists)
-                              : cp_never_clobber ||
-                                    (!destination_exists && !cp_force);
+            destination_exists ? destination_facts : null;
+        bool no_clobber = !destination_exists;
 
-        bipolar published = file_temporary_publish_decided_at(
-            directory, temporary, destination, handle, no_clobber, approved);
+        bipolar published = file_stage_publish_protected_keep_at(
+            stage, directory, destination, handle, result, no_clobber,
+            approved, remove_flags, null,
+            (remove_flags & AT_REMOVEDIR) != 0);
         if (moving && (published == -ERROR_EXISTS ||
                        published == -ERROR_AGAIN))
                 mv_collision_seen = true;
@@ -19427,7 +20298,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                           string_address destination_shown,
                           positive depth, bool named, bool moving,
                           bool remove_source,
-                          file_facts address_to known_source)
+                          file_facts address_to known_source,
+                          bipolar known_source_handle)
 {
         file_facts facts;
         file_facts there;
@@ -19438,13 +20310,18 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         if (known_source)
         {
                 facts = *known_source;
-                bipolar pinned = file_open_same(
-                    source_directory, source, address_of facts,
-                    O_PATH | (follow ? 0 : O_NOFOLLOW));
-                if (pinned < 0)
-                        looked = pinned;
-                else
-                        system_close(pinned);
+                file_facts pinned;
+                looked = known_source_handle < 0
+                             ? -ERROR_BAD_DESCRIPTOR
+                             : file_look_code(
+                                   known_source_handle, (string_address)"",
+                                   AT_EMPTY_PATH, address_of pinned);
+                if (looked >= 0 &&
+                    (!file_same_identity(address_of facts,
+                                         address_of pinned) ||
+                     (facts.mode & MODE_FORMAT) !=
+                         (pinned.mode & MODE_FORMAT)))
+                        looked = -ERROR_AGAIN;
         }
         else
                 looked = file_look_code(
@@ -19463,11 +20340,35 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 return false;
 
         positive kind = facts.mode & MODE_FORMAT;
-        positive destination_flags = kind == MODE_LINK && !follow
+        positive destination_flags = moving ||
+                                             (kind == MODE_LINK && !follow)
                                          ? AT_SYMLINK_NOFOLLOW : 0;
         bool destination_exists =
             file_look_code(destination_directory, destination,
                            destination_flags, address_of there) == 0;
+        file_facts destination_entry;
+        bool destination_entry_exists = file_look(
+            destination_directory, destination, AT_SYMLINK_NOFOLLOW,
+            address_of destination_entry);
+        bool destination_is_link = destination_entry_exists &&
+            (destination_entry.mode & MODE_FORMAT) == MODE_LINK;
+
+        if (!moving && named && cp_destination_decided &&
+            (destination_exists != cp_destination_existed ||
+             destination_entry_exists != cp_destination_entry_existed ||
+             (destination_exists &&
+              !file_same_identity(address_of there,
+                                  address_of cp_destination_facts)) ||
+             (destination_entry_exists &&
+              !file_same_identity(address_of destination_entry,
+                                  address_of cp_destination_entry_facts))))
+        {
+                string_format(
+                    log_error,
+                    "cp: destination changed before copying '%w'\n",
+                    writer_terminal_quoted_name, destination_shown);
+                return false;
+        }
 
         if (moving && named && mv_destination_decided &&
             (destination_exists != mv_destination_existed ||
@@ -19487,17 +20388,14 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                               writer_terminal_quoted_name, destination_shown);
         }
 
-        // A destination that is a link to nothing would be written through,
-        // making a file wherever the link points; the reference refuses that
-        // unless -f says to replace what is in the way.
-        file_facts destination_link;
-        if (!moving && !destination_exists && !cp_force &&
-            kind != MODE_DIRECTORY &&
-            file_look(destination_directory, destination,
-                      AT_SYMLINK_NOFOLLOW, address_of destination_link) &&
-            (destination_link.mode & MODE_FORMAT) == MODE_LINK)
+        /* A final symlink is authority chosen by the directory writer, not
+           by the cp caller. Never follow it into an existing victim. An
+           explicit replacement request replaces the link itself through the
+           private staging transaction. */
+        if (!moving && destination_is_link && !cp_force && !cp_replace &&
+            kind != MODE_DIRECTORY)
         {
-                return string_report(log_error, false, "cp: not writing through dangling symlink '%w'\n",
+                return string_report(log_error, false, "cp: not writing through symlink '%w'\n",
                               writer_terminal_quoted_name, destination_shown);
         }
 
@@ -19509,7 +20407,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 // Both sides followed all the way: a destination spelled
                 // through a link into the source is still inside it.
                 if (file_resolve(source_shown, from, true) &&
-                    file_resolve(destination_shown, to, true) &&
+                    file_resolve_as(destination_shown, to, true,
+                                    FILE_RESOLVE_FINAL_MISSING) &&
                     realpath_under(from, to))
                 {
                         return string_report(log_error, false, "cp: cannot copy a directory, '%w', into itself, '%w'\n",
@@ -19519,6 +20418,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         }
 
         if (!moving && kind != MODE_DIRECTORY &&
+            !(named && cp_destination_decided) &&
             !cp_allowed(destination_directory, destination,
                         destination_shown, address_of facts,
                         destination_exists, address_of there))
@@ -19526,27 +20426,30 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
         if (!moving && (cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
                 return cp_linked(source_directory, source, source_shown,
+                                 known_source_handle,
                                  destination_directory, destination,
                                  destination_shown, address_of facts, follow,
-                                 destination_exists, address_of there);
+                                 destination_entry_exists,
+                                 address_of destination_entry);
 
         if (kind == MODE_LINK || ((moving || cp_recursive) &&
                                   kind != MODE_DIRECTORY && kind != MODE_FILE))
         {
                 p8 target[FILE_PATH_MAX];
-                p8 temporary[FILE_PATH_MAX];
-                bipolar pinned = file_open_same(source_directory, source,
-                                                address_of facts,
-                                                O_PATH | O_NOFOLLOW);
+                bipolar pinned = known_source_handle >= 0
+                    ? known_source_handle
+                    : file_open_same(source_directory, source,
+                                     address_of facts, O_PATH | O_NOFOLLOW);
                 if (pinned < 0)
                         return false;
 
                 bipolar length = kind == MODE_LINK
                     ? system_read_link_at(pinned, (string_address)"", target,
-                                            sizeof(target) - 1)
+                                          sizeof(target))
                     : 0;
-                system_close(pinned);
-                if (length < 0)
+                if (known_source_handle < 0)
+                        system_close(pinned);
+                if (length < 0 || (positive)length >= sizeof(target))
                         return false;
                 target[length] = end;
                 file_stage_expectation expected = {
@@ -19555,13 +20458,10 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                     .device_major = facts.rdev_major,
                     .device_minor = facts.rdev_minor,
                 };
+                system_path_stage protected;
                 bipolar made = file_stage_claim_at(
-                    destination_directory, destination, temporary,
-                    sizeof(temporary), (string_address)".moonwater-copy-",
-                    facts.mode & 07777, -1, address_of expected);
-                if (made >= 0)
-                        made = file_stage_open_verified_at(
-                            destination_directory, temporary, address_of expected);
+                    address_of protected, destination_directory,
+                    destination, 0, -1, address_of expected);
                 if (made < 0)
                 {
                         if (kind == MODE_LINK)
@@ -19582,22 +20482,49 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         }
                         return false;
                 }
+
+                bipolar protected_result = 0;
+
                 if (moving || cp_preserve)
-                        file_keep_handle(made, address_of facts);
+                        protected_result = file_keep_handle(
+                            made, protected.directory,
+                            SYSTEM_PATH_STAGE_LEAF, address_of facts);
+                else if (kind != MODE_LINK)
+                        protected_result = system_change_mode_at(
+                            protected.directory, SYSTEM_PATH_STAGE_LEAF,
+                            file_copy_creation_mode(address_of facts));
+
+                if (protected_result < 0)
+                        string_format(
+                            log_error,
+                            "%s: cannot preserve attributes for '%w': %s\n",
+                            program, writer_terminal_quoted_name,
+                            destination_shown, file_reason(protected_result));
+
                 bipolar published = file_copy_publish(
-                    destination_directory, temporary, destination, made,
-                    moving, destination_exists, address_of there);
-                if (file_stage_close_at(destination_directory, temporary,
-                                         made, published, 0) < 0)
+                    address_of protected, destination_directory,
+                    destination, made, protected_result, moving,
+                    destination_entry_exists, address_of destination_entry,
+                    0);
+                if (published < 0)
                         return false;
                 goto copied_without_metadata;
         }
 
         if (!moving && cp_attributes_only && kind != MODE_DIRECTORY)
         {
-                bipolar made = file_copy_destination_open(
-                    destination_directory, destination, facts.mode & 07777,
-                    destination_exists, address_of there, false);
+                bool staged = cp_replace || destination_is_link ||
+                              !destination_exists;
+                system_path_stage protected;
+                system_path_stage_reset(address_of protected);
+                bipolar made = staged
+                    ? file_stage_file_open_at(
+                          address_of protected, destination_directory,
+                          destination, 0600)
+                    : file_copy_destination_open(
+                          destination_directory, destination,
+                          facts.mode & 07777, destination_exists,
+                          address_of there, false);
 
                 if (made < 0)
                 {
@@ -19606,9 +20533,37 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                                       file_reason(made));
                 }
 
-                if (cp_preserve)
-                        file_keep_handle(made, address_of facts);
-                system_close(made);
+                bipolar attributed = cp_preserve
+                                         ? file_keep_handle(
+                                               made,
+                                               staged ? protected.directory
+                                                      : -1,
+                                               staged
+                                                   ? SYSTEM_PATH_STAGE_LEAF
+                                                   : null,
+                                               address_of facts)
+                                         : staged
+                                               ? file_change_mode_handle(
+                                                     made,
+                                                     file_copy_creation_mode(
+                                                         address_of facts))
+                                               : 0;
+                bipolar published = staged
+                    ? file_copy_publish(
+                          address_of protected, destination_directory,
+                          destination, made, attributed, false,
+                          destination_entry_exists,
+                          address_of destination_entry, 0)
+                    : 0;
+                bipolar closed = staged ? 0 : system_close(made);
+                if (attributed < 0)
+                        string_format(
+                            log_error,
+                            "cp: cannot preserve attributes for '%w': %s\n",
+                            writer_terminal_quoted_name, destination_shown,
+                            file_reason(attributed));
+                if (attributed < 0 || published < 0 || closed < 0)
+                        return false;
                 goto copied_without_metadata;
         }
 
@@ -19619,8 +20574,11 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 if (kind == MODE_FILE)
                         source_flags |= O_NONBLOCK;
 
-                bipolar in = file_open_same(source_directory, source,
-                                            address_of facts, source_flags);
+                bipolar in = known_source_handle >= 0
+                                 ? known_source_handle
+                                 : file_open_same(
+                                       source_directory, source,
+                                       address_of facts, source_flags);
                 if (in < 0)
                 {
                         if (!moving)
@@ -19630,14 +20588,18 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         return false;
                 }
 
-                p8 temporary[FILE_PATH_MAX];
-                bool staged = moving || cp_replace;
+                /* Existing destinations retain their inode, ownership and
+                   hard-link contract unless replacement was explicitly
+                   requested.  Missing names and replacements are prepared
+                   privately and published only after a complete copy. */
+                bool staged = moving || cp_replace || destination_is_link ||
+                              !destination_exists;
+                system_path_stage protected;
+                system_path_stage_reset(address_of protected);
                 bipolar out = staged
-                    ? file_temporary_open_at(
-                          destination_directory, destination, temporary,
-                          sizeof(temporary),
-                          (string_address)".moonwater-copy-", 16,
-                          system_nonce(), 128, facts.mode & 07777)
+                    ? file_stage_file_open_at(
+                          address_of protected, destination_directory,
+                          destination, 0600)
                     : file_copy_destination_open(
                           destination_directory, destination,
                           facts.mode & 07777, destination_exists,
@@ -19645,18 +20607,16 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
                 if (out < 0 && cp_force && !moving)
                 {
-                        out = file_temporary_open_at(
-                            destination_directory, destination, temporary,
-                            sizeof(temporary),
-                            (string_address)".moonwater-copy-", 16,
-                            system_nonce(), 128,
-                            facts.mode & 07777);
+                        out = file_stage_file_open_at(
+                            address_of protected, destination_directory,
+                            destination, 0600);
                         staged = out >= 0;
                 }
 
                 if (out < 0)
                 {
-                        system_close(in);
+                        if (known_source_handle < 0)
+                                system_close(in);
                         if (!moving)
                                 string_format(log_error, "cp: cannot create regular file '%w': %s\n",
                                               writer_terminal_quoted_name, destination_shown,
@@ -19665,14 +20625,16 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 }
 
                 bool complete = file_copy_handles(in, out);
-                system_close(in);
+                if (known_source_handle < 0)
+                        system_close(in);
 
                 if (!complete)
                 {
                         if (staged)
-                                (void)file_stage_close_at(
-                                    destination_directory, temporary, out,
-                                    -ERROR_INPUT_OUTPUT, 0);
+                                (void)file_stage_publish_protected_at(
+                                    address_of protected,
+                                    destination_directory, destination, out,
+                                    -ERROR_INPUT_OUTPUT, true, null, 0);
                         else
                                 system_close(out);
                         if (!moving)
@@ -19681,19 +20643,36 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         return false;
                 }
 
-                if (moving || cp_preserve)
-                        file_keep_handle(out, address_of facts);
-                bipolar published = staged ? file_copy_publish(
-                                                 destination_directory,
-                                                 temporary, destination, out,
-                                                 moving, destination_exists,
-                                                 address_of there) : 0;
-                bipolar closed = staged
-                                     ? file_stage_close_at(
-                                           destination_directory, temporary,
-                                           out, published, 0)
-                                     : system_close(out);
-                if (published < 0 || closed < 0)
+                bipolar attributed = moving || cp_preserve
+                                         ? file_keep_handle(
+                                               out,
+                                               staged ? protected.directory
+                                                      : -1,
+                                               staged
+                                                   ? SYSTEM_PATH_STAGE_LEAF
+                                                   : null,
+                                               address_of facts)
+                                         : staged
+                                               ? file_change_mode_handle(
+                                                     out,
+                                                     file_copy_creation_mode(
+                                                         address_of facts))
+                                               : 0;
+                bipolar published = staged
+                    ? file_copy_publish(
+                          address_of protected, destination_directory,
+                          destination, out, attributed, moving,
+                          destination_entry_exists,
+                          address_of destination_entry, 0)
+                    : 0;
+                bipolar closed = staged ? 0 : system_close(out);
+                if (attributed < 0)
+                        string_format(
+                            log_error,
+                            "%s: cannot preserve attributes for '%w': %s\n",
+                            program, writer_terminal_quoted_name,
+                            destination_shown, file_reason(attributed));
+                if (attributed < 0 || published < 0 || closed < 0)
                         return false;
 
                 goto copied_without_metadata;
@@ -19711,9 +20690,13 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                               writer_terminal_quoted_name, source_shown);
         }
 
-        bipolar source_handle = file_open_same(
-            source_directory, source, address_of facts,
-            FILE_READ | O_DIRECTORY | (follow ? 0 : O_NOFOLLOW));
+        bipolar source_handle = known_source_handle >= 0
+            ? system_open_at(
+                  known_source_handle, (string_address)".",
+                  FILE_READ | O_DIRECTORY | O_CLOEXEC)
+            : file_open_same(
+                  source_directory, source, address_of facts,
+                  FILE_READ | O_DIRECTORY | (follow ? 0 : O_NOFOLLOW));
         if (source_handle < 0)
         {
                 string_format(log_error, "%s: cannot read directory '%w': %s\n", program,
@@ -19723,12 +20706,12 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 return false;
         }
 
-        p8 temporary[FILE_PATH_MAX];
-        temporary[0] = end;
+        bool staged = moving || !destination_exists;
+        system_path_stage protected;
+        system_path_stage_reset(address_of protected);
         bipolar destination_handle = file_copy_directory_open(
-            destination_directory, destination,
-            moving ? 0700 : (facts.mode & 07777) | 0700, destination_exists,
-            address_of there, moving, temporary);
+            address_of protected, destination_directory, destination,
+            destination_exists, address_of there, staged);
         if (destination_handle < 0)
         {
                 system_close(source_handle);
@@ -19775,7 +20758,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
                 if (!file_copy_one(walk.handle, child->d_name, from,
                                    destination_handle, child->d_name, to,
-                                   depth - 1, false, moving, false, null))
+                                   depth - 1, false, moving, false, null, -1))
                         complete = false;
         }
 
@@ -19793,43 +20776,60 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         // A directory that was already there keeps its mode, as a file does;
         // one made here gets the source's under the umask, unless -p wants
         // the source's whole.
-        if (!moving && cp_preserve)
-                file_keep_handle(destination_handle, address_of facts);
-        else if (!moving && !destination_exists)
-                system_call_2(syscall(fchmod), (positive)destination_handle,
-                              facts.mode & 07777 & ~cp_umask);
+        bipolar attributed = moving || cp_preserve
+                                 ? file_keep_handle(
+                                       destination_handle,
+                                       staged ? protected.directory : -1,
+                                       staged ? SYSTEM_PATH_STAGE_LEAF : null,
+                                       address_of facts)
+                                 : staged
+                                       ? file_change_mode_handle(
+                                             destination_handle,
+                                             file_copy_creation_mode(
+                                                 address_of facts))
+                                       : 0;
 
-        bipolar published = moving && complete
-                                ? file_copy_publish(
-                                      destination_directory, temporary,
-                                      destination, destination_handle, true,
-                                      destination_exists, address_of there)
-                                : 0;
-        if (moving && published >= 0)
-                file_keep_handle(destination_handle, address_of facts);
+        bipolar published = 0;
+        if (staged && complete && attributed >= 0)
+                published = file_copy_publish(
+                    address_of protected, destination_directory,
+                    destination, destination_handle, attributed, moving,
+                    destination_entry_exists, address_of destination_entry,
+                    AT_REMOVEDIR);
 
-        if (moving && (!complete || published < 0))
+        if (attributed < 0)
+                string_format(
+                    log_error,
+                    "%s: cannot preserve attributes for '%w': %s\n",
+                    program, writer_terminal_quoted_name,
+                    destination_shown, file_reason(attributed));
+
+        if (staged && (!complete || attributed < 0 || published < 0))
         {
-                file_facts staged;
-                if (file_look(destination_handle, (string_address)"",
-                              AT_EMPTY_PATH, address_of staged))
+                file_facts staged_facts;
+                if (file_look(protected.directory,
+                              SYSTEM_PATH_STAGE_LEAF,
+                              AT_SYMLINK_NOFOLLOW,
+                              address_of staged_facts))
                         (void)file_move_remove_tree(
-                            destination_directory, temporary,
-                            address_of staged, FILE_MAX_DEPTH);
+                            protected.directory, SYSTEM_PATH_STAGE_LEAF,
+                            address_of staged_facts, FILE_MAX_DEPTH);
+                system_path_stage_release(address_of protected);
         }
-        bipolar closed = system_close(destination_handle);
+        bipolar closed = staged && complete && attributed >= 0
+                             ? 0 : system_close(destination_handle);
 
-        if (moving)
+        if (staged)
         {
-                if (!complete || published < 0 || closed < 0)
+                if (!complete || attributed < 0 || published < 0 || closed < 0)
                         return false;
-                if (remove_source)
+                if (moving && remove_source)
                         complete = file_move_remove(
                             source_directory, source, source_shown,
                             AT_REMOVEDIR, address_of facts);
         }
 
-        return complete;
+        return complete && attributed >= 0;
 
 copied_without_metadata:
         if (!moving)
@@ -19877,13 +20877,38 @@ static fn cp_pair(string_address source, string_address destination)
         bipolar source_looked = file_look_code(
             source_directory, source_leaf,
             follow ? 0 : AT_SYMLINK_NOFOLLOW, address_of source_facts);
-        bipolar source_pinned = source_looked < 0
-                                    ? source_looked
-                                    : file_open_same(
-                                          source_directory, source_leaf,
-                                          address_of source_facts,
-                                          O_PATH |
-                                              (follow ? 0 : O_NOFOLLOW));
+        if (source_looked < 0)
+        {
+                string_format(log_error, "cp: cannot stat '%w': %s\n", writer_terminal_quoted_name,
+                              source, file_reason(source_looked));
+                system_close(source_directory);
+                system_close(destination_directory);
+                cp_status = 1;
+                return;
+        }
+        positive kind = source_facts.mode & MODE_FORMAT;
+        if (kind == MODE_DIRECTORY && !cp_recursive)
+        {
+                string_format(log_error, "cp: -r not specified; omitting directory '%w'\n",
+                              writer_terminal_quoted_name, source);
+                system_close(source_directory);
+                system_close(destination_directory);
+                cp_status = 1;
+                return;
+        }
+        positive source_flags =
+            kind == MODE_DIRECTORY
+                ? FILE_READ | O_DIRECTORY
+                : kind == MODE_LINK || cp_hard || cp_symbolic ||
+                          cp_attributes_only ||
+                          (cp_recursive && kind != MODE_FILE)
+                      ? O_PATH
+                      : FILE_READ | (kind == MODE_FILE ? O_NONBLOCK : 0);
+        if (!follow)
+                source_flags |= O_NOFOLLOW;
+        bipolar source_pinned = file_open_same(
+            source_directory, source_leaf, address_of source_facts,
+            source_flags);
         if (source_pinned < 0)
         {
                 string_format(log_error, "cp: cannot stat '%w': %s\n", writer_terminal_quoted_name,
@@ -19893,9 +20918,6 @@ static fn cp_pair(string_address source, string_address destination)
                 cp_status = 1;
                 return;
         }
-        system_close(source_pinned);
-
-        positive kind = source_facts.mode & MODE_FORMAT;
         positive destination_flags = kind == MODE_LINK && !follow
                                          ? AT_SYMLINK_NOFOLLOW : 0;
         bool destination_exists = file_look(
@@ -19913,7 +20935,27 @@ static fn cp_pair(string_address source, string_address destination)
                               destination);
                 system_close(source_directory);
                 system_close(destination_directory);
+                system_close(source_pinned);
                 cp_status = 1;
+                return;
+        }
+
+        /* Collision options authorize the original destination.  Backing it
+           up first would turn that decision into apparent absence, bypassing
+           -n, -i and -u and mutating the namespace even when the copy should
+           be skipped. */
+        bool collision_exists = destination_exists || entry_exists;
+        file_facts address_to collision_facts = destination_exists
+                                                    ? address_of destination_facts
+                                                    : address_of destination_entry;
+        if (kind != MODE_DIRECTORY &&
+            !cp_allowed(destination_directory, destination_leaf,
+                        destination, address_of source_facts,
+                        collision_exists, collision_facts))
+        {
+                system_close(source_directory);
+                system_close(destination_directory);
+                system_close(source_pinned);
                 return;
         }
 
@@ -19925,15 +20967,30 @@ static fn cp_pair(string_address source, string_address destination)
         {
                 system_close(source_directory);
                 system_close(destination_directory);
+                system_close(source_pinned);
                 cp_status = 1;
                 return;
+        }
+
+        cp_destination_decided = true;
+        cp_destination_existed = destination_exists;
+        cp_destination_entry_existed = entry_exists;
+        if (destination_exists)
+                cp_destination_facts = destination_facts;
+        if (entry_exists)
+                cp_destination_entry_facts = destination_entry;
+        if (file_backup_kind && entry_exists)
+        {
+                cp_destination_existed = false;
+                cp_destination_entry_existed = false;
         }
 
         if (!file_copy_one(source_directory, source_leaf, source,
                            destination_directory, destination_leaf,
                            destination, FILE_MAX_DEPTH, true, false, false,
-                           address_of source_facts))
+                           address_of source_facts, source_pinned))
                 cp_status = 1;
+        system_close(source_pinned);
         system_close(source_directory);
         system_close(destination_directory);
 }
@@ -20020,6 +21077,7 @@ static b32 file_cp()
 {
         positive count = (positive)program_argument_count();
         cp_status = 0;
+        cp_destination_decided = false;
         cp_selected = (cp_selection){};
 
         file_taking taking = {
@@ -20168,16 +21226,31 @@ static bool install_identity(string_address text, bool group,
         return true;
 }
 
-static bool install_leading(string_address destination)
+/* -D returns the parent descriptor produced by the same no-symlink walk that
+   created it.  The destination is never resolved a second time after its
+   leading path has been authorized. */
+static bipolar install_leading(string_address destination,
+                               p8 address_to leaf)
 {
         p8 parent[FILE_PATH_MAX];
+        positive length = string_length(destination);
+
+        if (!length || length >= FILE_PATH_MAX)
+                goto failed;
 
         path_head_copy(parent, FILE_PATH_MAX, destination);
-        if (file_make_parents(parent, 0755))
-                return true;
+        path_tail_copy(leaf, FILE_PATH_MAX, destination);
+        bipolar directory = file_make_directories_open(
+            parent, 0755, 0755, true, true,
+            null, null, null, null, null);
+        if (directory >= 0)
+                return directory;
 
-        return string_report(log_error, false, "install: cannot create leading directories for '%w'\n",
+failed:
+        string_format(log_error,
+                      "install: cannot create leading directories for '%w'\n",
                       writer_terminal_quoted_name, destination);
+        return -ERROR_INVALID;
 }
 
 static bool install_attributes_handle(bipolar destination_handle,
@@ -20185,10 +21258,10 @@ static bool install_attributes_handle(bipolar destination_handle,
                                       file_facts address_to source)
 {
         bipolar owned = install_owner >= 0 || install_group >= 0
-                            ? system_call_3(syscall(fchown),
-                                            (positive)destination_handle,
-                                            (positive)install_owner,
-                                            (positive)install_group)
+                            ? system_change_owner_at(
+                                  destination_handle,
+                                  (string_address)"", install_owner,
+                                  install_group, AT_EMPTY_PATH)
                             : 0;
 
         if (owned < 0)
@@ -20197,8 +21270,7 @@ static bool install_attributes_handle(bipolar destination_handle,
                               writer_terminal_quoted_name, destination, file_reason(owned));
         }
 
-        if (system_call_2(syscall(fchmod), (positive)destination_handle,
-                          install_mode) < 0)
+        if (file_change_mode_handle(destination_handle, install_mode) < 0)
         {
                 return string_report(log_error, false, "install: cannot change mode of '%w'\n",
                               writer_terminal_quoted_name, destination);
@@ -20221,28 +21293,78 @@ static bool install_attributes_handle(bipolar destination_handle,
         return true;
 }
 
-static bool install_directory_attributes(string_address destination)
+/* Turn an exact O_PATH directory into a normal descriptor for metadata and
+   directory I/O.  Newly created callers can start at 0700 and open directly;
+   existing mode-000 directories need a temporary owner mode.  Prefer the
+   descriptor-only fchmodat2 bootstrap there; on older kernels, use the held
+   parent only after its ownership/mode policy and the exact leaf identity
+   establish that another principal cannot redirect the pathname chmod. */
+static bipolar file_directory_real(
+    bipolar exact, bipolar parent, string_address leaf,
+    bool address_to changed, positive address_to old_mode)
 {
-        p8 leaf[FILE_PATH_MAX];
         file_facts facts;
-        bipolar directory = file_parent_open(destination, leaf);
-        bipolar looked = directory < 0 ? directory : file_look_code(
-            directory, leaf, AT_SYMLINK_NOFOLLOW, address_of facts);
-        bipolar handle = looked < 0 ? looked : file_open_same(
-            directory, leaf, address_of facts,
+        bipolar looked = file_look_code(
+            exact, (string_address)"", AT_EMPTY_PATH, address_of facts);
+        if (looked < 0 || (facts.mask & STATX_BASIC) != STATX_BASIC ||
+            (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return looked < 0 ? looked : -ERROR_INPUT_OUTPUT;
+
+        address_to changed = false;
+        address_to old_mode = facts.mode & 07777;
+        bipolar real = file_open_same(
+            exact, (string_address)".", address_of facts,
             FILE_READ | O_DIRECTORY | O_NOFOLLOW);
+        if (real >= 0)
+                return real;
 
-        if (handle < 0)
+        bipolar prepared = file_change_mode_handle(exact, 0700);
+        if (prepared < 0)
         {
-                if (directory >= 0)
-                        system_close(directory);
-                return false;
+                bipolar same = parent >= 0 && string_get(leaf)
+                                   ? system_path_same_opened_at(
+                                         exact, parent, leaf)
+                                   : -ERROR_ACCESS;
+                if (same < 0 || !file_name_stable(parent, address_of facts))
+                        return prepared;
+                prepared = system_change_mode_at(parent, leaf, 0700);
+                if (prepared >= 0)
+                        prepared = system_path_same_opened_at(
+                            exact, parent, leaf);
         }
+        if (prepared < 0)
+                return prepared;
 
-        bool complete = install_attributes_handle(handle, destination, null);
-        system_close(handle);
-        system_close(directory);
-        return complete;
+        address_to changed = true;
+        real = file_open_same(
+            exact, (string_address)".", address_of facts,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW);
+        if (real < 0)
+        {
+                bipolar restored = file_change_mode_handle(
+                    exact, address_to old_mode);
+                if (restored < 0 && parent >= 0 && string_get(leaf) &&
+                    file_name_stable(parent, address_of facts) &&
+                    system_path_same_opened_at(exact, parent, leaf) >= 0)
+                        (void)system_change_mode_at(
+                            parent, leaf, address_to old_mode);
+                address_to changed = false;
+        }
+        return real;
+}
+
+static bool install_directory_entry_stable(
+    bipolar exact, bipolar parent, string_address leaf)
+{
+        if (parent < 0)
+                return true;
+
+        file_facts facts;
+        return string_get(leaf) &&
+               file_look(exact, (string_address)"", AT_EMPTY_PATH,
+                         address_of facts) &&
+               system_path_same_opened_at(exact, parent, leaf) >= 0 &&
+               file_name_stable(parent, address_of facts);
 }
 
 static fn install_pair(string_address source, string_address destination)
@@ -20277,29 +21399,44 @@ static fn install_pair(string_address source, string_address destination)
                 return;
         }
 
-        if (install_parents && !install_leading(destination))
-        {
-                system_close(source_handle);
-                install_status = 1;
-                return;
-        }
-
         p8 destination_leaf[FILE_PATH_MAX];
-        bipolar destination_directory = file_parent_open(
-            destination, destination_leaf);
+        bipolar destination_directory = install_parents
+                                            ? install_leading(
+                                                  destination,
+                                                  destination_leaf)
+                                            : file_parent_open(
+                                                  destination,
+                                                  destination_leaf);
         if (destination_directory < 0)
         {
                 system_close(source_handle);
-                string_format(log_error, "install: cannot open destination parent '%w': %s\n",
-                              writer_terminal_quoted_name, destination,
-                              file_reason(destination_directory));
+                if (!install_parents)
+                        string_format(
+                            log_error,
+                            "install: cannot open destination parent '%w': %s\n",
+                            writer_terminal_quoted_name, destination,
+                            file_reason(destination_directory));
                 install_status = 1;
                 return;
         }
 
         file_facts to;
-        if (file_look(destination_directory, destination_leaf,
-                      AT_SYMLINK_NOFOLLOW, address_of to) &&
+        bipolar to_looked = file_look_code(
+            destination_directory, destination_leaf,
+            AT_SYMLINK_NOFOLLOW, address_of to);
+        bool destination_exists = to_looked >= 0;
+        if (to_looked < 0 && to_looked != -ERROR_NO_ENTRY)
+        {
+                string_format(log_error,
+                              "install: cannot inspect '%w': %s\n",
+                              writer_terminal_quoted_name, destination,
+                              file_reason(to_looked));
+                system_close(destination_directory);
+                system_close(source_handle);
+                install_status = 1;
+                return;
+        }
+        if (destination_exists &&
             file_same_identity(address_of from, address_of to))
         {
                 string_format(log_error, "install: '%w' and '%w' are the same file\n",
@@ -20313,19 +21450,21 @@ static fn install_pair(string_address source, string_address destination)
 
         if (!file_backup_made_at((string_address)"install",
                                  destination_directory, destination_leaf,
-                                 destination, null))
+                                 destination,
+                                 destination_exists ? address_of to : null))
         {
                 system_close(destination_directory);
                 system_close(source_handle);
                 install_status = 1;
                 return;
         }
+        if (file_backup_kind && destination_exists)
+                destination_exists = false;
 
-        p8 temporary[FILE_PATH_MAX];
-        bipolar destination_handle = file_temporary_open_at(
-            destination_directory, destination_leaf, temporary,
-            sizeof(temporary), (string_address)".moonwater-install-", 19,
-            system_nonce(), 128, install_mode);
+        system_path_stage protected;
+        bipolar destination_handle = file_stage_file_open_at(
+            address_of protected, destination_directory,
+            destination_leaf, 0600);
         if (destination_handle < 0)
         {
                 system_close(destination_directory);
@@ -20342,16 +21481,14 @@ static fn install_pair(string_address source, string_address destination)
         bool attributed = copied && install_attributes_handle(
                                       destination_handle, destination,
                                       address_of from);
-        bipolar published = attributed ? file_temporary_publish_decided_at(
-            destination_directory, temporary, destination_leaf, destination_handle,
-            false, null)
-                                       : -ERROR_INPUT_OUTPUT;
-        bipolar closed = file_stage_close_at(
-            destination_directory, temporary, destination_handle,
-            published, 0);
+        bipolar published = file_stage_publish_protected_at(
+            address_of protected, destination_directory, destination_leaf,
+            destination_handle,
+            attributed ? 0 : -ERROR_INPUT_OUTPUT, !destination_exists,
+            destination_exists ? address_of to : null, 0);
         system_close(destination_directory);
 
-        if (!copied || !attributed || published < 0 || closed < 0)
+        if (!copied || !attributed || published < 0)
         {
                 string_format(log_error, "install: cannot publish '%w'\n",
                               writer_terminal_quoted_name, destination);
@@ -20363,6 +21500,13 @@ static fn install_pair(string_address source, string_address destination)
                 string_format(log, "'%w' -> '%w'\n", writer_terminal_quoted_name, source,
                               writer_terminal_quoted_name, destination);
 }
+
+static fn install_directory_told(string_address path)
+{
+        string_format(log, "install: creating directory '%w'\n",
+                      writer_terminal_quoted_name, path);
+}
+
 static b32 file_install()
 {
         positive count = (positive)program_argument_count();
@@ -20411,31 +21555,37 @@ static b32 file_install()
                 for (positive at = taking.first; at < count; at++)
                 {
                         string_address path = program_argument((b32)at);
+                        p8 leaf[FILE_PATH_MAX];
+                        bipolar parent = -1;
+                        bipolar exact = file_make_directories_open(
+                            path, 0755, 0700, true, true,
+                            install_loud ? install_directory_told : null,
+                            null, null, address_of parent, leaf);
+                        bool bootstrapped = false;
+                        positive old_mode = 0;
+                        bipolar handle = exact < 0
+                                             ? exact
+                                             : !install_directory_entry_stable(
+                                                   exact, parent, leaf)
+                                                   ? -ERROR_ACCESS
+                                             : file_directory_real(
+                                                         exact, parent, leaf,
+                                                         address_of bootstrapped,
+                                                         address_of old_mode);
+                        bool attributed = handle >= 0 &&
+                                          install_attributes_handle(
+                                              handle, path, null);
 
-                        // Each level is named as it is made, which is what
-                        // -v is for; a level already there is passed over.
-                        if (install_loud)
-                                for (positive cut = 0; path[cut]; cut++)
-                                {
-                                        if (path[cut] != '/' && path[cut + 1])
-                                                continue;
-
-                                        p8 step[FILE_PATH_MAX];
-                                        positive length = path[cut] == '/' ? cut : cut + 1;
-
-                                        if (!length || length >= FILE_PATH_MAX)
-                                                continue;
-
-                                        memory_copy_apart(step, path, length);
-                                        step[length] = end;
-
-                                        if (!file_exists(AT_FDCWD, step))
-                                                string_format(log, "install: creating directory '%w'\n",
-                                                              writer_terminal_quoted_name, step);
-                                }
-
-                        if (!file_make_parents(path, 0755) ||
-                            !install_directory_attributes(path))
+                        if (!attributed && bootstrapped && handle >= 0)
+                                (void)file_change_mode_handle(
+                                    handle, old_mode);
+                        if (handle >= 0)
+                                system_close(handle);
+                        if (exact >= 0)
+                                system_close(exact);
+                        if (parent >= 0)
+                                system_close(parent);
+                        if (!attributed)
                         {
                                 string_format(log_error, "install: cannot create directory '%w'\n",
                                               writer_terminal_quoted_name, path);
@@ -20468,6 +21618,7 @@ static b32 file_install()
 */
 static bool mv_newer_only;
 static bool mv_exchange;
+static bool mv_no_copy;
 static b32 mv_status;
 static bool mv_loud;
 static p8 mv_collision_option;
@@ -20508,6 +21659,8 @@ static fn mv_one(string_address source, string_address destination)
             source, source_leaf);
         bipolar destination_directory = file_parent_open(
             destination, destination_leaf);
+        bipolar source_handle = -1;
+        bipolar destination_handle = -1;
         if (source_directory < 0 || destination_directory < 0)
         {
                 string_format(log_error, "mv: cannot move '%w' to '%w': %s\n",
@@ -20537,7 +21690,9 @@ static fn mv_one(string_address source, string_address destination)
                         address_of destination_exists, address_of to))
                 goto finished;
 
-        mv_destination_decided = mv_ask || mv_never_clobber;
+        /* Cross-device fallback must honor the same destination inode/absence
+           decision as the first rename attempt. */
+        mv_destination_decided = true;
         mv_destination_existed = destination_exists;
         if (destination_exists)
                 mv_destination_facts = to;
@@ -20573,6 +21728,48 @@ static fn mv_one(string_address source, string_address destination)
                 goto finished;
         }
 
+        source_handle = file_open_same(
+            source_directory, source_leaf, address_of from,
+            O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        if (source_handle < 0)
+        {
+                string_format(log_error,
+                              "mv: source changed before moving '%w': %s\n",
+                              writer_terminal_quoted_name, source,
+                              file_reason(source_handle));
+                mv_status = 1;
+                goto finished;
+        }
+
+        if (mv_exchange && destination_exists)
+        {
+                if (!file_name_stable(source_directory, address_of from) ||
+                    !file_name_stable(destination_directory, address_of to))
+                {
+                        string_format(
+                            log_error,
+                            "mv: cannot safely exchange writable names '%w' and '%w'\n",
+                            writer_terminal_quoted_name, source,
+                            writer_terminal_quoted_name, destination);
+                        mv_status = 1;
+                        goto finished;
+                }
+
+                destination_handle = file_open_same(
+                    destination_directory, destination_leaf,
+                    address_of to, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+                if (destination_handle < 0)
+                {
+                        string_format(
+                            log_error,
+                            "mv: destination changed before exchanging '%w': %s\n",
+                            writer_terminal_quoted_name, destination,
+                            file_reason(destination_handle));
+                        mv_status = 1;
+                        goto finished;
+                }
+        }
+
         if (!file_backup_made_at((string_address)"mv",
                                  destination_directory, destination_leaf,
                                  destination,
@@ -20594,19 +21791,32 @@ static fn mv_one(string_address source, string_address destination)
                 either arrives or it does not, and a swap that the kernel
                 cannot do comes back as an ordinary failure below.
         */
-        bool guarded = mv_never_clobber ||
-                       (mv_ask && !destination_exists);
+        bool guarded = !destination_exists;
         file_facts address_to approved =
-            mv_ask && destination_exists ? address_of to : null;
-        bipolar done = mv_exchange
-                           ? system_rename_at(
+            destination_exists ? address_of to : null;
+        bipolar done;
+        if (mv_exchange)
+        {
+                done = !destination_exists || destination_handle < 0
+                           ? -ERROR_NO_ENTRY
+                           : system_rename_at(
                                  source_directory, source_leaf,
                                  destination_directory, destination_leaf,
-                                 FILE_RENAME_EXCHANGE)
-                           : file_rename_decided_at(
-                                 source_directory, source_leaf,
-                                 destination_directory, destination_leaf,
-                                 address_of from, guarded, approved);
+                                 FILE_RENAME_EXCHANGE);
+                if (done >= 0 &&
+                    (system_path_same_opened_at(
+                         source_handle, destination_directory,
+                         destination_leaf) < 0 ||
+                     system_path_same_opened_at(
+                         destination_handle, source_directory,
+                         source_leaf) < 0))
+                        done = -ERROR_AGAIN;
+        }
+        else
+                done = file_rename_decided_at(
+                    source_directory, source_leaf,
+                    destination_directory, destination_leaf,
+                    source_handle, address_of from, guarded, approved);
 
         if (done == 0)
         {
@@ -20641,13 +21851,42 @@ static fn mv_one(string_address source, string_address destination)
                 goto finished;
         }
 
-        if (done == -ERROR_CROSS_DEVICE)
+        if (done == -ERROR_CROSS_DEVICE && !mv_no_copy)
         {
                 mv_across_said = false;
-                bool copied = file_copy_one(
-                    source_directory, source_leaf, source,
-                    destination_directory, destination_leaf, destination,
-                    FILE_MAX_DEPTH, true, true, true, null);
+                positive kind = from.mode & MODE_FORMAT;
+                bipolar copy_handle = source_handle;
+                bool copy_handle_owned = false;
+
+                if (kind == MODE_FILE || kind == MODE_DIRECTORY)
+                {
+                        positive flags = kind == MODE_DIRECTORY
+                                             ? FILE_READ | O_DIRECTORY
+                                             : FILE_READ | O_NONBLOCK;
+                        copy_handle = file_open_same(
+                            source_directory, source_leaf, address_of from,
+                            flags | O_NOFOLLOW | O_CLOEXEC);
+                        copy_handle_owned = copy_handle >= 0;
+                }
+
+                bool copied = false;
+                if (copy_handle < 0)
+                {
+                        string_format(log_error,
+                                      "mv: cannot open '%w': %s\n",
+                                      writer_terminal_quoted_name, source,
+                                      file_reason(copy_handle));
+                        mv_across_said = true;
+                }
+                else
+                        copied = file_copy_one(
+                            source_directory, source_leaf, source,
+                            destination_directory, destination_leaf,
+                            destination, FILE_MAX_DEPTH, true, true, true,
+                            address_of from, copy_handle);
+
+                if (copy_handle_owned)
+                        system_close(copy_handle);
 
                 if (copied)
                 {
@@ -20698,6 +21937,10 @@ static fn mv_one(string_address source, string_address destination)
         mv_status = 1;
 
 finished:
+        if (destination_handle >= 0)
+                system_close(destination_handle);
+        if (source_handle >= 0)
+                system_close(source_handle);
         if (source_directory >= 0)
                 system_close(source_directory);
         if (destination_directory >= 0)
@@ -20756,6 +21999,12 @@ static b32 file_mv()
         mv_never_clobber = mv_collision_option == 'n';
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
         mv_exchange = (taking.flags & FILE_FLAG('X')) != 0;
+        mv_no_copy = (taking.flags & FILE_FLAG('c')) != 0;
+
+        if (mv_exchange && file_backup_kind)
+                return string_report(
+                    log_error, 1,
+                    "mv: --exchange and --backup cannot be combined\n");
 
         string_address into = file_option_value(address_of taking, 't');
 
@@ -25335,7 +26584,6 @@ static bipolar rename_symlink_publish(
     bipolar directory, string_address source, string_address destination,
     bipolar original, file_facts address_to expected)
 {
-        p8 temporary[FILE_PATH_MAX];
         if (system_path_same_opened_at(original, directory, source) < 0)
                 return -ERROR_AGAIN;
 
@@ -25343,12 +26591,10 @@ static bipolar rename_symlink_publish(
             .kind = MODE_LINK,
             .link = destination,
         };
+        system_path_stage protected;
         bipolar staged = file_stage_claim_at(
-            directory, source, temporary, sizeof(temporary),
-            (string_address)".moonwater-rename-", 0, -1, address_of wanted);
-        if (staged >= 0)
-                staged = file_stage_open_verified_at(
-                    directory, temporary, address_of wanted);
+            address_of protected, directory, source,
+            0, -1, address_of wanted);
         /* If the descriptor table is exhausted, the new name cannot be
            proved before cleanup.  Retaining an unpredictable sibling is
            safer than removing a replacement planted by a directory writer. */
@@ -25358,10 +26604,14 @@ static bipolar rename_symlink_publish(
         bipolar result = system_path_same_opened_at(
             original, directory, source);
         if (result >= 0)
-                result = file_temporary_publish_decided_at(
-                    directory, temporary, source, staged, false, expected);
-        return file_stage_close_at(
-            directory, temporary, staged, result, 0);
+                result = file_stage_publish_protected_at(
+                    address_of protected, directory, source, staged,
+                    0, false, expected, 0);
+        else
+                result = file_stage_publish_protected_at(
+                    address_of protected, directory, source, staged,
+                    result, false, expected, 0);
+        return result;
 }
 
 /*
@@ -25481,10 +26731,10 @@ static b32 file_rename()
                                 ? -ERROR_INVALID
                                 : system_read_link_at(
                                       source_handle, (string_address)"",
-                                      target, FILE_PATH_MAX - 1);
+                                      target, sizeof(target));
 
                         if (target_length < 0 ||
-                            target_length >= FILE_PATH_MAX - 1)
+                            (positive)target_length >= sizeof(target))
                         {
                                 string_format(log_error, "rename: %w: not a symbolic link\n",
                                               writer_terminal_name, source);
@@ -25578,25 +26828,77 @@ static b32 file_rename()
                         continue;
                 }
 
-                if (no_overwrite)
-                {
-                        file_facts facts;
-                        if (file_look_at(destination, address_of facts))
-                                continue;
-                }
-                else if (interactive)
-                {
-                        file_facts facts;
-                        if (file_look_at(destination, address_of facts) &&
-                            !rename_ask(destination))
-                                continue;
-                }
-
                 if (!no_act)
                 {
-                        bipolar answer = system_rename_at(
-                            AT_FDCWD, source, AT_FDCWD, destination,
-                            no_overwrite ? FILE_RENAME_NOREPLACE : 0);
+                        p8 source_leaf[FILE_PATH_MAX];
+                        p8 destination_leaf[FILE_PATH_MAX];
+                        bipolar source_directory = file_parent_open(
+                            source, source_leaf);
+                        bipolar destination_directory = file_parent_open(
+                            destination, destination_leaf);
+                        bipolar source_handle =
+                            source_directory < 0
+                                ? source_directory
+                                : file_open_same(
+                                      source_directory, source_leaf,
+                                      address_of facts,
+                                      O_PATH | O_NOFOLLOW | O_CLOEXEC);
+                        file_facts there;
+                        bool destination_exists =
+                            destination_directory >= 0 &&
+                            file_look(destination_directory,
+                                      destination_leaf,
+                                      AT_SYMLINK_NOFOLLOW,
+                                      address_of there);
+
+                        if (source_handle < 0 || destination_directory < 0)
+                        {
+                                bipolar reason = source_handle < 0
+                                                     ? source_handle
+                                                     : destination_directory;
+                                string_format(
+                                    log_error,
+                                    "rename: %w: rename to %w failed: %s\n",
+                                    writer_terminal_name, source,
+                                    writer_terminal_name, destination,
+                                    file_reason(reason));
+                                if (source_handle >= 0)
+                                        system_close(source_handle);
+                                if (source_directory >= 0)
+                                        system_close(source_directory);
+                                if (destination_directory >= 0)
+                                        system_close(destination_directory);
+                                failed = true;
+                                continue;
+                        }
+
+                        if (destination_exists &&
+                            (no_overwrite ||
+                             (interactive && !rename_ask(destination))))
+                        {
+                                system_close(source_handle);
+                                system_close(source_directory);
+                                system_close(destination_directory);
+                                continue;
+                        }
+
+                        bipolar answer =
+                            destination_exists &&
+                                    file_same_identity(address_of facts,
+                                                       address_of there)
+                                ? 0
+                                : file_rename_decided_at(
+                                      source_directory, source_leaf,
+                                      destination_directory,
+                                      destination_leaf, source_handle,
+                                      address_of facts,
+                                      !destination_exists,
+                                      destination_exists
+                                          ? address_of there
+                                          : null);
+                        system_close(source_handle);
+                        system_close(source_directory);
+                        system_close(destination_directory);
                         if (answer < 0)
                         {
                                 if (no_overwrite && answer == -ERROR_EXISTS)
@@ -26244,7 +27546,6 @@ static bool xargs_exit_too_long;
 static string_address xargs_slot_name;
 static bool xargs_said_nul;
 static bipolar xargs_input;
-static b32 xargs_signal;
 static bool xargs_needs_input;
 static positive xargs_most;
 static string_address xargs_replace;
@@ -26267,6 +27568,29 @@ static positive xargs_line_count;
 static positive xargs_mark;
 
 static bool xargs_ask;
+
+/*
+        A successful exec has copied argv and the environment into the new
+        image, so only the process id and the command name have to outlive a
+        batch reset.  Slots are kept between invocations and reused from zero
+        upward; that is both the value --process-slot-var promises and the
+        smallest live state a parallel run needs.
+*/
+typedef struct
+{
+        bipolar child;
+        bipolar pidfd;
+        p8 address_to command;
+        positive command_room;
+} xargs_job;
+
+static xargs_job address_to xargs_jobs;
+static positive xargs_job_room;
+static positive xargs_job_slots;
+static system_poll_descriptor address_to xargs_polls;
+static positive xargs_poll_room;
+static positive xargs_active;
+static positive xargs_parallel;
 
 static fn xargs_trace_words(string_address address_to words, positive count)
 {
@@ -26324,9 +27648,10 @@ static fn xargs_item_put(p8 letter)
         whether anything said permission denied, because that is a different
         number to come back with than nothing being there at all.
 */
-#define XARGS_EXEC_SIGNAL (-4097)
 #define XARGS_EXEC_SYSTEM (-4098)
 #define XARGS_EXEC_TTY (-4099)
+#define XARGS_EXEC_STARTED (-4100)
+#define XARGS_EXEC_STOP (-4101)
 #define XARGS_O_CLOEXEC 02000000
 
 /*
@@ -26361,13 +27686,306 @@ static bool xargs_allowed(void)
         return yes;
 }
 
+static fn xargs_answer_raise(b32 answer)
+{
+        if (answer > xargs_answer)
+                xargs_answer = answer;
+}
+
+/* Build NAME=slot beside a filtered copy of the exported vector.  This runs
+   after fork, so neither a farm invocation nor an in-shell utility changes
+   its parent's environment. */
+static bipolar xargs_exec_with_slot(string_address address_to words,
+                                    positive slot)
+{
+        if (!xargs_slot_name)
+                return file_exec_path_try(words);
+
+        string_address address_to inherited = file_environment_all();
+        positive count = 0;
+
+        while (inherited && inherited[count])
+        {
+                if (count == positive_max)
+                        return XARGS_EXEC_SYSTEM;
+                count++;
+        }
+
+        positive name_length = string_length(xargs_slot_name);
+        p8 digits[20];
+        positive digit_count = positive_into(digits, slot);
+
+        if (count > positive_max / sizeof(string_address) - 2 ||
+            name_length > positive_max - digit_count - 2)
+                return XARGS_EXEC_SYSTEM;
+
+        positive vector_bytes = (count + 2) * sizeof(string_address);
+        positive assignment_bytes = name_length + digit_count + 2;
+
+        if (vector_bytes > positive_max - assignment_bytes)
+                return XARGS_EXEC_SYSTEM;
+
+        positive bytes = vector_bytes + assignment_bytes;
+        positive mapped = (positive)memory(bytes);
+
+        if (!mapped || system_failed(mapped))
+                return XARGS_EXEC_SYSTEM;
+
+        string_address address_to environment =
+            (string_address address_to)mapped;
+        p8 address_to assignment = (p8 address_to)(mapped + vector_bytes);
+        positive have = 0;
+
+        for (positive at = 0; at < count; at++)
+                if (!environment_key_is(inherited[at], xargs_slot_name,
+                                        name_length))
+                        environment[have++] = inherited[at];
+
+        memory_copy(assignment, xargs_slot_name, name_length);
+        assignment[name_length] = '=';
+        memory_copy(assignment + name_length + 1, digits, digit_count);
+        assignment[name_length + digit_count + 1] = end;
+        environment[have++] = assignment;
+        environment[have] = null;
+
+        string_address path = env_get("PATH");
+
+        if (!path)
+                path = file_environment("PATH");
+
+        bipolar answer = file_exec_path_try_in(words[0], words, environment,
+                                                path);
+
+        memory_free((address_any)mapped, bytes);
+        return answer;
+}
+
+static positive xargs_job_take(string_address command)
+{
+        positive slot = 0;
+
+        while (slot < xargs_job_slots && xargs_jobs[slot].child > 0)
+                slot++;
+
+        if (slot == xargs_job_slots)
+        {
+                if (!shell_array_room(xargs_jobs, xargs_job_room,
+                                      xargs_job_slots + 1) ||
+                    !shell_array_room(xargs_polls, xargs_poll_room,
+                                      xargs_job_slots + 1))
+                        return positive_max;
+
+                xargs_jobs[slot] = (xargs_job){0, -1, null, 0};
+                xargs_job_slots++;
+        }
+
+        xargs_job address_to job = xargs_jobs + slot;
+        positive length = string_length(command);
+
+        if (length == positive_max)
+                return positive_max;
+
+        positive wanted = length + 1;
+        positive mapped = (positive)memory(wanted);
+
+        if (!mapped || system_failed(mapped))
+                return positive_max;
+
+        job->command = (p8 address_to)mapped;
+        job->command_room = wanted;
+        memory_copy_end(job->command, command, length);
+        return slot;
+}
+
+static fn xargs_job_release(positive slot)
+{
+        xargs_job address_to job = xargs_jobs + slot;
+
+        if (job->pidfd >= 0)
+                system_close(job->pidfd);
+        if (job->command)
+                memory_free(job->command, job->command_room);
+
+        job->pidfd = -1;
+        job->command = null;
+        job->command_room = 0;
+}
+
+static fn xargs_jobs_release()
+{
+        for (positive slot = 0; slot < xargs_job_slots; slot++)
+                xargs_job_release(slot);
+
+        if (xargs_jobs)
+                memory_free(xargs_jobs, xargs_job_room * sizeof(xargs_job));
+        if (xargs_polls)
+                memory_free(xargs_polls,
+                            xargs_poll_room * sizeof(system_poll_descriptor));
+
+        xargs_jobs = null;
+        xargs_job_room = 0;
+        xargs_job_slots = 0;
+        xargs_polls = null;
+        xargs_poll_room = 0;
+}
+
+static fn xargs_job_finish(positive slot, positive status)
+{
+        xargs_job address_to job = xargs_jobs + slot;
+
+        job->child = 0;
+        xargs_active--;
+
+        if (status & 0x7f)
+        {
+                string_format(log_error, "xargs: %w: terminated by signal %b\n",
+                              writer_terminal_name, job->command,
+                              (b32)(status & 0x7f));
+                xargs_answer_raise(125);
+                xargs_done = true;
+                xargs_job_release(slot);
+                return;
+        }
+
+        b32 code = (b32)((status >> 8) & 0xff);
+
+        if (!code)
+        {
+                xargs_job_release(slot);
+                return;
+        }
+
+        if (code == 255)
+        {
+                string_format(log_error,
+                              "xargs: %w: exited with status 255; aborting\n",
+                              writer_terminal_name, job->command);
+                xargs_answer_raise(124);
+                xargs_done = true;
+                xargs_job_release(slot);
+                return;
+        }
+
+        xargs_answer_raise(123);
+        xargs_job_release(slot);
+}
+
+/* Ask only for children this invocation started.  wait4(-1) is tempting, but
+   an in-shell xargs can have the shell's unrelated background children beside
+   it and must leave their statuses for `wait`. */
+static bool xargs_reap_ready(bool address_to reaped)
+{
+        address_to reaped = false;
+
+        for (positive slot = 0; slot < xargs_job_slots; slot++)
+        {
+                xargs_job address_to job = xargs_jobs + slot;
+
+                if (job->child <= 0)
+                        continue;
+
+                positive status = 0;
+                bipolar child = system_wait4_retry(job->child,
+                                                   address_of status, 1, null);
+
+                if (!child)
+                        continue;
+
+                if (child < 0)
+                {
+                        log_error("xargs: failure while waiting for command\n", 0);
+                        xargs_answer_raise(125);
+                        xargs_done = true;
+                        return false;
+                }
+
+                xargs_job_finish(slot, status);
+                address_to reaped = true;
+        }
+
+        return true;
+}
+
+/* pidfds provide wait-any without claiming any child outside the job table.
+   If an old kernel or a descriptor limit refuses one, a short timed poll and
+   another targeted WNOHANG sweep is the bounded fallback. */
+static bool xargs_reap(bool wait)
+{
+        bool reaped;
+
+        if (!xargs_reap_ready(address_of reaped))
+                return false;
+        if (!wait || reaped || !xargs_active)
+                return true;
+
+        for (;;)
+        {
+                positive count = 0;
+
+                for (positive slot = 0; slot < xargs_job_slots; slot++)
+                        if (xargs_jobs[slot].child > 0 &&
+                            xargs_jobs[slot].pidfd >= 0)
+                                xargs_polls[count++] =
+                                    (system_poll_descriptor){
+                                        (b32)xargs_jobs[slot].pidfd,
+                                        SYSTEM_POLL_READ, 0};
+
+                timespec span = {0, 10000000};
+                timespec address_to limit = count < xargs_active
+                                                  ? address_of span : null;
+                bipolar ready;
+
+                if (count)
+                        ready = system_poll_wait(
+                            xargs_polls, count, limit, null);
+                else
+                        ready = system_call_2(syscall(nanosleep),
+                                              (positive)address_of span, 0);
+
+                if (ready < 0 && ready != -4)
+                {
+                        log_error("xargs: failure while waiting for command\n", 0);
+                        xargs_answer_raise(125);
+                        xargs_done = true;
+                        return false;
+                }
+
+                if (!xargs_reap_ready(address_of reaped))
+                        return false;
+                if (reaped || !xargs_active)
+                        return true;
+        }
+}
+
+static fn xargs_drain()
+{
+        while (xargs_active)
+                if (!xargs_reap(true))
+                        break;
+}
+
+static bool xargs_start_room()
+{
+        if (xargs_active && !xargs_reap(false))
+                return false;
+
+        while (!xargs_done && xargs_parallel &&
+               xargs_active >= xargs_parallel)
+                if (!xargs_reap(true))
+                        return false;
+
+        return !xargs_done;
+}
+
 static bipolar xargs_execute(string_address address_to words,
                              positive word_count)
 {
         b32 ends[2];
-        positive status = 0;
 
         words[word_count] = null;
+
+        if (!xargs_start_room())
+                return XARGS_EXEC_STOP;
 
         if (xargs_trace || xargs_ask)
                 xargs_trace_words(words, word_count);
@@ -26391,50 +28009,109 @@ static bipolar xargs_execute(string_address address_to words,
                         return 0;
         }
 
-        log_flush();
+        positive slot = xargs_job_take(words[0]);
 
-        if (system_pipe(ends,
-                          XARGS_O_CLOEXEC) < 0)
+        if (slot == positive_max)
                 return XARGS_EXEC_SYSTEM;
 
-        bipolar child = system_fork();
+        log_flush();
+
+        bipolar child;
+
+        for (;;)
+        {
+                if (system_pipe(ends, XARGS_O_CLOEXEC) < 0)
+                {
+                        xargs_job_release(slot);
+                        return XARGS_EXEC_SYSTEM;
+                }
+
+                child = system_fork();
+
+                if (child >= 0)
+                        break;
+
+                system_close(ends[0]);
+                system_close(ends[1]);
+
+                /* -P0 is bounded by the kernel.  Once it reaches that bound,
+                   a completed child makes room for this same command. */
+                if (child != -ERROR_AGAIN || !xargs_active ||
+                    !xargs_reap(true))
+                {
+                        xargs_job_release(slot);
+                        return XARGS_EXEC_SYSTEM;
+                }
+
+                if (xargs_done)
+                {
+                        xargs_job_release(slot);
+                        return XARGS_EXEC_STOP;
+                }
+        }
 
         if (child == 0)
         {
                 system_close(ends[0]);
-                bipolar answer = file_exec_path_try(words);
+                bipolar answer = xargs_exec_with_slot(words, slot);
 
-                system_write_all((positive)ends[1], address_of answer,
-                                 sizeof(answer));
-                exit(answer == -ERROR_ACCESS ? 126 : 127);
+                /* This write is at most PIPE_BUF and the parent keeps the
+                   reader open, so EINTR is the only recoverable short report.
+                   Retry it: otherwise a failed exec could look like a
+                   successful exec followed by an ordinary status 126/127. */
+                system_write_result sent;
+                do
+                        sent = system_write_all_checked(
+                            (positive)ends[1], address_of answer,
+                            sizeof(answer));
+                while (!sent.bytes && sent.error == -4);
+
+                if (sent.bytes != sizeof(answer))
+                {
+                        bipolar own = system_call_1(syscall(getpid), 0);
+                        system_call_2(syscall(kill), (positive)own, SIGKILL);
+                        exit(125);
+                }
+
+                exit(answer == -ERROR_NO_ENTRY ||
+                             answer == -ERROR_NOT_DIRECTORY ? 127 : 126);
         }
 
         system_close(ends[1]);
-
-
-        if (child < 0)
-        {
-                system_close(ends[0]);
-                return XARGS_EXEC_SYSTEM;
-        }
 
         bipolar exec_error = 0;
         bipolar got = system_read_retry((positive)ends[0], address_of exec_error,
                                         sizeof(exec_error));
 
         system_close(ends[0]);
-        system_wait4_retry(child, address_of status, 0, null);
 
         if (got == sizeof(exec_error))
-                return exec_error;
-
-        if (status & 0x7f)
         {
-                xargs_signal = (b32)(status & 0x7f);
-                return XARGS_EXEC_SIGNAL;
+                positive status = 0;
+
+                if (system_wait4_retry(child, address_of status, 0, null) < 0)
+                {
+                        xargs_job_release(slot);
+                        return XARGS_EXEC_SYSTEM;
+                }
+                xargs_job_release(slot);
+                return exec_error;
         }
 
-        return (bipolar)((status >> 8) & 0xff);
+        if (got)
+        {
+                positive status = 0;
+
+                system_wait4_retry(child, address_of status, 0, null);
+                xargs_job_release(slot);
+                return XARGS_EXEC_SYSTEM;
+        }
+
+        xargs_jobs[slot].child = child;
+        xargs_jobs[slot].pidfd = system_call_2(
+            syscall(pidfd_open), (positive)child, 0);
+        xargs_active++;
+        return XARGS_EXEC_STARTED;
 }
 
 static bool xargs_execute_range(positive first, positive count)
@@ -26442,7 +28119,7 @@ static bool xargs_execute_range(positive first, positive count)
         if (count == positive_max ||
             xargs_prefix_words > positive_max - count - 1)
         {
-                xargs_answer = 1;
+                xargs_answer_raise(1);
                 xargs_done = true;
                 return false;
         }
@@ -26451,7 +28128,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (total + 1 > positive_max / sizeof(string_address))
         {
-                xargs_answer = 1;
+                xargs_answer_raise(1);
                 xargs_done = true;
                 return false;
         }
@@ -26463,7 +28140,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (!words)
         {
-                xargs_answer = 1;
+                xargs_answer_raise(1);
                 xargs_done = true;
                 return false;
         }
@@ -26482,12 +28159,18 @@ static bool xargs_execute_range(positive first, positive count)
         /* The argv table is per attempt; recursive E2BIG splits reuse it. */
         utility_arena.used = arena_mark;
 
+        if (code == XARGS_EXEC_STARTED || !code)
+                return true;
+
+        if (code == XARGS_EXEC_STOP)
+                return false;
+
         if (code == -ERROR_ARGUMENT_LIST)
         {
                 if (xargs_replace || count <= 1)
                 {
                         log_error("xargs: argument list too long\n", 0);
-                        xargs_answer = 1;
+                        xargs_answer_raise(1);
                         xargs_done = true;
                         return false;
                 }
@@ -26500,7 +28183,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == XARGS_EXEC_TTY)
         {
-                xargs_answer = 1;
+                xargs_answer_raise(1);
                 xargs_done = true;
                 return false;
         }
@@ -26508,43 +28191,23 @@ static bool xargs_execute_range(positive first, positive count)
         if (code == XARGS_EXEC_SYSTEM)
         {
                 log_error("xargs: cannot fork or execute\n", 0);
-                xargs_answer = 125;
+                xargs_answer_raise(125);
                 xargs_done = true;
                 return false;
         }
-
-        if (code == XARGS_EXEC_SIGNAL)
-        {
-                string_format(log_error, "xargs: %w: terminated by signal %b\n",
-                              writer_terminal_name, command, xargs_signal);
-                xargs_answer = 125;
-                xargs_done = true;
-                return false;
-        }
-
-        if (!code)
-                return true;
 
         if (code < 0)
         {
                 string_format(log_error, "xargs: failed to run command '%w': %s\n",
                               writer_terminal_quoted_name, command, file_reason(code));
-                xargs_answer = code == -ERROR_ACCESS ? 126 : 127;
+                xargs_answer_raise(code == -ERROR_NO_ENTRY ||
+                                           code == -ERROR_NOT_DIRECTORY
+                                       ? 127 : 126);
                 xargs_done = true;
                 return false;
         }
 
-        if (code == 255)
-        {
-                string_format(log_error, "xargs: %w: exited with status 255; aborting\n",
-                              writer_terminal_name, command);
-                xargs_answer = 124;
-                xargs_done = true;
-                return false;
-        }
-
-        xargs_answer = 123;
-        return true;
+        return false;
 }
 
 static fn xargs_run()
@@ -26629,7 +28292,7 @@ static fn xargs_item_done()
         if (xargs_item_broken)
         {
                 log_error("xargs: argument line too long\n", 0);
-                xargs_answer = 1;
+                xargs_answer_raise(1);
                 xargs_done = true;
                 return;
         }
@@ -26648,7 +28311,7 @@ static fn xargs_item_done()
                 if (!xargs_replaced(xargs_item))
                 {
                         log_error("xargs: argument list too long\n", 0);
-                        xargs_answer = 1;
+                        xargs_answer_raise(1);
                         xargs_done = true;
                         return;
                 }
@@ -26667,7 +28330,7 @@ static fn xargs_item_done()
                 }
 
                 log_error("xargs: argument line too long\n", 0);
-                xargs_answer = 1;
+                xargs_answer_raise(1);
                 xargs_done = true;
                 return;
         }
@@ -26680,7 +28343,7 @@ static fn xargs_item_done()
                 if (xargs_exit_too_long)
                 {
                         log_error("xargs: argument list too long\n", 0);
-                        xargs_answer = 1;
+                        xargs_answer_raise(1);
                         xargs_done = true;
                         return;
                 }
@@ -26696,7 +28359,7 @@ static fn xargs_item_done()
         if (!xargs_add(xargs_item, xargs_item_length))
         {
                 log_error("xargs: argument list too long\n", 0);
-                xargs_answer = 1;
+                xargs_answer_raise(1);
                 xargs_done = true;
                 return;
         }
@@ -26841,6 +28504,8 @@ static b32 file_xargs()
         xargs_done = false;
         xargs_ended = false;
         xargs_ran = false;
+        xargs_active = 0;
+        xargs_parallel = 1;
         xargs_lines = 0;
 
         file_taking taking = {
@@ -26865,7 +28530,6 @@ static b32 file_xargs()
         xargs_delimited = false;
         xargs_delimiter = 0;
         xargs_said_nul = false;
-        xargs_signal = 0;
         xargs_most = 0;
         xargs_lines = 0;
         xargs_most_bytes = XARGS_BATCH_BYTES;
@@ -26893,11 +28557,20 @@ static b32 file_xargs()
 
         if (taking.flags & FILE_FLAG('P'))
         {
-                positive parallel;
-
                 if (!xargs_count_value(file_option_value(address_of taking, 'P'), 'P',
-                                       address_of parallel))
+                                       address_of xargs_parallel))
                         return 1;
+        }
+
+        if (xargs_slot_name)
+        {
+                if (!string_get(xargs_slot_name))
+                        return string_report(log_error, 1,
+                                      "xargs: --process-slot-var requires a nonempty name\n");
+
+                if (string_first_of(xargs_slot_name, '='))
+                        return string_report(log_error, 1,
+                                      "xargs: option --process-slot-var may not be set to a value which includes `='\n");
         }
 
         if (taking.flags & FILE_FLAG('s'))
@@ -26932,7 +28605,8 @@ static b32 file_xargs()
 
         if (from)
         {
-                xargs_input = system_open_at(AT_FDCWD, from, FILE_READ);
+                xargs_input = system_open_at(AT_FDCWD, from,
+                                             FILE_READ | XARGS_O_CLOEXEC);
 
                 if (xargs_input < 0)
                 {
@@ -26945,30 +28619,47 @@ static b32 file_xargs()
 
         if (!array_arena_reserve(xargs_words, xargs_word_room, 0, words, words,
                                  utility_arena_grow))
-                return 1;
+        {
+                xargs_answer_raise(1);
+                goto xargs_finished;
+        }
 
-        if (index >= count)
-                xargs_add("echo", 4);
+        if (index >= count && !xargs_add("echo", 4))
+        {
+                xargs_answer_raise(1);
+                goto xargs_finished;
+        }
 
         while (index < count)
         {
                 string_address word = program_argument((b32)index++);
 
                 if (!xargs_add(word, string_length(word)))
-                        return string_report(log_error, 1, "xargs: command too long\n");
+                {
+                        log_error("xargs: command too long\n", 0);
+                        xargs_answer_raise(1);
+                        goto xargs_finished;
+                }
         }
 
         xargs_prefix_bytes = xargs_used;
         xargs_prefix_words = xargs_word_count;
 
         if (!xargs_keep_template())
-                return string_report(log_error, 1, "xargs: command too long\n");
+        {
+                log_error("xargs: command too long\n", 0);
+                xargs_answer_raise(1);
+                goto xargs_finished;
+        }
 
         xargs_item = (p8 address_to)utility_arena_take(XARGS_BATCH_BYTES + 1);
         xargs_buffer = (p8 address_to)utility_arena_take(XARGS_READ_BYTES);
 
         if (!xargs_item || !xargs_buffer)
-                return 1;
+        {
+                xargs_answer_raise(1);
+                goto xargs_finished;
+        }
 
         xargs_item_room = XARGS_BATCH_BYTES + 1;
         xargs_mark = utility_arena.used;
@@ -26981,7 +28672,8 @@ static b32 file_xargs()
                 if (got < 0)
                 {
                         log_error("xargs: read error\n", 0);
-                        xargs_answer = 1;
+                        xargs_answer_raise(1);
+                        xargs_done = true;
                         break;
                 }
 
@@ -27146,11 +28838,18 @@ static b32 file_xargs()
                         break;
         }
 
-        if (xargs_input > 0)
+        if (from && xargs_input >= 0)
+        {
                 system_close(xargs_input);
+                xargs_input = -1;
+        }
 
         if (quote)
-                return string_report(log_error, 1, "xargs: unmatched quote\n");
+        {
+                log_error("xargs: unmatched quote\n", 0);
+                xargs_answer_raise(1);
+                xargs_done = true;
+        }
 
         if (started && !xargs_done && !xargs_ended)
         {
@@ -27159,18 +28858,29 @@ static b32 file_xargs()
                 xargs_item_length = 0;
         }
 
-        if (xargs_replace || xargs_done)
-                return xargs_answer;
-
-        if (xargs_word_count > xargs_prefix_words)
-                xargs_run();
-        else if (!xargs_ran && !xargs_needs_input)
+        if (!xargs_replace && !xargs_done)
         {
-                // An input with nothing in it still runs the command once,
-                // with no arguments, unless -r says not to. -I is the one
-                // mode where no item means nothing to stand in for.
-                xargs_run();
+                if (xargs_word_count > xargs_prefix_words)
+                        xargs_run();
+                else if (!xargs_ran && !xargs_needs_input)
+                {
+                        // An input with nothing in it still runs the command once,
+                        // with no arguments, unless -r says not to. -I is the one
+                        // mode where no item means nothing to stand in for.
+                        xargs_run();
+                }
         }
+
+xargs_finished:
+        if (from && xargs_input >= 0)
+                system_close(xargs_input);
+
+        xargs_drain();
+
+        if (xargs_terminal >= 0)
+                system_close(xargs_terminal);
+
+        xargs_jobs_release();
 
         return xargs_answer;
 }

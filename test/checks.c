@@ -38422,6 +38422,12 @@ static fn arithmetic(void)
         check("address body is 8", sizeof(netlink_address) == 8);
         check("route body is 12", sizeof(netlink_route) == 12);
         check("attribute is 4", sizeof(netlink_attribute) == 4);
+
+        netlink_sequence_next = 0xffffffffu;
+        check("netlink sequence wrap never enters notification zero",
+              netlink_sequence_take() == 0xffffffffu &&
+                  netlink_sequence_take() == 1);
+        netlink_sequence_next = 1;
 }
 
 static fn building(void)
@@ -38553,6 +38559,104 @@ static fn attribute_growth(void)
         netlink_forget(address_of request);
 }
 
+static fn userspace_source_progress(void)
+{
+        b32 pair[2];
+        netlink_buffer message = {0};
+        netlink_header packet = {.length = sizeof packet};
+        timeval limit = {.tv_usec = 100000};
+        bipolar received = -1;
+        bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                        SOCK_DGRAM, 0, (positive)pair);
+
+        check("mock userspace netlink source fixture starts", opened == 0);
+        if (opened)
+                return;
+
+        check("mock userspace netlink receive is bounded",
+              socket_option_set(pair[0], SOL_SOCKET, SO_RCVTIMEO,
+                                address_of limit, sizeof limit) == 0);
+        check("mock userspace netlink datagram queues",
+              socket_send(pair[1], address_of packet, sizeof packet, 0,
+                          null, 0) == sizeof packet);
+        check("mock userspace netlink buffer allocates",
+              net_room(address_of message, 64));
+
+        message.used = 1;
+        received = netlink_receive_one(pair[0], address_of message, true);
+        check("a userspace-only netlink queue returns without another packet",
+              received == 0);
+        check("the neutral netlink result clears the prior datagram",
+              message.used == 0);
+        check("the rejected userspace netlink datagram is consumed",
+              socket_receive(pair[0], null, 0, MSG_DONTWAIT,
+                             null, null) < 0);
+
+        netlink_forget(address_of message);
+        socket_close(pair[0]);
+        socket_close(pair[1]);
+}
+
+/* Root can exercise the exact NETLINK_ROUTE path without touching the host:
+   unshare changes only this test process, and this is the final network test.
+   Restricted containers and ordinary users retain the unprivileged fixture
+   above and say explicitly why this additional check did not run. */
+static fn userspace_route_source_in_namespace(void)
+{
+        netlink_buffer message = {0};
+        netlink_header packet = {.length = sizeof packet};
+        socket_address_netlink receiver_address = {.family = AF_NETLINK};
+        socket_address_netlink sender_address = {.family = AF_NETLINK};
+        p32 address_length = sizeof receiver_address;
+        bipolar receiver;
+        bipolar sender;
+        bipolar received;
+
+        if (system_call(syscall(geteuid)) != 0)
+        {
+                log_direct(str("net: isolated NETLINK_ROUTE source regression NOT RUN -- needs root\n"));
+                return;
+        }
+        if (system_call_1(syscall(unshare), CLONE_NEWNET) < 0)
+        {
+                log_direct(str("net: isolated NETLINK_ROUTE source regression NOT RUN -- network namespaces unavailable\n"));
+                return;
+        }
+
+        receiver = socket_new(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE);
+        sender = socket_new(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE);
+        if (receiver < 0 || sender < 0 ||
+            socket_bind((b32)receiver, address_of receiver_address,
+                        sizeof receiver_address) < 0 ||
+            socket_bind((b32)sender, address_of sender_address,
+                        sizeof sender_address) < 0 ||
+            socket_name((b32)receiver, address_of receiver_address,
+                        address_of address_length) < 0 ||
+            address_length < sizeof receiver_address ||
+            socket_send((b32)sender, address_of packet, sizeof packet, 0,
+                        address_of receiver_address,
+                        sizeof receiver_address) != sizeof packet ||
+            !net_room(address_of message, 64))
+        {
+                log_direct(str("net: isolated NETLINK_ROUTE source regression NOT RUN -- userspace route injection refused\n"));
+                goto done;
+        }
+
+        message.used = 1;
+        received = netlink_receive((b32)receiver, address_of message, null);
+        check("an isolated userspace route datagram cannot strand receive",
+              received == 0 && message.used == 0 &&
+                  socket_receive((b32)receiver, null, 0, MSG_DONTWAIT,
+                                 null, null) < 0);
+
+done:
+        netlink_forget(address_of message);
+        if (sender >= 0)
+                socket_close((b32)sender);
+        if (receiver >= 0)
+                socket_close((b32)receiver);
+}
+
 static fn error_frames(void)
 {
         b32 pair[2];
@@ -38570,17 +38674,17 @@ static fn error_frames(void)
                     .status = 0};
 
                 check("a bare netlink DONE completes a dump",
-                      netlink_done_status(address_of done.header) == 0);
+                      netlink_status(address_of done.header, true) == 0);
                 done.header.length = NETLINK_HEADER + 1;
                 check("a truncated netlink DONE status is refused",
-                      netlink_done_status(address_of done.header) == -1);
+                      netlink_status(address_of done.header, true) == -1);
                 done.header.length = sizeof done;
                 done.status = -13;
                 check("a negative netlink DONE status is propagated",
-                      netlink_done_status(address_of done.header) == -13);
+                      netlink_status(address_of done.header, true) == -13);
                 done.status = 1;
                 check("a positive netlink DONE status is malformed",
-                      netlink_done_status(address_of done.header) == -1);
+                      netlink_status(address_of done.header, true) == -1);
         }
 
         check("netlink framing test socket pair opens", opened == 0);
@@ -38601,6 +38705,18 @@ static fn error_frames(void)
         else
                 check("netlink framing request allocates", false);
         frame.header.length = sizeof frame;
+        frame.error = 1;
+        if (netlink_begin(&request, RTM_GETLINK, NLM_REQUEST, 91, 0))
+        {
+                socket_send(pair[1], &frame, sizeof frame, 0, null, 0);
+                check("a positive netlink error status is malformed",
+                      netlink_walk(pair[0], &request, 91, &reply, null, null) ==
+                          -1);
+                p8 discarded[NETLINK_HEADER];
+                socket_receive(pair[1], discarded, sizeof discarded, 0,
+                               null, null);
+        }
+        frame.error = -123;
         if (netlink_begin(&request, RTM_GETLINK, NLM_REQUEST, 91, 0))
         {
                 socket_send(pair[1], &frame, sizeof frame, 0, null, 0);
@@ -38873,17 +38989,6 @@ static fn resolving(void)
                 check("a forward pointer is refused", dns_skip_name(message, 4, 2) < 0);
         }
 
-        check("a transaction id is not always the same",
-              (p16)network_transaction(sizeof(p16)) != (p16)network_transaction(sizeof(p16)) ||
-                  (p16)network_transaction(sizeof(p16)) != (p16)network_transaction(sizeof(p16)));
-        check("transaction fallback stirs adjacent counters before truncation",
-              (p16)system_nonce_stir(1) !=
-                      (p16)system_nonce_stir(2) &&
-                  (p16)system_nonce_stir(2) !=
-                      (p16)system_nonce_stir(3));
-        check("transaction generation rejects impossible widths",
-              !network_transaction(0) &&
-                  !network_transaction(sizeof(positive) + 1));
         {
                 p16 secure = 0;
 
@@ -39195,6 +39300,16 @@ static fn fetching(void)
                           HTTP_MALFORMED);
         }
 
+        for (b32 status = 299; status <= 309; status++)
+        {
+                bool expected = status == 300 || status == 301 ||
+                                status == 302 || status == 303 ||
+                                status == 307 || status == 308;
+
+                check("automatic redirects use the explicit GET status set",
+                      http_response_is_redirect(status) == expected);
+        }
+
         {
                 static const p8 first[] =
                     "HTTP/1.1 103 Early Hints\r\nLink: </x>\r\n\r\n";
@@ -39478,6 +39593,24 @@ static fn streaming_chunk_boundaries(void)
                 memory_copy(over_limit, "0;", 2);
                 memory_copy(at_limit + 126, "\n\n", 2);
                 memory_copy(over_limit + 127, "\n\n", 2);
+
+                {
+                        p8 buffered_at_limit[sizeof at_limit];
+                        p8 buffered_over_limit[sizeof over_limit];
+
+                        memory_copy(buffered_at_limit, at_limit,
+                                    sizeof at_limit);
+                        memory_copy(buffered_over_limit, over_limit,
+                                    sizeof over_limit);
+                        check("buffered chunk line accepts its exact bound",
+                              http_unchunk(buffered_at_limit,
+                                           sizeof buffered_at_limit) == 0);
+                        check("buffered chunk line enforces its shared bound",
+                              http_unchunk(buffered_over_limit,
+                                           sizeof buffered_over_limit) ==
+                                  HTTP_MALFORMED);
+                }
+
                 const struct
                 {
                         const p8 address_to bytes;
@@ -39643,8 +39776,233 @@ static fn network_stream_timeouts(void)
                       socket_receive(pair[0], address_of byte, 1, 0, null, 0) < 0);
         }
 
+        {
+                p8 exact[3] = {0};
+
+                check("an exact stream payload queues",
+                      socket_send(pair[1], "abc", 3, 0, null, 0) == 3);
+                check("the shared stream reader consumes the complete span",
+                      network_stream_read_all(pair[0], exact, sizeof exact,
+                                              null) &&
+                          !memory_compare(exact, "abc", sizeof exact));
+                socket_close(pair[1]);
+                pair[1] = -1;
+                check("the shared stream reader rejects premature EOF",
+                      !network_stream_read_all(pair[0], exact, 1, null));
+        }
+
         socket_close(pair[0]);
+        if (pair[1] >= 0)
+                socket_close(pair[1]);
+}
+
+static fn network_stream_send_timeout(void)
+{
+        enum { payload_size = 1024 * 1024 };
+        b32 pair[2];
+        b32 send_room = 4096;
+        p8 address_to payload = memory(payload_size);
+        bool allocated = (bipolar)(positive)payload > 0;
+        bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                        SOCK_STREAM, 0, (positive)pair);
+
+        check("stalled-send socket pair opens", opened == 0);
+        check("stalled-send payload allocates", allocated);
+        if (opened || !allocated)
+        {
+                if (!opened)
+                {
+                        socket_close(pair[0]);
+                        socket_close(pair[1]);
+                }
+                if (allocated)
+                        memory_free(payload, payload_size);
+                return;
+        }
+
+        memory_fill(payload, 'x', payload_size);
+        check("stalled-send buffer is bounded",
+              socket_option_set(pair[0], SOL_SOCKET, SO_SNDBUF,
+                                address_of send_room, sizeof send_room) == 0 &&
+                  network_stream_timeout(pair[0], 0, 100000));
+
+        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+        check("stalled stream writer starts", child >= 0);
+        if (!child)
+        {
+                positive default_action[4] = {0, 0, 0, 0};
+                bipolar reset = system_signal_action(
+                    13, address_of default_action, null, 8);
+                positive began = clock_monotonic_nanoseconds();
+                bool sent = network_stream_send_all(
+                    pair[0], payload, payload_size);
+                positive elapsed = clock_monotonic_nanoseconds() - began;
+
+                socket_close(pair[0]);
+                socket_close(pair[1]);
+                system_call_1(syscall(exit_group), reset < 0 ? 4
+                    : sent ? 3
+                    : elapsed >= NETWORK_NANOSECONDS ? 2 : 0);
+        }
+
+        socket_close(pair[0]);
+        if (child > 0)
+        {
+                positive raw = 0;
+
+                check("a full stream send buffer returns within its timeout without SIGPIPE",
+                      system_wait4_retry((b32)child, address_of raw, 0, null) ==
+                              child &&
+                          wait_status_code(raw) == 0);
+        }
         socket_close(pair[1]);
+        memory_free(payload, payload_size);
+}
+
+static fn network_trickle_and_exit(b32 handle, p8 address_to bytes,
+                                   positive length)
+{
+        timespec pause = {0, 25000000};
+
+        for (positive at = 0; at < length; at++)
+        {
+                if (socket_send(handle, bytes + at, 1, MSG_NOSIGNAL,
+                                null, 0) != 1)
+                        break;
+                system_call_2(syscall(nanosleep), (positive)address_of pause, 0);
+        }
+
+        socket_close(handle);
+        system_call_1(syscall(exit_group), 0);
+}
+
+static fn http_header_deadlines(void)
+{
+        static p8 plain[] = "HTTP/1.1 200 OK\r\n\r\n";
+        static p8 record[69] = {
+            TLS_CT_HANDSHAKE, 0x03, 0x03, 0x00, 0x40};
+
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                check("slow-header socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                        if (!child)
+                        {
+                                socket_close(pair[0]);
+                                network_trickle_and_exit(pair[1], plain,
+                                                         sizeof(plain) - 1);
+                        }
+                        check("slow-header writer starts", child > 0);
+                        socket_close(pair[1]);
+                        if (child > 0)
+                        {
+                                p8 head[HTTP_HEAD_MAX];
+                                positive used = 0, header = 0;
+                                http_response response;
+                                http_link link = {.handle = pair[0]};
+
+                                check("a trickled HTTP header cannot renew its total deadline",
+                                      http_response_head(
+                                          address_of link, head, sizeof head,
+                                          address_of used, address_of header,
+                                          address_of response, 0, 100000000,
+                                          false) == HTTP_NO_REPLY);
+                        }
+                        socket_close(pair[0]);
+                        if (child > 0)
+                                system_wait4_retry((b32)child, null, 0, null);
+                }
+        }
+
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                check("slow-TLS-record socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                        if (!child)
+                        {
+                                socket_close(pair[0]);
+                                network_trickle_and_exit(pair[1], record,
+                                                         sizeof record);
+                        }
+                        check("slow-TLS-record writer starts", child > 0);
+                        socket_close(pair[1]);
+                        if (child > 0)
+                        {
+                                tls_conn connection = {
+                                    .handle = pair[0],
+                                    .host = (string_address)"localhost"};
+                                network_deadline deadline;
+                                bipolar status;
+                                positive ended;
+
+                                check("TLS handshake deadline starts",
+                                      network_deadline_begin(
+                                          address_of deadline, 0, 100000000));
+                                status = tls_handshake(address_of connection,
+                                                       address_of deadline);
+                                ended = clock_monotonic_nanoseconds();
+                                check("a partial TLS record cannot renew the handshake deadline",
+                                      status == TLS_FAIL && ended >= deadline.began &&
+                                          ended - deadline.began <
+                                              NETWORK_NANOSECONDS);
+                                tls_forget(address_of connection);
+                        }
+                        socket_close(pair[0]);
+                        if (child > 0)
+                                system_wait4_retry((b32)child, null, 0, null);
+                }
+        }
+}
+
+static fn network_stream_sigpipe(void)
+{
+        b32 pair[2];
+        bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                        SOCK_STREAM, 0, (positive)pair);
+        bipolar child;
+        positive raw = 0;
+
+        check("no-signal stream socket pair opens", opened == 0);
+        if (opened)
+                return;
+
+        socket_close(pair[1]);
+        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        check("no-signal stream writer starts", child >= 0);
+        if (child < 0)
+        {
+                socket_close(pair[0]);
+                return;
+        }
+        if (!child)
+        {
+                positive default_action[4] = {0, 0, 0, 0};
+                bipolar reset = system_signal_action(
+                    13, address_of default_action, null, 8);
+                bool sent = network_stream_send_all(
+                    pair[0], (p8 address_to)"x", 1);
+
+                socket_close(pair[0]);
+                system_call_1(syscall(exit_group), reset < 0 ? 3
+                                                     : sent ? 2 : 0);
+        }
+
+        check("closed peer cannot raise SIGPIPE from an HTTP/TLS write",
+              system_wait4_retry((b32)child, address_of raw, 0, null) == child &&
+                  wait_status_code(raw) == 0);
+        socket_close(pair[0]);
 }
 
 static fn tls_closure_boundaries(void)
@@ -39769,6 +40127,130 @@ static fn tls_closure_boundaries(void)
                         socket_close(pair[0]);
                         socket_close(pair[1]);
                 }
+        }
+}
+
+static fn tls_sensitive_state_erasure(void)
+{
+        {
+                tls_conn connection = {0};
+                p8 byte = 0;
+
+                check("TLS record sizing rejects arithmetic wraparound",
+                      tls_send_enc(address_of connection, TLS_CT_APP,
+                                   address_of byte, (positive)-1) == TLS_FAIL);
+
+                connection.seq_write = TLS_AES_GCM_RECORD_LIMIT;
+                check("TLS write keys stop at their AES-GCM usage limit",
+                      tls_send_enc(address_of connection, TLS_CT_APP,
+                                   address_of byte, 1) == TLS_FAIL);
+
+                {
+                        p8 payload[16] = {0};
+                        p8 aad[5] = {TLS_CT_APP, 0x03, 0x03, 0, 16};
+                        p8 inner[16] = {0};
+                        positive inner_length = 0;
+                        p8 type = 0;
+
+                        connection.seq_read = TLS_AES_GCM_RECORD_LIMIT;
+                        check("TLS read keys stop at their AES-GCM usage limit",
+                              tls_decrypt_record(
+                                  address_of connection, payload,
+                                  sizeof payload, aad, inner,
+                                  address_of inner_length,
+                                  address_of type) == TLS_FAIL);
+                }
+        }
+
+        {
+                tls_conn connection;
+                p8 address_to bytes = (p8 address_to)address_of connection;
+                bool erased = true;
+
+                memory_fill(address_of connection, 0xa5, sizeof connection);
+                connection.handle = 42;
+                tls_forget(address_of connection);
+                for (positive at = sizeof connection.handle;
+                     at < sizeof connection; at++)
+                        erased &= bytes[at] == 0;
+                check("TLS connection teardown invalidates its handle",
+                      connection.handle == -1);
+                check("TLS connection teardown erases retained secrets",
+                      erased);
+        }
+
+        {
+                tls_conn connection = {0};
+                p8 output[2] = {0};
+                positive got = 0;
+
+                memory_copy(connection.leftover, "seal", 4);
+                connection.leftover_used = 4;
+                check("TLS retained plaintext remains readable",
+                      tls_read(address_of connection, output, sizeof output,
+                               address_of got) == TLS_OK &&
+                          got == sizeof output &&
+                          !memory_compare(output, "se", sizeof output));
+                check("TLS consumed plaintext is erased after compaction",
+                      connection.leftover_used == 2 &&
+                          connection.leftover[0] == 'a' &&
+                          connection.leftover[1] == 'l' &&
+                          !connection.leftover[2] && !connection.leftover[3]);
+        }
+
+        {
+                tls_conn connection = {0};
+                crypto_sha256 empty_transcript = {0};
+                p8 zeros[32] = {0};
+
+                memory_fill(address_of connection.transcript, 0xa5,
+                            sizeof connection.transcript);
+                memory_fill(connection.hs_secret, 0xa5,
+                            sizeof connection.hs_secret);
+                memory_fill(connection.c_hs_traffic, 0xa5,
+                            sizeof connection.c_hs_traffic);
+                memory_fill(connection.s_hs_traffic, 0xa5,
+                            sizeof connection.s_hs_traffic);
+                memory_fill(connection.c_ap_traffic, 0xa5,
+                            sizeof connection.c_ap_traffic);
+                memory_fill(connection.s_ap_traffic, 0xa5,
+                            sizeof connection.s_ap_traffic);
+                connection.seq_read = 17;
+                connection.seq_write = 29;
+                tls_use_app_keys(address_of connection);
+                check("TLS application keys replace transition secrets",
+                      connection.application && !connection.seq_read &&
+                          !connection.seq_write &&
+                          !memory_compare(connection.hs_secret, zeros,
+                                          sizeof zeros) &&
+                          !memory_compare(connection.c_hs_traffic, zeros,
+                                          sizeof zeros) &&
+                          !memory_compare(connection.s_hs_traffic, zeros,
+                                          sizeof zeros) &&
+                          !memory_compare(connection.c_ap_traffic, zeros,
+                                          sizeof zeros) &&
+                          !memory_compare(connection.s_ap_traffic, zeros,
+                                          sizeof zeros) &&
+                          !memory_compare(address_of connection.transcript,
+                                          address_of empty_transcript,
+                                          sizeof empty_transcript));
+        }
+
+        {
+                http_link link;
+                p8 address_to bytes = (p8 address_to)address_of link.session;
+                bool erased = true;
+
+                memory_fill(address_of link, 0xa5, sizeof link);
+                link.handle = -1;
+                link.tls = true;
+                http_link_close(address_of link);
+                for (positive at = sizeof link.session.handle;
+                     at < sizeof link.session; at++)
+                        erased &= bytes[at] == 0;
+                check("HTTP close clears its TLS mode", !link.tls);
+                check("HTTP close erases the TLS session", erased &&
+                      link.session.handle == -1);
         }
 }
 
@@ -40513,6 +40995,21 @@ static fn crypto_floor_aes(void)
         p8 ba[32];
         p8 zero[32] = {0};
 
+        {
+                p8 portable_round[176];
+
+                memory_fill(key, 0, 16);
+                memory_fill(block, 0, 16);
+                crypto_aes128_expand(key, portable_round);
+                crypto_aes128_encrypt_portable(
+                    portable_round, block, block);
+                crypto_forget(portable_round, sizeof portable_round);
+                check("portable AES-128 fallback",
+                      crypto_bytes_are(
+                          block, 16,
+                          "66e94bd4ef8a2c3b884cfa59ca342b2e"));
+        }
+
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
         memory_fill(block, 0, 16);
@@ -40535,6 +41032,50 @@ static fn crypto_floor_aes(void)
         check("AES-GCM bad tag wipes",
               !crypto_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
                   crypto_bytes_are(block, 16, "00000000000000000000000000000000"));
+
+        {
+                static const p8 varied_key[16] = {
+                    0xfe, 0xff, 0xe9, 0x92, 0x86, 0x65, 0x73, 0x1c,
+                    0x6d, 0x6a, 0x8f, 0x94, 0x67, 0x30, 0x83, 0x08};
+                static const p8 varied_iv[12] = {
+                    0xca, 0xfe, 0xba, 0xbe, 0xfa, 0xce,
+                    0xdb, 0xad, 0xde, 0xca, 0xf8, 0x88};
+                static const p8 varied_aad[20] = {
+                    0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef,
+                    0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef,
+                    0xab, 0xad, 0xda, 0xd2};
+                p8 varied_text[60] = {
+                    0xd9, 0x31, 0x32, 0x25, 0xf8, 0x84, 0x06, 0xe5,
+                    0xa5, 0x59, 0x09, 0xc5, 0xaf, 0xf5, 0x26, 0x9a,
+                    0x86, 0xa7, 0xa9, 0x53, 0x15, 0x34, 0xf7, 0xda,
+                    0x2e, 0x4c, 0x30, 0x3d, 0x8a, 0x31, 0x8a, 0x72,
+                    0x1c, 0x3c, 0x0c, 0x95, 0x95, 0x68, 0x09, 0x53,
+                    0x2f, 0xcf, 0x0e, 0x24, 0x49, 0xa6, 0xb5, 0x25,
+                    0xb1, 0x6a, 0xed, 0xf5, 0xaa, 0x0d, 0xe6, 0x57,
+                    0xba, 0x63, 0x7b, 0x39};
+
+                crypto_aesgcm_encrypt((p8 address_to)varied_key,
+                                      (p8 address_to)varied_iv,
+                                      (p8 address_to)varied_aad,
+                                      sizeof varied_aad, varied_text,
+                                      sizeof varied_text, tag);
+                check("AES-GCM partial block and AAD NIST",
+                      crypto_bytes_are(
+                          varied_text, sizeof varied_text,
+                          "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091") &&
+                          crypto_bytes_are(
+                              tag, sizeof tag,
+                              "5bc94fbc3221a5db94fae95ae7121a47"));
+                check("AES-GCM partial block and AAD decrypt",
+                      crypto_aesgcm_decrypt(
+                          (p8 address_to)varied_key,
+                          (p8 address_to)varied_iv,
+                          (p8 address_to)varied_aad, sizeof varied_aad,
+                          varied_text, sizeof varied_text, tag) &&
+                          crypto_bytes_are(
+                              varied_text, sizeof varied_text,
+                              "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"));
+        }
 
         {
                 static const p8 qx[32] = {
@@ -40763,6 +41304,10 @@ static fn fetching_for_real(void)
                                    "cOnTeNt-LeNgTh: 11\r\n"
                                    "\r\n"
                                    "hello there";
+                p8 answer_split[] = "HTTP/1.0 200 OK\r\n"
+                                    "Content-Length: 13\r\n"
+                                    "\r\n"
+                                    "split-payload";
                 p8 answer_short[] = "HTTP/1.0 200 OK\r\n"
                                     "Content-Length: 12\r\n"
                                     "\r\n"
@@ -40796,24 +41341,52 @@ static fn fetching_for_real(void)
                                       "Content-Length: 5\r\n"
                                       "\r\n"
                                       "final";
+                p8 answer_no_content[] = "HTTP/1.1 204 No Content\r\n"
+                                         "Content-Length: 9\r\n"
+                                         "\r\n"
+                                         "forbidden";
+                p8 answer_not_modified[] = "HTTP/1.1 304 Not Modified\r\n"
+                                           "Content-Length: 9\r\n"
+                                           "\r\n"
+                                           "forbidden";
+                p8 answer_use_proxy[] = "HTTP/1.1 305 Use Proxy\r\n"
+                                        "Location: /ignored\r\n"
+                                        "Content-Length: 0\r\n"
+                                        "\r\n";
+                p8 answer_unused[] = "HTTP/1.1 306 Unused\r\n"
+                                     "Location: /ignored\r\n"
+                                     "Content-Length: 0\r\n"
+                                     "\r\n";
                 string_address answers[] = {
                     (string_address)answer_good,
+                    (string_address)answer_split,
                     (string_address)answer_short,
                     (string_address)answer_repeated,
                     (string_address)answer_conflicting,
                     (string_address)answer_bad_length,
                     (string_address)answer_overflow,
                     (string_address)answer_bad_status,
-                    (string_address)answer_interim};
+                    (string_address)answer_interim,
+                    (string_address)answer_no_content,
+                    (string_address)answer_no_content,
+                    (string_address)answer_not_modified,
+                    (string_address)answer_use_proxy,
+                    (string_address)answer_unused};
                 positive sizes[] = {
                     sizeof(answer_good) - 1,
+                    sizeof(answer_split) - 1,
                     sizeof(answer_short) - 1,
                     sizeof(answer_repeated) - 1,
                     sizeof(answer_conflicting) - 1,
                     sizeof(answer_bad_length) - 1,
                     sizeof(answer_overflow) - 1,
                     sizeof(answer_bad_status) - 1,
-                    sizeof(answer_interim) - 1};
+                    sizeof(answer_interim) - 1,
+                    sizeof(answer_no_content) - 1,
+                    sizeof(answer_no_content) - 1,
+                    sizeof(answer_not_modified) - 1,
+                    sizeof(answer_use_proxy) - 1,
+                    sizeof(answer_unused) - 1};
 
                 for (positive at = 0;
                      at < array_count(answers) + array_count(status_mutations) +
@@ -40846,7 +41419,27 @@ static fn fetching_for_real(void)
                         if (taken >= 0)
                         {
                                 socket_receive((b32)taken, said, sizeof said, 0, 0, 0);
-                                system_write_all((positive)taken, answer, length);
+                                if (at == 1)
+                                {
+                                        positive split =
+                                            sizeof("HTTP/1.0 200 OK\r\n"
+                                                   "Content-Length: 13\r\n"
+                                                   "\r\n"
+                                                   "split") - 1;
+                                        timespec pause = {0, 100000000};
+
+                                        system_write_all((positive)taken,
+                                                         answer, split);
+                                        system_call_2(
+                                            syscall(nanosleep),
+                                            (positive)address_of pause, 0);
+                                        system_write_all(
+                                            (positive)taken, answer + split,
+                                            length - split);
+                                }
+                                else
+                                        system_write_all((positive)taken,
+                                                         answer, length);
                                 socket_shutdown((b32)taken, SHUT_BOTH);
                                 socket_close((b32)taken);
                         }
@@ -40877,6 +41470,15 @@ static fn fetching_for_real(void)
                       body.bytes && memory_compare(body.bytes, "hello there", 11) == 0);
                 check("the response allocation becomes the body",
                       body.bytes && body.bytes != prior);
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a body split after a header prefix is reassembled",
+                      status == HTTP_OK && code == 200 && body.used == 13 &&
+                          body.bytes &&
+                          !memory_compare(body.bytes, "split-payload", 13));
 
                 status = http_get(HOST_LOOPBACK, port,
                                   (string_address) "127.0.0.1",
@@ -40913,8 +41515,8 @@ static fn fetching_for_real(void)
                 check("an overflowing Content-Length is refused",
                       status == HTTP_MALFORMED);
                 check("a rejected response leaves the prior body owned",
-                      body.used == 11 && body.bytes &&
-                      memory_compare(body.bytes, "hello there", 11) == 0);
+                      body.used == 13 && body.bytes &&
+                      !memory_compare(body.bytes, "split-payload", 13));
 
                 status = http_get(HOST_LOOPBACK, port,
                                   (string_address) "127.0.0.1",
@@ -40931,6 +41533,47 @@ static fn fetching_for_real(void)
                       status == HTTP_OK && code == 200 && body.used == 5 &&
                           body.bytes &&
                           !memory_compare(body.bytes, "final", 5));
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a 204 response publishes an empty buffered body",
+                      status == HTTP_OK && code == 204 && !body.used);
+
+                {
+                        p8 url[64];
+                        positive url_used = sizeof("http://127.0.0.1:") - 1;
+
+                        memory_copy(url, "http://127.0.0.1:", url_used);
+                        url_used += positive_into(url + url_used, port);
+                        url[url_used++] = '/';
+                        url[url_used] = end;
+                        status = http_fetch_to(url, -1, false,
+                                               address_of code);
+                        check("a streaming 204 succeeds without writing its forbidden body",
+                              status == HTTP_OK && code == 204);
+                        status = http_fetch_to(url, -1, false,
+                                               address_of code);
+                        check("a terminal 304 is not redirected or accepted as a download",
+                              status == HTTP_STATUS && code == 304);
+                        status = http_fetch_to(url, -1, false,
+                                               address_of code);
+                        check("a 305 Location is not followed",
+                              status == HTTP_STATUS && code == 305);
+                        status = http_fetch_to(url, -1, false,
+                                               address_of code);
+                        check("a 306 Location is not followed",
+                              status == HTTP_STATUS && code == 306);
+                }
+
+                check("the preservation sentinel is restored",
+                      byte_store_reserve(address_of body, 6, 16));
+                if (body.bytes)
+                {
+                        memory_copy(body.bytes, "final", 6);
+                        body.used = 5;
+                }
 
                 /* Independently damage each fixed status-line field, then
                    cut the reply before and at its smallest parsed boundary.
@@ -40979,7 +41622,15 @@ static fn leasing(void)
         p8 kind = 0;
 
         {
-                dhcp_lease answer = {.server = 0x0a000202};
+                dhcp_lease offer = {
+                    .address = 0x0a00020f, .server = 0x0a000202};
+                dhcp_lease answer = {
+                    .address = 0x0a00020f, .server = 0x0a000202};
+                socket_address_internet expected = {
+                    .family = AF_INET,
+                    .port = network_order_16(DHCP_SERVER_PORT),
+                    .host = network_order_32(0x0a000202)};
+                socket_address_internet peer = expected;
 
                 check("the selected DHCP server may acknowledge",
                       dhcp_answer_matches(DHCP_ACK, address_of answer,
@@ -40987,6 +41638,17 @@ static fn leasing(void)
                 check("the selected DHCP server may refuse",
                       dhcp_answer_matches(DHCP_NAK, address_of answer,
                                           0x0a000202));
+                check("a DHCP ACK completes the selected offered address",
+                      dhcp_acquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer));
+                answer.address++;
+                check("a DHCP ACK cannot replace the selected offered address",
+                      !dhcp_acquisition_answer_matches(
+                          DHCP_ACK, address_of answer, address_of offer));
+                answer.address = 0;
+                check("a selected server may still refuse without an address",
+                      dhcp_acquisition_answer_matches(
+                          DHCP_NAK, address_of answer, address_of offer));
                 check("a different DHCP server cannot complete the exchange",
                       !dhcp_answer_matches(DHCP_ACK, address_of answer,
                                            0x0a000203));
@@ -40994,6 +41656,28 @@ static fn leasing(void)
                 check("a DHCP answer without its server id is refused",
                       !dhcp_answer_matches(DHCP_ACK, address_of answer,
                                            0x0a000202));
+                check("a DHCP reply is bound to server port 67",
+                      dhcp_peer_matches(address_of peer, sizeof peer,
+                                        address_of expected, false));
+                peer.port = network_order_16(DHCP_CLIENT_PORT);
+                check("a DHCP reply from another source port is refused",
+                      !dhcp_peer_matches(address_of peer, sizeof peer,
+                                         address_of expected, false));
+                peer = expected;
+                peer.host = network_order_32(0x0a000203);
+                check("a DHCP renewal reply from another host is refused",
+                      !dhcp_peer_matches(address_of peer, sizeof peer,
+                                         address_of expected, false));
+                expected.host = 0;
+                check("acquisition accepts any server host at port 67",
+                      dhcp_peer_matches(address_of peer, sizeof peer,
+                                        address_of expected, true));
+                check("a zero selected peer is not an implicit wildcard",
+                      !dhcp_peer_matches(address_of peer, sizeof peer,
+                                         address_of expected, false));
+                check("a truncated DHCP source address is refused",
+                      !dhcp_peer_matches(address_of peer, sizeof peer - 1,
+                                         address_of expected, true));
         }
 
         length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 0xdeadbeef,
@@ -41278,32 +41962,216 @@ static fn leasing(void)
 
 static fn leasing_datagrams(void)
 {
-        b32 pair[2];
         p8 packet[301], received[300], hardware[6] = {1, 2, 3, 4, 5, 6};
         dhcp_lease lease = {0};
+        network_deadline deadline;
         p8 kind = 0;
-        bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
-                                        SOCK_DGRAM, 0, (positive)pair);
-        check("DHCP datagram test socket pair opens", opened == 0);
-        if (opened)
+        socket_address_internet receiver_at = {
+            .family = AF_INET, .host = network_order_32(HOST_LOOPBACK)};
+        socket_address_internet sender_at = receiver_at;
+        socket_address_internet other_at = receiver_at;
+        socket_address_internet any_sender;
+        socket_address_internet accepted;
+        p32 address_size;
+        bipolar receiver = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC,
+                                      IPPROTO_UDP);
+        bipolar sender = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC,
+                                    IPPROTO_UDP);
+        bipolar other = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC,
+                                   IPPROTO_UDP);
+
+        check("DHCP IPv4 test receiver opens", receiver >= 0);
+        check("DHCP IPv4 test sender opens", sender >= 0);
+        check("DHCP IPv4 alternate sender opens", other >= 0);
+        if (receiver < 0 || sender < 0 || other < 0)
+        {
+                if (receiver >= 0) socket_close((b32)receiver);
+                if (sender >= 0) socket_close((b32)sender);
+                if (other >= 0) socket_close((b32)other);
                 return;
+        }
+
+        check("DHCP test receiver binds",
+              socket_bind((b32)receiver, address_of receiver_at,
+                          sizeof receiver_at) == 0);
+        check("DHCP test sender binds",
+              socket_bind((b32)sender, address_of sender_at,
+                          sizeof sender_at) == 0);
+        check("DHCP alternate sender binds",
+              socket_bind((b32)other, address_of other_at,
+                          sizeof other_at) == 0);
+        address_size = sizeof receiver_at;
+        check("DHCP test receiver address is known",
+              socket_name((b32)receiver, address_of receiver_at,
+                          address_of address_size) == 0 &&
+                  address_size == sizeof receiver_at && receiver_at.port);
+        address_size = sizeof sender_at;
+        check("DHCP test sender address is known",
+              socket_name((b32)sender, address_of sender_at,
+                          address_of address_size) == 0 &&
+                  address_size == sizeof sender_at && sender_at.port);
+        address_size = sizeof other_at;
+        check("DHCP alternate sender address is known",
+              socket_name((b32)other, address_of other_at,
+                          address_of address_size) == 0 &&
+                  address_size == sizeof other_at && other_at.port &&
+                  other_at.port != sender_at.port);
+        any_sender = sender_at;
+        any_sender.host = 0;
+
         dhcp_build(packet, sizeof packet, DHCP_OFFER, 123, hardware, 0, 0, 0);
         packet[0] = 2;
         packet[300] = 0;
         for (positive length = 300; length <= 301; length++)
         {
-                check("DHCP datagram queues", socket_send(pair[1], packet, length,
-                      0, null, 0) == (bipolar)length);
+                check("DHCP datagram queues", socket_send(
+                      (b32)sender, packet, length, 0, address_of receiver_at,
+                      sizeof receiver_at) == (bipolar)length);
+                check("DHCP receive deadline starts",
+                      network_deadline_begin(address_of deadline,
+                                             0, 100000000));
                 check("DHCP refuses datagrams larger than its receive buffer",
-                      dhcp_receive(pair[0], received, sizeof received, 123, hardware,
-                                   &lease, &kind, 0, 100000000) == (length == 300));
+                      dhcp_receive(receiver, received, sizeof received, 123,
+                                   hardware, &lease, &kind,
+                                   address_of any_sender, true,
+                                   address_of accepted,
+                                   address_of deadline) ==
+                          (length == 300));
+                if (length == 300)
+                        check("DHCP records the accepted transport peer",
+                              accepted.family == sender_at.family &&
+                                  accepted.port == sender_at.port &&
+                                  accepted.host == sender_at.host);
         }
-        socket_close(pair[0]);
-        socket_close(pair[1]);
+
+        /* Invalid traffic consumes elapsed time, not a receive attempt.  A
+           wrong transaction and an oversized datagram queued before the real
+           offer must both be discarded inside the same fixed budget. */
+        network_store_32(packet + 4, 124);
+        check("wrong-transaction DHCP datagram queues",
+              socket_send((b32)sender, packet, 300, 0, address_of receiver_at,
+                          sizeof receiver_at) == 300);
+        check("empty DHCP junk queues",
+              socket_send((b32)sender, packet, 0, 0, address_of receiver_at,
+                          sizeof receiver_at) == 0);
+        check("oversized DHCP junk queues",
+              socket_send((b32)sender, packet, 301, 0, address_of receiver_at,
+                          sizeof receiver_at) == 301);
+        network_store_32(packet + 4, 123);
+        check("valid-looking DHCP reply from wrong peer queues",
+              socket_send((b32)other, packet, 300, 0, address_of receiver_at,
+                          sizeof receiver_at) == 300);
+        check("valid DHCP datagram follows junk",
+              socket_send((b32)sender, packet, 300, 0, address_of receiver_at,
+                          sizeof receiver_at) == 300);
+        check("DHCP junk budget starts",
+              network_deadline_begin(address_of deadline, 0, 100000000));
+        check("DHCP discards junk and wrong peers before the valid reply",
+              dhcp_receive(receiver, received, sizeof received, 123, hardware,
+                           &lease, &kind, address_of sender_at, false, null,
+                           address_of deadline));
+        socket_close((b32)receiver);
+        socket_close((b32)sender);
+        socket_close((b32)other);
         bipolar invalid = dhcp_open("moonwater-no-interface", HOST_ANY, true);
         check("DHCP cannot continue when binding to its interface fails", invalid < 0);
         if (invalid >= 0)
                 socket_close(invalid);
+}
+
+/* Exercise DHCP's two intentional kernel entropy policies independently.  A
+   seccomp errno filter can distinguish getrandom's flags without replacing
+   the production helper: one child refuses only the early-boot stream, one
+   refuses only initialized nonblocking randomness, and one refuses both.
+   The last child also calls the public acquisition and renewal paths with a
+   nonexistent interface; DHCP_NO_RANDOM proves they returned before opening
+   that socket (and therefore before sending a packet). */
+typedef struct
+{
+        p16 code;
+        p8 yes;
+        p8 no;
+        p32 value;
+} dhcp_test_filter_instruction;
+
+typedef struct
+{
+        p16 length;
+        dhcp_test_filter_instruction address_to instructions;
+} dhcp_test_filter_program;
+
+static bipolar dhcp_test_random_filter(p32 first, p32 second)
+{
+        dhcp_test_filter_instruction instructions[] = {
+            {0x20, 0, 0, 0},
+            {0x15, 0, 4, syscall(getrandom)},
+            {0x20, 0, 0, 32},
+            {0x15, 1, 0, first},
+            {0x15, 0, 1, second},
+            {0x06, 0, 0, 0x0005000b},
+            {0x06, 0, 0, 0x7fff0000},
+        };
+        dhcp_test_filter_program program = {
+            array_count(instructions), instructions};
+
+        if (system_call_5(syscall(prctl), 38, 1, 0, 0, 0) < 0)
+                return -1;
+        return system_call_3(syscall(seccomp), 1, 0,
+                             (positive)address_of program);
+}
+
+static fn dhcp_test_random_child(positive which)
+{
+        p32 first = which == 0 ? 4 : 1;
+        p32 second = which == 2 ? 4 : first;
+        p32 transaction = 0;
+        p8 hardware[6] = {1, 2, 3, 4, 5, 6};
+        dhcp_lease lease = {
+            .address = 0x0a00020f,
+            .mask = 0xffffff00,
+            .router = 0x0a000202,
+            .nameserver = 0x01010101,
+            .server = 0x0a000202,
+            .seconds = 60,
+        };
+        bool ok;
+
+        if (dhcp_test_random_filter(first, second) < 0)
+                system_call_1(syscall(exit_group), 77);
+
+        ok = dhcp_transaction_early(address_of transaction) == (which != 2);
+        if (which == 2)
+        {
+                dhcp_lease empty = {0};
+
+                ok &= dhcp_ask((string_address)"moonwater-no-interface",
+                               hardware, address_of empty) == DHCP_NO_RANDOM;
+                ok &= dhcp_renew((string_address)"moonwater-no-interface",
+                                 hardware, address_of lease) == DHCP_NO_RANDOM;
+        }
+
+        system_call_1(syscall(exit_group), ok ? 0 : 1);
+}
+
+static fn dhcp_transaction_randomness(void)
+{
+        for (positive which = 0; which < 3; which++)
+        {
+                bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+                positive raw = 0;
+
+                check("DHCP entropy-policy child starts", child >= 0);
+                if (child < 0)
+                        continue;
+                if (!child)
+                        dhcp_test_random_child(which);
+
+                check("DHCP uses secure and early-boot kernel entropy and fails before I/O",
+                      system_wait4_retry((b32)child, address_of raw, 0, null) ==
+                              child &&
+                          (wait_status_code(raw) == 0 ||
+                           wait_status_code(raw) == 77));
+        }
 }
 
 b32 main(void)
@@ -41313,6 +42181,7 @@ b32 main(void)
         padding();
         oversized();
         attribute_growth();
+        userspace_source_progress();
         error_frames();
         link_candidates();
         talking();
@@ -41322,7 +42191,11 @@ b32 main(void)
         streaming_chunk_boundaries();
         http_bounded_store();
         network_stream_timeouts();
+        network_stream_send_timeout();
+        http_header_deadlines();
+        network_stream_sigpipe();
         tls_closure_boundaries();
+        tls_sensitive_state_erasure();
         tls_certificate_dates();
         tls_certificate_identity_rules();
         tls_client_hello_bounds();
@@ -41337,6 +42210,8 @@ b32 main(void)
         fetching_for_real();
         leasing();
         leasing_datagrams();
+        dhcp_transaction_randomness();
+        userspace_route_source_in_namespace();
 
         return test_report(null);
 }
@@ -43231,6 +44106,31 @@ static fn reuse_counted_classes(void)
 
 static fn reuse_utility_numbers(void)
 {
+        check("shared size suffixes retain case and dialect policy",
+              size_suffix_power('K', false) == 1 &&
+              size_suffix_power('q', true) == 10 &&
+              !size_suffix_power('q', false) &&
+              !size_suffix_power('J', true));
+        p64 scaled = 73;
+        check("shared size scaling commits only checked products",
+              size_scale_power_checked(2, 1024, 3, positive_max,
+                                       &scaled) &&
+              scaled == 2147483648ULL);
+        scaled = 73;
+        check("shared size scaling rejects overflow without changing output",
+              !size_scale_power_checked(positive_max, 1024, 1,
+                                        positive_max, &scaled) &&
+              scaled == 73);
+        positive unit = 0;
+        bool human = false, si = false;
+        p8 suffix[8];
+        check("ls block size applies the checked count and suffix together",
+              ls_block_size_read("2K", &unit, &human, &si, suffix) &&
+              unit == 2048 && !suffix[0]);
+        check("ls block size refuses count-times-suffix overflow",
+              !ls_block_size_read("18446744073709551615K", &unit,
+                                  &human, &si, suffix));
+
         for (bipolar sign = -1; sign <= 1; sign += 2)
         {
                 check("file reasons preserve accepted error text and both signs",
@@ -43434,6 +44334,413 @@ b32 main(void)
         return test_report(null);
 }
 #endif /* CHECK_reuse_shell */
+
+#ifdef CHECK_path_stage
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+#ifndef LINUX
+#error "protected path staging is a Linux userspace primitive"
+#endif
+
+static bipolar path_stage_make(
+    bipolar directory, string_address name, string_address data)
+{
+        bipolar handle = system_open_at_mode(
+            directory, name,
+            FILE_WRITE | FILE_EXCLUSIVE | O_NOFOLLOW | O_CLOEXEC, 0600);
+        bipolar written = handle < 0 ? handle : system_write_all(
+            (positive)handle, data, string_length(data));
+        bipolar closed = handle < 0 ? 0 : system_close(handle);
+
+        return handle < 0 ? handle : written < 0 ? written : closed;
+}
+
+static bipolar path_stage_read(
+    bipolar directory, string_address name, p8 address_to into, positive room)
+{
+        bipolar handle = system_open_at(
+            directory, name, FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        bipolar got = handle < 0 ? handle : system_read_retry(
+            (positive)handle, into, room);
+
+        if (handle >= 0)
+                system_close(handle);
+        return got;
+}
+
+static bool path_stage_exists(bipolar directory, string_address name)
+{
+        system_path_identity identity;
+
+        return system_path_identity_at(
+                   directory, name,
+                   SYSTEM_PATH_AT_SYMLINK_NOFOLLOW |
+                       SYSTEM_PATH_AT_NO_AUTOMOUNT,
+                   SYSTEM_PATH_STATX_IDENTITY, address_of identity) >= 0;
+}
+
+static fn path_stage_copy_name(
+    p8 address_to into, string_address from)
+{
+        memory_copy_end(into, from, string_length(from));
+}
+
+static bipolar path_stage_restore(system_path_stage address_to stage)
+{
+        bipolar restored = system_path_stage_publish_at(
+            stage, stage->parent, stage->original,
+            SYSTEM_PATH_RENAME_NOREPLACE);
+        if (restored < 0)
+                system_path_stage_release(stage);
+        return restored;
+}
+
+static fn path_stage_normal(bipolar directory)
+{
+        p8 private_name[256];
+        system_path_stage stage;
+
+        check("protected removal fixture is created",
+              path_stage_make(directory, (string_address)"normal",
+                              (string_address)"ours") == 0);
+        bipolar opened = system_open_at(
+            directory, (string_address)"normal",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        check("protected removal fixture stays open", opened >= 0);
+        bipolar staged = opened < 0 ? opened : system_path_stage_opened_at(
+            address_of stage, directory, (string_address)"normal", opened);
+        check("a verified name moves under an fd-held private directory",
+              staged == 0 && stage.verified &&
+                  system_path_same_opened_at(
+                      opened, stage.directory,
+                      SYSTEM_PATH_STAGE_LEAF) == 0);
+        if (staged >= 0)
+        {
+                path_stage_copy_name(private_name, stage.private_name);
+                check("the protected inode is removed through the private fd",
+                      system_path_stage_remove(address_of stage, 0) == 0);
+                check("owner-private parent cleanup removes the empty stage",
+                      !path_stage_exists(directory, private_name));
+        }
+        check("protected removal vacates only the requested public name",
+              !path_stage_exists(directory, (string_address)"normal"));
+        if (opened >= 0)
+                system_close(opened);
+}
+
+static fn path_stage_restrictive_umask(bipolar directory)
+{
+        system_path_stage stage;
+
+        check("restrictive-umask source is created",
+              path_stage_make(directory, (string_address)"masked",
+                              (string_address)"ours") == 0);
+        bipolar opened = system_open_at(
+            directory, (string_address)"masked",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        bipolar former = system_call_1(syscall(umask), 0777);
+        bipolar staged = opened < 0 || former < 0 ? -1 :
+            system_path_stage_opened_at(
+                address_of stage, directory, (string_address)"masked",
+                opened);
+        if (former >= 0)
+                system_call_1(syscall(umask), (positive)former);
+
+        check("restrictive umask still yields an exact private stage",
+              staged == 0 && system_path_private_directory_valid(
+                                 stage.directory, directory,
+                                 stage.private_name) == 0);
+        check("restrictive-umask stage restores its exact source",
+              staged >= 0 && path_stage_restore(address_of stage) == 0);
+        check("restrictive-umask source identity survives staging",
+              opened >= 0 && system_path_same_opened_at(
+                                 opened, directory,
+                                 (string_address)"masked") == 0);
+        if (opened >= 0)
+                system_close(opened);
+        system_remove_at(directory, (string_address)"masked", 0);
+}
+
+static fn path_stage_mismatch(bipolar directory)
+{
+        p8 bytes[16];
+
+        check("mismatch original fixture is created",
+              path_stage_make(directory, (string_address)"mismatch",
+                              (string_address)"expected") == 0);
+        bipolar opened = system_open_at(
+            directory, (string_address)"mismatch",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        check("mismatch original fixture stays open", opened >= 0);
+        check("mismatch original name is displaced",
+              system_call_5(
+                  syscall(renameat2), (positive)directory,
+                  (positive)(string_address)"mismatch", (positive)directory,
+                  (positive)(string_address)"expected",
+                  SYSTEM_PATH_RENAME_NOREPLACE) == 0);
+        check("mismatch attacker fixture is created",
+              path_stage_make(directory, (string_address)"mismatch",
+                              (string_address)"attacker") == 0);
+
+        bipolar removed = opened < 0 ? opened : system_path_remove_opened_at(
+            directory, (string_address)"mismatch", opened, 0);
+        check("an entry that differs from the open handle is refused",
+              removed == -11);
+        bipolar got = path_stage_read(
+            directory, (string_address)"mismatch", bytes, sizeof bytes);
+        check("a refused mismatching entry is restored without replacement",
+              got == 8 && !memory_compare(bytes, "attacker", 8));
+        check("the caller's opened inode remains under its displaced name",
+              opened >= 0 && system_path_same_opened_at(
+                                 opened, directory,
+                                 (string_address)"expected") == 0);
+
+        if (opened >= 0)
+                system_close(opened);
+        system_remove_at(directory, (string_address)"mismatch", 0);
+        system_remove_at(directory, (string_address)"expected", 0);
+}
+
+static fn path_stage_restore_collision(bipolar directory)
+{
+        p8 private_name[256];
+        p8 bytes[16];
+        system_path_stage stage;
+
+        check("restore fixture is created",
+              path_stage_make(directory, (string_address)"restore",
+                              (string_address)"protected") == 0);
+        bipolar opened = system_open_at(
+            directory, (string_address)"restore",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        bipolar staged = opened < 0 ? opened : system_path_stage_opened_at(
+            address_of stage, directory, (string_address)"restore", opened);
+        check("restore fixture enters protected staging", staged == 0);
+        if (staged >= 0)
+        {
+                path_stage_copy_name(private_name, stage.private_name);
+                check("a concurrent public claimant is created",
+                      path_stage_make(directory, (string_address)"restore",
+                                      (string_address)"claimant") == 0);
+                check("restore never overwrites a concurrent claimant",
+                      path_stage_restore(address_of stage) == -17);
+                bipolar got = path_stage_read(
+                    directory, (string_address)"restore", bytes,
+                    sizeof bytes);
+                check("the concurrent claimant remains intact",
+                      got == 8 && !memory_compare(bytes, "claimant", 8));
+
+                bipolar private_directory = system_open_at(
+                    directory, private_name,
+                    FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+                check("failed restore retains the private directory",
+                      private_directory >= 0);
+                check("failed restore retains the exact protected inode",
+                      private_directory >= 0 && opened >= 0 &&
+                          system_path_same_opened_at(
+                              opened, private_directory,
+                              SYSTEM_PATH_STAGE_LEAF) == 0);
+                if (private_directory >= 0)
+                {
+                        system_remove_at(private_directory,
+                                         SYSTEM_PATH_STAGE_LEAF, 0);
+                        system_close(private_directory);
+                }
+                system_remove_at(directory, private_name,
+                                 SYSTEM_PATH_AT_REMOVEDIR);
+        }
+        if (opened >= 0)
+                system_close(opened);
+        system_remove_at(directory, (string_address)"restore", 0);
+}
+
+static fn path_stage_publish_retry(bipolar directory)
+{
+        system_path_stage stage;
+
+        check("publish-retry source is created",
+              path_stage_make(directory, (string_address)"publish-source",
+                              (string_address)"ours") == 0);
+        check("publish-retry claimant is created",
+              path_stage_make(directory, (string_address)"publish-target",
+                              (string_address)"theirs") == 0);
+        bipolar opened = system_open_at(
+            directory, (string_address)"publish-source",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        bipolar staged = opened < 0 ? opened : system_path_stage_opened_at(
+            address_of stage, directory,
+            (string_address)"publish-source", opened);
+        check("publish-retry source enters protected staging", staged == 0);
+        if (staged >= 0)
+        {
+                bipolar published = system_path_stage_publish_at(
+                    address_of stage, directory,
+                    (string_address)"publish-target",
+                    SYSTEM_PATH_RENAME_NOREPLACE);
+                check("failed protected publication reports the collision",
+                      published == -17);
+                check("failed protected publication keeps its live stage",
+                      stage.verified && stage.directory >= 0 &&
+                          system_path_same_opened_at(
+                              opened, stage.directory,
+                              SYSTEM_PATH_STAGE_LEAF) == 0);
+                check("a live failed publication can restore its source",
+                      path_stage_restore(address_of stage) == 0);
+                check("restored source retains its exact opened identity",
+                      system_path_same_opened_at(
+                          opened, directory,
+                          (string_address)"publish-source") == 0);
+        }
+        if (opened >= 0)
+                system_close(opened);
+        system_remove_at(directory, (string_address)"publish-source", 0);
+        system_remove_at(directory, (string_address)"publish-target", 0);
+}
+
+static fn path_stage_failed_remove(bipolar directory)
+{
+        check("failed-remove directory is created",
+              system_make_directory_exact_at(
+                  directory, (string_address)"occupied", 0700) == 0);
+        bipolar occupied = system_open_at(
+            directory, (string_address)"occupied",
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        check("failed-remove occupant is created",
+              occupied >= 0 &&
+                  path_stage_make(occupied, (string_address)"inside",
+                                  (string_address)"bytes") == 0);
+        bipolar removed = occupied < 0 ? occupied :
+            system_path_remove_opened_at(
+                directory, (string_address)"occupied", occupied,
+                SYSTEM_PATH_AT_REMOVEDIR);
+        check("a failed private removal reports the original failure",
+              removed == -39);
+        check("a failed private removal restores the verified directory",
+              occupied >= 0 && system_path_same_opened_at(
+                                   occupied, directory,
+                                   (string_address)"occupied") == 0);
+        if (occupied >= 0)
+        {
+                system_remove_at(occupied, (string_address)"inside", 0);
+                system_close(occupied);
+        }
+        system_remove_at(directory, (string_address)"occupied",
+                         SYSTEM_PATH_AT_REMOVEDIR);
+}
+
+static fn path_stage_hostile_parent(bipolar root)
+{
+        system_path_stage stage;
+
+        check("hostile writable parent fixture is created",
+              system_make_directory_exact_at(
+                  root, (string_address)"hostile", 0777) == 0);
+        bipolar directory = system_open_at(
+            root, (string_address)"hostile",
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        check("non-sticky writable parent is classified as hostile",
+              directory >= 0 &&
+                  !system_path_parent_cleanup_safe(directory));
+        check("hostile-parent source fixture is created",
+              directory >= 0 &&
+                  path_stage_make(directory, (string_address)"source",
+                                  (string_address)"ours") == 0);
+        bipolar opened = directory < 0 ? directory : system_open_at(
+            directory, (string_address)"source",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        bipolar staged = opened < 0 ? opened : system_path_stage_opened_at(
+            address_of stage, directory, (string_address)"source", opened);
+        check("hostile-parent staging fails before namespace mutation",
+              staged == -13 && stage.directory < 0 &&
+                  !string_get(stage.private_name));
+        check("hostile-parent refusal preserves the selected source",
+              opened >= 0 && system_path_same_opened_at(
+                                 opened, directory,
+                                 (string_address)"source") == 0);
+        if (opened >= 0)
+                system_close(opened);
+        if (directory >= 0)
+                system_remove_at(directory, (string_address)"source", 0);
+        if (directory >= 0)
+                system_close(directory);
+        system_remove_at(root, (string_address)"hostile",
+                         SYSTEM_PATH_AT_REMOVEDIR);
+}
+
+static fn path_stage_sticky_parent(bipolar root)
+{
+        p8 private_name[256];
+        system_path_stage stage;
+
+        check("sticky writable parent fixture is created",
+              system_make_directory_exact_at(
+                  root, (string_address)"sticky", 01777) == 0);
+        bipolar directory = system_open_at(
+            root, (string_address)"sticky",
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        check("sticky writable parent permits identity-safe cleanup",
+              directory >= 0 && system_path_parent_cleanup_safe(directory));
+        check("sticky-parent source fixture is created",
+              directory >= 0 &&
+                  path_stage_make(directory, (string_address)"source",
+                                  (string_address)"ours") == 0);
+        bipolar opened = directory < 0 ? directory : system_open_at(
+            directory, (string_address)"source",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        bipolar staged = opened < 0 ? opened : system_path_stage_opened_at(
+            address_of stage, directory, (string_address)"source", opened);
+        check("sticky-parent source enters protected staging", staged == 0);
+        if (staged >= 0)
+        {
+                path_stage_copy_name(private_name, stage.private_name);
+                check("sticky-parent protected removal succeeds",
+                      system_path_stage_remove(address_of stage, 0) == 0);
+                check("sticky-parent cleanup removes the exact empty stage",
+                      !path_stage_exists(directory, private_name));
+        }
+        if (opened >= 0)
+                system_close(opened);
+        if (directory >= 0)
+                system_close(directory);
+        system_remove_at(root, (string_address)"sticky",
+                         SYSTEM_PATH_AT_REMOVEDIR);
+}
+
+b32 main(void)
+{
+        p8 root[128];
+        static const p8 prefix[] = "/tmp/moonwater-path-stage-";
+
+        memory_copy_apart(root, prefix, sizeof(prefix) - 1);
+        positive_into_string(root + sizeof(prefix) - 1, system_nonce());
+
+        check("protected staging root is created",
+              system_make_directory_exact_at(
+                  AT_FDCWD, root, 0700) == 0);
+        bipolar directory = system_open_at(
+            AT_FDCWD, root,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        check("protected staging root stays pinned", directory >= 0);
+        if (directory >= 0)
+        {
+                path_stage_normal(directory);
+                path_stage_restrictive_umask(directory);
+                path_stage_mismatch(directory);
+                path_stage_restore_collision(directory);
+                path_stage_publish_retry(directory);
+                path_stage_failed_remove(directory);
+                path_stage_hostile_parent(directory);
+                path_stage_sticky_parent(directory);
+                system_close(directory);
+        }
+        system_remove_at(AT_FDCWD, root, SYSTEM_PATH_AT_REMOVEDIR);
+        return test_report(null);
+}
+#endif /* CHECK_path_stage */
 
 #ifdef CHECK_audit_builtin_regressions
 /* Pure-state regressions for the verified enable/formatter/signal repairs.
@@ -44521,6 +45828,8 @@ static positive storage_test_mode, storage_test_calls, storage_test_number;
 static positive storage_test_offset, storage_test_length, storage_test_used;
 static bool storage_test_arguments, storage_test_preclear;
 static p8 address_to storage_test_destination;
+static positive storage_test_net_syncs, storage_test_net_sync_failure;
+static bipolar storage_test_net_close_failure = -1;
 
 typedef struct { bool send; bipolar result; positive ask; } copy_test_step;
 static const copy_test_step address_to copy_test_steps;
@@ -44632,11 +45941,32 @@ static bipolar storage_test_call3(positive number, positive one,
         return 56;
 }
 
+static bipolar storage_test_call1(positive number, positive one)
+{
+        if (number == syscall(fsync) && storage_test_net_sync_failure)
+        {
+                storage_test_net_syncs++;
+                if (storage_test_net_syncs == storage_test_net_sync_failure)
+                        return -5;
+        }
+
+        bipolar result = (system_call_1)(number, one);
+        if (number == syscall(close) &&
+            (bipolar)one == storage_test_net_close_failure)
+        {
+                storage_test_net_close_failure = -1;
+                return result < 0 ? result : -5;
+        }
+        return result;
+}
+
+#define system_call_1(...) storage_test_call1(__VA_ARGS__)
 #define system_call_3(...) storage_test_call3(__VA_ARGS__)
 #define system_call_4(...) storage_test_call4(__VA_ARGS__)
 #define system_call_6(...) storage_test_call6(__VA_ARGS__)
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
+#undef system_call_1
 #undef system_call_4
 #undef system_call_6
 #undef system_call_3
@@ -45153,7 +46483,6 @@ static fn storage_test_link_state(void)
         check("a first observed down event invalidates the active link",
               net_link_news(41, 0, address_of held) && held.lost);
         netlink_forget(address_of net_states);
-        net_state_count = 0;
         memory_fill(address_of held, 0, sizeof held);
 
         {
@@ -45167,7 +46496,7 @@ static fn storage_test_link_state(void)
                 held.lease.address = 0x0a000202;
                 check("an active link can seed deletion state",
                       !net_link_news(42, IFF_RUNNING, address_of held) &&
-                          net_state_count == 1);
+                          net_states.used == sizeof(net_state));
                 header->type = RTM_DELLINK;
                 header->length = NETLINK_HEADER;
                 link->index = 42;
@@ -45176,10 +46505,9 @@ static fn storage_test_link_state(void)
                 header->length = sizeof record;
                 check("device removal invalidates its lease and carrier snapshot",
                       net_link_event(header, address_of held) && held.lost &&
-                          net_state_count == 0);
+                          !net_states.used);
         }
         netlink_forget(address_of net_states);
-        net_state_count = 0;
         memory_fill(address_of held, 0, sizeof held);
 
         check("new down interface can be configured", net_link_news(11, 0, address_of held));
@@ -45244,7 +46572,6 @@ static fn storage_test_link_state(void)
         }
 
         netlink_forget(address_of net_states);
-        net_state_count = 0;
 }
 
 static fn storage_test_netlink_output(void)
@@ -45285,6 +46612,11 @@ static fn storage_test_netlink_output(void)
                               storage_test_output_used == sizeof wanted - 1 &&
                                   !memory_compare(storage_test_output, wanted,
                                                   sizeof wanted - 1));
+                        netlink_buffer failed = {.used = positive_max};
+                        check("route name growth overflow poisons its staged table",
+                              !net_name_seen(
+                                  (netlink_header address_to)message.bytes,
+                                  address_of failed) && failed.failed);
                 }
                 netlink_forget(address_of message);
         }
@@ -45366,10 +46698,69 @@ static fn storage_test_netlink_output(void)
         }
 
         {
+                netlink_buffer next = {0};
+
+                check("prior route names reserve room",
+                      net_room(address_of net_names, sizeof(net_name)));
+                if (!net_names.failed)
+                {
+                        net_name address_to old =
+                            (net_name address_to)net_names.bytes;
+                        old->index = 3;
+                        string_copy(old->name, "old");
+                        net_names.used = sizeof(net_name);
+                }
+
+                check("replacement route names reserve room",
+                      net_room(address_of next, sizeof(net_name)));
+                if (!next.failed)
+                {
+                        net_name address_to fresh =
+                            (net_name address_to)next.bytes;
+                        fresh->index = 4;
+                        string_copy(fresh->name, "new");
+                        next.used = sizeof(net_name);
+                }
+                check("a failed link dump preserves the complete prior name table",
+                      !net_names_commit(address_of next, -1) &&
+                          net_name_of(3) &&
+                          string_equals(net_name_of(3), "old") &&
+                          !net_name_of(4));
+
+                check("failed route names reserve room",
+                      net_room(address_of next, sizeof(net_name)));
+                if (!next.failed)
+                {
+                        next.used = sizeof(net_name);
+                        next.failed = true;
+                }
+                check("a failed name callback preserves the complete prior table",
+                      !net_names_commit(address_of next, 0) &&
+                          net_name_of(3) &&
+                          string_equals(net_name_of(3), "old"));
+
+                check("successful route names reserve room",
+                      net_room(address_of next, sizeof(net_name)));
+                if (!next.failed)
+                {
+                        net_name address_to fresh =
+                            (net_name address_to)next.bytes;
+                        fresh->index = 4;
+                        string_copy(fresh->name, "new");
+                        next.used = sizeof(net_name);
+                }
+                check("only a complete name table is published",
+                      net_names_commit(address_of next, 0) &&
+                          !net_name_of(3) &&
+                          net_name_of(4) &&
+                          string_equals(net_name_of(4), "new"));
+                netlink_forget(address_of net_names);
+        }
+
+        {
                 netlink_buffer message = {0};
                 p32 index = 7;
 
-                net_name_count = 0;
                 check("route name table fixture reserves room",
                       net_room(address_of net_names, sizeof(net_name)));
                 if (!net_names.failed)
@@ -45380,13 +46771,13 @@ static fn storage_test_netlink_output(void)
                         entry->name[0] = 'd';
                         entry->name[1] = 27;
                         entry->name[2] = 0;
-                        net_name_count = 1;
+                        net_names.used = sizeof(net_name);
                 }
 
                 check("netlink route output fixture builds",
                       netlink_begin(address_of message, RTM_NEWROUTE, 0, 1,
                                     sizeof(netlink_route)));
-                if (!message.failed && net_name_count)
+                if (!message.failed && net_names.used == sizeof(net_name))
                 {
                         netlink_route address_to body =
                             (netlink_route address_to)netlink_body(
@@ -45407,7 +46798,6 @@ static fn storage_test_netlink_output(void)
                 }
                 netlink_forget(address_of message);
                 netlink_forget(address_of net_names);
-                net_name_count = 0;
         }
 
         {
@@ -45449,12 +46839,101 @@ static bipolar storage_test_file_read(string_address path,
         return got;
 }
 
+static fn storage_test_wget_304(string_address target)
+{
+        static p8 answer[] = "HTTP/1.1 304 Not Modified\r\n"
+                             "Content-Length: 9\r\n"
+                             "\r\n"
+                             "forbidden";
+        socket_address_internet where = {0};
+        p32 where_size = sizeof where;
+        b32 one = 1;
+        bipolar listening = socket_new(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+
+        check("304 preservation server opens", listening >= 0);
+        if (listening < 0)
+                return;
+        where.family = AF_INET;
+        where.host = network_order_32(HOST_LOOPBACK);
+        check("304 preservation server binds",
+              socket_option_set((b32)listening, SOL_SOCKET, SO_REUSEADDR,
+                                address_of one, sizeof one) == 0 &&
+                  socket_bind((b32)listening, address_of where,
+                              sizeof where) == 0 &&
+                  socket_listen((b32)listening, 1) == 0 &&
+                  socket_name((b32)listening, address_of where,
+                              address_of where_size) == 0 &&
+                  where_size == sizeof where && where.port);
+        if (!where.port)
+        {
+                socket_close((b32)listening);
+                return;
+        }
+
+        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+        check("304 preservation server starts", child >= 0);
+        if (!child)
+        {
+                bipolar client = socket_accept((b32)listening, 0, 0, 0);
+
+                if (client >= 0)
+                {
+                        p8 request[256];
+                        socket_receive((b32)client, request, sizeof request,
+                                       0, 0, 0);
+                        system_write_all((positive)client, answer,
+                                         sizeof answer - 1);
+                        socket_close((b32)client);
+                }
+                socket_close((b32)listening);
+                system_call_1(syscall(exit_group), client < 0 ? 1 : 0);
+        }
+        if (child < 0)
+        {
+                socket_close((b32)listening);
+                return;
+        }
+
+        socket_close((b32)listening);
+        {
+                p8 url[64];
+                positive used = sizeof("http://127.0.0.1:") - 1;
+                string_address address_to saved_words = program_words;
+                b32 saved_count = program_words_count;
+                positive raw = 0;
+
+                memory_copy(url, "http://127.0.0.1:", used);
+                used += positive_into(url + used,
+                                      network_order_16(where.port));
+                url[used++] = '/';
+                url[used] = end;
+                string_address words[] = {
+                    "wget", "-q", "-O", target, url, null};
+                program_arguments_use(words, 5);
+                check("wget refuses a terminal 304",
+                      net_wget() == 1);
+                if (saved_words)
+                        program_arguments_use(saved_words, saved_count);
+                else
+                        program_arguments_own();
+                check("304 preservation server completes",
+                      system_wait4_retry((b32)child, address_of raw, 0,
+                                         null) == child &&
+                          wait_status_code(raw) == 0);
+        }
+}
+
 static fn storage_test_net_files(void)
 {
         p8 root[FILE_PATH_MAX] = {0};
         p8 target[FILE_PATH_MAX] = {0};
         p8 retained[FILE_PATH_MAX] = {0};
+        p8 raced_directory[FILE_PATH_MAX] = {0};
         p8 raced[FILE_PATH_MAX] = {0};
+        p8 pinned_directory[FILE_PATH_MAX] = {0};
+        p8 pinned_directory_slash[FILE_PATH_MAX] = {0};
+        p8 directory_link[FILE_PATH_MAX] = {0};
+        p8 endpoint_leaf[FILE_PATH_MAX] = {0};
         p8 bytes[128];
         positive used = string_copy_end(
                             root,
@@ -45466,6 +46945,44 @@ static fn storage_test_net_files(void)
               system_make_directory_at(AT_FDCWD, root, 0700) == 0);
         check("network staging target path fits",
               file_path_join(target, root, (string_address) "result"));
+        check("pinned directory fixture path fits",
+              file_path_join(pinned_directory, root,
+                             (string_address)"directory"));
+        check("pinned directory link path fits",
+              file_path_join(directory_link, root,
+                             (string_address)"directory-link"));
+        positive pinned_length = string_length(pinned_directory);
+        check("pinned directory slash path fits",
+              pinned_length + 1 < sizeof(pinned_directory_slash));
+        memory_copy_apart(pinned_directory_slash, pinned_directory,
+                          pinned_length);
+        pinned_directory_slash[pinned_length] = '/';
+        pinned_directory_slash[pinned_length + 1] = end;
+        check("pinned directory fixture is created",
+              system_make_directory_at(AT_FDCWD, pinned_directory,
+                                       0700) == 0);
+        check("pinned directory link fixture is created",
+              system_symbolic_link_at((string_address)"directory",
+                                      AT_FDCWD, directory_link) == 0);
+
+        bipolar pinned = system_open_directory_nofollow(
+            AT_FDCWD, pinned_directory);
+        check("directory pin accepts an ordinary path", pinned >= 0);
+        if (pinned >= 0)
+                system_close(pinned);
+        pinned = system_open_directory_nofollow(
+            AT_FDCWD, pinned_directory_slash);
+        check("directory pin accepts a trailing slash", pinned >= 0);
+        if (pinned >= 0)
+                system_close(pinned);
+        pinned = system_open_directory_nofollow(
+            AT_FDCWD, (string_address)".");
+        check("directory pin accepts dot", pinned >= 0);
+        if (pinned >= 0)
+                system_close(pinned);
+        check("directory pin refuses a final symlink",
+              system_open_directory_nofollow(
+                  AT_FDCWD, directory_link) < 0);
 
         bipolar seed = system_open_at_mode(
             AT_FDCWD, target, FILE_WRITE | O_CLOEXEC, 0644);
@@ -45475,59 +46992,148 @@ static fn storage_test_net_files(void)
         if (seed >= 0)
                 system_close(seed);
 
-        net_staging staged;
-        bipolar handle = net_staging_open(
-            address_of staged, target,
-            (string_address) ".moonwater-test-",
-            sizeof(".moonwater-test-") - 1, 0644);
+        storage_test_wget_304(target);
+        bipolar got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("a terminal 304 preserves wget's existing destination",
+              got == 3 && !memory_compare(bytes, "old", 3));
+
+        file_facts endpoint = {0};
+        bool endpoint_known = file_look(
+            AT_FDCWD, target, AT_SYMLINK_NOFOLLOW,
+            address_of endpoint);
+        check("direct endpoint fixture has complete facts",
+              endpoint_known);
+        bipolar endpoint_parent = file_parent_open(target, endpoint_leaf);
+        check("an owned endpoint in a private parent is authorized",
+              endpoint_known && endpoint_parent >= 0 &&
+                  file_direct_endpoint_authorized(
+                      endpoint_parent, address_of endpoint));
+        p32 endpoint_owner = endpoint.owner;
+        endpoint.owner = endpoint_owner == 1 ? 2 : 1;
+        check("a cross-principal direct endpoint is refused",
+              endpoint_known && endpoint_parent >= 0 &&
+                  !file_direct_endpoint_authorized(
+                      endpoint_parent, address_of endpoint));
+        endpoint.owner = endpoint_owner;
+        if (endpoint_parent >= 0)
+                system_close(endpoint_parent);
+
+        file_staged_name link_stage;
+        bipolar link_output = file_staged_name_open(
+            address_of link_stage, directory_link, 0644,
+            FILE_STAGED_STREAM_SPECIAL);
+        check("stream staging never follows a final symlink",
+              link_output >= 0 && !link_stage.direct);
+        check("stream symlink replacement writes only to its private stage",
+              link_output >= 0 &&
+                  system_write_all((positive)link_output, "safe", 4) == 4);
+        check("stream symlink replacement publishes atomically",
+              link_output >= 0 &&
+                  file_staged_name_finish(
+                      address_of link_stage, true, 0) == 0);
+
+        file_staged_name staged;
+        bipolar handle = file_staged_name_open(
+            address_of staged, target, 0644, 0);
         check("network publication opens an adjacent exclusive stage",
               handle >= 0);
         check("network publication writes through its pinned descriptor",
               handle >= 0 &&
                   system_write_all((positive)handle, "new", 3) == 3);
         check("network publication atomically replaces the destination",
-              handle >= 0 && net_staging_finish(address_of staged, true) == 0);
-        bipolar got = storage_test_file_read(target, bytes, sizeof bytes);
+              handle >= 0 &&
+                  net_staged_name_publish(address_of staged) == 0);
+        got = storage_test_file_read(target, bytes, sizeof bytes);
         check("network publication exposes only completed bytes",
               got == 3 && !memory_compare(bytes, "new", 3));
 
-        handle = net_staging_open(
-            address_of staged, target,
-            (string_address) ".moonwater-test-",
-            sizeof(".moonwater-test-") - 1, 0644);
+        handle = file_staged_name_open(
+            address_of staged, target, 0644, 0);
+        check("pre-publication sync failure stage opens", handle >= 0);
+        if (handle >= 0)
+        {
+                system_write_all((positive)handle, "early", 5);
+                storage_test_net_syncs = 0;
+                storage_test_net_sync_failure = 1;
+                check("pre-publication sync failure is reported",
+                      net_staged_name_publish(address_of staged) ==
+                          -ERROR_INPUT_OUTPUT);
+                storage_test_net_sync_failure = 0;
+        }
+        got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("pre-publication sync failure preserves the old name",
+              got == 3 && !memory_compare(bytes, "new", 3));
+
+        handle = file_staged_name_open(
+            address_of staged, target, 0644, 0);
+        check("post-publication sync failure stage opens", handle >= 0);
+        if (handle >= 0)
+        {
+                system_write_all((positive)handle, "late", 4);
+                storage_test_net_syncs = 0;
+                storage_test_net_sync_failure = 2;
+                check("post-publication sync failure remains committed",
+                      net_staged_name_publish(address_of staged) == 0 &&
+                          storage_test_net_syncs == 2);
+                storage_test_net_sync_failure = 0;
+        }
+        got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("post-publication sync failure exposes the new name",
+              got == 4 && !memory_compare(bytes, "late", 4));
+
+        handle = file_staged_name_open(
+            address_of staged, target, 0644, 0);
+        check("post-publication close failure stage opens", handle >= 0);
+        if (handle >= 0)
+        {
+                system_write_all((positive)handle, "close", 5);
+                storage_test_net_close_failure = staged.directory;
+                check("post-publication directory close remains committed",
+                      net_staged_name_publish(address_of staged) == 0 &&
+                          storage_test_net_close_failure == -1);
+                storage_test_net_close_failure = -1;
+        }
+        got = storage_test_file_read(target, bytes, sizeof bytes);
+        check("post-publication close failure exposes the new name",
+              got == 5 && !memory_compare(bytes, "close", 5));
+
+        handle = file_staged_name_open(
+            address_of staged, target, 0644, 0);
         check("failed network publication has a private stage", handle >= 0);
         if (handle >= 0)
         {
                 check("failed network publication stage path fits",
-                      file_path_join(retained, root, staged.temporary));
+                      file_path_join(retained, root,
+                                     staged.protected.private_name));
                 system_write_all((positive)handle, "partial", 7);
-                check("failed network staging is removed by live identity",
-                      net_staging_finish(address_of staged, false) == 0);
+                file_staged_name_abort(address_of staged);
         }
         got = storage_test_file_read(target, bytes, sizeof bytes);
         check("abandoned network output preserves the caller destination",
-              got == 3 && !memory_compare(bytes, "new", 3));
+              got == 5 && !memory_compare(bytes, "close", 5));
         got = retained[0]
                   ? storage_test_file_read(retained, bytes, sizeof bytes)
                   : -1;
         check("failed staging cleanup removes only its own inode",
               got == -ERROR_NO_ENTRY);
 
-        handle = net_staging_open(
-            address_of staged, target,
-            (string_address) ".moonwater-test-",
-            sizeof(".moonwater-test-") - 1, 0644);
+        handle = file_staged_name_open(
+            address_of staged, target, 0644, 0);
         check("identity-race network stage opens", handle >= 0);
         if (handle >= 0)
         {
                 system_write_all((positive)handle, "ours", 4);
+                check("identity-race private directory path fits",
+                      file_path_join(raced_directory, root,
+                                     staged.protected.private_name));
                 check("identity-race stage path fits",
-                      file_path_join(raced, root, staged.temporary));
+                      file_path_join(raced, raced_directory,
+                                     SYSTEM_PATH_STAGE_LEAF));
                 check("identity-race fixture displaces the named stage",
-                      system_remove_at(staged.directory,
-                                       staged.temporary, 0) == 0);
+                      system_remove_at(staged.protected.directory,
+                                       SYSTEM_PATH_STAGE_LEAF, 0) == 0);
                 bipolar attacker = system_open_at_mode(
-                    staged.directory, staged.temporary,
+                    staged.protected.directory, SYSTEM_PATH_STAGE_LEAF,
                     FILE_WRITE | FILE_EXCLUSIVE | O_CLOEXEC, 0644);
                 check("identity-race replacement opens", attacker >= 0);
                 if (attacker >= 0)
@@ -45536,20 +47142,31 @@ static fn storage_test_net_files(void)
                         system_close(attacker);
                 }
                 check("a swapped staging name cannot be published",
-                      net_staging_finish(address_of staged, true) ==
+                      net_staged_name_publish(address_of staged) ==
                           -ERROR_AGAIN);
         }
         got = storage_test_file_read(target, bytes, sizeof bytes);
         check("a staging identity race preserves the destination",
-              got == 3 && !memory_compare(bytes, "new", 3));
+              got == 5 && !memory_compare(bytes, "close", 5));
         got = raced[0]
                   ? storage_test_file_read(raced, bytes, sizeof bytes)
                   : -1;
         check("a staging identity race retains the untrusted replacement",
               got == 5 && !memory_compare(bytes, "other", 5));
 
+        check("fresh resolver mode fixture removes the old destination",
+              system_remove_at(AT_FDCWD, target, 0) == 0);
+        bipolar previous_mask = system_call_1(syscall(umask), 0077);
+        bipolar resolver_written = net_write_resolv_to(target, 0x0a000001);
+        if (previous_mask >= 0)
+                (void)system_call_1(syscall(umask), (positive)previous_mask);
         check("resolver contents publish through the same atomic path",
-              net_write_resolv_to(target, 0x0a000001) == 0);
+              previous_mask >= 0 && resolver_written == 0);
+        file_facts resolver_facts;
+        check("a fresh resolver file honors a restrictive umask",
+              file_look(AT_FDCWD, target, AT_SYMLINK_NOFOLLOW,
+                        address_of resolver_facts) &&
+                  (resolver_facts.mode & 0777) == 0600);
         static p8 wanted[] =
             "nameserver 1.1.1.1\nnameserver 10.0.0.1\n";
         got = storage_test_file_read(target, bytes, sizeof bytes);
@@ -45572,6 +47189,10 @@ static fn storage_test_net_files(void)
                 system_remove_at(AT_FDCWD, retained, 0);
         if (raced[0])
                 system_remove_at(AT_FDCWD, raced, 0);
+        if (raced_directory[0])
+                system_remove_at(AT_FDCWD, raced_directory, AT_REMOVEDIR);
+        system_remove_at(AT_FDCWD, directory_link, 0);
+        system_remove_at(AT_FDCWD, pinned_directory, AT_REMOVEDIR);
         system_remove_at(AT_FDCWD, root, AT_REMOVEDIR);
 }
 
@@ -45598,6 +47219,8 @@ b32 main(void)
         return test_report(null);
 }
 #endif /* CHECK_storage_io */
+
+
 
 #ifdef CHECK_probe
 #include "../src/compiler_memory.c"

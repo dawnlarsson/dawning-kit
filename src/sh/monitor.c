@@ -481,11 +481,9 @@ static b32 monitor_sleep(p64 address_to span)
                 // interval back into the timespec it was given: the second
                 // sleep on the same span was a sleep of nothing, and every
                 // frame after the first came out at once.
-                p64 left[2] = {span[0], span[1]};
-                bipolar polled = system_call_5(syscall(ppoll), 0, 0,
-                                               (positive)left,
-                                               (positive)address_of previous,
-                                               8);
+                timespec left = {(b64)span[0], (b64)span[1]};
+                bipolar polled = system_poll_wait(
+                    null, 0, address_of left, address_of previous);
 
                 if (polled >= 0)
                 {

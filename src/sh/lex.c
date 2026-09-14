@@ -101,9 +101,12 @@ _Static_assert(__builtin_offsetof(lex_frame, line) == 24, "line");
 
 /*
         Nested input gets its own token table; the outer table and the input
-        it views remain alive until the nested source returns.
+        it views remain alive until the nested source returns. lex_line_floor
+        names this object from file-scope assembly, whose textual references
+        LTO cannot see; external visibility keeps the symbol through whole-
+        program optimization.
 */
-static lex_frame lex_context;
+KEEP __attribute__((externally_visible)) lex_frame lex_context;
 
 #define lex_tokens lex_context.tokens
 #define lex_token_room lex_context.token_room
@@ -161,9 +164,12 @@ static fn lex_nest_leave(lex_frame address_to frame)
         ordinary     everything a word may contain without further thought,
                      which is the complement of the two above plus the things
                      that begin a quote or an expansion
+
+        lex_line_floor names both tables from file-scope assembly, so they
+        need the same external visibility as lex_context under LTO.
 */
-static b8 lex_ordinary[STRING_SET_BYTES];
-static b8 lex_operator[STRING_SET_BYTES];
+KEEP __attribute__((externally_visible)) b8 lex_ordinary[STRING_SET_BYTES];
+KEEP __attribute__((externally_visible)) b8 lex_operator[STRING_SET_BYTES];
 // What decides nothing inside a double quote: wider than lex_ordinary,
 // because a blank means nothing in there.
 static b8 lex_in_double[STRING_SET_BYTES];

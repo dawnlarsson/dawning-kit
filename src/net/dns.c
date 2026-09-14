@@ -62,8 +62,6 @@
 #define DNS_CODE_MASK 0x000f
 
 #define DNS_MAX_MESSAGE 4096
-#define DNS_NANOSECONDS 1000000000
-
 //      Everything the caller may want to tell apart.
 #define DNS_OK 0
 #define DNS_NO_SERVER (-1)
@@ -439,14 +437,12 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         bipolar handle;
         bipolar written;
         bipolar got;
+        bipolar failure = DNS_NO_REPLY;
         p16 flags;
         positive at;
         positive answers;
         positive question_length;
-        positive budget;
-        positive began;
-        bool first_wait = true;
-        bool clocked;
+        network_deadline deadline;
 
         if (!network_transaction_secure(address_of id, sizeof id))
                 return DNS_NO_RANDOM;
@@ -469,7 +465,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 
         question_length = (positive)written + 4;
 
-        handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+        handle = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 
         if (handle < 0)
                 return DNS_NO_SERVER;
@@ -480,21 +476,14 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 
         if (socket_connect((b32)handle, address_of where, sizeof where) < 0)
         {
-                socket_close((b32)handle);
-                return DNS_NO_SERVER;
+                failure = DNS_NO_SERVER;
+                goto failed;
         }
 
-        if (socket_send((b32)handle, request, DNS_HEADER + question_length, 0, 0, 0) < 0)
-        {
-                socket_close((b32)handle);
-                return DNS_NO_REPLY;
-        }
-
-        budget = seconds > positive_max / DNS_NANOSECONDS
-                     ? positive_max
-                     : seconds * DNS_NANOSECONDS;
-        began = clock_monotonic_nanoseconds();
-        clocked = began != 0;
+        if (socket_send((b32)handle, request, DNS_HEADER + question_length,
+                        0, 0, 0) < 0 ||
+            !network_deadline_begin(address_of deadline, seconds, 0))
+                goto failed;
 
         /* A connected UDP socket authenticates the source address, not the
            transaction. An off-path sender can still spoof that address and
@@ -503,42 +492,10 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
            original total deadline. */
         for (;;)
         {
-                positive left = budget;
-
-                if (!first_wait)
-                {
-                        positive now;
-                        positive elapsed;
-
-                        if (!clocked || !(now = clock_monotonic_nanoseconds()) ||
-                            now < began)
-                        {
-                                socket_close((b32)handle);
-                                return DNS_NO_REPLY;
-                        }
-
-                        elapsed = now - began;
-                        if (elapsed >= budget)
-                        {
-                                socket_close((b32)handle);
-                                return DNS_NO_REPLY;
-                        }
-                        left = budget - elapsed;
-                }
-                first_wait = false;
-
-                got = network_wait_readable(
-                    handle, left / DNS_NANOSECONDS,
-                    left % DNS_NANOSECONDS);
-
-                if (got == NETWORK_INTERRUPTED)
-                        continue;
+                got = network_wait_readable_until(handle, address_of deadline);
 
                 if (got <= 0)
-                {
-                        socket_close((b32)handle);
-                        return DNS_NO_REPLY;
-                }
+                        goto failed;
 
                 got = socket_receive((b32)handle, reply, sizeof reply,
                                      MSG_TRUNC, 0, 0);
@@ -580,6 +537,10 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 
         return dns_answer_address(reply, (positive)got, at, (p16)answers,
                                   DNS_HEADER, found);
+
+failed:
+        socket_close((b32)handle);
+        return failure;
 }
 
 /*

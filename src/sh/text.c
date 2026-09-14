@@ -16701,13 +16701,15 @@ static bool sed_option_seen(p8 letter, string_address value)
    so the shared publisher can bind the destination to that exact inode even
    when another process can rename entries in the parent directory. */
 static bool sed_commit(bipolar directory, string_address leaf,
-                       string_address name, string_address temporary,
+                       string_address name,
+                       system_path_stage address_to output_stage,
                        bipolar staged, bipolar original,
-                       file_facts address_to replaced)
+                       file_facts address_to replaced, bool ready)
 {
         bool backup = sed_in_place[0] != '\0';
+        bipolar result = ready ? 0 : -ERROR_INPUT_OUTPUT;
 
-        if (backup)
+        if (result >= 0 && backup)
         {
                 positive length = string_length(name);
                 positive extra = string_length(sed_in_place);
@@ -16720,7 +16722,8 @@ static bool sed_commit(bipolar directory, string_address leaf,
                     extra >= TEXT_PATH_MAX - leaf_length)
                 {
                         string_diagnostic(&text_diagnostic, 0, name, "backup path too long");
-                        return false;
+                        result = -ERROR_NAME_TOO_LONG;
+                        goto publish;
                 }
 
                 memory_copy(kept, name, length);
@@ -16735,52 +16738,55 @@ static bool sed_commit(bipolar directory, string_address leaf,
                 {
                         string_diagnostic(&text_diagnostic, 0, name,
                                           file_reason(same));
-                        return false;
+                        result = same;
+                        goto publish;
                 }
 
-                /* Make the backup from the opened directory entry rather
-                   than from its reusable pathname.  The alias directory is
-                   private and contains a hard link to that exact object. */
-                p8 alias_name[TEXT_PATH_MAX];
-                bipolar alias = system_path_alias_opened_at(
-                    directory, leaf, original, alias_name,
-                    sizeof(alias_name));
-                bipolar moved = alias < 0 ? alias : system_rename_at(
-                    alias, SYSTEM_PATH_ALIAS_LEAF,
-                    directory, kept_leaf, 0);
-
-                if (moved >= 0)
-                        moved = system_path_same_opened_at(
-                            original, directory, kept_leaf);
-
-                if (alias >= 0)
+                file_facts kept_facts;
+                bipolar found = file_look_code(
+                    directory, kept_leaf, AT_SYMLINK_NOFOLLOW,
+                    address_of kept_facts);
+                bool kept_exists = found >= 0;
+                if (found < 0 && found != -ERROR_NO_ENTRY)
                 {
-                        if (moved < 0 &&
-                            system_path_same_opened_at(
-                                original, alias,
-                                SYSTEM_PATH_ALIAS_LEAF) >= 0)
-                                (void)system_path_remove_opened_at(
-                                    alias, SYSTEM_PATH_ALIAS_LEAF,
-                                    original, 0);
+                        string_diagnostic(&text_diagnostic, 0, kept,
+                                          file_reason(found));
+                        result = found;
+                        goto publish;
+                }
 
-                        (void)system_path_remove_opened_at(
-                            directory, alias_name, alias, AT_REMOVEDIR);
-                        system_close(alias);
-                }
-                if (moved < 0)
-                {
-                        string_diagnostic(&text_diagnostic, 0, kept, file_reason(moved));
-                        return false;
-                }
+                file_stage_expectation expected = {
+                    .kind = replaced->mode & MODE_FORMAT,
+                    .identity = replaced,
+                };
+                system_path_stage backup_stage;
+                bipolar backup_handle = file_stage_claim_at(
+                    address_of backup_stage, directory, kept_leaf,
+                    0, original, address_of expected);
+                result = backup_handle < 0
+                             ? backup_handle
+                             : file_stage_publish_protected_at(
+                                   address_of backup_stage, directory,
+                                   kept_leaf, backup_handle, 0,
+                                   !kept_exists,
+                                   kept_exists ? address_of kept_facts : null,
+                                   0);
+                if (result < 0)
+                        string_diagnostic(&text_diagnostic, 0, kept,
+                                          file_reason(result));
         }
 
-        bipolar moved = file_temporary_publish_decided_at(
-            directory, temporary, leaf, staged, false, replaced);
+publish:
+        bipolar moved = file_stage_publish_protected_at(
+            output_stage, directory, leaf, staged, result,
+            false, replaced, 0);
 
         if (moved >= 0)
                 return true;
 
-        string_diagnostic(&text_diagnostic, 0, name, file_reason(moved));
+        if (ready && result >= 0)
+                string_diagnostic(&text_diagnostic, 0, name,
+                                  file_reason(moved));
         return false;
 }
 
@@ -16881,7 +16887,6 @@ static b32 text_sed()
                 return text_done(string_diagnostic(&text_diagnostic, 4, null, "no input files"));
 
         b32 inputs = text_input_count();
-        positive temporary_nonce = sed_in_place ? system_nonce() : 0;
 
         for (b32 i = 0; i < inputs && leaving < 0; i++)
         {
@@ -16891,10 +16896,11 @@ static b32 text_sed()
                 string_address called = name;
                 p8 resolved[TEXT_PATH_MAX];
                 p8 leaf[TEXT_PATH_MAX];
-                p8 temporary[TEXT_PATH_MAX];
                 bipolar written = -1;
                 bipolar directory = -1;
                 bipolar original = -1;
+                system_path_stage output_stage;
+                system_path_stage_reset(address_of output_stage);
                 file_facts replaced;
                 file_facts input_facts;
 
@@ -17013,19 +17019,17 @@ static b32 text_sed()
                                 continue;
                         }
 
-                        written = file_temporary_open_at(
-                            directory, leaf, temporary, TEXT_PATH_MAX,
-                            (string_address)"sed", 3,
-                            temporary_nonce + (positive)i * 64, 64, 0600);
+                        written = file_stage_file_open_at(
+                            address_of output_stage, directory, leaf, 0600);
 
                         if (written < 0)
                         {
                                 text_close();
                                 system_close(original);
                                 system_close(directory);
-                                if (!temporary[0])
-                                        return text_done(string_diagnostic(&text_diagnostic, 4, name, "cannot make a temporary file beside"));
-                                return text_done(string_diagnostic(&text_diagnostic, 4, temporary, "cannot create"));
+                                return text_done(string_diagnostic(
+                                    &text_diagnostic, 4, name,
+                                    "cannot create private output"));
                         }
 
                         text_out_to((positive)written);
@@ -17290,26 +17294,26 @@ cycle_done:
                         bipolar chmodded = incomplete
                             ? -1
                             : file_preserve_owner_mode(
-                                  written, address_of input_facts);
+                                  written, output_stage.directory,
+                                  SYSTEM_PATH_STAGE_LEAF,
+                                  address_of input_facts,
+                                  file_replacement_mode(input_facts.mode));
                         bipolar synced = incomplete || chmodded < 0 ? -1
                             : system_call_1(syscall(fsync),
                                             (positive)written);
                         bool ready = !incomplete && chmodded >= 0 && synced >= 0;
-                        bool committed = ready && sed_commit(
-                            directory, leaf, name, temporary, written, original,
-                            address_of replaced);
-                        bipolar finished = file_stage_close_at(
-                            directory, temporary, written,
-                            committed ? 0 : -1, 0);
+                        bool committed = sed_commit(
+                            directory, leaf, name, address_of output_stage,
+                            written, original, address_of replaced, ready);
                         system_close(original);
                         system_close(directory);
 
                         /* Never replace the input with a partial temporary.
                            fchmod and fsync are part of that same transaction;
                            the open stage also gives cleanup its exact inode. */
-                        if (!committed || finished < 0)
+                        if (!committed)
                         {
-                                if (!ready || finished < 0)
+                                if (!ready)
                                         string_diagnostic(&text_diagnostic, 0,
                                                           name, "write error");
                                 if (!sed_failed)

@@ -12,6 +12,8 @@
 #ifndef STANDARD_MODERN_C_NET_NETLINK
 #define STANDARD_MODERN_C_NET_NETLINK
 
+#include "wait.c"
+
 /*
         This is ordinary C on purpose.
 
@@ -41,6 +43,7 @@
 #define NETLINK_ALIGN 4
 #define NETLINK_HEADER 16
 #define NETLINK_DATAGRAM_MAX (16u * 1024u * 1024u)
+#define NETLINK_TRANSACTION_SECONDS 10
 
 #define NLM_REQUEST 0x0001
 #define NLM_MULTI 0x0002
@@ -316,7 +319,8 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
 
 static bipolar netlink_open_groups(p32 groups)
 {
-        bipolar handle = socket_new(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE);
+        bipolar handle = socket_new(
+            AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_ROUTE);
         b32 want = 1;
 
         if (handle < 0)
@@ -353,51 +357,38 @@ static bool netlink_source_is_kernel(
                source->port == 0;
 }
 
-static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer,
-                               p32 address_to local_port)
+static bipolar netlink_receive_one(b32 handle,
+                                   netlink_buffer address_to buffer,
+                                   bool require_kernel)
 {
         bipolar size;
         bipolar got;
-        socket_address_netlink self_address;
         socket_address_netlink source;
-        p32 local_length = sizeof self_address;
         p32 source_length;
-        bool require_kernel;
 
-        memory_fill(address_of self_address, 0, sizeof self_address);
-        got = socket_name(handle, address_of self_address,
-                          address_of local_length);
-        if (got < 0 || local_length < sizeof(self_address.family))
-                return got < 0 ? got : -1;
-        require_kernel = self_address.family == AF_NETLINK;
-        if (local_port)
-                address_to local_port = require_kernel ? self_address.port : 0;
+        source_length = sizeof source;
+        memory_fill(address_of source, 0, sizeof source);
 
-        for (;;)
+        /* With MSG_TRUNC a zero-length datagram read still returns its true
+           length. Capture its sender at the same time: NETLINK_ROUTE replies
+           and notifications are authoritative only from kernel port zero. */
+        size = socket_receive(handle, null, 0, MSG_PEEK | MSG_TRUNC,
+                              address_of source, address_of source_length);
+
+        if (size < 0)
+                return size;
+
+        if (require_kernel &&
+            !netlink_source_is_kernel(address_of source, source_length))
         {
-                source_length = sizeof source;
-                memory_fill(address_of source, 0, sizeof source);
-
-                /* With MSG_TRUNC a zero-length datagram read still returns
-                   its true length.  Capture its sender at the same time:
-                   NETLINK_ROUTE replies and notifications are authoritative
-                   only when they came from kernel port zero. */
-                size = socket_receive(handle, null, 0,
-                                      MSG_PEEK | MSG_TRUNC,
-                                      address_of source,
-                                      address_of source_length);
-
-                if (size < 0)
-                        return size;
-
-                if (!require_kernel ||
-                    netlink_source_is_kernel(address_of source,
-                                              source_length))
-                        break;
-
                 /* Drop a userspace datagram without allocating according to
-                   its claimed size, then continue to the kernel reply. */
+                   its claimed size. Both callers loop: a transaction waits
+                   for its kernel reply on the next call, while an event
+                   socket returns to poll. One discard per call also bounds
+                   the work a userspace sender can impose before that poll. */
                 socket_receive(handle, null, 0, 0, 0, 0);
+                buffer->used = 0;
+                return 0;
         }
 
         if (!size || (positive)size > NETLINK_DATAGRAM_MAX)
@@ -426,17 +417,46 @@ static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer,
         return got;
 }
 
+static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer,
+                               p32 address_to local_port)
+{
+        socket_address_netlink self_address;
+        p32 local_length = sizeof self_address;
+        bipolar got;
+        bool require_kernel;
+
+        memory_fill(address_of self_address, 0, sizeof self_address);
+        got = socket_name(handle, address_of self_address,
+                          address_of local_length);
+        if (got < 0 || local_length < sizeof(self_address.family))
+                return got < 0 ? got : -1;
+
+        require_kernel = self_address.family == AF_NETLINK;
+        /* A netlink port is meaningful only when getsockname returned the
+           complete netlink address.  Other datagram families remain usable
+           by the protocol's byte-level test harness, without weakening the
+           kernel-source requirement on a real routing socket. */
+        if (require_kernel && local_length < sizeof self_address)
+                return -1;
+        if (local_port)
+                address_to local_port = require_kernel
+                                            ? self_address.port : 0;
+
+        return netlink_receive_one(handle, buffer, require_kernel);
+}
+
 typedef bool (address_to netlink_visitor)(netlink_header address_to header,
                                           address_any context);
 
-/* Multipart dumps finish with NLMSG_DONE.  Modern kernels may put a signed
-   status in its first four payload bytes (and optional extack data after it),
-   so DONE is not synonymous with success. */
-static bipolar netlink_done_status(netlink_header address_to header)
+/* NLMSG_DONE and NLMSG_ERROR share a signed status payload convention.
+   Multipart DONE may omit it; ERROR may not.  Optional extack data can follow
+   the first word.  A positive value is neither success nor a Linux errno, so
+   it is malformed rather than a successful transaction. */
+static bipolar netlink_status(netlink_header address_to header, bool empty_ok)
 {
         b32 status;
 
-        if (header->length == NETLINK_HEADER)
+        if (empty_ok && header->length == NETLINK_HEADER)
                 return 0;
         if (header->length < NETLINK_HEADER + sizeof status)
                 return -1;
@@ -494,6 +514,7 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                             netlink_visitor visit, address_any context)
 {
         netlink_header address_to header;
+        network_deadline deadline;
         bool enough = false;
         bipolar sent;
         positive at;
@@ -505,13 +526,29 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
 
         if (sent < 0)
                 return sent;
+        if (!network_deadline_begin(address_of deadline,
+                                    NETLINK_TRANSACTION_SECONDS, 0))
+                return -1;
 
         for (;;)
         {
                 p32 local_port = 0;
-                bipolar got = netlink_receive(handle, reply,
-                                               address_of local_port);
+                bipolar got = network_wait_readable_until(
+                    handle, address_of deadline);
 
+                if (got <= 0)
+                        return got < 0 ? got : -1;
+
+                got = netlink_receive(handle, reply,
+                                      address_of local_port);
+
+                /* A signal may land after ppoll reported the datagram but
+                   before either receive consumes it.  The packet remains
+                   queued, so retain the transaction's absolute deadline and
+                   wait for the same reply again instead of turning a caught
+                   signal into a failed routing operation. */
+                if (got == NETWORK_INTERRUPTED)
+                        continue;
                 if (got < 0)
                         return got;
 
@@ -540,12 +577,10 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                                 return -1;
 
                         if (header->type == NLMSG_IS_DONE)
-                                return netlink_done_status(header);
+                                return netlink_status(header, true);
 
                         if (header->type == NLMSG_IS_ERROR)
-                                return header->length < NETLINK_HEADER + sizeof(b32)
-                                    ? -1 : memory_load_unaligned(b32,
-                                        reply->bytes + at + NETLINK_HEADER);
+                                return netlink_status(header, false);
 
                         if (!enough && header->type != NLMSG_IS_NOOP && visit &&
                             !visit(header, context))
@@ -618,6 +653,24 @@ static address_any netlink_find(netlink_header address_to header, positive body,
 */
 
 static p32 netlink_sequence_next = 1;
+
+/* Sequence zero conventionally labels unsolicited notifications. Keep every
+   request/reply correlation in the nonzero namespace even after wraparound. */
+static p32 netlink_sequence_take(void)
+{
+        p32 sequence = netlink_sequence_next;
+
+        netlink_sequence_next++;
+        if (!netlink_sequence_next)
+                netlink_sequence_next = 1;
+        if (!sequence)
+        {
+                sequence = 1;
+                netlink_sequence_next = 2;
+        }
+
+        return sequence;
+}
 
 typedef struct
 {
@@ -745,7 +798,7 @@ static bipolar netlink_link_up(b32 handle, p32 index)
 {
         netlink_buffer request = {0};
         netlink_link address_to body;
-        p32 sequence = netlink_sequence_next++;
+        p32 sequence = netlink_sequence_take();
 
         if (!netlink_begin(address_of request, RTM_NEWLINK,
                            NLM_REQUEST | NLM_ACK, sequence, sizeof(netlink_link)))
@@ -773,7 +826,7 @@ static bipolar netlink_address_change(b32 handle, p16 type, p16 flags,
 {
         netlink_buffer request = {0};
         netlink_address address_to body;
-        p32 sequence = netlink_sequence_next++;
+        p32 sequence = netlink_sequence_take();
         p32 wire = network_order_32(host);
 
         if (!netlink_begin(address_of request, type, flags, sequence,
@@ -823,7 +876,7 @@ static bipolar netlink_route_change(b32 handle, p16 type, p16 flags,
 {
         netlink_buffer request = {0};
         netlink_route address_to body;
-        p32 sequence = netlink_sequence_next++;
+        p32 sequence = netlink_sequence_take();
         p32 wire_gateway = network_order_32(gateway);
         p32 wire_destination = network_order_32(destination);
 
@@ -888,7 +941,7 @@ static bipolar netlink_dump(b32 handle, p16 type, positive body, p8 family,
                             netlink_visitor visit, address_any context)
 {
         netlink_buffer request = {0};
-        p32 sequence = netlink_sequence_next++;
+        p32 sequence = netlink_sequence_take();
         if (!netlink_begin(address_of request, type, NLM_REQUEST | NLM_DUMP,
                            sequence, body))
                 return -1;

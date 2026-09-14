@@ -84,6 +84,7 @@ static positive exec_compound_depth;
 fn shell_trap_exit();
 fn exec_traps();
 fn job_forget();
+fn job_reap();
 fn trap_child_began();
 fn trap_omit_exit_set();
 static b32 exec_child_status(bipolar child);
@@ -92,10 +93,9 @@ static fn exec_pipe_status_publish(bipolar address_to values, positive count);
 static fn exec_coproc_child();
 static fn exec_coproc_reaped(bipolar pid);
 static fn exec_coproc_drop_finished();
-static bipolar address_to exec_here_children;
-static positive exec_here_children_room;
-static positive exec_here_children_count;
-static fn exec_here_children_reap(positive first, positive stop, bool wait);
+static fn exec_unknown_children_reap();
+static fn exec_parent_supervision_relax();
+static positive exec_coproc_count;
 
 /* A wait builtin in a parent-run lastpipe stage may hear that an upstream
    foreground stage exited.  That pid is not a background job, but its status
@@ -136,16 +136,27 @@ static bool exec_foreground_child_changed(bipolar pid, positive status)
         return false;
 }
 
-/* A fork inherits the parent's bookkeeping but none of the children named by
-   it.  Keep the allocation for the short-lived child and forget every row. */
-static fn exec_here_children_forget()
+/* Reset every launcher state which cannot cross a structural fork. A child
+   keeps the shell role only when its real parser parent established the full
+   protected-supervisor contract before creating it. */
+static fn exec_floodlight_child_began()
 {
-        exec_here_children_count = 0;
+        if (!floodlight_parent_protected ||
+            !floodlight_parent_supervised)
+                floodlight_parent_role = false;
+        floodlight_parent_subreaper = false;
+        floodlight_parent_subreaper_owned = false;
+        floodlight_parent_dumpable_owned = false;
+        floodlight_inplace_requested = false;
+        floodlight_inplace_final = false;
+        floodlight_inplace_descendants_checked = false;
+        floodlight_inplace_terminal = false;
 }
 
 fn exec_child_began()
 {
         exec_forked = true;
+        exec_floodlight_child_began();
         trap_child_began();
         // One more shell between this process and the one the script began
         // in, which is the whole of what $BASH_SUBSHELL counts.
@@ -156,7 +167,6 @@ fn exec_child_began()
         //      it, so it would ask about processes that are not its own and
         //      close descriptors somebody else is still handing out.
         shell_substitutions_forget();
-        exec_here_children_forget();
         shell_background_child();
         exec_coproc_child();
 }
@@ -172,9 +182,9 @@ fn exec_child_began()
 static fn exec_helper_began()
 {
         exec_forked = true;
+        exec_floodlight_child_began();
         trap_child_began();
         shell_substitutions_forget();
-        exec_here_children_forget();
         shell_background_child();
         exec_coproc_child();
 }
@@ -515,6 +525,7 @@ typedef struct
         bool reported;
         bool background;
         bool nohup;
+        bipolar owner;
         p8 address_to text;
         positive text_room;
 } job_entry;
@@ -522,6 +533,145 @@ typedef struct
 static job_entry address_to job_table;
 static positive job_room;
 static positive job_count;
+typedef struct
+{
+        bipolar pid;
+        bipolar owner;
+} exec_disowned_child;
+static exec_disowned_child address_to exec_disowned_children;
+static positive exec_disowned_children_room;
+static positive exec_disowned_children_count;
+
+/* Keep the exact direct children removed from the public job/wait tables.
+   Reserve the whole transfer first: a failed `disown` can leave the public
+   job intact, while a partial transfer would lose the remaining PIDs. */
+static bool exec_disowned_remember(job_entry address_to entry)
+{
+        bipolar own = system_call_1(syscall(getpid), 0);
+        positive count = 0;
+
+        if (own <= 0)
+                return false;
+
+        /* A fork may discard copied metadata for children owned by its
+           parent. It has no wait rows to transfer and must not claim them. */
+        if (entry->owner != own)
+                return true;
+
+        for (positive at = 0; at < shell_wait_count; at++)
+        {
+                shell_wait_entry address_to waited = shell_wait_table + at;
+
+                if (waited->job != entry->last ||
+                    (waited->flags & SHELL_WAIT_DONE))
+                        continue;
+
+                count++;
+        }
+
+        if (!count)
+                return entry->state == JOB_FINISHED;
+        if (count > positive_max - exec_disowned_children_count ||
+            !shell_array_room(exec_disowned_children,
+                              exec_disowned_children_room,
+                              exec_disowned_children_count + count))
+                return false;
+
+        for (positive at = 0; at < shell_wait_count; at++)
+        {
+                shell_wait_entry address_to waited = shell_wait_table + at;
+                exec_disowned_child address_to child;
+
+                if (waited->job != entry->last ||
+                    (waited->flags & SHELL_WAIT_DONE))
+                        continue;
+
+                child = exec_disowned_children +
+                        exec_disowned_children_count++;
+                child->pid = waited->pid;
+                child->owner = own;
+        }
+
+        return true;
+}
+
+static bool exec_disowned_kept(bipolar own)
+{
+        positive into = 0;
+        bool live = false;
+
+        for (positive at = 0; at < exec_disowned_children_count; at++)
+        {
+                exec_disowned_child child = exec_disowned_children[at];
+                positive status = 0;
+                bipolar got;
+
+                /* A fork inherits bookkeeping for children it does not own.
+                   It may discard those copied rows without touching them. */
+                if (child.owner != own)
+                        continue;
+
+                got = system_wait4_retry(child.pid, address_of status,
+                                         JOB_NO_HANG, null);
+                if (got == child.pid || got == ERROR_NO_CHILDREN)
+                        continue;
+
+                exec_disowned_children[into++] = child;
+                live = true;
+        }
+
+        exec_disowned_children_count = into;
+        return live;
+}
+
+/* Prepare the one transition which has no protected parent after success.
+   A restricted nonfinal decision must already have established the verified
+   contract. The descendant check then releases only shell-owned process
+   attributes. Final policy may use this one-shot marker; if it starts
+   irreversible confinement, any failed exec ends the process. */
+static bool exec_inplace_ready(bool restricted)
+{
+        bipolar own = system_call_1(syscall(getpid), 0);
+
+        floodlight_inplace_final = false;
+        floodlight_inplace_terminal = false;
+        floodlight_inplace_descendants_checked = false;
+
+        /* An ordinary stock exec retains normal shell semantics. A child
+           inventory is security-relevant only once this target needs final
+           confinement or an earlier confined descendant is still supervised. */
+        if (!restricted && !floodlight_parent_supervised)
+        {
+                floodlight_inplace_requested = true;
+                floodlight_inplace_final = true;
+                return true;
+        }
+
+        if (own <= 0)
+                return false;
+
+        /* In-place replacement transfers every unreaped child to the target,
+           even when this command itself is unrestricted. Poll exact owners
+           first, then use authenticated procfs as the final liveness answer. */
+        if (job_count)
+                job_reap();
+        (void)exec_disowned_kept(own);
+        exec_coproc_drop_finished();
+        shell_substitutions_reap();
+        if (floodlight_parent_supervised)
+                exec_unknown_children_reap();
+
+        if (floodlight_descendants_blocking())
+                return false;
+
+        if (floodlight_parent_supervised &&
+            !floodlight_parent_release_subreaper())
+                return false;
+        floodlight_inplace_requested = true;
+        floodlight_inplace_final = true;
+        floodlight_inplace_descendants_checked = true;
+        return true;
+}
 static positive job_numbered;
 static positive job_current;
 static positive job_previous;
@@ -559,6 +709,15 @@ static fn job_child_watch();
 static PURE bool job_monitor()
 {
         return !exec_forked && shell_option_on(SHELL_OPTION_MONITOR);
+}
+
+/* An implicit final-command exec may remove the shell only when no state
+   needs it after the command returns.  A monitored command needs the shell
+   to own its process group, and any recorded trap may need a command-boundary
+   or EXIT action.  Explicit `exec` keeps its separate, deliberate semantics. */
+static PURE bool exec_tail_line_safe()
+{
+        return !job_monitor() && !trap_count;
 }
 
 static bipolar job_group_of(bipolar process)
@@ -799,6 +958,7 @@ fn job_forget()
         while (job_count)
                 job_drop_at(job_count - 1);
 
+        exec_disowned_children_count = 0;
         job_numbered = 0;
         job_current = 0;
         job_previous = 0;
@@ -1008,6 +1168,7 @@ static positive job_started(bipolar address_to children, positive count,
         entry->reported = false;
         entry->background = background;
         entry->nohup = false;
+        entry->owner = system_call_1(syscall(getpid), 0);
         entry->text = null;
         entry->text_room = 0;
 
@@ -1138,6 +1299,20 @@ static positive job_running_children(bipolar last)
 static bipolar address_to job_held;
 static positive job_held_room;
 
+/* Every allocation needed to retain a child is completed before fork.  A
+   monitored foreground pipeline additionally needs a stable PID copy if it
+   stops; background pipelines retain directly from their launch vector. */
+static bool job_reserve(positive count, bool stopped_pipeline)
+{
+        if (!count || job_count == positive_max ||
+            !shell_background_reserve(count) ||
+            !shell_array_room(job_table, job_room, job_count + 1))
+                return false;
+
+        return !stopped_pipeline ||
+               shell_array_room(job_held, job_held_room, count);
+}
+
 static bool job_hold(bipolar address_to children, positive count)
 {
         if (!count || !shell_array_room(job_held, job_held_room, count))
@@ -1204,7 +1379,6 @@ static fn job_child_changed(bipolar pid, positive status)
         shell_background_reaped(pid, status);
         exec_coproc_reaped(pid);
 
-        // A here-document writer is a child too, and belongs to no job.
         at = job_find(pid, true);
 
         if (at < job_count)
@@ -1314,47 +1488,27 @@ static fn job_child_watch()
 
 fn job_notice()
 {
-        if (!job_child_news || !job_count)
+        if (!job_child_news)
                 return;
 
-        job_reap();
-}
+        /* The wait table owns child statuses even when allocating the
+           descriptive jobs row failed after a child was retained. */
+        if (shell_wait_count)
+                job_reap();
+        else
+                job_child_news = false;
 
-/* Reap only the here-document writers owned by one redirect scope.  A broad
-   wait for any child can steal a foreground pipeline stage before its local
-   waiter records PIPESTATUS.  Stable removal also leaves writers created by
-   a nested function after `stop` outside the enclosing redirect's range. */
-static fn exec_here_children_reap(positive first, positive stop, bool wait)
-{
-        positive at = first;
-
-        if (stop > exec_here_children_count)
-                stop = exec_here_children_count;
-
-        while (at < stop)
+        if (exec_disowned_children_count)
         {
-                positive raw = 0;
-                bipolar child = exec_here_children[at];
-                bipolar reaped = system_wait4_retry(
-                    child, address_of raw, wait ? 0 : JOB_NO_HANG, null);
+                bipolar own = system_call_1(syscall(getpid), 0);
 
-                if (!reaped)
-                {
-                        at++;
-                        continue;
-                }
-
-                /* A targeted wait can only answer this pid or an error such
-                   as ECHILD when the job-control sweep got there first. In
-                   either case this process has no further claim on the row. */
-                for (positive move = at + 1;
-                     move < exec_here_children_count; move++)
-                        exec_here_children[move - 1] =
-                            exec_here_children[move];
-
-                exec_here_children_count--;
-                stop--;
+                if (own > 0)
+                        (void)exec_disowned_kept(own);
         }
+
+        shell_substitutions_reap();
+        exec_coproc_drop_finished();
+        exec_unknown_children_reap();
 }
 
 /* Whether any job is stopped, which is what an interactive shell asks before
@@ -2409,6 +2563,15 @@ fn shell_disown(writer write, string_address input)
                         }
 
                         touched = true;
+                        if (!exec_disowned_remember(job_table + at))
+                        {
+                                answer = string_report(
+                                    log_error, 2,
+                                    "disown: no room to retain child\n");
+                                at++;
+                                continue;
+                        }
+
                         shell_wait_drop(job_table[at].last);
                         job_drop_at(at);
                 }
@@ -2420,7 +2583,7 @@ fn shell_disown(writer write, string_address input)
                         return shell_answer(string_report(
                             log_error, 1, "disown: current: no such job\n"));
 
-                return shell_answer(0);
+                return shell_answer(answer);
         }
 
         for (positive at = walk.index; at < shell_argc; at++)
@@ -2457,6 +2620,13 @@ fn shell_disown(writer write, string_address input)
                         continue;
                 }
 
+                if (!exec_disowned_remember(job_table + found))
+                {
+                        answer = string_report(
+                            log_error, 2,
+                            "disown: no room to retain child\n");
+                        continue;
+                }
                 shell_wait_drop(job_table[found].last);
                 job_drop_at(found);
         }
@@ -2688,12 +2858,19 @@ static b32 job_foreground_wait(bipolar child, bipolar group, b32 node)
         which point setpgid is refused. Both sides racing to the same answer is
         what makes the group certain, and only a fork has two sides.
 */
-static fn job_execute_foreground()
+static fn job_execute_foreground(bool confined)
 {
         bipolar child;
 
+        if (!job_reserve(1, false))
+        {
+                shell_answer(string_report(log_error, 2,
+                                           "No room to retain foreground job\n"));
+                return;
+        }
+
         log_flush();
-        child = shell_clone();
+        child = confined ? shell_clone() : shell_clone_raw();
 
         if (child == 0)
         {
@@ -2724,12 +2901,16 @@ static fn job_execute_foreground()
         utility rather than loading one, and what the fork costs over the
         spawn buys a `sleep` that control-Z can stop.
 */
-fn job_execute_tool(positive which)
+fn job_execute_tool(positive which, bool confined)
 {
         bipolar child;
 
+        if (!job_reserve(1, false))
+                return shell_answer(string_report(
+                    log_error, 2, "No room to retain foreground job\n"));
+
         log_flush();
-        child = shell_clone();
+        child = confined ? shell_clone() : shell_clone_raw();
 
         if (child == 0)
         {
@@ -4524,23 +4705,201 @@ static positive history_read(string_address path, positive skip)
         return seen;
 }
 
-static bool history_write(string_address path, positive from, bool append)
+static bipolar history_write_lines(bipolar handle, positive from)
 {
-        bipolar handle = system_open_at_mode(
-            AT_FDCWD, path, append ? FILE_APPEND : FILE_WRITE, 0600);
-
-        if (handle < 0)
-                return string_report(log_error, false, "history: %s: cannot write\n",
-                              path);
-
         for (positive at = from; at < history_used; at++)
         {
-                system_write_all((positive)handle, history_text[at],
-                                 string_length(history_text[at]));
-                system_write_all((positive)handle, "\n", 1);
+                positive length = string_length(history_text[at]);
+                system_write_result written = system_write_all_checked(
+                    (positive)handle, history_text[at], length);
+
+                if (written.bytes != length)
+                        return written.error ? written.error
+                                             : -ERROR_INPUT_OUTPUT;
+
+                written = system_write_all_checked((positive)handle, "\n", 1);
+                if (written.bytes != 1)
+                        return written.error ? written.error
+                                             : -ERROR_INPUT_OUTPUT;
         }
 
-        system_close(handle);
+        return 0;
+}
+
+static bipolar history_append(string_address path, positive from)
+{
+        p8 leaf[FILE_PATH_MAX];
+        bipolar directory = file_parent_open(path, leaf);
+        if (directory < 0)
+                return directory;
+
+        file_facts existing;
+        bipolar looked = file_look_code(directory, leaf,
+                                        AT_SYMLINK_NOFOLLOW,
+                                        address_of existing);
+        bool exists = looked >= 0;
+        if (looked < 0 && looked != -ERROR_NO_ENTRY)
+        {
+                system_close(directory);
+                return looked;
+        }
+        if (exists && (existing.mask & STATX_BASIC) != STATX_BASIC)
+        {
+                system_close(directory);
+                return -ERROR_INPUT_OUTPUT;
+        }
+        if (exists && !file_direct_endpoint_authorized(
+                          directory, address_of existing))
+        {
+                system_close(directory);
+                return -ERROR_ACCESS;
+        }
+        if (exists && (existing.mode & MODE_FORMAT) == MODE_LINK)
+        {
+                system_close(directory);
+                return -ERROR_TOO_MANY_LEVELS;
+        }
+
+        positive flags = (FILE_APPEND & ~FILE_CREATE) |
+                         O_NOFOLLOW | O_CLOEXEC;
+        if (exists && (existing.mode & MODE_FORMAT) == MODE_FILE)
+                flags |= O_NONBLOCK;
+        bipolar handle = exists
+                             ? file_direct_endpoint_open(
+                                   directory, leaf, address_of existing,
+                                   flags)
+                             : system_open_at_mode(
+                                   directory, leaf,
+                                   FILE_APPEND | FILE_EXCLUSIVE |
+                                       O_NOFOLLOW | O_CLOEXEC,
+                                   0600);
+
+        if (handle < 0)
+        {
+                system_close(directory);
+                return handle;
+        }
+
+        bipolar result = history_write_lines(handle, from);
+        bipolar closed = system_close(handle);
+        /* Closing the read-only parent cannot undo bytes already appended.
+           Do not report a false failure that would append the same history
+           range again on the next save. */
+        (void)system_close(directory);
+
+        return result < 0 ? result : closed;
+}
+
+static bipolar history_write_direct_at(bipolar directory,
+                                       string_address leaf,
+                                       file_facts address_to expected,
+                                       positive from)
+{
+        positive flags = (FILE_WRITE & ~(FILE_CREATE | O_TRUNC)) |
+                         O_NOFOLLOW | O_CLOEXEC;
+        bipolar handle = file_direct_endpoint_open(
+            directory, leaf, expected, flags);
+
+        if (handle < 0)
+                return handle;
+
+        bipolar result = history_write_lines(handle, from);
+        bipolar closed = system_close(handle);
+        return result < 0 ? result : closed;
+}
+
+/* Regular histories are prepared beside a pinned destination and published
+   only after their writes, metadata, sync and writing-descriptor close have
+   all succeeded. Missing destinations use RENAME_NOREPLACE; existing ones
+   use their original identity in the exchange. Special files retain stream
+   semantics, while a final-component symlink fails closed. */
+static bipolar history_replace(string_address path, positive from)
+{
+        p8 leaf[FILE_PATH_MAX];
+        bipolar directory = file_parent_open(path, leaf);
+        if (directory < 0)
+                return directory;
+
+        file_facts existing;
+        bipolar looked = file_look_code(directory, leaf,
+                                        AT_SYMLINK_NOFOLLOW,
+                                        address_of existing);
+        bool exists = looked >= 0;
+        if (looked < 0 && looked != -ERROR_NO_ENTRY)
+        {
+                system_close(directory);
+                return looked;
+        }
+        if (exists && (existing.mask & STATX_BASIC) != STATX_BASIC)
+        {
+                system_close(directory);
+                return -ERROR_INPUT_OUTPUT;
+        }
+        if (exists && !file_direct_endpoint_authorized(
+                          directory, address_of existing))
+        {
+                system_close(directory);
+                return -ERROR_ACCESS;
+        }
+
+        positive kind = exists ? existing.mode & MODE_FORMAT : MODE_FILE;
+        if (kind == MODE_LINK)
+        {
+                system_close(directory);
+                return -ERROR_TOO_MANY_LEVELS;
+        }
+        if (exists && kind != MODE_FILE)
+        {
+                bipolar result = history_write_direct_at(
+                    directory, leaf, address_of existing, from);
+                bipolar closed = system_close(directory);
+                return result < 0 ? result : closed;
+        }
+
+        positive mode = exists ? file_replacement_mode(existing.mode) : 0600;
+        system_path_stage protected;
+        bipolar handle = file_stage_file_open_at(
+            address_of protected, directory, leaf, 0600);
+        if (handle < 0)
+        {
+                system_close(directory);
+                return handle;
+        }
+
+        bipolar result = history_write_lines(handle, from);
+        if (result >= 0 && exists)
+                result = system_call_3(syscall(fchown),
+                                       (positive)handle,
+                                       existing.owner,
+                                       existing.group);
+        if (result >= 0)
+                result = system_call_2(syscall(fchmod),
+                                       (positive)handle, mode);
+        if (result >= 0)
+                result = system_call_1(syscall(fsync),
+                                       (positive)handle);
+
+        result = file_stage_publish_protected_at(
+            address_of protected, directory, leaf, handle, result,
+            !exists, exists ? address_of existing : null, 0);
+        /* A successful protected rename committed the history.  The parent
+           descriptor is read-only, so a later close error cannot make that
+           publication fail or justify writing the range a second time. */
+        (void)system_close(directory);
+        return result;
+}
+
+static bool history_write(string_address path, positive from, bool append)
+{
+        bipolar result = append ? history_append(path, from)
+                                : history_replace(path, from);
+
+        if (result < 0)
+                return string_report(log_error, false,
+                                     "history: %w: cannot write: %s\n",
+                                     writer_terminal_name, path,
+                                     file_reason(result));
+
         history_saved = history_used;
 
         return true;
@@ -5078,6 +5437,13 @@ static b32 history_edit(writer write, string_address editor, positive first,
                 return editor_status;
         }
 
+        /* A confined editor can leave a descendant which still knows this
+           private pathname.  Do not turn bytes that process can continue to
+           change into shell commands after the editor itself has returned. */
+        if (floodlight_parent_supervised &&
+            floodlight_descendants_present())
+                goto failed;
+
         handle = system_open_at(directory, "commands",
                                 FILE_READ | O_NOFOLLOW | O_CLOEXEC);
 
@@ -5473,6 +5839,7 @@ static COLD bool exec_script_preserve(parse_node address_to node)
         ul_limit_pair limits;
         b32 floor = 255;
         bipolar moved;
+        b32 previous = exec_script_fd;
 
         if (ul_prlimit(0, 7, null, address_of limits) >= 0 && limits.soft <= 255)
                 floor = limits.soft > 3 ? (b32)limits.soft - 1 : 3;
@@ -5485,7 +5852,8 @@ static COLD bool exec_script_preserve(parse_node address_to node)
         if (moved < 0)
                 return false;
 
-        system_close(exec_script_fd);
+        shell_parser_source_relocated(previous, moved);
+        system_close(previous);
         exec_script_fd = (b32)moved;
         return true;
 }
@@ -5530,13 +5898,15 @@ static COLD bool exec_internal_source_release(
 
         if (source == exec_script_fd)
         {
+                b32 previous = exec_script_fd;
                 bipolar moved = exec_internal_duplicate(
                     exec_script_fd, node, 3, source);
 
                 if (moved < 0)
                         return false;
 
-                system_close(exec_script_fd);
+                shell_parser_source_relocated(previous, moved);
+                system_close(previous);
                 exec_script_fd = (b32)moved;
         }
 
@@ -5556,6 +5926,13 @@ static bool exec_save_fd(b32 fd, parse_node address_to node)
         // later in the same redirect list. Keep the original live on failure.
         if (fd == exec_script_fd && !exec_script_preserve(node))
                 return string_report(log_error, false, "Cannot preserve script input\n");
+
+        /* A temporary redirect can hide the parser descriptor before an
+           expansion helper or nested command forks. Freeze while the owning
+           handle is still installed and publish the save for this scope. */
+        if (shell_parser_source_active &&
+            shell_parser_source_handle == fd)
+                shell_parser_source_fork_prepare();
 
         if (exec_save_count >= REDIRECT_SAVE_MAX)
                 return string_report(log_error, false, "Too many redirections\n");
@@ -5579,6 +5956,10 @@ static bool exec_save_fd(b32 fd, parse_node address_to node)
                 return string_report(log_error, false, "Cannot preserve descriptor %p\n",
                               (positive)fd);
 
+        if (!closed && shell_parser_source_active &&
+            shell_parser_source_handle == fd)
+                shell_parser_source_relocated(fd, saved);
+
         exec_saves[exec_save_count].fd = fd;
         exec_saves[exec_save_count].saved = closed ? -1 : (b32)saved;
         exec_save_count++;
@@ -5596,6 +5977,10 @@ static fn exec_redirect_restore(b32 mark)
 
                 if (saved->saved >= 0)
                 {
+                        if (shell_parser_source_active &&
+                            shell_parser_source_handle == saved->saved)
+                                shell_parser_source_relocated(saved->saved,
+                                                              saved->fd);
                         system_duplicate(saved->saved, saved->fd, 0);
                         system_close(saved->saved);
                         continue;
@@ -5615,8 +6000,48 @@ static fn exec_redirect_forget(b32 mark)
                 exec_saved_fd address_to saved = exec_saves + --exec_save_count;
 
                 if (saved->saved >= 0)
+                {
+                        if (shell_parser_source_active &&
+                            shell_parser_source_handle == saved->saved)
+                                shell_parser_source_relocated(saved->saved,
+                                                              saved->fd);
                         system_close(saved->saved);
+                }
         }
+}
+
+/* A bare exec makes its own saves permanent, but an enclosing function,
+   eval or compound-command redirect may still restore the parser descriptor
+   when that scope returns.  Refreshing while such a save exists would
+   authenticate the temporary descriptor and forget the pipe the reader will
+   resume, giving a nested confined applet a writable parser alias. */
+static bool exec_parser_source_can_refresh()
+{
+        /* A substitution, pipeline stage or explicit subshell has a private
+           descriptor table. Its bare exec cannot change the parent process
+           which will resume the published reader, so its inherited snapshot
+           must stay fixed until that final child exits. */
+        if (!shell_parser_source_active ||
+            shell_parser_source_process !=
+                system_call_1(syscall(getpid), 0))
+                return false;
+
+        for (b32 at = 0; at < exec_save_count; at++)
+                if (exec_saves[at].fd == shell_parser_source_handle)
+                        return false;
+
+        return true;
+}
+
+static bool exec_parser_source_saved(b32 mark)
+{
+        for (b32 at = mark; at < exec_save_count; at++)
+                if (exec_saves[at].saved >= 0 &&
+                    shell_parser_source_active &&
+                    shell_parser_source_handle == exec_saves[at].saved)
+                        return true;
+
+        return false;
 }
 
 // A failed redirect may have closed fd 2 already. Put this redirect's saved
@@ -5728,7 +6153,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
         b32 ends[2];
         bipolar child;
 
-        if (system_pipe(ends, 0) < 0)
+        if (system_pipe(ends, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
                 return false;
 
         log_flush();
@@ -5785,7 +6210,7 @@ static bool exec_here_string_expand_isolated(string_address word,
         b32 ends[2];
         bipolar child;
 
-        if (system_pipe(ends, 0) < 0)
+        if (system_pipe(ends, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
                 return false;
 
         log_flush();
@@ -5821,57 +6246,59 @@ static bool exec_here_string_expand_isolated(string_address word,
         return exec_helper_collect(child, ends[0], start, out, out_length);
 }
 
-/* A here-document body reaches the command through a writer child. Pipe
-   capacity is a per-pipe kernel decision and can fall below its usual value
-   under memory pressure, so the shell must never fill it before the reader
-   exists. An empty body needs no writer. */
-static bipolar exec_here_pipe(string_address body, positive length)
+/* Large here-document bodies use a sealed file so staging cannot block before
+   the command starts reading. Small bodies retain ordinary pipe semantics. */
+static bipolar exec_here_file(string_address body, positive length)
+{
+        bipolar handle = system_call_2(
+            syscall(memfd_create),
+            (positive)(string_address)"shell-here",
+            SHELL_PARSER_MFD_CLOEXEC | SHELL_PARSER_MFD_ALLOW_SEALING);
+
+        if (handle < 0 ||
+            system_write_all((positive)handle, body, length) != length ||
+            system_seek(handle, 0, FILE_SEEK_SET) != 0 ||
+            system_call_3(syscall(fcntl), (positive)handle,
+                          SHELL_PARSER_F_ADD_SEALS,
+                          SHELL_PARSER_SNAPSHOT_SEALS) < 0 ||
+            !shell_parser_snapshot_sealed(handle))
+        {
+                if (handle >= 0)
+                        system_close(handle);
+                return -1;
+        }
+
+        return handle;
+}
+
+#define EXEC_F_GETPIPE_SZ 1032
+/* Materialize every here-document without a writer process. A function or
+   compound command may execute `exec` beneath a redirect, so recognizing
+   only a literal top-level exec cannot prove that a helper will be reaped.
+   A body which fits the kernel's actual empty-pipe capacity keeps ordinary
+   pipe semantics; a larger body uses a sealed memfd and cannot block before
+   the reader exists. */
+static bipolar exec_here_open(string_address body, positive length)
 {
         b32 ends[2];
-        bipolar child;
 
-        if (system_pipe(ends, 0) < 0)
-                return -1;
-
-        if (!length)
+        if (system_pipe(ends, SHELL_PIPE_CLOSE_ON_EXEC) >= 0)
         {
-                system_close(ends[1]);
-                return ends[0];
-        }
+                bipolar capacity = system_call_3(
+                    syscall(fcntl), (positive)ends[1], EXEC_F_GETPIPE_SZ, 0);
 
-        /* Reserve before forking.  Once the child exists, losing its pid
-           would leave no safe way to distinguish it from jobs and pipeline
-           stages in a later wait. */
-        if (!shell_array_room(exec_here_children, exec_here_children_room,
-                              exec_here_children_count + 1))
-        {
+                if (capacity >= 0 && (positive)capacity >= length &&
+                    system_write_all((positive)ends[1], body, length) ==
+                        length)
+                {
+                        system_close(ends[1]);
+                        return ends[0];
+                }
                 system_close(ends[0]);
                 system_close(ends[1]);
-                return -1;
         }
 
-        log_flush();
-        child = shell_clone();
-
-        if (child == 0)
-        {
-                system_close(ends[0]);
-                trap_default_all();
-
-                exit(system_write_all(ends[1], body, length) == length ? 0 : 1);
-        }
-
-        system_close(ends[1]);
-
-        if (child < 0)
-        {
-                system_close(ends[0]);
-                return -1;
-        }
-
-        exec_here_children[exec_here_children_count++] = child;
-
-        return ends[0];
+        return exec_here_file(body, length);
 }
 
 // Open an output redirect without replacing an existing regular file when
@@ -5933,17 +6360,17 @@ static COLD b32 exec_redirect_refused(p8 op, string_address target,
         shell_diagnostic_where();
 
         if (shell_bash_compat)
-                return string_report(log_error, false, "%s: %s\n", target,
-                                     why);
+                return string_report(log_error, false, "%w: %s\n",
+                                     writer_terminal_name, target, why);
 
         if (code == ERROR_NO_ENTRY)
                 why = reading ? (string_address) "No such file"
                               : (string_address) "Directory nonexistent";
 
         return string_report(log_error, false,
-                             reading ? "cannot open %s: %s\n"
-                                     : "cannot create %s: %s\n",
-                             target, why);
+                             reading ? "cannot open %w: %s\n"
+                                     : "cannot create %w: %s\n",
+                             writer_terminal_name, target, why);
 }
 
 /* `{name}` / `{name[index]}` names the descriptor stored in that variable. */
@@ -6240,7 +6667,7 @@ static bool exec_redirect_apply(b32 index)
                                 }
                         }
 
-                        opened = exec_here_pipe(body, length);
+                        opened = exec_here_open(body, length);
                 }
                 else if (want->op == OP_HERESTRING)
                 {
@@ -6252,7 +6679,7 @@ static bool exec_redirect_apply(b32 index)
                                                               address_of length))
                                 return false;
 
-                        opened = exec_here_pipe(body, length);
+                        opened = exec_here_open(body, length);
                 }
                 else if (want->op == OP_GREATAND || want->op == OP_LESSAND)
                 {
@@ -6380,6 +6807,14 @@ static bool exec_redirect_apply(b32 index)
                         }
 
                         system_close(opened);
+                }
+                else if (system_descriptor_install(opened, fd) < 0)
+                {
+                        system_close(opened);
+                        exec_redirect_diagnostic_restore(redirect_mark);
+                        return string_report(log_error, false,
+                                              "Cannot redirect descriptor: %p\n",
+                                              (positive)fd);
                 }
         }
 
@@ -9361,16 +9796,30 @@ static b32 exec_dispatch(b32 command_word)
                 {
                         string_address address_to saved_argv = shell_argv;
                         positive saved_argc = shell_argc;
+                        bool monitored = job_monitor();
+                        b32 policy;
+
+                        /* A monitored external skips the Spark preflight and
+                           forks directly.  Freeze a regular reader here only
+                           when its nonfinal policy proves confinement is
+                           required; the final child merely verifies it. */
+                        policy = floodlight_launch_decide(
+                            found, shell_argv, shell_argc, false,
+                            false, false, null);
 
                         if (!bowl_wrap_command(found, shell_directory,
                                                address_of shell_argv,
                                                address_of shell_argc))
                                 shell_argv[0] = found;
 
-                        if (shell_tail_command)
+                        if (shell_tail_command &&
+                            policy != FLOODLIGHT_LAUNCH_REFUSE &&
+                            exec_inplace_ready(
+                                floodlight_parent_supervised))
                                 shell_thread_instance_mode(exec_asynchronous);
-                        else if (job_monitor())
-                                job_execute_foreground();
+                        else if (monitored)
+                                job_execute_foreground(
+                                    policy != FLOODLIGHT_LAUNCH_ALLOW);
                         else
                                 shell_execute_command();
                         shell_argv = saved_argv;
@@ -9647,8 +10096,6 @@ static b32 exec_simple(b32 index)
         b32 kept_count = 0;
         b32 expanded_count = 0;
         b32 mark = exec_save_count;
-        positive here_first = exec_here_children_count;
-        positive here_stop = here_first;
         b32 count = 0;
         b32 first = 0;
         b32 declaration_from = -1;
@@ -9849,7 +10296,6 @@ static b32 exec_simple(b32 index)
         {
                 if (!exec_redirect_apply(index))
                 {
-                        here_stop = exec_here_children_count;
                         exec_redirect_restore(mark);
                         status = (exec_line_aborted() ? shell_status :
                                   exec_redirect_status ? exec_redirect_status
@@ -9864,7 +10310,6 @@ static b32 exec_simple(b32 index)
                         goto fail;
                 }
                 redirects_applied = true;
-                here_stop = exec_here_children_count;
         }
         for (at = 0; at < leading && !exec_line_aborted(); at++)
         {
@@ -10025,7 +10470,6 @@ static b32 exec_simple(b32 index)
         {
                 if (!exec_redirect_apply(index))
                 {
-                        here_stop = exec_here_children_count;
                         exec_redirect_restore(mark);
                         status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
                         // An expansion error already selected its reader boundary.
@@ -10041,14 +10485,12 @@ static b32 exec_simple(b32 index)
                 }
 
                 redirects_applied = true;
-                here_stop = exec_here_children_count;
         }
 
         if (first == count)
         {
                 if (node->redirect_count)
                         exec_redirect_restore(mark);
-                exec_here_children_reap(here_first, here_stop, true);
                 shell_status = shell_substitution_status;
                 shell_store_rewind(address_of exec_store, arena_mark);
                 return shell_status;
@@ -10108,12 +10550,36 @@ static b32 exec_simple(b32 index)
         if (node->redirect_count)
         {
                 if (bare_exec)
-                        exec_redirect_forget(mark);
+                {
+                        if (exec_parser_source_can_refresh() &&
+                            exec_parser_source_saved(mark) &&
+                            floodlight_parent_supervised &&
+                            floodlight_descendants_present())
+                        {
+                                /* A confined child may have selected or
+                                   modified the proposed new input before it
+                                   was opened. Keep the old authenticated
+                                   reader instead of publishing that source. */
+                                exec_redirect_restore(mark);
+                                status = shell_status = 126;
+                                log_error("exec: active child prevents replacing shell input\n",
+                                          0);
+                                bare_exec = false;
+                                shell_exec_failed(126);
+                        }
+                        else
+                                exec_redirect_forget(mark);
+                        /* Subsequent commands on this physical line can feed
+                           a new pipe installed by the committed exec.
+                           Authenticate it only when no outer temporary
+                           redirect will put the old reader back. Ambiguity
+                           remains fail-closed. */
+                        if (bare_exec && exec_parser_source_can_refresh())
+                                shell_parser_source_refresh();
+                }
                 else
                         exec_redirect_restore(mark);
         }
-        exec_here_children_reap(here_first, here_stop, !bare_exec);
-
         /* lima bash waitchld's leftover children when a simple command
            finishes, which is when a coproc that died during `sleep` is
            forgotten so a later unquoted wait $C_PID sees nothing. */
@@ -10135,7 +10601,6 @@ static b32 exec_simple(b32 index)
 fail:
         if (redirects_applied)
                 exec_redirect_restore(mark);
-        exec_here_children_reap(here_first, here_stop, true);
         if (kept && !exec_finish_prefixes(kept, kept_count) && !status)
                 status = shell_status = 2;
         exec_put_back(expanded_kept, expanded_count, true);
@@ -11683,11 +12148,73 @@ static fn exec_child_signals(bool background, bool null_input)
         }
 }
 
+/* Recognize only the command name whose bytes are already fixed in the
+   parent's parse tree. Functions and shell builtins keep their precedence;
+   dynamic and compound commands reach the child with no claimed contract and
+   therefore fail closed if they later try to confine an in-process applet. */
+static bool exec_literal_tool(b32 index, string_address address_to name,
+                              positive2 address_to named)
+{
+        parse_node address_to node = parse_nodes + index;
+        b32 at = 0;
+        b32 word;
+
+        if (node->kind != NODE_SIMPLE || !node->word_count)
+                return false;
+
+        while (at < node->word_count &&
+               (parse_word_flags[node->word + at] & PARSE_WORD_ASSIGNMENT))
+                at++;
+        if (at >= node->word_count)
+                return false;
+
+        word = node->word + at;
+        if (!(parse_word_flags[word] & PARSE_WORD_LITERAL) ||
+            string_first_of_set(parse_words[word], "*?[~") ||
+            string_first_of(parse_words[word], '/'))
+                return false;
+
+        *name = parse_words[word];
+        *named = string_hash_33_length(*name);
+        if (exec_function_slot(*name, *named) != positive_max ||
+            exec_control_builtin(*name, false) ||
+            shell_command_named_hashed(*name, *named))
+                return false;
+
+        return shell_tool_find_hashed(*name, *named) != SHELL_TOOLS;
+}
+
+/* A fallback-confined resident applet can run inside the structural child
+   without another fork. Establish the real parser parent's contract before
+   making that child. A later flag refusal is harmless; network/spawn policy
+   depends only on this already authenticated literal subject. */
+static fn exec_node_parent_policy_prepare(b32 index)
+{
+        string_address name;
+        positive2 named;
+        string_address arguments[2];
+
+        if (!exec_literal_tool(index, address_of name, address_of named))
+                return;
+
+        arguments[0] = name;
+        arguments[1] = null;
+        (void)floodlight_launch_decide(null, arguments, 1, true,
+                                       false, false, null);
+}
+
 static bipolar exec_spawn_node(b32 index, bool background)
 {
         bipolar child;
         bool monitor = job_monitor();
 
+        if ((background || monitor) && !job_reserve(1, false))
+        {
+                log_error(str("No room to retain child\n"));
+                return -ERROR_NO_MEMORY;
+        }
+
+        exec_node_parent_policy_prepare(index);
         log_flush();
         child = shell_clone();
 
@@ -11789,7 +12316,6 @@ static PURE bool exec_pipe_omits_exit(b32 kind)
         Answers -1 for "not this stage", which is not an error: the caller
         forks as it always did.
 */
-#define EXEC_PIPE_CLOSE_ON_EXEC 02000000
 #define EXEC_STAGE_WORDS_MAX 64
 
 static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
@@ -11829,6 +12355,13 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
         name = words[0];
         executable = name;
 
+        if (exec_literal_tool(index, address_of name, address_of named))
+        {
+                /* The structural caller already prepared the owning parser
+                   before choosing between this probe and its fork path. */
+                return -1;
+        }
+
         /* Let ordinary dispatch own the one user-facing refusal. This path
            only declines the direct spawn that would otherwise bypass it. */
         if (!shell_command_path_allowed(name, false))
@@ -11841,8 +12374,10 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
                 named = string_hash_33_length(name);
 
                 if (exec_function_slot(name, named) != positive_max ||
-                    shell_command_named_hashed(name, named) ||
                     exec_control_builtin(name, false))
+                        return -1;
+
+                if (shell_command_named_hashed(name, named))
                         return -1;
 
                 if (shell_find_in_path_alloc(name, address_of found,
@@ -11892,6 +12427,9 @@ static b32 coproc_kept(b32 descriptor)
         bipolar moved = system_call_3(syscall(fcntl), (positive)descriptor,
                                       F_DUPFD_CLOEXEC, COPROC_FLOOR);
 
+        /* Both original ends were made close-on-exec by pipe2. A low
+           descriptor is therefore still safe when the process limit leaves
+           no number at COPROC_FLOOR or above. */
         if (moved < 0)
                 return descriptor;
 
@@ -11910,7 +12448,6 @@ typedef struct
 } exec_coproc_slot;
 
 static exec_coproc_slot exec_coprocs[EXEC_COPROC_LIVE];
-static positive exec_coproc_count;
 
 static fn exec_coproc_child()
 {
@@ -11991,6 +12528,82 @@ static fn exec_coproc_remember(string_address name, positive name_length,
         slot->pid = pid;
 }
 
+/* A subreaper can acquire an orphan which has no shell bookkeeping row. Reap
+   only exact PIDs absent from every owner table; broad wait4(-1) would steal
+   the status of a foreground pipeline stage. */
+static bool exec_child_tracked(bipolar pid)
+{
+        exec_foreground_frame address_to frame;
+        bipolar own = system_call_1(syscall(getpid), 0);
+
+        for (positive at = 0; at < shell_wait_count; at++)
+                if (shell_wait_table[at].pid == pid &&
+                    !(shell_wait_table[at].flags & SHELL_WAIT_DONE))
+                        return true;
+        for (positive at = 0; at < expand_substitutions_count; at++)
+                if (expand_substitutions[at].child == pid)
+                        return true;
+        for (positive at = 0; at < exec_coproc_count; at++)
+                if (exec_coprocs[at].pid == pid)
+                        return true;
+        for (positive at = 0; at < exec_disowned_children_count; at++)
+                if (exec_disowned_children[at].owner == own &&
+                    exec_disowned_children[at].pid == pid)
+                        return true;
+        for (frame = exec_foreground_frames; frame; frame = frame->previous)
+                for (positive at = 0; at < frame->count; at++)
+                        if (frame->children[at] == pid)
+                                return true;
+
+        return false;
+}
+
+static fn exec_unknown_children_reap()
+{
+        p8 text[FLOODLIGHT_CHILDREN_ROOM];
+        bipolar got;
+        p8 address_to at;
+        p8 address_to stop;
+
+        if (!floodlight_parent_supervised)
+                return;
+
+        got = floodlight_descendants_read(text, sizeof(text));
+        if (got <= 0)
+                return;
+        at = text;
+        stop = text + got;
+
+        while (at < stop)
+        {
+                bipolar child = floodlight_child_next(address_of at, stop);
+
+                if (child <= 0)
+                        return;
+                if (!exec_child_tracked(child))
+                {
+                        positive status = 0;
+
+                        (void)system_wait4_retry(child, address_of status,
+                                                JOB_NO_HANG, null);
+                }
+        }
+}
+
+/* Protection is needed only while a confined descendant can outlive its
+   immediate launcher. Once the authenticated inventory is empty, restore
+   shell-owned subreaper and dumpability state so later ordinary commands keep
+   the process and ptrace semantics their caller supplied. */
+static fn exec_parent_supervision_relax()
+{
+        if (!floodlight_parent_supervised)
+                return;
+
+        exec_unknown_children_reap();
+        if (!floodlight_descendants_present())
+                (void)floodlight_parent_release_subreaper();
+}
+
 static b32 exec_coproc(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -12006,6 +12619,10 @@ static b32 exec_coproc(b32 index)
         if (name_length > EXEC_COPROC_NAME)
                 return string_report(log_error, 1, "coproc: %s: name too long\n", name);
 
+        if (!shell_background_reserve(1))
+                return string_report(log_error, 2,
+                                     "No room to retain coprocess\n");
+
         if (exec_coproc_count)
         {
                 shell_diagnostic_where();
@@ -12016,16 +12633,18 @@ static b32 exec_coproc(b32 index)
 
         log_flush();
 
-        if (system_pipe(address_of into, 0) < 0)
+        if (system_pipe(address_of into, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
                 return string_report(log_error, 1, "coproc: no pipe\n");
 
-        if (system_pipe(address_of from, 0) < 0)
+        if (system_pipe(address_of from, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
         {
                 system_close(into[0]);
                 system_close(into[1]);
                 return string_report(log_error, 1, "coproc: no pipe\n");
         }
 
+        job_child_watch();
+        exec_node_parent_policy_prepare(node->left);
         child = exec_stage_spawn(node->left, into[0], from[1]);
 
         if (child < 0)
@@ -12132,6 +12751,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         positive at;
         bool spawn_failed = false;
         bool monitor = job_monitor();
+        bool monitor_retained = false;
         bool lastpipe = !background && !monitor &&
                         shell_shopt_on(LASTPIPE);
         bool lastpipe_ran = false;
@@ -12152,6 +12772,17 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         if (wanted > positive_max / sizeof(children[0]) ||
             !shell_array_room(children, children_room, wanted))
                 return string_report(log_error, 2, "No room for pipeline\n");
+
+        if ((background || monitor) &&
+            !job_reserve(count, monitor && !background))
+        {
+                memory_free(children, children_room * sizeof(children[0]));
+                return string_report(log_error, 2,
+                                     "No room to retain pipeline\n");
+        }
+
+        if (background)
+                job_child_watch();
 
         if (lastpipe)
         {
@@ -12193,7 +12824,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                    write end waits for an end of file that never comes. The
                    forked path is unaffected: it duplicates the ends it wants
                    onto 0 and 1, and a duplicate does not carry the flag. */
-                if (!last && system_pipe(ends, EXEC_PIPE_CLOSE_ON_EXEC) < 0)
+                if (!last &&
+                    system_pipe(ends, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
                 {
                         spawn_failed = true;
                         break;
@@ -12206,6 +12838,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                    time the request has returned it may already have exec'd,
                    at which point setpgid is refused. Under the monitor the
                    stage is forked, which is slower and has two sides. */
+                exec_node_parent_policy_prepare(child);
                 made = monitor
                            ? -1
                            : exec_stage_spawn(child, upstream,
@@ -12403,7 +13036,14 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
         if (monitor)
         {
-                job_hold(children, started);
+                /* Install the already-reserved wait rows before consuming
+                   any status.  A short early stage may exit before a later
+                   stage stops; retaining only afterwards would resurrect
+                   that reaped PID as a live child. */
+                if (job_hold(children, started))
+                        monitor_retained =
+                            job_retain(job_held, started, pipefail, invert,
+                                       false);
                 job_terminal_give(group);
         }
 
@@ -12411,20 +13051,26 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         {
                 b32 got;
                 positive raw = 0;
+                bool changed = false;
 
                 if (monitor)
                 {
                         if (system_wait4_retry(children[at], address_of raw,
                                                JOB_UNTRACED, null) < 0)
                                 got = 1;
-                        else if ((raw & 0xff) == 0x7f)
-                        {
-                                stopped = true;
-                                stopped_by = (raw >> 8) & 0xff;
-                                got = 128 + (b32)stopped_by;
-                        }
                         else
-                                got = wait_status_code(raw);
+                        {
+                                changed = true;
+
+                                if ((raw & 0xff) == 0x7f)
+                                {
+                                        stopped = true;
+                                        stopped_by = (raw >> 8) & 0xff;
+                                        got = 128 + (b32)stopped_by;
+                                }
+                                else
+                                        got = wait_status_code(raw);
+                        }
                 }
                 else if (early_status && early_status[at] != positive_max)
                 {
@@ -12433,6 +13079,11 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 }
                 else
                         got = exec_wait_status(children[at], 0, address_of raw);
+
+                if (monitor_retained && changed &&
+                    (raw & 0xff) != 0x7f &&
+                    (raw & 0xffff) != 0xffff)
+                        shell_background_reaped(job_held[at], raw);
 
                 if (got)
                         rightmost_failure = got;
@@ -12481,13 +13132,10 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         /* A pipeline stopped in front is a job from that moment on: it is
            listed, it is what `fg` means, and the number it answers with is the
            one POSIX gives a command that stopped rather than ended. */
-        if (stopped && job_hold(job_held, started))
+        if (stopped && monitor_retained)
         {
-                positive number =
-                    job_retain(job_held, started, pipefail, invert, false)
-                        ? job_started(job_held, started, group, first, true,
-                                      false)
-                        : 0;
+                positive number = job_started(job_held, started, group, first,
+                                              true, false);
                 positive slot = number ? job_find(number, false) : job_count;
 
                 memory_free(children, children_room * sizeof(children[0]));
@@ -12505,6 +13153,9 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                 return 128 + (b32)stopped_by;
         }
+
+        if (monitor_retained)
+                shell_wait_drop(job_held[started - 1]);
 
         exec_pipe_status_pending = false;
         exec_pipe_status_publish(children, started);
@@ -12986,6 +13637,7 @@ static b32 exec_background(b32 index)
                 index = body;
         }
 
+        job_child_watch();
         child = exec_spawn_node(index, true);
 
         if (child < 0)
@@ -13060,6 +13712,8 @@ static b32 exec_node(b32 index)
         if (trap_caught && !trap_inside && !exec_line_aborted())
                 exec_traps();
 
+        exec_parent_supervision_relax();
+
         return status;
 }
 
@@ -13068,15 +13722,13 @@ static b32 exec_node_kind(b32 index)
         /* The count is read first and it is an ordinary word: a shell with
            nothing in the background never touches the volatile flag beside
            it, so the notice costs one load and a branch not taken. */
-        if (job_count && job_child_news)
+        if (job_child_news)
                 job_notice();
 
         parse_node address_to node;
         shell_mark expanded;
         b32 mark;
         b32 status;
-        positive here_first;
-        positive here_stop;
 
         if (!index)
                 return shell_status;
@@ -13177,21 +13829,16 @@ static b32 exec_node_kind(b32 index)
         // while a redirect target dies as soon as its descriptor is open.
         expanded = shell_store_mark(address_of expand_store);
         mark = exec_save_count;
-        here_first = exec_here_children_count;
-        here_stop = here_first;
         token_used = 0;
 
         if (node->redirect_count && !exec_redirect_apply(index))
         {
-                here_stop = exec_here_children_count;
                 exec_redirect_restore(mark);
-                exec_here_children_reap(here_first, here_stop, true);
                 exec_expansion_done(expanded, substitutions);
 
                 shell_status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
                 return shell_status;
         }
-        here_stop = exec_here_children_count;
 
         exec_compound_depth++;
 
@@ -13228,7 +13875,6 @@ static b32 exec_node_kind(b32 index)
         exec_compound_depth--;
 
         exec_redirect_restore(mark);
-        exec_here_children_reap(here_first, here_stop, true);
 
         if (shell_bash_compat && exec_compound_depth == 0)
                 shell_child_death_flush();
@@ -13275,15 +13921,6 @@ fn exec_program(b32 root)
         exec_signal = EXEC_SIGNAL_NONE;
         exec_signal_level = 0;
 
-        // Reap without forgetting: wait still owes the status to the script.
-        //
-        /* A bare `exec` can deliberately leave a here-document descriptor in
-           the shell. Its writer is the only kind that outlives the redirect
-           scope, and targeted polling keeps it bounded without consuming a
-           foreground pipeline's status. */
-        if (!exec_depth && exec_here_children_count)
-                exec_here_children_reap(0, exec_here_children_count, false);
-
         // Only when something was started in the background. This runs at the
         // top of every complete command, so a script that never forked one
         // was paying a wait4 per line to be told it has no children.
@@ -13305,9 +13942,6 @@ fn exec_program(b32 root)
                 exec_node(root);
 
         exec_depth--;
-
-        if (!exec_depth && exec_here_children_count)
-                exec_here_children_reap(0, exec_here_children_count, false);
 
         shell_store_rewind(address_of exec_store, kept_arena);
         exec_save_count = kept_saves;

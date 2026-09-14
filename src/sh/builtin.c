@@ -352,6 +352,19 @@ static PURE bool exec_special_builtin(string_address name);
 static fn exec_special_error_note();
 static bool exec_child_process();
 static bool job_any_stopped();
+static bool exec_inplace_ready(bool restricted);
+static bool floodlight_parent_prepare(bool supervise);
+static bool floodlight_parent_protected;
+static bool floodlight_parent_subreaper;
+static bool floodlight_parent_supervised;
+static bool floodlight_inplace_requested;
+static bool floodlight_inplace_final;
+static bool floodlight_inplace_descendants_checked;
+static bool floodlight_inplace_terminal;
+static DEAD_END fn floodlight_silent_stop();
+#define FLOODLIGHT_LAUNCH_ALLOW 0
+#define FLOODLIGHT_LAUNCH_PROCESS 1
+#define FLOODLIGHT_LAUNCH_REFUSE 2
 /* Whether the builtin before this one was exit, which is how both references
    decide that a second exit past a refused one may leave. The dispatcher
    maintains it, because it is a fact about what ran before. */
@@ -376,14 +389,20 @@ static fn exec_source_return_trap();
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
 fn shell_execute_command();
-bipolar shell_spawn_tool(string_address address_to arguments,
-                         b32 output, bool quiet);
+static bipolar shell_spawn_tool_preflighted(
+    string_address address_to arguments, b32 output, bool quiet);
 typedef struct
 {
         bipolar handle;
         p8 identity[FILE_PATH_MAX];
 } floodlight_executable;
 
+static b32 floodlight_launch_decide(
+    string_address executable, string_address address_to arguments,
+    positive count, bool tool, bool final, bool diagnose,
+    floodlight_executable address_to pinned);
+
+static DEAD_END fn floodlight_silent_stop();
 static bool floodlight_external_final(
     string_address executable, string_address address_to arguments,
     positive count, floodlight_executable address_to pinned);
@@ -427,6 +446,117 @@ static bool shell_pipe_status_wanted(const_string name, positive length)
 #define FLOODLIGHT_DESCRIPTOR_PREFIX "/proc/self/fd/"
 #define FLOODLIGHT_PROC_MAGIC 0x9fa0
 
+/* A zero syscall result is not enough when an inherited seccomp filter can
+   synthesize it.  Every Floodlight identity/classification needs the complete
+   statx basic set, and proc topology additionally needs a mount id. */
+static bool floodlight_facts_complete(
+    const file_facts address_to facts, bool mount)
+{
+        return (facts->mask & STATX_BASIC) == STATX_BASIC &&
+               (!mount || (facts->mask & STATX_MOUNT_ID));
+}
+
+static bipolar floodlight_proc_root_open(file_facts address_to facts)
+{
+        bipolar proc = system_open_at(
+            AT_FDCWD, (string_address)"/proc",
+            FILE_READ | O_DIRECTORY | O_CLOEXEC);
+        file_mount_facts mount = {0};
+
+        if (proc < 0)
+                return proc;
+
+        if (system_call_2(syscall(fstatfs), (positive)proc,
+                          (positive)address_of mount) < 0 ||
+            mount.type != FLOODLIGHT_PROC_MAGIC ||
+            !file_look(proc, (string_address)"", AT_EMPTY_PATH, facts) ||
+            !floodlight_facts_complete(facts, true))
+        {
+                system_close(proc);
+                return -ERROR_ACCESS;
+        }
+
+        return proc;
+}
+
+/* /proc/misc is a kernel-owned inventory outside the caller's /dev mount.
+   A mount namespace can hide /dev/floodlight, but it cannot make the genuine
+   registered misc device disappear from an authenticated procfs view. Return
+   one when the policy device is registered, zero when it is absent, and a
+   negative result when stock-kernel absence cannot be proved. */
+static bipolar floodlight_policy_registered()
+{
+#define FLOODLIGHT_MISC_MAX 4096
+        static const p8 registered[] = "249 floodlight";
+        p8 text[FLOODLIGHT_MISC_MAX];
+        file_facts proc_facts;
+        file_facts misc_facts;
+        file_mount_facts mount = {0};
+        bipolar proc = floodlight_proc_root_open(address_of proc_facts);
+        bipolar handle = -1;
+        bipolar got = -ERROR_ACCESS;
+        positive used = 0;
+        bipolar result = -ERROR_ACCESS;
+
+        if (proc < 0)
+                return proc;
+
+        handle = system_open_at(
+            proc, (string_address)"misc",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        if (handle < 0 ||
+            system_call_2(syscall(fstatfs), (positive)handle,
+                          (positive)address_of mount) < 0 ||
+            mount.type != FLOODLIGHT_PROC_MAGIC ||
+            !file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of misc_facts) ||
+            !floodlight_facts_complete(address_of misc_facts, true) ||
+            misc_facts.mount_id != proc_facts.mount_id ||
+            (misc_facts.mode & MODE_FORMAT) != MODE_FILE)
+                goto finished;
+
+        while (used < sizeof(text) - 1)
+        {
+                memory_fill(text + used, 0, sizeof(text) - used);
+                got = system_read_retry((positive)handle, text + used,
+                                        sizeof(text) - 1 - used);
+                if (got <= 0)
+                        break;
+                if ((positive)got > sizeof(text) - 1 - used)
+                        goto finished;
+                used += (positive)got;
+        }
+        if (got < 0 || used >= sizeof(text) - 1)
+                goto finished;
+
+        result = 0;
+        for (positive at = 0; at < used;)
+        {
+                positive stop = at;
+
+                while (stop < used && text[stop] != '\n')
+                        stop++;
+                while (at < stop &&
+                       (text[at] == ' ' || text[at] == '\t'))
+                        at++;
+                if (stop - at == sizeof(registered) - 1 &&
+                    !memory_compare(text + at, registered,
+                                    sizeof(registered) - 1))
+                {
+                        result = 1;
+                        break;
+                }
+                at = stop < used ? stop + 1 : stop;
+        }
+
+finished:
+        if (handle >= 0)
+                system_close(handle);
+        system_close(proc);
+        return result;
+#undef FLOODLIGHT_MISC_MAX
+}
+
 static fn floodlight_descriptor_name(p8 address_to into, bipolar handle)
 {
         positive used = positive_into_string(into, (positive)handle);
@@ -443,23 +573,14 @@ static fn floodlight_descriptor_path(p8 address_to into, bipolar handle)
         into[used] = end;
 }
 
-/* Hold the proc root while resolving self/fd, and require the resulting
-   directory to remain on that exact proc mount.  A bind-mounted fd directory
-   from another process has procfs's magic too, but necessarily crosses to a
-   different mount id.  Finally prove the table's own descriptor row follows
-   back to the directory inode, which distinguishes self from another genuine
-   /proc/<pid>/fd directory on the same mount. */
-static bool floodlight_descriptor_table_open(file_walk address_to table)
+/* Hold the authenticated proc root while resolving a process table and
+   require the result to stay on that exact proc mount. */
+static bool floodlight_proc_directory_open(
+    file_walk address_to table, string_address path)
 {
-        bipolar proc = system_open_at(
-            AT_FDCWD, (string_address)"/proc",
-            FILE_READ | O_DIRECTORY | O_CLOEXEC);
-        file_mount_facts proc_mount;
-        file_mount_facts table_mount;
+        file_mount_facts table_mount = {0};
         file_facts proc_facts;
         file_facts table_facts;
-        file_facts through;
-        p8 own_name[24];
         bool safe = false;
 
         table->handle = -1;
@@ -467,16 +588,12 @@ static bool floodlight_descriptor_table_open(file_walk address_to table)
         table->have = 0;
         table->at = 0;
 
+        bipolar proc = floodlight_proc_root_open(address_of proc_facts);
+
         if (proc < 0)
                 return false;
 
-        if (system_call_2(syscall(fstatfs), (positive)proc,
-                          (positive)address_of proc_mount) < 0 ||
-            proc_mount.type != FLOODLIGHT_PROC_MAGIC ||
-            !file_look(proc, (string_address)"", AT_EMPTY_PATH,
-                       address_of proc_facts) ||
-            !(proc_facts.mask & STATX_MOUNT_ID) ||
-            !file_walk_open(table, proc, (string_address)"self/fd"))
+        if (!file_walk_open(table, proc, path))
                 goto finished;
 
         if (system_call_2(syscall(fstatfs), (positive)table->handle,
@@ -484,13 +601,8 @@ static bool floodlight_descriptor_table_open(file_walk address_to table)
             table_mount.type != FLOODLIGHT_PROC_MAGIC ||
             !file_look(table->handle, (string_address)"", AT_EMPTY_PATH,
                        address_of table_facts) ||
-            !(table_facts.mask & STATX_MOUNT_ID) ||
+            !floodlight_facts_complete(address_of table_facts, true) ||
             table_facts.mount_id != proc_facts.mount_id)
-                goto finished;
-
-        floodlight_descriptor_name(own_name, table->handle);
-        if (!file_look(table->handle, own_name, 0, address_of through) ||
-            !file_same_identity(address_of table_facts, address_of through))
                 goto finished;
 
         safe = true;
@@ -500,6 +612,39 @@ finished:
         if (!safe && table->handle >= 0)
                 file_walk_close(table);
         return safe;
+}
+
+/* A bind-mounted fd directory from another process has procfs's magic too,
+   but necessarily crosses to a different mount id.  The common opener above
+   checks that.  Finally prove this table's own descriptor row follows back to
+   the directory inode, which distinguishes self from another genuine
+   /proc/<pid>/fd directory on the same mount. */
+static bool floodlight_descriptor_table_open(file_walk address_to table)
+{
+        file_facts table_facts;
+        file_facts through;
+        p8 own_name[24];
+
+        if (!floodlight_proc_directory_open(
+                table, (string_address)"self/fd"))
+                return false;
+
+        if (!file_look(table->handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of table_facts) ||
+            !floodlight_facts_complete(address_of table_facts, false))
+                goto refuse;
+
+        floodlight_descriptor_name(own_name, table->handle);
+        if (!file_look(table->handle, own_name, 0, address_of through) ||
+            !floodlight_facts_complete(address_of through, false) ||
+            !file_same_identity(address_of table_facts, address_of through))
+                goto refuse;
+
+        return true;
+
+refuse:
+        file_walk_close(table);
+        return false;
 }
 
 static bipolar floodlight_descriptor_read_link(
@@ -516,6 +661,218 @@ static bipolar floodlight_descriptor_read_link(
         length = system_read_link_at(table.handle, name, into, room);
         file_walk_close(address_of table);
         return length;
+}
+
+/* A seccomp filter cannot distinguish opening /proc/PID/mem from an ordinary
+   file open.  Yama scope 1 or stronger supplies the missing process boundary:
+   a confined descendant cannot trace its parent or an unrelated same-UID
+   process.  Authenticate the sysctl on the same proc mount used by the
+   descriptor inventory and fail closed when that guarantee is absent. */
+static bool floodlight_ptrace_scope_safe()
+{
+        p8 text[16];
+        file_facts proc_facts;
+        file_facts scope_facts;
+        file_mount_facts mount = {0};
+        bipolar proc = floodlight_proc_root_open(address_of proc_facts);
+        bipolar handle = -1;
+        bipolar got = -ERROR_ACCESS;
+        positive used = 0;
+        bool safe = false;
+
+        if (proc < 0)
+                return false;
+
+        handle = system_open_at(
+            proc, (string_address)"sys/kernel/yama/ptrace_scope",
+            FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        if (handle < 0 ||
+            system_call_2(syscall(fstatfs), (positive)handle,
+                          (positive)address_of mount) < 0 ||
+            mount.type != FLOODLIGHT_PROC_MAGIC ||
+            !file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of scope_facts) ||
+            !floodlight_facts_complete(address_of scope_facts, true) ||
+            scope_facts.mount_id != proc_facts.mount_id ||
+            (scope_facts.mode & MODE_FORMAT) != MODE_FILE)
+                goto finished;
+
+        while (used < sizeof(text) - 1)
+        {
+                memory_fill(text + used, 0, sizeof(text) - used);
+                got = system_read_retry((positive)handle, text + used,
+                                        sizeof(text) - 1 - used);
+                if (got <= 0)
+                        break;
+                if ((positive)got > sizeof(text) - 1 - used)
+                        goto finished;
+                used += (positive)got;
+        }
+
+        if (got < 0 || !used || used >= sizeof(text) - 1)
+                goto finished;
+        if (text[used - 1] == '\n')
+                used--;
+        safe = used == 1 && text[0] >= '1' && text[0] <= '3';
+
+finished:
+        if (handle >= 0)
+                system_close(handle);
+        system_close(proc);
+        return safe;
+}
+
+/* execve resets dumpability.  Before this shell replaces itself, ask the
+   authenticated proc mount whether the current task still has any children,
+   including jobs removed from shell bookkeeping by `disown`.  An unreadable
+   or ambiguous answer is treated as a live descendant so the nondumpable
+   supervisor remains in place. */
+/* Read the complete authenticated direct-child list. A bounded overflow is
+   ambiguity rather than an empty inventory; callers therefore fail closed. */
+#define FLOODLIGHT_CHILDREN_ROOM 4096
+static bipolar floodlight_descendants_read(p8 address_to text, positive room)
+{
+        static const p8 prefix[] = "self/task/";
+        static const p8 suffix[] = "/children";
+        p8 path[64];
+        file_facts proc_facts;
+        file_facts children_facts;
+        file_mount_facts mount = {0};
+        bipolar process = system_call_1(syscall(getpid), 0);
+        positive used = sizeof(prefix) - 1;
+        bipolar proc;
+        bipolar handle = -1;
+        bipolar got = -ERROR_ACCESS;
+        bipolar closed = 0;
+        positive filled = 0;
+
+        if (process <= 0)
+                return -ERROR_ACCESS;
+        memory_copy_apart(path, prefix, used);
+        used += positive_into(path + used, (positive)process);
+        if (used + sizeof(suffix) > sizeof(path))
+                return -ERROR_ACCESS;
+        memory_copy_end(path + used, suffix, sizeof(suffix) - 1);
+
+        proc = floodlight_proc_root_open(address_of proc_facts);
+        if (proc < 0)
+                return -ERROR_ACCESS;
+        handle = system_open_at(proc, path, FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+        if (handle < 0 ||
+            system_call_2(syscall(fstatfs), (positive)handle,
+                          (positive)address_of mount) < 0 ||
+            mount.type != FLOODLIGHT_PROC_MAGIC ||
+            !file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of children_facts) ||
+            !floodlight_facts_complete(address_of children_facts, true) ||
+            children_facts.mount_id != proc_facts.mount_id ||
+            (children_facts.mode & MODE_FORMAT) != MODE_FILE)
+                goto finished;
+
+        while (filled < room)
+        {
+                got = system_read_retry((positive)handle, text + filled,
+                                        room - filled);
+                if (got <= 0)
+                        break;
+                if ((positive)got > room - filled)
+                {
+                        got = -ERROR_ACCESS;
+                        break;
+                }
+                filled += (positive)got;
+        }
+
+        if (filled == room)
+        {
+                p8 probe;
+
+                got = system_read_retry((positive)handle,
+                                        address_of probe, 1);
+                if (!got)
+                        got = (bipolar)filled;
+                else
+                        got = -ERROR_ACCESS;
+        }
+        else if (!got)
+                got = (bipolar)filled;
+        else
+                got = -ERROR_ACCESS;
+
+finished:
+        if (handle >= 0)
+                closed = system_close(handle);
+        system_close(proc);
+        return got < 0 || closed < 0 ? -ERROR_ACCESS : got;
+}
+
+static bipolar floodlight_child_next(p8 address_to address_to at,
+                                      p8 address_to stop)
+{
+        positive value = 0;
+        bool digits = false;
+
+        while (address_to at < stop &&
+               (address_to address_to at == ' ' ||
+                address_to address_to at == '\n' ||
+                address_to address_to at == '\t'))
+                address_to at += 1;
+        if (address_to at == stop)
+                return 0;
+
+        while (address_to at < stop &&
+               address_to address_to at >= '0' &&
+               address_to address_to at <= '9')
+        {
+                positive digit = address_to address_to at - '0';
+
+                if (value > (positive)bipolar_max / 10 ||
+                    value * 10 > (positive)bipolar_max - digit)
+                        return -1;
+                value = value * 10 + digit;
+                digits = true;
+                address_to at += 1;
+        }
+
+        if (!digits || !value ||
+            (address_to at < stop &&
+             address_to address_to at != ' ' &&
+             address_to address_to at != '\n' &&
+             address_to address_to at != '\t'))
+                return -1;
+        return (bipolar)value;
+}
+
+static bool floodlight_descendants_present()
+{
+        p8 text[FLOODLIGHT_CHILDREN_ROOM];
+        bipolar got = floodlight_descendants_read(text, sizeof(text));
+
+        return got != 0;
+}
+
+/* Every child keeps the nondumpable supervisor in place. Even a fixed-code
+   here-document writer would become an unreapable zombie after this shell
+   execs; explicit exec therefore materializes that input without a child. */
+static bool floodlight_descendants_blocking()
+{
+        p8 text[FLOODLIGHT_CHILDREN_ROOM];
+        bipolar got = floodlight_descendants_read(text, sizeof(text));
+        p8 address_to at = text;
+        p8 address_to stop;
+
+        if (got < 0)
+                return true;
+        stop = text + got;
+        while (at < stop)
+        {
+                bipolar child = floodlight_child_next(address_of at, stop);
+
+                if (child <= 0)
+                        return child < 0;
+                return true;
+        }
+        return false;
 }
 
 /* execveat with an empty path makes the opened file, rather than a pathname
@@ -558,7 +915,8 @@ static bipolar floodlight_pinned_reader(bipolar handle)
                 return -ERROR_ACCESS;
 
         if (!file_look(handle, (string_address)"", AT_EMPTY_PATH,
-                       address_of expected))
+                       address_of expected) ||
+            !floodlight_facts_complete(address_of expected, false))
         {
                 file_walk_close(address_of table);
                 return -ERROR_ACCESS;
@@ -573,6 +931,7 @@ static bipolar floodlight_pinned_reader(bipolar handle)
 
         if (!file_look(reader, (string_address)"", AT_EMPTY_PATH,
                        address_of opened) ||
+            !floodlight_facts_complete(address_of opened, false) ||
             !file_same_identity(address_of expected, address_of opened))
         {
                 system_close(reader);
@@ -5845,6 +6204,14 @@ COLD fn shell_exec(writer write, string_address input)
                 shell_argv[1] = login_name;
         }
 
+        /* The final decision validates and pins the complete target before
+           authenticating that no child would be transferred across exec.
+           Parser isolation is unnecessary because no shell reader survives. */
+        floodlight_inplace_requested = true;
+        floodlight_inplace_final = false;
+        floodlight_inplace_descendants_checked = false;
+        floodlight_inplace_terminal = false;
+
         log_flush();
 
         // From argv[1] on, so the new program is named by what it was asked
@@ -5852,6 +6219,17 @@ COLD fn shell_exec(writer write, string_address input)
         {
                 bipolar told = shell_exec_file(found, shell_argv + 1,
                                                shell_argc - 1, environment);
+
+                /* Descriptor cleanup, no-new-privs and seccomp cannot be
+                   rolled back. Once an authorized in-place launch reaches
+                   that boundary, an exec error must not resume this broader
+                   shell under the target's partial confinement. */
+                if (floodlight_inplace_terminal)
+                        floodlight_silent_stop();
+                floodlight_inplace_requested = false;
+                floodlight_inplace_final = false;
+                floodlight_inplace_descendants_checked = false;
+                floodlight_inplace_terminal = false;
 
                 memory_free(found, found_room);
                 shell_answer(126);
@@ -11602,6 +11980,7 @@ PURE bool read_blank(string_address ifs, positive at)
 */
 #define READ_CLOCK_MONOTONIC 1
 #define READ_TIMEOUT_STATUS 142
+#define READ_WAIT_INTERRUPTED (-4)
 
 /* Bash's timeout operand is a fixed decimal, kept to the microseconds its
    interface observes. Empty, a bare sign and a bare point are its spellings
@@ -11650,10 +12029,11 @@ static bool read_timeout(string_address text, timespec address_to span)
         return true;
 }
 
-static fn read_deadline(timespec span, timespec address_to deadline)
+static bool read_deadline(timespec span, timespec address_to deadline)
 {
-        system_call_2(syscall(clock_gettime), READ_CLOCK_MONOTONIC,
-                      (positive)deadline);
+        if (system_call_2(syscall(clock_gettime), READ_CLOCK_MONOTONIC,
+                          (positive)deadline) < 0)
+                return false;
 
         if (span.tv_sec > (positive)b64_max - deadline->tv_sec ||
             (span.tv_sec == (positive)b64_max - deadline->tv_sec &&
@@ -11661,7 +12041,7 @@ static fn read_deadline(timespec span, timespec address_to deadline)
         {
                 deadline->tv_sec = b64_max;
                 deadline->tv_nsec = 999999999;
-                return;
+                return true;
         }
 
         deadline->tv_sec += span.tv_sec;
@@ -11672,31 +12052,47 @@ static fn read_deadline(timespec span, timespec address_to deadline)
                 deadline->tv_sec++;
                 deadline->tv_nsec -= 1000000000;
         }
+        return true;
 }
 
-static bool read_waited(b32 descriptor, timespec address_to deadline)
+/* Ready, expired, or a raw negative syscall error.  EINTR consumes none of
+   the fixed budget, so recompute the remaining time and wait again. */
+static bipolar read_waited(b32 descriptor, timespec address_to deadline)
 {
-        timespec now;
-        timespec left;
-
-        system_call_2(syscall(clock_gettime), READ_CLOCK_MONOTONIC,
-                      (positive)address_of now);
-
-        if (now.tv_sec > deadline->tv_sec ||
-            (now.tv_sec == deadline->tv_sec && now.tv_nsec >= deadline->tv_nsec))
-                return false;
-
-        left.tv_sec = deadline->tv_sec - now.tv_sec;
-
-        if (deadline->tv_nsec >= now.tv_nsec)
-                left.tv_nsec = deadline->tv_nsec - now.tv_nsec;
-        else
+        for (;;)
         {
-                left.tv_sec--;
-                left.tv_nsec = deadline->tv_nsec + 1000000000 - now.tv_nsec;
-        }
+                timespec now;
+                timespec left;
+                bipolar ready;
 
-        return descriptor_wait_readable(descriptor, address_of left, null) > 0;
+                if (system_call_2(syscall(clock_gettime),
+                                  READ_CLOCK_MONOTONIC,
+                                  (positive)address_of now) < 0)
+                        return -1;
+
+                if (now.tv_sec > deadline->tv_sec ||
+                    (now.tv_sec == deadline->tv_sec &&
+                     now.tv_nsec >= deadline->tv_nsec))
+                        return 0;
+
+                left.tv_sec = deadline->tv_sec - now.tv_sec;
+
+                if (deadline->tv_nsec >= now.tv_nsec)
+                        left.tv_nsec = deadline->tv_nsec - now.tv_nsec;
+                else
+                {
+                        left.tv_sec--;
+                        left.tv_nsec = deadline->tv_nsec + 1000000000 -
+                                       now.tv_nsec;
+                }
+
+                ready = descriptor_wait_readable(
+                    descriptor, address_of left, null);
+                if (ready == READ_WAIT_INTERRUPTED)
+                        continue;
+
+                return ready > 0 ? 1 : ready;
+        }
 }
 
 static PURE b32 read_result(bool failed, bool ended, bool timed_out)
@@ -11970,15 +12366,16 @@ COLD fn shell_read(writer write, string_address input)
         if (timed && !timeout.tv_sec && !timeout.tv_nsec)
         {
                 timespec none = {0, 0};
+                bipolar ready = descriptor_wait_readable(
+                    descriptor, address_of none, null);
 
                 return shell_answer(
-                    descriptor_wait_readable(descriptor, address_of none, null) > 0
-                        ? 0
-                        : 1);
+                    ready > 0 ? 0
+                              : ready < 0 ? read_result(true, false, false) : 1);
         }
 
-        if (timed)
-                read_deadline(timeout, address_of deadline);
+        if (timed && !read_deadline(timeout, address_of deadline))
+                return shell_answer(read_result(true, false, false));
 
         if (hidden)
                 quieted = read_echo_off(descriptor, address_of quiet_held);
@@ -12005,11 +12402,18 @@ COLD fn shell_read(writer write, string_address input)
                         return shell_answer(string_report(log_error, 2, "%s: no room\n", "read"));
                 }
 
-                if (timed && !read_waited(descriptor, address_of deadline))
+                if (timed)
                 {
-                        timed_out = true;
-                        ended = true;
-                        break;
+                        bipolar ready = read_waited(
+                            descriptor, address_of deadline);
+
+                        if (ready <= 0)
+                        {
+                                failed = ready < 0;
+                                timed_out = !ready;
+                                ended = !ready;
+                                break;
+                        }
                 }
 
                 bipolar got = system_read_once(descriptor, address_of value, 1);
@@ -14654,8 +15058,219 @@ static positive floodlight_row_count;
 
 static p8 floodlight_report_state;
 static bool floodlight_report_promised;
+static bool floodlight_inherited_seccomp;
+/* Only a shell process may establish the protected-launcher contract.  A
+   directly invoked applet is somebody else's child: making that applet
+   nondumpable cannot protect the external shell which may still be parsing
+   an inherited pipe.  Forked shell children inherit both this role and the
+   protection bit; a fresh exec or Spark image starts with neither. */
+static bool floodlight_parent_role;
+static bool floodlight_parent_protected;
+static bool floodlight_parent_subreaper;
+static bool floodlight_parent_subreaper_owned;
+static bool floodlight_parent_supervised;
+static bool floodlight_parent_dumpable_owned;
+static bipolar floodlight_parent_dumpable_prior;
+/* An authenticated no-descendant transition may replace this shell directly.
+   Once final confinement starts changing descriptors or process policy, a
+   failed exec is terminal: continuing the broader shell would retain those
+   irreversible changes. Fork children clear both inherited markers. */
+static bool floodlight_inplace_requested;
+static bool floodlight_inplace_final;
+static bool floodlight_inplace_descendants_checked;
+static bool floodlight_inplace_terminal;
+/* Set only after this image installs its own verified filter.  Forks inherit
+   both the bit and the filter; exec starts a fresh image with the bit clear. */
+static bool floodlight_own_seccomp;
 
 #define FLOODLIGHT_PR_SET_DUMPABLE 4
+#define FLOODLIGHT_PR_GET_DUMPABLE 3
+#define FLOODLIGHT_PR_GET_SECCOMP 21
+#define FLOODLIGHT_PR_SET_CHILD_SUBREAPER 36
+#define FLOODLIGHT_PR_GET_CHILD_SUBREAPER 37
+
+static bool floodlight_entry_unfiltered();
+
+/* Every confined child shares an mm ancestor with the shell that forked it.
+   Protect that ancestor before any applet, substitution, pipeline or startup
+   code can create a child; doing this only in the final child protects the
+   copy and leaves the policy-owning shell writable through proc memory. */
+static bool floodlight_parent_prepare(bool supervise)
+{
+        b32 subreaper = 0;
+        bipolar dumpable;
+        bool changed_subreaper = false;
+        bool changed_dumpable = false;
+
+        if (!floodlight_parent_role)
+                return false;
+
+        if (floodlight_parent_protected &&
+            system_call_5(syscall(prctl), FLOODLIGHT_PR_GET_DUMPABLE,
+                          0, 0, 0, 0) == 0)
+        {
+                if (!supervise)
+                {
+                        floodlight_parent_supervised = true;
+                        job_child_watch();
+                        return true;
+                }
+
+                if (system_call_5(
+                        syscall(prctl), FLOODLIGHT_PR_GET_CHILD_SUBREAPER,
+                        (positive)address_of subreaper, 0, 0, 0) >= 0 &&
+                    subreaper == 1)
+                {
+                        floodlight_parent_subreaper = true;
+                        floodlight_parent_supervised = true;
+                        job_child_watch();
+                        return true;
+                }
+                floodlight_parent_subreaper = false;
+                floodlight_parent_subreaper_owned = false;
+                subreaper = 0;
+        }
+
+        dumpable = system_call_5(syscall(prctl), FLOODLIGHT_PR_GET_DUMPABLE,
+                                 0, 0, 0, 0);
+        if (dumpable < 0 || (supervise &&
+            system_call_5(syscall(prctl),
+                          FLOODLIGHT_PR_GET_CHILD_SUBREAPER,
+                          (positive)address_of subreaper, 0, 0, 0) < 0))
+                goto failed;
+
+        if (supervise && !subreaper)
+        {
+                if (system_call_5(syscall(prctl),
+                                  FLOODLIGHT_PR_SET_CHILD_SUBREAPER,
+                                  1, 0, 0, 0) < 0)
+                        goto failed;
+                changed_subreaper = true;
+                subreaper = 0;
+                if (system_call_5(
+                        syscall(prctl), FLOODLIGHT_PR_GET_CHILD_SUBREAPER,
+                        (positive)address_of subreaper, 0, 0, 0) < 0 ||
+                    subreaper != 1)
+                        goto failed;
+        }
+
+        if (dumpable != 0 &&
+            system_call_5(syscall(prctl), FLOODLIGHT_PR_SET_DUMPABLE,
+                          0, 0, 0, 0) < 0)
+                goto failed;
+        changed_dumpable = dumpable != 0;
+        if (system_call_5(syscall(prctl), FLOODLIGHT_PR_GET_DUMPABLE,
+                          0, 0, 0, 0) != 0)
+                goto failed;
+
+        if (supervise)
+        {
+                floodlight_parent_subreaper = true;
+                if (changed_subreaper)
+                        floodlight_parent_subreaper_owned = true;
+        }
+        if (changed_dumpable)
+        {
+                floodlight_parent_dumpable_owned = true;
+                floodlight_parent_dumpable_prior = dumpable;
+        }
+        floodlight_parent_supervised = true;
+        floodlight_parent_protected = true;
+        job_child_watch();
+        return true;
+
+failed:
+        /* Preparation is a transaction. A prctl failure after enabling
+           subreaping must not make an otherwise stock shell adopt unrelated
+           daemon grandchildren. Preserve an externally owned subreaper. */
+        if (changed_subreaper)
+                (void)system_call_5(syscall(prctl),
+                                    FLOODLIGHT_PR_SET_CHILD_SUBREAPER,
+                                    0, 0, 0, 0);
+        if (changed_dumpable)
+                (void)system_call_5(syscall(prctl),
+                                    FLOODLIGHT_PR_SET_DUMPABLE,
+                                    (positive)dumpable, 0, 0, 0);
+        floodlight_parent_subreaper = false;
+        floodlight_parent_subreaper_owned = false;
+        floodlight_parent_dumpable_owned = false;
+        floodlight_parent_protected = false;
+        return false;
+}
+
+/* The subreaper bit survives exec. Remove and verify the local kernel state
+   only after procfs proved there is no child left to supervise; the inherited
+   contract bit stays true for a fork child whose outer shell is the reaper. */
+static bool floodlight_parent_release_subreaper()
+{
+        b32 subreaper = 0;
+        bool cleared = false;
+
+        if (system_call_5(syscall(prctl),
+                          FLOODLIGHT_PR_GET_CHILD_SUBREAPER,
+                          (positive)address_of subreaper, 0, 0, 0) < 0)
+                return false;
+
+        if (!subreaper)
+        {
+                floodlight_parent_subreaper = false;
+                floodlight_parent_subreaper_owned = false;
+        }
+        else if (!floodlight_parent_subreaper_owned)
+        {
+                floodlight_parent_subreaper = true;
+        }
+        else
+        {
+                if (system_call_5(syscall(prctl),
+                                  FLOODLIGHT_PR_SET_CHILD_SUBREAPER,
+                                  0, 0, 0, 0) < 0)
+                        return false;
+                subreaper = 1;
+                if (system_call_5(
+                        syscall(prctl), FLOODLIGHT_PR_GET_CHILD_SUBREAPER,
+                        (positive)address_of subreaper, 0, 0, 0) < 0 ||
+                    subreaper != 0)
+                        return false;
+                floodlight_parent_subreaper = false;
+                floodlight_parent_subreaper_owned = false;
+                cleared = true;
+        }
+
+        if (floodlight_parent_dumpable_owned)
+        {
+                if (system_call_5(
+                        syscall(prctl), FLOODLIGHT_PR_SET_DUMPABLE,
+                        (positive)floodlight_parent_dumpable_prior,
+                        0, 0, 0) < 0 ||
+                    system_call_5(syscall(prctl),
+                                  FLOODLIGHT_PR_GET_DUMPABLE,
+                                  0, 0, 0, 0) !=
+                        floodlight_parent_dumpable_prior)
+                {
+                        /* Clearing the owned subreaper is safe, but an
+                           unverified dumpability transition is not a basis
+                           for replacing this process. */
+                        if (cleared)
+                                floodlight_parent_subreaper = false;
+                        return false;
+                }
+                floodlight_parent_dumpable_owned = false;
+                floodlight_parent_protected =
+                    floodlight_parent_dumpable_prior == 0;
+        }
+
+        floodlight_parent_supervised = false;
+        return true;
+}
+
+static bool floodlight_parent_begin()
+{
+        /* Selecting the shell personality must not change process semantics
+           for an unrestricted or stock shell. Preparation is lazy. */
+        floodlight_parent_role = true;
+        return true;
+}
 
 /*
         One word of a report line.
@@ -14850,10 +15465,31 @@ static fn floodlight_load()
         if (floodlight_report_state != FLOODLIGHT_REPORT_UNREAD)
                 return;
 
+        /* Stock defaults still install real confinement.  Verify the entry
+           state before the missing-device branch as well, or an inherited
+           errno filter can forge every later installation syscall and turn
+           the built-in denials into allowances. */
+        if (!floodlight_own_seccomp && !floodlight_entry_unfiltered())
+        {
+                floodlight_inherited_seccomp = true;
+                state = FLOODLIGHT_REPORT_REFUSED;
+                goto publish;
+        }
+
         handle = system_open_at(AT_FDCWD, FLOODLIGHT_PATH, FILE_READ);
 
         if (handle < 0)
+        {
+                bipolar registered = floodlight_policy_registered();
+
+                if (registered != 0)
+                {
+                        state = FLOODLIGHT_REPORT_REFUSED;
+                        if (registered > 0)
+                                floodlight_report_promised = true;
+                }
                 goto publish;
+        }
 
         /*
                 The register, and not something wearing its name.
@@ -14867,6 +15503,7 @@ static fn floodlight_load()
                 than the path, so nothing can be swapped between the two.
         */
         if (!file_look(handle, (string_address)"", AT_EMPTY_PATH, &facts) ||
+            !floodlight_facts_complete(&facts, false) ||
             (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
             facts.rdev_major != FLOODLIGHT_DEVICE_MAJOR ||
             facts.rdev_minor != FLOODLIGHT_DEVICE_MINOR)
@@ -14880,18 +15517,6 @@ static fn floodlight_load()
            policy register exists.  A malformed first report must not let a
            later disappearance downgrade the process to stock defaults. */
         floodlight_report_promised = true;
-
-        /* A confined child shares credentials with this shell. Make the
-           policy-owning parent an invalid ptrace and /proc/<pid>/mem target
-           before any such child exists; the final child also drops its
-           ptrace capability before entering user code. */
-        if (system_call_5(syscall(prctl), FLOODLIGHT_PR_SET_DUMPABLE,
-                          0, 0, 0, 0) < 0)
-        {
-                system_close(handle);
-                state = FLOODLIGHT_REPORT_REFUSED;
-                goto publish;
-        }
 
         /* seq_file reads may be short without being complete. Keep going to
            EOF, with system_read_retry owning EINTR, and reject a report that
@@ -14938,6 +15563,152 @@ static fn floodlight_load()
 
 publish:
         floodlight_report_state = state;
+}
+
+/* Authenticate /proc first, then require the complete status file to contain
+   exactly one zero-valued Seccomp and Seccomp_filters row.  Ordinary cBPF
+   errno actions can forge a syscall result but cannot manufacture these
+   bytes.  A USER_NOTIF supervisor already controlling this process remains
+   outside what an in-process policy can prove; any read/open anomaly here is
+   therefore a silent fail-closed refusal. */
+static bool floodlight_entry_unfiltered()
+{
+#define FLOODLIGHT_STATUS_MAX (16 * 1024)
+        p8 status_text[512];
+        p8 status_line[32];
+        file_facts proc_facts;
+        file_facts expected;
+        file_facts status_facts;
+        bipolar proc;
+        bipolar status;
+        bipolar got;
+        positive line_used = 0;
+        bool line_long = false;
+        bool ended = true;
+        bool saw_mode = false;
+        bool saw_count = false;
+        positive total = 0;
+
+        if (system_call_5(syscall(prctl), FLOODLIGHT_PR_GET_SECCOMP,
+                          0, 0, 0, 0) != 0)
+                return false;
+
+        proc = floodlight_proc_root_open(address_of proc_facts);
+        if (proc < 0)
+                return false;
+
+        if (!file_look(proc, (string_address)"self/status", 0,
+                       address_of expected) ||
+            !floodlight_facts_complete(address_of expected, true) ||
+            (expected.mode & MODE_FORMAT) != MODE_FILE ||
+            expected.mount_id != proc_facts.mount_id)
+        {
+                system_close(proc);
+                return false;
+        }
+
+        status = system_open_at(proc, (string_address)"self/status",
+                                FILE_READ | O_CLOEXEC);
+        if (status < 0)
+        {
+                system_close(proc);
+                return false;
+        }
+
+        if (!file_look(status, (string_address)"", AT_EMPTY_PATH,
+                       address_of status_facts) ||
+            !floodlight_facts_complete(address_of status_facts, true) ||
+            (status_facts.mode & MODE_FORMAT) != MODE_FILE ||
+            status_facts.mount_id != proc_facts.mount_id ||
+            !file_same_identity(address_of expected,
+                                address_of status_facts))
+                goto finished;
+
+        system_close(proc);
+        proc = -1;
+
+        for (;;)
+        {
+                /* A seccomp errno action can claim a successful read without
+                   writing the destination.  Clear every chunk and reject an
+                   impossible byte count or an endless forged stream before
+                   any returned length is trusted for indexing. */
+                memory_fill(status_text, 0, sizeof(status_text));
+                got = system_read_retry((positive)status, status_text,
+                                        sizeof(status_text));
+                if (got < 0)
+                        goto finished;
+                if (!got)
+                        break;
+                if ((positive)got > sizeof(status_text) ||
+                    (positive)got > FLOODLIGHT_STATUS_MAX - total)
+                        goto finished;
+                total += (positive)got;
+
+                for (positive at = 0; at < (positive)got; at++)
+                {
+                        p8 byte = status_text[at];
+
+                        if (byte != '\n')
+                        {
+                                ended = false;
+                                if (line_used < sizeof(status_line))
+                                        status_line[line_used++] = byte;
+                                else
+                                        line_long = true;
+                                continue;
+                        }
+
+                        positive name = 0;
+                        positive value;
+                        bool address_to seen = null;
+
+                        if (line_used >= 8 &&
+                            !memory_compare(status_line, "Seccomp:", 8))
+                        {
+                                name = 8;
+                                seen = address_of saw_mode;
+                        }
+                        else if (line_used >= 16 &&
+                                 !memory_compare(status_line,
+                                                 "Seccomp_filters:", 16))
+                        {
+                                name = 16;
+                                seen = address_of saw_count;
+                        }
+
+                        if (seen)
+                        {
+                                if (line_long || address_to seen)
+                                        goto finished;
+                                value = name;
+                                while (value < line_used &&
+                                       (status_line[value] == ' ' ||
+                                        status_line[value] == '\t'))
+                                        value++;
+                                if (value + 1 != line_used ||
+                                    status_line[value] != '0')
+                                        goto finished;
+                                address_to seen = true;
+                        }
+
+                        line_used = 0;
+                        line_long = false;
+                        ended = true;
+                }
+        }
+
+        if (!ended || !saw_mode || !saw_count)
+                goto finished;
+        system_close(status);
+        return true;
+
+finished:
+        if (proc >= 0)
+                system_close(proc);
+        system_close(status);
+        return false;
+#undef FLOODLIGHT_STATUS_MAX
 }
 
 /* Read one coherent policy snapshot for every launch decision.  Keeping the
@@ -15109,9 +15880,13 @@ static bool floodlight_executable_prepare(
                 return false;
 
         length = floodlight_descriptor_read_link(
-            image->handle, image->identity, FILE_PATH_MAX - 1);
+            image->handle, image->identity, sizeof(image->identity));
 
-        if (length <= 0 || image->identity[0] != '/' ||
+        /* readlinkat reports the buffer size when the physical name may have
+           been truncated.  A partial path must never become the policy
+           subject for the complete inode executed below. */
+        if (length <= 0 || (positive)length >= sizeof(image->identity) ||
+            image->identity[0] != '/' ||
             ((positive)length >= deleted_length &&
              !memory_compare(image->identity + (positive)length - deleted_length,
                              deleted, deleted_length)))
@@ -15213,6 +15988,7 @@ static bool floodlight_network_stdio_drop()
                     address_of facts);
 
                 if (looked < 0 ||
+                    !floodlight_facts_complete(address_of facts, false) ||
                     (facts.mode & MODE_FORMAT) == MODE_SOCKET ||
                          ((facts.mode & MODE_FORMAT) == MODE_CHARACTER &&
                           facts.rdev_major == FLOODLIGHT_TUN_MAJOR &&
@@ -15245,6 +16021,7 @@ static bool floodlight_network_stdio_drop()
                 if (opened != descriptor ||
                     !file_look(opened, (string_address)"", AT_EMPTY_PATH,
                                address_of facts) ||
+                    !floodlight_facts_complete(address_of facts, false) ||
                     (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
                     facts.rdev_major != FLOODLIGHT_NULL_MAJOR ||
                     facts.rdev_minor != FLOODLIGHT_NULL_MINOR ||
@@ -15259,20 +16036,137 @@ static bool floodlight_network_stdio_drop()
         return safe;
 }
 
+/* Closing a socket descriptor does not revoke a packet RX/TX ring already
+   mapped from it, and a SQPOLL io_uring can likewise outlive its last visible
+   descriptor.  A ring's registered files can also hide a proc-memory handle.
+   Proc exposes file-backed VMAs through map_files; reject rings for either
+   restriction and socket mappings when network itself is denied. */
+static bool floodlight_mappings_safe(bool network_denied)
+{
+        static string_address socket = (string_address)"socket:[";
+        static string_address ring = (string_address)"anon_inode:[io_uring]";
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
+        bool safe = true;
+
+        if (!floodlight_proc_directory_open(
+                address_of walk, (string_address)"self/map_files"))
+                return false;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                p8 target[32];
+                bipolar length;
+
+                if (file_is_dot((string_address)entry->d_name))
+                        continue;
+
+                length = system_read_link_at(
+                    walk.handle, (string_address)entry->d_name,
+                    target, sizeof(target));
+                if (length < 0)
+                {
+                        safe = false;
+                        continue;
+                }
+
+                if ((network_denied &&
+                     (positive)length >= string_length(socket) &&
+                     !memory_compare(target, socket, string_length(socket))) ||
+                    ((positive)length >= string_length(ring) &&
+                     !memory_compare(target, ring, string_length(ring))))
+                        safe = false;
+        }
+
+        if (walk.error < 0)
+                safe = false;
+        file_walk_close(address_of walk);
+        return safe;
+}
+
+/* Opening process memory performs its ptrace check once.  A descriptor opened
+   on /proc/self/mem before the final fork therefore keeps write authority over
+   the unfiltered parent after that parent becomes non-dumpable.
+
+   Names cannot identify this descriptor: a bind mount can give it any visible
+   spelling and can then be detached.  Proc's memory file is instead the one
+   0600 regular proc file that accepts unsigned offsets.  At LONG_MAX a
+   one-byte positioned access reaches its memory implementation and returns
+   EIO because no supported user address space reaches that value.  Ordinary
+   proc files reject the overflowing offset with EINVAL.  O_PATH carries no
+   byte authority and reopening it after the parent becomes non-dumpable
+   repeats the ptrace check, so it is safe to retain.
+
+   Zero means ordinary, one means process memory, and a negative answer means
+   the descriptor could not be classified safely. */
+static bipolar floodlight_process_memory_descriptor(
+    bipolar descriptor, const file_facts address_to facts)
+{
+        file_mount_facts mount = {0};
+        bipolar flags;
+        bipolar answer;
+        p8 byte = 0;
+
+        if (facts->mode != (MODE_FILE | 0600))
+                return 0;
+
+        if (system_call_2(syscall(fstatfs), (positive)descriptor,
+                          (positive)address_of mount) < 0)
+                return -1;
+
+        if (mount.type != FLOODLIGHT_PROC_MAGIC)
+                return 0;
+
+        flags = system_call_3(syscall(fcntl), (positive)descriptor,
+                              FILE_F_GETFL, 0);
+        if (flags < 0)
+                return -1;
+
+        if ((positive)flags & O_PATH)
+                return 0;
+
+        if (((positive)flags & 3) == 1)
+                answer = system_call_4(
+                    syscall(pwrite64), (positive)descriptor,
+                    (positive)address_of byte, 1, (positive)bipolar_max);
+        else if (((positive)flags & 3) == 0 ||
+                 ((positive)flags & 3) == 2)
+                answer = system_call_4(
+                    syscall(pread64), (positive)descriptor,
+                    (positive)address_of byte, 1, (positive)bipolar_max);
+        else
+                return -1;
+
+        if (answer == -ERROR_INPUT_OUTPUT)
+                return 1;
+        if (answer == -ERROR_INVALID || !answer)
+                return 0;
+
+        return -1;
+}
+
 /* A syscall filter cannot distinguish read(2) on a file from read(2) on a
-   socket.  Remove network-bearing descriptors before installing it, while
-   /proc still gives us an exact view of this single-threaded final process.
+   socket, and neither a spawn nor a network filter can revoke authority held
+   by an already-open process-memory descriptor.  Inventory descriptors before
+   either restriction is installed.  Network-only channels are removed only
+   when that boundary is requested.
 
    An inherited SQPOLL io_uring is stronger than its descriptor: a mapping can
    keep submitting after the descriptor is closed and without io_uring_enter.
    Close every copy we can see and refuse the launch, since closing it cannot
    prove that no live mapping remains. */
-static bool floodlight_network_descriptors_drop(bool standard_prepared)
+static bool floodlight_descriptors_drop(bool standard_prepared,
+                                        bool network_denied)
 {
         static string_address ring = (string_address)"anon_inode:[io_uring]";
         file_walk walk;
         struct linux_dirent64 address_to entry;
-        bool safe = standard_prepared || floodlight_network_stdio_drop();
+        bool safe = (floodlight_inplace_final ||
+                     !shell_parser_source_ambiguous) &&
+                    (!network_denied || standard_prepared ||
+                     floodlight_network_stdio_drop());
+        bool saw_table = false;
+        bool parser_standard_closed = false;
 
         if (!floodlight_descriptor_table_open(address_of walk))
                 return false;
@@ -15301,20 +16195,56 @@ static bool floodlight_network_descriptors_drop(bool standard_prepared)
                 }
 
                 if ((bipolar)descriptor == walk.handle)
+                {
+                        saw_table = true;
                         continue;
+                }
 
                 if (!file_look((bipolar)descriptor, (string_address)"",
-                               AT_EMPTY_PATH, address_of facts))
+                               AT_EMPTY_PATH, address_of facts) ||
+                    !floodlight_facts_complete(address_of facts, false))
                 {
                         system_close((bipolar)descriptor);
                         safe = false;
                         continue;
                 }
 
-                if ((facts.mode & MODE_FORMAT) == MODE_SOCKET ||
-                    ((facts.mode & MODE_FORMAT) == MODE_CHARACTER &&
-                     facts.rdev_major == FLOODLIGHT_TUN_MAJOR &&
-                     facts.rdev_minor == FLOODLIGHT_TUN_MINOR))
+                /* A sealed regular source is immutable but a read or seek on a
+                   shared open description can still move the parent's parser
+                   offset. Close every identity alias in the final child. A
+                   standard-stream alias is refused after closing it, because
+                   silently replacing command input or output would run a
+                   different command. */
+                if (shell_parser_isolated_live &&
+                    file_same_identity(address_of facts,
+                                       address_of shell_parser_isolated_facts))
+                {
+                        /* After an authenticated no-child in-place transition
+                           there is no parent parser offset left to protect.
+                           Preserve regular-file stdin and its aliases for the
+                           replacement program's ordinary input semantics. */
+                        if (floodlight_inplace_final)
+                                continue;
+
+                        bipolar closed = system_close((bipolar)descriptor);
+
+                        if (descriptor <= 2)
+                        {
+                                if (closed < 0)
+                                        floodlight_silent_stop();
+                                parser_standard_closed = true;
+                                safe = false;
+                        }
+                        else if (closed < 0)
+                                safe = false;
+                        continue;
+                }
+
+                if (network_denied &&
+                    ((facts.mode & MODE_FORMAT) == MODE_SOCKET ||
+                     ((facts.mode & MODE_FORMAT) == MODE_CHARACTER &&
+                      facts.rdev_major == FLOODLIGHT_TUN_MAJOR &&
+                      facts.rdev_minor == FLOODLIGHT_TUN_MINOR)))
                         close_descriptor = true;
 
                 length = system_read_link_at(
@@ -15333,6 +16263,13 @@ static bool floodlight_network_descriptors_drop(bool standard_prepared)
                         safe = false;
                 }
 
+                if (floodlight_process_memory_descriptor(
+                        (bipolar)descriptor, address_of facts))
+                {
+                        close_descriptor = true;
+                        safe = false;
+                }
+
                 if (close_descriptor)
                 {
                         if (system_close((bipolar)descriptor) < 0)
@@ -15342,10 +16279,19 @@ static bool floodlight_network_descriptors_drop(bool standard_prepared)
                 }
         }
 
-        if (walk.error < 0)
+        /* A forged successful getdents64 can present a clean empty walk.  The
+           authenticated directory necessarily contains its own live handle,
+           so absence of that row makes the inventory untrustworthy. */
+        if (walk.error < 0 || !saw_table)
                 safe = false;
 
         file_walk_close(address_of walk);
+
+        if (parser_standard_closed && !floodlight_network_stdio_drop())
+                floodlight_silent_stop();
+
+        if (!floodlight_mappings_safe(network_denied))
+                safe = false;
 
         return safe;
 }
@@ -15382,7 +16328,7 @@ typedef struct
 static bool floodlight_ptrace_capability_drop()
 {
         floodlight_cap_header header = {FLOODLIGHT_CAP_VERSION_3, 0};
-        floodlight_cap_data data[2];
+        floodlight_cap_data data[2] = {0};
         p32 keep = ~(1u << FLOODLIGHT_CAP_SYS_PTRACE);
 
         if (system_call_2(syscall(capget), (positive)address_of header,
@@ -15476,8 +16422,12 @@ static bool floodlight_confine(const p32 address_to numbers, positive count,
         if (system_call_5(syscall(prctl), PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
                 return false;
 
-        return system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
-                             (positive)address_of program) >= 0;
+        if (system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
+                          (positive)address_of program) < 0)
+                return false;
+
+        floodlight_own_seccomp = true;
+        return true;
 }
 
 /*
@@ -15498,9 +16448,9 @@ static bool floodlight_apply(bool spawn_allowed, bool network_allowed,
         p32 refused[FLOODLIGHT_REFUSED];
         positive count = 0;
 
-        if (!network_allowed && !network_prepared)
+        if ((!spawn_allowed || !network_allowed) && !network_prepared)
         {
-                if (!floodlight_network_descriptors_drop(false))
+                if (!floodlight_descriptors_drop(false, !network_allowed))
                         return false;
         }
 
@@ -15581,6 +16531,9 @@ static b32 floodlight_launch_decide(
         bool spawn_allowed;
         bool network_allowed;
         bool network_prepared = false;
+        bool inplace = final &&
+                       (floodlight_inplace_requested ||
+                        floodlight_inplace_final);
 
         image->handle = -1;
         image->identity[0] = end;
@@ -15589,7 +16542,18 @@ static b32 floodlight_launch_decide(
 
         if (floodlight_report_state == FLOODLIGHT_REPORT_REFUSED)
         {
-                if (final && !floodlight_network_stdio_drop())
+                if (inplace)
+                        /* The nonfinal decision was usable, but the report
+                           changed before commit. Refuse without mutating the
+                           shell which must continue if execfail is enabled. */
+                        diagnose = false;
+                else if (floodlight_inherited_seccomp)
+                {
+                        diagnose = false;
+                        if (final)
+                                floodlight_silent_stop();
+                }
+                else if (final && !floodlight_network_stdio_drop())
                         diagnose = false;
                 if (diagnose)
                         log_error("floodlight: policy unavailable; refusing launch\n",
@@ -15603,7 +16567,9 @@ static b32 floodlight_launch_decide(
                  floodlight_report_state == FLOODLIGHT_REPORT_VALID &&
                  final && !pinned)
         {
-                if (!floodlight_network_stdio_drop())
+                if (inplace)
+                        diagnose = false;
+                else if (!floodlight_network_stdio_drop())
                         diagnose = false;
                 if (diagnose)
                         log_error("floodlight: cannot pin executable; refusing launch\n",
@@ -15620,12 +16586,17 @@ static b32 floodlight_launch_decide(
                 /* A stock kernel has no path rows to consult. Preserve its
                    ordinary exec result when a path cannot be canonicalized;
                    a valid or promised register must instead fail closed. */
+                if (inplace &&
+                    !exec_inplace_ready(floodlight_parent_supervised))
+                        goto refuse;
                 return FLOODLIGHT_LAUNCH_ALLOW;
         }
 
         if (!subject)
         {
-                if (final && !floodlight_network_stdio_drop())
+                if (inplace)
+                        diagnose = false;
+                else if (final && !floodlight_network_stdio_drop())
                         diagnose = false;
                 if (diagnose)
                         log_error("floodlight: cannot identify executable; refusing launch\n",
@@ -15634,6 +16605,123 @@ static b32 floodlight_launch_decide(
         }
 
         network_allowed = floodlight_may(subject, FLOODLIGHT_NETWORK, true);
+        spawn_allowed = floodlight_may(
+            subject, FLOODLIGHT_SPAWN,
+            tool ? floodlight_built_in(subject) : true);
+
+        /* Refusals are reversible policy decisions. Resolve them before a
+           nonfinal path changes dumpability, subreaper state or its parser
+           representation merely to discover that no launch can occur. */
+        if (!final)
+        {
+                if (!floodlight_may(subject, FLOODLIGHT_RUN, true))
+                {
+                        if (diagnose)
+                                log_error("floodlight: run refused\n", 0);
+                        goto refuse;
+                }
+                for (positive at = 1; arguments && at < count; at++)
+                        if (arguments[at] &&
+                            floodlight_flag_refused(subject, arguments[at]))
+                        {
+                                if (diagnose)
+                                        log_error("floodlight: flag refused\n", 0);
+                                goto refuse;
+                        }
+                if (!tool && !spawn_allowed)
+                {
+                        if (diagnose)
+                                log_error("floodlight: cannot confine external program spawning; refusing launch\n",
+                                          0);
+                        goto refuse;
+                }
+
+                /* Only the shell which owns the live reader may replace a
+                   regular script descriptor with its sealed unread tail.
+                   Do that after policy proved a launch can occur and before
+                   any fork; a final child can only verify preparation. */
+                if ((!network_allowed || !spawn_allowed) &&
+                    (!floodlight_parent_prepare(true) ||
+                     !shell_parser_source_prepare()))
+                {
+                        floodlight_executable_drop(image);
+                        return FLOODLIGHT_LAUNCH_PROCESS;
+                }
+        }
+
+        /* Resolve every refusal before an in-place transition releases owned
+           supervision. Nothing below this block may reject the target for a
+           reversible run, flag or impossible external-spawn decision. */
+        if (inplace)
+        {
+                if (!tool && !spawn_allowed)
+                {
+                        if (diagnose && network_allowed)
+                                log_error("floodlight: cannot confine external program spawning; refusing launch\n",
+                                          0);
+                        goto refuse;
+                }
+                if (!floodlight_may(subject, FLOODLIGHT_RUN, true))
+                {
+                        if (diagnose && network_allowed)
+                                log_error("floodlight: run refused\n", 0);
+                        goto refuse;
+                }
+                for (positive at = 1; arguments && at < count; at++)
+                        if (arguments[at] &&
+                            floodlight_flag_refused(subject, arguments[at]))
+                        {
+                                if (diagnose && network_allowed)
+                                        log_error("floodlight: flag refused\n", 0);
+                                goto refuse;
+                        }
+        }
+
+        if (inplace &&
+            (!floodlight_inplace_final ||
+             ((!network_allowed || !spawn_allowed ||
+               floodlight_parent_supervised) &&
+              !floodlight_inplace_descendants_checked)) &&
+            !exec_inplace_ready(!network_allowed || !spawn_allowed ||
+                                floodlight_parent_supervised))
+        {
+                if (diagnose)
+                        log_error("floodlight: active child processes prevent a safe replacement\n",
+                                  0);
+                goto refuse;
+        }
+
+        /* This bit can only have been established before the fork that made
+           a final child. Retrying PR_SET_DUMPABLE there would protect that
+           child's copied mm, not the unrestricted shell it could attack. An
+           in-place transition instead authenticated an empty child inventory,
+           because no shell process survives a successful exec. */
+        if (final && (!network_allowed || !spawn_allowed) &&
+            (!floodlight_parent_role ||
+             ((!floodlight_parent_protected ||
+               !floodlight_parent_supervised) &&
+              !floodlight_inplace_final)))
+        {
+                if (diagnose)
+                        log_error("floodlight: parent protection unavailable; refusing launch\n",
+                                  0);
+                goto refuse;
+        }
+        if (final && (!network_allowed || !spawn_allowed) &&
+            !floodlight_ptrace_scope_safe())
+        {
+                if (diagnose)
+                        log_error("floodlight: process-memory isolation unavailable; refusing launch\n",
+                                  0);
+                goto refuse;
+        }
+
+        /* No shell remains to protect after a successful in-place exec. Its
+           authenticated no-child transition may therefore release owned
+           dumpability/subreaper state before this final decision. From the
+           first destructive confinement step onward, failure is terminal. */
+        if (final && !network_allowed && floodlight_inplace_final)
+                floodlight_inplace_terminal = true;
 
         /* A freshly reloaded final-child policy may differ from the parent's
            pre-fork snapshot. Enforce its network boundary before reporting
@@ -15643,7 +16731,7 @@ static b32 floodlight_launch_decide(
                 bool standard_safe = floodlight_network_stdio_drop();
 
                 if (!standard_safe ||
-                    !floodlight_network_descriptors_drop(true))
+                    !floodlight_descriptors_drop(true, true))
                 {
                         if (diagnose && standard_safe)
                                 log_error("floodlight: cannot sanitize network descriptors; refusing launch\n",
@@ -15653,14 +16741,40 @@ static b32 floodlight_launch_decide(
                 network_prepared = true;
         }
 
-        if (!floodlight_may(subject, FLOODLIGHT_RUN, true))
+        /* A restricted resident applet must not feed syntax to the shell that
+           launched it. Memory input has no live producer, and a sealed regular
+           snapshot becomes safe when the descriptor inventory removes every
+           alias that could move its shared read offset. Every live stream is
+           refused: a same-UID feeder can retain an anonymous-pipe writer or a
+           PTY master outside this child's descriptor table and expose it again
+           through /proc, just as a named FIFO or socket remains externally
+           mutable.
+
+           The subject policy and any required network descriptor cleanup are
+           complete here, while applet control has not yet passed to the tool.
+           A nonfinal Spark probe returns PROCESS below and this check then runs
+           in its protected fork child. */
+        if (final && (!network_allowed || !spawn_allowed) &&
+            !floodlight_inplace_final &&
+            shell_parser_source_kind != SHELL_PARSER_SOURCE_MEMORY &&
+            shell_parser_source_kind != SHELL_PARSER_SOURCE_SEALED_FILE)
+        {
+                if (diagnose)
+                        log_error("floodlight: parser input cannot be isolated; refusing launch\n",
+                                  0);
+                goto refuse;
+        }
+
+        if (!floodlight_inplace_final &&
+            !floodlight_may(subject, FLOODLIGHT_RUN, true))
         {
                 if (diagnose)
                         log_error("floodlight: run refused\n", 0);
                 goto refuse;
         }
 
-        for (positive at = 1; arguments && at < count; at++)
+        for (positive at = 1; !floodlight_inplace_final && arguments &&
+                               at < count; at++)
         {
                 if (arguments[at] &&
                     floodlight_flag_refused(subject, arguments[at]))
@@ -15670,10 +16784,6 @@ static b32 floodlight_launch_decide(
                         goto refuse;
                 }
         }
-
-        spawn_allowed = floodlight_may(
-            subject, FLOODLIGHT_SPAWN,
-            tool ? floodlight_built_in(subject) : true);
 
         /* Spark accepts a pathname rather than an executable descriptor.
            Once the register is active, every external launch therefore takes
@@ -15699,6 +16809,8 @@ static b32 floodlight_launch_decide(
                 goto refuse;
         }
 
+        if (floodlight_inplace_final)
+                floodlight_inplace_terminal = true;
         if (!floodlight_apply(spawn_allowed, network_allowed,
                               network_prepared))
         {
@@ -15715,20 +16827,29 @@ refuse:
         return FLOODLIGHT_LAUNCH_REFUSE;
 }
 
+/*
+        An inherited seccomp filter can forge success for close and exit as
+        well as for the procfs reads that exposed it.  Once that state is
+        observed, no syscall can be trusted to end the process or sanitize a
+        descriptor.  Ask the kernel to leave normally, then stay in userspace
+        forever if a hostile filter lies about that request.  The fallback has
+        no writes and cannot turn the refusal into output on an inherited
+        socket.
+*/
+static DEAD_END fn floodlight_silent_stop()
+{
+        system_call_1(syscall(exit_group), 126);
+
+        for (;;)
+                asm volatile("" ::: "memory");
+}
+
 static bool floodlight_external_final(
     string_address executable, string_address address_to arguments,
     positive count, floodlight_executable address_to pinned)
 {
         return floodlight_launch_decide(executable, arguments, count, false,
                                         true, true, pinned) ==
-               FLOODLIGHT_LAUNCH_ALLOW;
-}
-
-static bool floodlight_confines(string_address name)
-{
-        (void)name;
-        return floodlight_launch_decide(null, shell_argv, shell_argc, true,
-                                        false, false, null) !=
                FLOODLIGHT_LAUNCH_ALLOW;
 }
 
@@ -15885,21 +17006,44 @@ fn shell_tool_list(writer write)
 }
 
 static PURE bool job_monitor();
-fn job_execute_tool(positive which);
+fn job_execute_tool(positive which, bool confined);
 
 static bool shell_tool_run_hashed(string_address name, positive2 named)
 {
         positive which = shell_tool_find_hashed(name, named);
         bipolar child = -1;
         positive status = 0;
+        b32 policy;
+        bool monitor;
+        bool confined = false;
+        bool resident_only = false;
 
         if (which == SHELL_TOOLS)
                 return false;
 
+        monitor = job_monitor();
+
+        /* A monitored applet skips the Spark preflight and forks directly.
+           When a regular parser source still needs freezing, make the same
+           nonfinal policy decision here in the owning parent. */
+        policy = floodlight_launch_decide(null, shell_argv, shell_argc, true,
+                                          false, false, null);
+        confined = policy != FLOODLIGHT_LAUNCH_ALLOW;
+
+        /* Without an authenticated register, the fallback policy identifies
+           the resident applet by name. A same-named PATH executable has no
+           authenticated path rule in that state and must not silently replace
+           the confined applet: doing so would bypass both its seccomp policy
+           and the live-parser source gate. A valid register instead owns the
+           external image's physical-path identity, so retain ordinary PATH
+           selection there. */
+        resident_only = confined &&
+                        floodlight_report_state != FLOODLIGHT_REPORT_VALID;
+
         /* The tail command runs in the shell's own process. An applet the
            register confines must not, because the filter would stay on after
            it and take the shell's own exec with it. */
-        if (shell_tail_command && !floodlight_confines(name))
+        if (shell_tail_command && !confined)
         {
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 shell_answer(shell_tool_call(which));
@@ -15908,9 +17052,9 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
 
         // Under job control this utility is a job, which needs a process
         // group the spawn device has no way to put it in.
-        if (job_monitor())
+        if (monitor)
         {
-                job_execute_tool(which);
+                job_execute_tool(which, confined);
                 return true;
         }
 
@@ -15925,10 +17069,11 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
            SIGPIPE because that exec is still in flight when true has closed
            the pipe. Calling the utility in the fork, or execing this same
            already-mapped image, finishes too soon and answers 4. */
-        child = shell_spawn_tool(shell_argv, -1, false);
+        if (!confined)
+                child = shell_spawn_tool_preflighted(shell_argv, -1, false);
 
         if (child < 0)
-                child = system_fork();
+                child = confined ? shell_clone() : shell_clone_raw();
 
         if (child == 0)
         {
@@ -15950,7 +17095,7 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
                 trap_default_all();
 
                 environment = shell_environment();
-                if (environment &&
+                if (!resident_only && environment &&
                     shell_find_in_path_alloc(shell_argv[0], address_of found,
                                              address_of found_room) == 1)
                 {
@@ -16105,6 +17250,14 @@ static positive shell_dot_depth;
 static bipolar shell_source_direct(string_address name)
 {
         bipolar handle;
+
+        /* Every file loaded as shell text is a new trust transition.  Once a
+           confined descendant is live it can change a predictable source
+           path before this open; slurping those bytes into memory afterwards
+           does not make their origin trustworthy. */
+        if (floodlight_parent_supervised &&
+            floodlight_descendants_present())
+                return -ERROR_ACCESS;
 
         do
                 handle = system_open_at(AT_FDCWD, name, FILE_READ);
@@ -16535,6 +17688,17 @@ static positive shell_wait_count;
 #define SHELL_WAIT_INVERT 8
 #define SHELL_WAIT_TOLD 16
 
+/* Child ownership cannot be recovered after a fork if growing this table
+   then fails.  Callers reserve every row before they create the first child;
+   shell_background_started repeats the check only to keep its public
+   contract safe for future callers. */
+static bool shell_background_reserve(positive count)
+{
+        return count <= positive_max - shell_wait_count &&
+               shell_array_room(shell_wait_table, shell_wait_room,
+                                shell_wait_count + count);
+}
+
 static PURE positive shell_wait_find_job(bipolar job)
 {
         for (positive at = 0; at < shell_wait_count; at++)
@@ -16591,8 +17755,7 @@ bool shell_background_started(bipolar address_to children, positive count,
            no longer occupy that name. */
         shell_wait_drop(job);
 
-        if (count > positive_max - shell_wait_count ||
-            !shell_array_room(shell_wait_table, shell_wait_room, shell_wait_count + count))
+        if (!shell_background_reserve(count))
                 return false;
 
         for (positive at = 0; at < count; at++)
@@ -17588,6 +18751,79 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
         return 0;
 }
 
+/* One final nested-command handoff for every resident wrapper.  Resolve PATH
+   with the same executable test as ordinary shell dispatch, then submit the
+   selected physical spelling and complete argv to the same policy/pinning
+   route.  The separate name matters for env -a, where argv[0] is deliberately
+   different from the image being selected. */
+static bipolar file_exec_path_try_in(
+    string_address name, string_address address_to words,
+    string_address address_to environment, string_address path)
+{
+        p8 address_to executable = null;
+        positive executable_room = 0;
+        positive count = 0;
+        bipolar located;
+        bipolar answer;
+
+        if (!name || !string_get(name) || !words || !words[0])
+                return -ERROR_NO_ENTRY;
+
+        if (!shell_command_path_allowed(name, true))
+                return -ERROR_ACCESS;
+
+        /* A restricted shell's PATH is immutable shell state.  env may alter
+           the vector inherited by the child, but its resident implementation
+           must not turn that altered value into a second executable search
+           surface before the child exists. */
+        if (shell_restricted)
+        {
+                path = env_get("PATH");
+                if (!path)
+                        path = "/bin:/usr/bin:/";
+        }
+        else if (!path)
+                path = "/bin:/usr/bin:/";
+
+        located = shell_find_in_path_alloc_mode(
+            name, address_of executable, address_of executable_room,
+            ACCESS_EXECUTE, false, path);
+        if (located < 0)
+                return -ERROR_NO_MEMORY;
+        if (located != 1)
+        {
+                if (executable)
+                        memory_free(executable, executable_room);
+                return located == 2 ? -ERROR_ACCESS : -ERROR_NO_ENTRY;
+        }
+
+        while (words[count])
+        {
+                if (count == positive_max)
+                {
+                        memory_free(executable, executable_room);
+                        return -ERROR_ARGUMENT_LIST;
+                }
+                count++;
+        }
+
+        answer = shell_exec_file(executable, words, count, environment);
+        memory_free(executable, executable_room);
+        return answer;
+}
+
+/* This only returns in the child that a wrapper created for its command. */
+static bipolar file_exec_path_try(string_address address_to words)
+{
+        string_address path = env_get("PATH");
+
+        if (!path)
+                path = file_environment("PATH");
+
+        return file_exec_path_try_in(words ? words[0] : null, words,
+                                     file_environment_all(), path);
+}
+
 /*
         The grammar words.
 
@@ -18141,13 +19377,24 @@ fn shell_command_builtin(writer write, string_address input)
                 {
                         string_address address_to saved_argv = shell_argv;
                         positive saved_argc = shell_argc;
+                        b32 policy;
+
+                        /* command's external tail bypasses ordinary dispatch.
+                           Give a regular parser source the same lazy parent
+                           preflight before either fork or in-place exec. */
+                        policy = floodlight_launch_decide(
+                            found, shell_argv, shell_argc, false,
+                            false, false, null);
 
                         if (!bowl_wrap_command(found, shell_directory,
                                                address_of shell_argv,
                                                address_of shell_argc))
                                 shell_argv[0] = found;
 
-                        if (shell_tail_command)
+                        if (shell_tail_command &&
+                            policy != FLOODLIGHT_LAUNCH_REFUSE &&
+                            exec_inplace_ready(
+                                floodlight_parent_supervised))
                                 shell_thread_instance_mode(true);
                         else
                                 shell_execute_command();

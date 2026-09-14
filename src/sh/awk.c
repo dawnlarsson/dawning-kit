@@ -1563,7 +1563,8 @@ static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
                 if (awk_readers[i]->live && awk_readers[i]->handle > 2)
                         system_close(awk_readers[i]->handle);
 
-        system_execute("/bin/sh", words, awk_child_environment);
+        (void)shell_exec_file((string_address)"/bin/sh", words, 3,
+                              awk_child_environment);
         exit(127);
         return -1;
 }
@@ -1633,7 +1634,7 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
         {
                 b32 ends[2];
 
-                if (system_pipe(ends, 0) < 0)
+                if (system_pipe(ends, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
                         awk_leave((awk_flush_everything(),
                                    string_diagnostic(&text_diagnostic, 2, null, "cannot open pipe")));
 
@@ -1740,7 +1741,7 @@ static awk_reader address_to awk_reader_for(awk_text address_to name, bool pipe)
         {
                 b32 ends[2];
 
-                if (system_pipe(ends, 0) < 0)
+                if (system_pipe(ends, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
                         return null;
 
                 made->handle = ends[0];

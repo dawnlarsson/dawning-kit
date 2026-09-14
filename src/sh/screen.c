@@ -164,7 +164,7 @@ static b32 screen_term()
                 if (process_pty_child_setup(master, slave, -1, -1) < 0)
                         system_call_1(syscall(exit), 126);
 
-                system_execute(SHELL, argv, envp);
+                (void)shell_exec_file((string_address)SHELL, argv, 1, envp);
                 system_call_1(syscall(exit), 127);
         }
 

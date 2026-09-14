@@ -73,6 +73,7 @@
 #define DHCP_NO_SOCKET (-1)
 #define DHCP_NO_OFFER (-2)
 #define DHCP_REFUSED (-3)
+#define DHCP_NO_RANDOM (-4)
 
 typedef struct
 {
@@ -83,6 +84,18 @@ typedef struct
         p32 server;
         p32 seconds;
 } dhcp_lease;
+
+/* A transaction id is visible beside the client's public hardware address and
+   is the only unpredictable field an off-path reply must guess.  Prefer the
+   initialized CSPRNG.  Early boot still needs DHCP before that pool is ready,
+   so retain Linux's explicit GRND_INSECURE stream; unlike system_nonce(), do
+   not fall through to a timing/PID/ASLR value if both kernel entropy policies
+   are unavailable. */
+static bool dhcp_transaction_early(p32 address_to transaction)
+{
+        return network_transaction_secure(transaction, sizeof(*transaction)) ||
+               system_random_fill(transaction, sizeof(*transaction), 4) == 0;
+}
 
 /* A subnet mask is a run of one bits followed by a run of zero bits.  Zero is
    retained as the existing "server omitted it" /24 policy; any other broken
@@ -270,7 +283,7 @@ static CONST p8 dhcp_prefix_of(p32 mask)
         return bits ? bits : 24;
 }
 
-/* A DHCPACK is allowed to omit values already supplied by its offer.  Packet
+/* A DHCPACK is allowed to omit options already supplied by its offer.  Packet
    parsing itself stays replacement-based so unrelated packets cannot bleed
    into one another; only the stateful exchange chooses to retain an earlier
    nonzero field. */
@@ -301,9 +314,19 @@ static bool dhcp_answer_matches(p8 kind, const dhcp_lease address_to answer,
                answer->server == selected_server;
 }
 
+/* An acknowledgement completes the exact offer the client requested.  A NAK
+   has no address to match, but still has to come from the selected server. */
+static bool dhcp_acquisition_answer_matches(
+    p8 kind, const dhcp_lease address_to answer,
+    const dhcp_lease address_to offer)
+{
+        return dhcp_answer_matches(kind, answer, offer->server) &&
+               (kind != DHCP_ACK || answer->address == offer->address);
+}
+
 static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
 {
-        bipolar handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+        bipolar handle = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         b32 one = 1;
 
         if (handle < 0)
@@ -328,21 +351,66 @@ static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
         return handle;
 }
 
+/* Packet fields identify the DHCP transaction; the datagram endpoint says
+   who supplied them.  Every accepted reply comes from server port 67.
+   Acquisition explicitly permits any OFFER host, whose selected transport
+   peer is copied out and then required exactly for the completing ACK or NAK.
+   Keeping that policy separate from the address matters because 0.0.0.0 is
+   itself a possible source and must become an exact peer once selected.
+   This also binds a relayed exchange to the relay endpoint that supplied the
+   offer rather than confusing option 54 with the UDP sender. */
+static bool dhcp_peer_matches(
+    const socket_address_internet address_to peer, p32 peer_size,
+    const socket_address_internet address_to expected, bool any_host)
+{
+        return peer && expected && peer_size == sizeof(*peer) &&
+               peer->family == AF_INET && expected->family == AF_INET &&
+               peer->port == expected->port &&
+               (any_host || peer->host == expected->host);
+}
+
 static bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
                          p32 transaction, p8 address_to hardware,
                          dhcp_lease address_to lease, p8 address_to kind,
-                         positive seconds, positive nanoseconds)
+                         const socket_address_internet address_to expected_peer,
+                         bool any_peer_host,
+                         socket_address_internet address_to accepted_peer,
+                         const network_deadline address_to deadline)
 {
         bipolar got;
 
-        if (network_wait_readable(handle, seconds, nanoseconds) <= 0)
-                return false;
+        for (;;)
+        {
+                got = network_wait_readable_until(handle, deadline);
 
-        got = socket_receive((b32)handle, packet, room, MSG_TRUNC, 0, 0);
+                if (got <= 0)
+                        return false;
 
-        return got > 0 && (positive)got <= room &&
-               dhcp_read(packet, (positive)got, transaction, hardware,
-                         lease, kind) >= 0;
+                socket_address_internet peer;
+                p32 peer_size = sizeof peer;
+
+                memory_fill(address_of peer, 0, sizeof peer);
+                got = socket_receive((b32)handle, packet, room, MSG_TRUNC,
+                                     address_of peer, address_of peer_size);
+
+                if (got == NETWORK_INTERRUPTED)
+                        continue;
+                if (got < 0)
+                        return false;
+                if (!got)
+                        continue;
+
+                if ((positive)got <= room &&
+                    dhcp_peer_matches(address_of peer, peer_size,
+                                      expected_peer, any_peer_host) &&
+                    dhcp_read(packet, (positive)got, transaction, hardware,
+                              lease, kind) >= 0)
+                {
+                        if (accepted_peer)
+                                *accepted_peer = peer;
+                        return true;
+                }
+        }
 }
 
 /*
@@ -368,7 +436,7 @@ static bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
         to be initialised, and early in boot it is not. Twelve seconds of a
         boot were spent there, before a single packet moved, asking for a
         number to put in a header. GRND_NONBLOCK asks not to wait, and the
-        clock answers instead when the pool will not.
+        kernel's explicit early-boot stream answers until the pool is ready.
 
         Three seconds to carrier, four to an address. The second of those is
         qemu, not this.
@@ -384,7 +452,8 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         positive wait;
 
         memory_fill(lease, 0, sizeof(dhcp_lease));
-        transaction = (p32)network_transaction(sizeof transaction);
+        if (!dhcp_transaction_early(address_of transaction))
+                return DHCP_NO_RANDOM;
         handle = dhcp_open(device, HOST_ANY, true);
 
         if (handle < 0)
@@ -393,11 +462,14 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         socket_address_internet where = {
             .family = AF_INET, .port = network_order_16(DHCP_SERVER_PORT),
             .host = network_order_32(HOST_BROADCAST)};
+        socket_address_internet any_server = {
+            .family = AF_INET, .port = network_order_16(DHCP_SERVER_PORT)};
+        socket_address_internet selected_peer;
 
         for (attempt = 0; attempt < 20; attempt++)
         {
                 p8 kind = 0;
-                positive deadline;
+                network_deadline deadline;
 
                 /*
                         A quarter second apart while it matters.
@@ -414,8 +486,6 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         on it, which should not be broadcast at forever.
                 */
                 wait = attempt < 12 ? 1 : (attempt - 11) * 8;
-                deadline = wait;
-
                 length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, transaction,
                                     hardware, 0, 0, 0);
 
@@ -428,13 +498,18 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         continue;
                 }
 
-                while (deadline--)
-                {
-                        if (!dhcp_receive(handle, packet, sizeof packet, transaction,
-                                          hardware, lease, address_of kind,
-                                          0, 250000000))
-                                continue;
+                if (!network_deadline_begin(
+                        address_of deadline, wait / 4,
+                        (wait % 4) * 250000000))
+                        continue;
 
+                while (dhcp_receive(handle, packet, sizeof packet, transaction,
+                                    hardware, lease, address_of kind,
+                                    address_of any_server,
+                                    true,
+                                    address_of selected_peer,
+                                    address_of deadline))
+                {
                         if (kind != DHCP_OFFER || !dhcp_lease_usable(lease))
                                 continue;
 
@@ -444,23 +519,30 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                                             transaction, hardware, lease->address,
                                             lease->server, 0);
 
-                        socket_send((b32)handle, packet, length, 0, address_of where,
-                                    sizeof where);
-
-                        deadline = wait;
+                        if (socket_send(
+                                (b32)handle, packet, length, 0,
+                                address_of where, sizeof where) < 0)
+                                /* The REQUEST never left.  Start the next
+                                   discovery attempt immediately instead of
+                                   spending its whole reply budget waiting for
+                                   an answer that cannot exist. */
+                                break;
 
                         dhcp_lease answer = {0};
 
-                        while (deadline--)
-                        {
-                                if (!dhcp_receive(handle, packet, sizeof packet,
-                                                  transaction, hardware,
-                                                  address_of answer,
-                                                  address_of kind, 0, 250000000))
-                                        continue;
+                        if (!network_deadline_begin(
+                                address_of deadline, wait / 4,
+                                (wait % 4) * 250000000))
+                                break;
 
-                                if (dhcp_answer_matches(kind, address_of answer,
-                                                        lease->server))
+                        while (dhcp_receive(
+                                   handle, packet, sizeof packet,
+                                   transaction, hardware, address_of answer,
+                                   address_of kind, address_of selected_peer,
+                                   false, null, address_of deadline))
+                        {
+                                if (dhcp_acquisition_answer_matches(
+                                        kind, address_of answer, lease))
                                 {
                                         if (kind == DHCP_ACK)
                                         {
@@ -512,14 +594,16 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         p32 transaction;
         dhcp_lease fresh;
         bipolar handle;
+        bipolar status = DHCP_NO_OFFER;
         positive length;
-        positive deadline;
+        network_deadline deadline;
         p8 kind = 0;
 
         if (!dhcp_lease_usable(lease))
                 return DHCP_NO_OFFER;
 
-        transaction = (p32)network_transaction(sizeof transaction);
+        if (!dhcp_transaction_early(address_of transaction))
+                return DHCP_NO_RANDOM;
         handle = dhcp_open(device, lease->address, false);
 
         if (handle < 0)
@@ -535,18 +619,22 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         if (socket_send((b32)handle, packet, length, 0, address_of where,
                         sizeof where) < 0)
         {
-                socket_close((b32)handle);
-                return DHCP_NO_SOCKET;
+                status = DHCP_NO_SOCKET;
+                goto done;
         }
 
-        for (deadline = 0; deadline < 4; deadline++)
+        if (!network_deadline_begin(address_of deadline, 4, 0))
+                goto done;
+
+        while (true)
         {
                 memory_fill(address_of fresh, 0, sizeof fresh);
 
                 if (!dhcp_receive(handle, packet, sizeof packet, transaction,
                                   hardware, address_of fresh, address_of kind,
-                                  1, 0))
-                        continue;
+                                  address_of where, false, null,
+                                  address_of deadline))
+                        break;
 
                 if (kind == DHCP_ACK && fresh.address == lease->address &&
                     dhcp_answer_matches(kind, address_of fresh, lease->server))
@@ -559,22 +647,21 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
                         if (!dhcp_lease_usable(lease))
                                 continue;
 
-                        socket_close((b32)handle);
-
-                        return DHCP_OK;
+                        status = DHCP_OK;
+                        break;
                 }
 
                 if (kind == DHCP_NAK &&
                     dhcp_answer_matches(kind, address_of fresh, lease->server))
                 {
-                        socket_close((b32)handle);
-                        return DHCP_REFUSED;
+                        status = DHCP_REFUSED;
+                        break;
                 }
         }
 
+done:
         socket_close((b32)handle);
-
-        return DHCP_NO_OFFER;
+        return status;
 }
 
 #endif // STANDARD_MODERN_C_NET_DHCP

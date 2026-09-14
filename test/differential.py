@@ -6876,7 +6876,171 @@ def files_column_layout(farm):
     return passed, total, notes
 
 
-FILES_CHECKS = (files_column_layout,)
+def files_xargs_parallel(farm):
+    """Process-limit, slot, status and drain contracts need live children;
+    output-only generated cases cannot distinguish a real -P queue from a
+    parser that merely accepts and discards the option."""
+    import resource
+    import subprocess
+    import tempfile
+    import time
+
+    candidate = Path(farm) / "xargs"
+    if not candidate.exists():
+        return 0, 1, ["parallel xargs checks require the candidate xargs"]
+
+    passed = total = 0
+    notes = []
+
+    def check(condition, name, detail=""):
+        nonlocal passed, total
+        total += 1
+        if condition:
+            passed += 1
+        else:
+            notes.append(name + (": " + detail if detail else ""))
+
+    def run(arguments, data=b"", **kwargs):
+        return subprocess.run(
+            [str(candidate), *arguments], input=data,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=8, **kwargs)
+
+    sleep_command = ["-n1", "sh", "-c", "sleep 1", "sh"]
+    started = time.monotonic()
+    parallel = run(["-P2", *sleep_command], b"a\nb\n")
+    parallel_time = time.monotonic() - started
+    started = time.monotonic()
+    serial = run(sleep_command, b"a\nb\n")
+    serial_time = time.monotonic() - started
+    check(parallel.returncode == 0 and serial.returncode == 0 and
+          parallel_time < 1.75 and serial_time > 1.75,
+          "-P2 overlaps two one-second batches",
+          f"parallel={parallel_time:.3f}s serial={serial_time:.3f}s")
+
+    slots = run(["-P0", "-n1", "--process-slot-var=SLOT", "sh", "-c",
+                 'printf "%s\\n" "$SLOT"; sleep .2', "sh"],
+                b"a\nb\nc\nd\n")
+    check(slots.returncode == 0 and sorted(slots.stdout.splitlines()) ==
+          [b"0", b"1", b"2", b"3"],
+          "-P0 gives simultaneous children distinct decimal slots",
+          show(slots.stdout + slots.stderr))
+
+    reused = run(["-P2", "-n1", "--process-slot-var=SLOT", "sh", "-c",
+                  'case "$1" in slow) sleep .5;; *) sleep .05;; esac; '
+                  'printf "%s:%s\\n" "$1" "$SLOT"', "sh"],
+                 b"slow\nfast\nnext\n")
+    check(reused.returncode == 0 and b"next:1" in reused.stdout.splitlines(),
+          "the lowest completed slot is reusable while another stays live",
+          show(reused.stdout + reused.stderr))
+
+    inherited = dict(os.environ, SLOT="parent")
+    injected = run(["-n1", "--process-slot-var=SLOT", "sh", "-c",
+                    'env | grep "^SLOT="', "sh"], b"x\n", env=inherited)
+    check(injected.returncode == 0 and injected.stdout == b"SLOT=0\n" and
+          inherited["SLOT"] == "parent",
+          "slot assignment replaces one child entry without parent mutation",
+          show(injected.stdout + injected.stderr))
+
+    empty_slot = run(["--process-slot-var=", "true"], b"x\n")
+    equals_slot = run(["--process-slot-var=A=B", "true"], b"x\n")
+    check(empty_slot.returncode == 1 and equals_slot.returncode == 1,
+          "invalid slot variable names are refused before execution")
+
+    statuses = (
+        (["sh", "-c", "exit 7"], 123),
+        (["sh", "-c", "exit 255"], 124),
+        (["sh", "-c", "kill -TERM $$"], 125),
+        (["xargs-command-that-does-not-exist"], 127),
+        (["/"], 126),
+    )
+    for command, expected in statuses:
+        result = run(["-n1", *command], b"x\n")
+        check(result.returncode == expected,
+              "xargs status " + str(expected),
+              f"got {result.returncode}: {show(result.stderr)}")
+
+    combined = run(["-P2", "-n1", "sh", "-c",
+                    'if [ "$1" = sig ]; then sleep .1; kill -TERM $$; '
+                    'else exit 255; fi', "sh"], b"sig\n255\n")
+    check(combined.returncode == 125,
+          "parallel fatal statuses aggregate to the highest xargs status",
+          f"got {combined.returncode}: {show(combined.stderr)}")
+
+    with tempfile.TemporaryDirectory(prefix="xargs-drain-") as temporary:
+        marker = Path(temporary) / "finished"
+        drained = run(["-P2", "-n1", "sh", "-c",
+                       'touch "$1/$2"; if [ "$2" = 255 ]; then '
+                       'while [ ! -e "$1/slow" ]; do sleep .01; done; '
+                       'exit 255; fi; sleep .3; '
+                       'printf "%s\\n" "$2" >>"$1/finished"',
+                       "sh", temporary], b"255\nslow\nlate\n")
+        marked = marker.read_text().splitlines() if marker.exists() else []
+        check(drained.returncode == 124 and marked == ["slow"],
+              "a fatal child stops new work and drains work already started",
+              f"status={drained.returncode} marker={marked!r}")
+
+    # A helper can create a sibling whose parent is xargs with clone's
+    # CLONE_PARENT flag.  It is deliberately absent from xargs' job table.
+    # The third tracked command observes whether a broad wait consumed that
+    # unrelated child's zombie while waiting for one of the first two jobs.
+    with tempfile.TemporaryDirectory(prefix="xargs-owned-wait-") as temporary:
+        clone_parent = """\
+import ctypes, os, platform, sys, time
+kind, root = sys.argv[2], sys.argv[1]
+record = os.path.join(root, "pid")
+if kind == "owner":
+    number = 56 if platform.machine() == "x86_64" else 220
+    child = ctypes.CDLL(None).syscall(number, 0x8011, 0, 0, 0, 0)
+    if child == 0:
+        time.sleep(.05)
+        os._exit(42)
+    with open(record, "w") as output:
+        output.write(str(child))
+    time.sleep(.3)
+elif kind == "peer":
+    while not os.path.exists(record):
+        time.sleep(.01)
+    time.sleep(.3)
+else:
+    with open(record) as source:
+        child = source.read()
+    print("preserved" if os.path.exists("/proc/" + child) else "reaped")
+"""
+        owned = run(["-P2", "-n1", sys.executable, "-c", clone_parent,
+                     temporary], b"owner\npeer\nprobe\n")
+        check(owned.returncode == 0 and owned.stdout == b"preserved\n",
+              "xargs reaps only children in its own job table",
+              f"status={owned.returncode} output="
+              f"{show(owned.stdout + owned.stderr)}")
+
+    traced = run(["-t", "-P2", "-n1", "echo"], b"a\nb\n")
+    check(traced.returncode == 0 and traced.stderr == b"echo a\necho b\n",
+          "parallel tracing remains one ordered line per launch",
+          show(traced.stderr))
+
+    prompted = run(["-p", "-n1", "echo"], b"x\n", start_new_session=True)
+    check(prompted.returncode == 1 and b"echo x" in prompted.stderr and
+          b"/dev/tty" in prompted.stderr,
+          "interactive mode traces before reporting an unavailable terminal",
+          show(prompted.stderr))
+
+    def small_stack():
+        resource.setrlimit(resource.RLIMIT_STACK,
+                           (512 * 1024, 512 * 1024))
+
+    large = (" ".join(["x" * 32750] * 4) + "\n").encode()
+    split = run(["-s", "131072", "sh", "-c", "echo $#", "sh"], large,
+                env={"PATH": os.environ.get("PATH", os.defpath)},
+                preexec_fn=small_stack)
+    check(split.returncode == 0 and split.stdout == b"2\n2\n",
+          "an exec-time E2BIG splits and retries the batch",
+          f"status={split.returncode} output={show(split.stdout + split.stderr)}")
+
+    return passed, total, notes
+
+
+FILES_CHECKS = (files_column_layout, files_xargs_parallel)
 
 # ---- domain: misc (from spec_misc.py) ----
 
@@ -9806,7 +9970,10 @@ shell_RESTRICTED = Utility(
 
 # A close-on-exec pipe end may land directly on descriptor zero when the
 # invoking shell inherited stdin closed.  Cover both the parent-run lastpipe
-# stage and a forked middle stage which later execs an external reader.
+# stage and a forked middle stage which later execs an external reader. A
+# coprocess also keeps both parent ends across commands: when the descriptor
+# limit leaves no room for its preferred high numbers, a later external child
+# must still close the low-number fallback on exec.
 shell_PIPE_FD_COLLISIONS = Utility(
     "pipeline_fd_collisions",
     operands=(
@@ -9815,6 +9982,11 @@ shell_PIPE_FD_COLLISIONS = Utility(
                "printf 'status:%s\\n' \"$?\""),
         ("-c", "exec 0<&-; printf 'middle\\n' | { /bin/cat; } | /bin/cat; "
                "printf 'status:%s\\n' \"$?\""),
+        ("-c", "ulimit -n 60; coproc C { cat; }; copid=$C_PID; "
+               "/bin/sleep 2 & sleeper=$!; exec {C[1]}>&-; "
+               "read -t 0.2 value <&${C[0]}; eof=$?; "
+               "kill \"$sleeper\" 2>/dev/null; wait \"$sleeper\" 2>/dev/null; "
+               "wait \"$copid\" 2>/dev/null; printf 'closed:%s\\n' \"$eof\""),
     ),
     stdin=("empty",),
     fixture="shell",
@@ -12432,6 +12604,17 @@ def shell_lang_job_control_script(rng):
         script + " 2>/dev/null", "echo \"end=$?\"")
 
 
+def shell_lang_job_foreground_mixed_stop(rng):
+    # The first stage is already reaped when the second stops. Resuming and
+    # waiting must use that saved status rather than treating the old PID as
+    # a newly-live child. Redirect the stop announcement so only the retained
+    # job's final contract is compared.
+    script = ("set -m; { true | /bin/sh -c 'kill -STOP $$; exit 7'; } "
+              ">/dev/null 2>&1; bg %1 >/dev/null 2>&1; wait %1; w=$?; "
+              "printf 'wait=%s jobs=<%s>\\n' \"$w\" \"$(jobs -p)\"")
+    return "job-foreground-mixed-stop", shell_BASH, shell_program(script)
+
+
 def shell_lang_utf8_locale(rng):
     locale = rng.choice(("LC_ALL=C.UTF-8", "LC_ALL=C; LC_CTYPE=C.UTF-8; LANG=C.UTF-8", "LC_ALL=; LC_CTYPE=C.UTF-8; LANG=C",
                          "LC_ALL=; LC_CTYPE=; LANG=C.UTF-8", "LC_ALL=C"))
@@ -13042,6 +13225,7 @@ SHELL_FAMILIES = (
     shell_lang_special_builtin_fatality,
     shell_lang_assignment_words,
     shell_lang_job_control_script,
+    shell_lang_job_foreground_mixed_stop,
     shell_lang_utf8_locale,
     shell_lang_onecmd_input,
     shell_lang_process_redirection,
@@ -18296,7 +18480,7 @@ def harness_edit_driver(argv):
         passed += 1
 
         leftovers = [name for name in os.listdir(directory)
-                     if name.startswith(".moonwater-edit-")]
+                     if name.startswith(".moonwater-stage-")]
         if leftovers:
             fail("atomic save left temporary files behind")
         passed += 1
@@ -19778,14 +19962,6 @@ def harness_floodlight(argv):
     #   write-protects them. Without it a stray write flips a row and leaves
     #   the timestamp at zero, so the report goes on calling the flipped value
     #   the one this kernel was compiled with.
-    #   Built, not merely buildable. The Kconfig entry defaults to y, but a
-    #   profile that does not ask for it leaves the option unset and the module
-    #   out of the kernel entirely -- which is how it shipped for a while: the
-    #   register was written, tested and absent from every image.
-    profile = (ROOT / 'kernel/profile/any').read_text()
-    check('CONFIG_MOONWATER_FLOODLIGHT=y' in profile,
-          'every image is built with the register in it')
-
     minor = re.search(r'#define FLOODLIGHT_DEVICE_MINOR (\d+)', text)
     nodes = (ROOT / 'src/build/build.c').read_text()
     check(bool(minor) and ('dev/floodlight c 10 %s' % minor.group(1)) in nodes,
@@ -19935,8 +20111,14 @@ def harness_floodlight(argv):
     check(bool(re.search(r'shell_exec_file\s*\(\s*found\s*,', tool_run)) and
           not re.search(r'system_execute\s*\(\s*found\s*,', tool_run) and
           not re.search(r'floodlight_launch_decide\s*\(\s*found\s*,', tool_run) and
+          bool(re.search(r'resident_only\s*=\s*confined\s*&&\s*'
+                         r'floodlight_report_state\s*!=\s*'
+                         r'FLOODLIGHT_REPORT_VALID', tool_run)) and
+          bool(re.search(r'if\s*\(!resident_only\s*&&\s*environment',
+                         tool_run)) and
           bool(re.search(r'external_failed\s*==\s*-ERROR_ACCESS', tool_run)),
-          'a PATH image whose basename is an applet keeps external policy identity')
+          'a PATH image whose basename is an applet keeps authenticated '
+          'external identity, while fallback-confined applets stay resident')
     execution = (ROOT / 'src/sh/exec.c').read_text()
     stage = execution[execution.index('static bipolar exec_stage_spawn('):
                       execution.index('static b32 coproc_kept(',
@@ -19987,12 +20169,63 @@ def harness_floodlight(argv):
     shell_tokens = [token.value for token in lex(shell)[0]]
     exec_tokens = [token.value for token in lex(exec_source)[0]]
     shell_main_tokens = [token.value for token in lex(shell_main_source)[0]]
+    spawn_tool_source = shell_main_source[
+        shell_main_source.index('bipolar shell_spawn_tool('):
+        shell_main_source.index('\nfn shell_execute_command()',
+                                shell_main_source.index(
+                                    'bipolar shell_spawn_tool('))]
+    spawn_tool_tokens = [token.value for token in lex(spawn_tool_source)[0]]
+    execute_command_source = shell_main_source[
+        shell_main_source.index('fn shell_execute_command()'):
+        shell_main_source.index('\n}',
+                                shell_main_source.index(
+                                    'fn shell_execute_command()')) + 2]
+    execute_command_tokens = [token.value for token in
+                              lex(execute_command_source)[0]]
     tools_tokens = [token.value for token in lex(tools_source)[0]]
     monitor_tokens = [token.value for token in lex(monitor_source)[0]]
     utilities_tokens = [token.value for token in
                         lex((ROOT / 'programs/utilities.c').read_text())[0]]
+    program_source = (ROOT / 'programs/shell.c').read_text()
+    program_tokens = [token.value for token in lex(program_source)[0]]
     build_tokens = [token.value for token in
                     lex((ROOT / 'src/build/build.c').read_text())[0]]
+    parser_begin_source = shell_main_source[
+        shell_main_source.index('static bool shell_parser_source_begin('):
+        shell_main_source.index('\n/* The named-script reader',
+                                shell_main_source.index(
+                                    'static bool shell_parser_source_begin('))]
+    parser_begin_tokens = [token.value for token in lex(parser_begin_source)[0]]
+    source_direct_source = shell[
+        shell.index('static bipolar shell_source_direct('):
+        shell.index('\nstatic bipolar shell_source_open(',
+                    shell.index('static bipolar shell_source_direct('))]
+    source_direct_tokens = [token.value for token in lex(source_direct_source)[0]]
+    spawn_node_source = exec_source[
+        exec_source.index('static bipolar exec_spawn_node('):
+        exec_source.index('\n/*\n        A pipeline.',
+                          exec_source.index('static bipolar exec_spawn_node('))]
+    parent_policy_source = exec_source[
+        exec_source.index('static fn exec_node_parent_policy_prepare('):
+        exec_source.index('\nstatic bipolar exec_spawn_node(',
+                          exec_source.index(
+                              'static fn exec_node_parent_policy_prepare('))]
+    parent_policy_tokens = [token.value for token in lex(parent_policy_source)[0]]
+    stage_spawn_source = exec_source[
+        exec_source.index('static bipolar exec_stage_spawn('):
+        exec_source.index('\n/*\n        coproc:',
+                          exec_source.index('static bipolar exec_stage_spawn('))]
+    stage_spawn_tokens = [token.value for token in lex(stage_spawn_source)[0]]
+    coproc_source = exec_source[
+        exec_source.index('static b32 exec_coproc('):
+        exec_source.index('\n/*\n        lastpipe runs',
+                          exec_source.index('static b32 exec_coproc('))]
+    coproc_tokens = [token.value for token in lex(coproc_source)[0]]
+    pipe_source = exec_source[
+        exec_source.index('static b32 exec_pipe('):
+        exec_source.index('\n// How many commands a pipeline has',
+                          exec_source.index('static b32 exec_pipe('))]
+    pipe_tokens = [token.value for token in lex(pipe_source)[0]]
 
     def calls(*sequence):
         window = len(sequence)
@@ -20003,6 +20236,12 @@ def harness_floodlight(argv):
         window = len(sequence)
         return any(tokens[i:i + window] == list(sequence)
                    for i in range(len(tokens) - window))
+
+    exec_simple_source = exec_source[
+        exec_source.index('static b32 exec_simple('):
+        exec_source.index('\nstatic bool exec_loop_again()',
+                          exec_source.index('static b32 exec_simple('))]
+    exec_simple_tokens = [token.value for token in lex(exec_simple_source)[0]]
 
     for ok, what in (
             (calls('floodlight_launch_decide', '(', 'null', ',', 'arguments',
@@ -20027,9 +20266,13 @@ def harness_floodlight(argv):
              'external policy opens the command spelling before naming it'),
             (calls('floodlight_descriptor_read_link', '(', 'image', '-', '>',
                    'handle', ',', 'image', '-', '>', 'identity', ',',
-                   'FILE_PATH_MAX', '-', '1', ')'),
+                   'sizeof', '(', 'image', '-', '>', 'identity', ')', ')'),
              'the held descriptor supplies the physical absolute policy '
              'identity'),
+            (calls('(', 'positive', ')', 'length', '>', '=',
+                   'sizeof', '(', 'image', '-', '>', 'identity', ')'),
+             'a possibly truncated physical path is never used as a policy '
+             'subject'),
             (calls('syscall', '(', 'execveat', ')', ',', '(', 'positive', ')',
                    'handle', ',', '(', 'positive', ')', '""'),
              'the authorized descriptor, rather than a mutable pathname, is '
@@ -20041,7 +20284,9 @@ def harness_floodlight(argv):
                    'return', 'FLOODLIGHT_LAUNCH_PROCESS'),
              'an active register sends external Spark launches through the '
              'descriptor-pinned child path'),
-            (calls('shell_tail_command', '&', '&', '!', 'floodlight_confines', '(', 'name', ')'),
+            (calls('confined', '=', 'policy', '!', '=',
+                   'FLOODLIGHT_LAUNCH_ALLOW', ';') and
+             calls('shell_tail_command', '&', '&', '!', 'confined'),
              "an applet that must be confined never runs in the shell's own process"),
             (calls('tool', '?', 'floodlight_built_in', '(', 'subject', ')',
                    ':', 'true'),
@@ -20070,6 +20315,10 @@ def harness_floodlight(argv):
                    'FLOODLIGHT_REPORT_BUILTIN'),
              'a Spark-started shell and a process that has seen the register '
              'fail closed when the promised policy device is unavailable'),
+            (calls('registered', '=', 'floodlight_policy_registered', '(',
+                   ')', ';', 'if', '(', 'registered', '!', '=', '0', ')'),
+             'stock fallback is permitted only after authenticated procfs '
+             'proves that the policy device is not registered'),
             (calls('floodlight_row_count', '=', '0', ';',
                    'floodlight_report_state', '=',
                    'FLOODLIGHT_REPORT_UNREAD', ';',
@@ -20081,6 +20330,34 @@ def harness_floodlight(argv):
                    ',', 'arguments', ',', 'count', ',', '&', 'pinned', ')',
                    ')'),
              'every ordinary external exec passes the central final decision'),
+            (bool(re.search(
+                r'if \(floodlight_inherited_seccomp\)\s*\{\s*'
+                r'diagnose = false;\s*if \(final\)\s*'
+                r'floodlight_silent_stop\(\);\s*\}', shell)),
+             'a final child under untrusted inherited seccomp enters the '
+             'silent terminal path before any diagnostic or cleanup syscall'),
+            (bool(re.search(
+                r'static DEAD_END fn floodlight_silent_stop\(\)\s*\{\s*'
+                r'system_call_1\(syscall\(exit_group\), 126\);\s*'
+                r'for \(;;\)\s*asm volatile\("" ::: "memory"\);\s*\}',
+                shell)),
+             'the silent terminal path tries exit once and otherwise performs '
+             'no more syscalls or writes'),
+            (calls('if', '(', '!', 'floodlight_own_seccomp', '&', '&',
+                   '!', 'floodlight_entry_unfiltered', '(', ')', ')'),
+             'interpreter recursion recognizes only a filter installed by '
+             'this still-running image'),
+            (calls('memory_fill', '(', 'status_text', ',', '0', ',',
+                   'sizeof', '(', 'status_text', ')', ')', ';'),
+             'a forged successful status read cannot expose stale stack bytes'),
+            (calls('(', 'positive', ')', 'got', '>', 'sizeof', '(',
+                   'status_text', ')', '|', '|', '(', 'positive', ')', 'got',
+                   '>', 'FLOODLIGHT_STATUS_MAX', '-', 'total'),
+             'a forged status length is bounded before it indexes the chunk'),
+            (calls('floodlight_own_seccomp', '=', 'true', ';', 'return',
+                   'true', ';'),
+             'the image records filter ownership only after installation '
+             'succeeds'),
             (calls('equal', '=', 'memory_first_of', '(', 'argument', '+', '2',
                    ',', "'='", ',', 'length', '-', '2', ')'),
              'long --flag=value words use a bounded flag-name match'),
@@ -20088,9 +20365,18 @@ def harness_floodlight(argv):
                           'executable', ',', 'words'),
              'the pipeline and coprocess direct-spawn path uses the same '
              'executable and argument decision'),
-            (source_calls(shell_main_tokens, 'policy', '=',
-                          'floodlight_launch_decide', '(', 'path', ',',
-                          'arguments', ',', 'count', ',', 'tool'),
+            (source_calls(spawn_tool_tokens, 'floodlight_launch_decide', '(',
+                          'null', ',', 'arguments', ',', 'count', ',', 'true',
+                          ',', 'false', ',', 'false', ',', 'null', ')') and
+             spawn_tool_source.index('floodlight_launch_decide') <
+                 spawn_tool_source.index('shell_spawn_tool_preflighted') and
+             source_calls(execute_command_tokens, 'policy', '=',
+                          'floodlight_launch_decide', '(', 'shell_argv', '[',
+                          '0', ']', ',', 'shell_argv', ',', 'count', ',',
+                          'false', ',', 'false', ',', 'false', ',', 'null',
+                          ')') and
+             execute_command_source.index('floodlight_launch_decide') <
+                 execute_command_source.index('shell_spawn_preflighted'),
              'the Spark backend is gated before publishing a spawn request'),
             (calls('if', '(', '!', 'floodlight_row_count', ')'),
              'an untouched register costs an applet one comparison, not a walk'),
@@ -20107,6 +20393,172 @@ def harness_floodlight(argv):
              'native syscall numbers'),
             (source_calls(utilities_tokens, 'shell_tool_as_called_final', '(', ')'),
              'the standalone utility image uses the process-final confined entry'),
+            (source_calls(program_tokens, 'floodlight_parent_begin', '(', ')') and
+             program_source.index('shell_tool_named_in(called, true)') <
+                 program_source.index('(void)floodlight_parent_begin()') and
+             not source_calls(utilities_tokens, 'floodlight_parent_begin', '(', ')') and
+             not source_calls(utilities_tokens, 'floodlight_parent_prepare', '(', ')'),
+             'only a real shell publishes the protected-launcher role; '
+             'a fresh standalone applet cannot pretend its external parent is protected'),
+            ('!floodlight_parent_role ||\n'
+             '             ((!floodlight_parent_protected ||\n'
+             '               !floodlight_parent_supervised) &&\n'
+             '              !floodlight_inplace_final)' in shell,
+             'a final restricted child requires the inherited launcher '
+             'contract, with a distinct authenticated in-place transition'),
+            (exec_source.count('exec_floodlight_child_began();') == 2 and
+             'if (!floodlight_parent_protected ||\n'
+             '            !floodlight_parent_supervised)\n'
+             '                floodlight_parent_role = false;' in exec_source,
+             'an unprotected structural or helper child cannot authorize '
+             'itself as the parent of its already-running process'),
+            ('exec_node_parent_policy_prepare(index);' in spawn_node_source and
+             spawn_node_source.index('exec_node_parent_policy_prepare(index);') <
+                 spawn_node_source.index('child = shell_clone();') and
+             source_calls(parent_policy_tokens, 'exec_literal_tool', '(',
+                          'index', ',', 'address_of', 'name') and
+             source_calls(parent_policy_tokens, 'floodlight_launch_decide',
+                          '(', 'null', ',', 'arguments', ',', '1', ',',
+                          'true', ',', 'false', ',', 'false', ',', 'null', ')'),
+             'a literal resident applet prepares its actual parser parent '
+             'before a background or compound structural fork'),
+            (source_calls(pipe_tokens, 'exec_node_parent_policy_prepare', '(',
+                          'child', ')') and
+             pipe_source.index('exec_node_parent_policy_prepare(child);') <
+                 pipe_source.index('made = monitor') and
+             source_calls(coproc_tokens, 'exec_node_parent_policy_prepare',
+                          '(', 'node', '-', '>', 'left', ')') and
+             coproc_source.index(
+                 'exec_node_parent_policy_prepare(node->left);') <
+                 coproc_source.index('child = exec_stage_spawn(') and
+             not source_calls(stage_spawn_tokens,
+                              'exec_node_parent_policy_prepare', '('),
+             'pipeline and coprocess callers prepare literal resident stages '
+             'once before either their direct-spawn probe or structural fork'),
+            (source_calls(spawn_tool_tokens, 'if', '(',
+                          'floodlight_launch_decide', '(', 'null', ',',
+                          'arguments', ',', 'count', ',', 'true', ',', 'false',
+                          ',', 'false', ',', 'null', ')', '!', '=',
+                          'FLOODLIGHT_LAUNCH_ALLOW', ')', 'return', '-', '1',
+                          ';'),
+             'every restricted Spark tool falls back to a child that inherits '
+             'the protected-launcher contract'),
+            (calls('!', 'floodlight_ptrace_scope_safe', '(', ')'),
+             'restricted launches require authenticated Yama process-memory '
+             'isolation'),
+            (source_calls(exec_tokens, 'if', '(',
+                          'floodlight_descendants_blocking', '(', ')', ')',
+                          'return', 'false', ';') and
+             source_calls(exec_tokens, 'floodlight_parent_release_subreaper',
+                          '(', ')'),
+             'in-place exec authenticates an empty child inventory before it '
+             'releases shell-owned supervision state'),
+            (calls('floodlight_parent_prepare', '(', 'true', ')') and
+             not calls('floodlight_parent_prepare', '(',
+                       'spawn_allowed', ')'),
+             'every spawn or network restricted launch enables descendant '
+             'subreaping even when exec itself is denied'),
+            ('exec_here_children' not in exec_source and
+             'exec_redirect_childless' not in exec_source and
+             exec_source.count('opened = exec_here_open(body, length);') == 2 and
+             source_calls(exec_tokens, 'EXEC_F_GETPIPE_SZ') and
+             source_calls(exec_tokens, 'return', 'exec_here_file', '(',
+                          'body', ',', 'length', ')'),
+             'all here-documents use childless pipe-or-sealed-file staging, '
+             'including redirects around functions and compound commands'),
+            (source_calls(program_tokens, 'shell_parser_source_begin', '(',
+                          'input', ')') and
+             source_calls(program_tokens, 'shell_parser_source_end', '(', ')') and
+             program_source.index('shell_parser_source_begin(input)') <
+                 program_source.index('if (!shell_startup_file())'),
+             'stdin parser identity is published before startup code and kept '
+             'for the lifetime of the top-level reader'),
+            (source_calls(parser_begin_tokens, 'if', '(',
+                          'floodlight_parent_supervised', '&', '&',
+                          'floodlight_descendants_present', '(', ')', ')') and
+             source_calls(parser_begin_tokens, 'shell_parser_source_kind', '=',
+                          'SHELL_PARSER_SOURCE_AMBIGUOUS') and
+             source_calls(parser_begin_tokens, 'return', 'false', ';') and
+             parser_begin_source.index('floodlight_descendants_present()') <
+                 parser_begin_source.index('shell_parser_source_refresh();') and
+             source_calls(source_direct_tokens, 'if', '(',
+                          'floodlight_parent_supervised', '&', '&',
+                          'floodlight_descendants_present', '(', ')', ')') and
+             source_calls(source_direct_tokens, 'return', '-',
+                          'ERROR_ACCESS', ';') and
+             source_direct_source.index('floodlight_descendants_present()') <
+                 source_direct_source.index('system_open_at('),
+             'a live supervised descendant blocks every newly opened parser '
+             'source before descriptor authentication or file slurping'),
+            ('SHELL_PARSER_SOURCE_ANONYMOUS_PIPE' not in shell_main_source and
+             'floodlight_descriptor_anonymous_pipe' not in shell and
+             source_calls(shell_main_tokens, 'facts', '.', 'mode', '&',
+                          'MODE_FORMAT', ')', '=', '=', 'MODE_PIPE', ')',
+                          'shell_parser_source_kind', '=',
+                          'SHELL_PARSER_SOURCE_MUTABLE') and
+             source_calls(shell_main_tokens, 'facts', '.', 'mode', '&',
+                          'MODE_FORMAT', ')', '=', '=', 'MODE_SOCKET', ')',
+                          'shell_parser_source_kind', '=',
+                          'SHELL_PARSER_SOURCE_SOCKET') and
+             source_calls(shell_main_tokens, 'shell_parser_source_kind', '=',
+                          'SHELL_PARSER_SOURCE_MUTABLE') and
+             'SHELL_PARSER_SOURCE_TERMINAL' not in shell_main_source,
+             'every pipe, FIFO, terminal and device is mutable while sockets '
+             'retain their separately refused streamed-source class'),
+            (source_calls(shell_main_tokens, 'syscall', '(',
+                          'memfd_create', ')') and
+             source_calls(shell_main_tokens, 'syscall', '(', 'pread64', ')') and
+             source_calls(shell_main_tokens, 'address_of', 'probe', ',', '1',
+                          ',', '(', 'positive', ')', 'original', '-', '>', 'size') and
+             source_calls(shell_main_tokens, 'if', '(', 'beyond', '!', '=',
+                          '0', ')', 'goto', 'finished', ';') and
+             source_calls(shell_main_tokens, 'SHELL_PARSER_F_ADD_SEALS', ',',
+                          'SHELL_PARSER_SNAPSHOT_SEALS') and
+             source_calls(shell_main_tokens, 'system_duplicate', '(',
+                          'snapshot', ',', 'handle') and
+             source_calls(shell_main_tokens, 'if', '(', 'snapshot', '>', '=',
+                          '0', '&', '&', 'snapshot', '!', '=', 'handle', ')',
+                          'system_close', '(', 'snapshot', ')', ';') and
+             'shell_parser_snapshot_anchor' not in shell_main_source and
+             source_calls(shell_main_tokens, 'shell_parser_source_kind', '=',
+                          'SHELL_PARSER_SOURCE_SEALED_FILE'),
+             'a regular parser source installs a fully sealed snapshot of its '
+             'unread tail, including an advertised-EOF probe, at the original '
+             'descriptor and retains no script-visible anchor'),
+            (calls('shell_parser_source_kind', '!', '=',
+                   'SHELL_PARSER_SOURCE_MEMORY', '&', '&',
+                   'shell_parser_source_kind', '!', '=',
+                   'SHELL_PARSER_SOURCE_SEALED_FILE'),
+             'the final policy decision admits only memory and sealed regular snapshots'),
+            (calls('shell_parser_isolated_live', '&', '&',
+                   'file_same_identity', '(', 'address_of', 'facts', ',',
+                   'address_of',
+                   'shell_parser_isolated_facts', ')'),
+             'the final descriptor inventory removes every sealed-file source '
+             'alias that could change parent parser state'),
+            (source_calls(exec_simple_tokens, 'exec_redirect_forget', '(',
+                          'mark', ')') and
+             source_calls(exec_simple_tokens, 'exec_parser_source_can_refresh',
+                          '(', ')') and
+             source_calls(exec_simple_tokens, 'shell_parser_source_refresh',
+                          '(', ')') and
+             source_calls(exec_simple_tokens, 'exec_parser_source_saved',
+                          '(', 'mark', ')'),
+             'only a committed bare exec with no enclosing restoration may '
+             'replace the published parser identity'),
+            (source_calls(exec_tokens, 'shell_parser_source_process', '!',
+                          '=', 'system_call_1', '(', 'syscall', '(', 'getpid',
+                          ')', ',', '0', ')'),
+             'a bare exec in a substitution or subshell cannot replace the '
+             'reader identity owned by its still-running parent shell'),
+            (exec_source.count(
+                 'shell_parser_source_relocated(previous, moved);') >= 2 and
+             source_calls(shell_main_tokens, 'if', '(',
+                          'shell_parser_source_active', '&', '&',
+                          'shell_parser_source_handle', '=', '=', 'from', ')',
+                          'shell_parser_source_handle', '=', 'to', ';'),
+             'named-script and temporary-redirection relocation move the '
+             'published reader handle with the authenticated open description'),
             (source_calls(build_tokens, 'shell_tool_as_called', '(', ')') and
              not source_calls(build_tokens, 'shell_tool_as_called_final', '(', ')'),
              'the embedded build-tool dispatcher remains nonfinal')):
@@ -20121,6 +20573,9 @@ def harness_floodlight(argv):
     history_edit = exec_source[exec_source.index('#define HISTORY_EDIT_RANDOM'):
                                exec_source.index('\nfn shell_fc')]
     history_tokens = [token.value for token in lex(history_edit)[0]]
+    history_after_editor = history_edit[
+        history_edit.index('editor_status = history_edit_run_editor('):]
+    history_after_tokens = [token.value for token in lex(history_after_editor)[0]]
 
     for ok, what in (
             (source_calls(history_tokens, 'system_random_fill', '(', 'random',
@@ -20144,6 +20599,14 @@ def harness_floodlight(argv):
              'refuses a symlink replacement'),
             (source_calls(history_tokens, 'child', '=', 'shell_clone', '(', ')'),
              'the editor runs in a child whose exit cannot skip parent cleanup'),
+            (source_calls(history_after_tokens, 'if', '(',
+                          'floodlight_parent_supervised', '&', '&',
+                          'floodlight_descendants_present', '(', ')', ')') and
+             history_after_editor.index('floodlight_descendants_present()') <
+                 history_after_editor.index(
+                     'handle = system_open_at(directory, "commands"'),
+             'fc refuses to reopen executable editor output while a confined '
+             'editor descendant can still mutate it'),
             (history_edit.index('history_edit_cleanup(directory, (string_address)path);\n'
                                 '        directory = -1;') <
              history_edit.index('history_run_text('),
@@ -20162,8 +20625,12 @@ def harness_floodlight(argv):
                           ',', 'value', ',', 'length', ',', 'HEX_CONTROL', '|',
                           'HEX_TAB', '|', 'HEX_HIGH'),
              'the renderer escapes terminal controls, tabs and high bytes'),
-            (tools_source.count('terminal_safe_field(ps_bytes,') == 2,
-             'ps renders both COMM and ARGS through the shared boundary'),
+            (bool(re.search(r'\.escape\s*=\s*!title\s*&&\s*'
+                            r'\(field\s*==\s*PS_FIELD_COMM\s*\|\|\s*'
+                            r'field\s*==\s*PS_FIELD_ARGS\)\s*\?\s*'
+                            r'HEX_CONTROL\s*\|\s*HEX_TAB\s*\|\s*'
+                            r'HEX_HIGH\s*:\s*0', tools_source)),
+             'ps folds COMM and ARGS escaping into the shared table cell'),
             (source_calls(monitor_tokens, 'terminal_safe_field', '(',
                           'monitor_row_write'),
              'monitor renders command names through the same boundary'),
@@ -20240,6 +20707,14 @@ def harness_floodlight(argv):
     descriptor_source = shell[
         shell.index('#define FLOODLIGHT_DESCRIPTOR_PATH_ROOM'):
         shell.index('/* execveat with an empty path')]
+    entry_source = shell[
+        shell.index('static bool floodlight_entry_unfiltered()\n{'):
+        shell.index('/* Read one coherent policy snapshot',
+                    shell.index('static bool floodlight_entry_unfiltered()\n{'))]
+    silent_stop_source = shell[
+        shell.index('static DEAD_END fn floodlight_silent_stop()\n{'):
+        shell.index('\nstatic bool floodlight_external_final(',
+                    shell.index('static DEAD_END fn floodlight_silent_stop()\n{'))]
     if platform.system() == 'Linux':
         builder = shell[shell.index('#define BPF_LOAD_WORD'):]
         builder = builder[:builder.index(
@@ -20271,6 +20746,7 @@ typedef int b32;
 typedef unsigned long positive;
 typedef long bipolar;
 typedef char *string_address;
+#define DEAD_END __attribute__((noreturn))
 #define address_to *
 #define address_of &
 #define null NULL
@@ -20281,13 +20757,18 @@ typedef char *string_address;
 #endif
 #define FILE_READ O_RDONLY
 #define FILE_READ_WRITE O_RDWR
+#define FILE_F_GETFL F_GETFL
 #define MODE_FORMAT S_IFMT
 #define MODE_SOCKET S_IFSOCK
 #define MODE_CHARACTER S_IFCHR
+#define MODE_FILE S_IFREG
 #define bipolar_max LONG_MAX
 #define ERROR_BAD_DESCRIPTOR EBADF
 #define ERROR_NO_ENTRY ENOENT
 #define ERROR_ACCESS EACCES
+#define ERROR_INPUT_OUTPUT EIO
+#define ERROR_INVALID EINVAL
+#define STATX_BASIC STATX_BASIC_STATS
 #define STATX_MOUNT_ID STATX_MNT_ID
 #define syscall_name_capget SYS_capget
 #define syscall_name_capset SYS_capset
@@ -20321,8 +20802,13 @@ typedef char *string_address;
 #define syscall_name_ioctl SYS_ioctl
 #define syscall_name_dup3 SYS_dup3
 #define syscall_name_fcntl SYS_fcntl
+#define syscall_name_exit_group SYS_exit_group
+#define syscall_name_getpid SYS_getpid
 #define syscall_name_fstatfs SYS_fstatfs
+#define syscall_name_pread64 SYS_pread64
+#define syscall_name_pwrite64 SYS_pwrite64
 #define SPARK_IOCTL_SPAWN 0x40407301u
+#define FLOODLIGHT_PR_GET_SECCOMP 21
 static void shell_spawn_device_disable(void) { }
 
 typedef struct {
@@ -20335,6 +20821,13 @@ typedef struct {
         unsigned int mask;
         unsigned long mount_id;
 } file_facts;
+
+/* The live confinement unit models a final forked child. It has no active
+   sealed parser alias and has not entered an in-place replacement. */
+static bool shell_parser_source_ambiguous;
+static bool shell_parser_isolated_live;
+static file_facts shell_parser_isolated_facts;
+static bool floodlight_inplace_final;
 
 typedef struct {
         long type;
@@ -20352,7 +20845,15 @@ typedef struct {
 
 static int fail_walk;
 static int fake_walk;
-static int fake_statx_ebadf;
+static int fake_empty_walk;
+static int fake_statx;
+static int fake_socket_mapping;
+static int fake_status_open;
+static int fake_status_mount;
+static int fake_long_status;
+static int fake_valid_status;
+static int fake_untouched_status;
+static size_t fake_status_at;
 static char fake_walk_path[PATH_MAX];
 static bool file_walk_open(file_walk *walk, bipolar parent, string_address path)
 {
@@ -20377,6 +20878,10 @@ static bool file_walk_open(file_walk *walk, bipolar parent, string_address path)
 static struct linux_dirent64 *file_walk_next(file_walk *walk)
 {
         struct dirent *entry;
+        if (fake_empty_walk) {
+                walk->error = 0;
+                return NULL;
+        }
         errno = 0;
         entry = readdir(walk->directory);
         if (!entry) {
@@ -20421,9 +20926,13 @@ static bool file_look(bipolar fd, string_address path, positive flags,
                       file_facts *facts)
 {
         struct statx st;
-        if (fake_statx_ebadf && fd == 2) {
-                errno = EBADF;
-                return false;
+        memset(facts, 0, sizeof(*facts));
+        if (fake_statx && fd == 2) {
+                if (fake_statx == 1) {
+                        errno = EBADF;
+                        return false;
+                }
+                return true;
         }
         if (statx((int)fd, path, (int)flags, STATX_BASIC_STATS | STATX_MNT_ID, &st) < 0)
                 return false;
@@ -20435,6 +20944,8 @@ static bool file_look(bipolar fd, string_address path, positive flags,
         facts->inode = st.stx_ino;
         facts->mask = st.stx_mask;
         facts->mount_id = st.stx_mnt_id;
+        if (fake_status_mount && !strcmp(path, "self/status"))
+                facts->mount_id++;
         return true;
 }
 
@@ -20454,13 +20965,63 @@ static bipolar file_look_code(bipolar fd, string_address path, positive flags,
 static bipolar system_open_at(bipolar parent, string_address path,
                               positive flags)
 {
+        if (fake_status_open && !strcmp(path, "self/status"))
+                return 0;
         int fd = openat((int)parent, path, (int)flags);
         return fd < 0 ? -errno : fd;
+}
+
+static bipolar system_read_retry(positive fd, p8 *into, positive room)
+{
+        static const char valid[] =
+            "Seccomp:\t0\nSeccomp_filters:\t0\n";
+        static const char prefix[] = "Groups:\t";
+        static const char suffix[] =
+            "\nSeccomp:\t0\nSeccomp_filters:\t0\n";
+        const size_t groups = 6000;
+        const size_t total = sizeof(prefix) - 1 + groups + sizeof(suffix) - 1;
+
+        if (fake_valid_status) {
+                if (--fake_valid_status)
+                        memcpy(into, valid, sizeof(valid) - 1);
+                return fake_valid_status ? (bipolar)(sizeof(valid) - 1) : 0;
+        }
+        if (fake_untouched_status) {
+                --fake_untouched_status;
+                return fake_untouched_status
+                    ? (bipolar)(sizeof(valid) - 1) : 0;
+        }
+
+        if (fake_long_status) {
+                size_t made = 0;
+                while (made < room && fake_status_at < total) {
+                        if (fake_status_at < sizeof(prefix) - 1)
+                                into[made] = (p8)prefix[fake_status_at];
+                        else if (fake_status_at < sizeof(prefix) - 1 + groups)
+                                into[made] = '1';
+                        else
+                                into[made] = (p8)suffix[
+                                    fake_status_at - (sizeof(prefix) - 1 + groups)];
+                        made++;
+                        fake_status_at++;
+                }
+                return (bipolar)made;
+        }
+        ssize_t got = read((int)fd, into, room);
+        return got < 0 ? -errno : (bipolar)got;
 }
 
 static bipolar system_read_link_at(bipolar parent, string_address path,
                                    p8 *target, positive room)
 {
+        static const char mapped[] = "socket:[4242]";
+        if (fake_socket_mapping) {
+                size_t length = sizeof(mapped) - 1;
+                if (length > room)
+                        length = room;
+                memcpy(target, mapped, length);
+                return (bipolar)length;
+        }
         ssize_t got = readlinkat((int)parent, path, (char *)target, room);
         return got < 0 ? -errno : (bipolar)got;
 }
@@ -20474,9 +21035,17 @@ static positive positive_into_string(p8 *into, positive value)
 {
         return (positive)sprintf((char *)into, "%lu", value);
 }
+static p8 *memory_copy_end(p8 *into, const void *from, positive length)
+{
+        memcpy(into, from, length);
+        into[length] = 0;
+        return into + length;
+}
+#define positive_into positive_into_string
 #define string_length(value) strlen((const char *)(value))
 #define memory_compare(one, two, length) memcmp((one), (two), (length))
 #define memory_copy_apart(into, from, length) memcpy((into), (from), (length))
+#define memory_fill(into, value, length) memset((into), (value), (length))
 /* Taken before the name is redefined below, or the macro eats the call. */
 static long raw_call(long n, long a, long b, long c, long d, long e)
 {
@@ -20484,6 +21053,7 @@ static long raw_call(long n, long a, long b, long c, long d, long e)
 }
 
 static int fail_call;
+static bool floodlight_own_seccomp;
 static long checked_call_5(long n, long a, long b, long c, long d, long e)
 {
         if (fail_call == 1 && n == SYS_prctl)
@@ -20521,14 +21091,16 @@ static long checked_call_2(long n, long a, long b)
 }
 
 #define syscall(name) syscall_name_##name
+#define system_call_1(n, a) raw_call((long)(n), (long)(a), 0, 0, 0, 0)
 #define system_call_5(n, a, b, c, d, e) checked_call_5((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e))
+#define system_call_4(n, a, b, c, d) raw_call((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), 0)
 #define system_call_3(n, a, b, c) checked_call_3((long)(n), (long)(a), (long)(b), (long)(c))
 #define system_call_2(n, a, b) checked_call_2((long)(n), (long)(a), (long)(b))
 #define system_descriptor_install(from, to) \
         ((from) == (to) \
              ? system_call_3(SYS_fcntl, (from), 2, 0) \
              : system_call_3(SYS_dup3, (from), (to), 0))
-""" + descriptor_source + builder + r"""
+""" + silent_stop_source + descriptor_source + entry_source + builder + r"""
 static int ptrace_capability_present(void)
 {
         floodlight_cap_header header = {FLOODLIGHT_CAP_VERSION_3, 0};
@@ -20547,15 +21119,78 @@ int main(void)
         pid_t child;
         int status = 0;
 
+        /* Both the syscall view and the authenticated status bytes report a
+           clean entry before this process installs any test filter. */
+        if (!floodlight_entry_unfiltered())
+                return 68;
+
+        /* Supplementary groups can place the two seccomp rows beyond any
+           modest whole-file buffer.  Stream past one oversized unrelated
+           line and still authenticate both rows at EOF. */
+        fake_long_status = 1;
+        fake_status_at = 0;
+        if (!floodlight_entry_unfiltered())
+                return 73;
+        fake_long_status = 0;
+
+        /* A seccomp ERRNO action can return a positive read result without
+           writing the buffer.  First seed the same stack slot with valid
+           rows, then prove a forged success cannot replay those stale bytes. */
+        fake_valid_status = 2;
+        if (!floodlight_entry_unfiltered())
+                return 77;
+        fake_untouched_status = 2;
+        if (floodlight_entry_unfiltered())
+                return 79;
+
+        /* A bind mount over the status path is still proc-looking by type and
+           stable by inode.  It must be rejected for crossing the held proc
+           root's mount boundary before any bytes are trusted. */
+        fake_status_mount = 1;
+        if (floodlight_entry_unfiltered())
+                return 72;
+        fake_status_mount = 0;
+
+        /* Model ERRNO|0 on openat: fd 0 contains attacker-chosen zero rows,
+           while the held proc root still supplies the legitimate pre-open
+           identity.  The opened-fd identity check must reject the redirect. */
+        {
+                char name[] = "/tmp/floodlight-status-XXXXXX";
+                static const char forged[] =
+                    "Seccomp:\t0\nSeccomp_filters:\t0\n";
+                int controlled = mkstemp(name);
+                if (controlled < 0 ||
+                    write(controlled, forged, sizeof(forged) - 1) !=
+                        (ssize_t)(sizeof(forged) - 1) ||
+                    lseek(controlled, 0, SEEK_SET) < 0 ||
+                    dup2(controlled, 0) != 0)
+                        return 69;
+                if (controlled != 0)
+                        close(controlled);
+                unlink(name);
+                fake_status_open = 1;
+                if (floodlight_entry_unfiltered())
+                        return 70;
+                fake_status_open = 0;
+                if (open("/dev/null", O_RDONLY) != 0)
+                        return 71;
+        }
+
         fail_call = 1;
         if (floodlight_confine(refused, 2, false))
                 return 8;
+        if (floodlight_own_seccomp)
+                return 74;
         fail_call = 2;
         if (floodlight_confine(refused, 2, false))
                 return 9;
+        if (floodlight_own_seccomp)
+                return 75;
         fail_call = 0;
         if (!floodlight_confine(NULL, 0, false))
                 return 10;
+        if (floodlight_own_seccomp)
+                return 76;
         fail_cap_call = 1;
         if (floodlight_apply(false, true, false))
                 return 43;
@@ -20563,6 +21198,77 @@ int main(void)
         if (floodlight_apply(false, true, false))
                 return 44;
         fail_cap_call = 0;
+
+        /* A proc-memory open is authorized once, so making the parent
+           non-dumpable after that open does not revoke an inherited handle.
+           Both restriction modes must inventory and close the tgid and task
+           spellings before an applet receives control. */
+        {
+                int memory[2] = {
+                        open("/proc/self/mem", O_RDWR | O_CLOEXEC),
+                        open("/proc/thread-self/mem", O_RDWR | O_CLOEXEC),
+                };
+
+                if (memory[0] < 0 || memory[1] < 0 ||
+                    raw_call(SYS_prctl, 4, 0, 0, 0, 0) < 0)
+                        return 78;
+
+                for (int mode = 0; mode < 2; mode++) {
+                        child = fork();
+                        if (child == 0) {
+                                bool spawn_allowed = mode != 0;
+                                bool network_allowed = mode == 0;
+
+                                if (floodlight_apply(spawn_allowed,
+                                                     network_allowed, false))
+                                        _exit(79 + mode * 2);
+                                for (int at = 0; at < 2; at++) {
+                                        errno = 0;
+                                        if (fcntl(memory[at], F_GETFD) != -1 ||
+                                            errno != EBADF)
+                                                _exit(80 + mode * 2);
+                                }
+                                _exit(0);
+                        }
+                        if (child < 0 || waitpid(child, &status, 0) != child ||
+                            !WIFEXITED(status) || WEXITSTATUS(status))
+                                return 84 + mode;
+                }
+
+                close(memory[0]);
+                close(memory[1]);
+
+                /* O_PATH can name the same inode but cannot transfer bytes;
+                   reopening it rechecks the now non-dumpable target.  Keep
+                   that harmless handle to guard against metadata-only false
+                   positives in the classifier. */
+                memory[0] = open("/proc/self/mem", O_PATH | O_CLOEXEC);
+                if (memory[0] < 0)
+                        return 86;
+                child = fork();
+                if (child == 0) {
+                        char path[64];
+                        int reopened;
+
+                        if (!floodlight_apply(false, true, false) ||
+                            fcntl(memory[0], F_GETFD) < 0)
+                                _exit(87);
+                        snprintf(path, sizeof(path), "/proc/self/fd/%d",
+                                 memory[0]);
+                        reopened = open(path, O_RDWR | O_CLOEXEC);
+                        if (reopened >= 0) {
+                                close(reopened);
+                                _exit(88);
+                        }
+                        _exit(0);
+                }
+                if (child < 0 || waitpid(child, &status, 0) != child ||
+                    !WIFEXITED(status) || WEXITSTATUS(status))
+                        return 89;
+                close(memory[0]);
+                if (raw_call(SYS_prctl, 4, 1, 0, 0, 0) < 0)
+                        return 90;
+        }
 
         /* A spawn-only policy still blocks terminal/Spark escapes, while an
            explicitly network-allowed program retains its TUN control API. */
@@ -20576,6 +21282,11 @@ int main(void)
                 capget_seen = capset_seen = capset_bad_mask = 0;
                 if (!floodlight_apply(false, true, false))
                         _exit(33);
+                /* The installed filter is visible to the entry guard, but
+                   interpreter recursion may trust the provenance bit set by
+                   this image after that exact installation succeeded. */
+                if (!floodlight_own_seccomp || floodlight_entry_unfiltered())
+                        _exit(77);
                 if (ptrace_capability_present() != 0 || capget_seen != 1 ||
                     capset_seen != 1 || capset_bad_mask)
                         _exit(40);
@@ -20624,7 +21335,7 @@ int main(void)
                 if (diagnostic != 2)
                         close(diagnostic);
                 fail_walk = 1;
-                if (floodlight_network_descriptors_drop(false))
+                if (floodlight_descriptors_drop(false, true))
                         _exit(29);
                 if (fstat(2, &st) < 0 || !S_ISCHR(st.st_mode) ||
                     major(st.st_rdev) != 1 || minor(st.st_rdev) != 3)
@@ -20646,7 +21357,7 @@ int main(void)
                         _exit(37);
                 fake_walk = 1;
                 inherited = (int)raw_call(SYS_socket, 2, 2, 0, 0, 0);
-                if (inherited < 0 || floodlight_network_descriptors_drop(false))
+                if (inherited < 0 || floodlight_descriptors_drop(false, true))
                         _exit(38);
                 close(inherited);
                 rmdir(fake_walk_path);
@@ -20668,7 +21379,7 @@ int main(void)
                         _exit(55);
                 if (pair[0] != 2)
                         close(pair[0]);
-                fake_statx_ebadf = 1;
+                fake_statx = 1;
                 if (floodlight_network_stdio_drop())
                         _exit(56);
                 write(2, "x", 1);
@@ -20681,6 +21392,69 @@ int main(void)
         if (child < 0 || waitpid(child, &status, 0) != child ||
             !WIFEXITED(status))
                 return 58;
+        if (WEXITSTATUS(status))
+                return WEXITSTATUS(status);
+
+        /* A filter can also forge a successful statx without filling its
+           output.  An incomplete result must close the socket just like a
+           syscall error does. */
+        child = fork();
+        if (child == 0) {
+                int pair[2];
+                char byte;
+                ssize_t got;
+                if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair) < 0 ||
+                    dup2(pair[0], 2) != 2)
+                        _exit(59);
+                if (pair[0] != 2)
+                        close(pair[0]);
+                fake_statx = 2;
+                if (floodlight_network_stdio_drop())
+                        _exit(60);
+                write(2, "x", 1);
+                got = recv(pair[1], &byte, 1, MSG_DONTWAIT);
+                if (got > 0 || (got < 0 && errno != EAGAIN))
+                        _exit(61);
+                close(pair[1]);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status))
+                return 62;
+        if (WEXITSTATUS(status))
+                return WEXITSTATUS(status);
+
+        /* A forged clean EOF cannot stand in for the descriptor inventory:
+           the live walk descriptor must occur in its own proc fd table. */
+        child = fork();
+        if (child == 0) {
+                int inherited = (int)raw_call(SYS_socket, 2, 2, 0, 0, 0);
+                if (inherited < 0)
+                        _exit(63);
+                fake_empty_walk = 1;
+                if (floodlight_descriptors_drop(false, true))
+                        _exit(64);
+                close(inherited);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status))
+                return 65;
+        if (WEXITSTATUS(status))
+                return WEXITSTATUS(status);
+
+        /* Socket-backed VMAs survive close and can carry an AF_PACKET ring.
+           The map_files pass must make that inherited channel fatal. */
+        child = fork();
+        if (child == 0) {
+                fake_socket_mapping = 1;
+                if (floodlight_descriptors_drop(false, true))
+                        _exit(66);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status))
+                return 67;
         if (WEXITSTATUS(status))
                 return WEXITSTATUS(status);
 
@@ -20869,6 +21643,15 @@ int main(void)
     reader = shell[shell.index('static string_address const floodlight_denied[]'):
                    shell.index('/*\n        A filter that refuses selected operations')]
 
+    # Parent protection is established by programs/shell.c before this reader
+    # is used.  Keep its two state bits in the portable decision unit, while
+    # removing the prctl-backed setup routines whose Linux behavior belongs to
+    # the live confinement unit above.
+    parent_prepare = reader.index('static bool floodlight_parent_prepare(bool supervise)')
+    parent_after = reader.index('\n/*\n        One word of a report line.',
+                                parent_prepare)
+    reader = reader[:parent_prepare] + reader[parent_after:]
+
     #   Everything but the device read, which is stubbed: this test hands the
     #   reader the report the module just produced, so there is no device in
     #   it and nothing for the open, the statx and the read to talk to.
@@ -20881,12 +21664,19 @@ int main(void)
     #   backend.  The confinement builder itself has a separate live-seccomp
     #   test above, so its one call is stubbed here while policy selection and
     #   path identity remain the production code.
-    decision = shell[shell.index('static b32 floodlight_launch_decide('):
-                     shell.index('\nstatic bool floodlight_external_final(',
-                                 shell.index('static b32 floodlight_launch_decide('))]
+    decision = shell[shell.rindex('static b32 floodlight_launch_decide('):
+                     shell.index('\nstatic DEAD_END fn floodlight_silent_stop(',
+                                 shell.rindex('static b32 floodlight_launch_decide('))]
     # Descriptor-table authentication is exercised above with real procfs.
     # The portable report/decision test uses only a host path lookup here.
-    descriptor = descriptor_source[:descriptor_source.index('/* Hold the proc root')]
+    # The portable decision harness needs the descriptor-name/path helpers but
+    # not the procfs authentication helpers, whose Linux behavior is exercised
+    # by the live confinement unit above.
+    descriptor = descriptor_source[:descriptor_source.index(
+        '/* A zero syscall result')]
+    descriptor += descriptor_source[
+        descriptor_source.index('static fn floodlight_descriptor_name'):
+        descriptor_source.index('/* Hold the authenticated proc root')]
     descriptor += r"""
 static bipolar floodlight_descriptor_read_link(bipolar handle, p8 *into, positive room)
 {
@@ -20909,6 +21699,12 @@ typedef void fn;
 #define null ((void *)0)
 #define end '\0'
 #define FILE_PATH_MAX 4096
+#define SHELL_PARSER_SOURCE_MEMORY 0
+#define SHELL_PARSER_SOURCE_SEALED_FILE 1
+#define SHELL_PARSER_SOURCE_REGULAR_FILE 2
+#define SHELL_PARSER_SOURCE_SOCKET 3
+#define SHELL_PARSER_SOURCE_MUTABLE 4
+#define SHELL_PARSER_SOURCE_AMBIGUOUS 5
 #ifndef AT_FDCWD
 #define AT_FDCWD -100
 #endif
@@ -20924,6 +21720,7 @@ typedef struct
         bipolar handle;
         p8 identity[FILE_PATH_MAX];
 } floodlight_executable;
+static positive shell_parser_source_kind = SHELL_PARSER_SOURCE_MEMORY;
 static positive string_length(string_address s) { return strlen(s); }
 static int memory_compare(const void *a, const void *b, positive n) { return memcmp(a, b, n); }
 static p8 *memory_first_of(const void *a, p8 byte, positive n) { return memchr(a, byte, n); }
@@ -20961,8 +21758,40 @@ static bipolar test_read_link_at(bipolar directory, string_address path,
 #define system_read_link_at(directory, path, into, room) \
         test_read_link_at((directory), (path), (into), (room))
 static string_address shell_tool_name(string_address name) { return name; }
-static bool floodlight_network_stdio_drop(void) { return true; }
-static bool floodlight_network_descriptors_drop(bool prepared) { (void)prepared; return true; }
+static bool floodlight_parent_prepare(bool supervise)
+{
+        (void)supervise;
+        return true;
+}
+static bool shell_parser_source_prepare(void)
+{
+        return shell_parser_source_kind == SHELL_PARSER_SOURCE_MEMORY ||
+               shell_parser_source_kind == SHELL_PARSER_SOURCE_SEALED_FILE;
+}
+static bool floodlight_inplace_requested;
+static bool floodlight_inplace_final;
+static bool floodlight_inplace_descendants_checked;
+static bool exec_inplace_ready(bool restricted)
+{
+        (void)restricted;
+        floodlight_inplace_requested = true;
+        floodlight_inplace_final = true;
+        floodlight_inplace_descendants_checked = true;
+        return true;
+}
+static positive network_stdio_drop_calls;
+static bool test_ptrace_scope_safe = true;
+static bool floodlight_network_stdio_drop(void)
+{
+        network_stdio_drop_calls++;
+        return true;
+}
+static bool floodlight_ptrace_scope_safe(void)
+{
+        return test_ptrace_scope_safe;
+}
+static void floodlight_silent_stop(void) { _Exit(126); }
+static bool floodlight_descriptors_drop(bool prepared, bool network) { (void)prepared; (void)network; return true; }
 static bool floodlight_apply(bool spawn_allowed, bool network_allowed,
                              bool network_prepared)
 {
@@ -21158,6 +21987,7 @@ static void reset(u32 random)
         sealed = false; compromised = false;
         mock_root = true; mock_uid = 0; mock_now = 1000;
         mock_copy_fails = false;
+        shell_parser_source_kind = SHELL_PARSER_SOURCE_MEMORY;
         mock_random = random;
         secret = get_random_u32();
         baseline_sum = baseline_seal();
@@ -21422,10 +22252,57 @@ int main(void)
         reset(0x11223344);
         {
                 bool said = false;
+                char *restricted_tool[] = {"awk", NULL};
 
                 reread();
                 check(floodlight_row_count == 0,
                       "an untouched register gives the reader nothing to carry");
+
+                floodlight_parent_role = false;
+                floodlight_parent_protected = false;
+                floodlight_parent_supervised = false;
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_REFUSE,
+                      "a fresh standalone restricted applet has no protected-parent contract");
+                floodlight_parent_role = true;
+                floodlight_parent_protected = true;
+                floodlight_parent_supervised = true;
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_ALLOW,
+                      "the same applet can be confined after a real shell establishes the contract");
+
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_MUTABLE;
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_REFUSE,
+                      "a restricted applet cannot run while later parser bytes come from a mutable source");
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_AMBIGUOUS;
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_REFUSE,
+                      "an unclassified parser source fails closed");
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_REGULAR_FILE;
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_REFUSE,
+                      "an unsealed regular parser source cannot reach a final restricted child");
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_SEALED_FILE;
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_ALLOW,
+                      "a sealed parser-file snapshot can be confined after its aliases are removed");
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_SOCKET;
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_REFUSE,
+                      "spawn-only confinement cannot leave a socket parser source under peer control");
+
+                put("awk network deny");
+                reread();
+                check(reader_tool_launch(restricted_tool, true) ==
+                          FLOODLIGHT_LAUNCH_REFUSE,
+                      "a socket parser source stays refused when its distinct peer cannot be inventoried");
+                reset(0x11223344);
+                reread();
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_MEMORY;
+                floodlight_parent_role = false;
+                floodlight_parent_protected = false;
+                floodlight_parent_supervised = false;
 
                 put("awk spawn allow");
                 reread();
@@ -21525,6 +22402,7 @@ int main(void)
         reset(0x11223344);
         {
                 char canonical[FILE_PATH_MAX];
+                char allowed_canonical[FILE_PATH_MAX];
                 char current[FILE_PATH_MAX];
                 char absolute_alias[FILE_PATH_MAX];
                 char line[FILE_PATH_MAX + 32];
@@ -21539,6 +22417,7 @@ int main(void)
                 bipolar denied_handle = -1;
 
                 check(realpath("tool", canonical) != NULL &&
+                      realpath("allowed", allowed_canonical) != NULL &&
                       getcwd(current, sizeof(current)) != NULL &&
                       snprintf(absolute_alias, sizeof(absolute_alias),
                                "%s/alias", current) <
@@ -21596,6 +22475,67 @@ int main(void)
                 check(reader_launch("toggle", toggle, true, &denied_handle) ==
                           FLOODLIGHT_LAUNCH_REFUSE && denied_handle < 0,
                       "a fresh decision sees the switched denied target");
+
+                /* An explicit exec has no parser parent after success. Its
+                   final decision may therefore bypass the parser-source and
+                   inherited-parent contract only after it authenticates an
+                   empty child inventory. All reversible refusals, including
+                   pinning and Yama, must happen before descriptor cleanup. */
+                reset(0x11223344);
+                snprintf(line, sizeof(line), "%s network deny",
+                         allowed_canonical);
+                check(put(line) > 0,
+                      "an external target can require in-place confinement");
+                reread();
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_MUTABLE;
+                floodlight_parent_role = true;
+                floodlight_parent_protected = false;
+                floodlight_parent_supervised = false;
+                {
+                        positive drops = network_stdio_drop_calls;
+
+                        floodlight_inplace_requested = true;
+                        floodlight_inplace_final = false;
+                        floodlight_inplace_descendants_checked = false;
+                        floodlight_inplace_terminal = false;
+                        check(reader_launch("./allowed", allowed, true, NULL) ==
+                                  FLOODLIGHT_LAUNCH_REFUSE &&
+                              network_stdio_drop_calls == drops &&
+                              !floodlight_inplace_terminal,
+                              "an unpinnable in-place target refuses before changing descriptors");
+
+                        floodlight_inplace_requested = true;
+                        floodlight_inplace_final = false;
+                        floodlight_inplace_descendants_checked = false;
+                        floodlight_inplace_terminal = false;
+                        test_ptrace_scope_safe = false;
+                        held = 99;
+                        check(reader_launch("./allowed", allowed, true, &held) ==
+                                  FLOODLIGHT_LAUNCH_REFUSE && held < 0 &&
+                              network_stdio_drop_calls == drops &&
+                              !floodlight_inplace_terminal,
+                              "restricted in-place exec requires Yama before its commit boundary");
+
+                        floodlight_inplace_requested = true;
+                        floodlight_inplace_final = false;
+                        floodlight_inplace_descendants_checked = false;
+                        floodlight_inplace_terminal = false;
+                        test_ptrace_scope_safe = true;
+                        held = -1;
+                        check(reader_launch("./allowed", allowed, true, &held) ==
+                                  FLOODLIGHT_LAUNCH_ALLOW && held >= 0 &&
+                              floodlight_inplace_final &&
+                              floodlight_inplace_terminal &&
+                              network_stdio_drop_calls == drops + 1,
+                              "an authenticated in-place transition confines a mutable-parser target terminally");
+                        if (held >= 0)
+                                close((int)held);
+                }
+                floodlight_inplace_requested = false;
+                floodlight_inplace_final = false;
+                floodlight_inplace_descendants_checked = false;
+                floodlight_inplace_terminal = false;
+                test_ptrace_scope_safe = true;
         }
 
         /* --- the lock is balanced whatever happened ------------------------ */
@@ -21692,6 +22632,18 @@ static b32 reader_launch(const char *path, char **arguments, bool final,
                 *handle = image.handle;
 
         return answered;
+}
+
+static b32 reader_tool_launch(char **arguments, bool final)
+{
+        positive count = 0;
+
+        while (arguments[count])
+                count++;
+
+        return floodlight_launch_decide(
+            NULL, (string_address *)arguments, count,
+            true, final, false, NULL);
 }
 """
 
@@ -22202,9 +23154,20 @@ def harness_compression(argv):
                     source = resolved / 'linked-input'
                     linked_data = b'intermediate symlink\n' * 257
                     source.write_bytes(linked_data)
+                    product = resolved / (source.name + ext)
+                    os.link(source, product)
+                    aliased = call(runner + [str(farms[label] / codec), '-fk',
+                                             str(alias / source.name)])
+                    check(label + '/' + codec + '/hardlink-output-alias',
+                          aliased.returncode != 0 and
+                          source.read_bytes() == linked_data and
+                          product.read_bytes() == linked_data and
+                          source.stat().st_ino == product.stat().st_ino,
+                          aliased.stderr.decode(errors='replace'))
+                    product.unlink()
+
                     linked = call(runner + [str(farms[label] / codec), '-k',
                                             str(alias / source.name)])
-                    product = resolved / (source.name + ext)
                     back = call(command(refs[codec], codec, True),
                                 product.read_bytes() if product.is_file() else b'')
                     check(label + '/' + codec + '/intermediate-directory-symlink',
@@ -22246,6 +23209,130 @@ def harness_compression(argv):
                               back.stdout == linked_data,
                               explicit.stderr.decode(errors='replace') +
                               back.stderr.decode(errors='replace'))
+
+                        replacement = b'forced replacement remains valid\n'
+                        source.write_bytes(replacement)
+                        named.chmod(0o640)
+                        replaced = call(runner + [str(farms[label] / codec),
+                                                  '-fk', '-o', str(named),
+                                                  str(source)])
+                        back = call(command(refs[codec], codec, True),
+                                    named.read_bytes() if named.is_file() else b'')
+                        check(label + '/' + codec + '/transactional-replace',
+                              replaced.returncode == back.returncode == 0 and
+                              back.stdout == replacement and
+                              (named.stat().st_mode & 0o777) == 0o640 and
+                              not list(resolved.glob('.moonwater-stage-*')),
+                              replaced.stderr.decode(errors='replace') +
+                              back.stderr.decode(errors='replace'))
+
+                        umask_output = resolved / 'umask-output.zst'
+                        prior_umask = os.umask(0o027)
+                        try:
+                            created = call(
+                                runner + [str(farms[label] / codec), '-k',
+                                          '-o', str(umask_output), str(source)])
+                        finally:
+                            os.umask(prior_umask)
+                        check(label + '/' + codec + '/published-output-mode',
+                              created.returncode == 0 and
+                              (umask_output.stat().st_mode & 0o777) == 0o640 and
+                              not list(resolved.glob('.moonwater-stage-*')),
+                              created.stderr.decode(errors='replace'))
+
+                        source.write_bytes(b'same path source must survive\n')
+                        before = source.read_bytes()
+                        same_path = call(runner + [str(farms[label] / codec),
+                                                   '-fk', '-o', str(source),
+                                                   str(source)])
+                        check(label + '/' + codec + '/same-path-output',
+                              same_path.returncode != 0 and
+                              source.read_bytes() == before,
+                              same_path.stderr.decode(errors='replace'))
+
+                        hard_source = resolved / 'explicit-hardlink-source'
+                        hard_output = resolved / 'explicit-hardlink-output'
+                        hard_source.write_bytes(b'hardlink source must survive\n')
+                        os.link(hard_source, hard_output)
+                        before = hard_source.read_bytes()
+                        hard_path = call(runner + [str(farms[label] / codec),
+                                                   '-fk', '-o', str(hard_output),
+                                                   str(hard_source)])
+                        check(label + '/' + codec + '/explicit-hardlink-output',
+                              hard_path.returncode != 0 and
+                              hard_source.read_bytes() == before and
+                              hard_output.read_bytes() == before and
+                              hard_source.stat().st_ino == hard_output.stat().st_ino,
+                              hard_path.stderr.decode(errors='replace'))
+
+                        broken = resolved / 'broken-input.zst'
+                        protected = resolved / 'protected-output'
+                        broken.write_bytes(b'not a zstd frame')
+                        protected.write_bytes(b'existing output must survive\n')
+                        protected.chmod(0o640)
+                        before = protected.read_bytes()
+                        failed = call(runner + [str(farms[label] / codec),
+                                                '-dfk', '-o', str(protected),
+                                                str(broken)])
+                        check(label + '/' + codec + '/failed-output-transaction',
+                              failed.returncode != 0 and
+                              protected.read_bytes() == before and
+                              (protected.stat().st_mode & 0o777) == 0o640 and
+                              not list(resolved.glob('.moonwater-stage-*')),
+                              failed.stderr.decode(errors='replace'))
+
+                        private_input = resolved / 'private-stage-input.zst'
+                        private_output = resolved / 'private-stage-output'
+                        os.mkfifo(private_input)
+                        private_output.write_bytes(
+                            b'failed private stage must preserve this\n')
+                        private_output.chmod(0o640)
+                        before = private_output.read_bytes()
+                        private = subprocess.Popen(
+                            runner + [str(farms[label] / codec), '-dfk',
+                                      '-o', str(private_output),
+                                      str(private_input)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        writer = -1
+                        deadline = time.monotonic() + 10
+                        while time.monotonic() < deadline and writer < 0:
+                            try:
+                                writer = os.open(
+                                    private_input, os.O_WRONLY | os.O_NONBLOCK)
+                            except OSError:
+                                if private.poll() is not None:
+                                    break
+                                time.sleep(0.001)
+                        if writer >= 0:
+                            os.write(writer, b'\x28\xb5\x2f\xfd')
+                        stage_mode = None
+                        object_mode = None
+                        while time.monotonic() < deadline:
+                            stages = list(resolved.glob('.moonwater-stage-*'))
+                            if stages:
+                                stage_mode = stages[0].stat().st_mode & 0o777
+                                staged_object = stages[0] / 'object'
+                                if staged_object.exists():
+                                    object_mode = (staged_object.stat().st_mode &
+                                                   0o777)
+                                break
+                            if private.poll() is not None:
+                                break
+                            time.sleep(0.001)
+                        if writer >= 0:
+                            os.close(writer)
+                        try:
+                            _, private_error = private.communicate(timeout=120)
+                        except subprocess.TimeoutExpired:
+                            private.kill()
+                            _, private_error = private.communicate()
+                        check(label + '/' + codec + '/failed-stage-private',
+                              stage_mode == 0o700 and object_mode == 0o600 and
+                              private.returncode != 0 and
+                              private_output.read_bytes() == before and
+                              (private_output.stat().st_mode & 0o777) == 0o640 and
+                              not list(resolved.glob('.moonwater-stage-*')),
+                              private_error.decode(errors='replace'))
                 print(label + ': codec matrix checked', flush=True)
 
         # Exercise the pull/write adapters and compressed EOF through tar in both directions.
@@ -22269,6 +23356,158 @@ def harness_compression(argv):
                     check(label + '/tar/' + suffix + '/' + direction,
                           made.returncode == unpacked.returncode == 0 and found == expected,
                           made.stderr.decode(errors='replace') + unpacked.stderr.decode(errors='replace'))
+
+            output_root = root / ('tar-output-' + label)
+            output_root.mkdir()
+            member = output_root / 'member'
+            member.write_bytes(b'named archive member\n')
+            our_tar = runner + [str(farms[label] / 'tar')]
+
+            hard_source = output_root / 'hard-source'
+            hard_archive = output_root / 'hard-archive.tar'
+            hard_source.write_bytes(b'hardlink input must survive\n')
+            os.link(hard_source, hard_archive)
+            before = hard_source.read_bytes()
+            hard = call(our_tar + ['-cf', str(hard_archive),
+                                   '-C', str(output_root), hard_source.name])
+            check(label + '/tar-output/hardlink-alias',
+                  hard.returncode != 0 and
+                  hard_source.read_bytes() == before and
+                  hard_archive.read_bytes() == before and
+                  hard_source.stat().st_ino == hard_archive.stat().st_ino and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  hard.stderr.decode(errors='replace'))
+
+            victim = output_root / 'symlink-victim'
+            linked_archive = output_root / 'linked.tar'
+            victim.write_bytes(b'symlink victim must survive\n')
+            before = victim.read_bytes()
+            linked_archive.symlink_to(victim.name)
+            linked = call(our_tar + ['-cf', str(linked_archive),
+                                     '-C', str(output_root), member.name])
+            listed = call([refs['tar'], '-tf', str(linked_archive)])
+            check(label + '/tar-output/symlink-victim',
+                  linked.returncode == listed.returncode == 0 and
+                  victim.read_bytes() == before and
+                  not linked_archive.is_symlink() and
+                  member.name.encode() in listed.stdout and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  linked.stderr.decode(errors='replace') +
+                  listed.stderr.decode(errors='replace'))
+
+            archive_directory = output_root / 'archive-directory'
+            archive_directory.mkdir()
+            directory_marker = archive_directory / 'marker'
+            directory_marker.write_bytes(b'directory must survive\n')
+            before_inode = archive_directory.stat().st_ino
+            directory_output = call(
+                our_tar + ['-cf', str(archive_directory),
+                           '-C', str(output_root), member.name])
+            check(label + '/tar-output/directory-refused',
+                  directory_output.returncode != 0 and
+                  archive_directory.is_dir() and
+                  archive_directory.stat().st_ino == before_inode and
+                  directory_marker.read_bytes() == b'directory must survive\n' and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  directory_output.stderr.decode(errors='replace'))
+
+            fifo_archive = output_root / 'archive.fifo'
+            os.mkfifo(fifo_archive)
+            cat = shutil.which('cat') or '/bin/cat'
+            fifo_reader = subprocess.Popen(
+                [cat, str(fifo_archive)], stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE)
+            fifo_output = call(
+                our_tar + ['-cf', str(fifo_archive),
+                           '-C', str(output_root), member.name])
+            try:
+                fifo_bytes, fifo_error = fifo_reader.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                fifo_reader.kill()
+                fifo_bytes, fifo_error = fifo_reader.communicate()
+            listed = call([refs['tar'], '-tf', '-'], fifo_bytes)
+            check(label + '/tar-output/fifo-stream',
+                  fifo_output.returncode == fifo_reader.returncode == 0 and
+                  stat.S_ISFIFO(fifo_archive.stat().st_mode) and
+                  listed.returncode == 0 and member.name.encode() in listed.stdout and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  fifo_output.stderr.decode(errors='replace') +
+                  fifo_error.decode(errors='replace') +
+                  listed.stderr.decode(errors='replace'))
+
+            null_before = os.stat('/dev/null')
+            null_output = call(
+                our_tar + ['-cf', '/dev/null',
+                           '-C', str(output_root), member.name])
+            null_after = os.stat('/dev/null')
+            check(label + '/tar-output/device-stream',
+                  null_output.returncode == 0 and
+                  stat.S_ISCHR(null_after.st_mode) and
+                  (null_after.st_dev, null_after.st_ino) ==
+                  (null_before.st_dev, null_before.st_ino) and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  null_output.stderr.decode(errors='replace'))
+
+            replaced_archive = output_root / 'replaced.tar'
+            replaced_archive.write_bytes(b'old archive bytes\n')
+            replaced_archive.chmod(0o640)
+            replaced = call(our_tar + ['-cf', str(replaced_archive),
+                                       '-C', str(output_root), member.name])
+            listed = call([refs['tar'], '-tf', str(replaced_archive)])
+            check(label + '/tar-output/successful-replacement',
+                  replaced.returncode == listed.returncode == 0 and
+                  member.name.encode() in listed.stdout and
+                  (replaced_archive.stat().st_mode & 0o777) == 0o640 and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  replaced.stderr.decode(errors='replace') +
+                  listed.stderr.decode(errors='replace'))
+
+            failed_archive = output_root / 'failed.tar'
+            failed_archive.write_bytes(b'prior archive must survive\n')
+            failed_archive.chmod(0o600)
+            before = failed_archive.read_bytes()
+            before_inode = failed_archive.stat().st_ino
+            failed = call(our_tar + ['-cf', str(failed_archive),
+                                     '-C', str(output_root), 'missing'])
+            check(label + '/tar-output/input-failure',
+                  failed.returncode != 0 and
+                  failed_archive.read_bytes() == before and
+                  failed_archive.stat().st_ino == before_inode and
+                  (failed_archive.stat().st_mode & 0o777) == 0o600 and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  failed.stderr.decode(errors='replace'))
+
+            limited_archive = output_root / 'limited.tar.zst'
+            limited_archive.write_bytes(b'compressed archive must survive\n')
+            before = limited_archive.read_bytes()
+            before_inode = limited_archive.stat().st_ino
+
+            def limit_archive_output():
+                signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+                # zstd writes its six-byte header in begin(), buffers this
+                # small archive, then crosses the limit only in write_end().
+                resource.setrlimit(resource.RLIMIT_FSIZE, (6, 6))
+
+            limited = subprocess.run(
+                our_tar + ['--zstd', '-cf', str(limited_archive),
+                           '-C', str(output_root), member.name],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120,
+                preexec_fn=limit_archive_output)
+            check(label + '/tar-output/compressor-finalization-failure',
+                  limited.returncode != 0 and
+                  limited_archive.read_bytes() == before and
+                  limited_archive.stat().st_ino == before_inode and
+                  not list(output_root.glob('.moonwater-stage-*')),
+                  limited.stderr.decode(errors='replace'))
+
+            streamed = call(our_tar + ['-cf', '-', '-C', str(output_root),
+                                       member.name])
+            listed = call([refs['tar'], '-tf', '-'], streamed.stdout)
+            check(label + '/tar-output/stdout',
+                  streamed.returncode == listed.returncode == 0 and
+                  member.name.encode() in listed.stdout,
+                  streamed.stderr.decode(errors='replace') +
+                  listed.stderr.decode(errors='replace'))
 
         def ustar_header(name, size, typeflag=b'0', linkname=b'', mode=0o644):
             block = bytearray(512)
@@ -22392,7 +23631,12 @@ def harness_compression(argv):
             err = (ours.stderr + reference.stderr).decode(errors='replace')
             named = codec in refuse and any(token in ours.stderr.lower()
                                             for token in refuse[codec])
-            if codec in refuse and not matched:
+            sparse_refused = (cell.startswith('type-S/') and
+                              ours.returncode != 0 and
+                              b"unknown file type 's'" in ours.stderr.lower())
+            if sparse_refused:
+                check(label + '/tar-grammar/' + cell, True, err)
+            elif codec in refuse and not matched:
                 check(label + '/tar-grammar/' + cell,
                       ours.returncode != 0 and named, err)
             else:
@@ -22411,11 +23655,77 @@ def harness_compression(argv):
             ('linkpath', (b'target', b'a.txt')),
         )
         codecs = ('', 'gz', 'xz', 'zst', 'bz2')
-        refuse = {'bz2': (b'bzip2', b'bz2')}
+        refuse = {
+            'bz2': (b'bzip2', b'bz2', b'compression is not supported')}
         for label, _ in binaries:
             our_tar = runner + [str(farms[label] / 'tar')]
             scratch_base = root / ('grammar-' + label)
             scratch_base.mkdir()
+
+            security_raw = ustar_archive([member('safe.txt', '0', b'safe\n')])
+            for codec in ('gz', 'xz', 'zst'):
+                incomplete = scratch_base / ('incomplete-end.' + codec)
+                incomplete.write_bytes(wrap_codec(bytes(512), codec))
+                incomplete_result = call(
+                    our_tar + ['-tf', str(incomplete)])
+                check(label + '/tar-security/' + codec + '/two-end-blocks',
+                      incomplete_result.returncode != 0 and
+                      b'end marker' in incomplete_result.stderr.lower(),
+                      incomplete_result.stderr.decode(errors='replace'))
+
+                suffix = scratch_base / ('nonzero-suffix.' + codec)
+                suffix.write_bytes(wrap_codec(security_raw + b'not padding',
+                                              codec))
+                suffix_result = call(our_tar + ['-tf', str(suffix)])
+                check(label + '/tar-security/' + codec + '/nonzero-suffix',
+                      suffix_result.returncode != 0 and
+                      b'follows archive end marker' in
+                      suffix_result.stderr.lower(),
+                      suffix_result.stderr.decode(errors='replace'))
+
+                expansion = scratch_base / ('expanded-padding.' + codec)
+                expansion.write_bytes(wrap_codec(
+                    security_raw + bytes(1024 * 1024 + 1), codec))
+                expansion_result = call(
+                    our_tar + ['-tf', str(expansion)])
+                check(label + '/tar-security/' + codec + '/padding-budget',
+                      expansion_result.returncode != 0 and
+                      b'padding exceeds limit' in
+                      expansion_result.stderr.lower(),
+                      expansion_result.stderr.decode(errors='replace'))
+
+            directory_root = scratch_base / 'directory-root'
+            directory_root.mkdir()
+            directory_link = scratch_base / 'directory-link'
+            directory_link.symlink_to(directory_root.name,
+                                      target_is_directory=True)
+            directory_archive = scratch_base / 'directory.tar'
+            directory_archive.write_bytes(security_raw)
+            through_link = call(
+                our_tar + ['-xf', str(directory_archive),
+                           '-C', str(directory_link)])
+            check(label + '/tar-security/directory-symlink-refused',
+                  through_link.returncode != 0 and
+                  not (directory_root / 'safe.txt').exists(),
+                  through_link.stderr.decode(errors='replace'))
+            source_member = directory_root / 'source.txt'
+            source_member.write_bytes(b'source\n')
+            create_through_link = scratch_base / 'created-through-link.tar'
+            linked_create = call(
+                our_tar + ['-cf', str(create_through_link),
+                           '-C', str(directory_link), source_member.name])
+            check(label + '/tar-security/create-directory-symlink-refused',
+                  linked_create.returncode != 0 and
+                  not create_through_link.exists(),
+                  linked_create.stderr.decode(errors='replace'))
+            trailing_directory = call(
+                our_tar + ['-xf', str(directory_archive),
+                           '-C', str(directory_root) + '/'])
+            check(label + '/tar-security/directory-trailing-slash',
+                  trailing_directory.returncode == 0 and
+                  (directory_root / 'safe.txt').read_bytes() == b'safe\n',
+                  trailing_directory.stderr.decode(errors='replace'))
+
             cells = []
             for typeflag in typeflags:
                 cells.append(('type-' + (typeflag.encode('unicode_escape').decode() or 'nul'),
@@ -25238,6 +26548,7 @@ PINNED = r"""
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["0600"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"chmod"},"domain":"files","id":"8af55f94d623d561","kind":"bug","list":"ledger","reason_id":"r87","utility":"chmod"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["1000","dangling"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"chown"},"domain":"files","id":"f98a31213b71d4df","kind":"bug","list":"ledger","reason_id":"r86","utility":"chown"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["dir","dirlink"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_no","utility":"cp"},"domain":"files","id":"02590d5db48a476f","kind":"bug","list":"ledger","reason_id":"r89","utility":"cp"},
+{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-a","--keep-directory-symlink","-H","--one-file-system","-u","--force","dir","dirlink"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","tier":"pinned","utility":"cp"},"domain":"files","id":"04629a86fef74958","kind":"deliberate","list":"ledger","reason":"deliberate: a recursive copy whose destination resolves inside its source is rejected before creating or changing an object; the reference leaves a partial tree before reporting the same error","reference":{"effects":"1bf2af85eab696eac345fddd70ea9746f9e1e684d8ca5b05deb992e528560e9c","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"utility":"cp"},
 {"candidate":{"effects":"a9c6836a027cc3e3a3d7cdf7c4dc7fcc394e91a6a268706a7492b4abe5b35bf4","status":0,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--reflink=always","a.txt","copy"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","utility":"cp"},"domain":"files","id":"0a91d3aa79230ee4","kind":"bug","list":"ledger","reason_id":"r89","utility":"cp"},
 {"candidate":{"effects":"7b650e3d0a68dff02b1f9a5995b2fc766664e7b5c56ca4bdf9dd5fd8d67cfea0","status":0,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--preserve=mode","a.txt","copy"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","utility":"cp"},"domain":"files","id":"23d4fd2175db6313","kind":"bug","list":"ledger","reason_id":"r89","utility":"cp"},
 {"candidate":{"effects":"669bddb331f7d74f373c8d177c2eece617f782ed5c7344fe9b65f85926151a4a","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-rL","dir/sub/back","copied"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","utility":"cp"},"domain":"files","id":"35314c34ff9224de","kind":"bug","list":"ledger","reason_id":"r89","utility":"cp"},

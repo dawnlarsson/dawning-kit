@@ -13,19 +13,55 @@
 #define STANDARD_MODERN_C_NET_WAIT
 
 #define NETWORK_INTERRUPTED (-4)
+#define NETWORK_TRY_AGAIN (-11)
+#define NETWORK_NANOSECONDS 1000000000
 
-/* DHCP uses the same availability-oriented entropy policy as temporary-file
-   nonces: nonblocking kernel randomness, then the kernel's early-boot byte
-   stream, and finally a mixed timing/PID/ASLR fallback. The width guard stays
-   here because callers copy only the low bytes into their wire field. DNS,
-   whose 16-bit tag authenticates a remote reply, uses the strict helper
-   below instead. */
-static inline INLINE positive network_transaction(positive width)
+typedef struct
 {
-        if (!width || width > sizeof(positive))
-                return 0;
+        positive began;
+        positive budget;
+} network_deadline;
 
-        return system_nonce();
+/* One absolute monotonic budget for every packet loop.  Recomputing the
+   remaining interval before each poll means junk packets neither buy the
+   sender more time nor consume a retry that represented elapsed time. */
+static bool network_deadline_begin(network_deadline address_to deadline,
+                                   positive seconds, positive nanoseconds)
+{
+        positive began;
+
+        if (nanoseconds >= NETWORK_NANOSECONDS)
+                return false;
+
+        if (seconds > (positive_max - nanoseconds) / NETWORK_NANOSECONDS)
+                deadline->budget = positive_max;
+        else
+                deadline->budget = seconds * NETWORK_NANOSECONDS + nanoseconds;
+
+        began = clock_monotonic_nanoseconds();
+        deadline->began = began;
+        return began != 0 && deadline->budget != 0;
+}
+
+static bool network_deadline_left(
+    const network_deadline address_to deadline, positive address_to seconds,
+    positive address_to nanoseconds)
+{
+        positive now = clock_monotonic_nanoseconds();
+        positive elapsed;
+        positive left;
+
+        if (!deadline->began || !now || now < deadline->began)
+                return false;
+
+        elapsed = now - deadline->began;
+        if (elapsed >= deadline->budget)
+                return false;
+
+        left = deadline->budget - elapsed;
+        address_to seconds = left / NETWORK_NANOSECONDS;
+        address_to nanoseconds = left % NETWORK_NANOSECONDS;
+        return true;
 }
 
 /* A DNS id is part of reply authentication, so its availability tradeoff is
@@ -41,34 +77,101 @@ static inline INLINE bool network_transaction_secure(address_any into,
         return system_random_fill(into, width, 1) == 0;
 }
 
-/*
-        ppoll rather than poll, because arm64 and riscv64 have only ppoll in
-        the asm-generic syscall table. Keep the kernel's pollfd layout typed:
-        writing one through casts into an eight-byte character array gives
-        that array neither the alignment nor the effective type of the words
-        being stored.
-*/
-static bipolar descriptor_wait_readable(bipolar handle,
-                                         timespec address_to limit,
-                                         positive address_to signal_mask)
-{
-        struct
-        {
-                b32 descriptor;
-                b16 events;
-                b16 returned;
-        } waited = {(b32)handle, 1, 0};        // POLLIN
-
-        return system_call_5(syscall(ppoll), (positive)address_of waited, 1,
-                             (positive)limit, (positive)signal_mask, 8);
-}
-
 static bipolar network_wait_readable(bipolar handle, positive seconds,
                                      positive nanoseconds)
 {
         timespec limit = {seconds, nanoseconds};
 
         return descriptor_wait_readable(handle, address_of limit, null);
+}
+
+static bipolar network_wait_readable_until(
+    bipolar handle, const network_deadline address_to deadline)
+{
+        positive seconds;
+        positive nanoseconds;
+        bipolar ready;
+
+        do
+        {
+                if (!network_deadline_left(deadline, address_of seconds,
+                                           address_of nanoseconds))
+                        return 0;
+
+                ready = network_wait_readable(handle, seconds, nanoseconds);
+        } while (ready == NETWORK_INTERRUPTED);
+
+        return ready;
+}
+
+/* Deadline-bound stream reads must not enter a blocking read merely because
+   one byte was ready: a peer could then trickle the rest forever under the
+   socket's renewing idle timeout. Poll the absolute budget and consume only
+   bytes immediately available before recomputing what remains. */
+static bipolar network_stream_read_some_until(
+    bipolar handle, p8 address_to into, positive length,
+    const network_deadline address_to deadline)
+{
+        for (;;)
+        {
+                bipolar ready = network_wait_readable_until(handle, deadline);
+
+                if (ready <= 0)
+                        return ready < 0 ? ready : -1;
+
+                bipolar got = socket_receive((b32)handle, into, length,
+                                             MSG_DONTWAIT, null, 0);
+
+                if (got == NETWORK_INTERRUPTED || got == NETWORK_TRY_AGAIN)
+                        continue;
+                return got;
+        }
+}
+
+/* Stream protocols share exact-record reads and complete writes.  A read
+   returns false on either EOF or an error before the requested span; a send
+   suppresses SIGPIPE and owns both interruption and short progress. */
+static bool network_stream_read_all(
+    bipolar handle, p8 address_to into, positive length,
+    const network_deadline address_to deadline)
+{
+        positive used = 0;
+
+        while (used < length)
+        {
+                bipolar got = deadline
+                    ? network_stream_read_some_until(
+                          handle, into + used, length - used, deadline)
+                    : system_read_retry((positive)handle, into + used,
+                                        length - used);
+
+                if (got <= 0 || (positive)got > length - used)
+                        return false;
+                used += (positive)got;
+        }
+
+        return true;
+}
+
+static bool network_stream_send_all(bipolar handle, p8 address_to data,
+                                    positive length)
+{
+        positive sent = 0;
+
+        while (sent < length)
+        {
+                bipolar wrote = socket_send((b32)handle, data + sent,
+                                            length - sent, MSG_NOSIGNAL,
+                                            null, 0);
+
+                if (wrote == NETWORK_INTERRUPTED)
+                        continue;
+                if (wrote <= 0 || (positive)wrote > length - sent)
+                        return false;
+                sent += (positive)wrote;
+        }
+
+        return true;
 }
 
 /*

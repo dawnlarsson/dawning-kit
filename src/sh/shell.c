@@ -692,9 +692,22 @@ bool exec_function_environment_fill(string_address address_to environment,
 fn exec_function_import_environment(string_address address_to environment);
 static fn shell_spawn_device_disable();
 
+/* Nested-command utilities are included before the policy engine that owns
+   their final exec decision.  Declare the shared handoff here so every
+   wrapper reaches the same resolver, restriction check and Floodlight pin. */
+bipolar shell_exec_file(string_address path,
+                        string_address address_to arguments,
+                        positive count,
+                        string_address address_to environment);
+static bipolar file_exec_path_try_in(
+    string_address name, string_address address_to words,
+    string_address address_to environment, string_address path);
+static bipolar file_exec_path_try(string_address address_to words);
+
 /* Keep child wiring names at their call sites while ownership and the fd==fd
    edge live with the shared descriptor operations. */
 #define shell_child_fd_move system_descriptor_move
+#define SHELL_PIPE_CLOSE_ON_EXEC 02000000
 
 #include "lex.c"
 #include "file.c"
@@ -727,6 +740,11 @@ static fn shell_spawn_device_disable();
 #include "monitor.c"
 #include "net.c"
 fn shell_child_death(bipolar child, positive raw, bool foreground);
+static fn shell_parser_source_fork_prepare();
+static bool floodlight_descendants_present();
+static bool floodlight_descendants_blocking();
+static fn job_child_watch();
+static bool floodlight_parent_supervised;
 #include "expand.c"
 #include "../canvas/window.c"
 #include "term.c"
@@ -737,7 +755,336 @@ fn shell_child_death(bipolar child, positive raw, bool foreground);
 
 static positive shell_syntax_generation;
 
+/* Source bytes held in memory have no live producer for a child to influence.
+   A streamed descriptor does: classify it once at the authenticated reader
+   boundary, then let the final policy decision admit only sources whose
+   influence that policy can actually remove. */
+#define SHELL_PARSER_SOURCE_MEMORY 0
+#define SHELL_PARSER_SOURCE_SEALED_FILE 1
+#define SHELL_PARSER_SOURCE_REGULAR_FILE 2
+#define SHELL_PARSER_SOURCE_SOCKET 3
+#define SHELL_PARSER_SOURCE_MUTABLE 4
+#define SHELL_PARSER_SOURCE_AMBIGUOUS 5
+
+#define SHELL_PARSER_MFD_CLOEXEC 1
+#define SHELL_PARSER_MFD_ALLOW_SEALING 2
+#define SHELL_PARSER_F_GETFD 1
+#define SHELL_PARSER_F_ADD_SEALS 1033
+#define SHELL_PARSER_F_GET_SEALS 1034
+#define SHELL_PARSER_F_SEAL_SEAL 0x01
+#define SHELL_PARSER_F_SEAL_SHRINK 0x02
+#define SHELL_PARSER_F_SEAL_GROW 0x04
+#define SHELL_PARSER_F_SEAL_WRITE 0x08
+#define SHELL_PARSER_FD_CLOEXEC 1
+#define SHELL_PARSER_SNAPSHOT_SEALS                                     \
+        (SHELL_PARSER_F_SEAL_SEAL | SHELL_PARSER_F_SEAL_SHRINK |       \
+         SHELL_PARSER_F_SEAL_GROW | SHELL_PARSER_F_SEAL_WRITE)
+#define SHELL_PARSER_SNAPSHOT_STEP 4096
+
+/* Sealed files need every inherited alias removed from a final child. This
+   identity is deliberately generic: changing the
+   source's bytes is not the only influence, because reading or seeking a
+   shared open description also changes where the parent continues. */
+static file_facts shell_parser_isolated_facts;
+static bool shell_parser_isolated_live;
+static bool shell_parser_source_active;
+static bool shell_parser_source_ambiguous;
+static positive shell_parser_source_kind = SHELL_PARSER_SOURCE_MEMORY;
+static bipolar shell_parser_source_handle = -1;
+static bipolar shell_parser_source_process = -1;
+static p8 shell_parser_snapshot_buffer[SHELL_PARSER_SNAPSHOT_STEP];
+
+static bool shell_parser_snapshot_sealed(bipolar handle)
+{
+        bipolar seals = system_call_3(syscall(fcntl), (positive)handle,
+                                      SHELL_PARSER_F_GET_SEALS, 0);
+
+        return seals >= 0 &&
+               ((positive)seals & SHELL_PARSER_SNAPSHOT_SEALS) ==
+                   SHELL_PARSER_SNAPSHOT_SEALS;
+}
+
+static bool shell_parser_snapshot_same(
+    const file_facts address_to before,
+    const file_facts address_to after)
+{
+        return (after->mask & STATX_BASIC) == STATX_BASIC &&
+               file_same_identity((file_facts address_to)before,
+                                  (file_facts address_to)after) &&
+               !((before->mask ^ after->mask) & STATX_MOUNT_ID) &&
+               (!(before->mask & STATX_MOUNT_ID) ||
+                before->mount_id == after->mount_id) &&
+               before->size == after->size &&
+               before->changed.seconds == after->changed.seconds &&
+               before->changed.nanoseconds == after->changed.nanoseconds &&
+               before->modified.seconds == after->modified.seconds &&
+               before->modified.nanoseconds == after->modified.nanoseconds;
+}
+
+/* Freeze all bytes the reader has not yet consumed without moving the source
+   offset.  Nothing is installed until the complete bounded tail is copied,
+   the source is reauthenticated unchanged, and the replacement is sealed
+   against writes and size changes.  Every failure therefore leaves the
+   original descriptor in place for unrestricted compatibility, while its
+   source class makes a later restricted launch fail closed. */
+static bool shell_parser_snapshot_make(
+    bipolar handle, const file_facts address_to original,
+    file_facts address_to frozen)
+{
+        file_facts after;
+        bipolar offset = system_seek(handle, 0, FILE_SEEK_CUR);
+        bipolar descriptor_flags = system_call_3(
+            syscall(fcntl), (positive)handle, SHELL_PARSER_F_GETFD, 0);
+        bipolar snapshot = -1;
+        bipolar beyond;
+        p64 copied = 0;
+        p64 remaining;
+        p8 probe;
+        bool ready = false;
+
+        if (offset < 0 || descriptor_flags < 0 ||
+            ((positive)descriptor_flags & ~SHELL_PARSER_FD_CLOEXEC) ||
+            original->size > (p64)bipolar_max ||
+            (p64)offset > original->size)
+                return false;
+
+        remaining = original->size - (p64)offset;
+        snapshot = system_call_2(
+            syscall(memfd_create), (positive)(string_address)"shell-parser",
+            SHELL_PARSER_MFD_CLOEXEC | SHELL_PARSER_MFD_ALLOW_SEALING);
+        if (snapshot < 0 || snapshot == handle)
+                goto finished;
+
+        while (copied < remaining)
+        {
+                positive ask = remaining - copied > SHELL_PARSER_SNAPSHOT_STEP
+                                   ? SHELL_PARSER_SNAPSHOT_STEP
+                                   : (positive)(remaining - copied);
+                bipolar got = system_call_4(
+                    syscall(pread64), (positive)handle,
+                    (positive)address_of shell_parser_snapshot_buffer, ask,
+                    (positive)((p64)offset + copied));
+
+                if (got == -4)
+                        continue;
+                if (got <= 0 || (positive)got > ask ||
+                    system_write_all((positive)snapshot,
+                                     shell_parser_snapshot_buffer,
+                                     (positive)got) != (positive)got)
+                        goto finished;
+                copied += (positive)got;
+        }
+
+        /* statx size is not a readable-length promise for proc-style files.
+           Probe exactly at the advertised end with positional I/O: a byte
+           there means the tail was not complete, while any error makes the
+           representation ambiguous. Neither outcome may publish an empty or
+           truncated snapshot as safe. */
+        do
+                beyond = system_call_4(
+                    syscall(pread64), (positive)handle,
+                    (positive)address_of probe, 1, (positive)original->size);
+        while (beyond == -4);
+        if (beyond != 0)
+                goto finished;
+
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of after) ||
+            !shell_parser_snapshot_same(original, address_of after) ||
+            system_seek(handle, 0, FILE_SEEK_CUR) != offset ||
+            system_call_3(syscall(fcntl), (positive)snapshot,
+                          SHELL_PARSER_F_ADD_SEALS,
+                          SHELL_PARSER_SNAPSHOT_SEALS) < 0 ||
+            !shell_parser_snapshot_sealed(snapshot) ||
+            system_seek(snapshot, 0, FILE_SEEK_SET) != 0 ||
+            !file_look(snapshot, (string_address)"", AT_EMPTY_PATH, frozen) ||
+            (frozen->mask & STATX_BASIC) != STATX_BASIC ||
+            (frozen->mode & MODE_FORMAT) != MODE_FILE)
+                goto finished;
+
+        if (system_duplicate(snapshot, handle,
+                             ((positive)descriptor_flags &
+                              SHELL_PARSER_FD_CLOEXEC)
+                                 ? O_CLOEXEC : 0) != handle)
+                goto finished;
+
+        ready = true;
+
+finished:
+        /* dup3 leaves the reader itself holding the sealed open description.
+           Do not retain a second, script-visible descriptor which could read
+           or seek the parent's future parser bytes. */
+        if (snapshot >= 0 && snapshot != handle)
+                system_close(snapshot);
+        return ready;
+}
+
+static fn shell_parser_source_refresh()
+{
+        file_facts facts;
+
+        shell_parser_isolated_live = false;
+        shell_parser_source_ambiguous = false;
+        shell_parser_source_kind = SHELL_PARSER_SOURCE_MEMORY;
+        if (!shell_parser_source_active)
+                return;
+
+        /* Failure to authenticate either the descriptor or its complete type
+           is its own source class.  It must never inherit the privileges of a
+           source that merely happens to look absent. */
+        shell_parser_source_kind = SHELL_PARSER_SOURCE_AMBIGUOUS;
+
+        if (!file_look(shell_parser_source_handle, (string_address)"",
+                       AT_EMPTY_PATH, address_of facts) ||
+            (facts.mask & STATX_BASIC) != STATX_BASIC)
+        {
+                shell_parser_source_ambiguous = true;
+                return;
+        }
+
+        if ((facts.mode & MODE_FORMAT) == MODE_PIPE)
+                /* Both a named FIFO and an anonymous pipe retain a writer
+                   outside this process. A same-UID child can reacquire that
+                   writer through the feeder's proc descriptor table. */
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_MUTABLE;
+        else if ((facts.mode & MODE_FORMAT) == MODE_FILE)
+        {
+                /* A snapshot already installed at the reader survives between
+                   batches and through named-script relocation.  An ordinary
+                   file remains cheap to stream until a parent-side policy
+                   decision proves that a restricted child will need its tail
+                   frozen. */
+                if (shell_parser_snapshot_sealed(
+                        shell_parser_source_handle))
+                {
+                        shell_parser_source_kind =
+                            SHELL_PARSER_SOURCE_SEALED_FILE;
+                        shell_parser_isolated_facts = facts;
+                        shell_parser_isolated_live = true;
+                }
+                else
+                        shell_parser_source_kind =
+                            SHELL_PARSER_SOURCE_REGULAR_FILE;
+        }
+        else if ((facts.mode & MODE_FORMAT) == MODE_SOCKET)
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_SOCKET;
+        else
+                /* Terminals, block devices and every other concrete source
+                   remain externally mutable while the shell streams later
+                   parser bytes from them. A PTY's influencing master can be
+                   held by an outside same-UID process, beyond this child's
+                   descriptor inventory, so terminal input must also refuse a
+                   restricted launch. */
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_MUTABLE;
+}
+
+/* A regular script is copied only when a nonfinal decision in its owning
+   shell has proved that this launch needs confinement.  A forked/final child
+   must never publish a private snapshot which leaves the real parent reader
+   mutable. */
+static bool shell_parser_source_prepare()
+{
+        file_facts facts;
+        bipolar own;
+
+        if (shell_parser_source_kind == SHELL_PARSER_SOURCE_MEMORY ||
+            shell_parser_source_kind == SHELL_PARSER_SOURCE_SEALED_FILE)
+                return true;
+
+        if (shell_parser_source_kind != SHELL_PARSER_SOURCE_REGULAR_FILE ||
+            !shell_parser_source_active)
+                return false;
+
+        own = system_call_1(syscall(getpid), 0);
+        if (own <= 0 || own != shell_parser_source_process ||
+            !file_look(shell_parser_source_handle, (string_address)"",
+                       AT_EMPTY_PATH, address_of facts) ||
+            (facts.mask & STATX_BASIC) != STATX_BASIC ||
+            (facts.mode & MODE_FORMAT) != MODE_FILE ||
+            shell_parser_snapshot_sealed(shell_parser_source_handle) ||
+            !shell_parser_snapshot_make(
+                shell_parser_source_handle, address_of facts,
+                address_of shell_parser_isolated_facts))
+        {
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_AMBIGUOUS;
+                shell_parser_source_ambiguous = true;
+                return false;
+        }
+
+        shell_parser_source_kind = SHELL_PARSER_SOURCE_SEALED_FILE;
+        shell_parser_isolated_live = true;
+        return true;
+}
+
+static bool shell_parser_source_begin(bipolar handle)
+{
+        shell_parser_source_handle = handle;
+        shell_parser_source_process =
+            system_call_1(syscall(getpid), 0);
+        shell_parser_source_active = true;
+
+        /* Startup code can leave a confined child alive before the main
+           reader is opened.  That child may already have selected or changed
+           the named source, so freezing bytes after open would authenticate
+           an attacker-chosen program.  Memory sources never call begin. */
+        if (floodlight_parent_supervised &&
+            floodlight_descendants_present())
+        {
+                shell_parser_isolated_live = false;
+                shell_parser_source_kind = SHELL_PARSER_SOURCE_AMBIGUOUS;
+                shell_parser_source_ambiguous = true;
+                return false;
+        }
+
+        shell_parser_source_refresh();
+        return true;
+}
+
+/* The named-script reader is a shell-owned descriptor.  A user redirect can
+   claim its number, in which case exec.c moves the same open description out
+   of the way.  Keep the published handle with that move without re-statting
+   it: every command in this reader batch still came from the identity that
+   begin authenticated, including commands nested below temporary redirects. */
+static fn shell_parser_source_relocated(bipolar from, bipolar to)
+{
+        if (shell_parser_source_active &&
+            shell_parser_source_handle == from)
+                shell_parser_source_handle = to;
+}
+
+static fn shell_parser_source_end()
+{
+        shell_parser_isolated_live = false;
+        shell_parser_source_active = false;
+        shell_parser_source_ambiguous = false;
+        shell_parser_source_kind = SHELL_PARSER_SOURCE_MEMORY;
+        shell_parser_source_handle = -1;
+        shell_parser_source_process = -1;
+}
+
+static bool exec_inplace_ready(bool restricted);
 #include "builtin.c"
+
+/* Structural forks can execute parsed commands before ordinary dispatch has
+   resolved a policy subject. On a real policy-bearing system, seal a regular
+   reader in its owning parent before making that copy. Stock/no-policy shells
+   keep streaming without the copy. */
+static fn shell_parser_source_fork_prepare()
+{
+        floodlight_reload();
+        if (floodlight_report_state == FLOODLIGHT_REPORT_VALID)
+        {
+                if (!floodlight_parent_prepare(true))
+                        return;
+
+                if (shell_parser_source_kind ==
+                        SHELL_PARSER_SOURCE_REGULAR_FILE &&
+                    shell_parser_source_active &&
+                    shell_parser_source_process ==
+                        system_call_1(syscall(getpid), 0))
+                        (void)shell_parser_source_prepare();
+        }
+}
 
 /*
         The line being read, which grows to hold whatever arrives.
@@ -947,6 +1294,9 @@ DEAD_END fn shell_thread_instance_mode(bool preserve_ignored)
         bipolar exec_result = shell_exec_file(shell_argv[0], shell_argv,
                                               shell_argc, environment);
 
+        if (floodlight_inplace_terminal)
+                floodlight_silent_stop();
+
         string_format(log, "failed with error: %b\n", exec_result);
         log_flush();
 
@@ -1107,27 +1457,22 @@ static bool shell_spawn_request(struct spawn address_to request,
         return true;
 }
 
-// Returns the child pid, or a negative error if the device could not take it.
-static bipolar shell_spawn_via_device(b32 flags, string_address path,
-                                      string_address address_to arguments,
-                                      b32 input, b32 output, b32 error)
+/* Submit a launch whose Floodlight decision the caller already made. Keeping
+   policy out of this sender lets paths which need the decision for their fork
+   fallback make one stable choice before probing or opening /dev/spark. */
+static bipolar shell_spawn_preflighted(b32 flags, string_address path,
+                                       string_address address_to arguments,
+                                       b32 input, b32 output, b32 error)
 {
         struct spawn request;
-        positive count = 0;
         bool tool = (flags & SPARK_SPAWN_TOOL) != 0;
-        b32 policy;
 
-        while (arguments[count])
-                count++;
+        /* An ambiguous parser source cannot be carried into a fresh image;
+           the fork path reaches the final fail-closed decision. */
+        if (tool && shell_parser_source_ambiguous)
+                return -1;
 
-        policy = floodlight_launch_decide(path, arguments, count, tool,
-                                          false, false, null);
-
-        /* A tool starts in /shell and installs its own filter before reading
-           input. An external Spark child executes no shell code at all, so a
-           restriction that needs a filter must take the fork path instead. */
-        if (policy == FLOODLIGHT_LAUNCH_REFUSE ||
-            (!tool && policy != FLOODLIGHT_LAUNCH_ALLOW))
+        if (!shell_spawn_device_open())
                 return -1;
 
         if (!shell_spawn_request(address_of request, path, arguments))
@@ -1155,11 +1500,8 @@ static bipolar shell_spawn_via_device(b32 flags, string_address path,
 bipolar shell_spawn_stage(string_address address_to arguments,
                           b32 input, b32 output, b32 error)
 {
-        if (!shell_spawn_device_open())
-                return -1;
-
-        return shell_spawn_via_device(SPARK_SPAWN_SHELL, arguments[0],
-                                      arguments, input, output, error);
+        return shell_spawn_preflighted(SPARK_SPAWN_SHELL, arguments[0],
+                                       arguments, input, output, error);
 }
 
 static bool shell_spawn_device_open()
@@ -1201,15 +1543,13 @@ static fn shell_spawn_device_disable()
         spawn_device_opened = true;
 }
 
-/* argv[0] selects a utility in the kernel-owned /shell image. */
-bipolar shell_spawn_tool(string_address address_to arguments,
-                         b32 output, bool quiet)
+/* argv[0] selects a utility in the kernel-owned /shell image. The caller has
+   already established that this launch is unrestricted. */
+static bipolar shell_spawn_tool_preflighted(
+    string_address address_to arguments, b32 output, bool quiet)
 {
         b32 null_output = -1;
         bipolar child;
-
-        if (!shell_spawn_device_open())
-                return -1;
 
         if (quiet)
                 null_output = system_open_at(AT_FDCWD,
@@ -1219,23 +1559,49 @@ bipolar shell_spawn_tool(string_address address_to arguments,
         if (quiet && null_output < 0)
                 return -1;
 
-        child = shell_spawn_via_device(SPARK_SPAWN_TOOL, null, arguments, -1,
-                                       output, quiet ? null_output : -1);
+        child = shell_spawn_preflighted(SPARK_SPAWN_TOOL, null, arguments, -1,
+                                        output, quiet ? null_output : -1);
         if (null_output >= 0)
                 system_close(null_output);
         return child;
 }
 
+/* Decide before opening either the launch device or the quiet-output sink.
+   A restricted command-substitution tool then takes its existing fork path,
+   whose child inherits the parser parent's authenticated contract. */
+bipolar shell_spawn_tool(string_address address_to arguments,
+                         b32 output, bool quiet)
+{
+        positive count = 0;
+
+        while (arguments[count])
+                count++;
+
+        if (floodlight_launch_decide(null, arguments, count, true,
+                                     false, false, null) !=
+            FLOODLIGHT_LAUNCH_ALLOW)
+                return -1;
+
+        return shell_spawn_tool_preflighted(arguments, output, quiet);
+}
+
 fn shell_execute_command()
 {
         bipolar child = -1;
+        positive count = 0;
+        b32 policy;
 
         log_flush();
 
-        if (shell_spawn_device_open())
-                child = shell_spawn_via_device(SPARK_SPAWN_SHELL,
-                                               shell_argv[0], shell_argv,
-                                               -1, -1, -1);
+        while (shell_argv[count])
+                count++;
+        policy = floodlight_launch_decide(shell_argv[0], shell_argv, count,
+                                          false, false, false, null);
+
+        if (policy == FLOODLIGHT_LAUNCH_ALLOW)
+                child = shell_spawn_preflighted(SPARK_SPAWN_SHELL,
+                                                shell_argv[0], shell_argv,
+                                                -1, -1, -1);
 
         if (child < 0)
         {
@@ -1246,7 +1612,8 @@ fn shell_execute_command()
                 // left child_stack as whatever happened to be in the second
                 // argument register, so the child started on a garbage stack
                 // and execve was handed an empty path.
-                child = system_fork();
+                child = policy == FLOODLIGHT_LAUNCH_ALLOW
+                            ? shell_clone_raw() : shell_clone();
 
                 if (child == 0)
                         shell_thread_instance();

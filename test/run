@@ -274,6 +274,11 @@ need_shell()
                 for name in $utilities; do
                         ln -sf "$work/shell" "$work/bin/$name" || return 1
                 done
+
+                # Language checks need the Bash personality before the
+                # differential runner creates its own private shell-name
+                # farm.
+                ln -sf "$work/shell" "$work/bin/bash" || return 1
         fi
 
         shell_binary="$work/shell"
@@ -1929,6 +1934,7 @@ lane_codec()     { freestanding_checks_lane codec codec; }
 lane_fixed()     { freestanding_checks_lane fixed fixed; }
 lane_table()     { freestanding_checks_lane table table; }
 lane_storage_io() { freestanding_checks_lane storage_io storage_io; }
+
 lane_leaving()   { freestanding_checks_lane leaving leaving; }
 lane_numbers()   { freestanding_checks_lane numbers number; }
 lane_scan()      { freestanding_checks_lane scan scan; }
@@ -2688,12 +2694,127 @@ lane_compression()
 
 lane_reuse_shell() { freestanding_checks_lane reuse_shell reuse_shell; }
 
-#       Pure-state regressions for the verified enable, formatter and signal
-#       repairs; no machine-control builtin or utility is invoked. The utility
-#       fixtures that ran beside it are the differential engine's domains now.
+secure_creation_regressions()
+(
+        need_shell || exit 1
+        place="$work/secure-creation"
+        mkdir -m 0700 "$place" || exit 1
+        trap 'chmod -R u+rwx "$place" 2> /dev/null || true' EXIT HUP INT TERM
+        printf source > "$place/source" || exit 1
+        chmod 0600 "$place/source" || exit 1
+        mkdir -m 0777 "$place/unsafe" || exit 1
+        mkdir -m 1777 "$place/sticky" || exit 1
+        mkdir -m 0700 "$place/target" || exit 1
+        mkdir -m 000 "$place/oldzero" || exit 1
+        mkdir -m 000 "$place/unsafe/locked" || exit 1
+        ln -s target "$place/link" || exit 1
+
+        cd "$place" || exit 1
+
+        # An explicit empty suffix falls back to '~'.  Existing mode still
+        # switches to numbered backups when a numbered series is present.
+        printf newer > backup-source || exit 1
+        printf older > backup-destination || exit 1
+        "$farm/cp" -b -S '' backup-source backup-destination || exit 1
+        [ "$(cat backup-destination)" = newer ] || exit 1
+        [ "$(cat 'backup-destination~')" = older ] || exit 1
+
+        printf newest > numbered-source || exit 1
+        printf current > numbered-destination || exit 1
+        printf prior > 'numbered-destination.~1~' || exit 1
+        "$farm/cp" --backup=existing -S '' \
+                numbered-source numbered-destination || exit 1
+        [ "$(cat numbered-destination)" = newest ] || exit 1
+        [ "$(cat 'numbered-destination.~2~')" = current ] || exit 1
+
+        umask 0777
+
+        "$farm/mkdir" -p a/b || exit 1
+        "$farm/mkdir" -p -m 0640 c/d || exit 1
+        "$farm/mkdir" -m 0640 e || exit 1
+        "$farm/mkfifo" -m 0640 pipe || exit 1
+        "$farm/mknod" -m 0640 node p || exit 1
+        "$farm/install" -D source f/g/out || exit 1
+        "$farm/install" -d -m 000 locked || exit 1
+        "$farm/install" -d -m 2750 locked || exit 1
+        "$farm/install" -d -m 0640 h/i || exit 1
+        "$farm/mkdir" -m 4750 setuid || exit 1
+        "$farm/mkdir" -m 4000 setuidzero || exit 1
+        "$farm/mkdir" -p -m 2750 setgid/tree || exit 1
+        "$farm/mkdir" -m 2755 inherited || exit 1
+        "$farm/mkdir" -m 0755 inherited/leaf || exit 1
+
+        modes=$(stat -c '%a' a a/b c c/d e pipe node f f/g f/g/out \
+                locked h h/i setuid setuidzero setgid/tree inherited inherited/leaf |
+                paste -sd:)
+        [ "$modes" = 300:0:300:640:640:640:640:755:755:755:2750:755:640:4750:4000:2750:2755:2755 ] ||
+                exit 1
+
+        if command -v strace > /dev/null 2>&1 &&
+                strace -qq -o /dev/null -e trace=fchmodat2 true \
+                        > /dev/null 2>&1; then
+                strace -qq -o /dev/null \
+                        -e trace=fchmod,fchmodat,fchmodat2 \
+                        -e inject=fchmodat2:error=ENOSYS:when=1 \
+                        "$farm/install" -d -m 0711 oldzero || exit 1
+                [ "$(stat -c '%a' oldzero)" = 711 ] || exit 1
+
+                strace -qq -o /dev/null \
+                        -e trace=fchmod,fchmodat,fchmodat2 \
+                        -e inject=fchmodat2:error=ENOSYS:when=1 \
+                        "$farm/mkdir" -m 4000 oldspecial || exit 1
+                [ "$(stat -c '%a' oldspecial)" = 4000 ] || exit 1
+
+                if strace -qq -o /dev/null \
+                        -e trace=fchmod,fchmodat,fchmodat2 \
+                        -e inject=fchmodat2:error=ENOSYS:when=1 \
+                        "$farm/install" -d -m 0711 unsafe/locked \
+                        > /dev/null 2>&1; then
+                        exit 1
+                fi
+                [ "$(stat -c '%a' unsafe/locked)" = 0 ] || exit 1
+        fi
+
+        "$farm/mkdir" -p unsafe/x > /dev/null 2>&1 && exit 1
+        "$farm/mkfifo" -m 0600 unsafe/f > /dev/null 2>&1 && exit 1
+        "$farm/mknod" -m 0600 unsafe/n p > /dev/null 2>&1 && exit 1
+        "$farm/install" -D source unsafe/a/out > /dev/null 2>&1 && exit 1
+        "$farm/install" -d unsafe/d/e > /dev/null 2>&1 && exit 1
+        for entry in unsafe/x unsafe/f unsafe/n unsafe/a unsafe/d; do
+                [ ! -e "$entry" ] || exit 1
+        done
+
+        "$farm/mkdir" -p -m 0700 sticky/x || exit 1
+        "$farm/mkfifo" -m 0600 sticky/f || exit 1
+        "$farm/mknod" -m 0600 sticky/n p || exit 1
+        "$farm/install" -D source sticky/a/out || exit 1
+        "$farm/install" -d -m 0700 sticky/d/e || exit 1
+
+        "$farm/mkdir" -p link/x > /dev/null 2>&1 && exit 1
+        "$farm/install" -D source link/out > /dev/null 2>&1 && exit 1
+        "$farm/install" -d link/d > /dev/null 2>&1 && exit 1
+        for entry in target/x target/out target/d; do
+                [ ! -e "$entry" ] || exit 1
+        done
+)
+
+#       Pure-state regressions for the verified builtin repairs, followed by
+#       the descriptor-pinned creation paths whose contract needs real Linux
+#       namespace and umask behavior.
 lane_audit()
 {
-        freestanding_checks_lane audit-builtin audit_builtin_regressions
+        failed=0
+        freestanding_checks_lane audit-builtin audit_builtin_regressions ||
+                failed=1
+        freestanding_checks_lane path-stage path_stage || failed=1
+        if secure_creation_regressions; then
+                tally secure-creation 1 1
+        else
+                tally secure-creation 0 1
+                note "secure creation mode, parent or symlink regression"
+                failed=1
+        fi
+        return "$failed"
 }
 
 lane_regex() { freestanding_checks_lane regex regex; }
@@ -3427,8 +3548,67 @@ differential_domain()
         differential_ready || return 2
         need_shell || return 1
 
-        python3 test/differential.py "$farm" --domain "$1" \
+        differential_farm=${2:-$farm}
+
+        python3 test/differential.py "$differential_farm" --domain "$1" \
                 --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}"
+}
+
+#       awk, script and setarch carry a stock spawn denial even when the
+#       Floodlight device is absent. A fresh named-app image cannot prove that
+#       its external parent is not parsing an inherited descriptor, so its
+#       direct refusal is a security property rather than an implementation
+#       result for the differential oracle. All three need to spawn for parts
+#       of their corpus, so a test-only nonfinal driver reaches those
+#       implementations. Focused checks below still exercise their real
+#       protected-shell and direct-refusal paths.
+policy_farm=""
+need_policy_farm()
+{
+        need_shell || return 1
+
+        if [ ! -x "$work/policy-utilities" ]; then
+                cat > "$work/policy-utilities.c" <<POLICY_UTILITIES
+#include "$root/src/compiler_memory.c"
+#include "$root/src/spark.c"
+#define SHELL_UTILITY_PROGRAM
+#include "$root/src/sh/shell.c"
+
+b32 main()
+{
+        string_address name = shell_tool_name(program_argument(0));
+        positive which = shell_tool_key_find(name);
+        b32 answered;
+
+        if (which == SHELL_TOOLS)
+                return string_report(log_error, 127,
+                                     "%s: utility not found\\n",
+                                     program_argument(0));
+
+        log_failure_reset();
+        answered = shell_tools[which].function() & 0xff;
+        log_flush();
+        return log_failed() && !answered ? 1 : answered;
+}
+POLICY_UTILITIES
+                freestanding "$work/policy-utilities.c" \
+                        "$work/policy-utilities" || return 1
+        fi
+
+        if [ ! -d "$work/policy-bin" ]; then
+                mkdir -p "$work/policy-bin" || return 1
+                for policy_name in $utilities; do
+                        ln -sf "$farm/$policy_name" \
+                                "$work/policy-bin/$policy_name" || return 1
+                done
+                ln -sf "$farm/bash" "$work/policy-bin/bash" || return 1
+                for policy_name in awk script setarch; do
+                        ln -sf "$work/policy-utilities" \
+                                "$work/policy-bin/$policy_name" || return 1
+                done
+        fi
+
+        policy_farm="$work/policy-bin"
 }
 
 #       The self-test drives the engine end to end on a farm of its own, and
@@ -3450,9 +3630,233 @@ lane_differential_oracle()
 }
 
 lane_text()       { differential_domain text; }
-lane_files()      { differential_domain files; }
-lane_misc()       { differential_domain misc; }
-lane_util_linux() { differential_domain util_linux; }
+lane_files()
+{
+        differential_ready || return $?
+        need_shell || return 1
+        files_failed=0
+
+        mkdir -p "$work/cp-mode-regression"
+        cp_mode_check()
+        {
+                cp_mode_label=$1
+                cp_mode_want=$2
+                cp_mode_source=$3
+                cp_mode_target=$4
+                shift 4
+                rm -rf "$cp_mode_target"
+                (
+                        umask 022
+                        "$farm/cp" "$@" "$cp_mode_source" "$cp_mode_target"
+                )
+                cp_mode_status=$?
+                cp_mode_got=$(stat -c %a "$cp_mode_target" 2>/dev/null ||
+                        printf missing)
+                if [ "$cp_mode_status:$cp_mode_got" = "0:$cp_mode_want" ]; then
+                        tally "$cp_mode_label" 1 1
+                else
+                        tally "$cp_mode_label" 0 1
+                        note "$cp_mode_label returned $cp_mode_status with mode $cp_mode_got"
+                        files_failed=1
+                fi
+        }
+
+        printf 'set-id source\n' > "$work/cp-mode-regression/source"
+        if [ "$(id -u)" = 0 ]; then
+                chown 65534:65534 "$work/cp-mode-regression/source"
+        fi
+        chmod 6755 "$work/cp-mode-regression/source"
+        cp_mode_check cp-new-file-clears-set-id 755 \
+                "$work/cp-mode-regression/source" \
+                "$work/cp-mode-regression/plain"
+        cp_mode_check cp-attributes-only-clears-set-id 755 \
+                "$work/cp-mode-regression/source" \
+                "$work/cp-mode-regression/attributes" --attributes-only
+        cp_mode_check cp-preserve-retains-set-id 6755 \
+                "$work/cp-mode-regression/source" \
+                "$work/cp-mode-regression/preserved" -p
+
+        mkdir "$work/cp-mode-regression/source-directory"
+        chmod 6755 "$work/cp-mode-regression/source-directory"
+        cp_mode_check cp-new-directory-clears-set-id 755 \
+                "$work/cp-mode-regression/source-directory" \
+                "$work/cp-mode-regression/directory" -R
+
+        mkfifo "$work/cp-mode-regression/source-fifo"
+        chmod 6755 "$work/cp-mode-regression/source-fifo"
+        cp_mode_check cp-new-special-clears-set-id 755 \
+                "$work/cp-mode-regression/source-fifo" \
+                "$work/cp-mode-regression/fifo" -R
+
+        printf 'old executable\n' > "$work/cp-mode-regression/staged-output"
+        chmod 4755 "$work/cp-mode-regression/staged-output"
+        printf 'replacement\n' | "$farm/shuf" -o \
+                "$work/cp-mode-regression/staged-output"
+        staged_output_status=$?
+        staged_output_mode=$(stat -c %a \
+                "$work/cp-mode-regression/staged-output" 2>/dev/null ||
+                printf missing)
+        if [ "$staged_output_status:$staged_output_mode" = '0:755' ]; then
+                tally staged-output-clears-set-id 1 1
+        else
+                tally staged-output-clears-set-id 0 1
+                note "generic staged output returned $staged_output_status with mode $staged_output_mode"
+                files_failed=1
+        fi
+
+        printf 'symlink victim\n' > "$work/cp-mode-regression/victim"
+        printf 'copy source\n' > "$work/cp-mode-regression/link-source"
+        ln -sf victim "$work/cp-mode-regression/link-target"
+        "$farm/cp" "$work/cp-mode-regression/link-source" \
+                "$work/cp-mode-regression/link-target" \
+                > /dev/null 2> "$work/cp-mode-regression/link.err"
+        cp_link_status=$?
+        if [ "$cp_link_status:$(readlink "$work/cp-mode-regression/link-target" 2>/dev/null):$(cat "$work/cp-mode-regression/victim")" = \
+                '1:victim:symlink victim' ]; then
+                tally cp-final-symlink-refused 1 1
+        else
+                tally cp-final-symlink-refused 0 1
+                note "cp final symlink returned $cp_link_status with victim [$(cat "$work/cp-mode-regression/victim" 2>/dev/null)]"
+                files_failed=1
+        fi
+
+        "$farm/cp" -f "$work/cp-mode-regression/link-source" \
+                "$work/cp-mode-regression/link-target"
+        cp_force_link_status=$?
+        if [ "$cp_force_link_status:$(test -L "$work/cp-mode-regression/link-target"; echo $?):$(cat "$work/cp-mode-regression/link-target")" = \
+                '0:1:copy source' ] &&
+                [ "$(cat "$work/cp-mode-regression/victim")" = 'symlink victim' ]; then
+                tally cp-final-symlink-explicit-replacement 1 1
+        else
+                tally cp-final-symlink-explicit-replacement 0 1
+                note "cp -f final symlink returned $cp_force_link_status or changed its victim"
+                files_failed=1
+        fi
+
+        ln -sf victim "$work/cp-mode-regression/stream-link"
+        printf 'stream replacement\n' | "$farm/shuf" -o \
+                "$work/cp-mode-regression/stream-link" \
+                > /dev/null 2> "$work/cp-mode-regression/stream-link.err"
+        stream_link_status=$?
+        if [ "$stream_link_status:$(test -L "$work/cp-mode-regression/stream-link"; echo $?):$(cat "$work/cp-mode-regression/stream-link"):$(cat "$work/cp-mode-regression/victim")" = \
+                '0:1:stream replacement:symlink victim' ]; then
+                tally staged-stream-final-symlink-replaced 1 1
+        else
+                tally staged-stream-final-symlink-replaced 0 1
+                note "staged stream symlink returned $stream_link_status or followed its victim"
+                files_failed=1
+        fi
+
+        printf 'codec input\n' > "$work/cp-mode-regression/codec"
+        printf 'old executable\n' > "$work/cp-mode-regression/codec.gz"
+        chmod 4755 "$work/cp-mode-regression/codec.gz"
+        "$farm/gzip" -f "$work/cp-mode-regression/codec"
+        codec_status=$?
+        codec_mode=$(stat -c %a "$work/cp-mode-regression/codec.gz" \
+                2>/dev/null || printf missing)
+        if [ "$codec_status:$codec_mode" = '0:755' ]; then
+                tally codec-replacement-clears-set-id 1 1
+        else
+                tally codec-replacement-clears-set-id 0 1
+                note "codec replacement returned $codec_status with mode $codec_mode"
+                files_failed=1
+        fi
+
+        printf 'archive member\n' > "$work/cp-mode-regression/member"
+        printf 'old executable\n' > "$work/cp-mode-regression/archive.tar"
+        chmod 4755 "$work/cp-mode-regression/archive.tar"
+        (
+                cd "$work/cp-mode-regression" || exit 1
+                "$farm/tar" -cf archive.tar member
+        )
+        archive_status=$?
+        archive_mode=$(stat -c %a "$work/cp-mode-regression/archive.tar" \
+                2>/dev/null || printf missing)
+        if [ "$archive_status:$archive_mode" = '0:755' ]; then
+                tally tar-replacement-clears-set-id 1 1
+        else
+                tally tar-replacement-clears-set-id 0 1
+                note "tar replacement returned $archive_status with mode $archive_mode"
+                files_failed=1
+        fi
+
+        printf 'old text\n' > "$work/cp-mode-regression/sed"
+        chmod 4755 "$work/cp-mode-regression/sed"
+        "$farm/sed" -i s/old/new/ "$work/cp-mode-regression/sed"
+        sed_status=$?
+        sed_mode=$(stat -c %a "$work/cp-mode-regression/sed" \
+                2>/dev/null || printf missing)
+        if [ "$sed_status:$sed_mode" = '0:755' ]; then
+                tally sed-replacement-clears-set-id 1 1
+        else
+                tally sed-replacement-clears-set-id 0 1
+                note "sed replacement returned $sed_status with mode $sed_mode"
+                files_failed=1
+        fi
+
+        differential_domain files || files_failed=1
+        return "$files_failed"
+}
+lane_misc()
+{
+        need_policy_farm || return 1
+        misc_failed=0
+
+        "$farm/script" --version > /dev/null \
+                2> "$work/script-direct-policy.err"
+        script_direct=$?
+        if [ "$script_direct" = 126 ] &&
+                grep -q 'parent protection unavailable; refusing launch' \
+                        "$work/script-direct-policy.err"; then
+                tally script-direct-policy-refusal 1 1
+        else
+                tally script-direct-policy-refusal 0 1
+                note "direct stock script did not preserve its parent-contract refusal"
+                misc_failed=1
+        fi
+
+        if "$farm/bash" -c 'script --version >/dev/null' \
+                > /dev/null 2>&1; then
+                tally script-integrated-policy-path 1 1
+        else
+                tally script-integrated-policy-path 0 1
+                note "script's non-spawning mode failed under a protected shell parent"
+                misc_failed=1
+        fi
+
+        differential_domain misc "$policy_farm" || misc_failed=1
+        return "$misc_failed"
+}
+lane_util_linux()
+{
+        need_policy_farm || return 1
+        util_linux_failed=0
+
+        "$farm/setarch" --show > /dev/null \
+                2> "$work/setarch-direct-policy.err"
+        setarch_direct=$?
+        if [ "$setarch_direct" = 126 ] &&
+                grep -q 'parent protection unavailable; refusing launch' \
+                        "$work/setarch-direct-policy.err"; then
+                tally setarch-direct-policy-refusal 1 1
+        else
+                tally setarch-direct-policy-refusal 0 1
+                note "direct stock setarch did not preserve its parent-contract refusal"
+                util_linux_failed=1
+        fi
+
+        if "$farm/bash" -c 'setarch --show >/dev/null' \
+                > /dev/null 2>&1; then
+                tally setarch-integrated-policy-path 1 1
+        else
+                tally setarch-integrated-policy-path 0 1
+                note "setarch's non-spawning mode failed under a protected shell parent"
+                util_linux_failed=1
+        fi
+
+        differential_domain util_linux "$policy_farm" || util_linux_failed=1
+        return "$util_linux_failed"
+}
 lane_shell()
 {
         need_shell || return 1
@@ -3466,17 +3870,588 @@ lane_shell()
                 note "bash literal fast path ignored inherited SHELLOPTS"
                 shell_failed=1
         fi
+        if process_limited=$(
+                ulimit -n 32 || exit 1
+                "$farm/bash" -c 'cat <(printf inherited)'
+        ) && [ "$process_limited" = inherited ]; then
+                tally shell-process-substitution-low-fd 1 1
+        else
+                tally shell-process-substitution-low-fd 0 1
+                note "process substitution lost its descriptor below fd 60"
+                shell_failed=1
+        fi
+
+        # ppoll reports POLLNVAL as a ready row. A zero-timeout read probe
+        # must distinguish that condition from readable input instead of
+        # claiming success for a closed descriptor.
+        read_invalid_status=$(
+                "$farm/bash" -c 'read -t 0 -u 99 value; printf "%s" "$?"'
+        )
+        if [ "$read_invalid_status" = 1 ]; then
+                tally shell-read-timeout-invalid-fd 1 1
+        else
+                tally shell-read-timeout-invalid-fd 0 1
+                note "zero-timeout read accepted invalid fd 99 with status [$read_invalid_status]"
+                shell_failed=1
+        fi
+
+        # A named script remains open while its commands run. Before the
+        # parser-source gate, confined awk could append a command that this
+        # unrestricted shell then read and executed. Keep an unrestricted
+        # command in the same streaming file as the compatibility control.
+        parser_source_dir="$work/parser-source"
+        mkdir -p "$parser_source_dir"
+        parser_regular_script="$parser_source_dir/regular-script"
+        parser_regular_target="$parser_source_dir/regular-injected"
+        parser_regular_compatible="$parser_source_dir/regular-compatible"
+        parser_regular_ran="$parser_source_dir/regular-restricted-ran"
+        cat > "$parser_regular_script" <<REGULAR_SCRIPT
+printf ready > "$parser_regular_compatible"
+awk 'BEGIN { print "ready" > "$parser_regular_ran"; print "touch -- $parser_regular_target" >> "$parser_regular_script" }' 2>/dev/null
+REGULAR_SCRIPT
+        # Keep the original EOF beyond the first parser read. Without the
+        # sealed-tail replacement, awk's appended command is then reached by a
+        # later read and executed; a tiny two-line file would already be fully
+        # buffered and would not exercise the vulnerable transition.
+        parser_padding=0
+        while [ "$parser_padding" -lt 512 ]; do
+                printf '# parser snapshot padding %04d 0123456789abcdef0123456789abcdef\n' \
+                        "$parser_padding" >> "$parser_regular_script"
+                parser_padding=$((parser_padding + 1))
+        done
+        "$farm/bash" "$parser_regular_script" >/dev/null 2>&1 || :
+
+        if [ "$(cat "$parser_regular_compatible" 2>/dev/null)" = ready ]; then
+                tally shell-parser-regular-compatible 1 1
+        else
+                tally shell-parser-regular-compatible 0 1
+                note "an unrestricted command stopped working in a streamed regular script"
+                shell_failed=1
+        fi
+        if [ "$(cat "$parser_regular_ran" 2>/dev/null)" = ready ] &&
+                [ ! -e "$parser_regular_target" ]; then
+                tally shell-parser-regular-mutation 1 1
+        else
+                tally shell-parser-regular-mutation 0 1
+                note "a restricted applet did not run safely against a sealed regular-script tail"
+                shell_failed=1
+        fi
+
+        # -c and dot/source both execute a complete memory snapshot. They have
+        # no live source descriptor for a child to feed and remain compatible
+        # with restricted applets that can otherwise be confined.
+        parser_command_marker="$parser_source_dir/command-memory"
+        "$farm/bash" -c \
+                "awk 'BEGIN { print \"ready\" > \"$parser_command_marker\" }'" \
+                >/dev/null 2>&1 || :
+        if [ "$(cat "$parser_command_marker" 2>/dev/null)" = ready ]; then
+                tally shell-parser-command-memory 1 1
+        else
+                tally shell-parser-command-memory 0 1
+                note "a memory-backed -c command was treated as a live mutable source"
+                shell_failed=1
+        fi
+
+        # Noninteractive Bash reads BASH_ENV before its main stdin program.
+        # Publish stdin's pipe identity first, or restricted startup awk can
+        # consume the future command while the parser is mislabeled memory.
+        parser_startup_env="$parser_source_dir/startup-env"
+        parser_startup_main="$parser_source_dir/startup-main"
+        parser_startup_stolen="$parser_source_dir/startup-stolen"
+        cat > "$parser_startup_env" <<STARTUP_ENV
+awk 'BEGIN { if ((getline line < "/dev/stdin") > 0) print line > "$parser_startup_stolen" }' 2>/dev/null
+STARTUP_ENV
+        printf 'printf ready > "%s"\n' "$parser_startup_main" |
+                BASH_ENV="$parser_startup_env" "$farm/bash" >/dev/null 2>&1 || :
+        if [ "$(cat "$parser_startup_main" 2>/dev/null)" = ready ] &&
+                [ ! -e "$parser_startup_stolen" ]; then
+                tally shell-parser-startup-stdin 1 1
+        else
+                tally shell-parser-startup-stdin 0 1
+                note "BASH_ENV consumed or suppressed the main stdin program"
+                shell_failed=1
+        fi
+
+        # A restricted startup applet can remain alive after BASH_ENV and
+        # change any pathname it was given. The shell must refuse both a main
+        # named script and a later dot/source open in that state; copying the
+        # already changed bytes after open would only preserve the attack.
+        parser_late_result=$(python3 - "$farm/bash" \
+                "$parser_source_dir" <<'PY'
+import os, pathlib, shlex, signal, subprocess, sys
+
+shell, root = sys.argv[1:]
+
+def run_case(label, dot):
+    base = pathlib.Path(root)
+    source = base / (label + "-source")
+    marker = base / (label + "-injected")
+    ready = base / (label + "-ready")
+    startup = base / (label + "-env")
+    quote = shlex.quote
+    program = (r'BEGIN { print "printf compromised > \047" marker "\047" > script; '
+               r'close(script); print "ready" > ready; close(ready); while (1) {} }')
+
+    source.write_text("printf original >/dev/null\n")
+    startup.write_text(
+        "awk -v script=%s -v marker=%s -v ready=%s %s "
+        "</dev/null >/dev/null 2>&1 &\n"
+        "while [ ! -e %s ]; do :; done\n" %
+        (quote(str(source)), quote(str(marker)), quote(str(ready)),
+         quote(program), quote(str(ready))))
+
+    environment = dict(os.environ, BASH_ENV=str(startup), ENV="/dev/null")
+    arguments = ([shell, "-c", ". " + quote(str(source))]
+                 if dot else [shell, str(source)])
+    status = None
+    process = None
+    try:
+        process = subprocess.Popen(
+            arguments, env=environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        status = process.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    finally:
+        if process:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+
+    expected = 1 if dot else 126
+    return status == expected and ready.exists() and not marker.exists()
+
+print("%d:%d" % (run_case("late-main", False),
+                  run_case("late-dot", True)))
+PY
+        )
+        if [ "$parser_late_result" = 1:1 ]; then
+                tally shell-parser-startup-descendant-source 2 2
+        else
+                tally shell-parser-startup-descendant-source 0 2
+                note "live startup descendant source guards answered [$parser_late_result]"
+                shell_failed=1
+        fi
+
+        # A forked parser may protect its own copied address space, but that
+        # says nothing about the outer shell which still owns future syntax.
+        # Close the inherited marker descriptor, derive the outer PID through
+        # procfs, and make the applet try to reopen it. Opaque command names
+        # must likewise refuse rather than minting a launcher role in-child.
+        parser_ancestor_marker="$parser_source_dir/ancestor-escaped"
+        parser_ancestor_result=$(python3 - "$farm/bash" \
+                "$parser_ancestor_marker" <<'PY'
+import pathlib, subprocess, sys
+
+shell, marker_name = sys.argv[1:]
+marker = pathlib.Path(marker_name)
+ancestor = r'''exec 9>"$1"
+value=$(exec 9>&-; :; awk 'BEGIN {
+    getline < "/proc/self/stat"; parent = $4; close("/proc/self/stat")
+    path = "/proc/" parent "/stat"
+    getline < path; outer = $4; close(path)
+    path = "/proc/" outer "/fd/9"
+    print "escaped" > path; close(path)
+}')
+printf '%s:%s\n' "$?" "$value"
+'''
+dynamic = r'''value=$(tool=awk; "$tool" 'BEGIN { print "ran" }')
+printf '%s:%s\n' "$?" "$value"
+'''
+literal = r'''value=$(awk 'BEGIN { print 3 }')
+printf '%s:%s\n' "$?" "$value"
+'''
+
+try:
+    first = subprocess.run(
+        [shell, "-c", ancestor, "guard", marker_name],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, timeout=10)
+    second = subprocess.run(
+        [shell, "-c", dynamic], stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True, timeout=10)
+    third = subprocess.run(
+        [shell, "-c", literal], stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True, timeout=10)
+    ancestor_ok = (first.returncode == 0 and first.stdout == "126:\n" and
+                   marker.exists() and marker.read_bytes() == b"")
+    dynamic_ok = second.returncode == 0 and second.stdout == "126:\n"
+    literal_ok = third.returncode == 0 and third.stdout == "0:3\n"
+except (OSError, subprocess.TimeoutExpired):
+    ancestor_ok = dynamic_ok = literal_ok = False
+
+print("%d:%d:%d" % (ancestor_ok, dynamic_ok, literal_ok))
+PY
+        )
+        if [ "$parser_ancestor_result" = 1:1:1 ]; then
+                tally shell-parser-ancestor-contract 3 3
+        else
+                tally shell-parser-ancestor-contract 0 3
+                note "forked/dynamic launcher contract answered [$parser_ancestor_result]"
+                shell_failed=1
+        fi
+
+        # Job control must fork every pipeline stage so parent and child can
+        # race setpgid, and a stage redirection also declines direct spawn. A
+        # fixed resident applet still has to prepare the real parser parent
+        # before either fallback fork; otherwise the child correctly refuses
+        # its inherited launcher contract and the pipeline is empty.
+        parser_redirect_pipeline=$(
+                "$farm/bash" -c \
+                        "awk 'BEGIN { print \"ok\" }' 2>/dev/null | wc -c" \
+                        2>/dev/null
+        )
+        parser_redirect_status=$?
+        parser_monitor_pipeline=$(
+                "$farm/bash" -c \
+                        "set -m; awk 'BEGIN { print \"ok\" }' | wc -c" \
+                        2>/dev/null
+        )
+        parser_monitor_status=$?
+        if [ "$parser_redirect_status" = 0 ] &&
+                [ "$parser_redirect_pipeline" = 3 ] &&
+                [ "$parser_monitor_status" = 0 ] &&
+                [ "$parser_monitor_pipeline" = 3 ]; then
+                tally shell-parser-pipeline-parent-contract 2 2
+        else
+                tally shell-parser-pipeline-parent-contract 0 2
+                note "redirected/monitored resident pipelines answered [$parser_redirect_status:$parser_redirect_pipeline][$parser_monitor_status:$parser_monitor_pipeline]"
+                shell_failed=1
+        fi
+
+        parser_dot_file="$parser_source_dir/dot-source"
+        parser_dot_marker="$parser_source_dir/dot-memory"
+        cat > "$parser_dot_file" <<DOT_SOURCE
+awk 'BEGIN { print "ready" > "$parser_dot_marker" }'
+DOT_SOURCE
+        "$farm/bash" -c ". '$parser_dot_file'" >/dev/null 2>&1 || :
+        if [ "$(cat "$parser_dot_marker" 2>/dev/null)" = ready ]; then
+                tally shell-parser-dot-memory 1 1
+        else
+                tally shell-parser-dot-memory 0 1
+                note "a fully loaded dot/source file was treated as a live mutable source"
+                shell_failed=1
+        fi
+
+        # A full-duplex socket lets a cooperating peer reflect a child write
+        # into the parent's next parser read. Spawn-only confinement therefore
+        # has to refuse the restricted child while ordinary socket-fed shell
+        # input still runs. Python owns the peer endpoint and performs exactly
+        # that reflection if the payload escapes.
+        parser_socket_compatible="$parser_source_dir/socket-compatible"
+        parser_socket_target="$parser_source_dir/socket-injected"
+        parser_socket_result=$(python3 - "$farm/bash" \
+                "$parser_socket_compatible" "$parser_socket_target" <<'PY'
+import os, socket, subprocess, sys, time
+
+shell, compatible_path, target_path = sys.argv[1:]
+left, right = socket.socketpair()
+process = subprocess.Popen(
+    [shell], stdin=left, stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL, close_fds=True)
+left.close()
+
+def quoted(path):
+    return "'" + path.replace("'", "'\\''") + "'"
+
+right.sendall(("printf ready > " + quoted(compatible_path) + "\n").encode())
+deadline = time.monotonic() + 5
+while time.monotonic() < deadline and not os.path.exists(compatible_path):
+    time.sleep(0.01)
+compatible = os.path.exists(compatible_path)
+
+payload = "touch -- " + quoted(target_path)
+awk_payload = payload.replace("\\", "\\\\").replace('"', '\\"')
+right.sendall(("awk 'BEGIN { print \"" + awk_payload + "\" }' >&0\n").encode())
+right.settimeout(1.5)
+answer = b""
+try:
+    while b"\n" not in answer:
+        part = right.recv(4096)
+        if not part:
+            break
+        answer += part
+except TimeoutError:
+    pass
+
+escaped = payload.encode() in answer
+if escaped:
+    right.sendall((payload + "\n").encode())
+right.sendall(b"exit 0\n")
+try:
+    process.wait(timeout=5)
+except subprocess.TimeoutExpired:
+    process.kill()
+    process.wait()
+right.close()
+
+safe = not escaped and not os.path.exists(target_path) and process.returncode == 0
+print("%d:%d" % (compatible, safe))
+PY
+        )
+        if [ "$parser_socket_result" = 1:1 ]; then
+                tally shell-parser-socket-injection 1 1
+        else
+                tally shell-parser-socket-injection 0 1
+                note "socket parser compatibility/security answered [$parser_socket_result]"
+                shell_failed=1
+        fi
+
+        # A terminal source is controlled by a paired PTY master with a
+        # different inode, and that master may live in an outside same-UID
+        # process which the child's descriptor inventory cannot revoke. A
+        # restricted applet is therefore refused while an unrestricted command
+        # from the same terminal remains ordinary shell input.
+        parser_pty_compatible="$parser_source_dir/pty-compatible"
+        parser_pty_restricted="$parser_source_dir/pty-restricted-ran"
+        parser_pty_result=$(python3 - "$farm/bash" \
+                "$parser_pty_compatible" "$parser_pty_restricted" <<'PY'
+import os, pty, subprocess, sys, time
+
+shell, compatible_path, restricted_path = sys.argv[1:]
+master, slave = pty.openpty()
+process = subprocess.Popen(
+    [shell, "+i", "-s"], stdin=slave, stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL, close_fds=True)
+os.close(slave)
+
+def quoted(path):
+    return "'" + path.replace("'", "'\\''") + "'"
+
+os.write(master, ("printf ready > " + quoted(compatible_path) + "\n").encode())
+deadline = time.monotonic() + 5
+while time.monotonic() < deadline and not os.path.exists(compatible_path):
+    time.sleep(0.01)
+compatible = os.path.exists(compatible_path)
+
+program = "awk 'BEGIN { print \"ready\" > \"%s\" }'\n" % (
+    restricted_path.replace("\\", "\\\\").replace('"', '\\"'))
+os.write(master, program.encode())
+time.sleep(0.3)
+os.write(master, b"exit 0\n")
+try:
+    process.wait(timeout=5)
+except subprocess.TimeoutExpired:
+    process.kill()
+    process.wait()
+os.close(master)
+
+safe = (not os.path.exists(restricted_path) and process.returncode == 0)
+print("%d:%d" % (compatible, safe))
+PY
+        )
+        if [ "$parser_pty_result" = 1:1 ]; then
+                tally shell-parser-pty-source 1 1
+        else
+                tally shell-parser-pty-source 0 1
+                note "PTY parser compatibility/security answered [$parser_pty_result]"
+                shell_failed=1
+        fi
+
+        # An exec target cannot reap a here-document writer inherited from the
+        # shell. Small input is synchronously placed in a pipe and input over
+        # actual pipe capacity is sealed in a memfd; neither path leaves a
+        # live/zombie child. Descriptor 3 also exercises the opened==target
+        # CLOEXEC case.
+        exec_here_result=$(python3 - "$farm/bash" "$farm/wc" <<'PY'
+import os, shlex, subprocess, sys, tempfile
+
+shell, wc = sys.argv[1:]
+quote = shlex.quote
+
+def run(script):
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", delete=False) as source:
+            path = source.name
+            source.write(script)
+        result = subprocess.run([shell, path], text=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, timeout=30)
+        return result.returncode, result.stdout
+    finally:
+        if path:
+            os.unlink(path)
+
+inspect = '''children=
+IFS= read -r children < "/proc/$$/task/$$/children"
+count=$(%s -c)
+printf 'children:%%s count:%%s\\n' "$children" "$count"
+''' % quote(wc)
+target = "%s -c %s" % (quote(shell), quote(inspect))
+commands = {
+    "literal": "exec " + target,
+    "builtin": "builtin exec " + target,
+    "command": "command exec " + target,
+    "function": "f() { exec " + target + "; }\nf",
+    "compound": "{ exec " + target + "; }",
+}
+answers = []
+for name, command in commands.items():
+    for body in ("small\n", "x" * (1 << 20) + "\n"):
+        status, out = run(command + " <<'EOF'\n" + body + "EOF\n")
+        expected = "children: count:%d\n" % len(body)
+        answers.append((name, len(body), status, out, expected))
+
+inspect_fd = r'''children=
+IFS= read -r children < "/proc/$$/task/$$/children"
+IFS= read -r body <&3
+printf 'children:%s fd:%s\n' "$children" "$body"
+'''
+fd_script = "exec %s -c %s 3<<'EOF'\nfdthree\nEOF\n" % (
+    quote(shell), quote(inspect_fd))
+fd_status, fd_out = run(fd_script)
+
+ok = (all(status == 0 and out == expected
+          for _, _, status, out, expected in answers) and
+      fd_status == 0 and fd_out == "children: fd:fdthree\n")
+print("1" if ok else "0:%r:%d:%r" % (answers, fd_status, fd_out))
+PY
+        )
+        if [ "$exec_here_result" = 1 ]; then
+                tally shell-exec-heredoc-childless 1 1
+        else
+                tally shell-exec-heredoc-childless 0 1
+                note "explicit exec heredoc lifecycle answered [$exec_here_result]"
+                shell_failed=1
+        fi
+
+        # A completed background job may remain as a JOB_FINISHED row for a
+        # later jobs notification. It is no longer a descendant and must not
+        # disable the final-command in-place exec optimization. A stock shell
+        # which has never activated Floodlight supervision retains ordinary
+        # exec semantics even with a disowned child; restricted replacement
+        # paths exercise the authenticated child gate in the Floodlight suite.
+        # The optimization is implicit, so an EXIT trap still needs the
+        # original shell to wait and run its post-command action.
+        descendant_result=$(python3 - "$farm/bash" "$farm/sleep" <<'PY'
+import os, re, shlex, signal, subprocess, sys
+
+shell, sleep = sys.argv[1:]
+
+completed_script = ": &\n%s 1\n%s -c 'printf \"tail:%%s\\n\" \"$$\"'\n" % (
+    shlex.quote(sleep), shlex.quote(shell))
+completed = subprocess.Popen(
+    [shell, "-c", completed_script], stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL, text=True)
+completed_output, _ = completed.communicate(timeout=10)
+match = re.search(r"^tail:(\d+)$", completed_output, re.MULTILINE)
+finished_ok = bool(
+    completed.returncode == 0 and match and int(match.group(1)) == completed.pid)
+
+disowned_script = "%s 5 &\nprintf 'child:%%s\\n' \"$!\"\ndisown\n%s -c 'printf \"tail:%%s\\n\" \"$$\"'\n" % (
+    shlex.quote(sleep), shlex.quote(shell))
+disowned = subprocess.Popen(
+    [shell, "-c", disowned_script], stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL, text=True)
+disowned_output, _ = disowned.communicate(timeout=10)
+child_match = re.search(r"^child:(\d+)$", disowned_output, re.MULTILINE)
+tail_match = re.search(r"^tail:(\d+)$", disowned_output, re.MULTILINE)
+disowned_ok = bool(
+    disowned.returncode == 0 and child_match and tail_match and
+    int(tail_match.group(1)) == disowned.pid)
+if child_match:
+    try:
+        os.kill(int(child_match.group(1)), signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+trapped_script = "trap 'echo exit:$?' EXIT\n%s -c 'exit 7'\n" % (
+    shlex.quote(shell),)
+trapped = subprocess.run(
+    [shell, "-c", trapped_script], stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL, text=True, timeout=10)
+trapped_ok = bool(trapped.returncode == 7 and trapped.stdout == "exit:7\n")
+
+print("%d:%d:%d" % (finished_ok, disowned_ok, trapped_ok))
+PY
+        )
+        if [ "$descendant_result" = 1:1:1 ]; then
+                tally shell-exec-descendant-liveness 1 1
+        else
+                tally shell-exec-descendant-liveness 0 1
+                note "completed/disowned descendant exec checks answered [$descendant_result]"
+                shell_failed=1
+        fi
+
+        # Lazy confinement must not make a stock shell a child subreaper.
+        # An ordinary double-fork daemon should be reparented past the shell,
+        # while a later restricted launch can establish supervision anew.
+        stock_daemon_result=$(python3 - "$farm/bash" "$farm/sleep" <<'PY'
+import os, shlex, signal, subprocess, sys, tempfile, time
+
+shell, sleep = sys.argv[1:]
+with tempfile.TemporaryDirectory() as directory:
+    helper = os.path.join(directory, "daemon.py")
+    result = os.path.join(directory, "parent")
+    with open(helper, "w") as output:
+        output.write(r'''import os, sys, time
+if os.fork():
+    os._exit(0)
+os.setsid()
+if os.fork():
+    os._exit(0)
+time.sleep(.1)
+with open(sys.argv[1], "w") as out:
+    out.write("%d:%d" % (os.getppid(), os.getpid()))
+time.sleep(5)
+''')
+    command = "%s %s %s\n%s 1\n" % (
+        shlex.quote(sys.executable), shlex.quote(helper), shlex.quote(result),
+        shlex.quote(sleep))
+    process = subprocess.Popen([shell, "-c", command],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+    process.wait(timeout=10)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not os.path.exists(result):
+        time.sleep(.01)
+    answer = open(result).read() if os.path.exists(result) else ""
+    try:
+        parent, daemon = map(int, answer.split(":"))
+    except ValueError:
+        parent = daemon = -1
+    if daemon > 0:
+        try:
+            os.kill(daemon, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    print("1" if process.returncode == 0 and parent != process.pid else
+          "0:%d:%d:%s" % (process.returncode, process.pid, answer))
+PY
+        )
+        if [ "$stock_daemon_result" = 1 ]; then
+                tally shell-stock-daemon-parent 1 1
+        else
+                tally shell-stock-daemon-parent 0 1
+                note "stock double-fork parent answered [$stock_daemon_result]"
+                shell_failed=1
+        fi
+
         differential_domain shell || shell_failed=1
         return "$shell_failed"
 }
 lane_builtins()
 {
-        differential_domain builtins || return $?
+        differential_ready || return $?
+        need_shell || return 1
+        builtins_failed=0
+
+        mkdir -p "$work/history-regression/bin"
+        chmod 700 "$work/history-regression"
+        ln -sf "$shell_binary" "$work/history-regression/bin/bash"
+        history_shell="$work/history-regression/bin/bash"
 
         mkdir -p "$work/fc-umask"
         if fc_masked=$(
                 cd "$work/fc-umask" || exit 1
-                "$farm/bash" -c '
+                "$history_shell" -c '
 history -c 2>/dev/null
 printf "echo one\n" > history
 history -r history 2>/dev/null
@@ -3495,10 +4470,313 @@ fc -e fc_editor 1
         else
                 tally fc-private-umask 0 1
                 note "fc under umask 0777 returned $fc_masked_status [$fc_masked]"
-                return 1
+                builtins_failed=1
         fi
+
+        history_command='history -c; history -s replacement; history -w "$1"'
+        history_append_command='history -c; history -s appended; history -a "$1"'
+
+        printf 'old history\n' > "$work/history-regression/history"
+        chmod 6751 "$work/history-regression/history"
+        history_owner=$(stat -c %u:%g "$work/history-regression/history")
+        "$history_shell" -c "$history_command" history \
+                "$work/history-regression/history" \
+                > "$work/history-regression/write.out" \
+                2> "$work/history-regression/write.err"
+        history_status=$?
+        history_mode=$(stat -c %a "$work/history-regression/history" 2>/dev/null ||
+                printf unknown)
+        history_owner_after=$(stat -c %u:%g \
+                "$work/history-regression/history" 2>/dev/null || printf unknown)
+        if [ "$history_status:$(cat "$work/history-regression/history"):$history_mode:$history_owner_after" = \
+                "0:replacement:751:$history_owner" ]; then
+                tally history-transaction-success 1 1
+        else
+                tally history-transaction-success 0 1
+                note "history rewrite returned $history_status, mode $history_mode, owner $history_owner_after, content [$(cat "$work/history-regression/history")]"
+                builtins_failed=1
+        fi
+
+        printf 'old history\n' > "$work/history-regression/preserved"
+        (
+                ulimit -f 0
+                trap '' 25
+                "$history_shell" -c "$history_command" history \
+                        "$work/history-regression/preserved" \
+                        > /dev/null 2>&1
+        )
+        history_limit_status=$?
+        history_temps=$(find "$work/history-regression" -maxdepth 1 \
+                -name '.moonwater-stage-*' -print | wc -l | tr -d '[:space:]')
+        if [ "$history_limit_status:$(cat "$work/history-regression/preserved"):$history_temps" = \
+                '1:old history:0' ]; then
+                tally history-transaction-write-error 1 1
+        else
+                tally history-transaction-write-error 0 1
+                note "limited history rewrite returned $history_limit_status, retained [$(cat "$work/history-regression/preserved")], stages $history_temps"
+                builtins_failed=1
+        fi
+
+        printf 'link victim\n' > "$work/history-regression/victim"
+        ln -sf victim "$work/history-regression/link"
+        "$history_shell" -c "$history_command" history \
+                "$work/history-regression/link" \
+                > "$work/history-regression/link.out" \
+                2> "$work/history-regression/link.err"
+        history_link_status=$?
+        if [ "$history_link_status:$(readlink "$work/history-regression/link"):$(cat "$work/history-regression/victim")" = \
+                '1:victim:link victim' ] &&
+                grep -q 'Too many levels of symbolic links' \
+                        "$work/history-regression/link.err"; then
+                tally history-symlink-fails-closed 1 1
+        else
+                tally history-symlink-fails-closed 0 1
+                note "history symlink rewrite returned $history_link_status with link [$(readlink "$work/history-regression/link" 2>/dev/null)] and victim [$(cat "$work/history-regression/victim" 2>/dev/null)]"
+                builtins_failed=1
+        fi
+
+        printf 'append victim\n' > "$work/history-regression/append-victim"
+        ln -sf append-victim "$work/history-regression/append-link"
+        "$history_shell" -c "$history_append_command" history \
+                "$work/history-regression/append-link" \
+                > "$work/history-regression/append-link.out" \
+                2> "$work/history-regression/append-link.err"
+        history_append_link_status=$?
+        if [ "$history_append_link_status:$(readlink "$work/history-regression/append-link"):$(cat "$work/history-regression/append-victim")" = \
+                '1:append-victim:append victim' ] &&
+                grep -q 'Too many levels of symbolic links' \
+                        "$work/history-regression/append-link.err"; then
+                tally history-append-symlink-fails-closed 1 1
+        else
+                tally history-append-symlink-fails-closed 0 1
+                note "history append symlink returned $history_append_link_status with victim [$(cat "$work/history-regression/append-victim" 2>/dev/null)]"
+                builtins_failed=1
+        fi
+
+        if [ -c /dev/full ]; then
+                "$history_shell" -c "$history_command" history /dev/full \
+                        > /dev/null 2> "$work/history-regression/full.err"
+                history_full_status=$?
+                if [ "$history_full_status" = 1 ] && [ -c /dev/full ] &&
+                        grep -q 'No space left on device' \
+                                "$work/history-regression/full.err"; then
+                        tally history-special-write-error 1 1
+                else
+                        tally history-special-write-error 0 1
+                        note "history /dev/full returned $history_full_status or changed the device"
+                        builtins_failed=1
+                fi
+        else
+                note "history special-file regression: NOT RUN -- no /dev/full"
+        fi
+
+        if command -v strace > /dev/null 2>&1; then
+                printf 'metadata preserved\n' > "$work/history-regression/metadata-error"
+                chmod 6751 "$work/history-regression/metadata-error"
+                history_metadata_owner=$(stat -c %u:%g \
+                        "$work/history-regression/metadata-error")
+                timeout 10 strace -qq \
+                        -o "$work/history-regression/metadata-error.trace" \
+                        -e trace=fchown \
+                        -e inject=fchown:error=EPERM:when=1 \
+                        "$history_shell" -c "$history_command" history \
+                        "$work/history-regression/metadata-error" \
+                        > /dev/null 2> "$work/history-regression/metadata-error.err"
+                history_metadata_status=$?
+                history_metadata_mode=$(stat -c %a \
+                        "$work/history-regression/metadata-error" 2>/dev/null ||
+                        printf unknown)
+                history_metadata_owner_after=$(stat -c %u:%g \
+                        "$work/history-regression/metadata-error" 2>/dev/null ||
+                        printf unknown)
+                history_temps=$(find "$work/history-regression" -maxdepth 1 \
+                        -name '.moonwater-stage-*' -print | wc -l | tr -d '[:space:]')
+                if [ "$history_metadata_status:$(cat "$work/history-regression/metadata-error"):$history_metadata_mode:$history_metadata_owner_after:$history_temps" = \
+                        "1:metadata preserved:6751:$history_metadata_owner:0" ] &&
+                        grep -q 'Operation not permitted' \
+                                "$work/history-regression/metadata-error.err"; then
+                        tally history-transaction-metadata-error 1 1
+                else
+                        tally history-transaction-metadata-error 0 1
+                        note "injected metadata failure returned $history_metadata_status, mode $history_metadata_mode, owner $history_metadata_owner_after, retained [$(cat "$work/history-regression/metadata-error")], stages $history_temps"
+                        builtins_failed=1
+                fi
+
+                printf 'trace baseline\n' > "$work/history-regression/close"
+                timeout 10 strace -qq -yy \
+                        -o "$work/history-regression/close.trace" \
+                        -e trace=close \
+                        "$history_shell" -c "$history_command" history \
+                        "$work/history-regression/close" \
+                        > /dev/null 2>&1
+                history_trace_status=$?
+                history_close_when=$(awk '
+/^close\(/ { count++ }
+/\.moonwater-stage-/ { print count; exit }
+' "$work/history-regression/close.trace")
+
+                printf 'close preserved\n' > "$work/history-regression/close"
+                if [ "$history_trace_status" = 0 ] &&
+                        [ -n "$history_close_when" ]; then
+                        timeout 10 strace -qq -yy \
+                                -o "$work/history-regression/close-injected.trace" \
+                                -e trace=close \
+                                -e "inject=close:error=EIO:when=$history_close_when" \
+                                "$history_shell" -c "$history_command" history \
+                                "$work/history-regression/close" \
+                                > /dev/null 2> "$work/history-regression/close.err"
+                        history_close_status=$?
+                else
+                        history_close_status=trace-failed
+                fi
+                history_temps=$(find "$work/history-regression" -maxdepth 1 \
+                        -name '.moonwater-stage-*' -print | wc -l | tr -d '[:space:]')
+                if [ "$history_close_status:$(cat "$work/history-regression/close"):$history_temps" = \
+                        '1:close preserved:0' ]; then
+                        tally history-transaction-close-error 1 1
+                else
+                        tally history-transaction-close-error 0 1
+                        note "injected close returned $history_close_status, retained [$(cat "$work/history-regression/close")], stages $history_temps"
+                        builtins_failed=1
+                fi
+        else
+                note "history close-error regression: NOT RUN -- no strace"
+        fi
+
+        redirect_target="$work/redirect-missing
+FORGED/leaf"
+        "$history_shell" -c ': > "$1"' diagnostic "$redirect_target" \
+                > "$work/history-regression/redirect.out" \
+                2> "$work/history-regression/redirect.err"
+        redirect_status=$?
+        redirect_lines=$(wc -l < "$work/history-regression/redirect.err" |
+                tr -d '[:space:]')
+        if [ "$redirect_status:$redirect_lines" = '1:1' ] &&
+                grep -Fq 'redirect-missing\x0aFORGED/leaf' \
+                        "$work/history-regression/redirect.err"; then
+                tally redirect-terminal-safe-name 1 1
+        else
+                tally redirect-terminal-safe-name 0 1
+                note "newline redirect returned $redirect_status across $redirect_lines diagnostic lines"
+                builtins_failed=1
+        fi
+
+        cat > "$work/fetch-write-server.py" <<'PY'
+import socket
+import sys
+
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", 0))
+server.listen(1)
+with open(sys.argv[1], "w", encoding="ascii") as port:
+    port.write(str(server.getsockname()[1]))
+connection, _ = server.accept()
+with connection:
+    request = b""
+    while b"\r\n\r\n" not in request:
+        part = connection.recv(4096)
+        if not part:
+            break
+        request += part
+    connection.sendall(
+        b"HTTP/1.0 200 OK\r\nContent-Length: 7\r\n"
+        b"Connection: close\r\n\r\npayload"
+    )
+server.close()
+PY
+        rm -f "$work/fetch-write.port"
+        python3 "$work/fetch-write-server.py" "$work/fetch-write.port" &
+        fetch_server=$!
+        fetch_wait=0
+        while [ ! -s "$work/fetch-write.port" ] && [ "$fetch_wait" -lt 200 ]; do
+                sleep 0.01
+                fetch_wait=$((fetch_wait + 1))
+        done
+        if [ -s "$work/fetch-write.port" ]; then
+                fetch_port=$(cat "$work/fetch-write.port")
+                timeout 10 "$farm/fetch" \
+                        "http://127.0.0.1:$fetch_port/output" \
+                        > /dev/full 2> "$work/fetch-write.err"
+                fetch_status=$?
+        else
+                fetch_status=server-failed
+        fi
+        if kill -0 "$fetch_server" 2>/dev/null; then
+                kill "$fetch_server" 2>/dev/null || :
+        fi
+        wait "$fetch_server" 2>/dev/null || :
+        if [ "$fetch_status" = 1 ] &&
+                grep -q 'fetch: write error on standard output' \
+                        "$work/fetch-write.err"; then
+                tally fetch-stdout-write-error 1 1
+        else
+                tally fetch-stdout-write-error 0 1
+                note "fetch to /dev/full returned $fetch_status without the write diagnostic"
+                builtins_failed=1
+        fi
+
+        differential_domain builtins || builtins_failed=1
+        return "$builtins_failed"
 }
-lane_awk()        { differential_domain awk; }
+lane_awk()
+{
+        need_policy_farm || return 1
+        awk_failed=0
+        awk_policy_dir="$work/awk-parent-policy"
+        mkdir -p "$awk_policy_dir"
+        awk_main="$awk_policy_dir/main"
+        awk_stolen="$awk_policy_dir/stolen"
+        awk_direct_status="$awk_policy_dir/status"
+        awk_direct_error="$awk_policy_dir/error"
+
+        printf '%s\n' \
+                "\"$farm/awk\" 'BEGIN { if ((getline line < \"/dev/stdin\") > 0) print line > \"$awk_stolen\" }' 2>\"$awk_direct_error\"; printf '%s' \"\$?\" > \"$awk_direct_status\"" \
+                "printf ready > \"$awk_main\"" | /bin/bash \
+                > /dev/null 2>&1 || :
+        if [ "$(cat "$awk_direct_status" 2>/dev/null)" = 126 ] &&
+                [ "$(cat "$awk_main" 2>/dev/null)" = ready ] &&
+                [ ! -e "$awk_stolen" ] &&
+                grep -q 'parent protection unavailable; refusing launch' \
+                        "$awk_direct_error"; then
+                tally awk-direct-parser-policy 1 1
+        else
+                tally awk-direct-parser-policy 0 1
+                note "direct stock awk did not refuse the external shell's live parser input"
+                awk_failed=1
+        fi
+
+        if [ "$(printf 'alpha beta\n' |
+                "$farm/bash" -c 'awk '\''{ print }'\'' 2>/dev/null')" = \
+                'alpha beta' ]; then
+                tally awk-integrated-policy-path 1 1
+        else
+                tally awk-integrated-policy-path 0 1
+                note "awk failed with a protected shell parent and memory parser"
+                awk_failed=1
+        fi
+
+        awk_system_marker="$awk_policy_dir/system-ran"
+        awk_pipe_marker="$awk_policy_dir/pipe-ran"
+        awk_system_output=$(AWK_POLICY_MARKER="$awk_system_marker" \
+                "$farm/bash" -c \
+                'awk '\''BEGIN { print "ran"; system("printf ready > " ENVIRON["AWK_POLICY_MARKER"]) }'\'' 2>/dev/null')
+        awk_pipe_output=$(AWK_POLICY_MARKER="$awk_pipe_marker" \
+                "$farm/bash" -c \
+                'awk '\''BEGIN { cmd = "printf ready > " ENVIRON["AWK_POLICY_MARKER"]; cmd | getline; close(cmd); print "ran" }'\'' 2>/dev/null')
+        if [ "$awk_system_output:$awk_pipe_output" = 'ran:ran' ] &&
+                [ ! -e "$awk_system_marker" ] &&
+                [ ! -e "$awk_pipe_marker" ]; then
+                tally awk-integrated-spawn-policy 1 1
+        else
+                tally awk-integrated-spawn-policy 0 1
+                note "protected awk did not preserve its system and pipe spawn denial"
+                awk_failed=1
+        fi
+
+        differential_domain awk "$policy_farm" || awk_failed=1
+        return "$awk_failed"
+}
 
 #
 #       The terminal: the sequences it is sent, the cells they become, and
@@ -7210,6 +8488,61 @@ printf 'fl-env-%s\n' "$(grep -c '^env .*spawn .*allow' /dev/floodlight)"
 #
 printf 'fl-esc-%s\n' "$(awk 'BEGIN { system("printf out") }' 2>/dev/null | rev)"
 printf 'fl-named-%s\n' "$(env /bin/dash -c 'printf ready' 2>/dev/null | rev)"
+#
+#       A live pipe has a writer in an outside feeder which a same-UID child
+#       can reacquire through that feeder's proc descriptor table. Restricted
+#       applets therefore refuse while such a parser source remains active,
+#       including below nested descriptor saves and substitutions.
+#
+rm -f /tmp/fl-parser-nested /tmp/fl-parser-nested-ran
+printf '%s\n' \
+'f() { awk '\''BEGIN { print "ready" > "/tmp/fl-parser-nested-ran"; print "touch /tmp/fl-parser-nested" > "/proc/self/fd/9" }'\'' 2>/dev/null; }' \
+'f 9<&0 </dev/null' | /bin/bash
+[ ! -e /tmp/fl-parser-nested-ran ] &&
+        [ ! -e /tmp/fl-parser-nested ] &&
+        printf 'fl-parser-nested-clean\n' | rev
+# A command substitution has a private descriptor table. Its committed exec
+# cannot replace the parent shell's reader identity, even though there is no
+# enclosing redirect save in that forked process.
+rm -f /tmp/fl-parser-substitution /tmp/fl-parser-substitution-ran
+printf '%s\n' \
+'x=$(exec 9<&0; exec 0</dev/null; awk '\''BEGIN { print "ready" > "/tmp/fl-parser-substitution-ran"; print "touch /tmp/fl-parser-substitution" > "/proc/self/fd/9" }'\'' 2>/dev/null)' |
+        /bin/bash
+[ ! -e /tmp/fl-parser-substitution-ran ] &&
+        [ ! -e /tmp/fl-parser-substitution ] &&
+        printf 'fl-parser-substitution-clean\n' | rev
+#
+#       A bare exec commits a new stdin pipe.  A later command on the same
+#       physical line must protect that new reader rather than the pipe that
+#       supplied the already-parsed line.
+#
+rm -f /tmp/fl-parser-bare /tmp/fl-parser-bare-fifo
+mkfifo /tmp/fl-parser-bare-fifo
+: > /tmp/fl-parser-bare-fifo &
+printf '%s\n' \
+'exec 0<&3; awk '\''BEGIN { print "touch /tmp/fl-parser-bare" > "/proc/self/fd/9" }'\'' 9<&0 </dev/null 2>/dev/null' |
+        /bin/bash 3</tmp/fl-parser-bare-fifo
+[ ! -e /tmp/fl-parser-bare ] && printf 'fl-parser-bare-clean\n' | rev
+rm -f /tmp/fl-parser-bare-fifo
+#
+#       A named FIFO is streamed through the shell-owned script fd. Claiming
+#       its initial fd 255 moves the live reader to 256. Unlike an anonymous
+#       pipe, the FIFO remains reopenable by pathname after aliases are closed,
+#       so a restricted child is refused. The first line proves ordinary
+#       unconfined FIFO scripts still run.
+#
+rm -f /tmp/fl-parser-reader /tmp/fl-parser-script
+mkfifo /tmp/fl-parser-script
+/bin/bash -c 'ulimit -n 1024; /bin/bash /tmp/fl-parser-script' >/dev/null 2>&1 &
+fl_parser_child=$!
+printf '%s\n' \
+'printf '\''fl-fifo-compatible-%s\n'\'' ready | rev' \
+'f() { awk '\''BEGIN { print "touch /tmp/fl-parser-reader" > "/tmp/fl-parser-script" }'\'' 2>/dev/null; }' \
+'f 255</dev/null' > /tmp/fl-parser-script
+wait "$fl_parser_child"
+[ ! -e /tmp/fl-parser-reader ] &&
+        printf 'fl-parser-reader-clean\n' | rev
+rm -f /tmp/fl-parser-script
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
 printf 'mount-link-%s\n' "$(readlink /bin/mount | rev)"
@@ -7343,6 +8676,11 @@ says 'floodlight has env'  'fl-env-1'
 says 'awk was asked'       'fl-esc-'
 never 'awk cannot escape'  'fl-esc-tuo'
 says 'a named applet runs' 'fl-named-ydaer'
+says 'nested parser alias' 'naelc-detsen-resrap-lf'
+says 'forked parser alias' 'naelc-noitutitsbus-resrap-lf'
+says 'bare exec parser'    'naelc-erab-resrap-lf'
+says 'moved script reader' 'naelc-redaer-resrap-lf'
+says 'ordinary fifo script' 'ydaer-elbitapmoc-ofif-lf'
 
 #
 #       The compositor put something on the screen.

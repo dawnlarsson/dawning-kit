@@ -61,77 +61,28 @@ string_address network_argv[] = {(string_address)network_program,
 #define NETWORK_SETTLED_NS 1000000000
 #define NETWORK_GIVE_UP 3
 
-/*
-        Start one boot service in a fresh address space.
-
-        fork copies PID 1's complete page tables and COW state only for exec
-        to throw them away. The Spark device creates the ordinary waitable
-        child with no mm, copies this bounded argv and empty environment, and
-        loads the image directly. Both boot services have the same signal,
-        descriptor, credential, root and working-directory contract; the
-        portable fork+exec path remains the exact fallback.
-*/
-static bipolar start_service(b32 device, string_address path,
+/* Start every boot service through the shared final-executable decision.
+   The old direct Spark request skipped target-specific run, flag and network
+   policy.  Boot starts two long-lived services, so the one fork also removes
+   a private launch backend without affecting steady-state performance. */
+static bipolar start_service(string_address path,
                              string_address address_to arguments,
                              positive count)
 {
-        if (device >= 0)
+        bipolar child = system_fork();
+
+        if (child == 0)
         {
-                struct spawn request;
-                p8 argv_block[64];
-                positive used = 0;
-
-                for (positive at = 0; at < count; at++)
-                {
-                        positive length = string_length(arguments[at]) + 1;
-
-                        if (length > sizeof(argv_block) - used)
-                                goto portable;
-
-                        memory_copy(argv_block + used, arguments[at], length);
-                        used += length;
-                }
-
-                request.path = (unsigned long)path;
-                request.argv = (unsigned long)argv_block;
-                request.argv_bytes = used;
-                request.argv_count = count;
-                request.envp = 0;
-                request.envp_bytes = 0;
-                request.envp_count = 0;
-                request.envp_generation = 0;
-                request.flags = 0;
-                request.stdio[0] = -1;
-                request.stdio[1] = -1;
-                request.stdio[2] = -1;
-
-                {
-                        bipolar spawned = system_control(
-                            device, SPARK_IOCTL_SPAWN, address_of request);
-
-                        if (spawned > 0)
-                                return spawned;
-                }
+                (void)shell_exec_file(path, arguments, count, init_envp);
+                system_call_1(syscall(exit), 127);
         }
 
-portable:
-        {
-                bipolar child = system_fork();
-
-                if (child == 0)
-                {
-                        system_execute(path, arguments, init_envp);
-
-                        system_call_1(syscall(exit), 127);
-                }
-
-                return child;
-        }
+        return child;
 }
 
-static bipolar start_network(b32 device)
+static bipolar start_network()
 {
-        return start_service(device, (string_address)network_program,
+        return start_service((string_address)network_program,
                              network_argv, 2);
 }
 
@@ -142,11 +93,11 @@ static fn pause_for(positive nanoseconds)
         sleep(address_of span);
 }
 
-static bipolar start_shell_until_ready(b32 device, positive address_to started)
+static bipolar start_shell_until_ready(positive address_to started)
 {
         bipolar shell;
 
-        while ((shell = start_service(device, (string_address)init_program,
+        while ((shell = start_service((string_address)init_program,
                                       init_argv, 1)) < 0)
         {
                 string_format(log, init_label "could not start %s: %b\n",
@@ -196,17 +147,13 @@ static DEAD_END b32 system_init()
         system_call(syscall(setsid));
         mount_devpts();
 
-        b32 device = system_open_at(AT_FDCWD,
-                                   SPARK_DEVICE,
-                                   FILE_READ_WRITE | O_CLOEXEC);
-
         positive quick_exits = 0;
         positive backoff = 0;
         positive started = clock_monotonic_nanoseconds();
         bipolar wait_error = 0;
 
 #ifndef SHELL_NO_UTILITIES
-        bipolar network = start_network(device);
+        bipolar network = start_network();
         positive network_started = clock_monotonic_nanoseconds();
         positive network_failures = 0;
 #endif
@@ -214,7 +161,7 @@ static DEAD_END b32 system_init()
         // Returning from PID 1 panics the kernel, which on a machine with no
         // serial console says nothing at all. Retrying at a bounded rate keeps
         // the reason on screen instead.
-        bipolar shell = start_shell_until_ready(device, address_of started);
+        bipolar shell = start_shell_until_ready(address_of started);
 
         while (1)
         {
@@ -268,7 +215,7 @@ static DEAD_END b32 system_init()
                                 }
 
                                 network_started = clock_monotonic_nanoseconds();
-                                network = start_network(device);
+                                network = start_network();
                                 continue;
                         }
 #endif
@@ -317,6 +264,6 @@ static DEAD_END b32 system_init()
                 // Retried here rather than by falling back into wait4,
                 // which would have no children to wait for and would report
                 // the shell as having died when it never started.
-                shell = start_shell_until_ready(device, address_of started);
+                shell = start_shell_until_ready(address_of started);
         }
 }

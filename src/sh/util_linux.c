@@ -690,7 +690,7 @@ static bool ul_size(string_address text, positive address_to value)
         if (!suffix)
                 return !fractional && (address_to value = whole, true);
 
-        power = file_size_power(suffix, true);
+        power = size_suffix_power(suffix, true);
 
         if (!power || power > 8)
                 return false;
@@ -708,19 +708,21 @@ static bool ul_size(string_address text, positive address_to value)
         else if (string_get(at))
                 return false;
 
+        p64 scaled;
+        if (!size_scale_power_checked(
+                whole, base, (p8)power, (p64)positive_max,
+                address_of scaled))
+                return false;
+        whole = (positive)scaled;
+
         positive scale = 1;
-        for (; power; power--)
-        {
-                if (whole > positive_max / base)
-                        return false;
-                whole *= base;
-                if (fraction)
-                {
-                        if (scale > positive_max / base)
-                                return false;
-                        scale *= base;
-                }
-        }
+        if (fraction &&
+            !size_scale_power_checked(
+                1, base, (p8)power, (p64)positive_max,
+                address_of scaled))
+                return false;
+        if (fraction)
+                scale = (positive)scaled;
 
         if (fraction)
         {
@@ -2560,11 +2562,11 @@ static bool ul_personality_number(string_address text, p32 address_to out)
 static b32 ul_setarch_show(string_address value, b32 pid)
 {
         p32 personality;
+        p8 text[32];
 
         if (pid)
         {
                 p8 path[64];
-                p8 text[32];
 
                 system_process_path(path, (p32)pid, null,
                                     "personality");
@@ -2745,20 +2747,14 @@ static b32 util_linux_setarch()
         string_address shell_words[2] = {(string_address)"-sh", null};
         if (ul_setarch_verbose) string_format(log, "Execute command `/bin/sh'.\n");
         log_flush();
-        changed = system_execute("/bin/sh", shell_words, file_environment_all());
+        changed = shell_exec_file((string_address)"/bin/sh", shell_words, 1,
+                                  file_environment_all());
         string_format(log_error, "setarch: /bin/sh: %s\n", file_reason(changed));
         return changed == -ERROR_NO_ENTRY ? 127 : 126;
 }
 
 // waitpid ---------------------------------------------------------
-typedef struct
-{
-        b32 descriptor;
-        b16 events;
-        b16 returned;
-} ul_wait_pid;
-
-static ul_wait_pid address_to ul_wait_pids;
+static system_poll_descriptor address_to ul_wait_pids;
 static positive ul_wait_room;
 
 static fn ul_wait_close(positive count)
@@ -2911,7 +2907,8 @@ static b32 util_linux_waitpid()
                         }
                 }
 
-                ul_wait_pids[active] = (ul_wait_pid){(b32)descriptor, 1, 0};
+                ul_wait_pids[active] = (system_poll_descriptor){
+                    (b32)descriptor, SYSTEM_POLL_READ, 0};
                 file_id_scratch[active++] = pid;
         }
 
@@ -2942,9 +2939,8 @@ static b32 util_linux_waitpid()
                         limit = address_of span;
                 }
 
-                bipolar ready = system_call_5(syscall(ppoll),
-                                               (positive)ul_wait_pids, active,
-                                               (positive)limit, 0, 8);
+                bipolar ready = system_poll_wait(
+                    ul_wait_pids, active, limit, null);
                 if (ready == 0)
                         return ul_wait_timed_out(active, verbose);
                 if (ready < 0)
@@ -4581,12 +4577,12 @@ static fn ul_lslocks_resolve(ul_lslocks_entry address_to lock)
 
                 p8 path[FILE_PATH_MAX];
                 bipolar length = system_read_link_at(
-                    walk.handle, entry->d_name, path, sizeof(path) - 1);
+                    walk.handle, entry->d_name, path, sizeof(path));
 
                 lock->size = facts.size;
                 lock->size_known = true;
 
-                if (length >= 0 && (positive)length < sizeof(path) - 1)
+                if (length >= 0 && (positive)length < sizeof(path))
                 {
                         p8 address_to copy = (p8 address_to)utility_arena_take(
                             (positive)length + 1);
@@ -5044,9 +5040,9 @@ static bipolar ul_lsfd_copy_name(ul_lsfd_entry address_to descriptor,
 {
         p8 path[FILE_PATH_MAX];
         bipolar length = system_read_link_at(directory, fd, path,
-                                              sizeof(path) - 1);
+                                              sizeof(path));
 
-        if (length < 0 || (positive)length >= sizeof(path) - 1)
+        if (length < 0 || (positive)length >= sizeof(path))
                 return -1;
 
         p8 address_to copy = (p8 address_to)utility_arena_take(
@@ -11354,7 +11350,7 @@ static fn ul_lsblk_parents()
                 p8 target[512];
                 ul_lsblk_sysfs(path, device->kname, null);
                 bipolar got = system_read_link_at(AT_FDCWD, path, target,
-                                                   sizeof(target) - 1);
+                                                   sizeof(target));
                 if (got <= 0 || (positive)got >= sizeof(target))
                         continue;
                 target[got] = end;
@@ -11646,7 +11642,7 @@ static string_address ul_lsblk_link_word(string_address name,
         p8 target[512];
         ul_lsblk_sysfs(path, name, property);
         bipolar got = system_read_link_at(AT_FDCWD, path, target,
-                                           sizeof(target) - 1);
+                                           sizeof(target));
         if (got <= 0 || (positive)got >= sizeof(target))
                 return (string_address)"";
         target[got] = end;

@@ -13,7 +13,6 @@
 #define STANDARD_MODERN_C_NET_HTTP
 
 #include "tls.c"
-#include "wait.c"
 
 /*
         Enough HTTP to fetch a file, and no more.
@@ -34,6 +33,7 @@
 #define HTTP_FETCH_MAX (16 * 1024 * 1024)
 #define HTTP_HOPS 10
 #define HTTP_IDLE_SECONDS 30
+#define HTTP_HEAD_SECONDS 30
 
 #define HTTP_OK 0
 #define HTTP_BAD_URL (-1)
@@ -45,6 +45,7 @@
 #define HTTP_TLS (-7)
 #define HTTP_REDIRECTS (-8)
 #define HTTP_DOWNGRADE (-9)
+#define HTTP_STATUS (-10)
 
 typedef byte_store http_buffer;
 #define http_forget(buffer) byte_store_release(buffer)
@@ -396,6 +397,17 @@ typedef struct
         positive location_length;
 } http_response;
 
+static bool http_response_is_redirect(b32 code)
+{
+        return code == 300 || code == 301 || code == 302 || code == 303 ||
+               code == 307 || code == 308;
+}
+
+static bool http_response_is_success(b32 code)
+{
+        return code >= 200 && code < 300;
+}
+
 /* Status and body framing have one interpretation in both clients.  This
    rejects duplicate or conflicting declarations before either the buffered
    or streaming body path acts on them. */
@@ -492,7 +504,7 @@ static bipolar http_response_framing(p8 address_to bytes, positive size,
                         continue;
                 }
 
-                if (response->code < 400 && response->code >= 300)
+                if (http_response_is_redirect(response->code))
                 {
                         bool repeated = false;
 
@@ -521,7 +533,7 @@ static bipolar http_stream_open(p32 host, p16 port)
         socket_address_internet where = {
             .family = AF_INET, .port = network_order_16(port),
             .host = network_order_32(host)};
-        bipolar handle = socket_new(AF_INET, SOCK_STREAM, 0);
+        bipolar handle = socket_new(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 
         if (handle < 0)
                 return HTTP_NO_ROUTE;
@@ -534,107 +546,6 @@ static bipolar http_stream_open(p32 host, p16 port)
         return handle;
 }
 
-static bipolar http_get(p32 host, p16 port, string_address name,
-                        string_address path, http_buffer address_to body,
-                        b32 address_to code)
-{
-        http_buffer whole = {0};
-        bipolar handle;
-        positive header = 0;
-        bipolar status = HTTP_MALFORMED;
-        positive length = 0;
-        http_response response;
-
-        handle = http_stream_open(host, port);
-        if (handle < 0)
-                return handle;
-
-        {
-                p8 request[2048];
-                positive used = 0;
-
-                status = http_get_request(
-                    request, sizeof request, name, port, path, false, '0',
-                    (string_address)"dawning", address_of used);
-                if (status)
-                {
-                        goto done;
-                }
-                if (system_write_all((positive)handle, request, used) != used)
-                {
-                        status = HTTP_NO_REPLY;
-                        goto done;
-                }
-        }
-
-        {
-                bipolar read = file_store_read_limit(
-                    (positive)handle, address_of whole, HTTP_FETCH_MAX);
-
-                status = read == -27 ? HTTP_MALFORMED
-                                     : read < 0 ? HTTP_NO_REPLY : HTTP_OK;
-        }
-        if (status)
-                goto done;
-        status = HTTP_MALFORMED;
-
-        socket_close((b32)handle);
-        handle = -1;
-
-        status = http_response_framing(whole.bytes, whole.used,
-                                       address_of header,
-                                       address_of response);
-        /* The buffered reader has already reached EOF.  Once a status line
-           exists, an incomplete header or an interim response without a final
-           response is malformed rather than something more bytes can repair. */
-        if (status == HTTP_NO_REPLY && whole.used >= 13)
-                status = HTTP_MALFORMED;
-        if (status)
-                goto done;
-        if (code)
-                address_to code = response.code;
-        status = HTTP_MALFORMED;
-        length = whole.used - (positive)header;
-
-        if (response.body_kind == HTTP_BODY_CHUNKED)
-        {
-                bipolar plain = http_unchunk(whole.bytes + header, length);
-                if (plain < 0)
-                        goto done;
-                length = (positive)plain;
-        }
-        else if (response.body_kind == HTTP_BODY_LENGTH)
-        {
-                if (response.body_length > length)
-                        goto done;
-                length = response.body_length;
-        }
-
-        //      The complete response already owns enough room for the body.
-        //      Compact it in place and hand that allocation to the caller;
-        //      reserving a second store doubled peak RAM for every large
-        //      download only to release the first one immediately afterward.
-        memory_copy(whole.bytes, whole.bytes + header, length);
-        whole.used = length;
-        whole.bytes[length] = end;
-
-        byte_store_release(body);
-        address_to body = whole;
-        whole.bytes = null;
-        whole.room = 0;
-        whole.used = 0;
-
-        status = HTTP_OK;
-
-done:
-        if (handle >= 0)
-                socket_close((b32)handle);
-
-        byte_store_release(address_of whole);
-
-        return status;
-}
-
 typedef struct
 {
         bipolar handle;
@@ -642,22 +553,14 @@ typedef struct
         tls_conn session;
 } http_link;
 
-typedef struct
-{
-        http_link address_to link;
-        p8 address_to stash;
-        positive stash_used;
-        // Streaming reuses the consumed header buffer for split lines and I/O.
-        p8 address_to scratch;
-        // A memory body compacts payload behind its read cursor.
-        p8 address_to output;
-} http_body;
-
 static fn http_link_close(http_link address_to link)
 {
         if (link->handle >= 0)
                 socket_close((b32)link->handle);
+        if (link->tls)
+                tls_forget(address_of link->session);
         link->handle = -1;
+        link->tls = false;
 }
 
 static bipolar http_link_open(http_link address_to link, p32 ip, p16 port,
@@ -684,31 +587,192 @@ static bipolar http_link_write(http_link address_to link, p8 address_to data,
                                positive length)
 {
         if (link->tls)
-                return tls_write(address_of link->session, data, length) ? HTTP_NO_REPLY
-                                                                         : HTTP_OK;
-        if (system_write_all((positive)link->handle, data, length) != length)
+                return tls_write(address_of link->session, data, length)
+                           ? HTTP_NO_REPLY : HTTP_OK;
+        return network_stream_send_all(link->handle, data, length)
+                   ? HTTP_OK : HTTP_NO_REPLY;
+}
+
+static bipolar http_link_read_until(
+    http_link address_to link, p8 address_to into, positive room,
+    positive address_to got, const network_deadline address_to deadline)
+{
+        bipolar n;
+
+        if (link->tls)
+                return tls_read_until(address_of link->session, into, room, got,
+                                      deadline)
+                           ? HTTP_NO_REPLY : HTTP_OK;
+
+        n = deadline ? network_stream_read_some_until(
+                           link->handle, into, room, deadline)
+                     : system_read_retry((positive)link->handle, into, room);
+        if (n < 0)
                 return HTTP_NO_REPLY;
+        address_to got = (positive)n;
         return HTTP_OK;
 }
 
 static bipolar http_link_read(http_link address_to link, p8 address_to into,
                               positive room, positive address_to got)
 {
-        bipolar n;
+        return http_link_read_until(link, into, room, got, null);
+}
 
-        if (link->tls)
+static bipolar http_response_head(
+    http_link address_to link, p8 address_to head, positive room,
+    positive address_to used, positive address_to header,
+    http_response address_to response, positive seconds, positive nanoseconds,
+    bool incomplete_is_malformed)
+{
+        network_deadline deadline;
+
+        address_to used = 0;
+        if (!network_deadline_begin(address_of deadline, seconds, nanoseconds))
+                return HTTP_NO_REPLY;
+
+        for (;;)
         {
-                if (tls_read(address_of link->session, into, room, got))
+                positive got = 0;
+                bipolar status = http_response_framing(
+                    head, address_to used, header, response);
+
+                if (status != HTTP_NO_REPLY)
+                        return status;
+                if (address_to used == room)
+                        return HTTP_MALFORMED;
+                status = http_link_read_until(
+                    link, head + address_to used, room - address_to used,
+                    address_of got, address_of deadline);
+                if (status)
                         return HTTP_NO_REPLY;
-                return HTTP_OK;
+                if (!got)
+                        return incomplete_is_malformed && address_to used >= 13
+                                   ? HTTP_MALFORMED : HTTP_NO_REPLY;
+                address_to used += got;
+        }
+}
+
+static bool http_response_has_no_body(b32 code)
+{
+        return code == 204 || code == 205 || code == 304;
+}
+
+static bipolar http_get(p32 host, p16 port, string_address name,
+                        string_address path, http_buffer address_to body,
+                        b32 address_to code)
+{
+        http_buffer whole = {0};
+        p8 head[HTTP_HEAD_MAX];
+        http_link link;
+        positive header = 0;
+        bipolar status = HTTP_MALFORMED;
+        positive length = 0;
+        positive used = 0;
+        http_response response;
+
+        status = http_link_open(address_of link, host, port, name, false, false);
+        if (status)
+                return status;
+
+        {
+                p8 request[2048];
+                positive request_used = 0;
+
+                status = http_get_request(
+                    request, sizeof request, name, port, path, false, '0',
+                    (string_address)"dawning", address_of request_used);
+                if (!status)
+                        status = http_link_write(address_of link, request,
+                                                 request_used);
+                crypto_forget(request, sizeof request);
+                if (status)
+                        goto done;
         }
 
-        n = system_read_retry((positive)link->handle, into, room);
-        if (n < 0)
-                return HTTP_NO_REPLY;
-        address_to got = (positive)n;
-        return HTTP_OK;
+        status = http_response_head(
+            address_of link, head, sizeof head, address_of used,
+            address_of header, address_of response, HTTP_HEAD_SECONDS, 0,
+            true);
+        if (status)
+                goto done;
+        if (code)
+                address_to code = response.code;
+
+        if (http_response_has_no_body(response.code))
+                goto publish;
+
+        {
+                positive stashed = used - header;
+                bipolar read = file_store_read_limit(
+                    (positive)link.handle, address_of whole,
+                    HTTP_FETCH_MAX - used);
+
+                status = read == -27 ? HTTP_MALFORMED
+                                     : read < 0 ? HTTP_NO_REPLY : HTTP_OK;
+                if (status)
+                        goto done;
+                if (stashed > positive_max - whole.used - 1 ||
+                    !byte_store_reserve(address_of whole,
+                                        stashed + whole.used + 1, 4096))
+                {
+                        status = HTTP_NO_REPLY;
+                        goto done;
+                }
+                memory_copy(whole.bytes + stashed, whole.bytes,
+                            whole.used);
+                memory_copy(whole.bytes, head + header, stashed);
+                whole.used += stashed;
+                whole.bytes[whole.used] = end;
+        }
+
+        status = HTTP_MALFORMED;
+        length = whole.used;
+
+        if (response.body_kind == HTTP_BODY_CHUNKED)
+        {
+                bipolar plain = http_unchunk(whole.bytes, length);
+                if (plain < 0)
+                        goto done;
+                length = (positive)plain;
+        }
+        else if (response.body_kind == HTTP_BODY_LENGTH)
+        {
+                if (response.body_length > length)
+                        goto done;
+                length = response.body_length;
+        }
+
+publish:
+        whole.used = length;
+        if (whole.bytes)
+                whole.bytes[length] = end;
+
+        byte_store_release(body);
+        address_to body = whole;
+        whole.bytes = null;
+        whole.room = 0;
+        whole.used = 0;
+
+        status = HTTP_OK;
+
+done:
+        http_link_close(address_of link);
+        byte_store_release(address_of whole);
+
+        return status;
 }
+
+typedef struct
+{
+        http_link address_to link;
+        p8 address_to stash;
+        positive stash_used;
+        // Streaming reuses the consumed header buffer for split lines and I/O.
+        p8 address_to scratch;
+        // A memory body compacts payload behind its read cursor.
+        p8 address_to output;
+} http_body;
 
 static bipolar http_body_read(http_body address_to body, p8 address_to into,
                               positive room, positive address_to got)
@@ -776,7 +840,7 @@ static bipolar http_line(http_body address_to body, positive limit,
 {
         positive used = body->stash_used;
         positive span = memory_span_without_byte(body->stash, '\n', used);
-        if (span < used && (!body->link || span < limit))
+        if (span < used && span < limit)
         {
                 *line = body->stash;
                 *length = span + 1;
@@ -1082,10 +1146,10 @@ static bipolar http_send_get(http_link address_to link, string_address host, p16
         bipolar built = http_get_request(
             request, sizeof request, host, port, path, tls, '1',
             (string_address)"Wget", address_of used);
+        bipolar status = built ? built : http_link_write(link, request, used);
 
-        if (built)
-                return built;
-        return http_link_write(link, request, used);
+        crypto_forget(request, sizeof request);
+        return status;
 }
 
 static bipolar http_status_code(p8 address_to bytes, positive size, b32 address_to code)
@@ -1193,29 +1257,10 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                         return status;
                 }
 
-                for (;;)
-                {
-                        positive got = 0;
-
-                        status = http_response_framing(
-                            head, used, address_of header,
-                            address_of response);
-                        if (status != HTTP_NO_REPLY)
-                                break;
-                        if (used == sizeof head)
-                        {
-                                status = HTTP_MALFORMED;
-                                break;
-                        }
-                        status = http_link_read(address_of link, head + used,
-                                                sizeof head - used, address_of got);
-                        if (status || !got)
-                        {
-                                status = HTTP_NO_REPLY;
-                                break;
-                        }
-                        used += got;
-                }
+                status = http_response_head(
+                    address_of link, head, sizeof head, address_of used,
+                    address_of header, address_of response,
+                    HTTP_HEAD_SECONDS, 0, false);
 
                 if (status)
                 {
@@ -1231,7 +1276,7 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 body.stash_used = used - (positive)header;
                 body.scratch = head;
 
-                if (answer >= 300 && answer < 400)
+                if (http_response_is_redirect(answer))
                 {
                         p8 next[HTTP_URL_MAX];
 
@@ -1262,7 +1307,13 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                         continue;
                 }
 
-                if (answer >= 400)
+                if (!http_response_is_success(answer))
+                {
+                        http_link_close(address_of link);
+                        return HTTP_STATUS;
+                }
+
+                if (http_response_has_no_body(answer))
                 {
                         http_link_close(address_of link);
                         return HTTP_OK;

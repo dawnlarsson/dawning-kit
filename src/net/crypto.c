@@ -309,6 +309,9 @@ static fn crypto_sha384(p8 address_to data, positive length, p8 address_to out)
         crypto_sha384_close(address_of hash, out);
 }
 
+/* Volatile stores keep secret erasure observable to the compiler. */
+static fn crypto_forget(address_any secret, positive length);
+
 static fn crypto_hmac_sha256(p8 address_to key, positive key_length,
                              p8 address_to data, positive length,
                              p8 address_to out)
@@ -345,6 +348,13 @@ static fn crypto_hmac_sha256(p8 address_to key, positive key_length,
         crypto_sha256_write(address_of outer, pad, 64);
         crypto_sha256_write(address_of outer, inner_sum, 32);
         crypto_sha256_close(address_of outer, out);
+
+        crypto_forget(address_of inner, sizeof inner);
+        crypto_forget(address_of outer, sizeof outer);
+        crypto_forget(pad, sizeof pad);
+        crypto_forget(inner_sum, sizeof inner_sum);
+        crypto_forget(key_block, sizeof key_block);
+        crypto_forget(hashed, sizeof hashed);
 }
 
 static fn crypto_hkdf_extract(p8 address_to salt, positive salt_length,
@@ -412,76 +422,172 @@ static fn crypto_hkdf_expand(p8 address_to prk, p8 address_to info,
 
                 memory_copy(previous, block, 32);
                 counter++;
+
+                crypto_forget(address_of hash, sizeof hash);
+                crypto_forget(pad, sizeof pad);
+                crypto_forget(inner, sizeof inner);
+                crypto_forget(key_block, sizeof key_block);
         }
+
+        crypto_forget(previous, sizeof previous);
+        crypto_forget(block, sizeof block);
 }
 
-static const p8 crypto_aes_sbox[256] = {
-    0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b,
-    0xfe, 0xd7, 0xab, 0x76, 0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0,
-    0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0, 0xb7, 0xfd, 0x93, 0x26,
-    0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
-    0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2,
-    0xeb, 0x27, 0xb2, 0x75, 0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0,
-    0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84, 0x53, 0xd1, 0x00, 0xed,
-    0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
-    0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f,
-    0x50, 0x3c, 0x9f, 0xa8, 0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5,
-    0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2, 0xcd, 0x0c, 0x13, 0xec,
-    0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
-    0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14,
-    0xde, 0x5e, 0x0b, 0xdb, 0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c,
-    0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79, 0xe7, 0xc8, 0x37, 0x6d,
-    0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
-    0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f,
-    0x4b, 0xbd, 0x8b, 0x8a, 0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e,
-    0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e, 0xe1, 0xf8, 0x98, 0x11,
-    0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
-    0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f,
-    0xb0, 0x54, 0xbb, 0x16};
+/* The AES state and key are secret, so an ordinary S-box table exposes them
+   through the cache.  Invert in GF(2^8) with a fixed addition chain, then
+   apply the AES affine transform.  Every input follows the same operations
+   and addresses. */
+static p8 crypto_aes_field_multiply(p8 left, p8 right)
+{
+        p8 product = 0;
+        positive bit;
+
+        for (bit = 0; bit < 8; bit++)
+        {
+                p8 selected = (p8)(0 - (right & 1));
+                p8 high = left >> 7;
+
+                product ^= left & selected;
+                left = (p8)((left << 1) ^
+                            (0x1b & (p8)(0 - high)));
+                right >>= 1;
+        }
+
+        return product;
+}
+
+static p8 crypto_aes_substitute(p8 value)
+{
+        p8 x2 = crypto_aes_field_multiply(value, value);
+        p8 x3 = crypto_aes_field_multiply(x2, value);
+        p8 x6 = crypto_aes_field_multiply(x3, x3);
+        p8 x12 = crypto_aes_field_multiply(x6, x6);
+        p8 x15 = crypto_aes_field_multiply(x12, x3);
+        p8 x30 = crypto_aes_field_multiply(x15, x15);
+        p8 x60 = crypto_aes_field_multiply(x30, x30);
+        p8 x120 = crypto_aes_field_multiply(x60, x60);
+        p8 x240 = crypto_aes_field_multiply(x120, x120);
+        p8 inverse = crypto_aes_field_multiply(
+            crypto_aes_field_multiply(x240, x12), x2);
+
+        return (p8)(inverse ^
+                    ((inverse << 1) | (inverse >> 7)) ^
+                    ((inverse << 2) | (inverse >> 6)) ^
+                    ((inverse << 3) | (inverse >> 5)) ^
+                    ((inverse << 4) | (inverse >> 4)) ^ 0x63);
+}
 
 static p8 crypto_xtime(p8 value)
 {
-        return (p8)((value << 1) ^ ((value & 0x80) ? 0x1b : 0));
+        return (p8)((value << 1) ^
+                    (0x1b & (p8)(0 - (value >> 7))));
 }
 
-static fn crypto_aes128_expand(p8 address_to key, p32 address_to round)
+/* Unlike memory_fill, these stores cannot be discarded after the final use. */
+static fn crypto_forget(address_any secret, positive length)
+{
+        volatile p8 address_to at = secret;
+
+        while (length)
+        {
+                *at++ = 0;
+                length--;
+        }
+}
+
+static fn crypto_aes128_expand(p8 address_to key, p8 address_to round)
 {
         static const p8 rcon[10] = {0x01, 0x02, 0x04, 0x08, 0x10,
                                     0x20, 0x40, 0x80, 0x1b, 0x36};
-        p8 schedule[176];
         positive i;
 
-        memory_copy(schedule, key, 16);
+        memory_copy(round, key, 16);
         for (i = 16; i < 176; i += 4)
         {
-                p8 t0 = schedule[i - 4];
-                p8 t1 = schedule[i - 3];
-                p8 t2 = schedule[i - 2];
-                p8 t3 = schedule[i - 1];
+                p8 t0 = round[i - 4];
+                p8 t1 = round[i - 3];
+                p8 t2 = round[i - 2];
+                p8 t3 = round[i - 1];
 
                 if (i % 16 == 0)
                 {
                         p8 k = t0;
-                        t0 = crypto_aes_sbox[t1] ^ rcon[i / 16 - 1];
-                        t1 = crypto_aes_sbox[t2];
-                        t2 = crypto_aes_sbox[t3];
-                        t3 = crypto_aes_sbox[k];
+                        t0 = crypto_aes_substitute(t1) ^ rcon[i / 16 - 1];
+                        t1 = crypto_aes_substitute(t2);
+                        t2 = crypto_aes_substitute(t3);
+                        t3 = crypto_aes_substitute(k);
                 }
 
-                schedule[i] = schedule[i - 16] ^ t0;
-                schedule[i + 1] = schedule[i - 15] ^ t1;
-                schedule[i + 2] = schedule[i - 14] ^ t2;
-                schedule[i + 3] = schedule[i - 13] ^ t3;
+                round[i] = round[i - 16] ^ t0;
+                round[i + 1] = round[i - 15] ^ t1;
+                round[i + 2] = round[i - 14] ^ t2;
+                round[i + 3] = round[i - 13] ^ t3;
         }
-
-        for (i = 0; i < 44; i++)
-                round[i] = crypto_be32(schedule + i * 4);
 }
 
-static fn crypto_aes128_encrypt(p32 address_to round, p8 address_to in,
-                                p8 address_to out)
+#if X64
+typedef p64 crypto_aes_vector
+    __attribute__((vector_size(16), aligned(1), may_alias));
+typedef long long crypto_aes_vector_signed __attribute__((vector_size(16)));
+
+static p8 crypto_aes_hardware_state;
+
+static bool crypto_aes_hardware(void)
+{
+        if (!crypto_aes_hardware_state)
+        {
+                p32 leaf = 1;
+                p32 ebx;
+                p32 features = 0;
+                p32 edx;
+
+                __asm__ volatile("cpuid"
+                                 : "+a"(leaf), "=b"(ebx), "+c"(features),
+                                   "=d"(edx));
+                (void)ebx;
+                (void)edx;
+                crypto_aes_hardware_state =
+                    features & ((p32)1 << 25) ? 2 : 1;
+        }
+
+        return crypto_aes_hardware_state == 2;
+}
+
+static __attribute__((target("aes,sse2"))) fn
+crypto_aes128_encrypt_hardware(p8 address_to round, p8 address_to in,
+                               p8 address_to out)
+{
+        crypto_aes_vector round_key =
+            *(crypto_aes_vector address_to)round;
+        crypto_aes_vector state =
+            *(crypto_aes_vector address_to)in ^ round_key;
+        positive round_at;
+
+        for (round_at = 1; round_at < 10; round_at++)
+        {
+                round_key = *(crypto_aes_vector address_to)
+                    (round + round_at * 16);
+                state = (crypto_aes_vector)__builtin_ia32_aesenc128(
+                    (crypto_aes_vector_signed)state,
+                    (crypto_aes_vector_signed)round_key);
+        }
+        round_key = *(crypto_aes_vector address_to)(round + 160);
+        state = (crypto_aes_vector)__builtin_ia32_aesenclast128(
+            (crypto_aes_vector_signed)state,
+            (crypto_aes_vector_signed)round_key);
+        *(crypto_aes_vector address_to)out = state;
+
+        state ^= state;
+        round_key ^= round_key;
+        __asm__ volatile("" : "+x"(state), "+x"(round_key));
+}
+#endif
+
+static fn crypto_aes128_encrypt_portable(p8 address_to round, p8 address_to in,
+                                         p8 address_to out)
 {
         p8 s[16];
+        p8 n[16];
         positive round_at;
         positive i;
 
@@ -489,18 +595,18 @@ static fn crypto_aes128_encrypt(p32 address_to round, p8 address_to in,
 
         for (i = 0; i < 4; i++)
         {
-                p32 word = crypto_be32(s + i * 4) ^ round[i];
+                p32 word = crypto_be32(s + i * 4) ^
+                           crypto_be32(round + i * 4);
                 crypto_put_be32(s + i * 4, word);
         }
 
         for (round_at = 1; round_at <= 10; round_at++)
         {
-                p8 n[16];
                 static const p8 shift[16] = {0, 5, 10, 15, 4, 9, 14, 3,
                                              8, 13, 2, 7, 12, 1, 6, 11};
 
                 for (i = 0; i < 16; i++)
-                        n[i] = crypto_aes_sbox[s[shift[i]]];
+                        n[i] = crypto_aes_substitute(s[shift[i]]);
 
                 if (round_at < 10)
                 {
@@ -523,12 +629,27 @@ static fn crypto_aes128_encrypt(p32 address_to round, p8 address_to in,
                 for (i = 0; i < 4; i++)
                 {
                         p32 word = crypto_be32(s + i * 4) ^
-                                   round[round_at * 4 + i];
+                                   crypto_be32(round + round_at * 16 + i * 4);
                         crypto_put_be32(s + i * 4, word);
                 }
         }
 
         memory_copy(out, s, 16);
+        crypto_forget(n, sizeof n);
+        crypto_forget(s, sizeof s);
+}
+
+static fn crypto_aes128_encrypt(p8 address_to round, p8 address_to in,
+                                p8 address_to out)
+{
+#if X64
+        if (crypto_aes_hardware())
+        {
+                crypto_aes128_encrypt_hardware(round, in, out);
+                return;
+        }
+#endif
+        crypto_aes128_encrypt_portable(round, in, out);
 }
 
 static fn crypto_ghash_times(p8 address_to x, p8 address_to y)
@@ -544,25 +665,24 @@ static fn crypto_ghash_times(p8 address_to x, p8 address_to y)
         for (i = 0; i < 16; i++)
                 for (bit = 0; bit < 8; bit++)
                 {
-                        if (x[i] & (0x80 >> bit))
-                        {
-                                positive k;
-                                for (k = 0; k < 16; k++)
-                                        z[k] ^= v[k];
-                        }
+                        p8 selected = (p8)(0 - ((x[i] >> (7 - bit)) & 1));
+                        positive k;
+
+                        for (k = 0; k < 16; k++)
+                                z[k] ^= v[k] & selected;
 
                         {
                                 p8 lsb = v[15] & 1;
-                                positive k;
                                 for (k = 15; k > 0; k--)
                                         v[k] = (p8)((v[k] >> 1) | (v[k - 1] << 7));
                                 v[0] >>= 1;
-                                if (lsb)
-                                        v[0] ^= 0xe1;
+                                v[0] ^= 0xe1 & (p8)(0 - lsb);
                         }
                 }
 
         memory_copy(x, z, 16);
+        crypto_forget(z, sizeof z);
+        crypto_forget(v, sizeof v);
 }
 
 static fn crypto_ghash_add(p8 address_to state, p8 address_to block)
@@ -578,7 +698,7 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
                               p8 address_to text, positive text_length,
                               p8 address_to tag, bool encrypt)
 {
-        p32 round[44];
+        p8 round[176];
         p8 h[16];
         p8 j0[16];
         p8 counter[16];
@@ -652,6 +772,7 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
                         crypto_ghash_times(s, h);
                 }
 
+                crypto_forget(block, sizeof block);
                 at += take;
         }
 
@@ -664,6 +785,15 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
         crypto_aes128_encrypt(round, j0, enc);
         for (i = 0; i < 16; i++)
                 tag[i] = s[i] ^ enc[i];
+
+        crypto_forget(round, sizeof round);
+        crypto_forget(h, sizeof h);
+        crypto_forget(j0, sizeof j0);
+        crypto_forget(counter, sizeof counter);
+        crypto_forget(s, sizeof s);
+        crypto_forget(zero, sizeof zero);
+        crypto_forget(enc, sizeof enc);
+        crypto_forget(padded, sizeof padded);
 }
 
 static fn crypto_aesgcm_encrypt(p8 address_to key, p8 address_to iv,
@@ -683,14 +813,18 @@ static bool crypto_aesgcm_decrypt(p8 address_to key, p8 address_to iv,
         p8 got[16];
         positive i;
         p8 diff = 0;
+        bool valid;
 
         crypto_aesgcm_crypt(key, iv, aad, aad_length, text, text_length, got,
                             false);
         for (i = 0; i < 16; i++)
                 diff |= got[i] ^ tag[i];
-        if (diff)
-                memory_fill(text, 0, text_length);
-        return diff == 0;
+        valid = diff == 0;
+        if (!valid)
+                crypto_forget(text, text_length);
+        crypto_forget(got, sizeof got);
+        crypto_forget(address_of diff, sizeof diff);
+        return valid;
 }
 
 /*
@@ -801,6 +935,7 @@ static fn crypto_x25519_store(p8 address_to out, crypto_x25519_fe in)
         crypto_x25519_store64(out + 8, (p64)((t[1] >> 13) | (t[2] << 38)));
         crypto_x25519_store64(out + 16, (p64)((t[2] >> 26) | (t[3] << 25)));
         crypto_x25519_store64(out + 24, (p64)((t[3] >> 39) | (t[4] << 12)));
+        crypto_forget(t, sizeof t);
 }
 
 static fn crypto_x25519_sum(crypto_x25519_fe o, crypto_x25519_fe in)
@@ -880,6 +1015,7 @@ static fn crypto_x25519_mul(crypto_x25519_fe o, crypto_x25519_fe in2,
         o[2] = r2;
         o[3] = r3;
         o[4] = r4;
+        crypto_forget(t, sizeof t);
 }
 
 static fn crypto_x25519_sqr_n(crypto_x25519_fe o, crypto_x25519_fe a, positive n)
@@ -894,6 +1030,7 @@ static fn crypto_x25519_sqr_n(crypto_x25519_fe o, crypto_x25519_fe a, positive n
                 n--;
         }
         crypto_x25519_copy(o, t);
+        crypto_forget(t, sizeof t);
 }
 
 static fn crypto_x25519_mul121665(crypto_x25519_fe o, crypto_x25519_fe a)
@@ -911,6 +1048,7 @@ static fn crypto_x25519_mul121665(crypto_x25519_fe o, crypto_x25519_fe a)
         w = (w >> 51) + (crypto_wide)a[4] * 121665;
         o[4] = (p64)w & 0x7ffffffffffffull;
         o[0] += 19 * (p64)(w >> 51);
+        crypto_forget(address_of w, sizeof w);
 }
 
 static fn crypto_x25519_invert(crypto_x25519_fe o, crypto_x25519_fe z)
@@ -939,6 +1077,11 @@ static fn crypto_x25519_invert(crypto_x25519_fe o, crypto_x25519_fe z)
         crypto_x25519_mul(t0, t0, b);
         crypto_x25519_sqr_n(t0, t0, 5);
         crypto_x25519_mul(o, t0, a);
+
+        crypto_forget(a, sizeof a);
+        crypto_forget(t0, sizeof t0);
+        crypto_forget(b, sizeof b);
+        crypto_forget(c, sizeof c);
 }
 
 static fn crypto_cswap(crypto_x25519_fe a, crypto_x25519_fe b, p64 swap)
@@ -962,6 +1105,7 @@ static bool crypto_x25519(p8 address_to out, p8 address_to scalar, p8 address_to
         positive i;
         p64 bit;
         p64 swap = 0;
+        bool valid;
 
         memory_copy(e, scalar, 32);
         e[0] &= 248;
@@ -1030,9 +1174,29 @@ static bool crypto_x25519(p8 address_to out, p8 address_to scalar, p8 address_to
 
                 for (i = 0; i < 32; i++)
                         nonzero |= out[i];
-
-                return nonzero != 0;
+                valid = nonzero != 0;
+                crypto_forget(address_of nonzero, sizeof nonzero);
         }
+
+        crypto_forget(e, sizeof e);
+        crypto_forget(x1, sizeof x1);
+        crypto_forget(x2, sizeof x2);
+        crypto_forget(z2, sizeof z2);
+        crypto_forget(x3, sizeof x3);
+        crypto_forget(z3, sizeof z3);
+        crypto_forget(a, sizeof a);
+        crypto_forget(b, sizeof b);
+        crypto_forget(c, sizeof c);
+        crypto_forget(d, sizeof d);
+        crypto_forget(aa, sizeof aa);
+        crypto_forget(bb, sizeof bb);
+        crypto_forget(ee, sizeof ee);
+        crypto_forget(da, sizeof da);
+        crypto_forget(cb, sizeof cb);
+        crypto_forget(t, sizeof t);
+        crypto_forget(address_of bit, sizeof bit);
+        crypto_forget(address_of swap, sizeof swap);
+        return valid;
 }
 
 #define CRYPTO_FE_MAX 6

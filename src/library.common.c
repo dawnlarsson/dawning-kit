@@ -225,6 +225,51 @@ static inline INLINE CONST bipolar bipolar_from_magnitude(positive magnitude,
             : (bipolar)magnitude;
 }
 
+/* Binary/decimal size dialects share the exponent alphabet while retaining
+   their own accepted ranges, trailing-unit rules and overflow limits.  Some
+   GNU grammars accept lower-case suffixes only through tera; every_lower
+   selects the wider K..Q/k..q alphabet. */
+static inline INLINE PURE p8 size_suffix_power(p8 suffix, bool every_lower)
+{
+        static const p8 powers['z' - 'A' + 1] = {
+            ['K' - 'A'] = 1, ['M' - 'A'] = 2, ['G' - 'A'] = 3,
+            ['T' - 'A'] = 4, ['P' - 'A'] = 5, ['E' - 'A'] = 6,
+            ['Z' - 'A'] = 7, ['Y' - 'A'] = 8, ['R' - 'A'] = 9,
+            ['Q' - 'A'] = 10,
+            ['k' - 'A'] = 1, ['m' - 'A'] = 2, ['g' - 'A'] = 3,
+            ['t' - 'A'] = 4, ['p' - 'A'] = 5, ['e' - 'A'] = 6,
+            ['z' - 'A'] = 7, ['y' - 'A'] = 8, ['r' - 'A'] = 9,
+            ['q' - 'A'] = 10,
+        };
+
+        if (suffix < 'A' || suffix > 'z')
+                return 0;
+
+        p8 power = powers[suffix - 'A'];
+
+        return suffix >= 'a' && !every_lower && power > 4
+                   ? 0
+                   : power;
+}
+
+/* Apply a decoded size exponent without letting an intermediate wrap.  The
+   caller supplies its semantic ceiling (native size, signed file offset,
+   protocol limit) and receives no partial result on failure. */
+static inline INLINE bool size_scale_power_checked(
+    p64 value, p64 base, p8 power, p64 maximum, p64 address_to scaled)
+{
+        if (!base)
+                return false;
+        while (power--)
+        {
+                if (value > maximum / base)
+                        return false;
+                value *= base;
+        }
+        address_to scaled = value;
+        return true;
+}
+
 /* One stable bottom-up merge machine for indexes, pointers and full records.
    The comparator and element type remain visible at every expansion, while
    exhausted runs fall through to the architecture's bulk copy floor. */
@@ -353,6 +398,52 @@ bipolar system_read_retry(positive handle, address_any into, positive length);
 #define system_pipe(pair, flags)                                             \
         system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
 
+#if defined(LINUX)
+/* Linux exposes pollfd as an eight-byte kernel record on every supported
+   architecture.  Keep its effective type, event spelling and ppoll's
+   eight-byte kernel signal-set ABI in one floor shared by networking,
+   terminals and process supervisors. */
+typedef struct
+{
+        b32 descriptor;
+        b16 events;
+        b16 returned;
+} system_poll_descriptor;
+
+_Static_assert(sizeof(system_poll_descriptor) == 8,
+               "Linux poll descriptors are eight bytes");
+
+#define SYSTEM_POLL_READ  0x001
+#define SYSTEM_POLL_WRITE 0x004
+#define SYSTEM_POLL_ERROR 0x008
+#define SYSTEM_POLL_HANGUP 0x010
+#define SYSTEM_POLL_INVALID 0x020
+
+static inline INLINE bipolar system_poll_wait(
+    system_poll_descriptor address_to descriptors, positive count,
+    timespec address_to limit, positive address_to signal_mask)
+{
+        return system_call_5(syscall(ppoll), (positive)descriptors, count,
+                             (positive)limit, (positive)signal_mask, 8);
+}
+
+static inline INLINE bipolar descriptor_wait_readable(
+    bipolar handle, timespec address_to limit,
+    positive address_to signal_mask)
+{
+        system_poll_descriptor waited = {
+            (b32)handle, SYSTEM_POLL_READ, 0};
+        bipolar ready = system_poll_wait(
+            address_of waited, 1, limit, signal_mask);
+
+        /* ppoll reports an invalid descriptor as a ready row.  Callers which
+           only probe readiness would otherwise treat a closed fd as readable
+           without ever making the read that exposes EBADF. */
+        return ready > 0 && (waited.returned & SYSTEM_POLL_INVALID)
+                   ? -9 : ready;
+}
+#endif
+
 static inline INLINE positive system_nonce_stir(positive value)
 {
         value ^= value >> 30;
@@ -477,14 +568,21 @@ static COLD bipolar system_make_directory_exact_at(
    survive descriptor cleanup. */
 static COLD bipolar system_open_parent_walk(
     bipolar directory, string_address path, bool create, positive mode,
-    p8 address_to leaf, positive room, bool contained,
-    bool (*accept)(bipolar))
+    p8 address_to leaf, positive room, bool nofollow, bool contained,
+    bool (*accept)(bipolar), bool final_directory)
 {
-        if (!path || !string_get(path) || !leaf || !room)
+        p8 directory_component[256];
+        p8 address_to component = final_directory
+                                      ? directory_component : leaf;
+        positive component_room = final_directory
+                                      ? sizeof(directory_component) : room;
+
+        if (!path || !string_get(path) ||
+            (!final_directory && (!leaf || !room)))
                 return -22;
 
         positive flags = O_PATH | O_DIRECTORY | O_CLOEXEC |
-                         (contained ? O_NOFOLLOW : 0);
+                         (nofollow ? O_NOFOLLOW : 0);
         bipolar held = system_open_at(directory, path[0] == '/' ? "/" : ".", flags);
         if (held < 0)
                 return held;
@@ -498,10 +596,17 @@ static COLD bipolar system_open_parent_walk(
         {
                 while (string_is(path, '/'))
                         path++;
+                if (!string_get(path))
+                {
+                        if (final_directory)
+                                return held;
+                        system_close(held);
+                        return -22;
+                }
                 positive length = 0;
                 while (string_get(path + length) && !string_is(path + length, '/'))
                 {
-                        if (length + 1 >= room)
+                        if (length + 1 >= component_room)
                         {
                                 system_close(held);
                                 return -36;
@@ -516,27 +621,30 @@ static COLD bipolar system_open_parent_walk(
                         return -22;
                 }
                 bool dot = length == 1 && path[0] == '.';
-                if (!string_get(path + length))
+                if (!final_directory && !string_get(path + length))
                 {
                         if (dot)
                         {
                                 system_close(held);
                                 return -22;
                         }
-                        memory_copy_apart(leaf, path, length);
-                        leaf[length] = end;
+                        memory_copy_apart(component, path, length);
+                        component[length] = end;
                         return held;
                 }
                 if (!dot)
                 {
-                        memory_copy_apart(leaf, path, length);
-                        leaf[length] = end;
-                        bipolar next = system_open_at(held, leaf, flags);
+                        memory_copy_apart(component, path, length);
+                        component[length] = end;
+                        bipolar next = system_open_at(held, component, flags);
                         if (next == -2 && create)
                         {
-                                bipolar made = system_make_directory_at(held, leaf, mode);
+                                bipolar made = system_make_directory_at(
+                                    held, component, mode);
                                 next = made < 0 && made != -17
-                                           ? made : system_open_at(held, leaf, flags);
+                                           ? made
+                                           : system_open_at(
+                                                 held, component, flags);
                         }
                         if (next >= 0 && accept && !accept(next))
                         {
@@ -548,7 +656,9 @@ static COLD bipolar system_open_parent_walk(
                                 return next;
                         held = next;
                 }
-                path += length + 1;
+                path += length;
+                if (string_is(path, '/'))
+                        path++;
         }
 }
 
@@ -557,7 +667,7 @@ static COLD bipolar system_open_parent_nofollow(
     p8 address_to leaf, positive room)
 {
         return system_open_parent_walk(directory, path, create, mode, leaf,
-                                       room, true, 0);
+                                       room, true, true, 0, false);
 }
 
 /* The caller supplies the ownership/mode policy while this shared walk keeps
@@ -567,7 +677,7 @@ static COLD bipolar system_open_parent_nofollow_checked(
     p8 address_to leaf, positive room, bool (*accept)(bipolar))
 {
         return system_open_parent_walk(directory, path, create, mode, leaf,
-                                       room, true, accept);
+                                       room, true, true, accept, false);
 }
 
 /* A command-line pathname may legitimately contain `..`; opening that
@@ -577,7 +687,18 @@ static COLD bipolar system_open_parent_pinned(
     bipolar directory, string_address path, p8 address_to leaf, positive room)
 {
         return system_open_parent_walk(directory, path, false, 0, leaf, room,
-                                       false, 0);
+                                       false, false, 0, false);
+}
+
+/* Pin a command-line directory without allowing any component to be a
+   symlink.  Dot-dot retains its ordinary command-line meaning, while each
+   resolved directory descriptor prevents a later rename from redirecting
+   the walk.  A final slash, '.', and '/' are valid directory spellings. */
+static COLD bipolar system_open_directory_nofollow(
+    bipolar directory, string_address path)
+{
+        return system_open_parent_walk(directory, path, false, 0, null, 0,
+                                       true, false, 0, true);
 }
 
 /* Make an unpredictable sibling name while preserving any directory prefix
@@ -611,12 +732,19 @@ static COLD bool system_temporary_name(
         return true;
 }
 
+#define SYSTEM_PATH_LEAF_ROOM 256
+
 #if defined(LINUX)
 /* The statx fields needed to compare an open descriptor with a directory
    entry.  The surrounding bytes keep the kernel's fixed 256-byte ABI. */
 typedef struct
 {
-        p8 before_mode[28];
+        p32 mask;
+        p32 block_size;
+        p64 attributes;
+        p32 hard_links;
+        p32 user;
+        p32 group;
         p16 mode;
         p16 spare;
         p64 inode;
@@ -629,16 +757,45 @@ typedef struct
 _Static_assert(sizeof(system_path_identity) == 256,
                "statx writes 256 bytes");
 
+#define SYSTEM_PATH_STATX_TYPE 0x001
+#define SYSTEM_PATH_STATX_MODE 0x002
+#define SYSTEM_PATH_STATX_UID  0x008
+#define SYSTEM_PATH_STATX_INO  0x100
+#define SYSTEM_PATH_STATX_IDENTITY                                      \
+        (SYSTEM_PATH_STATX_TYPE | SYSTEM_PATH_STATX_MODE |              \
+         SYSTEM_PATH_STATX_INO)
+#define SYSTEM_PATH_AT_SYMLINK_NOFOLLOW 0x100
+#define SYSTEM_PATH_AT_NO_AUTOMOUNT     0x800
+#define SYSTEM_PATH_AT_EMPTY_PATH       0x1000
+#define SYSTEM_PATH_RENAME_NOREPLACE    1
+#define SYSTEM_PATH_AT_REMOVEDIR         0x200
+
+static bipolar system_path_identity_at(
+    bipolar directory, string_address name, positive flags, positive required,
+    system_path_identity address_to identity)
+{
+        memory_fill(identity, 0, sizeof(*identity));
+        bipolar found = system_stat_at(directory, name, flags, 0x7ff,
+                                       identity);
+
+        if (found < 0)
+                return found;
+        return (identity->mask & required) == required ? 0 : -5;
+}
+
 static bipolar system_path_same_opened_at(
     bipolar handle, bipolar directory, string_address name)
 {
         system_path_identity opened;
         system_path_identity named;
-        bipolar looked = system_stat_at(
-            handle, (string_address)"", 0x1000 | 0x800, 0x7ff,
-            address_of opened);
-        bipolar found = looked < 0 ? looked : system_stat_at(
-            directory, name, 0x100 | 0x800, 0x7ff, address_of named);
+        bipolar looked = system_path_identity_at(
+            handle, (string_address)"",
+            SYSTEM_PATH_AT_EMPTY_PATH | SYSTEM_PATH_AT_NO_AUTOMOUNT,
+            SYSTEM_PATH_STATX_IDENTITY, address_of opened);
+        bipolar found = looked < 0 ? looked : system_path_identity_at(
+            directory, name,
+            SYSTEM_PATH_AT_SYMLINK_NOFOLLOW | SYSTEM_PATH_AT_NO_AUTOMOUNT,
+            SYSTEM_PATH_STATX_IDENTITY, address_of named);
 
         if (found < 0)
                 return found;
@@ -649,64 +806,361 @@ static bipolar system_path_same_opened_at(
                    ? 0 : -11;
 }
 
-/* Atomically detach a name, then prove it still names the open object.  On a
-   mismatch the name is restored when possible and the unexpected object is
-   never removed. */
-static bipolar system_path_detach_opened_at(
-    bipolar directory, string_address name, bipolar handle,
-    p8 address_to temporary, positive room)
+/* The fd is authoritative, but the public name may be removed only while a
+   parent writer cannot exchange it after the identity check.  The current
+   owner can trust a directory that is read-only to everyone else.  A sticky
+   directory is safe when its owner is the current user or the host root that
+   already has authority over this process. */
+static bool system_path_parent_cleanup_safe(bipolar directory)
 {
-        bipolar moved = -17;
+        system_path_identity parent;
+        p32 user = (p32)system_call(syscall(geteuid));
+        bipolar found = system_path_identity_at(
+            directory, (string_address)"",
+            SYSTEM_PATH_AT_EMPTY_PATH | SYSTEM_PATH_AT_NO_AUTOMOUNT,
+            SYSTEM_PATH_STATX_IDENTITY | SYSTEM_PATH_STATX_UID,
+            address_of parent);
+
+        if (found < 0 || (parent.mode & 0170000) != 0040000)
+                return false;
+        if (parent.mode & 01000)
+                return parent.user == user || parent.user == 0;
+        return parent.user == user && !(parent.mode & 0022);
+}
+
+static bipolar system_path_private_directory_valid(
+    bipolar handle, bipolar directory, string_address name)
+{
+        system_path_identity opened;
+        bipolar same = system_path_same_opened_at(handle, directory, name);
+        bipolar found = same < 0 ? same : system_path_identity_at(
+            handle, (string_address)"",
+            SYSTEM_PATH_AT_EMPTY_PATH | SYSTEM_PATH_AT_NO_AUTOMOUNT,
+            SYSTEM_PATH_STATX_IDENTITY | SYSTEM_PATH_STATX_UID,
+            address_of opened);
+
+        if (found < 0)
+                return found;
+        return opened.user == (p32)system_call(syscall(geteuid)) &&
+                       (opened.mode & 0177777) == 0040700
+                   ? 0 : -13;
+}
+
+/* Remove an empty private directory only when both checks around its public
+   name are meaningful.  In a non-sticky writable parent the name may be
+   exchanged after any check, so retaining an empty 0700 directory is the
+   only identity-safe cleanup. */
+static fn system_path_private_directory_close(
+    bipolar parent, string_address name, bipolar handle)
+{
+        if (handle < 0)
+                return;
+
+        if (system_path_parent_cleanup_safe(parent) &&
+            system_path_same_opened_at(handle, parent, name) >= 0)
+                (void)system_remove_at(parent, name,
+                                       SYSTEM_PATH_AT_REMOVEDIR);
+        system_close(handle);
+}
+
+/* Create, open and validate an owner-only directory before returning its fd.
+   The fd remains authoritative if a parent writer later moves the outer
+   name.  On a hostile parent, failed setup deliberately leaves harmless
+   residue rather than unlinking a name whose identity can change. */
+static COLD bipolar system_path_private_directory_open_at(
+    bipolar directory, string_address near, string_address marker,
+    positive marker_length, p8 address_to name, positive room)
+{
+        bipolar made = -17;
         positive nonce = system_nonce();
 
-        for (positive attempt = 0; attempt < 128 && moved == -17; attempt++)
+        if (!near || !string_get(near) || string_last_of(near, '/'))
+                return -22;
+
+        for (positive attempt = 0; attempt < 128 && made == -17; attempt++)
         {
                 if (!system_temporary_name(
-                        name, temporary, room,
-                        (string_address)".moonwater-remove-", 18,
+                        near, name, room, marker, marker_length,
                         nonce + attempt))
                         return -22;
-                moved = system_call_5(
-                    syscall(renameat2), (positive)directory, (positive)name,
-                    (positive)directory, (positive)temporary, 1);
+                made = system_make_directory_exact_at(
+                    directory, name, 0700);
         }
-        if (moved < 0)
-                return moved;
+        if (made < 0)
+                return made;
 
-        bipolar same = system_path_same_opened_at(
-            handle, directory, temporary);
-        if (same < 0)
+        bipolar handle = system_open_at(
+            directory, name,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (handle == -13)
+                /* An unusual umask may remove owner-read from the requested
+                   0700 mode.  O_PATH still pins the directory so the modern
+                   descriptor-only chmod can make it exactly private. */
+                handle = system_open_at(
+                    directory, name,
+                    O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (handle < 0)
+                return handle;
+
+        bipolar valid = system_path_same_opened_at(handle, directory, name);
+        system_path_identity opened;
+        if (valid >= 0)
+                valid = system_path_identity_at(
+                    handle, (string_address)"",
+                    SYSTEM_PATH_AT_EMPTY_PATH | SYSTEM_PATH_AT_NO_AUTOMOUNT,
+                    SYSTEM_PATH_STATX_IDENTITY | SYSTEM_PATH_STATX_UID,
+                    address_of opened);
+        if (valid >= 0 &&
+            (opened.user != (p32)system_call(syscall(geteuid)) ||
+             (opened.mode & 0170000) != 0040000))
+                valid = -13;
+        bool change_mode = valid >= 0 && (opened.mode & 07777) != 0700;
+        if (change_mode)
+                valid = system_call_2(syscall(fchmod), (positive)handle,
+                                      0700);
+        if (change_mode && valid == -9)
+                valid = system_call_4(
+                    syscall(fchmodat2), (positive)handle,
+                    (positive)(string_address)"", 0700,
+                    SYSTEM_PATH_AT_EMPTY_PATH);
+        if (change_mode && valid < 0 &&
+            system_path_parent_cleanup_safe(directory) &&
+            system_path_same_opened_at(handle, directory, name) >= 0)
         {
-                (void)system_call_5(
-                    syscall(renameat2), (positive)directory,
-                    (positive)temporary, (positive)directory,
-                    (positive)name, 1);
-                return same;
+                /* fchmodat2 arrived after the oldest supported kernels.
+                   A sticky or caller-private parent makes the legacy named
+                   fallback stable; verify the same inode again afterward. */
+                valid = system_call_3(
+                    syscall(fchmodat), (positive)directory,
+                    (positive)name, 0700);
+                if (valid >= 0)
+                        valid = system_path_same_opened_at(
+                            handle, directory, name);
+        }
+        if (valid >= 0)
+                valid = system_path_private_directory_valid(
+                    handle, directory, name);
+        if (valid < 0)
+        {
+                system_path_private_directory_close(
+                    directory, name, handle);
+                return valid;
+        }
+        return handle;
+}
+
+#define SYSTEM_PATH_STAGE_LEAF ((string_address)"object")
+
+/* A public entry is first moved under an fd-held, validated 0700 directory.
+   All later remove or publish operations recheck the caller's open handle
+   against that protected entry.  parent and opened remain caller-owned and
+   must stay open until one of the consuming operations below returns. */
+typedef struct
+{
+        bipolar parent;
+        bipolar directory;
+        bipolar opened;
+        bool verified;
+        p8 original[SYSTEM_PATH_LEAF_ROOM];
+        p8 private_name[SYSTEM_PATH_LEAF_ROOM];
+} system_path_stage;
+
+static fn system_path_stage_reset(system_path_stage address_to stage)
+{
+        stage->parent = -1;
+        stage->directory = -1;
+        stage->opened = -1;
+        stage->verified = false;
+        stage->original[0] = end;
+        stage->private_name[0] = end;
+}
+
+static fn system_path_stage_release(system_path_stage address_to stage)
+{
+        if (stage->directory >= 0)
+                system_path_private_directory_close(
+                    stage->parent, stage->private_name, stage->directory);
+        system_path_stage_reset(stage);
+}
+
+static bipolar system_path_stage_return_candidate(
+    system_path_stage address_to stage)
+{
+        return system_call_5(
+            syscall(renameat2), (positive)stage->directory,
+            (positive)SYSTEM_PATH_STAGE_LEAF, (positive)stage->parent,
+            (positive)stage->original, SYSTEM_PATH_RENAME_NOREPLACE);
+}
+
+/* Allocate the fd-held 0700 side of a transaction before creating its
+   object.  Callers that can create directly as `object` avoid even a brief
+   public staging name; the compatibility wrapper below moves an already
+   opened public candidate into the same transaction. */
+static bipolar system_path_stage_begin_at(
+    system_path_stage address_to stage, bipolar directory,
+    string_address name)
+{
+        positive length = name ? string_length(name) : 0;
+
+        system_path_stage_reset(stage);
+        if (!length || length >= sizeof(stage->original) ||
+            string_last_of(name, '/') ||
+            (length == 1 && name[0] == '.') ||
+            (length == 2 && name[0] == '.' && name[1] == '.'))
+                return -22;
+
+        /* Every completed transaction must be able to remove its outer
+           directory by an identity-checked name.  Starting in a non-sticky
+           writable parent would otherwise leave one private directory per
+           success and permit namespace exhaustion. */
+        if (!system_path_parent_cleanup_safe(directory))
+                return -13;
+
+        memory_copy_end(stage->original, name, length);
+        stage->parent = directory;
+        stage->opened = -1;
+        stage->directory = system_path_private_directory_open_at(
+            directory, name, (string_address)".moonwater-stage-",
+            sizeof(".moonwater-stage-") - 1, stage->private_name,
+            sizeof(stage->private_name));
+        if (stage->directory < 0)
+        {
+                bipolar failed = stage->directory;
+                system_path_stage_reset(stage);
+                return failed;
         }
         return 0;
+}
+
+static bipolar system_path_stage_bind_opened(
+    system_path_stage address_to stage, bipolar opened)
+{
+        if (opened < 0 || stage->directory < 0)
+                return -22;
+
+        bipolar same = system_path_same_opened_at(
+            opened, stage->directory, SYSTEM_PATH_STAGE_LEAF);
+        if (same < 0)
+                return same;
+
+        stage->opened = opened;
+        stage->verified = true;
+        return 0;
+}
+
+static bipolar system_path_stage_opened_at(
+    system_path_stage address_to stage, bipolar directory,
+    string_address name, bipolar opened)
+{
+        if (opened < 0)
+                return -22;
+
+        bipolar begun = system_path_stage_begin_at(
+            stage, directory, name);
+        if (begun < 0)
+                return begun;
+
+        bipolar moved = system_call_5(
+            syscall(renameat2), (positive)directory, (positive)name,
+            (positive)stage->directory, (positive)SYSTEM_PATH_STAGE_LEAF,
+            SYSTEM_PATH_RENAME_NOREPLACE);
+        if (moved < 0)
+        {
+                system_path_stage_release(stage);
+                return moved;
+        }
+
+        bipolar same = system_path_stage_bind_opened(stage, opened);
+        if (same < 0)
+        {
+                (void)system_path_stage_return_candidate(stage);
+                system_path_stage_release(stage);
+                return same;
+        }
+
+        return 0;
+}
+
+/* Publish the verified staged object with the caller's rename policy.  A
+   failed publication retains the protected object; it never falls back to a
+   pathname copy or an overwrite with different identity. */
+static bipolar system_path_stage_publish_at(
+    system_path_stage address_to stage, bipolar directory,
+    string_address name, positive flags)
+{
+        bipolar same = flags & ~SYSTEM_PATH_RENAME_NOREPLACE ? -22 :
+                       !stage->verified ? -22 : system_path_same_opened_at(
+            stage->opened, stage->directory, SYSTEM_PATH_STAGE_LEAF);
+        bipolar moved = same < 0 ? same : system_call_5(
+            syscall(renameat2), (positive)stage->directory,
+            (positive)SYSTEM_PATH_STAGE_LEAF, (positive)directory,
+            (positive)name, flags);
+
+        /* A failed rename, particularly EXDEV, leaves the fd-held source
+           available for caller-controlled recovery. */
+        if (moved >= 0)
+                system_path_stage_release(stage);
+        return moved;
+}
+
+static bipolar system_path_stage_remove(
+    system_path_stage address_to stage, positive flags)
+{
+        bipolar same = !stage->verified ? -22 : system_path_same_opened_at(
+            stage->opened, stage->directory, SYSTEM_PATH_STAGE_LEAF);
+        bipolar removed = same < 0 ? same : system_remove_at(
+            stage->directory, SYSTEM_PATH_STAGE_LEAF, flags);
+
+        if (removed < 0 && same >= 0 &&
+            system_path_same_opened_at(
+                stage->opened, stage->directory,
+                SYSTEM_PATH_STAGE_LEAF) >= 0)
+                (void)system_path_stage_return_candidate(stage);
+        system_path_stage_release(stage);
+        return removed;
+}
+
+/* Discard only the object still bound to the stage descriptor.  Unlike a
+   failed user-visible removal, an unpublished output must never be restored
+   to its old public temporary name: metadata may already have handed it to a
+   different uid.  A nonempty directory is retained behind its private 0700
+   parent when it cannot be removed safely. */
+static bipolar system_path_stage_discard(
+    system_path_stage address_to stage, positive flags)
+{
+        bipolar same = !stage->verified ? -22 : system_path_same_opened_at(
+            stage->opened, stage->directory, SYSTEM_PATH_STAGE_LEAF);
+        bipolar removed = same < 0 ? same : system_remove_at(
+            stage->directory, SYSTEM_PATH_STAGE_LEAF, flags);
+
+        system_path_stage_release(stage);
+        return removed;
 }
 
 static bipolar system_path_remove_opened_at(
     bipolar directory, string_address name, bipolar handle, positive flags)
 {
-        p8 temporary[256];
-        bipolar detached = system_path_detach_opened_at(
-            directory, name, handle, temporary, sizeof(temporary));
-        if (detached < 0)
-                return detached;
+        /* A directory removal may fail after a concurrent child appears.
+           Detaching its name first would turn ENOTEMPTY into data loss when
+           the old name is claimed before restoration.  Stable parents can
+           use the single identity-checked rmdir path; unstable parents fail
+           before any namespace change. */
+        if (flags & SYSTEM_PATH_AT_REMOVEDIR)
+        {
+                bipolar same = !system_path_parent_cleanup_safe(directory)
+                                   ? -13
+                                   : system_path_same_opened_at(
+                                         handle, directory, name);
+                return same < 0 ? same
+                                : system_remove_at(directory, name, flags);
+        }
 
-        bipolar removed = system_remove_at(directory, temporary, flags);
-        if (removed < 0 &&
-            system_path_same_opened_at(handle, directory, temporary) >= 0)
-                /* A failed rmdir/unlink must not silently rename the object.
-                   Restore only into the still-empty public name; a concurrent
-                   claimant is preserved and the detached inode remains under
-                   its private diagnostic name. */
-                (void)system_call_5(
-                    syscall(renameat2), (positive)directory,
-                    (positive)temporary, (positive)directory,
-                    (positive)name, 1);
-        return removed;
+        system_path_stage stage;
+        bipolar staged = system_path_stage_opened_at(
+            address_of stage, directory, name, handle);
+
+        return staged < 0 ? staged
+                          : system_path_stage_remove(address_of stage, flags);
 }
 
 #if !defined(KERNEL_MODE)
@@ -735,55 +1189,8 @@ static bipolar system_path_link_opened_at(
             (positive)directory, (positive)name, 0x400);
 }
 
-#define SYSTEM_PATH_ALIAS_LEAF ((string_address)"object")
-
-/* Prepare a publisher-owned 0700 directory containing an exact hard link to
-   object.  Renaming from its returned descriptor never trusts a chowned
-   staging name.  On failure no destination name has been touched. */
-static bipolar system_path_alias_opened_at(
-    bipolar directory, string_address near, bipolar object,
-    p8 address_to name, positive room)
-{
-        bipolar made = -17;
-        positive nonce = system_nonce();
-
-        for (positive attempt = 0; attempt < 128 && made == -17; attempt++)
-        {
-                if (!system_temporary_name(
-                        near, name, room,
-                        (string_address)".moonwater-publish-", 19,
-                        nonce + attempt))
-                        return -22;
-                made = system_make_directory_at(directory, name, 0700);
-        }
-        if (made < 0)
-                return made;
-
-        bipolar handle = system_open_at(
-            directory, name,
-            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-        /* Without an fd there is no identity-safe cleanup: a parent writer
-           could have exchanged the just-created name.  Retain the private
-           0700 directory and report the open failure. */
-        if (handle < 0)
-                return handle;
-
-        bipolar same = system_path_same_opened_at(handle, directory, name);
-        bipolar linked = same < 0 ? same : system_path_link_opened_at(
-            object, handle, SYSTEM_PATH_ALIAS_LEAF);
-        if (linked < 0)
-        {
-                (void)system_path_remove_opened_at(
-                    directory, name, handle, 0x200);
-                system_close(handle);
-                return linked;
-        }
-        return handle;
-}
 #endif
 #endif
-
-#define SYSTEM_PATH_LEAF_ROOM 256
 
 typedef struct
 {

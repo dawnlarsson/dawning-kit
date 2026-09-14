@@ -68,6 +68,20 @@ static bool shell_start_parameters(string_address address_to arguments,
         return shell_parameters_set(shell_argv, count);
 }
 
+/* A complete source which is already resident in memory can identify its
+   final physical line before parsing it.  Grant the executor's one-command
+   tail privilege only around that line, and restore an outer reader's state
+   if the command is a builtin, compound command, or failed exec. */
+static fn shell_run_known_line(string_address line, bool final)
+{
+        bool held = shell_tail_line_requested;
+
+        if (final && exec_tail_line_safe())
+                shell_tail_line_requested = true;
+        run_line(line);
+        shell_tail_line_requested = held;
+}
+
 static positive shell_run_complete_lines(p8 address_to text, positive length,
                                          bool command_string)
 {
@@ -118,7 +132,9 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
                                 }
 
                                 shell_verbose_line(ready);
-                                run_line(ready);
+                                shell_run_known_line(
+                                    ready,
+                                    command_string && !shell_line_has_more);
                                 shell_line_has_more = false;
                         }
                 }
@@ -640,6 +656,7 @@ b32 main()
         bipolar input = 0;
         bool script_file = false;
         bool command_option = false;
+        bool parser_source_started = false;
         string_address command = null;
         string_address address_to arguments;
         positive process_arguments;
@@ -664,6 +681,13 @@ b32 main()
                         return answered;
                 }
         }
+
+        /* This is a shell process, not a directly invoked applet.  It may
+           become the parent of a confined command before that command reaches
+           its final launch decision (pipelines, background jobs and
+           substitutions all fork earlier), so establish and protect the
+           launcher before parsing or startup code can create a child. */
+        (void)floodlight_parent_begin();
 
         process_arguments = (positive)program_argument_count();
         arguments = program_argument_list();
@@ -908,8 +932,21 @@ b32 main()
         history_start();
         exec_function_import_environment(environ);
 
+        /* Startup code shares stdin with a stdin-driven shell. Authenticate
+           that stream before ENV/BASH_ENV can launch a confined applet which
+           would otherwise see an unclassified reader as in-memory input. */
+        if (!script_file)
+        {
+                if (!shell_parser_source_begin(input))
+                        return string_report(log_error, 126,
+                                             "sh: cannot isolate input\n");
+                parser_source_started = true;
+        }
+
         if (!shell_startup_file())
         {
+                if (parser_source_started)
+                        shell_parser_source_end();
                 log_flush();
                 return shell_status ? shell_status : 1;
         }
@@ -933,6 +970,16 @@ b32 main()
                         // spare slot. Keep streaming the original, CLOEXEC,
                         // and refuse a later collision if it cannot move.
                         system_call_3(syscall(fcntl), input, 2, 1);
+
+                input = exec_script_fd;
+                if (!shell_parser_source_begin(input))
+                {
+                        system_close(input);
+                        exec_script_fd = -1;
+                        return string_report(log_error, 126,
+                                             "sh: cannot isolate script input\n");
+                }
+                parser_source_started = true;
         }
 
         /*
@@ -969,7 +1016,7 @@ b32 main()
                         shell_verbose_from_string = true;
                         shell_verbose_line(command);
                         lex_physical_newline(false);
-                        run_line(command);
+                        shell_run_known_line(command, true);
                 }
                 else
                 {
@@ -992,7 +1039,8 @@ b32 main()
                                 {
                                         shell_verbose_line(held_command + at);
                                         lex_physical_newline(false);
-                                        run_line(held_command + at);
+                                        shell_run_known_line(
+                                            held_command + at, true);
                                 }
                         }
 
@@ -1023,6 +1071,9 @@ b32 main()
         bool shared_input = !script_file && !shell_interactive();
         bool seekable_input = shared_input && system_seek(input, 0, 1) >= 0;
 
+        /* Keep one authenticated identity for the whole live reader. This is
+           established before the first byte is consumed, and a committed
+           bare exec refreshes it when it replaces that reader. */
         while (1)
         {
                 bipolar got;
@@ -1130,7 +1181,7 @@ b32 main()
                         // dash leaves the backslash as a byte of the word.
                         if (!shell_bash_compat)
                                 lex_physical_newline(false);
-                        run_line(ready);
+                        shell_run_known_line(ready, true);
                 }
         }
 
@@ -1142,6 +1193,8 @@ b32 main()
         //      ended is the file and not the session.
         if (!script_file)
                 shell_interactive_exit_said();
+
+        shell_parser_source_end();
 
 input_finished:
         shell_input_end();

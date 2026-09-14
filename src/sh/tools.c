@@ -19,6 +19,10 @@
 static bipolar dns_resolve_any(string_address path, string_address name,
                                p32 address_to found, positive seconds);
 
+#if defined(LINUX) && !defined(KERNEL_MODE)
+#include "../net/wait.c"
+#endif
+
 /* coreutils' complaint about a surplus word, with the usage hint. */
 static b32 tools_extra_operand(string_address program, string_address word)
 {
@@ -113,6 +117,7 @@ static b32 tools_hostid()
 #define LOGGER_HEADER_ROOM 4096
 #define LOGGER_FRAME_ROOM 64
 #define LOGGER_UNIX_PATH 108
+#define LOGGER_STREAM_TIMEOUT_SECONDS 30
 
 static fn tools_hostname(p8 address_to into, positive room,
                           string_address fallback)
@@ -312,7 +317,7 @@ static bool logger_size(string_address text, positive address_to size)
                 return false;
         text += digits;
 
-        p8 power = file_size_power(string_get(text), true);
+        p8 power = size_suffix_power(string_get(text), true);
         if (power)
         {
                 text++;
@@ -325,12 +330,10 @@ static bool logger_size(string_address text, positive address_to size)
                 else if (string_is(text, 'i') && string_is(text + 1, 'B'))
                         text += 2;
 
-                while (power--)
-                {
-                        if (value > (p64)positive_max / base)
-                                return false;
-                        value *= base;
-                }
+                if (!size_scale_power_checked(
+                        value, base, power, (p64)positive_max,
+                        address_of value))
+                        return false;
         }
 
         if (string_get(text) || !value || value > UTILITY_ARENA_BYTES -
@@ -396,7 +399,9 @@ static positive logger_timestamp_5424(logger_builder address_to build,
         tm broken;
         p8 time_text[32];
 
-        if (!localtime_r(address_of stamp, address_of broken))
+        /* This spelling declares a zero UTC offset on the wire, so format
+           the broken-down time in UTC as well. */
+        if (!gmtime_r(address_of stamp, address_of broken))
                 return 0;
 
         positive length = strftime(time_text, sizeof(time_text),
@@ -549,6 +554,12 @@ static bipolar logger_connect_kind(logger_control address_to control,
                                     kind | SOCK_CLOEXEC, 0);
         if (handle < 0)
                 return handle;
+        if (transport == LOGGER_TRANSPORT_STREAM &&
+            !network_stream_timeout(handle, LOGGER_STREAM_TIMEOUT_SECONDS, 0))
+        {
+                socket_close((b32)handle);
+                return -ERROR_INPUT_OUTPUT;
+        }
 
         bipolar connected;
         if (control->server)
@@ -675,17 +686,7 @@ static bool logger_send_once(logger_control address_to control,
                 return socket_send((b32)control->handle, bytes, length,
                                    MSG_NOSIGNAL, null, 0) == (bipolar)length;
 
-        positive sent = 0;
-        while (sent < length)
-        {
-                bipolar wrote = socket_send((b32)control->handle, bytes + sent,
-                                            length - sent, MSG_NOSIGNAL,
-                                            null, 0);
-                if (wrote <= 0)
-                        return false;
-                sent += (positive)wrote;
-        }
-        return true;
+        return network_stream_send_all(control->handle, bytes, length);
 }
 #endif
 
@@ -1754,10 +1755,7 @@ static bipolar login_message_source_tty(p8 address_to path, positive room,
                         if (build.failed || build.used + 1 > sizeof(link))
                                 continue;
                         link[build.used] = end;
-                        length = system_read_link_at(AT_FDCWD, link, path,
-                                                     room - 1);
-                        if (length >= 0)
-                                path[length] = end;
+                        length = file_link_text(link, path, room);
                 }
 
                 if (length >= 0)
@@ -2073,15 +2071,10 @@ static bipolar login_message_send(string_address line,
                 p64 left = deadline - current;
                 timespec limit = {(time_t)(left / 1000000000ULL),
                                   (long)(left % 1000000000ULL)};
-                struct
-                {
-                        b32 descriptor;
-                        b16 events;
-                        b16 returned;
-                } waited = {(b32)handle, 4, 0}; /* POLLOUT */
-                bipolar ready = system_call_5(
-                    syscall(ppoll), (positive)address_of waited, 1,
-                    (positive)address_of limit, 0, 8);
+                system_poll_descriptor waited = {
+                    (b32)handle, SYSTEM_POLL_WRITE, 0};
+                bipolar ready = system_poll_wait(
+                    address_of waited, 1, address_of limit, null);
                 if (!ready)
                 {
                         answer = -ETIMEDOUT;
@@ -4617,15 +4610,13 @@ static bool numfmt_unit(string_address text, positive address_to unit)
         if (!value)
                 return false;
 
-        while (power--)
-        {
-                if (value > positive_max / base)
-                        return false;
+        p64 scaled;
+        if (!size_scale_power_checked(
+                value, base, (p8)power, (p64)positive_max,
+                address_of scaled))
+                return false;
 
-                value *= base;
-        }
-
-        address_to unit = value;
+        address_to unit = (positive)scaled;
         return true;
 }
 
@@ -7501,7 +7492,7 @@ static bool dd_size(string_address text, positive address_to out)
                         return false;
                 }
 
-                positive power = file_size_power(string_get(at), false);
+                positive power = size_suffix_power(string_get(at), false);
                 positive multiple = 1;
 
                 if (power)
@@ -7530,16 +7521,15 @@ static bool dd_size(string_address text, positive address_to out)
                                 at++;
                         }
 
-                        for (positive i = 0; i < power; i++)
+                        p64 scaled;
+                        if (!size_scale_power_checked(
+                                multiple, base, (p8)power,
+                                (p64)positive_max, address_of scaled))
                         {
-                                if (multiple > positive_max / base)
-                                {
-                                        dd_overflow = true;
-                                        return false;
-                                }
-
-                                multiple *= base;
+                                dd_overflow = true;
+                                return false;
                         }
+                        multiple = (positive)scaled;
                 }
 
                 if (value && multiple > positive_max / value)
@@ -8802,16 +8792,13 @@ static p8 dump_od_number(string_address text, positive address_to out)
                                 at++;
                         }
 
-                        multiple = 1;
-                        for (positive i = 0; i < power; i++)
-                        {
-                                if (multiple > positive_max / step)
-                                {
-                                        large = true;
-                                        break;
-                                }
-                                multiple *= step;
-                        }
+                        p64 scaled;
+                        if (!size_scale_power_checked(
+                                1, step, (p8)power, (p64)positive_max,
+                                address_of scaled))
+                                large = true;
+                        else
+                                multiple = (positive)scaled;
                 }
 
                 if (string_get(at))

@@ -360,7 +360,7 @@ static bool stdbuf_mode(string_address text, bool input,
         if (suffix)
         {
                 power = suffix == 'k' ? 1
-                                      : file_size_power(suffix, false);
+                                      : size_suffix_power(suffix, false);
 
                 if (!power || (suffix >= 'a' && suffix != 'k'))
                         goto invalid;
@@ -382,13 +382,12 @@ static bool stdbuf_mode(string_address text, bool input,
         if (string_get(at))
                 goto invalid;
 
-        if (value)
-                while (power--)
-                {
-                        if (value > positive_max / base)
-                                goto invalid;
-                        value *= base;
-                }
+        p64 scaled;
+        if (!size_scale_power_checked(
+                value, base, (p8)power, (p64)positive_max,
+                address_of scaled))
+                goto invalid;
+        value = (positive)scaled;
 
         positive_into_string(assignment + 10, value);
         return true;
@@ -1147,13 +1146,6 @@ static b32 process_coresched()
 
 // timeout ---------------------------------------------------------
 
-typedef struct
-{
-        b32 descriptor;
-        b16 events;
-        b16 returned;
-} process_timeout_poll;
-
 static const argument_option process_timeout_options[] = {
     {"foreground", 'f'},
     {"kill-after", 'k', ARGUMENT_REQUIRED},
@@ -1184,7 +1176,7 @@ static bipolar process_timeout_wait(b32 child, bipolar pidfd, bipolar signal_fd,
 {
         if (pidfd >= 0 || signal_fd >= 0)
         {
-                process_timeout_poll waited[2];
+                system_poll_descriptor waited[2];
                 positive descriptors = 0;
                 positive pid_index = positive_max;
                 positive signal_index = positive_max;
@@ -1193,13 +1185,15 @@ static bipolar process_timeout_wait(b32 child, bipolar pidfd, bipolar signal_fd,
                 {
                         pid_index = descriptors;
                         waited[descriptors++] =
-                            (process_timeout_poll){(b32)pidfd, 1, 0};
+                            (system_poll_descriptor){
+                                (b32)pidfd, SYSTEM_POLL_READ, 0};
                 }
                 if (signal_fd >= 0)
                 {
                         signal_index = descriptors;
                         waited[descriptors++] =
-                            (process_timeout_poll){(b32)signal_fd, 1, 0};
+                            (system_poll_descriptor){
+                                (b32)signal_fd, SYSTEM_POLL_READ, 0};
                 }
 
                 for (;;)
@@ -1230,9 +1224,8 @@ static bipolar process_timeout_wait(b32 child, bipolar pidfd, bipolar signal_fd,
 
                         for (positive i = 0; i < descriptors; i++)
                                 waited[i].returned = 0;
-                        bipolar ready = system_call_5(
-                            syscall(ppoll), (positive)waited, descriptors,
-                            (positive)limit, 0, 8);
+                        bipolar ready = system_poll_wait(
+                            waited, descriptors, limit, null);
 
                         if (!ready)
                                 return 0;
@@ -1632,11 +1625,6 @@ static b32 process_timeout()
 #else
 #define PROCESS_O_NOFOLLOW 0400000
 #endif
-#define PROCESS_POLL_IN 0x001
-#define PROCESS_POLL_OUT 0x004
-#define PROCESS_POLL_ERROR 0x008
-#define PROCESS_POLL_HUP 0x010
-
 
 typedef struct
 {
@@ -2062,12 +2050,12 @@ static b32 process_script_record(process_script_state address_to state,
                 own input does not hold the recorder here.
         */
         {
-                process_timeout_poll first[2] = {
-                    {0, PROCESS_POLL_IN, 0}, {master, PROCESS_POLL_OUT, 0}};
+                system_poll_descriptor first[2] = {
+                    {0, SYSTEM_POLL_READ, 0},
+                    {master, SYSTEM_POLL_WRITE, 0}};
                 timespec none = {0, 0};
 
-                if (system_call_5(syscall(ppoll), (positive)first, 2,
-                                  (positive)address_of none, 0, 8) > 0 &&
+                if (system_poll_wait(first, 2, address_of none, null) > 0 &&
                     first[0].returned)
                 {
                         bipolar got = system_read_once(0, input, sizeof(input));
@@ -2111,34 +2099,33 @@ static b32 process_script_record(process_script_state address_to state,
 
         while (!master_end)
         {
-                process_timeout_poll waited[4];
+                system_poll_descriptor waited[4];
                 positive count = 0;
                 positive master_index = count;
                 bool sending = input_at < input_length;
-                waited[count++] = (process_timeout_poll){
-                    master, (b16)(PROCESS_POLL_IN |
-                                   (sending ? PROCESS_POLL_OUT : 0)), 0};
+                waited[count++] = (system_poll_descriptor){
+                    master, (b16)(SYSTEM_POLL_READ |
+                                  (sending ? SYSTEM_POLL_WRITE : 0)), 0};
                 positive input_index = positive_max;
                 if (!input_end && input_at == input_length)
                 {
                         input_index = count;
-                        waited[count++] = (process_timeout_poll){0,
-                                                               PROCESS_POLL_IN,
-                                                               0};
+                        waited[count++] = (system_poll_descriptor){
+                            0, SYSTEM_POLL_READ, 0};
                 }
                 positive signal_index = positive_max;
                 if (signal_fd >= 0)
                 {
                         signal_index = count;
-                        waited[count++] = (process_timeout_poll){
-                            (b32)signal_fd, PROCESS_POLL_IN, 0};
+                        waited[count++] = (system_poll_descriptor){
+                            (b32)signal_fd, SYSTEM_POLL_READ, 0};
                 }
                 positive pid_index = positive_max;
                 if (pidfd >= 0 && !child_done)
                 {
                         pid_index = count;
-                        waited[count++] = (process_timeout_poll){
-                            (b32)pidfd, PROCESS_POLL_IN, 0};
+                        waited[count++] = (system_poll_descriptor){
+                            (b32)pidfd, SYSTEM_POLL_READ, 0};
                 }
 
                 timespec drain = {1, 0};
@@ -2147,9 +2134,8 @@ static b32 process_script_record(process_script_state address_to state,
                 timespec address_to timeout =
                     child_done ? address_of drain
                                : (offering ? address_of quiet : null);
-                bipolar ready = system_call_5(
-                    syscall(ppoll), (positive)waited, count,
-                    (positive)timeout, 0, 8);
+                bipolar ready = system_poll_wait(
+                    waited, count, timeout, null);
                 if (ready < 0)
                 {
                         if (ready == UL_ERROR_INTERRUPTED)
@@ -2194,7 +2180,7 @@ static b32 process_script_record(process_script_state address_to state,
                         }
                 }
 
-                if (waited[master_index].returned & PROCESS_POLL_OUT)
+                if (waited[master_index].returned & SYSTEM_POLL_WRITE)
                 {
                         if (sending)
                         {
@@ -2226,8 +2212,8 @@ static b32 process_script_record(process_script_state address_to state,
                 }
 
                 if (waited[master_index].returned &
-                    (PROCESS_POLL_IN | PROCESS_POLL_HUP |
-                     PROCESS_POLL_ERROR))
+                    (SYSTEM_POLL_READ | SYSTEM_POLL_HANGUP |
+                     SYSTEM_POLL_ERROR))
                 {
                         for (;;)
                         {

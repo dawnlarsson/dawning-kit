@@ -126,6 +126,15 @@ static fn net_kmsg(address_any data, positive length)
 //      The terminal by default; the kernel log once init owns this.
 static writer net_out = log;
 
+static fn net_kmsg_close(void)
+{
+        if (net_kmsg_handle >= 0)
+                (void)system_close(net_kmsg_handle);
+        net_kmsg_handle = -1;
+        net_kmsg_used = 0;
+        net_out = log;
+}
+
 static fn net_flush(void)
 {
         if (net_out == log)
@@ -189,8 +198,10 @@ static bool net_split_prefix(string_address text, p32 address_to host,
                              p8 address_to bits)
 {
         string_address slash = string_first_of(text, '/');
+        string_address digits;
         p8 kept[64];
         bipolar parsed;
+        positive prefix;
         positive length;
 
         length = slash ? (positive)(slash - text) : string_length(text);
@@ -216,12 +227,17 @@ static bool net_split_prefix(string_address text, p32 address_to host,
         if (!string_get(slash + 1))
                 return false;
 
-        parsed = (bipolar)string_to_positive(slash + 1);
-
-        if (parsed < 0 || parsed > 32)
+        /* string_to_positive deliberately reads only the trailing digits of
+           a general string, so `junk24` means 24 to its other callers.  A
+           network prefix is a complete grammar token: accepting that suffix
+           here silently configures a different route than the user wrote. */
+        digits = slash + 1;
+        if (!string_digits_checked(address_of digits, 10,
+                                   address_of prefix) ||
+            string_get(digits) || prefix > 32)
                 return false;
 
-        address_to bits = (p8)parsed;
+        address_to bits = (p8)prefix;
 
         return true;
 }
@@ -274,42 +290,65 @@ typedef struct
 } net_name;
 
 static netlink_buffer net_names;
-static positive net_name_count;
 
 static bool net_name_seen(netlink_header address_to header, address_any context)
 {
+        netlink_buffer address_to names =
+            (netlink_buffer address_to)context;
         netlink_link address_to link;
         string_address found = netlink_link_name(header, address_of link);
         net_name address_to entry;
-        (void)context;
+        positive count = names->used / sizeof(net_name);
 
         if (!found)
                 return true;
 
-        if (!net_room(address_of net_names,
-                      (net_name_count + 1) * sizeof(net_name)))
+        if (names->used > positive_max - sizeof(net_name))
+        {
+                names->failed = true;
+                return false;
+        }
+        if (!net_room(names, names->used + sizeof(net_name)))
                 return false;
 
-        entry = ((net_name address_to)net_names.bytes) + net_name_count;
+        entry = ((net_name address_to)names->bytes) + count;
         entry->index = link->index;
         string_copy_max_end(entry->name, found, IFNAME_SIZE - 1);
-        net_name_count++;
+        names->used += sizeof(net_name);
 
         return true;
 }
 
-static fn net_names_gather(b32 handle)
+static bool net_names_commit(netlink_buffer address_to next, bipolar status)
 {
-        net_name_count = 0;
-        netlink_dump(handle, RTM_GETLINK, sizeof(netlink_link), AF_UNSPEC,
-                     net_name_seen, null);
+        if (status < 0 || next->failed)
+        {
+                netlink_forget(next);
+                return false;
+        }
+
+        netlink_forget(address_of net_names);
+        net_names = *next;
+        memory_fill(next, 0, sizeof(*next));
+        return true;
+}
+
+static bool net_names_gather(b32 handle)
+{
+        netlink_buffer next = {0};
+        bipolar status = netlink_dump(
+            handle, RTM_GETLINK, sizeof(netlink_link), AF_UNSPEC,
+            net_name_seen, address_of next);
+
+        return net_names_commit(address_of next, status);
 }
 
 static PURE string_address net_name_of(p32 index)
 {
         positive at;
+        positive count = net_names.used / sizeof(net_name);
 
-        for (at = 0; at < net_name_count; at++)
+        for (at = 0; at < count; at++)
         {
                 net_name address_to entry = ((net_name address_to)net_names.bytes) + at;
 
@@ -645,7 +684,7 @@ static b32 net_fetch(void)
                 return 1;
         }
 
-        if (code >= 300 && code < 400)
+        if (http_response_is_redirect(code))
         {
                 string_format(net_out, "fetch: %p, which is a redirect this does not "
                                    "follow\n", (positive)code);
@@ -654,7 +693,7 @@ static b32 net_fetch(void)
                 return 1;
         }
 
-        if (code >= 400)
+        if (!http_response_is_success(code))
         {
                 string_format(net_out, "fetch: the server answered %p\n", (positive)code);
                 net_flush();
@@ -662,8 +701,13 @@ static b32 net_fetch(void)
                 return 1;
         }
 
-        if (body.used)
-                system_write_all(1, body.bytes, body.used);
+        if (body.used &&
+            system_write_all(1, body.bytes, body.used) != body.used)
+        {
+                http_forget(address_of body);
+                return string_report(log_error, 1,
+                                     "fetch: write error on standard output\n");
+        }
 
         http_forget(address_of body);
 
@@ -680,82 +724,46 @@ static const argument_option wget_options[] = {
     {null},
 };
 
-/* A download and resolv.conf update share the same publication rule: write a
-   fresh regular file through its exclusive descriptor, sync it, prove its
-   directory entry while that descriptor remains open, then rename it over
-   the destination in one operation. The parent directory
-   remains pinned throughout, so renaming a command-line ancestor cannot send
-   publication somewhere else. Failed staging is removed only through the
-   still-open descriptor; an entry whose identity changed is retained. */
-typedef struct
+/* Network files use the same descriptor-bound output transaction as the file
+   tools. They add a data sync before publication because a downloaded image
+   and resolv.conf must survive the power loss that may immediately follow
+   boot-time networking. */
+static bipolar net_staged_name_publish(file_staged_name address_to stage)
 {
-        bipolar directory;
-        bipolar handle;
-        p8 destination[SYSTEM_PATH_LEAF_ROOM];
-        p8 temporary[SYSTEM_PATH_LEAF_ROOM];
-} net_staging;
-
-static bipolar net_staging_open(net_staging address_to file,
-                                string_address destination,
-                                string_address marker,
-                                positive marker_length,
-                                positive mode)
-{
-        file->directory = system_open_parent_pinned(
-            AT_FDCWD, destination, file->destination,
-            sizeof(file->destination));
-        file->handle = -1;
-        file->temporary[0] = end;
-
-        if (file->directory < 0)
-                return file->directory;
-
-        file->handle = file_temporary_open_at(
-            file->directory, file->destination, file->temporary,
-            sizeof(file->temporary), marker, marker_length, system_nonce(),
-            128, mode);
-
-        if (file->handle < 0)
+        bipolar directory = system_open_at(
+            stage->directory, (string_address)".",
+            FILE_READ | O_DIRECTORY | O_CLOEXEC);
+        if (directory < 0)
         {
-                bipolar failed = file->handle;
-                system_close(file->directory);
-                file->directory = -1;
-                return failed;
+                file_staged_name_abort(stage);
+                return directory;
         }
 
-        return file->handle;
-}
+        bipolar prepared = file_staged_name_prepare(stage);
+        bipolar synced = prepared < 0 ? prepared : system_call_1(
+            syscall(fsync), (positive)stage->handle);
 
-static bipolar net_staging_finish(net_staging address_to file, bool publish)
-{
-        bipolar failed = 0;
+        if (synced < 0)
+        {
+                file_staged_name_abort(stage);
+                system_close(directory);
+                return synced;
+        }
 
-        if (publish)
-                failed = system_call_1(syscall(fsync),
-                                       (positive)file->handle);
+        bipolar published = file_staged_name_finish(stage, true, 0);
+        if (published < 0)
+        {
+                system_close(directory);
+                return published;
+        }
 
-        if (!publish)
-                failed = system_path_remove_opened_at(
-                    file->directory, file->temporary, file->handle, 0);
-
-        if (publish && !failed)
-                failed = file_temporary_publish_decided_at(
-                    file->directory, file->temporary, file->destination, file->handle,
-                    false, null);
-
-        bipolar closed = system_close(file->handle);
-        file->handle = -1;
-
-        /* Once a synced file has been atomically published, a later close
-           error cannot be rolled back without replacing a possibly changed
-           destination. Before publication, close failure remains failure. */
-        if (!publish && !failed && closed < 0)
-                failed = closed;
-
-        system_close(file->directory);
-        file->directory = -1;
-
-        return failed;
+        /* The rename above committed the caller-visible result.  Sync and
+           close still strengthen crash durability, but neither can turn that
+           published name back into a pre-publication failure for callers that
+           would otherwise roll back unrelated network state. */
+        (void)system_call_1(syscall(fsync), (positive)directory);
+        (void)system_close(directory);
+        return 0;
 }
 
 /*
@@ -784,7 +792,7 @@ static b32 net_wget(void)
         bipolar status;
         b32 code = 0;
         bool own_file = false;
-        net_staging staged;
+        file_staged_name staged;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -832,10 +840,8 @@ static b32 net_wget(void)
                         http_url_leaf(path, leaf, sizeof leaf);
                         output = leaf;
                 }
-                dest = net_staging_open(
-                    address_of staged, output,
-                    (string_address) ".moonwater-wget-",
-                    sizeof(".moonwater-wget-") - 1, 0644);
+                dest = file_staged_name_open(
+                    address_of staged, output, 0644 & ~file_umask(), 0);
                 if (dest < 0)
                 {
                         return string_report(log_error, 1, "wget: cannot write %w\n",
@@ -856,9 +862,7 @@ static b32 net_wget(void)
         {
                 if (own_file)
                 {
-                        if (net_staging_finish(address_of staged, false) < 0)
-                                string_format(log_error, "wget: incomplete staging file retained beside '%w'\n",
-                                              writer_terminal_quoted_name, output);
+                        file_staged_name_abort(address_of staged);
                 }
                 if (status == HTTP_NO_HOST)
                         string_format(log_error, "wget: cannot resolve %w\n",
@@ -876,26 +880,17 @@ static b32 net_wget(void)
                 else if (status == HTTP_NO_REPLY)
                         string_format(log_error, "wget: no reply from %w\n",
                                       writer_terminal_quoted_name, name);
+                else if (status == HTTP_STATUS)
+                        string_format(log_error, "wget: server returned %p\n",
+                                      (positive)code);
                 else
                         string_format(log_error, "wget: download failed\n");
                 return 1;
         }
 
-        if (code >= 400)
+        if (own_file && net_staged_name_publish(address_of staged) < 0)
         {
-                if (own_file)
-                {
-                        if (net_staging_finish(address_of staged, false) < 0)
-                                string_format(log_error, "wget: rejected response retained beside '%w'\n",
-                                              writer_terminal_quoted_name, output);
-                }
-                return string_report(log_error, 1, "wget: server returned %p\n",
-                              (positive)code);
-        }
-
-        if (own_file && net_staging_finish(address_of staged, true) < 0)
-        {
-                return string_report(log_error, 1, "wget: cannot publish %w; staging file retained\n",
+                return string_report(log_error, 1, "wget: cannot publish %w\n",
                               writer_terminal_quoted_name, output);
         }
 
@@ -926,7 +921,7 @@ static bipolar net_write_resolv_to(string_address path, p32 nameserver)
 {
         p8 line[64];
         positive used = 11;
-        net_staging staged;
+        file_staged_name staged;
         bipolar handle;
 
         memory_copy(line, "nameserver ", 11);
@@ -941,20 +936,19 @@ static bipolar net_write_resolv_to(string_address path, p32 nameserver)
                 line[used++] = '\n';
         }
 
-        handle = net_staging_open(
-            address_of staged, path, (string_address) ".moonwater-resolv-",
-            sizeof(".moonwater-resolv-") - 1, 0644);
+        handle = file_staged_name_open(
+            address_of staged, path, 0644 & ~file_umask(), 0);
 
         if (handle < 0)
                 return handle;
 
         if (system_write_all((positive)handle, line, used) != used)
         {
-                net_staging_finish(address_of staged, false);
+                file_staged_name_abort(address_of staged);
                 return -ERROR_INPUT_OUTPUT;
         }
 
-        return net_staging_finish(address_of staged, true);
+        return net_staged_name_publish(address_of staged);
 }
 
 static bipolar net_write_resolv(p32 nameserver)
@@ -1346,6 +1340,9 @@ static b32 net_auto(b32 handle, net_holding address_to held)
                         string_format(net_out, "ip: the server refused the request\n");
                 else if (status == DHCP_NO_OFFER)
                         string_format(net_out, "ip: nobody offered a lease\n");
+                else if (status == DHCP_NO_RANDOM)
+                        string_format(net_out,
+                                      "ip: kernel randomness is unavailable\n");
                 else
                         string_format(net_out, "ip: could not ask for a lease\n");
 
@@ -1404,7 +1401,6 @@ typedef struct
 } net_state;
 
 static netlink_buffer net_states;
-static positive net_state_count;
 
 /* Remember every carrier transition, but reconfigure only when no lease is
    active or its interface actually loses carrier. A newly probed down link
@@ -1412,9 +1408,10 @@ static positive net_state_count;
 static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
 {
         net_state address_to entry;
+        positive count = net_states.used / sizeof(net_state);
         positive at;
 
-        for (at = 0; at < net_state_count; at++)
+        for (at = 0; at < count; at++)
         {
                 entry = ((net_state address_to)net_states.bytes) + at;
 
@@ -1429,13 +1426,15 @@ static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
                 goto changed;
         }
 
-        if (!net_room(address_of net_states,
-                      (net_state_count + 1) * sizeof(net_state)))
+        if (net_states.used > positive_max - sizeof(net_state) ||
+            !net_room(address_of net_states,
+                      net_states.used + sizeof(net_state)))
                 return false;
 
-        entry = ((net_state address_to)net_states.bytes) + net_state_count++;
+        entry = ((net_state address_to)net_states.bytes) + count;
         entry->index = index;
         entry->flags = flags;
+        net_states.used += sizeof(net_state);
 
 changed:
         if (held && held->index == index && !(flags & IFF_RUNNING))
@@ -1446,16 +1445,18 @@ changed:
 static bool net_link_removed(p32 index, net_holding address_to held)
 {
         net_state address_to states = (net_state address_to)net_states.bytes;
+        positive count = net_states.used / sizeof(net_state);
 
         /* Forget the carrier snapshot as well as the lease.  Interface
            indexes may be reused, and retaining the deleted device's flags
            could suppress the replacement device's first event. */
-        for (positive at = 0; at < net_state_count; at++)
+        for (positive at = 0; at < count; at++)
                 if (states[at].index == index)
                 {
-                        net_state_count--;
-                        if (at != net_state_count)
-                                states[at] = states[net_state_count];
+                        count--;
+                        if (at != count)
+                                states[at] = states[count];
+                        net_states.used = count * sizeof(net_state);
                         break;
                 }
 
@@ -1493,10 +1494,16 @@ static b32 net_watch(void)
         bipolar events;
         bipolar handle;
 
+        /* A watcher may return to the hosting shell after a descriptor
+           failure and later be started again.  Its carrier snapshots belong
+           to the former event stream; retaining them can suppress the
+           replacement stream's first transition while no lease is held. */
+        netlink_forget(address_of net_states);
+
         //      O_WRONLY. A failure leaves the handle at -1 and net_out at
         //      log, which is exactly the old behaviour.
-        net_kmsg_handle = (b32)system_open_at(AT_FDCWD,
-                                              "/dev/kmsg", 1);
+        net_kmsg_handle = (b32)system_open_at(
+            AT_FDCWD, "/dev/kmsg", 1 | O_CLOEXEC);
 
         if (net_kmsg_handle >= 0)
         {
@@ -1510,6 +1517,7 @@ static b32 net_watch(void)
         {
                 string_format(net_out, "ip: %s\n", (string_address) "cannot listen for link changes");
                 net_flush();
+                net_kmsg_close();
                 return 1;
         }
 
@@ -1640,6 +1648,11 @@ static b32 net_watch(void)
 
                 got = netlink_receive((b32)events, address_of message, null);
 
+                /* recvfrom can still be interrupted in the narrow interval
+                   after the readiness poll.  Nothing was consumed, and the
+                   lease deadline is recomputed at the top of the loop. */
+                if (got == NETWORK_INTERRUPTED)
+                        continue;
                 if (got < 0)
                         break;
 
@@ -1673,6 +1686,8 @@ static b32 net_watch(void)
 
         netlink_forget(address_of message);
         socket_close((b32)events);
+        net_kmsg_close();
+        netlink_forget(address_of net_states);
 
         return 1;
 }
@@ -1798,10 +1813,10 @@ static b32 net_ip(void)
         {
                 if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
                 {
-                        net_names_gather((b32)handle);
-
-                        if (netlink_dump((b32)handle, RTM_GETROUTE, sizeof(netlink_route),
-                                         AF_INET, net_route_line, null) < 0)
+                        if (!net_names_gather((b32)handle) ||
+                            netlink_dump((b32)handle, RTM_GETROUTE,
+                                         sizeof(netlink_route), AF_INET,
+                                         net_route_line, null) < 0)
                                 status = net_refused((string_address) "route show", -1);
                 }
                 else if (net_word_is(verb, "add", 1) &&

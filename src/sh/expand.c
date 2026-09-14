@@ -1514,10 +1514,16 @@ fn shell_pid_ensure()
 
 /* A child may perform its first $$ expansion after the clone. Capture the
    shell's identity on the parent side while leaving no-fork startup lazy. */
-bipolar shell_clone()
+bipolar shell_clone_raw()
 {
         shell_pid_ensure();
         return system_fork();
+}
+
+bipolar shell_clone()
+{
+        shell_parser_source_fork_prepare();
+        return shell_clone_raw();
 }
 
 enum
@@ -3849,7 +3855,7 @@ static fn expand_run(string_address command, bool quoted)
         // with it still in hand prints all of it a second time.
         log_flush();
 
-        if (system_pipe(address_of channel, 0) < 0)
+        if (system_pipe(address_of channel, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
                 return;
 
         child = expand_tool_direct(command, channel[1]);
@@ -4253,31 +4259,65 @@ static bool expand_substitutions_ever;
 */
 static fn shell_substitutions_close(positive mark)
 {
-        positive at;
-        positive kept = mark;
+        positive kept = 0;
 
-        for (at = mark; at < expand_substitutions_count; at++)
+        if (mark > expand_substitutions_count)
+                mark = expand_substitutions_count;
+
+        for (positive at = 0; at < expand_substitutions_count; at++)
         {
+                expand_substitution entry = expand_substitutions[at];
                 positive status = 0;
                 bipolar reaped;
 
-                if (expand_substitutions[at].descriptor >= 0)
-                        system_close(expand_substitutions[at].descriptor);
+                /* Entries below the mark belong to an outer command. Its
+                   published descriptor remains open, while a child retained
+                   after an earlier close is safe to poll again. */
+                if (at < mark && entry.descriptor >= 0)
+                {
+                        expand_substitutions[kept++] = entry;
+                        continue;
+                }
 
-                reaped = system_wait4_retry(expand_substitutions[at].child,
+                if (entry.descriptor >= 0)
+                        system_close(entry.descriptor);
+
+                reaped = system_wait4_retry(entry.child,
                                             address_of status,
                                             EXPAND_WAIT_NO_HANG, null);
 
                 if (!reaped)
                 {
                         expand_substitutions[kept].descriptor = -1;
-                        expand_substitutions[kept].child =
-                            expand_substitutions[at].child;
+                        expand_substitutions[kept].child = entry.child;
                         kept++;
                 }
         }
 
         expand_substitutions_count = kept;
+}
+
+/* SIGCHLD may arrive while a retained process-substitution child is the only
+   child this shell knows about. Poll closed entries without disturbing the
+   descriptors still owned by an active command. */
+static fn shell_substitutions_reap()
+{
+        positive into = 0;
+
+        for (positive at = 0; at < expand_substitutions_count; at++)
+        {
+                expand_substitution entry = expand_substitutions[at];
+                positive status = 0;
+
+                if (entry.descriptor < 0 &&
+                    system_wait4_retry(entry.child, address_of status,
+                                       EXPAND_WAIT_NO_HANG, null) != 0)
+                        continue;
+
+                expand_substitutions[into++] = entry;
+        }
+
+        expand_substitutions_count = into;
 }
 
 // A fork inherits the list and none of the children on it. Dropping the
@@ -4298,6 +4338,7 @@ static bool expand_substitution_remember(b32 descriptor, bipolar child)
         expand_substitutions[expand_substitutions_count].child = child;
         expand_substitutions_count++;
         expand_substitutions_ever = true;
+        job_child_watch();
 
         return true;
 }
@@ -4400,7 +4441,18 @@ static string_address expand_process(string_address step, p8 mark)
         // with it still in hand writes all of it a second time.
         log_flush();
 
-        if (system_pipe(address_of channel, 0) < 0)
+        /* Reserve the child row before it exists. Losing its pid after fork
+           would leave an unreapable zombie and make descendant liveness
+           permanently ambiguous. */
+        if (!shell_array_room(expand_substitutions,
+                              expand_substitutions_room,
+                              expand_substitutions_count + 1))
+        {
+                expand_fatal_status(2);
+                return stop + 1;
+        }
+
+        if (system_pipe(address_of channel, SHELL_PIPE_CLOSE_ON_EXEC) < 0)
         {
                 expand_fatal_status(2);
                 return stop + 1;
@@ -4409,6 +4461,7 @@ static string_address expand_process(string_address step, p8 mark)
         ours = reading ? channel[0] : channel[1];
         theirs = reading ? channel[1] : channel[0];
 
+        job_child_watch();
         child = shell_clone();
 
         if (child == 0)
@@ -4442,6 +4495,18 @@ static string_address expand_process(string_address step, p8 mark)
                 {
                         system_close(ours);
                         ours = (b32)moved;
+                }
+                else if (system_descriptor_install(ours, ours) < 0)
+                {
+                        /* F_DUPFD can fail when the descriptor limit leaves
+                           no room above the substitution floor.  The pipe
+                           itself is still usable, but pipe2 made it
+                           close-on-exec; clear that bit before publishing a
+                           /dev/fd path or fail without handing out a path
+                           whose descriptor vanishes at exec. */
+                        system_close(ours);
+                        expand_fatal_status(2);
+                        return stop + 1;
                 }
         }
 
@@ -6931,6 +6996,25 @@ done:
         would turn ${a[@]@A} into one assignment per value; bash writes a
         single declare (or a key/value listing) and lets IFS split the flags.
 */
+static shell_array_item address_to expand_array_items_take(
+    string_address name, positive length, positive count,
+    shell_mark address_to held)
+{
+        shell_array_item address_to items;
+
+        address_to held = shell_store_mark(address_of expand_store);
+        if (count > positive_max / sizeof(items[0]) ||
+            !(items = (shell_array_item address_to)shell_store_take(
+                  address_of expand_store, count * sizeof(items[0]))))
+        {
+                expand_fail_state();
+                return null;
+        }
+
+        shell_array_items(name, length, items, count);
+        return items;
+}
+
 static COLD fn expand_array_whole_transform(string_address name, positive length,
                                             p8 form, p8 which, bool quoted)
 {
@@ -6967,16 +7051,10 @@ static COLD fn expand_array_whole_transform(string_address name, positive length
                         return;
                 }
 
-                held = shell_store_mark(address_of expand_store);
-                if (count > positive_max / sizeof(items[0]) ||
-                    !(items = (shell_array_item address_to)shell_store_take(
-                          address_of expand_store, count * sizeof(items[0]))))
-                {
-                        expand_fail_state();
+                items = expand_array_items_take(name, length, count,
+                                                address_of held);
+                if (!items)
                         return;
-                }
-
-                shell_array_items(name, length, items, count);
                 for (at = 0; at < count && !expand_failed; at++)
                 {
                         if (at)
@@ -7009,16 +7087,10 @@ static COLD fn expand_array_whole_transform(string_address name, positive length
                         return;
                 }
 
-                held = shell_store_mark(address_of expand_store);
-                if (count > positive_max / sizeof(items[0]) ||
-                    !(items = (shell_array_item address_to)shell_store_take(
-                          address_of expand_store, count * sizeof(items[0]))))
-                {
-                        expand_fail_state();
+                items = expand_array_items_take(name, length, count,
+                                                address_of held);
+                if (!items)
                         return;
-                }
-
-                shell_array_items(name, length, items, count);
                 for (at = 0; at < count && !expand_failed; at++)
                 {
                         if (at)
@@ -7058,16 +7130,10 @@ static COLD fn expand_array_whole_transform(string_address name, positive length
 
         if (count)
         {
-                held = shell_store_mark(address_of expand_store);
-                if (count > positive_max / sizeof(items[0]) ||
-                    !(items = (shell_array_item address_to)shell_store_take(
-                          address_of expand_store, count * sizeof(items[0]))))
-                {
-                        expand_fail_state();
+                items = expand_array_items_take(name, length, count,
+                                                address_of held);
+                if (!items)
                         return;
-                }
-
-                shell_array_items(name, length, items, count);
                 for (at = 0; at < count && !expand_failed; at++)
                 {
                         if (at)
