@@ -31,6 +31,11 @@
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
 #include <asm/fpu/xcr.h>
+#elif defined(CONFIG_ARM64)
+#include <asm/cpufeature.h>
+#elif defined(CONFIG_RISCV)
+#include <asm/cpufeature.h>
+#include <asm/vector.h>
 #endif
 
 // The graphics headers must precede library.c: it defines "end" as a macro
@@ -198,6 +203,35 @@ static void __init spark_cpu_features_start(void)
                 if (cpu_feature_enabled(X86_FEATURE_AVX512VBMI))
                         spark_cpu_features |= SPARK_CPU_AVX512_VBMI;
         }
+}
+#endif
+
+#if defined(CONFIG_ARM64)
+static unsigned long __ro_after_init spark_cpu_features;
+
+/* The Boolean byte lanes from bit 0, as spark.inc lays them out: PMULL,
+   then AES. Both are system capabilities, final once the CPUs are up. */
+static void __init spark_cpu_features_start(void)
+{
+        if (cpu_have_named_feature(PMULL))
+                spark_cpu_features |= SPARK_CPU_CLMUL_LANE;
+        if (cpu_have_named_feature(AES))
+                spark_cpu_features |= SPARK_CPU_AES_LANE;
+}
+#elif defined(CONFIG_RISCV)
+/* Zbc, then Zvkned with the vector state this task may use. Asked at each
+   exec rather than once, because whether userspace may touch V is a per-task
+   control. */
+static unsigned long spark_cpu_features_now(void)
+{
+        unsigned long lanes = 0;
+
+        if (riscv_has_extension_unlikely(RISCV_ISA_EXT_ZBC))
+                lanes |= SPARK_CPU_CLMUL_LANE;
+        if (has_vector() && riscv_v_vstate_ctrl_user_allowed() &&
+            riscv_has_extension_unlikely(RISCV_ISA_EXT_ZVKNED))
+                lanes |= SPARK_CPU_AES_LANE;
+        return lanes;
 }
 #endif
 
@@ -490,14 +524,14 @@ int execute_spark(struct linux_binprm *bprm)
         regs->ss = __USER_DS;
 #elif defined(CONFIG_ARM64)
         regs->regs[19] = SPARK_START_MAGIC;
-        regs->regs[20] = 0;
+        regs->regs[20] = spark_cpu_features;
         regs->regs[21] = task_pid_nr(current);
         regs->pc = header->entry;
         regs->sp = stack_addr;
         regs->pstate = PSR_MODE_EL0t;
 #elif defined(CONFIG_RISCV)
         regs->s2 = SPARK_START_MAGIC;
-        regs->s3 = 0;
+        regs->s3 = spark_cpu_features_now();
         regs->s4 = task_pid_nr(current);
         regs->epc = header->entry;
         regs->sp = stack_addr;
@@ -1341,7 +1375,7 @@ static b32 __init start()
         */
         wait_for_initramfs();
 
-#ifdef CONFIG_X86_64
+#if defined(CONFIG_X86_64) || defined(CONFIG_ARM64)
         spark_cpu_features_start();
 #endif
         init_mount();

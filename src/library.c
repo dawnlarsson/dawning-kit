@@ -15175,15 +15175,31 @@ __asm__(
     ".Lmemory_records_arm64_zero:\n   mov x0, #0\n" ASM_RET
     ASM_END(memory_count_records_with_prepared)
     //
-    //       moonwater_cpu_detect -- nothing to ask yet.
+    //       moonwater_cpu_detect -- the AES and PMULL bits.
     //
-    //       NEON is not optional on arm64: every one of them has it, so there
-    //       is no feature to test and no second body to choose between. This
-    //       exists because startup calls it on every machine, and a routine
-    //       that is present on two architectures of three is the unevenness
-    //       the inventory at the top of this file exists to stop.
+    //       NEON is not optional on arm64, but the cryptography extension is:
+    //       a Cortex-A72 in a Raspberry Pi 4 has neither instruction. Linux
+    //       answers in AT_HWCAP, which sits in the auxiliary vector past argv
+    //       and envp on the stack _start was entered with -- HWCAP_AES is bit
+    //       3, HWCAP_PMULL bit 4. A Spark loader hands _start the same two
+    //       answers in x20 instead and this is not called.
     //
     ASM_FUNC(moonwater_cpu_detect)
+#if !defined(KERNEL_MODE) && !defined(MACOS)
+    "adrp x9, program_stack_base\n   ldr x9, [x9, :lo12:program_stack_base]\n"
+    "cbz x9, .Lcpu_detect_arm64_done\n"
+    "ldr x10, [x9], #8\n   add x9, x9, x10, lsl #3\n   add x9, x9, #8\n"
+    ".Lcpu_detect_arm64_environment:\n"
+    "ldr x10, [x9], #8\n   cbnz x10, .Lcpu_detect_arm64_environment\n"
+    ".Lcpu_detect_arm64_auxv:\n"
+    "ldp x10, x11, [x9], #16\n   cbz x10, .Lcpu_detect_arm64_done\n"
+    "cmp x10, #16\n   b.ne .Lcpu_detect_arm64_auxv\n"
+    "ubfx x12, x11, #4, #1\n   adrp x13, cpu_has_pclmul\n"
+    "strb w12, [x13, :lo12:cpu_has_pclmul]\n"
+    "ubfx x12, x11, #3, #1\n   adrp x13, cpu_has_aes\n"
+    "strb w12, [x13, :lo12:cpu_has_aes]\n"
+    ".Lcpu_detect_arm64_done:\n"
+#endif
     ASM_RET
     ASM_END(moonwater_cpu_detect)
     ASM_FUNC(get_cpu_time)
@@ -16045,13 +16061,104 @@ __asm__(
     ASM_RET
     ASM_LOCAL_END(ghash_integer)
 
-    // See the x86_64 body for the table.
+    // See the x86_64 body for the table and the aggregated Karatsuba turn.
+    // PMULL multiplies lane 0 of two registers and PMULL2 lane 1, so with
+    // the powers stored high word first the low and high products of a
+    // block are one instruction each, and the sums' product a third. 32
+    // blocks a turn: 18.3 GB/s over a 16 KiB record on an M2 Pro, against
+    // 13.7 for 16, 17.5 for 48 and 7.8 for OpenSSL's GMAC.
+#define GHASH_PMULL_ZERO                                                      \
+    "movi v1.16b, #0\n   movi v2.16b, #0\n   movi v3.16b, #0\n"
+#define GHASH_PMULL_FIRST "eor v4.16b, v4.16b, v0.16b\n"
+#define GHASH_PMULL_BLOCK(power, sum, first)                                  \
+    "ldr q4, [x2], #16\n   rev64 v4.16b, v4.16b\n" first                      \
+    "ldr q5, [x1, #" power "]\n"                                              \
+    "pmull2 v6.1q, v4.2d, v5.2d\n   eor v1.16b, v1.16b, v6.16b\n"             \
+    "pmull v6.1q, v4.1d, v5.1d\n   eor v2.16b, v2.16b, v6.16b\n"              \
+    "ext v7.16b, v4.16b, v4.16b, #8\n   eor v7.16b, v7.16b, v4.16b\n"        \
+    "ldr q5, [x1, #" sum "]\n"                                                \
+    "pmull v6.1q, v7.1d, v5.1d\n   eor v3.16b, v3.16b, v6.16b\n"
+//  The middle less the other two, split across the halves, and the low
+//  half folded into the high by two multiplies with 0xc2 << 56 in v31.
+#define GHASH_PMULL_FINISH                                                    \
+    "eor v3.16b, v3.16b, v1.16b\n   eor v3.16b, v3.16b, v2.16b\n"             \
+    "ext v6.16b, v30.16b, v3.16b, #8\n   eor v1.16b, v1.16b, v6.16b\n"        \
+    "ext v6.16b, v3.16b, v30.16b, #8\n   eor v2.16b, v2.16b, v6.16b\n"        \
+    "pmull v6.1q, v1.1d, v31.1d\n   ext v1.16b, v1.16b, v1.16b, #8\n"         \
+    "eor v1.16b, v1.16b, v6.16b\n"                                            \
+    "pmull v6.1q, v1.1d, v31.1d\n   ext v1.16b, v1.16b, v1.16b, #8\n"         \
+    "eor v2.16b, v2.16b, v6.16b\n   eor v2.16b, v2.16b, v1.16b\n"             \
+    "ext v0.16b, v2.16b, v2.16b, #8\n"
     ASM_FUNC(ghash_blocks)
+#ifndef KERNEL_MODE
+    "adrp x9, cpu_has_pclmul\n   ldrb w9, [x9, :lo12:cpu_has_pclmul]\n"
+    "cbnz w9, .Lghash_blocks_arm64_pmull\n"
+#endif
     "add x1, x1, #1536\n   b ghash_integer\n"
+#ifndef KERNEL_MODE
+    ".Lghash_blocks_arm64_pmull:\n"
+    ".arch_extension crypto\n"
+    "cbz x3, .Lghash_blocks_arm64_done\n"
+    "movz x9, #0xc200, lsl #48\n   fmov d31, x9\n   movi v30.16b, #0\n"
+    "ldr q0, [x0]\n   rev64 v0.16b, v0.16b\n"
+    "cmp x3, #32\n   b.lo .Lghash_blocks_arm64_one\n"
+    ".balign 16\n"
+    ".Lghash_blocks_arm64_turn:\n"
+    GHASH_PMULL_ZERO
+    GHASH_PMULL_BLOCK("256", "1024", GHASH_PMULL_FIRST)
+    GHASH_PMULL_BLOCK("272", "1040", "")
+    GHASH_PMULL_BLOCK("288", "1056", "")
+    GHASH_PMULL_BLOCK("304", "1072", "")
+    GHASH_PMULL_BLOCK("320", "1088", "")
+    GHASH_PMULL_BLOCK("336", "1104", "")
+    GHASH_PMULL_BLOCK("352", "1120", "")
+    GHASH_PMULL_BLOCK("368", "1136", "")
+    GHASH_PMULL_BLOCK("384", "1152", "")
+    GHASH_PMULL_BLOCK("400", "1168", "")
+    GHASH_PMULL_BLOCK("416", "1184", "")
+    GHASH_PMULL_BLOCK("432", "1200", "")
+    GHASH_PMULL_BLOCK("448", "1216", "")
+    GHASH_PMULL_BLOCK("464", "1232", "")
+    GHASH_PMULL_BLOCK("480", "1248", "")
+    GHASH_PMULL_BLOCK("496", "1264", "")
+    GHASH_PMULL_BLOCK("512", "1280", "")
+    GHASH_PMULL_BLOCK("528", "1296", "")
+    GHASH_PMULL_BLOCK("544", "1312", "")
+    GHASH_PMULL_BLOCK("560", "1328", "")
+    GHASH_PMULL_BLOCK("576", "1344", "")
+    GHASH_PMULL_BLOCK("592", "1360", "")
+    GHASH_PMULL_BLOCK("608", "1376", "")
+    GHASH_PMULL_BLOCK("624", "1392", "")
+    GHASH_PMULL_BLOCK("640", "1408", "")
+    GHASH_PMULL_BLOCK("656", "1424", "")
+    GHASH_PMULL_BLOCK("672", "1440", "")
+    GHASH_PMULL_BLOCK("688", "1456", "")
+    GHASH_PMULL_BLOCK("704", "1472", "")
+    GHASH_PMULL_BLOCK("720", "1488", "")
+    GHASH_PMULL_BLOCK("736", "1504", "")
+    GHASH_PMULL_BLOCK("752", "1520", "")
+    GHASH_PMULL_FINISH
+    "sub x3, x3, #32\n   cmp x3, #32\n   b.hs .Lghash_blocks_arm64_turn\n"
+    ".Lghash_blocks_arm64_one:\n"
+    "cbz x3, .Lghash_blocks_arm64_store\n"
+    GHASH_PMULL_ZERO
+    GHASH_PMULL_BLOCK("752", "1520", GHASH_PMULL_FIRST)
+    GHASH_PMULL_FINISH
+    "sub x3, x3, #1\n   b .Lghash_blocks_arm64_one\n"
+    ".Lghash_blocks_arm64_store:\n"
+    "rev64 v0.16b, v0.16b\n   str q0, [x0]\n"
+    "movi v0.16b, #0\n   movi v1.16b, #0\n   movi v2.16b, #0\n   movi v3.16b, #0\n"
+    "movi v4.16b, #0\n   movi v5.16b, #0\n   movi v6.16b, #0\n   movi v7.16b, #0\n"
+    ".Lghash_blocks_arm64_done:\n"
+    ".arch_extension nocrypto\n"
+    ASM_RET
+#endif
     ASM_END(ghash_blocks)
 
     // See the x86_64 body. extr makes the shift of the reversed value one
     // instruction; 0xc2 << 56 is not a logical immediate, so it is a movz.
+    // arm64's entries are (high word, low word), the order rev64 leaves a
+    // loaded block in, which is what the PMULL body wants.
     ASM_FUNC(ghash_key)
     "stp x29, x30, [sp, #-80]!\n   mov x29, sp\n"
     "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
@@ -16066,7 +16173,7 @@ __asm__(
     "lsl x3, x3, #1\n   eor x3, x3, x4\n"
     "neg x4, x4\n   movz x5, #0xc200, lsl #48\n   and x4, x4, x5\n"
     "eor x2, x2, x4\n"
-    "add x6, x19, x21\n   stp x3, x2, [x6]\n"
+    "add x6, x19, x21\n   stp x2, x3, [x6]\n"
     "eor x7, x2, x3\n   add x6, x6, #768\n   stp x7, xzr, [x6]\n"
     "subs x21, x21, #16\n   b.lo .Lghash_key_arm64_done\n"
     "add x0, sp, #40\n   mov x1, x20\n   add x2, sp, #56\n   mov x3, #1\n"
@@ -16509,6 +16616,8 @@ __asm__(
     "add sp, sp, #1696\n"
     ASM_RET
 #else
+    "adrp x9, cpu_has_aes\n   ldrb w9, [x9, :lo12:cpu_has_aes]\n"
+    "cbnz w9, .Laes_ctr_arm64_ce\n"
     "sub sp, sp, #1616\n   str d8, [sp, #1552]\n   str d9, [sp, #1560]\n"
     "str d10, [sp, #1568]\n   str d11, [sp, #1576]\n   str d12, [sp, #1584]\n"
     "str d13, [sp, #1592]\n   str d14, [sp, #1600]\n   str d15, [sp, #1608]\n"
@@ -16721,6 +16830,75 @@ __asm__(
     "movi v30.16b, #0\n   movi v31.16b, #0\n   mov x9, xzr\n"
     "mov x10, xzr\n   mov x11, xzr\n   mov x14, xzr\n"
     "add sp, sp, #1616\n"
+    ASM_RET
+    ".Laes_ctr_arm64_ce:\n"
+    ".arch_extension crypto\n"
+    //  Eight counters a turn, ten rounds of aese and aesmc on each against
+    //  keys loaded once; aese adds the key before SubBytes, so the last key
+    //  is an eor. 15.4 GB/s over a 16 KiB record on an M2 Pro.
+    "ldp q16, q17, [x0]\n   ldp q18, q19, [x0, #32]\n   ldp q20, q21, [x0, #64]\n"
+    "ldp q22, q23, [x0, #96]\n   ldp q24, q25, [x0, #128]\n   ldr q26, [x0, #160]\n"
+    "ldr q29, [x1]\n   ldr w9, [x1, #12]\n   rev w9, w9\n"
+    "cmp x4, #8\n   b.lo .Laes_ctr_arm64_ce_one\n"
+    ".balign 16\n"
+    ".Laes_ctr_arm64_ce_turn:\n"
+    "add w10, w9, #0\n   rev w10, w10\n   mov v0.16b, v29.16b\n   mov v0.s[3], w10\n"
+    "add w10, w9, #1\n   rev w10, w10\n   mov v1.16b, v29.16b\n   mov v1.s[3], w10\n"
+    "add w10, w9, #2\n   rev w10, w10\n   mov v2.16b, v29.16b\n   mov v2.s[3], w10\n"
+    "add w10, w9, #3\n   rev w10, w10\n   mov v3.16b, v29.16b\n   mov v3.s[3], w10\n"
+    "add w10, w9, #4\n   rev w10, w10\n   mov v4.16b, v29.16b\n   mov v4.s[3], w10\n"
+    "add w10, w9, #5\n   rev w10, w10\n   mov v5.16b, v29.16b\n   mov v5.s[3], w10\n"
+    "add w10, w9, #6\n   rev w10, w10\n   mov v6.16b, v29.16b\n   mov v6.s[3], w10\n"
+    "add w10, w9, #7\n   rev w10, w10\n   mov v7.16b, v29.16b\n   mov v7.s[3], w10\n"
+    "aese v0.16b, v16.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v16.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v16.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v16.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v16.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v16.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v16.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v16.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v17.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v17.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v17.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v17.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v17.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v17.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v17.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v17.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v18.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v18.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v18.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v18.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v18.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v18.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v18.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v18.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v19.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v19.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v19.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v19.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v19.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v19.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v19.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v19.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v20.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v20.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v20.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v20.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v20.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v20.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v20.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v20.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v21.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v21.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v21.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v21.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v21.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v21.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v21.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v21.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v22.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v22.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v22.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v22.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v22.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v22.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v22.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v22.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v23.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v23.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v23.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v23.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v23.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v23.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v23.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v23.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v24.16b\n   aesmc v0.16b, v0.16b\n   aese v1.16b, v24.16b\n   aesmc v1.16b, v1.16b\n   aese v2.16b, v24.16b\n   aesmc v2.16b, v2.16b\n   aese v3.16b, v24.16b\n   aesmc v3.16b, v3.16b\n   aese v4.16b, v24.16b\n   aesmc v4.16b, v4.16b\n   aese v5.16b, v24.16b\n   aesmc v5.16b, v5.16b\n   aese v6.16b, v24.16b\n   aesmc v6.16b, v6.16b\n   aese v7.16b, v24.16b\n   aesmc v7.16b, v7.16b\n"
+    "aese v0.16b, v25.16b\n   aese v1.16b, v25.16b\n   aese v2.16b, v25.16b\n   aese v3.16b, v25.16b\n   aese v4.16b, v25.16b\n   aese v5.16b, v25.16b\n   aese v6.16b, v25.16b\n   aese v7.16b, v25.16b\n"
+    "ldp q27, q28, [x2], #32\n   eor v27.16b, v27.16b, v26.16b\n   eor v28.16b, v28.16b, v26.16b\n"
+    "eor v0.16b, v0.16b, v27.16b\n   eor v1.16b, v1.16b, v28.16b\n   stp q0, q1, [x3], #32\n"
+    "ldp q27, q28, [x2], #32\n   eor v27.16b, v27.16b, v26.16b\n   eor v28.16b, v28.16b, v26.16b\n"
+    "eor v2.16b, v2.16b, v27.16b\n   eor v3.16b, v3.16b, v28.16b\n   stp q2, q3, [x3], #32\n"
+    "ldp q27, q28, [x2], #32\n   eor v27.16b, v27.16b, v26.16b\n   eor v28.16b, v28.16b, v26.16b\n"
+    "eor v4.16b, v4.16b, v27.16b\n   eor v5.16b, v5.16b, v28.16b\n   stp q4, q5, [x3], #32\n"
+    "ldp q27, q28, [x2], #32\n   eor v27.16b, v27.16b, v26.16b\n   eor v28.16b, v28.16b, v26.16b\n"
+    "eor v6.16b, v6.16b, v27.16b\n   eor v7.16b, v7.16b, v28.16b\n   stp q6, q7, [x3], #32\n"
+    "add w9, w9, #8\n   sub x4, x4, #8\n   cmp x4, #8\n   b.hs .Laes_ctr_arm64_ce_turn\n"
+    ".Laes_ctr_arm64_ce_one:\n"
+    "cbz x4, .Laes_ctr_arm64_ce_done\n"
+    "rev w10, w9\n   mov v0.16b, v29.16b\n   mov v0.s[3], w10\n"
+    "aese v0.16b, v16.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v17.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v18.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v19.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v20.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v21.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v22.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v23.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v24.16b\n   aesmc v0.16b, v0.16b\n"
+    "aese v0.16b, v25.16b\n   eor v0.16b, v0.16b, v26.16b\n"
+    "ldr q27, [x2], #16\n   eor v0.16b, v0.16b, v27.16b\n   str q0, [x3], #16\n"
+    "add w9, w9, #1\n   sub x4, x4, #1\n   b .Laes_ctr_arm64_ce_one\n"
+    ".Laes_ctr_arm64_ce_done:\n"
+    "rev w9, w9\n   str w9, [x1, #12]\n"
+    "movi v0.16b, #0\n   movi v1.16b, #0\n"
+    "movi v2.16b, #0\n   movi v3.16b, #0\n"
+    "movi v4.16b, #0\n   movi v5.16b, #0\n"
+    "movi v6.16b, #0\n   movi v7.16b, #0\n"
+    "movi v16.16b, #0\n   movi v17.16b, #0\n"
+    "movi v18.16b, #0\n   movi v19.16b, #0\n"
+    "movi v20.16b, #0\n   movi v21.16b, #0\n"
+    "movi v22.16b, #0\n   movi v23.16b, #0\n"
+    "movi v24.16b, #0\n   movi v25.16b, #0\n"
+    "movi v26.16b, #0\n   movi v27.16b, #0\n"
+    "movi v28.16b, #0\n   movi v29.16b, #0\n"
+    "mov x9, xzr\n   mov x10, xzr\n"
+    ".arch_extension nocrypto\n"
     ASM_RET
 #endif
     ".Laes_ctr_arm64_none:\n"
@@ -22187,10 +22365,29 @@ __asm__(
     ".Lmemory_records_rv_zero:\n   li a0, 0\n" ASM_RET
     ASM_END(memory_count_records_with_prepared)
     //
-    //       moonwater_cpu_detect -- nothing to ask yet. The vector extension is optional
-    //       on riscv and would need asking about; nothing here uses it.
+    //       moonwater_cpu_detect -- Zbc, V and Zvkned, from riscv_hwprobe.
+    //
+    //       Every extension above the floor is optional here, and the kernel
+    //       answers for all harts at once: syscall 258 with key 4,
+    //       IMA_EXT_0, whose value has V at bit 2, Zbc at bit 7 and Zvkned at
+    //       bit 21. An older kernel answers ENOSYS, or leaves the key as -1,
+    //       and both bytes stay zero. A Spark loader hands _start the same
+    //       two answers in s3 instead and this is not called.
     //
     ASM_FUNC(moonwater_cpu_detect)
+#ifndef KERNEL_MODE
+    "addi sp, sp, -16\n   li t0, 4\n   sd t0, 0(sp)\n   sd zero, 8(sp)\n"
+    "mv a0, sp\n   li a1, 1\n   li a2, 0\n   li a3, 0\n   li a4, 0\n"
+    "li a7, 258\n   ecall\n"
+    "bnez a0, .Lcpu_detect_rv_done\n"
+    "ld t0, 0(sp)\n   li t1, 4\n   bne t0, t1, .Lcpu_detect_rv_done\n"
+    "ld t0, 8(sp)\n"
+    "srli t1, t0, 7\n   andi t1, t1, 1\n   lla t2, cpu_has_pclmul\n   sb t1, 0(t2)\n"
+    "srli t1, t0, 21\n   srli t2, t0, 2\n   and t1, t1, t2\n   andi t1, t1, 1\n"
+    "lla t2, cpu_has_aes\n   sb t1, 0(t2)\n"
+    ".Lcpu_detect_rv_done:\n"
+    "addi sp, sp, 16\n"
+#endif
     ASM_RET
     ASM_END(moonwater_cpu_detect)
     ASM_SECTION
@@ -23121,9 +23318,53 @@ __asm__(
     ASM_RET
     ASM_LOCAL_END(ghash_integer)
 
-    // See the x86_64 body for the table.
+    // See the x86_64 body for the table. With Zbc a block is one Karatsuba
+    // product of three clmul/clmulh pairs against H times x^-1 and a fold
+    // of two more by 0xc2 << 56, so there is no shift anywhere; without Zbb
+    // the block and the state still come in a byte at a time. Checked under
+    // qemu only, so no timing is claimed here.
     ASM_FUNC(ghash_blocks)
+#ifndef KERNEL_MODE
+    "lla t0, cpu_has_pclmul\n   lbu t0, 0(t0)\n   bnez t0, .Lghash_blocks_rv_zbc\n"
+#endif
     "addi a1, a1, 1536\n   j ghash_integer\n"
+#ifndef KERNEL_MODE
+    ".Lghash_blocks_rv_zbc:\n"
+    ".option push\n   .option arch, +zbc\n"
+    "beqz a3, .Lghash_blocks_rv_zbc_done\n"
+    "addi sp, sp, -32\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n"
+    "li t6, 0xc2\n   slli t6, t6, 56\n"
+    "ld a4, 752(a1)\n   ld a5, 760(a1)\n   ld a6, 1520(a1)\n"
+    GHASH_RISCV_LOAD("a0", "a7", "0", "1", "2", "3", "4", "5", "6", "7")
+    GHASH_RISCV_LOAD("a0", "t4", "8", "9", "10", "11", "12", "13", "14", "15")
+    ".Lghash_blocks_rv_zbc_block:\n"
+    GHASH_RISCV_LOAD("a2", "t0", "0", "1", "2", "3", "4", "5", "6", "7")
+    "xor a7, a7, t0\n"
+    GHASH_RISCV_LOAD("a2", "t0", "8", "9", "10", "11", "12", "13", "14", "15")
+    "xor t4, t4, t0\n"
+    //  Low, high and sum products; the middle less the other two.
+    "clmul t0, t4, a4\n   clmulh t1, t4, a4\n"
+    "clmul t2, a7, a5\n   clmulh t3, a7, a5\n"
+    "xor s0, t4, a7\n   clmul s1, s0, a6\n   clmulh s2, s0, a6\n"
+    "xor s1, s1, t0\n   xor s1, s1, t2\n   xor s2, s2, t1\n   xor s2, s2, t3\n"
+    //  w0 t0, w1 t1, w2 t2, w3 t3; w0 folds into w1 and w2, then w1 into
+    //  w2 and w3.
+    "xor t1, t1, s1\n   xor t2, t2, s2\n"
+    "clmul s1, t0, t6\n   clmulh s2, t0, t6\n"
+    "xor t1, t1, s1\n   xor t2, t2, t0\n   xor t2, t2, s2\n"
+    "clmul s1, t1, t6\n   clmulh s2, t1, t6\n"
+    "xor t2, t2, s1\n   xor t3, t3, t1\n   xor t3, t3, s2\n"
+    "mv a7, t3\n   mv t4, t2\n"
+    "addi a2, a2, 16\n   addi a3, a3, -1\n   bnez a3, .Lghash_blocks_rv_zbc_block\n"
+    GHASH_RISCV_STORE("a0", "a7", "0", "1", "2", "3", "4", "5", "6", "7")
+    GHASH_RISCV_STORE("a0", "t4", "8", "9", "10", "11", "12", "13", "14", "15")
+    "li a4, 0\n   li a5, 0\n   li a6, 0\n   li a7, 0\n   li t0, 0\n   li t1, 0\n"
+    "li t2, 0\n   li t3, 0\n   li t4, 0\n   li t5, 0\n"
+    "ld s0, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n   addi sp, sp, 32\n"
+    ".Lghash_blocks_rv_zbc_done:\n"
+    ".option pop\n"
+    ASM_RET
+#endif
     ASM_END(ghash_blocks)
 
     // See the x86_64 body. Without Zbb the reversal is the byte load.
@@ -23166,6 +23407,9 @@ __asm__(
     "bnez a4, .Laes_ctr_rv_some\n"
     ASM_RET
     ".Laes_ctr_rv_some:\n"
+#ifndef KERNEL_MODE
+    "lla t0, cpu_has_aes\n   lbu t0, 0(t0)\n   bnez t0, .Laes_ctr_rv_zvkned\n"
+#endif
     "addi sp, sp, -1712\n   sd s0, 208(sp)\n   sd s1, 216(sp)\n"
     "sd s2, 224(sp)\n   sd s3, 232(sp)\n   sd s4, 240(sp)\n"
     "sd s5, 248(sp)\n   sd s6, 256(sp)\n   sd s7, 264(sp)\n"
@@ -23646,6 +23890,70 @@ __asm__(
     "li a5, 0\n   li a6, 0\n   li a7, 0\n"
     "addi sp, sp, 1712\n"
     ASM_RET
+#ifndef KERNEL_MODE
+    //  Zvkned: blocks loaded a byte at a time and read as 32-bit elements,
+    //  every counter of a chunk in one vector, the ten rounds as vector
+    //  instructions against keys loaded once. vl is asked for exactly: a
+    //  whole number of blocks no larger than VLMAX or the 512-byte counter
+    //  buffer, since vsetvli may otherwise hand back half a block.
+    ".Laes_ctr_rv_zvkned:\n"
+    ".option push\n   .option arch, +v, +zvkned\n"
+    "addi sp, sp, -560\n"
+    "sd s0, 512(sp)\n   sd s1, 520(sp)\n   sd s2, 528(sp)\n   sd s3, 536(sp)\n"
+    "li t0, 16\n   vsetvli t1, t0, e8, ta, ma\n"
+    "vle8.v v1, (a0)\n   addi t2, a0, 16\n   vle8.v v2, (t2)\n"
+    "addi t2, a0, 32\n   vle8.v v3, (t2)\n   addi t2, a0, 48\n   vle8.v v4, (t2)\n"
+    "addi t2, a0, 64\n   vle8.v v5, (t2)\n   addi t2, a0, 80\n   vle8.v v6, (t2)\n"
+    "addi t2, a0, 96\n   vle8.v v7, (t2)\n   addi t2, a0, 112\n   vle8.v v8, (t2)\n"
+    "addi t2, a0, 128\n   vle8.v v9, (t2)\n   addi t2, a0, 144\n   vle8.v v10, (t2)\n"
+    "addi t2, a0, 160\n   vle8.v v11, (t2)\n"
+    "lbu s0, 12(a1)\n   lbu t0, 13(a1)\n   slli s0, s0, 8\n   or s0, s0, t0\n"
+    "lbu t0, 14(a1)\n   slli s0, s0, 8\n   or s0, s0, t0\n"
+    "lbu t0, 15(a1)\n   slli s0, s0, 8\n   or s0, s0, t0\n"
+    "vsetvli s1, zero, e8, ta, ma\n   andi s1, s1, -16\n   li t0, 512\n"
+    "bleu s1, t0, .Laes_ctr_rv_zvkned_chunk\n   mv s1, t0\n"
+    ".Laes_ctr_rv_zvkned_chunk:\n"
+    "slli s2, a4, 4\n   bleu s2, s1, .Laes_ctr_rv_zvkned_sized\n   mv s2, s1\n"
+    ".Laes_ctr_rv_zvkned_sized:\n"
+    "srli s3, s2, 4\n   li t1, 0\n   mv t2, sp\n"
+    ".Laes_ctr_rv_zvkned_counter:\n"
+    "lbu t3, 0(a1)\n   sb t3, 0(t2)\n   lbu t3, 1(a1)\n   sb t3, 1(t2)\n"
+    "lbu t3, 2(a1)\n   sb t3, 2(t2)\n   lbu t3, 3(a1)\n   sb t3, 3(t2)\n"
+    "lbu t3, 4(a1)\n   sb t3, 4(t2)\n   lbu t3, 5(a1)\n   sb t3, 5(t2)\n"
+    "lbu t3, 6(a1)\n   sb t3, 6(t2)\n   lbu t3, 7(a1)\n   sb t3, 7(t2)\n"
+    "lbu t3, 8(a1)\n   sb t3, 8(t2)\n   lbu t3, 9(a1)\n   sb t3, 9(t2)\n"
+    "lbu t3, 10(a1)\n   sb t3, 10(t2)\n   lbu t3, 11(a1)\n   sb t3, 11(t2)\n"
+    "addw t3, s0, t1\n   srli t4, t3, 24\n   sb t4, 12(t2)\n   srli t4, t3, 16\n"
+    "sb t4, 13(t2)\n   srli t4, t3, 8\n   sb t4, 14(t2)\n   sb t3, 15(t2)\n"
+    "addi t2, t2, 16\n   addi t1, t1, 1\n   bltu t1, s3, .Laes_ctr_rv_zvkned_counter\n"
+    "vsetvli t0, s2, e8, ta, ma\n   vle8.v v12, (sp)\n"
+    "srli t1, s2, 2\n   vsetvli t0, t1, e32, ta, ma\n"
+    "vaesz.vs v12, v1\n   vaesem.vs v12, v2\n   vaesem.vs v12, v3\n   vaesem.vs v12, v4\n"
+    "vaesem.vs v12, v5\n   vaesem.vs v12, v6\n   vaesem.vs v12, v7\n   vaesem.vs v12, v8\n"
+    "vaesem.vs v12, v9\n   vaesem.vs v12, v10\n   vaesef.vs v12, v11\n"
+    "vsetvli t0, s2, e8, ta, ma\n   vle8.v v13, (a2)\n   vxor.vv v12, v12, v13\n"
+    "vse8.v v12, (a3)\n"
+    "add a2, a2, s2\n   add a3, a3, s2\n   addw s0, s0, s3\n   sub a4, a4, s3\n"
+    "bnez a4, .Laes_ctr_rv_zvkned_chunk\n"
+    "srli t0, s0, 24\n   sb t0, 12(a1)\n   srli t0, s0, 16\n   sb t0, 13(a1)\n"
+    "srli t0, s0, 8\n   sb t0, 14(a1)\n   sb s0, 15(a1)\n"
+    "mv t0, sp\n   addi t1, sp, 512\n"
+    ".Laes_ctr_rv_zvkned_wipe:\n"
+    "sd zero, 0(t0)\n   addi t0, t0, 8\n   bltu t0, t1, .Laes_ctr_rv_zvkned_wipe\n"
+    "vsetvli t0, zero, e8, ta, ma\n"
+    "vxor.vv v1, v1, v1\n   vxor.vv v2, v2, v2\n"
+    "vxor.vv v3, v3, v3\n   vxor.vv v4, v4, v4\n"
+    "vxor.vv v5, v5, v5\n   vxor.vv v6, v6, v6\n"
+    "vxor.vv v7, v7, v7\n   vxor.vv v8, v8, v8\n"
+    "vxor.vv v9, v9, v9\n   vxor.vv v10, v10, v10\n"
+    "vxor.vv v11, v11, v11\n   vxor.vv v12, v12, v12\n"
+    "vxor.vv v13, v13, v13\n"
+    "li t2, 0\n   li t3, 0\n   li t4, 0\n"
+    "ld s0, 512(sp)\n   ld s1, 520(sp)\n   ld s2, 528(sp)\n   ld s3, 536(sp)\n"
+    "addi sp, sp, 560\n"
+    ".option pop\n"
+    ASM_RET
+#endif
     ASM_END(aes128_ctr_blocks)
 
     // See the x86_64 bodies for the reductions. Without flags each carry is

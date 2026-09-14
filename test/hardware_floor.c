@@ -11,10 +11,10 @@
             Darwin (lifted ARM64 bodies):
                 python3 test/differential.py --harness native_extract \
                     src/library.c $NAMES > /tmp/lifted.h
-                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_FIELD -DSKIP_HEX \
+                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_FIELD -DSKIP_AES -DSKIP_HEX \
                     -DSKIP_ITOA -I/tmp test/hardware_floor.c -o /tmp/hwfloor
 
-            Darwin names (sha256/ghash/field/hex/itoa skipped: Mach-O :lo12: tables
+            Darwin names (sha256/ghash/field/aes/hex/itoa skipped: Mach-O :lo12: tables
                 or not lifted):
                 memory_copy_apart memory_copy memory_fill memory_fill_32
                 memory_fill_64 memory_reverse memory_frob
