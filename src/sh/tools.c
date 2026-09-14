@@ -231,14 +231,6 @@ static bool logger_clock_synced(positive address_to accuracy)
         return true;
 }
 
-static fn logger_build_padded(logger_builder address_to build, positive value,
-                              positive width)
-{
-        p8 digits[24];
-        positive length = positive_into_padded(digits, value, width, '0');
-        logger_build_bytes(build, digits, length);
-}
-
 static const named_byte logger_facilities[] = {
     {(string_address)"kern", 0},       {(string_address)"user", 8},
     {(string_address)"mail", 16},      {(string_address)"daemon", 24},
@@ -373,57 +365,62 @@ static bool logger_rfc_flags(logger_control address_to control,
         return true;
 }
 
-static positive logger_timestamp_3164(logger_builder address_to build,
-                                      p64 seconds)
+/* A moment spelled by a strftime format, terminated; empty when the moment
+   has no spelling. There is no timezone database, so local time is UTC. */
+static positive tools_clock_text(p8 address_to into, positive room,
+                                 string_address format, b64 seconds)
 {
         time_t stamp = (time_t)seconds;
         tm broken;
-        p8 time_text[32];
+        positive made = gmtime_r(address_of stamp, address_of broken)
+                            ? strftime(into, room, format, address_of broken)
+                            : 0;
 
-        if (!localtime_r(address_of stamp, address_of broken))
-                return 0;
-
-        positive length = strftime(time_text, sizeof(time_text),
-                                   (string_address)"%b %e %H:%M:%S",
-                                   address_of broken);
-        if (!length)
-                return 0;
-        logger_build_bytes(build, time_text, length);
-        return length;
+        into[made] = end;
+        return made;
 }
 
-static positive logger_timestamp_5424(logger_builder address_to build,
-                                      p64 seconds, positive nanoseconds)
+/* YYYY-MM-DD?HH:MM:SS, a mark and six digits of microseconds unless the mark
+   is zero, then the zero offset: util-linux's ISO spelling, and RFC 5424's
+   with a point for the mark. Needs 40 bytes; answers 0 for no spelling. */
+static positive tools_clock_iso(p8 address_to into, b64 seconds, p8 separator,
+                                p8 mark, positive microseconds)
 {
-        time_t stamp = (time_t)seconds;
-        tm broken;
-        p8 time_text[32];
+        p8 format[] = "%Y-%m-%dT%H:%M:%S";
 
-        /* This spelling declares a zero UTC offset on the wire, so format
-           the broken-down time in UTC as well. */
-        if (!gmtime_r(address_of stamp, address_of broken))
+        format[8] = separator;
+        positive made = tools_clock_text(into, 40, format, seconds);
+        if (!made)
                 return 0;
-
-        positive length = strftime(time_text, sizeof(time_text),
-                                   (string_address)"%Y-%m-%dT%H:%M:%S",
-                                   address_of broken);
-        if (!length)
-                return 0;
-        logger_build_bytes(build, time_text, length);
-        logger_build_character(build, '.');
-        logger_build_padded(build, nanoseconds / 1000, 6);
-        logger_build_string(build, "+00:00");
-        return length + 13;
+        if (mark)
+        {
+                into[made++] = mark;
+                made += positive_into_padded(into + made, microseconds % 1000000,
+                                             6, '0');
+        }
+        memory_copy(into + made, "+00:00", 7);
+        return made + 6;
 }
 
-/*      One structured-data element, the last --sd-id named, and the
-        parameters written after it. An element nobody gave a parameter is
-        not written at all, and a parameter before any element is refused
-        where it stands. */
-#define LOGGER_SD_PARAMETERS 8
+/*      The structured-data elements as the options spell them, all but the
+        closing bracket: an --sd-id opens its element at its first
+        --sd-param, so one nobody gave a parameter is not written at all, and
+        a parameter before any element is refused where it stands. */
 static string_address logger_seen_sd_id;
-static string_address logger_seen_sd_parameter[LOGGER_SD_PARAMETERS];
-static positive logger_seen_sd_count;
+static bool logger_seen_sd_open;
+static byte_store logger_seen_sd;
+
+static bool logger_sd_put(string_address text)
+{
+        positive length = string_length(text);
+
+        if (!byte_store_reserve(address_of logger_seen_sd,
+                                logger_seen_sd.used + length, 256))
+                return false;
+        memory_copy(logger_seen_sd.bytes + logger_seen_sd.used, text, length);
+        logger_seen_sd.used += length;
+        return true;
+}
 
 static bool logger_header(logger_control address_to control,
                           p8 address_to into, positive room,
@@ -444,9 +441,13 @@ static bool logger_header(logger_control address_to control,
                 logger_build_string(address_of build, "1 ");
                 if (control->rfc_time)
                 {
-                        if (!logger_timestamp_5424(address_of build, now[0],
-                                                   (positive)now[1]))
+                        p8 stamp[40];
+                        positive stamped = tools_clock_iso(stamp, (b64)now[0], 'T',
+                                                           '.', (positive)now[1] / 1000);
+
+                        if (!stamped)
                                 return false;
+                        logger_build_bytes(address_of build, stamp, stamped);
                 }
                 else
                         logger_build_character(address_of build, '-');
@@ -484,16 +485,10 @@ static bool logger_header(logger_control address_to control,
                                 logger_build_string(address_of build,
                                     "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
                 }
-                if (logger_seen_sd_count)
+                if (logger_seen_sd.used)
                 {
-                        logger_build_character(address_of build, '[');
-                        logger_build_string(address_of build, logger_seen_sd_id);
-                        for (positive at = 0; at < logger_seen_sd_count; at++)
-                        {
-                                logger_build_character(address_of build, ' ');
-                                logger_build_string(address_of build,
-                                                    logger_seen_sd_parameter[at]);
-                        }
+                        logger_build_bytes(address_of build, logger_seen_sd.bytes,
+                                           logger_seen_sd.used);
                         logger_build_character(address_of build, ']');
                 }
                 else if (!control->rfc_quality)
@@ -502,8 +497,13 @@ static bool logger_header(logger_control address_to control,
         }
         else
         {
-                if (!logger_timestamp_3164(address_of build, now[0]))
+                p8 stamp[40];
+                positive stamped = tools_clock_text(stamp, sizeof(stamp),
+                                                    "%b %e %H:%M:%S", (b64)now[0]);
+
+                if (!stamped)
                         return false;
+                logger_build_bytes(address_of build, stamp, stamped);
                 logger_build_character(address_of build, ' ');
 
                 if (control->protocol == LOGGER_PROTOCOL_3164)
@@ -1161,7 +1161,7 @@ static bool logger_option_seen(p8 letter, string_address value)
         if (letter == 'D' && value)
         {
                 logger_seen_sd_id = value;
-                logger_seen_sd_count = 0;
+                logger_seen_sd_open = false;
         }
         if (letter == 'X' && value)
         {
@@ -1172,8 +1172,16 @@ static bool logger_option_seen(p8 letter, string_address value)
                             "logger: --sd-id was not specified for --sd-param %s\n",
                             value);
                 }
-                if (logger_seen_sd_count < LOGGER_SD_PARAMETERS)
-                        logger_seen_sd_parameter[logger_seen_sd_count++] = value;
+                if ((!logger_seen_sd_open &&
+                     (!logger_sd_put(logger_seen_sd.used ? "][" : "[") ||
+                      !logger_sd_put(logger_seen_sd_id))) ||
+                    !logger_sd_put(" ") || !logger_sd_put(value))
+                {
+                        text_flush();
+                        return string_report(writer_stderr, false,
+                                             "logger: out of memory\n");
+                }
+                logger_seen_sd_open = true;
         }
 
         return true;
@@ -1197,7 +1205,7 @@ static b32 tools_logger()
         text_delimiter = '\n';
         logger_port_unknown = false;
         logger_seen_sd_id = null;
-        logger_seen_sd_count = 0;
+        logger_seen_sd.used = 0;
         logger_seen_priority = 13;
         logger_seen_size = LOGGER_DEFAULT_SIZE;
         logger_seen_process = 0;
@@ -7631,22 +7639,6 @@ static bool dd_operand(string_address argument, string_address name,
         return true;
 }
 
-static bool dd_word(string_address address_to at, string_address name)
-{
-        string_address here = address_to at;
-        positive i = string_length(name);
-
-        if (string_compare_max(here, name, i))
-                return false;
-
-        if (here[i] && here[i] != ',')
-                return false;
-
-        address_to at = here + i + (here[i] == ',' ? 1 : 0);
-
-        return true;
-}
-
 /* The three comma lists differ only in their vocabulary and empty policy. */
 static bool dd_flags(string_address value, p8 group, positive address_to flags)
 {
@@ -7676,32 +7668,34 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
             {"nofollow", DD_NOFOLLOW, 1}, {"nofollow", DD_NOFOLLOW, 2},
         };
 
+        //      A word ends at a comma, so an empty one, before, between or after
+        //      the others, is refused by its empty name like any unknown word.
         do
         {
-                if (!*value)
-                {
-                        text_flush();
-                        return string_report(writer_stderr, false,
-                            "dd: invalid %s: ''\nTry 'dd --help' for more information.\n",
-                            group == 0 ? (string_address)"conversion"
-                            : group == 1 ? (string_address)"input flag"
-                                         : (string_address)"output flag");
-                }
+                positive length = memory_span_without_byte(value, ',',
+                                                           string_length(value));
                 positive word = 0;
                 while (word < array_count(words) &&
                        (words[word].group != group ||
-                        !dd_word(address_of value, words[word].name)))
+                        string_length(words[word].name) != length ||
+                        memory_compare(value, words[word].name, length)))
                         word++;
                 if (word == array_count(words))
                 {
+                        p8 named[FILE_PATH_MAX];
+                        positive kept = min(length, sizeof(named) - 1);
+
+                        memory_copy(named, value, kept);
+                        named[kept] = end;
                         dd_complain(group == 0 ? (string_address)"invalid conversion" :
                                     group == 1 ? (string_address)"invalid input flag" :
                                                  (string_address)"invalid output flag",
-                                    value);
+                                    named);
                         return false;
                 }
                 *flags |= words[word].flag;
-        } while (*value);
+                value += length;
+        } while (*value++);
         return true;
 }
 
@@ -13702,17 +13696,23 @@ static fn tools_dmesg_timestamp_delta(p64 microseconds, p64 delta,
 static fn tools_dmesg_calendar(tools_dmesg_state address_to state,
                                p64 microseconds, bool compact)
 {
-        time_t stamp = (time_t)(state->realtime_base +
-                                microseconds / 1000000);
-        tm broken;
+        // The boot's wall clock in microseconds plus the record's, carried
+        // whole as util-linux adds them.
+        p64 moment = state->realtime_base + microseconds;
         p8 made[64];
-        string_address format = compact ? (string_address)"%b%e %H:%M"
-                                        : (string_address)"%a %b %e %H:%M:%S %Y";
+        positive length;
 
-        if (!localtime_r(address_of stamp, address_of broken))
+        if (state->iso && !compact)
+        {
+                length = tools_clock_iso(made, (b64)(moment / 1000000), 'T', ',',
+                                         (positive)(moment % 1000000));
+                text_put(made, length);
+                text_put_character(' ');
                 return;
-        positive length = clock_format_extended(made, sizeof(made), format,
-                                                address_of broken);
+        }
+        length = tools_clock_text(made, sizeof(made),
+                                  compact ? "%b%e %H:%M" : "%a %b %e %H:%M:%S %Y",
+                                  (b64)(moment / 1000000));
         if (!length)
                 return;
         text_put_character('[');
@@ -14122,7 +14122,7 @@ static b32 tools_dmesg_main()
         p64 real = system_clock_ns(0);
         p64 boot = system_clock_ns(7);
         state.realtime_base = real >= boot
-            ? (real - boot) / SYSTEM_NANOSECONDS : 0;
+            ? (real - boot) / 1000 : 0;
 
         positive capacity = 0;
         value = file_option_value(address_of taking, 's');

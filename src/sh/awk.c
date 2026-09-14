@@ -242,15 +242,18 @@ static positive awk_write_decimal(decimal value, b32 precision, p8 address_to ou
 }
 
 // The reference spells these with a sign, always, wherever they are written.
-/* Every spelling is a sign and three letters. */
+/* Every spelling is a sign and three letters, in capitals for the capital
+   conversions %E, %F, %G and %X. */
 #define AWK_NOT_FINITE_LENGTH 4
 
-static string_address awk_not_finite_name(decimal value)
+static string_address awk_not_finite_name(decimal value, bool capitals)
 {
-        if (decimal_is_nan(value))
-                return decimal_sign_bit(value) ? "-nan" : "+nan";
+        static const string_address names[] = {"+inf", "-inf", "+nan", "-nan",
+                                               "+INF", "-INF", "+NAN", "-NAN"};
+        bool nan = decimal_is_nan(value);
 
-        return value < 0 ? "-inf" : "+inf";
+        return names[capitals * 4 + nan * 2 +
+                     (nan ? decimal_sign_bit(value) != 0 : value < 0)];
 }
 
 /*
@@ -491,7 +494,7 @@ static awk_text address_to awk_text_of_number(decimal number, string_address for
 
         if (!decimal_is_finite(number))
         {
-                string_address name = awk_not_finite_name(number);
+                string_address name = awk_not_finite_name(number, false);
 
                 return awk_text_new(name, string_length(name));
         }
@@ -1588,6 +1591,11 @@ static bool awk_name_is(awk_text address_to name, string_address what)
         return awk_text_is(name, what, string_length(what));
 }
 
+/* The names standard output answers to, and whether a redirection opened
+   each: close() answers 0 once for a name a rule opened, -1 otherwise. */
+static const string_address awk_standard_names[2] = {"/dev/stdout", "-"};
+static bool awk_standard_named[2];
+
 static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
 {
         b32 free_slot = -1;
@@ -1597,9 +1605,12 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
                 A second buffer for it would put what a rule wrote through it
                 after everything the rules around it wrote directly.
         */
-        if (kind != AWK_TO_PIPE &&
-            (awk_name_is(name, "/dev/stdout") || awk_name_is(name, "-")))
-                return address_of awk_standard_out;
+        for (b32 i = 0; kind != AWK_TO_PIPE && i < 2; i++)
+                if (awk_name_is(name, awk_standard_names[i]))
+                {
+                        awk_standard_named[i] = true;
+                        return address_of awk_standard_out;
+                }
 
         for (b32 i = 0; i < awk_writer_count; i++)
         {
@@ -1809,6 +1820,15 @@ static inline INLINE b32 awk_reader_close(awk_reader address_to which)
 static b32 awk_close_named(awk_text address_to name)
 {
         b32 answer = -1;
+
+        for (b32 i = 0; i < 2; i++)
+                if (awk_standard_named[i] &&
+                    awk_name_is(name, awk_standard_names[i]))
+                {
+                        awk_standard_named[i] = false;
+                        awk_writer_flush(address_of awk_standard_out);
+                        answer = 0;
+                }
 
         for (b32 i = 0; i < awk_writer_count; i++)
         {
@@ -2096,7 +2116,7 @@ static b32 awk_integer_digits(decimal value, p8 address_to out, positive room,
 
         if (!decimal_is_finite(value))
         {
-                string_address name = awk_not_finite_name(value);
+                string_address name = awk_not_finite_name(value, false);
                 b32 at = AWK_NOT_FINITE_LENGTH;
 
                 address_to negative = false;
@@ -2275,7 +2295,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         {
                                 if (!decimal_is_finite(exact))
                                 {
-                                        string_address name = awk_not_finite_name(exact);
+                                        string_address name = awk_not_finite_name(exact, conversion == 'X');
 
                                         body = AWK_NOT_FINITE_LENGTH;
                                         memory_copy(room, name, AWK_NOT_FINITE_LENGTH);
@@ -2396,7 +2416,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
 
                         if (!decimal_is_finite(value))
                         {
-                                string_address name = awk_not_finite_name(value);
+                                string_address name = awk_not_finite_name(value, conversion <= 'Z');
 
                                 body = AWK_NOT_FINITE_LENGTH;
                                 memory_copy(room, name, AWK_NOT_FINITE_LENGTH);
@@ -2453,15 +2473,6 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 // padded with spaces, as the reference awk pads them.
                 if (from_string || conversion == 'c')
                         zero = false;
-
-                // %E, %F, %G and %X write INF and NAN in capitals, as the
-                // reference does.
-                if ((conversion == 'E' || conversion == 'F' || conversion == 'G' ||
-                     conversion == 'X') && body_at == room)
-                        for (positive i = 0; i < body; i++)
-                                if (room[i] >= 'a' && room[i] <= 'z')
-                                        room[i] = (p8)(room[i] - 'a' + 'A');
-
                 positive total = awk_size_add(awk_size_add(prefixed, zeros), body);
                 positive padding = width > total ? width - total : 0;
 
@@ -6331,6 +6342,7 @@ static fn awk_start()
         awk_standard_out.used = 0;
         awk_standard_out.live = true;
         awk_standard_out.kind = AWK_TO_FILE;
+        awk_standard_named[0] = awk_standard_named[1] = false;
 
         string_address address_to process_environment = program_environment_list();
         positive environment_count = 0;
