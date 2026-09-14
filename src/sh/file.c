@@ -2079,12 +2079,20 @@ static const file_unit address_to file_unit_of(string_address text, positive len
 static positive file_read_number(string_address text, positive at, b64 address_to out,
                                  positive address_to digits)
 {
-        positive have;
+        string_address from = text + at;
+        string_address stop = from;
+        positive value = 0;
 
-        address_to out = (b64)string_digits(text + at, address_of have);
-        address_to digits = have;
+        // A run too wide for a signed second is no number at all, which is
+        // the invalid date GNU reports, rather than whatever it wraps to.
+        if (!string_digits_checked(address_of stop, 10, address_of value) ||
+            value > (positive)b64_max)
+                stop = from, value = 0;
 
-        return at + have;
+        address_to out = (b64)value;
+        address_to digits = (positive)(stop - from);
+
+        return at + address_to digits;
 }
 
 // The fraction of a second after a clock time or an epoch, kept to the
@@ -2228,6 +2236,9 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
                         b64 value;
 
                         at = file_read_number(text, at, address_of value, address_of digits);
+
+                        if (!digits)
+                                return false;
 
                         if (!marked && string_is(text + at, '-'))
                         {
@@ -8698,7 +8709,7 @@ static const struct
     {"-samefile", 'S', FIND_TAKES_VALUE},
     {"-xtype", 'Y', FIND_TAKES_VALUE},
     {"-used", 'B', FIND_TAKES_VALUE},
-    {"-ilname", 'L', FIND_TAKES_VALUE},
+    {"-ilname", 'I', FIND_TAKES_VALUE},
     {"-iwholename", 'P', FIND_TAKES_VALUE},
     {"-printf", 'l', FIND_SETS_ACTION | FIND_TAKES_VALUE},
     {"-fprintf", 'l', FIND_SETS_ACTION | FIND_TAKES_VALUE},
@@ -9009,8 +9020,9 @@ static b32 find_parse_primary()
         case 'p':
         case 'P':
         case 'L':
+        case 'I':
                 // Fold invariant patterns once, not on every visited entry.
-                if (node->kind == 'N' || node->kind == 'P')
+                if (node->kind == 'N' || node->kind == 'P' || node->kind == 'I')
                         find_lowered(value, (p8 address_to)value);
                 node->text = value;
                 find_pattern_prepare(node);
@@ -10020,16 +10032,24 @@ static bool find_true(b32 which)
                 return shell_match(node->text, name);
 
         case 'L':
+        case 'I':
+        {
                 if (!find_facts_ready())
                         return false;
 
                 if ((find_facts->mode & MODE_FORMAT) != MODE_LINK)
                         return false;
 
-                if (file_link_text(find_path, name, FILE_PATH_MAX) < 0)
+                bipolar length = file_link_text(find_path, name, FILE_PATH_MAX);
+
+                if (length < 0)
                         return false;
 
+                if (node->kind == 'I')
+                        memory_to_lower_ascii(name, (positive)length);
+
                 return shell_match(node->text, name);
+        }
 
         case 't':
                 return find_type_holds((p8)node->number, find_facts->mode);
@@ -12293,11 +12313,11 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
             ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
         bipolar looked = file_look_code(directory, name, through, address_of facts);
-        bool known = looked == 0;
 
-        // A name that is not there is not an ownership that would not
-        // change: the reference says it could not look at it.
-        if (looked == -ERROR_NO_ENTRY)
+        // A name that is not there, or one the caller may not look at, is
+        // not an ownership that would not change: the reference says it
+        // could not access it, and why.
+        if (looked < 0)
         {
                 if (chown_loud)
                 {
@@ -12319,17 +12339,15 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         //      --from names the ownership a file must already have. One that
         //      has another is left alone, and -v calls that a retention
         //      rather than a change.
-        if (known && ((chown_from_user >= 0 && facts.owner != (positive)chown_from_user) ||
-                      (chown_from_group >= 0 && facts.group != (positive)chown_from_group)))
+        if ((chown_from_user >= 0 && facts.owner != (positive)chown_from_user) ||
+            (chown_from_group >= 0 && facts.group != (positive)chown_from_group))
         {
                 chown_said(shown, address_of facts, false);
                 return;
         }
 
-        bipolar handle = known ? file_open_same(
-                                     directory, name, address_of facts,
-                                     O_PATH |
-                                         (through ? 0 : O_NOFOLLOW)) : -1;
+        bipolar handle = file_open_same(directory, name, address_of facts,
+                                        O_PATH | (through ? 0 : O_NOFOLLOW));
         bipolar done = handle < 0 ? handle : system_change_owner_at(
             handle, (string_address)"", chown_user, chown_group,
             AT_EMPTY_PATH | through);
@@ -12342,20 +12360,11 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
                 {
                         p8 before[FILE_PATH_MAX];
 
-                        if (known)
-                        {
-                                chown_who(facts.owner, facts.group, before);
-                                string_format(log, "%s%w' from %s to %s\n",
-                                              chown_groups_only ? (string_address) "failed to change group of '" : (string_address) "failed to change ownership of '",
-                                              writer_terminal_quoted_name, shown, before,
-                                              chown_spec);
-                        }
-                        else
-                        {
-                                string_format(log, "%s%w' to %s\n",
-                                              chown_groups_only ? (string_address) "failed to change group of '" : (string_address) "failed to change ownership of '",
-                                              writer_terminal_quoted_name, shown, chown_spec);
-                        }
+                        chown_who(facts.owner, facts.group, before);
+                        string_format(log, "%s%w' from %s to %s\n",
+                                      chown_groups_only ? (string_address) "failed to change group of '" : (string_address) "failed to change ownership of '",
+                                      writer_terminal_quoted_name, shown, before,
+                                      chown_spec);
                 }
 
                 if (!chown_quiet)
@@ -12372,9 +12381,6 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
                 chown_status = 1;
                 return;
         }
-
-        if (!known)
-                return;
 
         bool changed = (chown_user >= 0 && facts.owner != (positive)chown_user) ||
                        (chown_group >= 0 && facts.group != (positive)chown_group);
@@ -15027,28 +15033,20 @@ static bool file_device_number(string_address text, p32 address_to value)
         else if (string_is(text, '-'))
                 return false;
 
-        positive used;
+        positive base = 10;
         positive made;
 
         if (string_is(text, '0') &&
             (string_is(text + 1, 'x') || string_is(text + 1, 'X')))
         {
-                positive digits;
-
-                made = string_digits_hexadecimal_max(text + 2, p32_max,
-                                                     address_of digits);
-
-                if (!digits)
-                        return false;
-
-                used = digits + 2;
+                base = 16;
+                text += 2;
         }
         else if (string_is(text, '0'))
-                made = string_digits_octal_max(text, p32_max, address_of used);
-        else
-                made = string_digits_max(text, p32_max, address_of used);
+                base = 8;
 
-        if (!used || string_get(text + used) || made > p32_max)
+        // A number too wide for the word is refused, not wrapped to a small one.
+        if (!string_digits_checked_exact(text, base, address_of made) || made > p32_max)
                 return false;
 
         address_to value = (p32)made;
@@ -28368,8 +28366,13 @@ static fn xargs_item_done()
 static bool xargs_count_value(string_address value, p8 letter, positive address_to out)
 {
         positive taken = 0;
-        positive made = string_digits(value, address_of taken);
+        positive made = positive_max;
         p8 named[2] = {letter, end};
+
+        // A count too wide for the word saturates, as strtol hands GNU its
+        // LONG_MAX, rather than wrapping round to a small one.
+        string_digits(value, address_of taken);
+        string_digits_checked_exact(value, 10, address_of made);
 
         if (!taken || string_get(value + taken))
         {
@@ -28382,6 +28385,10 @@ static bool xargs_count_value(string_address value, p8 letter, positive address_
                 return string_report(log_error, false,
                               "xargs: value 0 for -%s option should be >= 1\n", named);
         }
+
+        if (letter == 'P' && made > 2147483647)
+                return string_report(log_error, false,
+                              "xargs: value %s for -P option should be <= 2147483647\n", value);
 
         address_to out = made;
         return true;
