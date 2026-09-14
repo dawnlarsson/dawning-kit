@@ -49886,6 +49886,13 @@ typedef uint64_t u64;
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 #define WINDOW_CELL_W 8
 #define WINDOW_CELL_H 16
+#define WINDOW_CELL_BOLD 1u
+#define WINDOW_CELL_DIM 2u
+#define WINDOW_CELL_ITALIC 4u
+#define WINDOW_CELL_UNDERLINE 8u
+#define WINDOW_CELL_BLINK 16u
+#define WINDOW_CELL_HIDDEN 32u
+#define WINDOW_CELL_STRIKE 64u
 #define DRM_FORMAT_ARGB8888 0x34325241u
 static struct {unsigned scale;int bar_grab,frame_pending;} desktop={1};
 #define canvas_cell_w (WINDOW_CELL_W * (int)desktop.scale)
@@ -49906,6 +49913,8 @@ static unsigned font_glyph_size(unsigned w,unsigned h) {return font_glyph_pitch(
 static unsigned long int_sqrt(unsigned long v) {unsigned long r=0;while((r+1)*(r+1)<=v)r++;return r;}
 void memory_fill_u32(u32 *p,unsigned long n,u32 v) {while(n--)*p++=v;}
 void *memory_copy_apart(void *to,const void *from,unsigned long n) {return memcpy(to,from,n);}
+void *memory_copy(void *to,const void *from,unsigned long n) {return memcpy(to,from,n);}
+void *memory_fill(void *p,int v,unsigned long n) {return memset(p,v,n);}
 void canvas_rect_fill(u32 *,unsigned long,unsigned long,unsigned long,u32);
 void canvas_glyph(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u32);
 void canvas_glyph2(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u32);
