@@ -173,8 +173,18 @@ static bool storage_mount_line(storage_mount_table address_to table,
         }
         while (string_compare(separator, (string_address) "-"));
 
+        /* The kernel writes an empty source as nothing between two blanks
+           (mount -t tmpfs "" /mnt).  Collapsing that run would read the
+           options as the source and refuse the whole table; findmnt shows
+           it as an empty SOURCE. */
         type = storage_field(address_of cursor);
-        source = storage_field(address_of cursor);
+        if (cursor && (*cursor == ' ' || *cursor == '\t'))
+        {
+                source = (string_address) "";
+                cursor++;
+        }
+        else
+                source = storage_field(address_of cursor);
         filesystem_options = storage_field(address_of cursor);
 
         if (!type || !source || !filesystem_options ||
