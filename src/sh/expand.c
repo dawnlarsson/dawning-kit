@@ -889,16 +889,19 @@ static PURE bool glob_extended_anywhere(string_address pattern)
         }
 }
 
-// An escaped byte or a bracket set closed before bound, which a group scan
-// steps over whole: one byte past it, or nothing when at begins neither.
+// An escaped byte or a bracket set closed before bound (or the terminator,
+// with no bound), which a group scan steps over whole: one byte past it, or
+// nothing when at begins neither.
 static PURE string_address glob_unit_end(string_address at,
                                          string_address bound)
 {
         string_address close;
 
-        if (string_is(at, '\\') && at + 1 < bound)
+        if (string_is(at, '\\') && string_get(at + 1) &&
+            (!bound || at + 1 < bound))
                 return at + 2;
-        if (string_is(at, '[') && (close = expand_set_end(at)) && close < bound)
+        if (string_is(at, '[') && (close = expand_set_end(at)) &&
+            (!bound || close < bound))
                 return close + 1;
         return null;
 }
@@ -907,14 +910,13 @@ static PURE string_address glob_unit_end(string_address at,
 // nothing when it never closes.
 static PURE string_address glob_group_end(string_address at)
 {
-        string_address bound = at + string_length(at);
         string_address step = at;
         string_address past;
         positive depth = 0;
 
-        while (step < bound)
+        while (string_get(step))
         {
-                if ((past = glob_unit_end(step, bound)))
+                if ((past = glob_unit_end(step, null)))
                 {
                         step = past;
                         continue;
@@ -5619,12 +5621,13 @@ static fn expand_case_change(expand_reference reference, string_address pattern_
 
 // A byte a single-quoted run cannot carry, which is what decides between the
 // two forms Q may answer with.
-static CONST bool transform_awkward(p8 value)
+static PURE bool transform_awkward(p8 value)
 {
-        return value < ' ' || value == 127;
+        return escape_categories[value] & (HEX_CONTROL | HEX_TAB);
 }
 
-// Immutable scanner sets shared by parameter quoting and builtin writers.
+// Immutable scanner sets for the builtin writers; parameter quoting asks
+// escape_categories the same questions.
 static const b8 shell_quote_value[STRING_SET_BYTES] = {
         [32 ... 126] = 1, [128 ... 255] = 1
 };
@@ -5682,9 +5685,8 @@ static fn transform_quoted(string_address value, positive length, p8 mark)
         // In the C locale a high byte is not a character, so @Q has to spell
         // it in $'...' the way bash 5.2 does. UTF-8 may keep it inside quotes.
         bool high = !shell_utf8_on();
-        bool awkward = string_span_max(value, length,
-                                       high ? shell_quote_printable
-                                            : shell_quote_value) < length;
+        bool awkward = memory_escape_index(value, length,
+            HEX_CONTROL | HEX_TAB | (high ? HEX_HIGH : 0)) < length;
 
         if (!awkward)
         {
@@ -5956,8 +5958,8 @@ static COLD fn transform_attributes(expand_reference reference, p8 mark)
 static COLD fn transform_declare_quoted(string_address value, positive length,
                                         p8 mark)
 {
-        bool control = string_span_max(value, length, shell_quote_printable) <
-                       length;
+        bool control = memory_escape_index(value, length,
+            HEX_CONTROL | HEX_TAB | HEX_HIGH) < length;
         positive at = 0;
 
         if (control)
