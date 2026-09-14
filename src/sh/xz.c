@@ -1352,10 +1352,7 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
 {
         bool ok;
 
-        xz_input.fd = -1;
-        xz_input.mem = src;
-        xz_input.mem_len = src_len;
-        xz_input.mem_at = 0;
+        byte_input_open_memory(address_of xz_input, src, src_len, xz_in_buf, XZ_IN);
         xz_out_fd = -1;
         xz_output.bytes = dst;
         xz_output.room = dst_cap;
@@ -2011,23 +2008,12 @@ static bipolar xz_deflate_mem(p8 address_to src, positive src_len,
         return ok ? (bipolar)xz_output.used : -1;
 }
 
-static fn xz_in_from_fd(bipolar in)
-{
-        xz_input.fd = in;
-        xz_input.mem = null;
-        xz_input.mem_len = 0;
-        xz_input.mem_at = 0;
-        xz_input.at = 0;
-        xz_input.have = 0;
-        xz_input.eof = false;
-}
-
 static bool xz_decode_begin(bipolar in)
 {
         xz_encoding = false;
         xz_why = null;
         xz_out_failed = false;
-        xz_in_from_fd(in);
+        byte_input_open_fd(address_of xz_input, in, xz_in_buf, XZ_IN);
         xz_out_fd = -1;
         xz_output.bytes = null;
         xz_out_fill = xz_out_taken = xz_out_hashed = 0;
@@ -2114,8 +2100,7 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
 {
         bool ok;
 
-        xz_input.fd = in;
-        xz_input.mem = null;
+        byte_input_open_fd(address_of xz_input, in, xz_in_buf, XZ_IN);
         xz_out_fd = out;
         xz_output.bytes = null;
         xz_status = 0;

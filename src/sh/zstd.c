@@ -923,13 +923,11 @@ static bool zstd_emit(p8 address_to p, positive n)
 
         if (zstd_output.bytes)
         {
-                if (zstd_output.used > zstd_output.room ||
-                    n > zstd_output.room - zstd_output.used)
+                if (!byte_store_append_exact(address_of zstd_output, p, n))
                         return zstd_fail("zstd output larger than the destination");
                 if (zstd_hashing)
                         hash_xxh64_add(address_of zstd_hash, p, n);
                 zstd_decoded += n;
-                byte_store_append_exact(address_of zstd_output, p, n);
                 return true;
         }
 
@@ -1678,26 +1676,12 @@ static bool zstd_stream(void)
         return true;
 }
 
-static fn zstd_src_mem(p8 address_to src, positive len)
-{
-        zstd_src = (byte_input){.buf = zstd_in_buf, .room = ZSTD_IN};
-        zstd_src.fd = -1;
-        zstd_src.mem = src;
-        zstd_src.mem_len = len;
-}
-
-static fn zstd_src_fd(bipolar fd)
-{
-        zstd_src = (byte_input){.buf = zstd_in_buf, .room = ZSTD_IN};
-        zstd_src.fd = fd;
-}
-
 static bipolar zstd_inflate(p8 address_to src, positive src_len,
                             p8 address_to dst, positive dst_cap)
 {
         bool ok;
 
-        zstd_src_mem(src, src_len);
+        byte_input_open_memory(address_of zstd_src, src, src_len, zstd_in_buf, ZSTD_IN);
         zstd_output.bytes = dst;
         zstd_output.room = dst_cap;
         zstd_out_fd = -1;
@@ -1716,7 +1700,7 @@ static bipolar zstd_inflate(p8 address_to src, positive src_len,
 
 static bool zstd_decode_begin(bipolar in)
 {
-        zstd_src_fd(in);
+        byte_input_open_fd(address_of zstd_src, in, zstd_in_buf, ZSTD_IN);
         zstd_output.bytes = null;
         zstd_out_fd = -1;
         zstd_out_fill = zstd_out_taken = 0;
@@ -1862,9 +1846,8 @@ static __attribute__((always_inline)) inline fn zstd_bout_add(zstd_bout address_
         }
 }
 
-static bool zstd_bout_close(zstd_bout address_to b)
+static fn zstd_bout_pad(zstd_bout address_to b)
 {
-        zstd_bout_add(b, 1, 1);
         while (b->bits >= 8)
         {
                 b->buf[b->n++] = (p8)b->acc;
@@ -1872,11 +1855,15 @@ static bool zstd_bout_close(zstd_bout address_to b)
                 b->bits -= 8;
         }
         if (b->bits)
-        {
                 b->buf[b->n++] = (p8)b->acc;
-                b->acc = 0;
-                b->bits = 0;
-        }
+        b->bits = 0;
+        b->acc = 0;
+}
+
+static bool zstd_bout_close(zstd_bout address_to b)
+{
+        zstd_bout_add(b, 1, 1);
+        zstd_bout_pad(b);
         return !b->full && b->n && b->buf[b->n - 1];
 }
 
@@ -2023,20 +2010,6 @@ static fn zstd_cstate_flush(zstd_bout address_to b, zstd_cstate address_to st)
    the alphabet exceeds the direct nibble form, and four backward streams.
    Sequence and weight FSE share the bounded state-table builder. */
 static p8 zstd_packed_lits[ZSTD_BLOCK_MAX * 2 + 512];
-
-static fn zstd_bout_pad(zstd_bout address_to b)
-{
-        while (b->bits >= 8)
-        {
-                b->buf[b->n++] = (p8)b->acc;
-                b->acc >>= 8;
-                b->bits -= 8;
-        }
-        if (b->bits)
-                b->buf[b->n++] = (p8)b->acc;
-        b->bits = 0;
-        b->acc = 0;
-}
 
 static positive zstd_write_norm(p8 address_to dst, const bipolar address_to norm,
                                  positive max_sym, p8 log)
@@ -2333,17 +2306,20 @@ static bool zstd_enc_out(p8 address_to p, positive n)
                zstd_fail("zstd write failed");
 }
 
+/* A block header: last flag, type and size in three little-endian bytes;
+   the fourth is the caller's (an RLE block's byte) or unused. */
+static fn zstd_block_header(p8 address_to into, bool last, p8 type, positive size)
+{
+        memory_store_unaligned(p32, into,
+                               (last ? 1u : 0) | (p32)type << 1 | (p32)size << 3);
+}
+
 static bool zstd_emit_raw_block(p8 address_to src, positive n, bool last)
 {
-        p32 pack = (last ? 1u : 0) | (0 << 1) | (n << 3);
-        p8 header[3];
+        p8 header[4];
 
-        header[0] = (p8)pack;
-        header[1] = (p8)(pack >> 8);
-        header[2] = (p8)(pack >> 16);
-        if (!zstd_enc_out(header, 3))
-                return false;
-        return zstd_enc_out(src, n);
+        zstd_block_header(header, last, 0, n);
+        return zstd_enc_out(header, 3) && zstd_enc_out(src, n);
 }
 
 static p16 zstd_enc_hash4(p8 address_to p)
@@ -2366,8 +2342,7 @@ static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
         positive nseq = 0;
         positive pos = 0;
         positive used;
-        p32 pack;
-        p8 header[3];
+        p8 header[4];
         p8 lit_hdr[5];
         p8 address_to lit_data = zstd_enc_lits;
         positive lit_size;
@@ -2636,10 +2611,7 @@ static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
 
                 if (csize >= n)
                         return zstd_emit_raw_block(src, n, last);
-                pack = (last ? 1u : 0) | (2u << 1) | ((p32)csize << 3);
-                header[0] = (p8)pack;
-                header[1] = (p8)(pack >> 8);
-                header[2] = (p8)(pack >> 16);
+                zstd_block_header(header, last, 2, csize);
                 if (!zstd_enc_out(header, 3) || !zstd_enc_out(lit_hdr, used) ||
                     !zstd_enc_out(lit_data, lit_size) ||
                     !zstd_enc_out(seq_hdr, seq_hdr_n) ||
@@ -2656,8 +2628,10 @@ static bool zstd_emit_block(p8 address_to src, positive n, bool last)
         bool ok;
         if (n && memory_span_byte(src, src[0], n) == n)
         {
-                p32 pack = (last ? 1u : 0) | 2u | ((p32)n << 3);
-                p8 header[4] = {(p8)pack, (p8)(pack >> 8), (p8)(pack >> 16), src[0]};
+                p8 header[4];
+
+                zstd_block_header(header, last, 1, n);
+                header[3] = src[0];
                 ok = zstd_enc_out(header, sizeof(header));
                 if (n >= 5)
                         zstd_enc_head[zstd_enc_hash4(src)] =
@@ -2758,10 +2732,7 @@ static bool zstd_encode_end(void)
                 return false;
         zstd_enc_fill = 0;
         sum = (p32)hash_xxh64_finish(address_of zstd_enc_hash);
-        tail[0] = (p8)sum;
-        tail[1] = (p8)(sum >> 8);
-        tail[2] = (p8)(sum >> 16);
-        tail[3] = (p8)(sum >> 24);
+        memory_store_unaligned(p32, tail, sum);
         return (!zstd_output.bytes && zstd_out_fd < 0) ||
                zstd_enc_out(tail, sizeof tail);
 }
@@ -2796,19 +2767,18 @@ static fn zstd_refuse(string_address message)
 static const file_codec_suffix zstd_suffixes[] = {
     {".zst", ""}, {".tzst", ".tar"}};
 
+/* Read straight into the block the encoder owns, as xz reads into its
+   pending window; zstd_encode_write is the copy for callers with a span. */
 static b32 zstd_encode_fd(bipolar in, bipolar out, p8 level)
 {
-        p8 buf[ZSTD_OUT];
-        bipolar got;
-
         if (!zstd_encode_begin(out, level))
-        {
-                zstd_refuse(zstd_why ? zstd_why : (string_address) "encode failed");
-                return 1;
-        }
+                goto refused;
         for (;;)
         {
-                got = system_read_retry((positive)in, buf, sizeof(buf));
+                p8 address_to into = zstd_enc_block + zstd_enc_fill;
+                bipolar got = system_read_retry((positive)in, into,
+                                                ZSTD_BLOCK_MAX - zstd_enc_fill);
+
                 if (got < 0)
                 {
                         zstd_refuse("read failed");
@@ -2816,26 +2786,27 @@ static b32 zstd_encode_fd(bipolar in, bipolar out, p8 level)
                 }
                 if (!got)
                         break;
-                if (!zstd_encode_write(buf, (positive)got))
+                hash_xxh64_add(address_of zstd_enc_hash, into, (positive)got);
+                zstd_enc_fill += (positive)got;
+                if (zstd_enc_fill == ZSTD_BLOCK_MAX)
                 {
-                        zstd_refuse(zstd_why ? zstd_why
-                                             : (string_address) "encode failed");
-                        return 1;
+                        if (!zstd_emit_block(zstd_enc_block, zstd_enc_fill, false))
+                                goto refused;
+                        zstd_enc_fill = 0;
                 }
         }
-        if (!zstd_encode_end())
-        {
-                zstd_refuse(zstd_why ? zstd_why : (string_address) "encode failed");
-                return 1;
-        }
-        return 0;
+        if (zstd_encode_end())
+                return 0;
+refused:
+        zstd_refuse(zstd_why ? zstd_why : (string_address) "encode failed");
+        return 1;
 }
 
 static b32 zstd_one(bipolar in, bipolar out)
 {
         bool ok;
 
-        zstd_src_fd(in);
+        byte_input_open_fd(address_of zstd_src, in, zstd_in_buf, ZSTD_IN);
         zstd_output.bytes = null;
         zstd_out_fd = out;
         zstd_pull = false;

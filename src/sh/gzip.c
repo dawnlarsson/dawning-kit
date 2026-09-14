@@ -854,10 +854,8 @@ static bipolar gzip_inflate_mem(p8 address_to src, positive src_len,
 {
         bool ok;
 
-        gzip_input.fd = -1;
-        gzip_input.mem = src;
-        gzip_input.mem_len = src_len;
-        gzip_input.mem_at = 0;
+        byte_input_open_memory(address_of gzip_input, src, src_len, gzip_in_buf,
+                               GZIP_IN);
         gzip_out_fd = -1;
         gzip_output.bytes = dst;
         gzip_output.room = dst_cap;
@@ -1738,23 +1736,12 @@ static bipolar gzip_deflate_mem(p8 address_to src, positive src_len,
         return ok ? (bipolar)gzip_output.used : -1;
 }
 
-static fn gzip_in_from_fd(bipolar in)
-{
-        gzip_input.fd = in;
-        gzip_input.mem = null;
-        gzip_input.mem_len = 0;
-        gzip_input.mem_at = 0;
-        gzip_input.at = 0;
-        gzip_input.have = 0;
-        gzip_input.eof = false;
-}
-
 static bool gzip_decode_begin(bipolar in)
 {
         gzip_out_taken = 0;
         gzip_why = null;
         gzip_out_failed = false;
-        gzip_in_from_fd(in);
+        byte_input_open_fd(address_of gzip_input, in, gzip_in_buf, GZIP_IN);
         gzip_out_fd = -1;
         gzip_output.bytes = null;
         gzip_out_fill = 0;
@@ -1876,8 +1863,7 @@ static b32 gzip_stream(bipolar in, bipolar out, bool decode, p8 level)
 {
         bool ok;
 
-        gzip_input.fd = in;
-        gzip_input.mem = null;
+        byte_input_open_fd(address_of gzip_input, in, gzip_in_buf, GZIP_IN);
         gzip_out_fd = out;
         gzip_output.bytes = null;
         gzip_feed = null;
