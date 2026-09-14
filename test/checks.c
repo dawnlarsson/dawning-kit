@@ -37436,6 +37436,11 @@ int main(void)
         threads, and a return from main with a thread still running ends the
         whole process, because exit is exit_group.
 
+        The pool. parallel_for runs every index once at every width;
+        parallel_ordered's bytes do not move with the width; stops, a refusing
+        sink, nesting, the beside job and a forked child behave as the sheet
+        in library.common.c says.
+
         The timing is BENCH_lock's: sh test/run bench lock.
 */
 #include "../src/compiler_memory.c"
@@ -38090,6 +38095,440 @@ static fn lock_process(void)
               lock_now() - started < 5000000000ull);
 }
 
+//      -- the pool ----------------------------------------------------------
+
+/*
+        The pool proves four things. Every index of a parallel_for runs
+        exactly once at every width, and below the threshold it runs on the
+        caller alone. parallel_ordered's bytes -- lengths from 0 to 3000 per
+        job, half written through parallel_reserve and half through
+        parallel_write -- hash the same at widths 1, 2, 3 and 8 as inline,
+        every sink call comes on the first thread in index order, and no more
+        than two outputs a thread are ever finished and waiting. A stop from
+        a job or a false from the sink ends the run with no sink call after
+        it. And the beside job, nesting, fork and exit behave as the API
+        says.
+*/
+#define POOL_JOBS 4096
+
+static positive pool_ran[POOL_JOBS];
+static volatile positive pool_highest_slot = 0;
+static volatile positive pool_nested_bad = 0;
+static volatile positive pool_errno_bad = 0;
+static volatile positive pool_outstanding = 0;
+static volatile positive pool_outstanding_most = 0;
+static volatile positive pool_jobs_run = 0;
+static volatile positive pool_stop_index = positive_max;
+
+static fn pool_note_slot(void)
+{
+        positive slot = parallel_slot();
+        positive seen = atomic_load(address_of pool_highest_slot);
+
+        while (slot > seen &&
+               !atomic_compare_exchange(address_of pool_highest_slot, seen, slot))
+                seen = atomic_load(address_of pool_highest_slot);
+}
+
+static fn pool_nested_job(address_any context, positive index)
+{
+        atomic_add((positive address_to)context, index + 1);
+}
+
+static fn pool_count_job(address_any context, positive index)
+{
+        (void)context;
+        atomic_add(address_of pool_ran[index], 1);
+        atomic_add(address_of pool_jobs_run, 1);
+        pool_note_slot();
+
+        if (index == atomic_load(address_of pool_stop_index))
+                parallel_stop();
+}
+
+static positive pool_length(positive index)
+{
+        positive mixed = index * 0x9e3779b97f4a7c15ull;
+
+        mixed ^= mixed >> 29;
+        return mixed % 3001;
+}
+
+static p8 pool_byte(positive index, positive at)
+{
+        return (p8)(index * 13 + at * 7);
+}
+
+static fn pool_emit_job(address_any context, positive index,
+                        parallel_output address_to output)
+{
+        positive length = pool_length(index);
+        positive at;
+        b32 mine = (b32)(index * 3 + 1);
+        positive most;
+        positive now;
+
+        (void)context;
+
+        errno = mine;
+        atomic_add(address_of pool_jobs_run, 1);
+        pool_note_slot();
+
+        //      A nested call runs inline, on this thread, and still answers.
+        if (index % 97 == 0)
+        {
+                positive sum = 0;
+                positive slot = parallel_slot();
+
+                if (!parallel_for(pool_nested_job, address_of sum, 10, PARALLEL_SPREAD) ||
+                    sum != 55 || parallel_slot() != slot)
+                        atomic_add(address_of pool_nested_bad, 1);
+        }
+
+        if (index & 1)
+        {
+                p8 address_to span = parallel_reserve(output, length);
+
+                if (span)
+                        for (at = 0; at < length; at++)
+                                span[at] = pool_byte(index, at);
+        }
+        else
+        {
+                //      Through the allocator, on whatever thread this is.
+                p8 address_to scratch = malloc(length + 1);
+
+                if (!scratch)
+                        atomic_add(address_of pool_errno_bad, 1000);
+                else
+                {
+                        for (at = 0; at < length; at++)
+                                scratch[at] = pool_byte(index, at);
+
+                        for (at = 0; at < length; at += 64)
+                                parallel_write(output, scratch + at,
+                                               length - at < 64 ? length - at : 64);
+
+                        free(scratch);
+                }
+        }
+
+        if (errno != mine)
+                atomic_add(address_of pool_errno_bad, 1);
+
+        now = atomic_add(address_of pool_outstanding, 1) + 1;
+        most = atomic_load(address_of pool_outstanding_most);
+
+        while (now > most &&
+               !atomic_compare_exchange(address_of pool_outstanding_most, most, now))
+                most = atomic_load(address_of pool_outstanding_most);
+
+        if (index == atomic_load(address_of pool_stop_index))
+                parallel_stop();
+}
+
+typedef struct
+{
+        positive next;
+        positive calls;
+        positive bytes;
+        positive hash;
+        positive wrong;
+        positive refuse_at;
+} pool_stream;
+
+static bool pool_sink(address_any context, positive index, address_any data,
+                      positive length)
+{
+        pool_stream address_to stream = context;
+        p8 address_to bytes = data;
+        positive at;
+
+        if (thread_self() != address_of thread_main || index != stream->next ||
+            length != pool_length(index))
+                stream->wrong++;
+
+        for (at = 0; at < length; at++)
+        {
+                if (bytes[at] != pool_byte(index, at))
+                {
+                        stream->wrong++;
+                        break;
+                }
+
+                stream->hash = (stream->hash ^ bytes[at]) * 0x100000001b3ull;
+        }
+
+        atomic_sub(address_of pool_outstanding, 1);
+        stream->next = index + 1;
+        stream->calls++;
+        stream->bytes += length;
+
+        return index != stream->refuse_at;
+}
+
+static fn pool_fresh_stream(pool_stream address_to stream)
+{
+        address_to stream = (pool_stream){0};
+        stream->hash = 0xcbf29ce484222325ull;
+        stream->refuse_at = positive_max;
+        pool_outstanding = 0;
+        pool_outstanding_most = 0;
+        pool_jobs_run = 0;
+        pool_highest_slot = 0;
+}
+
+//      The beside job: a producer filling a small ring the caller drains.
+#define POOL_BESIDE_ITEMS 200000
+#define POOL_BESIDE_RING 64
+
+static lock pool_ring_guard = lock_start;
+static positive pool_ring[POOL_BESIDE_RING];
+static positive pool_ring_head = 0;
+static positive pool_ring_tail = 0;
+static volatile b32 pool_ring_count = 0;
+static volatile positive pool_beside_slot = 0;
+
+static fn pool_beside_producer(address_any context, positive index)
+{
+        positive item;
+
+        (void)context;
+        (void)index;
+        pool_beside_slot = parallel_slot();
+
+        for (item = 1; item <= POOL_BESIDE_ITEMS; item++)
+        {
+                for (;;)
+                {
+                        b32 count = atomic_load(address_of pool_ring_count);
+
+                        if (count < POOL_BESIDE_RING)
+                                break;
+
+                        thread_wait(address_of pool_ring_count, count);
+                }
+
+                lock_take(address_of pool_ring_guard);
+                pool_ring[pool_ring_tail] = item;
+                pool_ring_tail = (pool_ring_tail + 1) % POOL_BESIDE_RING;
+                lock_release(address_of pool_ring_guard);
+
+                atomic_add(address_of pool_ring_count, 1);
+                thread_wake(address_of pool_ring_count, 1);
+        }
+}
+
+static fn pool_beside_stopper(address_any context, positive index)
+{
+        (void)context;
+        (void)index;
+        parallel_stop();
+}
+
+static volatile positive pool_beside_refused_inside = 0;
+
+static fn pool_beside_inside_job(address_any context, positive index)
+{
+        (void)context;
+
+        if (index == 0 && !parallel_beside(pool_beside_stopper, null))
+                atomic_add(address_of pool_beside_refused_inside, 1);
+}
+
+static fn lock_pool(bool emulated)
+{
+        static const positive widths[] = {1, 2, 3, 8};
+        pool_stream reference;
+        pool_stream stream;
+        positive round;
+        positive at;
+        bool every_once = true;
+        bool same = true;
+        bool bounded = true;
+        bool ordered = true;
+        b32 child;
+        b32 raw = 0;
+
+        parallel_reset(0);
+        check("the pool's width is at least one", parallel_width() >= 1);
+
+        //      Below the threshold: the caller alone, in order.
+        for (at = 0; at < POOL_JOBS; at++)
+                pool_ran[at] = 0;
+        pool_highest_slot = 0;
+        check("a small parallel_for completes",
+              parallel_for(pool_count_job, null, POOL_JOBS, PARALLEL_MINIMUM_BYTES - 1));
+        check("a small parallel_for ran only on the caller", pool_highest_slot == 0);
+
+        //      The reference stream, inline.
+        pool_fresh_stream(address_of reference);
+        check("an inline ordered run completes",
+              parallel_ordered(pool_emit_job, pool_sink, address_of reference,
+                               POOL_JOBS, 0));
+        check("the inline run called the sink once per job in order",
+              reference.calls == POOL_JOBS && reference.wrong == 0);
+
+        for (round = 0; round < sizeof(widths) / sizeof(widths[0]); round++)
+        {
+                positive width = widths[round];
+
+                parallel_reset(width);
+
+                for (at = 0; at < POOL_JOBS; at++)
+                        pool_ran[at] = 0;
+
+                pool_stop_index = positive_max;
+                pool_jobs_run = 0;
+
+                if (!parallel_for(pool_count_job, null, POOL_JOBS, PARALLEL_SPREAD))
+                        every_once = false;
+
+                for (at = 0; at < POOL_JOBS; at++)
+                        every_once = every_once && pool_ran[at] == 1;
+
+                pool_fresh_stream(address_of stream);
+
+                if (!parallel_ordered(pool_emit_job, pool_sink, address_of stream,
+                                      POOL_JOBS, PARALLEL_SPREAD))
+                        same = false;
+
+                same = same && stream.hash == reference.hash &&
+                       stream.bytes == reference.bytes && stream.calls == reference.calls;
+                ordered = ordered && stream.wrong == 0;
+                bounded = bounded && pool_outstanding_most <= 2 * width;
+
+                string_format(log, "  pool: width %p, %p jobs, %p bytes, most waiting %p\n",
+                              width, stream.calls, stream.bytes, pool_outstanding_most);
+        }
+
+        check("every index ran exactly once at widths 1, 2, 3 and 8", every_once);
+        check("ordered bytes are the same at every width as inline", same);
+        check("every sink call was on the first thread, in index order, with its job's bytes",
+              ordered);
+        check("no more than two outputs a thread ever waited", bounded);
+        check("nested calls ran inline and answered", pool_nested_bad == 0);
+        check("every job kept its own errno", pool_errno_bad == 0);
+
+        //      Stopping, at width 8.
+        parallel_reset(8);
+        pool_stop_index = 300;
+        pool_jobs_run = 0;
+        check("a job's stop makes parallel_for answer false",
+              !parallel_for(pool_count_job, null, POOL_JOBS, PARALLEL_SPREAD));
+        check("a stopped parallel_for did not run everything",
+              pool_jobs_run < POOL_JOBS);
+
+        pool_fresh_stream(address_of stream);
+        pool_stop_index = 300;
+        check("a job's stop makes parallel_ordered answer false",
+              !parallel_ordered(pool_emit_job, pool_sink, address_of stream,
+                                POOL_JOBS, PARALLEL_SPREAD));
+        check("a stopped ordered run started no job past its window",
+              pool_jobs_run <= 300 + 2 * 8 + 1 && stream.next <= 300 && stream.wrong == 0);
+
+        pool_fresh_stream(address_of stream);
+        pool_stop_index = positive_max;
+        stream.refuse_at = 500;
+        check("a refusing sink makes parallel_ordered answer false",
+              !parallel_ordered(pool_emit_job, pool_sink, address_of stream,
+                                POOL_JOBS, PARALLEL_SPREAD));
+        check("nothing reached the sink after it refused",
+              stream.calls == 501 && stream.wrong == 0);
+        check("after a stop the next call runs normally",
+              parallel_for(pool_count_job, null, POOL_JOBS, PARALLEL_SPREAD));
+
+        //      Beside.
+        {
+                positive taken = 0;
+                positive sum = 0;
+
+                pool_ring_head = pool_ring_tail = 0;
+                pool_ring_count = 0;
+
+                check("a beside job starts", parallel_beside(pool_beside_producer, null));
+                check("a second beside job is refused while one runs",
+                      !parallel_beside(pool_beside_stopper, null));
+
+                while (taken < POOL_BESIDE_ITEMS)
+                {
+                        b32 count = atomic_load(address_of pool_ring_count);
+
+                        if (!count)
+                        {
+                                thread_wait(address_of pool_ring_count, 0);
+                                continue;
+                        }
+
+                        lock_take(address_of pool_ring_guard);
+                        sum += pool_ring[pool_ring_head];
+                        pool_ring_head = (pool_ring_head + 1) % POOL_BESIDE_RING;
+                        lock_release(address_of pool_ring_guard);
+
+                        atomic_sub(address_of pool_ring_count, 1);
+                        thread_wake(address_of pool_ring_count, 1);
+                        taken++;
+                }
+
+                check("the beside job joined cleanly", parallel_beside_wait());
+                check("every item the beside job made arrived once",
+                      sum == (positive)POOL_BESIDE_ITEMS * (POOL_BESIDE_ITEMS + 1) / 2);
+                check("the beside thread is slot width", pool_beside_slot == 8);
+
+                check("a stopping beside job starts", parallel_beside(pool_beside_stopper, null));
+                check("a stopped beside job joins false", !parallel_beside_wait());
+
+                pool_beside_refused_inside = 0;
+                parallel_for(pool_beside_inside_job, null, 4, PARALLEL_SPREAD);
+                check("a job cannot start a beside job", pool_beside_refused_inside == 1);
+        }
+
+        //      Fork: the child starts its own workers. qemu-user 11.1 aborts
+        //      in plugins/core.c qemu_plugin_vcpu_init__async when a forked
+        //      child of a threaded process makes a thread, so under emulation
+        //      the child proves the parent's pool forgotten and runs inline.
+        log_flush();
+        child = fork();
+
+        if (child == 0)
+        {
+                if (emulated)
+                        parallel_reset(1);
+
+                for (at = 0; at < POOL_JOBS; at++)
+                        pool_ran[at] = 0;
+
+                if (!parallel_for(pool_count_job, null, POOL_JOBS, PARALLEL_SPREAD))
+                        exit(2);
+
+                for (at = 0; at < POOL_JOBS; at++)
+                        if (pool_ran[at] != 1)
+                                exit(3);
+
+                exit(0);
+        }
+
+        if (child > 0)
+                system_wait4_retry(child, address_of raw, 0, null);
+
+        if (emulated)
+        {
+                log_direct(str("  pool: a forked child starting its own workers NOT RUN under emulation\n"));
+                check("a forked child of a pooled parent forgets its pool",
+                      child > 0 && (raw & 0x7f) == 0 && ((raw >> 8) & 0xff) == 0);
+        }
+        else
+                check("a forked child of a pooled parent runs its own pool",
+                      child > 0 && (raw & 0x7f) == 0 && ((raw >> 8) & 0xff) == 0);
+
+        if (!(child > 0 && (raw & 0x7f) == 0 && ((raw >> 8) & 0xff) == 0))
+                string_format(log, "  pool: forked child answered raw status %p\n",
+                              (positive)(p32)raw);
+
+        parallel_reset(0);
+        check("a reset pool leaves no thread counted", threads_live == 0);
+}
+
 //      -- across processes --------------------------------------------------
 
 #define LOCK_MAP_SHARED 1
@@ -38170,6 +38609,8 @@ b32 main(void)
         lock_exclusion();
         lock_allocator();
         lock_process();
+        lock_pool(program_argument_count() > 1 &&
+                  !string_compare(program_argument(1), (string_address)"--emulated"));
         lock_across_processes();
 
         check("nothing is left counted at the end", threads_live == 0);
@@ -60055,6 +60496,113 @@ b32 main(void)
         return 0;
 }
 #endif /* BENCH_lock */
+
+#ifdef BENCH_pool
+/* How parallel_for scales. The work is fixed -- 256 jobs of 1 MiB, each
+   hashed with memory_hash_33 four times over -- and the width is set with
+   parallel_reset from 1 to the affinity width, so the only thing that moves
+   is the number of threads. Every width must reach the same sum, which is
+   checked, because a benchmark that is fast and wrong measured nothing.
+   Scaling is only meaningful natively, on cores nothing else is using. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define POOL_BENCH_JOBS 256
+#define POOL_BENCH_CHUNK (1u << 20)
+#define POOL_BENCH_PASSES 4
+
+static p8 address_to pool_bench_data;
+static positive pool_bench_sums[POOL_BENCH_JOBS];
+
+static fn pool_bench_job(address_any context, positive index)
+{
+        p8 address_to chunk = pool_bench_data + index * POOL_BENCH_CHUNK;
+        positive sum = 0;
+        positive pass;
+
+        (void)context;
+
+        for (pass = 0; pass < POOL_BENCH_PASSES; pass++)
+                sum += memory_hash_33(chunk, POOL_BENCH_CHUNK);
+
+        pool_bench_sums[index] = sum;
+}
+
+static positive pool_bench_clock(void)
+{
+        positive when[2] = {0, 0};
+
+        system_call_2(syscall(clock_gettime), 1, (positive)address_of when);
+        return when[0] * 1000000000ull + when[1];
+}
+
+b32 main(void)
+{
+        positive limit;
+        positive width;
+        positive single = 0;
+        positive reference = 0;
+        positive at;
+
+        pool_bench_data = (p8 address_to)memory(POOL_BENCH_JOBS * POOL_BENCH_CHUNK);
+
+        if (!pool_bench_data || system_failed((positive)pool_bench_data))
+                return 1;
+
+        for (at = 0; at < POOL_BENCH_JOBS * POOL_BENCH_CHUNK; at++)
+                pool_bench_data[at] = (p8)(at * 2654435761u >> 13);
+
+        parallel_reset(0);
+        limit = parallel_width();
+
+        string_format(log, "parallel_for over %p x 1 MiB, best of 3, affinity width %p\n",
+                      (positive)POOL_BENCH_JOBS, limit);
+
+        for (width = 1;; width = width * 2 > limit ? limit : width * 2)
+        {
+                positive best = positive_max;
+                positive round;
+                positive total = 0;
+
+                parallel_reset(width);
+
+                for (round = 0; round < 3; round++)
+                {
+                        positive started = pool_bench_clock();
+
+                        parallel_for(pool_bench_job, null, POOL_BENCH_JOBS, PARALLEL_SPREAD);
+                        started = pool_bench_clock() - started;
+
+                        if (started < best)
+                                best = started;
+                }
+
+                for (at = 0; at < POOL_BENCH_JOBS; at++)
+                        total += pool_bench_sums[at];
+
+                if (width == 1)
+                {
+                        single = best;
+                        reference = total;
+                }
+
+                string_format(log, "  width %p  %p us  speedup x%p.%p%s\n", width,
+                              best / 1000, single / (best ? best : 1),
+                              (single * 10 / (best ? best : 1)) % 10,
+                              total == reference ? (string_address)"" : (string_address)"  WRONG SUM");
+
+                if (width == limit)
+                        break;
+        }
+
+        parallel_reset(0);
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_pool */
 
 #ifdef BENCH_reserve
 /* Run a fresh process per sample: ru_maxrss is a lifetime high-water mark.

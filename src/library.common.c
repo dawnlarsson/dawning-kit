@@ -4296,4 +4296,632 @@ pub address_any memalign(positive alignment, positive bytes)
 #endif // !KERNEL_MODE && !WINDOWS
 
 #endif // STANDARD_MODERN_C_STANDARD_ALLOCATOR
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        THE POOL
+
+        One per process, started the first time a call is worth threads, and
+        parked on a futex word between calls. It never writes a descriptor:
+        a parallel_for job touches only what its caller gave it by index, and
+        a parallel_ordered job fills its own output, which the sink receives
+        on the calling thread in index order. So the bytes a utility writes
+        cannot depend on how many threads ran, only on how the caller chose
+        to cut its work -- which it must do from the data or from a fixed
+        size, never from parallel_width().
+
+        WIDTH
+
+        The CPUs sched_getaffinity grants at first use, so taskset decides it.
+        The caller counts as one: width - 1 workers are started, slots 1 up,
+        and the caller is slot 0. A beside job's thread is slot width.
+
+        WHEN IT RUNS INLINE
+
+        count below two, bytes below PARALLEL_MINIMUM_BYTES, a width of one,
+        a call from inside a job or a sink (nesting), or workers that could
+        not be started. Inline runs index 0, 1, 2 ... on the caller, and an
+        ordered inline run hands each job's bytes to the sink before the next
+        job starts. PARALLEL_SPREAD as bytes skips the size test for work
+        that is heavy per byte.
+
+        A RUN
+
+        The caller publishes a run and bumps the generation word; each woken
+        worker counts itself busy, reads the run, and claims indices with a
+        compare-and-swap on next until none are left or the run is stopped.
+        The caller claims beside them. When nothing is left to claim the
+        caller withdraws the run and sleeps until busy is zero, so no worker
+        can still be reading a run that lived on the caller's stack. Both
+        halves of every handshake -- busy against the withdrawn run, a
+        finished job against a sleeping caller, a moved limit against a
+        sleeping claimer -- write with a bus-locked instruction before they
+        read the other side's word, which is what keeps a wake from being
+        lost on a machine with a store buffer.
+
+        ORDERED RUNS
+
+        A ring of window = 2 x width outputs. Index i uses entry i % window,
+        and nobody may claim an index at or past emitted + window, so an
+        entry is never reused before its last owner was emitted. That bound
+        is the memory bound and the backpressure: a worker that runs ahead
+        sleeps on limit_word until the caller emits. The caller emits
+        whenever the next entry is done, runs a job itself when it can claim
+        one, and otherwise sleeps on finished_word.
+
+        STOPPING
+
+        parallel_stop marks the run the calling thread is working inside and
+        wakes everybody. No job starts after a claimer sees it and no sink is
+        called after the caller sees it. Which later jobs had already run is
+        unspecified, which is why a per-item error that must keep the output
+        exact is recorded for the sink rather than stopping the run.
+
+        FORK
+
+        A forked child keeps the parent's pool bookkeeping but none of its
+        threads. The pool remembers the thread id that started its workers
+        and starts afresh when a different one asks; system_fork has already
+        set threads_live back to zero in the child.
+*/
+#define PARALLEL_MINIMUM_BYTES (256ull << 10)
+#define PARALLEL_SPREAD positive_max
+#define PARALLEL_WORKERS_MAX 63
+#define PARALLEL_OUTPUT_FIRST 65536
+
+typedef fn(address_to parallel_job)(address_any context, positive index);
+
+typedef struct
+{
+        p8 address_to bytes;
+        positive room;
+        positive used;
+} parallel_output;
+
+typedef fn(address_to parallel_emit_job)(address_any context, positive index,
+                                         parallel_output address_to output);
+typedef bool(address_to parallel_sink)(address_any context, positive index,
+                                       address_any data, positive length);
+
+typedef struct
+{
+        parallel_output output;
+        b32 done;
+        b32 spare;
+} parallel_entry;
+
+typedef struct
+{
+        parallel_job job;
+        parallel_emit_job emit;
+        address_any context;
+        positive count;
+        positive next;
+        positive limit;
+        positive window;
+        parallel_entry address_to ring;
+        b32 stop;
+        b32 limit_word;
+        b32 finished_word;
+        b32 waiting;
+        b32 claimers_waiting;
+        b32 spare;
+} parallel_run;
+
+static struct
+{
+        positive width;
+        positive workers;
+        b32 owner;
+        b32 generation;
+        b32 busy;
+        b32 quit;
+        parallel_run address_to run;
+        thread address_to worker[PARALLEL_WORKERS_MAX];
+} parallel_pool;
+
+static struct
+{
+        thread address_to handle;
+        b32 owner;
+        b32 spare;
+        parallel_job job;
+        address_any context;
+        parallel_run run;
+} parallel_beside_state;
+
+pub positive parallel_width(void)
+{
+        if (!parallel_pool.width)
+        {
+                p8 mask[128] = {0};
+                bipolar got = system_call_3(syscall(sched_getaffinity), 0,
+                                            sizeof(mask), (positive)mask);
+                positive count = 0;
+                bipolar at;
+
+                for (at = 0; at < got && at < (bipolar)sizeof(mask); at++)
+                {
+                        p8 bits = mask[at];
+
+                        while (bits)
+                        {
+                                count += bits & 1;
+                                bits >>= 1;
+                        }
+                }
+
+                if (!count)
+                        count = 1;
+
+                if (count > PARALLEL_WORKERS_MAX + 1)
+                        count = PARALLEL_WORKERS_MAX + 1;
+
+                parallel_pool.width = count;
+        }
+
+        return parallel_pool.width;
+}
+
+pub positive parallel_slot(void)
+{
+        return thread_self()->slot;
+}
+
+static fn parallel_run_stop(parallel_run address_to run)
+{
+        atomic_exchange(address_of run->stop, 1);
+        atomic_inc(address_of run->limit_word);
+        thread_wake(address_of run->limit_word, 1 << 30);
+        atomic_inc(address_of run->finished_word);
+        thread_wake(address_of run->finished_word, 1 << 30);
+}
+
+pub fn parallel_stop(void)
+{
+        parallel_run address_to run = thread_self()->run;
+
+        if (run)
+                parallel_run_stop(run);
+}
+
+pub bool parallel_stopped(void)
+{
+        parallel_run address_to run = thread_self()->run;
+
+        return run && atomic_load(address_of run->stop) != 0;
+}
+
+pub p8 address_to parallel_reserve(parallel_output address_to output,
+                                   positive length)
+{
+        p8 address_to at;
+
+        if (length > positive_max - output->used)
+        {
+                parallel_stop();
+                return null;
+        }
+
+        if (output->room - output->used < length &&
+            !memory_reserve((address_any address_to)address_of output->bytes,
+                            address_of output->room, output->used,
+                            output->used + length, 1, PARALLEL_OUTPUT_FIRST))
+        {
+                parallel_stop();
+                return null;
+        }
+
+        at = output->bytes + output->used;
+        output->used += length;
+
+        return at;
+}
+
+pub bool parallel_write(parallel_output address_to output, address_any data,
+                        positive length)
+{
+        p8 address_to at;
+
+        if (!length)
+                return true;
+
+        at = parallel_reserve(output, length);
+
+        if (!at)
+                return false;
+
+        memory_copy(at, data, length);
+        return true;
+}
+
+/*
+        A claim. A worker that meets the ordered limit sleeps on limit_word;
+        the caller, which is the one that moves the limit, is told no and
+        goes to emit instead.
+*/
+static bool parallel_claim(parallel_run address_to run, positive address_to index,
+                           bool may_sleep)
+{
+        for (;;)
+        {
+                positive at;
+                positive limit;
+
+                if (atomic_load(address_of run->stop))
+                        return false;
+
+                at = atomic_load(address_of run->next);
+
+                if (at >= run->count)
+                        return false;
+
+                limit = run->ring ? atomic_load(address_of run->limit) : run->count;
+
+                if (at >= limit)
+                {
+                        b32 word;
+
+                        if (!may_sleep)
+                                return false;
+
+                        word = atomic_load(address_of run->limit_word);
+                        atomic_inc(address_of run->claimers_waiting);
+
+                        if (at >= atomic_load(address_of run->limit) &&
+                            !atomic_load(address_of run->stop))
+                                thread_wait(address_of run->limit_word, word);
+
+                        atomic_dec(address_of run->claimers_waiting);
+                        continue;
+                }
+
+                if (atomic_compare_exchange(address_of run->next, at, at + 1))
+                {
+                        address_to index = at;
+                        return true;
+                }
+        }
+}
+
+static fn parallel_run_one(parallel_run address_to run, positive index)
+{
+        parallel_entry address_to entry;
+
+        if (!run->ring)
+        {
+                run->job(run->context, index);
+                return;
+        }
+
+        entry = address_of run->ring[index % run->window];
+        entry->output.used = 0;
+        run->emit(run->context, index, address_of entry->output);
+        atomic_exchange(address_of entry->done, 1);
+        atomic_inc(address_of run->finished_word);
+
+        if (atomic_load(address_of run->waiting))
+                thread_wake(address_of run->finished_word, 1);
+}
+
+static fn parallel_participate(parallel_run address_to run)
+{
+        positive index;
+
+        while (parallel_claim(run, address_of index, true))
+                parallel_run_one(run, index);
+}
+
+static fn parallel_worker(address_any argument)
+{
+        thread address_to self = thread_self();
+        b32 seen = 0;
+
+        self->slot = (positive)argument;
+
+        for (;;)
+        {
+                b32 now = atomic_load(address_of parallel_pool.generation);
+                parallel_run address_to run;
+
+                if (now == seen)
+                {
+                        thread_wait(address_of parallel_pool.generation, now);
+                        continue;
+                }
+
+                seen = now;
+
+                if (atomic_load(address_of parallel_pool.quit))
+                        return;
+
+                atomic_inc(address_of parallel_pool.busy);
+                run = atomic_load(address_of parallel_pool.run);
+
+                if (run)
+                {
+                        self->run = run;
+                        parallel_participate(run);
+                        self->run = null;
+                }
+
+                if (__atomic_sub_fetch(address_of parallel_pool.busy, 1,
+                                       __ATOMIC_SEQ_CST) == 0)
+                        thread_wake(address_of parallel_pool.busy, 1);
+        }
+}
+
+static fn parallel_forget(void)
+{
+        memory_fill(address_of parallel_pool.worker, 0,
+                    sizeof(parallel_pool.worker));
+        parallel_pool.workers = 0;
+        parallel_pool.generation = 0;
+        parallel_pool.busy = 0;
+        parallel_pool.quit = 0;
+        parallel_pool.run = null;
+}
+
+//      Workers for this process, started if none are; false means run inline.
+static bool parallel_ready(void)
+{
+        b32 me = (b32)system_call(syscall(gettid));
+        positive slot;
+
+        if (parallel_pool.workers && parallel_pool.owner != me)
+                parallel_forget();
+
+        if (parallel_pool.workers)
+                return true;
+
+        parallel_pool.owner = me;
+
+        for (slot = 1; slot < parallel_width(); slot++)
+        {
+                thread address_to handle =
+                        thread_start(parallel_worker, (address_any)slot);
+
+                if (!handle)
+                        break;
+
+                parallel_pool.worker[parallel_pool.workers++] = handle;
+        }
+
+        return parallel_pool.workers != 0;
+}
+
+/*
+        Joins every worker and forgets the width, so the next call measures
+        affinity again -- or runs at the width given, which is what a check
+        uses to prove output does not move with it. Zero means measure.
+*/
+pub fn parallel_reset(positive width)
+{
+        b32 me = (b32)system_call(syscall(gettid));
+        positive at;
+
+        if (parallel_pool.workers && parallel_pool.owner == me)
+        {
+                atomic_exchange(address_of parallel_pool.quit, 1);
+                atomic_inc(address_of parallel_pool.generation);
+                thread_wake(address_of parallel_pool.generation, 1 << 30);
+
+                for (at = 0; at < parallel_pool.workers; at++)
+                        thread_join(parallel_pool.worker[at]);
+        }
+
+        parallel_forget();
+        parallel_pool.width = width > PARALLEL_WORKERS_MAX + 1
+                                      ? PARALLEL_WORKERS_MAX + 1
+                                      : width;
+}
+
+static bool parallel_inline_wanted(positive count, positive bytes)
+{
+        return count < 2 || bytes < PARALLEL_MINIMUM_BYTES ||
+               thread_self()->run || parallel_width() == 1;
+}
+
+static fn parallel_publish(parallel_run address_to run)
+{
+        thread_self()->run = run;
+        atomic_exchange(address_of parallel_pool.run, run);
+        atomic_inc(address_of parallel_pool.generation);
+        thread_wake(address_of parallel_pool.generation, 1 << 30);
+}
+
+static fn parallel_withdraw(void)
+{
+        b32 busy;
+
+        atomic_exchange(address_of parallel_pool.run, (parallel_run address_to)null);
+
+        while ((busy = atomic_load(address_of parallel_pool.busy)) != 0)
+                thread_wait(address_of parallel_pool.busy, busy);
+
+        thread_self()->run = null;
+}
+
+pub bool parallel_for(parallel_job job, address_any context, positive count,
+                      positive bytes)
+{
+        parallel_run run = {0};
+        positive index;
+
+        run.job = job;
+        run.context = context;
+        run.count = count;
+        run.limit = count;
+
+        if (parallel_inline_wanted(count, bytes) || !parallel_ready())
+        {
+                address_any outer = thread_self()->run;
+
+                thread_self()->run = address_of run;
+
+                for (index = 0; index < count && !run.stop; index++)
+                        job(context, index);
+
+                thread_self()->run = outer;
+                return !run.stop;
+        }
+
+        parallel_publish(address_of run);
+        parallel_participate(address_of run);
+        parallel_withdraw();
+
+        return !run.stop;
+}
+
+pub bool parallel_ordered(parallel_emit_job job, parallel_sink sink,
+                          address_any context, positive count, positive bytes)
+{
+        parallel_run run = {0};
+        positive emitted = 0;
+        positive at;
+
+        run.emit = job;
+        run.context = context;
+        run.count = count;
+
+        if (parallel_inline_wanted(count, bytes) || !parallel_ready())
+        {
+                address_any outer = thread_self()->run;
+                parallel_output output = {0};
+
+                thread_self()->run = address_of run;
+
+                for (at = 0; at < count && !run.stop; at++)
+                {
+                        output.used = 0;
+                        job(context, at, address_of output);
+
+                        if (run.stop)
+                                break;
+
+                        if (!sink(context, at, output.bytes, output.used))
+                                run.stop = 1;
+                }
+
+                if (output.bytes)
+                        memory_release((address_any address_to)address_of output.bytes,
+                                       address_of output.room, address_of output.used, 1);
+
+                thread_self()->run = outer;
+                return !run.stop;
+        }
+
+        run.window = 2 * parallel_width();
+        run.limit = run.window;
+        run.ring = memory_take_zeroed(run.window, sizeof(parallel_entry));
+
+        if (!run.ring)
+                return false;
+
+        parallel_publish(address_of run);
+
+        while (emitted < count)
+        {
+                parallel_entry address_to entry = address_of run.ring[emitted % run.window];
+                positive index;
+                b32 word;
+
+                if (atomic_load(address_of entry->done))
+                {
+                        if (!atomic_load(address_of run.stop) &&
+                            !sink(context, emitted, entry->output.bytes,
+                                  entry->output.used))
+                                parallel_run_stop(address_of run);
+
+                        entry->output.used = 0;
+                        atomic_exchange(address_of entry->done, 0);
+                        emitted++;
+                        atomic_exchange(address_of run.limit, emitted + run.window);
+                        atomic_inc(address_of run.limit_word);
+
+                        if (atomic_load(address_of run.claimers_waiting))
+                                thread_wake(address_of run.limit_word, 1 << 30);
+
+                        continue;
+                }
+
+                if (atomic_load(address_of run.stop))
+                        break;
+
+                if (parallel_claim(address_of run, address_of index, false))
+                {
+                        parallel_run_one(address_of run, index);
+                        continue;
+                }
+
+                word = atomic_load(address_of run.finished_word);
+                atomic_exchange(address_of run.waiting, 1);
+
+                if (!atomic_load(address_of entry->done) &&
+                    !atomic_load(address_of run.stop))
+                        thread_wait(address_of run.finished_word, word);
+
+                atomic_exchange(address_of run.waiting, 0);
+        }
+
+        parallel_withdraw();
+
+        for (at = 0; at < run.window; at++)
+                if (run.ring[at].output.bytes)
+                        memory_release((address_any address_to)address_of run.ring[at].output.bytes,
+                                       address_of run.ring[at].output.room,
+                                       address_of run.ring[at].output.used, 1);
+
+        memory_give(run.ring);
+
+        return !run.stop;
+}
+
+static fn parallel_beside_entry(address_any argument)
+{
+        thread address_to self = thread_self();
+
+        (void)argument;
+        self->slot = parallel_pool.width;
+        self->run = address_of parallel_beside_state.run;
+        parallel_beside_state.job(parallel_beside_state.context, 0);
+        self->run = null;
+}
+
+pub bool parallel_beside(parallel_job job, address_any context)
+{
+        b32 me = (b32)system_call(syscall(gettid));
+
+        if (parallel_beside_state.handle && parallel_beside_state.owner != me)
+                parallel_beside_state.handle = null;
+
+        if (parallel_beside_state.handle || thread_self()->run ||
+            parallel_width() == 1)
+                return false;
+
+        parallel_beside_state.run = (parallel_run){0};
+        parallel_beside_state.job = job;
+        parallel_beside_state.context = context;
+        parallel_beside_state.owner = me;
+        parallel_beside_state.handle = thread_start(parallel_beside_entry, null);
+
+        return parallel_beside_state.handle != null;
+}
+
+pub bool parallel_beside_wait(void)
+{
+        b32 me = (b32)system_call(syscall(gettid));
+
+        if (!parallel_beside_state.handle || parallel_beside_state.owner != me)
+        {
+                parallel_beside_state.handle = null;
+                return false;
+        }
+
+        thread_join(parallel_beside_state.handle);
+        parallel_beside_state.handle = null;
+
+        return !parallel_beside_state.run.stop;
+}
+#endif // LIBRARY_THREAD_RUNTIME
+
 #endif // LIBRARY_COMMON_ALLOCATOR
