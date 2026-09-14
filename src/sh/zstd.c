@@ -3317,6 +3317,19 @@ zstd_row_find(zstd_encoder address_to e, p8 address_to ip, p8 address_to iend,
         zstd_row_update(e, cur, low, row_log, mls);
         h = zstd_hash_bytes(ip, (p8)(e->p.hash_log - row_log + 8), mls);
         row = h >> 8;
+        /* The row a search eight bytes on will read is fetched now, as
+           libzstd does, so the load it waits on is in cache by then. */
+        if (ip + 16 <= iend)
+        {
+                positive const ahead =
+                    (zstd_hash_bytes(ip + 8, (p8)(e->p.hash_log - row_log + 8), mls) >> 8)
+                    << row_log;
+
+                __builtin_prefetch((p8 address_to)e->chain + ahead);
+                __builtin_prefetch(e->hash + ahead);
+                if (row_log > 4)
+                        __builtin_prefetch(e->hash + ahead + 16);
+        }
         head = ((p8 address_to)e->chain + ((positive)1 << e->p.hash_log))[row];
         mask = zstd_row_mask((p8 address_to)e->chain + (row << row_log), (p8)h, entries);
         if (head)
