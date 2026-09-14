@@ -15,8 +15,6 @@
         for the ext4.
 */
 
-#define STORAGE_FORMAT_INVALID 22
-#define STORAGE_FORMAT_NO_MEMORY 12
 #define STORAGE_FORMAT_ZERO_CHUNK ((positive)1 << 20)
 
 typedef struct
@@ -38,31 +36,12 @@ typedef struct
         string_address label;
 } storage_format_identity;
 
-static fn storage_put16(p8 address_to at, p64 value)
-{
-        at[0] = (p8)value;
-        at[1] = (p8)(value >> 8);
-}
-
-static fn storage_put32(p8 address_to at, p64 value)
-{
-        storage_put16(at, value);
-        storage_put16(at + 2, value >> 16);
-}
-
-static fn storage_put64(p8 address_to at, p64 value)
-{
-        storage_put32(at, value);
-        storage_put32(at + 4, value >> 32);
-}
-
-static fn storage_put32_be(p8 address_to at, p64 value)
-{
-        at[0] = (p8)(value >> 24);
-        at[1] = (p8)(value >> 16);
-        at[2] = (p8)(value >> 8);
-        at[3] = (p8)value;
-}
+/* Every field here is little-endian on disk, as the machine floor is; the
+   one big-endian field, ext4's jbd2 header, takes the network store. */
+#define storage_put16(at, value) memory_store_unaligned(p16, (at), (value))
+#define storage_put32(at, value) memory_store_unaligned(p32, (at), (value))
+#define storage_put64(at, value) memory_store_unaligned(p64, (at), (value))
+#define storage_put32_be(at, value) network_store_32((at), (p32)(value))
 
 static bipolar storage_format_write(bipolar handle, p8 address_to bytes,
                                     positive length, p64 offset)
@@ -83,7 +62,7 @@ static bipolar storage_format_zero(bipolar handle, p64 offset, p64 length)
 
         zeros = memory(STORAGE_FORMAT_ZERO_CHUNK);
         if (!zeros)
-                return -STORAGE_FORMAT_NO_MEMORY;
+                return -ERROR_NO_MEMORY;
 
         memory_zero(zeros, STORAGE_FORMAT_ZERO_CHUNK);
 
@@ -216,26 +195,26 @@ static bipolar storage_format_gpt(bipolar handle, p64 sectors, p32 sector_size,
         if (!storage_gpt_span(sectors, sector_size, address_of first_usable,
                               address_of last_usable) ||
             count > STORAGE_GPT_ENTRIES)
-                return -STORAGE_FORMAT_INVALID;
+                return -ERROR_INVALID;
 
         for (positive at = 0; at < count; at++)
         {
                 if (parts[at].first < first_usable ||
                     parts[at].last > last_usable ||
                     parts[at].first > parts[at].last)
-                        return -STORAGE_FORMAT_INVALID;
+                        return -ERROR_INVALID;
 
                 for (positive other = 0; other < at; other++)
                         if (parts[at].first <= parts[other].last &&
                             parts[other].first <= parts[at].last)
-                                return -STORAGE_FORMAT_INVALID;
+                                return -ERROR_INVALID;
         }
 
         table_sectors = storage_gpt_table_sectors(sector_size);
         table_bytes = (positive)(table_sectors * sector_size);
         table = memory(table_bytes + sector_size);
         if (!table)
-                return -STORAGE_FORMAT_NO_MEMORY;
+                return -ERROR_NO_MEMORY;
 
         sector = table + table_bytes;
         memory_zero(table, table_bytes + sector_size);
@@ -336,7 +315,7 @@ static bipolar storage_format_fat32(bipolar handle, p64 offset, p64 bytes,
         if (sector_size < 512 || sector_size > STORAGE_FAT_CLUSTER ||
             (sector_size & (sector_size - 1)) || total > 0xffffffff ||
             total <= STORAGE_FAT_RESERVED)
-                return -STORAGE_FORMAT_INVALID;
+                return -ERROR_INVALID;
 
         per_cluster = STORAGE_FAT_CLUSTER / sector_size;
         fat_sectors = (((total - STORAGE_FAT_RESERVED) / per_cluster + 2) * 4 +
@@ -344,11 +323,11 @@ static bipolar storage_format_fat32(bipolar handle, p64 offset, p64 bytes,
                       sector_size;
 
         if (STORAGE_FAT_RESERVED + 2 * fat_sectors >= total)
-                return -STORAGE_FORMAT_INVALID;
+                return -ERROR_INVALID;
 
         clusters = (total - STORAGE_FAT_RESERVED - 2 * fat_sectors) / per_cluster;
         if (clusters < STORAGE_FAT32_FEWEST || clusters > STORAGE_FAT32_MOST)
-                return -STORAGE_FORMAT_INVALID;
+                return -ERROR_INVALID;
 
         data = STORAGE_FAT_RESERVED + 2 * fat_sectors;
 
@@ -359,7 +338,7 @@ static bipolar storage_format_fat32(bipolar handle, p64 offset, p64 bytes,
 
         sector = memory(sector_size);
         if (!sector)
-                return -STORAGE_FORMAT_NO_MEMORY;
+                return -ERROR_NO_MEMORY;
 
         //      The boot sector, and its copy at sector 6.
         memory_zero(sector, sector_size);
@@ -789,13 +768,13 @@ static bipolar storage_format_ext4(bipolar handle, p64 offset, p64 bytes,
         bipolar failed = 0;
 
         if (!storage_ext4_layout(address_of plan, bytes))
-                return -STORAGE_FORMAT_INVALID;
+                return -ERROR_INVALID;
 
         seed = storage_crc32c(~(p32)0, identity->uuid, 16);
         descriptor_bytes = (positive)plan.descriptor_blocks * STORAGE_EXT4_BLOCK;
         descriptors = memory(descriptor_bytes + STORAGE_EXT4_BLOCK);
         if (!descriptors)
-                return -STORAGE_FORMAT_NO_MEMORY;
+                return -ERROR_NO_MEMORY;
 
         block = descriptors + descriptor_bytes;
         memory_zero(descriptors, descriptor_bytes + STORAGE_EXT4_BLOCK);

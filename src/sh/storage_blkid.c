@@ -910,12 +910,7 @@ static bool storage_udf_metadata(bipolar handle,
                                 bool hexadecimal = true;
 
                                 for (positive at = 0; at < 16; at++)
-                                        if (!((volume_set[at] >= '0' &&
-                                               volume_set[at] <= '9') ||
-                                              (volume_set[at] >= 'a' &&
-                                               volume_set[at] <= 'f') ||
-                                              (volume_set[at] >= 'A' &&
-                                               volume_set[at] <= 'F')))
+                                        if (digit_known(volume_set[at], 16) == 16)
                                                 hexadecimal = false;
 
                                 if (hexadecimal)
@@ -1280,7 +1275,7 @@ static fn storage_partition_value(storage_identity address_to identity,
 static fn storage_probe_partition(string_address path,
                                   storage_identity address_to identity)
 {
-        p8 facts[256];
+        file_facts facts;
         p8 sysfs[96];
         p8 text[4096];
         positive used;
@@ -1288,13 +1283,12 @@ static fn storage_probe_partition(string_address path,
         positive minor;
         bipolar got;
 
-        memory_zero(facts, sizeof(facts));
-        if (system_stat_at(AT_FDCWD, path, 0x800, 0x7ff, facts) < 0 ||
-            (storage_le16(facts + 28) & 0170000) != 0060000)
+        if (!file_look(AT_FDCWD, path, 0, address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_BLOCK)
                 return;
 
-        major = storage_le32(facts + 128);
-        minor = storage_le32(facts + 132);
+        major = facts.rdev_major;
+        minor = facts.rdev_minor;
         used = sizeof("/sys/dev/block/") - 1;
         memory_copy(sysfs, "/sys/dev/block/", used);
         used += positive_into_string(sysfs + used, major);

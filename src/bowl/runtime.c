@@ -46,7 +46,6 @@ static const p8 bowl_usage_text[] = bowl_label
 #define BOWL_ACCESS_EXECUTE 1
 #define BOWL_WRAP_ARGV 96
 
-#define MNT_DETACH 2
 
 struct bowl_mount_point
 {

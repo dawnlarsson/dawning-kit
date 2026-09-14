@@ -523,9 +523,8 @@ static HOT b32 tools_monitor()
         file_machine facts;
         p8 host[15];
 
-        memory_fill(address_of facts, 0, sizeof(facts));
         memory_fill(host, 0, sizeof(host));
-        if (system_call_1(syscall(uname), (positive)address_of facts) >= 0)
+        if (file_machine_read(address_of facts))
         {
                 positive length = string_length_max(facts.node, 14);
 

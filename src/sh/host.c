@@ -843,13 +843,8 @@ static b32 host_run(string_address address_to argv)
 
         if (child == 0)
         {
-                positive count = 0;
-
-                while (argv[count])
-                        count++;
-
                 // Through the launch decision every other exec here takes.
-                (void)shell_exec_file(argv[0], argv, count,
+                (void)shell_exec_file(argv[0], argv, pointer_vector_count(argv),
                                       file_environment_all());
                 system_call_1(syscall(exit), 127);
         }

@@ -335,12 +335,7 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
         if (!file_store_slurp(path, address_of table->text))
         {
                 if (!missing_ok && diagnostic)
-                {
-                        diagnostic(str("cannot read "));
-                        if (path)
-                                diagnostic((address_any)path, string_length(path));
-                        diagnostic(str("\n"));
-                }
+                        string_format(diagnostic, "cannot read %s\n", path);
 
                 return missing_ok;
         }
@@ -364,13 +359,9 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
                         if (count < 4 || count > 6)
                         {
                                 if (diagnostic)
-                                {
-                                        if (path)
-                                                diagnostic((address_any)path, string_length(path));
-                                        diagnostic(str(": parse error at line "));
-                                        positive_to_string(diagnostic, line_number);
-                                        diagnostic(str(" -- ignored\n"));
-                                }
+                                        string_format(diagnostic,
+                                                      "%s: parse error at line %p -- ignored\n",
+                                                      path, line_number);
                                 table->malformed = true;
                                 continue;
                         }
@@ -585,9 +576,7 @@ static PURE bool storage_mount_options_match(storage_mount address_to mount,
         unknown name is named, and a name written twice is a column written
         twice.  `unknown` is left holding the name that was not recognised. */
 #define STORAGE_COLUMN_NAME 64
-#define STORAGE_COLUMNS_OK NAME_LIST_OK
 #define STORAGE_COLUMNS_EMPTY NAME_LIST_EMPTY
-#define STORAGE_COLUMNS_UNKNOWN NAME_LIST_UNKNOWN
 
 static b32 storage_columns(string_address list,
                            storage_findmnt_options address_to options,
@@ -846,12 +835,15 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room);
 
 /*      The absolute spelling of a word that names something, or null for a
         word that names nothing -- a source such as `tmpfs` is no path and
-        stays as it was written. */
-static p8 address_to storage_findmnt_path(string_address word,
-                                          positive address_to room)
+        stays as it was written.  Extra open flags let umount leave the last
+        symlink unfollowed. */
+static p8 address_to storage_word_path(string_address word,
+                                       positive address_to room,
+                                       positive extra_flags)
 {
         bipolar handle = system_open_at(AT_FDCWD, word,
-                                        STORAGE_OPEN_PATH | O_CLOEXEC);
+                                        STORAGE_OPEN_PATH | O_CLOEXEC |
+                                            extra_flags);
         p8 address_to resolved;
 
         address_to room = 0;
@@ -977,8 +969,7 @@ static bool storage_findmnt_rows(storage_mount_table address_to table,
                                          table->count, 64))
                         return false;
                 done_count = table->count;
-                for (positive at = 0; at < table->count; at++)
-                        done[at] = 0;
+                memory_zero(done, done_count);
         }
 
         if (submounts)
@@ -1154,12 +1145,9 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                         if (fault)
                         {
                                 if (diagnostic)
-                                {
-                                        diagnostic(str("findmnt: unknown column: "));
-                                        diagnostic((address_any)unknown,
-                                                   string_length((string_address)unknown));
-                                        diagnostic(str("\n"));
-                                }
+                                        string_format(diagnostic,
+                                                      "findmnt: unknown column: %s\n",
+                                                      unknown);
                                 return 1;
                         }
                 }
@@ -1191,14 +1179,14 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         positive target_room = 0;
         positive second_room = 0;
         if (options.operand)
-                options.operand_path = (string_address)storage_findmnt_path(
-                    options.operand, address_of operand_room);
+                options.operand_path = (string_address)storage_word_path(
+                    options.operand, address_of operand_room, 0);
         if (options.mountpoint_query && options.target)
-                options.target_path = (string_address)storage_findmnt_path(
-                    options.target, address_of target_room);
+                options.target_path = (string_address)storage_word_path(
+                    options.target, address_of target_room, 0);
         if (options.second)
-                options.second_path = (string_address)storage_findmnt_path(
-                    options.second, address_of second_room);
+                options.second_path = (string_address)storage_word_path(
+                    options.second, address_of second_room, 0);
 
         if (options.path_query)
         {
@@ -1408,24 +1396,18 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                                address_of facts))
                 {
                         if (!quiet && diagnostic)
-                        {
-                                diagnostic(str("mountpoint: "));
-                                if (path)
-                                        diagnostic((address_any)path, string_length(path));
-                                diagnostic(str(": cannot inspect\n"));
-                        }
+                                string_format(diagnostic,
+                                              "mountpoint: %s: cannot inspect\n",
+                                              path);
                         return 1;
                 }
 
                 if ((facts.mode & MODE_FORMAT) != MODE_BLOCK)
                 {
                         if (!quiet && diagnostic)
-                        {
-                                diagnostic(str("mountpoint: "));
-                                if (path)
-                                        diagnostic((address_any)path, string_length(path));
-                                diagnostic(str(": not a block device\n"));
-                        }
+                                string_format(diagnostic,
+                                              "mountpoint: %s: not a block device\n",
+                                              path);
                         return 32;
                 }
 
@@ -1444,19 +1426,8 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         if (handle < 0)
         {
                 if (!quiet && diagnostic)
-                {
-                        b32 number = (b32)-handle;
-
-                        diagnostic(str("mountpoint: "));
-                        if (path)
-                                diagnostic((address_any)path, string_length(path));
-                        diagnostic(str(": "));
-                        string_address reason = strerror(number);
-                        if (reason)
-                                diagnostic((address_any)reason,
-                                           string_length(reason));
-                        diagnostic(str("\n"));
-                }
+                        string_format(diagnostic, "mountpoint: %s: %s\n", path,
+                                      strerror((b32)-handle));
                 return 1;
         }
 
@@ -1528,12 +1499,8 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         if (!inspected)
         {
                 if (!quiet && diagnostic)
-                {
-                        diagnostic(str("mountpoint: "));
-                        if (path)
-                                diagnostic((address_any)path, string_length(path));
-                        diagnostic(str(": cannot inspect\n"));
-                }
+                        string_format(diagnostic,
+                                      "mountpoint: %s: cannot inspect\n", path);
                 return 1;
         }
 

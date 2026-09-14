@@ -23,6 +23,10 @@
 #define MS_KERNMOUNT (1 << 22)
 #define MS_I_VERSION (1 << 23)
 #define MS_STRICTATIME (1 << 24)
+#define MS_LAZYTIME (1 << 25)
+
+#define MNT_FORCE 1
+#define MNT_DETACH 2
 
 /* Linux namespace types, shared by bowl(1), unshare(1) and nsenter(1). */
 #define CLONE_NEWTIME 0x00000080

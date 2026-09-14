@@ -105,13 +105,6 @@ static bipolar start_network()
                              network_argv, 2);
 }
 
-static fn pause_for(positive nanoseconds)
-{
-        timespec span = {nanoseconds / 1000000000, nanoseconds % 1000000000};
-
-        sleep(address_of span);
-}
-
 static fn wait_for_settling(bipolar service)
 {
         positive started = clock_monotonic_nanoseconds();
@@ -129,7 +122,7 @@ static fn wait_for_settling(bipolar service)
                 if (reaped != 0)
                         return;
 
-                pause_for(20000000);
+                host_pause(20000000);
         }
 }
 
@@ -143,7 +136,7 @@ static bipolar start_shell_until_ready(positive address_to started)
                 string_format(log, init_label "could not start %s: %b\n",
                               init_program, shell);
                 log_flush();
-                pause_for(RESTART_BACKOFF_MAX_NS);
+                host_pause(RESTART_BACKOFF_MAX_NS);
                 address_to started = clock_monotonic_nanoseconds();
         }
 
@@ -232,7 +225,7 @@ static DEAD_END b32 system_init()
                                 log_flush();
                         }
 
-                        pause_for(RESTART_BACKOFF_NS);
+                        host_pause(RESTART_BACKOFF_NS);
                         continue;
                 }
 
@@ -302,7 +295,7 @@ static DEAD_END b32 system_init()
                                       quick_exits, backoff / 1000000);
                         log_flush();
 
-                        pause_for(backoff);
+                        host_pause(backoff);
                 }
 
                 started = clock_monotonic_nanoseconds();

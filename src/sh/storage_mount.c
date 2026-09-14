@@ -15,44 +15,10 @@
 
 #include "../compiler_memory.c"
 
-#define STORAGE_MS_RDONLY       1
-#define STORAGE_MS_NOSUID       2
-#define STORAGE_MS_NODEV        4
-#define STORAGE_MS_NOEXEC       8
-#define STORAGE_MS_SYNCHRONOUS  16
-#define STORAGE_MS_REMOUNT      32
-#define STORAGE_MS_MANDLOCK     64
-#define STORAGE_MS_DIRSYNC      128
-#define STORAGE_MS_NOSYMFOLLOW  256
-#define STORAGE_MS_NOATIME      1024
-#define STORAGE_MS_NODIRATIME   2048
-#define STORAGE_MS_BIND         4096
-#define STORAGE_MS_MOVE         8192
-#define STORAGE_MS_REC          16384
-#define STORAGE_MS_SILENT       32768
-#define STORAGE_MS_UNBINDABLE   (1UL << 17)
-#define STORAGE_MS_PRIVATE      (1UL << 18)
-#define STORAGE_MS_SLAVE        (1UL << 19)
-#define STORAGE_MS_SHARED       (1UL << 20)
-#define STORAGE_MS_RELATIME     (1UL << 21)
-#define STORAGE_MS_STRICTATIME  (1UL << 24)
-#define STORAGE_MS_LAZYTIME     (1UL << 25)
-
-#define STORAGE_MNT_FORCE       1
-#define STORAGE_MNT_DETACH      2
-#define STORAGE_MNT_EXPIRE      4
-
-#define STORAGE_ERROR_PERMISSION 1
-#define STORAGE_ERROR_NO_ENTRY  2
-#define STORAGE_ERROR_IO        5
-#define STORAGE_ERROR_NO_MEMORY 12
-#define STORAGE_ERROR_BUSY      16
-#define STORAGE_ERROR_INVALID   22
-
-#define STORAGE_BIND_CHANGEABLE (STORAGE_MS_RDONLY | STORAGE_MS_NOSUID | \
-                                 STORAGE_MS_NODEV | STORAGE_MS_NOEXEC | \
-                                 STORAGE_MS_NOATIME | STORAGE_MS_NODIRATIME | \
-                                 STORAGE_MS_RELATIME | STORAGE_MS_NOSYMFOLLOW)
+#define STORAGE_BIND_CHANGEABLE (MS_RDONLY | MS_NOSUID | \
+                                 MS_NODEV | MS_NOEXEC | \
+                                 MS_NOATIME | MS_NODIRATIME | \
+                                 MS_RELATIME | MS_NOSYMFOLLOW)
 
 #define storage_word(word, wanted) string_equals((word), (wanted))
 
@@ -146,45 +112,45 @@ enum { STORAGE_OPTION_FLAGS, STORAGE_OPTION_PROPAGATION,
 /* Length and action live above Linux's highest mount flag, leaving the hot
    table at two words and one pointer per spelling. */
 static const storage_mount_option storage_mount_option_table[] = {
-    O("ro", STORAGE_MS_RDONLY, 0, STORAGE_OPTION_FLAGS),
-    O("rw", 0, STORAGE_MS_RDONLY, STORAGE_OPTION_FLAGS),
-    O("suid", 0, STORAGE_MS_NOSUID, STORAGE_OPTION_FLAGS),
-    O("nosuid", STORAGE_MS_NOSUID, 0, STORAGE_OPTION_FLAGS),
-    O("dev", 0, STORAGE_MS_NODEV, STORAGE_OPTION_FLAGS),
-    O("nodev", STORAGE_MS_NODEV, 0, STORAGE_OPTION_FLAGS),
-    O("exec", 0, STORAGE_MS_NOEXEC, STORAGE_OPTION_FLAGS),
-    O("noexec", STORAGE_MS_NOEXEC, 0, STORAGE_OPTION_FLAGS),
-    O("sync", STORAGE_MS_SYNCHRONOUS, 0, STORAGE_OPTION_FLAGS),
-    O("async", 0, STORAGE_MS_SYNCHRONOUS, STORAGE_OPTION_FLAGS),
-    O("dirsync", STORAGE_MS_DIRSYNC, 0, STORAGE_OPTION_FLAGS),
-    O("mand", STORAGE_MS_MANDLOCK, 0, STORAGE_OPTION_FLAGS),
-    O("nomand", 0, STORAGE_MS_MANDLOCK, STORAGE_OPTION_FLAGS),
-    O("atime", 0, STORAGE_MS_NOATIME, STORAGE_OPTION_FLAGS),
-    O("noatime", STORAGE_MS_NOATIME, 0, STORAGE_OPTION_FLAGS),
-    O("diratime", 0, STORAGE_MS_NODIRATIME, STORAGE_OPTION_FLAGS),
-    O("nodiratime", STORAGE_MS_NODIRATIME, 0, STORAGE_OPTION_FLAGS),
-    O("relatime", STORAGE_MS_RELATIME, STORAGE_MS_STRICTATIME, STORAGE_OPTION_FLAGS),
-    O("norelatime", 0, STORAGE_MS_RELATIME, STORAGE_OPTION_FLAGS),
-    O("strictatime", STORAGE_MS_STRICTATIME, STORAGE_MS_RELATIME, STORAGE_OPTION_FLAGS),
-    O("nostrictatime", 0, STORAGE_MS_STRICTATIME, STORAGE_OPTION_FLAGS),
-    O("lazytime", STORAGE_MS_LAZYTIME, 0, STORAGE_OPTION_FLAGS),
-    O("nolazytime", 0, STORAGE_MS_LAZYTIME, STORAGE_OPTION_FLAGS),
-    O("symfollow", 0, STORAGE_MS_NOSYMFOLLOW, STORAGE_OPTION_FLAGS),
-    O("nosymfollow", STORAGE_MS_NOSYMFOLLOW, 0, STORAGE_OPTION_FLAGS),
-    O("bind", STORAGE_MS_BIND, 0, STORAGE_OPTION_FLAGS),
-    O("rbind", STORAGE_MS_BIND | STORAGE_MS_REC, 0, STORAGE_OPTION_FLAGS),
-    O("move", STORAGE_MS_MOVE, 0, STORAGE_OPTION_FLAGS),
-    O("remount", STORAGE_MS_REMOUNT, 0, STORAGE_OPTION_FLAGS),
-    O("silent", STORAGE_MS_SILENT, 0, STORAGE_OPTION_FLAGS),
-    O("loud", 0, STORAGE_MS_SILENT, STORAGE_OPTION_FLAGS),
-    O("shared", STORAGE_MS_SHARED, 0, STORAGE_OPTION_PROPAGATION),
-    O("rshared", STORAGE_MS_SHARED | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
-    O("slave", STORAGE_MS_SLAVE, 0, STORAGE_OPTION_PROPAGATION),
-    O("rslave", STORAGE_MS_SLAVE | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
-    O("private", STORAGE_MS_PRIVATE, 0, STORAGE_OPTION_PROPAGATION),
-    O("rprivate", STORAGE_MS_PRIVATE | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
-    O("unbindable", STORAGE_MS_UNBINDABLE, 0, STORAGE_OPTION_PROPAGATION),
-    O("runbindable", STORAGE_MS_UNBINDABLE | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("ro", MS_RDONLY, 0, STORAGE_OPTION_FLAGS),
+    O("rw", 0, MS_RDONLY, STORAGE_OPTION_FLAGS),
+    O("suid", 0, MS_NOSUID, STORAGE_OPTION_FLAGS),
+    O("nosuid", MS_NOSUID, 0, STORAGE_OPTION_FLAGS),
+    O("dev", 0, MS_NODEV, STORAGE_OPTION_FLAGS),
+    O("nodev", MS_NODEV, 0, STORAGE_OPTION_FLAGS),
+    O("exec", 0, MS_NOEXEC, STORAGE_OPTION_FLAGS),
+    O("noexec", MS_NOEXEC, 0, STORAGE_OPTION_FLAGS),
+    O("sync", MS_SYNCHRONOUS, 0, STORAGE_OPTION_FLAGS),
+    O("async", 0, MS_SYNCHRONOUS, STORAGE_OPTION_FLAGS),
+    O("dirsync", MS_DIRSYNC, 0, STORAGE_OPTION_FLAGS),
+    O("mand", MS_MANDLOCK, 0, STORAGE_OPTION_FLAGS),
+    O("nomand", 0, MS_MANDLOCK, STORAGE_OPTION_FLAGS),
+    O("atime", 0, MS_NOATIME, STORAGE_OPTION_FLAGS),
+    O("noatime", MS_NOATIME, 0, STORAGE_OPTION_FLAGS),
+    O("diratime", 0, MS_NODIRATIME, STORAGE_OPTION_FLAGS),
+    O("nodiratime", MS_NODIRATIME, 0, STORAGE_OPTION_FLAGS),
+    O("relatime", MS_RELATIME, MS_STRICTATIME, STORAGE_OPTION_FLAGS),
+    O("norelatime", 0, MS_RELATIME, STORAGE_OPTION_FLAGS),
+    O("strictatime", MS_STRICTATIME, MS_RELATIME, STORAGE_OPTION_FLAGS),
+    O("nostrictatime", 0, MS_STRICTATIME, STORAGE_OPTION_FLAGS),
+    O("lazytime", MS_LAZYTIME, 0, STORAGE_OPTION_FLAGS),
+    O("nolazytime", 0, MS_LAZYTIME, STORAGE_OPTION_FLAGS),
+    O("symfollow", 0, MS_NOSYMFOLLOW, STORAGE_OPTION_FLAGS),
+    O("nosymfollow", MS_NOSYMFOLLOW, 0, STORAGE_OPTION_FLAGS),
+    O("bind", MS_BIND, 0, STORAGE_OPTION_FLAGS),
+    O("rbind", MS_BIND | MS_REC, 0, STORAGE_OPTION_FLAGS),
+    O("move", MS_MOVE, 0, STORAGE_OPTION_FLAGS),
+    O("remount", MS_REMOUNT, 0, STORAGE_OPTION_FLAGS),
+    O("silent", MS_SILENT, 0, STORAGE_OPTION_FLAGS),
+    O("loud", 0, MS_SILENT, STORAGE_OPTION_FLAGS),
+    O("shared", MS_SHARED, 0, STORAGE_OPTION_PROPAGATION),
+    O("rshared", MS_SHARED | MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("slave", MS_SLAVE, 0, STORAGE_OPTION_PROPAGATION),
+    O("rslave", MS_SLAVE | MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("private", MS_PRIVATE, 0, STORAGE_OPTION_PROPAGATION),
+    O("rprivate", MS_PRIVATE | MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("unbindable", MS_UNBINDABLE, 0, STORAGE_OPTION_PROPAGATION),
+    O("runbindable", MS_UNBINDABLE | MS_REC, 0, STORAGE_OPTION_PROPAGATION),
     O("noauto", 0, 0, STORAGE_OPTION_NOAUTO),
     O("nofail", 0, 0, STORAGE_OPTION_NOFAIL),
     O("loop", 0, 0, STORAGE_OPTION_LOOP),
@@ -268,8 +234,8 @@ static bool storage_options_parse(storage_mount_options address_to out,
 static bool storage_options_merge(storage_mount_options address_to into,
                                   storage_mount_options address_to extra)
 {
-        positive operations = STORAGE_MS_BIND | STORAGE_MS_MOVE |
-                              STORAGE_MS_REMOUNT | STORAGE_MS_REC;
+        positive operations = MS_BIND | MS_MOVE |
+                              MS_REMOUNT | MS_REC;
 
         into->flags = (into->flags & ~extra->mentioned) |
                       (extra->flags & extra->mentioned) |
@@ -283,23 +249,6 @@ static bool storage_options_merge(storage_mount_options address_to into,
 
         return !extra->data.used ||
                storage_data_add(into, extra->data.bytes, extra->data.used);
-}
-
-/*      The absolute spelling of a word that names something, and null for
-        one that does not -- `tmpfs` is not a path and stays as it was
-        written, which is how the reference reports both. */
-static p8 address_to storage_mount_canonical(string_address word,
-                                             positive address_to room)
-{
-        bipolar handle = system_open_at(AT_FDCWD, word,
-                                        STORAGE_OPEN_PATH | O_CLOEXEC);
-        p8 address_to resolved;
-
-        if (handle < 0)
-                return null;
-        resolved = storage_fd_path(handle, room);
-        system_close(handle);
-        return resolved;
 }
 
 /*
@@ -327,8 +276,8 @@ static bool storage_remount_options(string_address target,
                         it handed this mount over: EPERM, where the
                         reference keeps nosuid and nodev and succeeds. */
                 positive room = 0;
-                p8 address_to resolved = storage_mount_canonical(target,
-                                                                 address_of room);
+                p8 address_to resolved = storage_word_path(target,
+                                                           address_of room, 0);
                 storage_mount address_to live =
                     storage_mount_find_target(address_of table,
                                               resolved ? (string_address)resolved
@@ -349,8 +298,8 @@ static bool storage_remount_options(string_address target,
                 return false;
         }
 
-        effective->flags |= STORAGE_MS_REMOUNT;
-        effective->mentioned |= STORAGE_MS_REMOUNT;
+        effective->flags |= MS_REMOUNT;
+        effective->mentioned |= MS_REMOUNT;
         return true;
 }
 
@@ -365,10 +314,22 @@ static bipolar storage_source(string_address source,
             storage_prefix(source, "PARTLABEL="))
         {
                 if (!storage_resolve_tag(source, path, room))
-                        return -STORAGE_ERROR_NO_ENTRY;
+                        return -ERROR_NO_ENTRY;
                 *resolved = path;
         }
         return 0;
+}
+
+/*      The refusal line every mount path says, the errno spelled as the
+        reference does. */
+static fn storage_mount_failed(writer diagnostic, string_address program,
+                               string_address source, string_address target,
+                               bipolar answer)
+{
+        string_format(diagnostic, "%s: %s on %s failed: %s\n", program,
+                      source ? source : (string_address)"none",
+                      target ? target : (string_address)"none",
+                      strerror((b32)(answer < 0 ? -answer : answer)));
 }
 
 static bipolar storage_mount_one(string_address source, string_address target,
@@ -386,35 +347,35 @@ static bipolar storage_mount_one(string_address source, string_address target,
         if (answer)
                 return answer;
         if (options->unsupported_loop)
-                return -STORAGE_ERROR_INVALID;
+                return -ERROR_INVALID;
         /* --fake does everything but the mount-related system calls. */
         if (options->fake)
                 return 0;
 
         /* mount(2) itself does not implement util-linux's `-t auto`. */
         if ((!type || storage_word(type, (string_address)"auto")) &&
-            !(options->flags & (STORAGE_MS_BIND | STORAGE_MS_MOVE |
-                                STORAGE_MS_REMOUNT)) &&
+            !(options->flags & (MS_BIND | MS_MOVE |
+                                MS_REMOUNT)) &&
             storage_probe_device(resolved, address_of identity))
                 type = identity.type;
 
-        if (options->flags & STORAGE_MS_MOVE)
-                return system_mount(resolved, target, 0, STORAGE_MS_MOVE, 0);
+        if (options->flags & MS_MOVE)
+                return system_mount(resolved, target, 0, MS_MOVE, 0);
 
         /* A propagation change alone names only a target; combined with a
            real mount it follows that mount as a second call below. */
         if (options->propagation && !type &&
             storage_word(source, (string_address)"none") &&
-            !(options->flags & ~(STORAGE_MS_REC)))
+            !(options->flags & ~(MS_REC)))
                 return system_mount(0, target, 0,
                                      options->propagation, 0);
 
-        bool bind = (options->flags & STORAGE_MS_BIND) != 0;
+        bool bind = (options->flags & MS_BIND) != 0;
 
-        if (bind && !(options->flags & STORAGE_MS_REMOUNT))
+        if (bind && !(options->flags & MS_REMOUNT))
         {
-                positive bind_flags = STORAGE_MS_BIND |
-                                      (options->flags & STORAGE_MS_REC);
+                positive bind_flags = MS_BIND |
+                                      (options->flags & MS_REC);
                 answer = system_mount(resolved, target, 0, bind_flags, 0);
                 if (answer)
                         return answer;
@@ -422,12 +383,12 @@ static bipolar storage_mount_one(string_address source, string_address target,
 
         /* bind(2) ignores VFS restrictions on the first call. Both kinds of
            remount merge the requested changes with the live options. */
-        if ((options->flags & STORAGE_MS_REMOUNT) ||
+        if ((options->flags & MS_REMOUNT) ||
             (bind && (options->mentioned & STORAGE_BIND_CHANGEABLE)))
         {
                 if (!storage_remount_options(target, options,
                                              address_of effective))
-                        return -STORAGE_ERROR_NO_MEMORY;
+                        return -ERROR_NO_MEMORY;
                 effective_live = true;
         }
 
@@ -436,7 +397,7 @@ static bipolar storage_mount_one(string_address source, string_address target,
                 if (effective_live)
                         answer = system_call_5(
                             syscall(mount), 0, (positive)target, 0,
-                            STORAGE_MS_BIND | STORAGE_MS_REMOUNT |
+                            MS_BIND | MS_REMOUNT |
                                 (effective.flags & STORAGE_BIND_CHANGEABLE),
                             0);
         }
@@ -520,10 +481,8 @@ static b32 storage_mount_fstab_record(string_address program,
         if (!answer && options.verbose && write)
                 string_format(write, "%s: successfully mounted\n", record->target);
         if (answer && !tolerated)
-                string_format(diagnostic, "%s: %s on %s failed: %s\n", program,
-                              (record->source) ? (record->source) : (string_address)"none",
-                              (record->target) ? (record->target) : (string_address)"none",
-                              strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
+                storage_mount_failed(diagnostic, program, record->source,
+                                     record->target, answer);
         storage_options_free(address_of options);
         return answer && !tolerated ? 32 : 0;
 }
@@ -726,15 +685,15 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                 }
                 else if (option == 'B' || option == 'R')
                 {
-                        positive flags = STORAGE_MS_BIND |
-                            (option == 'R' ? STORAGE_MS_REC : 0);
+                        positive flags = MS_BIND |
+                            (option == 'R' ? MS_REC : 0);
                         options.flags |= flags;
                         options.mentioned |= flags;
                 }
                 else if (option == 'M')
                 {
-                        options.flags |= STORAGE_MS_MOVE;
-                        options.mentioned |= STORAGE_MS_MOVE;
+                        options.flags |= MS_MOVE;
+                        options.mentioned |= MS_MOVE;
                 }
                 else if (option == 'c')
                         canonical = false;
@@ -766,14 +725,14 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                 else if (option >= '1' && option <= '8')
                 {
                         static const positive propagation[] = {
-                            STORAGE_MS_SHARED,
-                            STORAGE_MS_SHARED | STORAGE_MS_REC,
-                            STORAGE_MS_PRIVATE,
-                            STORAGE_MS_PRIVATE | STORAGE_MS_REC,
-                            STORAGE_MS_SLAVE,
-                            STORAGE_MS_SLAVE | STORAGE_MS_REC,
-                            STORAGE_MS_UNBINDABLE,
-                            STORAGE_MS_UNBINDABLE | STORAGE_MS_REC,
+                            MS_SHARED,
+                            MS_SHARED | MS_REC,
+                            MS_PRIVATE,
+                            MS_PRIVATE | MS_REC,
+                            MS_SLAVE,
+                            MS_SLAVE | MS_REC,
+                            MS_UNBINDABLE,
+                            MS_UNBINDABLE | MS_REC,
                         };
                         options.propagation = propagation[option - '1'];
                 }
@@ -870,33 +829,25 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                     attributes of that one operation and never looks the
                     target up in fstab. */
                 if (options.propagation &&
-                    (!(options.flags & (STORAGE_MS_BIND | STORAGE_MS_MOVE |
-                                        STORAGE_MS_REMOUNT)) ||
+                    (!(options.flags & (MS_BIND | MS_MOVE |
+                                        MS_REMOUNT)) ||
                      ((options.flags | options.propagation) &
-                      STORAGE_MS_REC)))
+                      MS_REC)))
                 {
                         bipolar answer = storage_mount_one((string_address)"none",
                                                            operand[0], null,
                                                            address_of options);
                         if (answer)
-                                string_format(diagnostic, "%s: %s on %s failed: %s\n", (string_address)"mount",
-                                              (null) ? (null) : (string_address)"none",
-                                              (operand[0]) ? (operand[0]) : (string_address)"none",
-                                              strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
+                                storage_mount_failed(diagnostic,
+                                                     (string_address)"mount",
+                                                     null, operand[0], answer);
                         else if (options.verbose)
                         {
                                 /* util-linux names the followed, absolute
                                    spelling here, not the word it was given. */
                                 positive room = 0;
-                                p8 address_to resolved = null;
-                                bipolar handle = system_open_at(
-                                    AT_FDCWD, operand[0],
-                                    STORAGE_OPEN_PATH | O_CLOEXEC);
-                                if (handle >= 0)
-                                {
-                                        resolved = storage_fd_path(handle, address_of room);
-                                        system_close(handle);
-                                }
+                                p8 address_to resolved = storage_word_path(
+                                    operand[0], address_of room, 0);
                                 string_format(write,
                                               "mount: %s propagation flags changed.\n",
                                               resolved ? (string_address)resolved
@@ -906,7 +857,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         }
                         status = answer ? 32 : 0;
                 }
-                else if (options.flags & STORAGE_MS_REMOUNT)
+                else if (options.flags & MS_REMOUNT)
                 {
                         storage_mount_table table;
                         if (storage_mount_table_load(address_of table, diagnostic))
@@ -930,10 +881,11 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                                    live->type,
                                                                    address_of options);
                                         if (answer)
-                                                string_format(diagnostic, "%s: %s on %s failed: %s\n", (string_address)"mount",
-                                                              (live->source) ? (live->source) : (string_address)"none",
-                                                              (live->target) ? (live->target) : (string_address)"none",
-                                                              strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
+                                                storage_mount_failed(
+                                                    diagnostic,
+                                                    (string_address)"mount",
+                                                    live->source, live->target,
+                                                    answer);
                                         status = answer ? 32 : 0;
                                 }
                                 storage_mount_table_release(address_of table);
@@ -978,10 +930,10 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                       address_of itself) &&
                             (itself.mode & MODE_FORMAT) == MODE_LINK)
                         {
-                                string_format(diagnostic,
-                                              "mount: %s on %s failed: %s\n",
-                                              operand[0], operand[1],
-                                              strerror(STORAGE_ERROR_INVALID));
+                                storage_mount_failed(diagnostic,
+                                                     (string_address)"mount",
+                                                     operand[0], operand[1],
+                                                     -ERROR_INVALID);
                                 status = 32;
                                 goto done;
                         }
@@ -991,13 +943,13 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                     calls that a subsequent operation that failed -- the
                     usage answer 1, not the 32 a refused mount(2) leaves. A
                     target that is not there at all never gets that far. */
-                if ((options.flags & STORAGE_MS_MOVE) &&
-                    (options.flags & STORAGE_MS_REMOUNT) && !options.fake)
+                if ((options.flags & MS_MOVE) &&
+                    (options.flags & MS_REMOUNT) && !options.fake)
                 {
                         positive room = 0;
                         p8 address_to shown = canonical
-                            ? storage_mount_canonical(operand[1],
-                                                      address_of room)
+                            ? storage_word_path(operand[1],
+                                                address_of room, 0)
                             : null;
 
                         if (shown || !canonical)
@@ -1017,10 +969,8 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                 answer = storage_mount_one(operand[0], operand[1], type,
                                            address_of options);
                 if (answer)
-                        string_format(diagnostic, "%s: %s on %s failed: %s\n", (string_address)"mount",
-                                      (operand[0]) ? (operand[0]) : (string_address)"none",
-                                      (operand[1]) ? (operand[1]) : (string_address)"none",
-                                      strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
+                        storage_mount_failed(diagnostic, (string_address)"mount",
+                                             operand[0], operand[1], answer);
                 else if (options.verbose)
                 {
                         /*  The reference names both words the way it
@@ -1034,30 +984,30 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         positive shown_room = 0;
                         positive source_room = 0;
                         p8 address_to shown = canonical
-                            ? storage_mount_canonical(operand[1],
-                                                      address_of shown_room)
+                            ? storage_word_path(operand[1],
+                                                address_of shown_room, 0)
                             : null;
                         p8 address_to source_shown = canonical
-                            ? storage_mount_canonical(operand[0],
-                                                      address_of source_room)
+                            ? storage_word_path(operand[0],
+                                                address_of source_room, 0)
                             : null;
                         string_address target = shown ? (string_address)shown
                                                       : operand[1];
                         string_address source = source_shown
                             ? (string_address)source_shown : operand[0];
 
-                        if (options.flags & STORAGE_MS_MOVE)
+                        if (options.flags & MS_MOVE)
                                 string_format(write, "mount: %s moved to %s.\n",
                                               source, target);
-                        else if (options.flags & STORAGE_MS_BIND)
+                        else if (options.flags & MS_BIND)
                                 string_format(write, "mount: %s bound on %s.\n",
                                               source, target);
                         else
                                 string_format(write, "mount: %s mounted on %s.\n",
                                               source, target);
                         if (options.propagation &&
-                            !(options.flags & (STORAGE_MS_MOVE |
-                                               STORAGE_MS_BIND)))
+                            !(options.flags & (MS_MOVE |
+                                               MS_BIND)))
                                 string_format(write,
                                               "mount: %s propagation flags changed.\n",
                                               target);
@@ -1079,20 +1029,6 @@ done:
         storage_options_free(address_of options);
         byte_store_release(address_of tag_source);
         return status;
-}
-
-static bool storage_path_below(string_address path, string_address root)
-{
-        positive length = string_length(root);
-
-        while (length > 1 && root[length - 1] == '/')
-                length--;
-
-        if (string_compare_max(path, root, length))
-                return false;
-        if (!path[length])
-                return true;
-        return (length == 1 && root[0] == '/') || path[length] == '/';
 }
 
 /* The mount a spelling names, or null when the table has none. */
@@ -1122,13 +1058,13 @@ static PURE storage_mount address_to storage_umount_target(
         kernel never saw at all is "no mount point specified". */
 static PURE string_address storage_umount_reason(b32 number)
 {
-        if (number == STORAGE_ERROR_PERMISSION)
+        if (number == ERROR_NOT_PERMITTED)
                 return (string_address)"must be superuser to unmount.";
-        if (number == STORAGE_ERROR_BUSY)
+        if (number == ERROR_BUSY)
                 return (string_address)"target is busy.";
-        if (number == STORAGE_ERROR_INVALID)
+        if (number == ERROR_INVALID)
                 return (string_address)"not mounted.";
-        if (number == STORAGE_ERROR_NO_ENTRY)
+        if (number == ERROR_NO_ENTRY)
                 return (string_address)"no mount point specified.";
         return null;
 }
@@ -1147,24 +1083,23 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
         bipolar answer = fake ? 0
             : system_call_2(syscall(umount2), (positive)target, flags);
 
-        if (answer && read_only && source && answer == -STORAGE_ERROR_BUSY)
+        if (answer && read_only && source && answer == -ERROR_BUSY)
         {
                 storage_mount_options remount;
 
                 memory_fill(address_of remount, 0, sizeof(remount));
-                remount.flags = STORAGE_MS_REMOUNT | STORAGE_MS_RDONLY;
-                remount.mentioned = STORAGE_MS_REMOUNT | STORAGE_MS_RDONLY;
+                remount.flags = MS_REMOUNT | MS_RDONLY;
+                remount.mentioned = MS_REMOUNT | MS_RDONLY;
                 answer = storage_mount_one(source, target,
                                            null, address_of remount);
         }
         if (answer)
         {
-                b32 number = answer < 0 ? (b32)-(answer + 1) + 1 :
-                                         (b32)answer;
+                b32 number = (b32)(answer < 0 ? -answer : answer);
                 string_address reason = storage_umount_reason(number);
                 /*  --quiet is only about the path that was never a mount
                     point; every other refusal is still said. */
-                if (!(quiet && number == STORAGE_ERROR_INVALID))
+                if (!(quiet && number == ERROR_INVALID))
                 {
                         if (reason)
                                 string_format(diagnostic, "%s: %s: %s\n",
@@ -1181,8 +1116,6 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
                               target, type ? type : (string_address)"none");
         return 0;
 }
-
-#define STORAGE_MOUNT_OPEN_NOFOLLOW 0400000
 
 static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                     storage_mount_table address_to table,
@@ -1213,7 +1146,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                         length = string_length(record->target);
                         if (length < longest &&
                             length > selected_length &&
-                            storage_path_below(record->target, root) &&
+                            realpath_under(root, record->target) &&
                             storage_type_match(types, record->type))
                         {
                                 selected = at;
@@ -1230,7 +1163,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                         storage_mount address_to record = table->entry + at;
                         if (record->target &&
                             string_length(record->target) == selected_length &&
-                            storage_path_below(record->target, root) &&
+                            realpath_under(root, record->target) &&
                             storage_type_match(types, record->type))
                         {
                                 found = true;
@@ -1350,9 +1283,9 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         ; /* Every mount matches an empty option filter, and
                              there is no mtab to leave alone. */
                 else if (option == 'l')
-                        flags |= STORAGE_MNT_DETACH;
+                        flags |= MNT_DETACH;
                 else if (option == 'f')
-                        flags |= STORAGE_MNT_FORCE;
+                        flags |= MNT_FORCE;
                 else if (option == 'R')
                         recursive = true;
                 else if (option == 'r')
@@ -1421,25 +1354,14 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         {
                 /* util-linux looks a spelling up by its canonical path, so a
                    relative or symlinked target names the same mount. */
+                /* The table holds absolute targets, so a relative word is
+                   made absolute even under --no-canonicalize; that option
+                   says not to follow the last symlink, not to leave the
+                   spelling as it was typed. */
                 positive resolved_room = 0;
-                p8 address_to resolved = null;
-                {
-                        /* The table holds absolute targets, so a relative
-                           word is made absolute even under
-                           --no-canonicalize; that option says not to follow
-                           the last symlink, not to leave the spelling as it
-                           was typed. */
-                        bipolar handle = system_open_at(
-                            AT_FDCWD, operand[i],
-                            STORAGE_OPEN_PATH | O_CLOEXEC |
-                                (canonical ? 0 : STORAGE_MOUNT_OPEN_NOFOLLOW));
-                        if (handle >= 0)
-                        {
-                                resolved = storage_fd_path(handle,
-                                                           address_of resolved_room);
-                                system_close(handle);
-                        }
-                }
+                p8 address_to resolved = storage_word_path(
+                    operand[i], address_of resolved_room,
+                    canonical ? 0 : STORAGE_OPEN_NOFOLLOW);
                 string_address asked = resolved ? (string_address)resolved
                                                 : operand[i];
                 b32 answer;
