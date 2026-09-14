@@ -285,6 +285,16 @@ static p8 address_to build_text_take(positive want)
         return answer;
 }
 
+//      A terminated copy of a span out of a buffer the next read overwrites.
+static string_address build_text_keep(string_address text, positive length)
+{
+        p8 address_to into = build_text_take(length + 1);
+
+        memory_copy(into, text, length);
+        into[length] = end;
+        return (string_address)into;
+}
+
 //      Only --watch runs more than one build in one process, and it is the
 //      one caller that has to give the arena back.
 
@@ -507,14 +517,12 @@ static b32 build_tool_words(string_address address_to words)
 
 #define BUILD_ARGUMENT_ROOM 512
 
-static b32 build_tool(string_address name, ...)
+//      A null-ended argument list, as build_tool and build_run are called,
+//      into a vector of BUILD_ARGUMENT_ROOM.
+static fn build_vector_of(string_address address_to words, string_address piece,
+                          var_args rest)
 {
-        string_address words[BUILD_ARGUMENT_ROOM];
         positive count = 0;
-        string_address piece = name;
-        var_args rest;
-
-        var_list(rest, name);
 
         while (piece && count + 1 < BUILD_ARGUMENT_ROOM)
         {
@@ -522,8 +530,17 @@ static b32 build_tool(string_address name, ...)
                 piece = var_list_get(rest, string_address);
         }
 
-        var_list_end(rest);
         words[count] = null;
+}
+
+static b32 build_tool(string_address name, ...)
+{
+        string_address words[BUILD_ARGUMENT_ROOM];
+        var_args rest;
+
+        var_list(rest, name);
+        build_vector_of((string_address address_to)words, name, rest);
+        var_list_end(rest);
 
         return build_tool_words((string_address address_to)words);
 }
@@ -537,7 +554,7 @@ static string_address build_resolve(string_address name);
 
         The toolchain, make, tar, curl, gpg, ssh, rsync and QEMU stay separate
         programs: they are not this tree's to reimplement and driving them is
-        what a build tool is for. Everything below goes through these three so
+        what a build tool is for. Everything below goes through build_start so
         that a failed command is a status rather than a shell's opinion of one.
 */
 static b32 build_wait(b32 child)
@@ -561,12 +578,58 @@ static b32 build_wait(b32 child)
         x86_64-linux-gnu-gcc in the configuration and lives in /usr/bin, so
         handing that name straight to execve got 127 and "compilation failed"
         with nothing above it to say why.
+
+        A working directory, an environment, a muzzle or somewhere else for
+        stdout: the shell build reached for a subshell whenever it needed one
+        of them -- `( cd linux && make ... )`, `env $make_flags sh ...`,
+        `> /dev/null`, `$(...)`. Each was a process whose only job was to
+        change one thing about the next one. Here they are fields, and every
+        child this program starts goes through the one fork below.
 */
-static b32 build_spawn(string_address address_to words,
-                       string_address address_to environment)
+typedef struct build_command
 {
-        string_address path = build_resolve(words[0]);
+        string_address address_to words;
+        string_address directory;
+        string_address address_to environment;
+        bool quiet;
+        bool privileged;
+        //      Descriptor for the child's stdout, 0 to leave it alone. Opened
+        //      close-on-exec, so the child keeps only the copy on 1.
+        b32 output;
+} build_command;
+
+static bool build_root()
+{
+        return geteuid() == 0;
+}
+
+static b32 build_start(build_command address_to what)
+{
+        string_address raised[BUILD_ARGUMENT_ROOM];
+        string_address address_to words = what->words;
+        string_address path;
         b32 child;
+
+        //      sudo only when we are not already it. Under the documented
+        //      invocation this program is root and the prefix is a no-op; run
+        //      as somebody else, it asks, which is what the shell did.
+        if (what->privileged && !build_root())
+        {
+                positive count = 0;
+
+                raised[count++] = "sudo";
+
+                while (words[count - 1] && count + 1 < BUILD_ARGUMENT_ROOM)
+                {
+                        raised[count] = words[count - 1];
+                        count++;
+                }
+
+                raised[count] = null;
+                words = (string_address address_to)raised;
+        }
+
+        path = build_resolve(words[0]);
 
         if (!path)
         {
@@ -593,7 +656,17 @@ static b32 build_spawn(string_address address_to words,
 
         if (child == 0)
         {
-                execve(path, words, environment ? environment : environ);
+                b32 sink = what->quiet ? open("/dev/null", O_WRONLY | O_CLOEXEC, 0)
+                                       : what->output;
+
+                if (what->directory && chdir(what->directory) < 0)
+                        exit(126);
+
+                if (sink > 0 && dup2(sink, 1) < 0)
+                        exit(127);
+
+                execve(path, words,
+                       what->environment ? what->environment : environ);
                 //      exec only returns having failed, and this is the child:
                 //      leaving would run the rest of the build twice.
                 exit(127);
@@ -602,31 +675,28 @@ static b32 build_spawn(string_address address_to words,
         return child;
 }
 
-static b32 build_run_words(string_address address_to words,
-                           string_address address_to environment)
+static b32 build_execute(build_command address_to what)
 {
-        return build_wait(build_spawn(words, environment));
+        return build_wait(build_start(what));
+}
+
+static b32 build_run_words(string_address address_to words)
+{
+        build_command what = {.words = words};
+
+        return build_execute(address_of what);
 }
 
 static b32 build_run(string_address name, ...)
 {
         string_address words[BUILD_ARGUMENT_ROOM];
-        positive count = 0;
-        string_address piece = name;
         var_args rest;
 
         var_list(rest, name);
-
-        while (piece && count + 1 < BUILD_ARGUMENT_ROOM)
-        {
-                words[count++] = piece;
-                piece = var_list_get(rest, string_address);
-        }
-
+        build_vector_of((string_address address_to)words, name, rest);
         var_list_end(rest);
-        words[count] = null;
 
-        return build_run_words((string_address address_to)words, null);
+        return build_run_words((string_address address_to)words);
 }
 
 /*
@@ -641,7 +711,7 @@ static b32 build_run(string_address name, ...)
 static bipolar build_capture_words(string_address address_to words,
                                    p8 address_to into, positive capacity)
 {
-        string_address found;
+        build_command what = {.words = words};
         b32 pair[2];
         b32 child;
         positive used = 0;
@@ -651,30 +721,11 @@ static bipolar build_capture_words(string_address address_to words,
 
         into[0] = end;
 
-        {
-                string_address path = build_resolve(words[0]);
-
-                if (!path)
-                        return -1;
-
-                found = path;
-        }
-
-        if (pipe(pair) < 0)
+        if (system_pipe(pair, O_CLOEXEC) < 0)
                 return -1;
 
-        log_flush();
-        child = fork();
-
-        if (child == 0)
-        {
-                close(pair[0]);
-                dup2(pair[1], 1);
-                close(pair[1]);
-                execve(found, words, environ);
-                exit(127);
-        }
-
+        what.output = pair[1];
+        child = build_start(address_of what);
         close(pair[1]);
 
         if (child < 0)
@@ -945,28 +996,13 @@ static fn build_settings_read()
 
                 //      Copied out of the file buffer, which the next thing to
                 //      read a file will overwrite.
-                {
-                        p8 address_to keep = build_text_take(name_length + 1);
-
-                        memory_copy(keep, walk.line + at, name_length);
-                        keep[name_length] = end;
-                        name = (string_address)keep;
-                }
-
+                name = build_text_keep(walk.line + at, name_length);
                 at += name_length;
 
                 while (at < walk.length && build_blank(walk.line[at]))
                         at++;
 
-                {
-                        positive length = walk.length - at;
-                        p8 address_to keep = build_text_take(length + 1);
-
-                        memory_copy(keep, walk.line + at, length);
-                        keep[length] = end;
-                        value = (string_address)keep;
-                }
-
+                value = build_text_keep(walk.line + at, walk.length - at);
                 build_setting_set(name, value);
         }
 }
@@ -1262,14 +1298,8 @@ static fn build_config_conflicts(string_address text,
 
                 if (distinct > 1)
                 {
-                        p8 address_to name = build_text_take(BUILD_WORD_ROOM);
-                        positive length = build_pairs[first].name_length;
-
-                        if (length > BUILD_WORD_ROOM - 1)
-                                length = BUILD_WORD_ROOM - 1;
-
-                        memory_copy(name, build_pairs[first].name, length);
-                        name[length] = end;
+                        string_address name = build_text_keep(
+                                build_pairs[first].name, build_pairs[first].name_length);
 
                         if (!announced)
                         {
@@ -1279,7 +1309,7 @@ static fn build_config_conflicts(string_address text,
                                 announced = true;
                         }
 
-                        string_format(log, "  %s\n", (string_address)name);
+                        string_format(log, "  %s\n", name);
 
                         for (positive which = 0; which < profile_count; which++)
                         {
@@ -1287,7 +1317,7 @@ static fn build_config_conflicts(string_address text,
                                         build_join(build_setting_get("profile_root"),
                                                    "/", profiles[which], null);
                                 build_lines profile_walk;
-                                p8 address_to value = build_text_take(BUILD_WORD_ROOM);
+                                string_address value = "";
                                 bool found = false;
 
                                 if (file_slurp(path, build_file_two,
@@ -1299,7 +1329,7 @@ static fn build_config_conflicts(string_address text,
 
                                 while (build_lines_next(address_of profile_walk))
                                 {
-                                        positive want = string_length((string_address)name);
+                                        positive want = string_length(name);
                                         positive have;
 
                                         if (profile_walk.length <= want ||
@@ -1309,14 +1339,8 @@ static fn build_config_conflicts(string_address text,
                                                 continue;
 
                                         have = profile_walk.length - want - 1;
-
-                                        if (have > BUILD_WORD_ROOM - 1)
-                                                have = BUILD_WORD_ROOM - 1;
-
-                                        memory_copy(value,
-                                                    profile_walk.line + want + 1,
-                                                    have);
-                                        value[have] = end;
+                                        value = build_text_keep(
+                                                profile_walk.line + want + 1, have);
                                         found = have > 0;
                                 }
 
@@ -1325,7 +1349,7 @@ static fn build_config_conflicts(string_address text,
 
                                 string_format(log, "      ");
                                 build_write_field(profiles[which], 14);
-                                string_format(log, " %s\n", (string_address)value);
+                                string_format(log, " %s\n", value);
                         }
                 }
 
@@ -2657,7 +2681,7 @@ static b32 build_spark(string_address source, string_address output,
         words[count++] = "-Wl,--no-warn-rwx-segments";
         words[count] = null;
 
-        if (build_run_words((string_address address_to)words, null))
+        if (build_run_words((string_address address_to)words))
         {
                 build_remove_tree(work);
                 string_format(log_error, "spark: compilation failed\n");
@@ -2946,7 +2970,7 @@ static b32 build_freestanding_link(string_address source, string_address output,
         words[count++] = build_join("-Wl,-e,", build_setting_get("entry"), null);
         words[count] = null;
 
-        if (build_run_words((string_address address_to)words, null))
+        if (build_run_words((string_address address_to)words))
         {
                 string_format(log_error, "build: compilation failed\n");
                 log_flush();
@@ -2971,14 +2995,14 @@ static b32 build_freestanding_link(string_address source, string_address output,
 static b32 build_watch_application;
 static b32 build_watch_watcher;
 
-static fn build_stop_application()
+static fn build_stop(b32 address_to child)
 {
-        if (build_watch_application <= 0)
+        if (address_to child <= 0)
                 return;
 
-        kill(build_watch_application, BUILD_SIGNAL_TERMINATE);
-        build_wait(build_watch_application);
-        build_watch_application = 0;
+        kill(address_to child, BUILD_SIGNAL_TERMINATE);
+        build_wait(address_to child);
+        address_to child = 0;
 }
 
 /*
@@ -2994,15 +3018,8 @@ static fn build_stop_application()
 */
 static fn build_watch_caught(b32 number)
 {
-        build_stop_application();
-
-        if (build_watch_watcher > 0)
-        {
-                kill(build_watch_watcher, BUILD_SIGNAL_TERMINATE);
-                build_wait(build_watch_watcher);
-                build_watch_watcher = 0;
-        }
-
+        build_stop(address_of build_watch_application);
+        build_stop(address_of build_watch_watcher);
         exit(number == SIGNAL_INTERRUPT ? 130 : 143);
 }
 
@@ -3117,7 +3134,7 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                 string_address directory = build_directory_of(source);
                 string_address words[10];
                 b32 pair[2];
-                b32 child;
+                build_command watch = {.words = (string_address address_to)words};
                 positive at = 0;
 
                 if (build_have("inotifywait"))
@@ -3132,7 +3149,7 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                         return 1;
                 }
 
-                if (pipe(pair) < 0)
+                if (system_pipe(pair, O_CLOEXEC) < 0)
                         return 1;
 
                 words[at++] = watcher;
@@ -3150,27 +3167,9 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
 
                 words[at++] = directory;
                 words[at] = null;
-
-                log_flush();
-                child = fork();
-
-                if (child == 0)
-                {
-                        string_address found = build_resolve(words[0]);
-
-                        close(pair[0]);
-                        dup2(pair[1], 1);
-                        close(pair[1]);
-
-                        if (found)
-                                execve(found, (string_address address_to)words,
-                                       environ);
-
-                        exit(127);
-                }
-
+                watch.output = pair[1];
+                build_watch_watcher = build_start(address_of watch);
                 close(pair[1]);
-                build_watch_watcher = child;
                 system_signal_install(SIGNAL_INTERRUPT,
                                       (positive)build_watch_caught,
                                       SIGNAL_CATCH_FLAGS, SIGNAL_CATCH_RESTORER,
@@ -3185,19 +3184,16 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                         p8 byte = 0;
                         bipolar got;
 
-                        build_stop_application();
+                        build_stop(address_of build_watch_application);
                         string_format(log, "\033[H\033[2J");
                         log_flush();
 
                         if (!build_freestanding_link(source, output, loud))
                         {
-                                string_address only[2];
+                                string_address only[2] = {output, null};
+                                build_command run = {.words = only};
 
-                                only[0] = output;
-                                only[1] = null;
-                                build_watch_application =
-                                        build_spawn((string_address address_to)only,
-                                                    null);
+                                build_watch_application = build_start(address_of run);
                         }
                         else
                         {
@@ -3217,15 +3213,8 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                                 break;
                 }
 
-                build_stop_application();
-
-                if (build_watch_watcher > 0)
-                {
-                        kill(build_watch_watcher, BUILD_SIGNAL_TERMINATE);
-                        build_wait(build_watch_watcher);
-                        build_watch_watcher = 0;
-                }
-
+                build_stop(address_of build_watch_application);
+                build_stop(address_of build_watch_watcher);
                 close(pair[0]);
         }
 
@@ -3418,7 +3407,7 @@ static b32 build_floor(string_address arch)
         words[count++] = source;
         words[count] = null;
 
-        if (build_run_words((string_address address_to)words, null))
+        if (build_run_words((string_address address_to)words))
         {
                 build_remove_tree(work);
                 string_format(log, "%s does not compile at the %s floor\n",
@@ -3471,18 +3460,8 @@ static b32 build_floor(string_address arch)
 
                                 if (length > 1 && word[0] == '"')
                                 {
-                                        p8 address_to trimmed =
-                                                build_text_take(length + 1);
-
-                                        memory_copy(trimmed, word + 1, length - 1);
-                                        trimmed[length - 1] = end;
-
-                                        if (length >= 2 &&
-                                            trimmed[length - 2] == '"')
-                                                trimmed[length - 2] = end;
-
-                                        word = (string_address)trimmed;
-                                        length = string_length(word);
+                                        length -= 1 + (word[length - 1] == '"');
+                                        word = build_text_keep(word + 1, length);
                                 }
 
                                 if (length > wanted &&
@@ -3600,104 +3579,9 @@ static bool build_install(string_address what)
                                 BUILD_ARGUMENT_ROOM, command);
         words[count++] = what;
         words[count] = null;
-        at = (positive)build_run_words((string_address address_to)words, null);
+        at = (positive)build_run_words((string_address address_to)words);
 
         return at == 0;
-}
-
-/*
-        Running something with a working directory, an environment or a
-        muzzle.
-
-        The shell build reached for a subshell whenever it needed one of the
-        three -- `( cd linux && make ... )`, `env $make_flags sh ...`,
-        `> /dev/null`. Each was a process whose only job was to change one
-        thing about the next one. Here they are fields.
-*/
-typedef struct build_command
-{
-        string_address address_to words;
-        string_address directory;
-        string_address address_to environment;
-        bool quiet;
-        bool privileged;
-} build_command;
-
-static bool build_root()
-{
-        return geteuid() == 0;
-}
-
-static b32 build_execute(build_command address_to what)
-{
-        string_address raised[BUILD_ARGUMENT_ROOM];
-        string_address address_to words = what->words;
-        string_address path;
-        b32 child;
-
-        //      sudo only when we are not already it. Under the documented
-        //      invocation this program is root and the prefix is a no-op; run
-        //      as somebody else, it asks, which is what the shell did.
-        if (what->privileged && !build_root())
-        {
-                positive count = 0;
-
-                raised[count++] = "sudo";
-
-                while (words[count - 1] && count + 1 < BUILD_ARGUMENT_ROOM)
-                {
-                        raised[count] = words[count - 1];
-                        count++;
-                }
-
-                raised[count] = null;
-                words = (string_address address_to)raised;
-        }
-
-        path = build_resolve(words[0]);
-
-        if (!path)
-        {
-                string_format(log_error, "build: %s not found\n", words[0]);
-                log_flush();
-                return -1;
-        }
-
-        if (string_get_environment(environ, "BUILD_TRACE"))
-        {
-                string_format(log, "+ %s", path);
-
-                for (positive at = 1; words[at]; at++)
-                        string_format(log, " %s", words[at]);
-
-                string_format(log, "\n");
-        }
-
-        log_flush();
-        child = fork();
-
-        if (child == 0)
-        {
-                if (what->directory && chdir(what->directory) < 0)
-                        exit(126);
-
-                if (what->quiet)
-                {
-                        b32 sink = open("/dev/null", O_WRONLY, 0);
-
-                        if (sink >= 0)
-                        {
-                                dup2(sink, 1);
-                                close(sink);
-                        }
-                }
-
-                execve(path, words,
-                       what->environment ? what->environment : environ);
-                exit(127);
-        }
-
-        return build_wait(child);
 }
 
 //      environ with a few more entries on the end, for the two places the
@@ -3907,21 +3791,11 @@ static b32 build_kernel_source()
         //      Derived rather than written out, so moving to another release
         //      means editing the version and the signature and nothing else.
         //      kernel.org lays every series out under vMAJOR.x.
-        {
-                positive major = 0;
-                p8 address_to into;
-
-                while (version[major] && version[major] != '.')
-                        major++;
-
-                into = build_text_take(major + 4);
-                into[0] = 'v';
-                memory_copy(into + 1, version, major);
-                into[major + 1] = '.';
-                into[major + 2] = 'x';
-                into[major + 3] = end;
-                series = (string_address)into;
-        }
+        series = build_join("v",
+                            build_text_keep(version,
+                                            (positive)(string_first_of_or_end(version, '.') -
+                                                       version)),
+                            ".x", null);
 
         tarball = build_join(artifacts, "/linux-", version, ".tar", null);
         archive = build_join(tarball, ".xz", null);
@@ -3988,21 +3862,13 @@ static b32 build_kernel_source()
         */
         {
                 string_address keys = build_setting_get("kernel_keys");
-                string_address named[BUILD_ARGUMENT_ROOM];
-                positive many = build_split(keys, (string_address address_to)named,
-                                            BUILD_ARGUMENT_ROOM);
-                string_address words[BUILD_ARGUMENT_ROOM];
-                positive at = 0;
-
-                words[at++] = "gpg";
-                words[at++] = "--locate-keys";
-
-                for (positive which = 0; which < many; which++)
-                        words[at++] = named[which];
+                string_address words[BUILD_ARGUMENT_ROOM] = {"gpg", "--locate-keys"};
+                positive at = build_add_split((string_address address_to)words, 2,
+                                              BUILD_ARGUMENT_ROOM, keys);
 
                 words[at] = null;
 
-                if (build_run_words((string_address address_to)words, null))
+                if (build_run_words((string_address address_to)words))
                 {
                         string_format(log_error,
                                       BUILD_RED
@@ -4496,7 +4362,7 @@ static b32 build_local(string_address address_to profiles, positive count)
                                             (string_address address_to)extra,
                                             BUILD_ARGUMENT_ROOM);
                 string_address words[BUILD_ARGUMENT_ROOM];
-                build_command what = {null, tree, null, true, true};
+                build_command what = {.directory = tree, .quiet = true, .privileged = true};
                 positive at;
 
                 at = 0;
@@ -4592,7 +4458,7 @@ static b32 build_local(string_address address_to profiles, positive count)
         //      module's Makefile builds those as part of it.
         {
                 string_address words[3];
-                build_command what = {null, null, null, false, true};
+                build_command what = {.privileged = true};
 
                 words[0] = "sh";
                 words[1] = build_setting_get("replace_script");
@@ -4627,7 +4493,7 @@ static b32 build_local(string_address address_to profiles, positive count)
                                             (string_address address_to)extra,
                                             BUILD_ARGUMENT_ROOM);
                 string_address words[BUILD_ARGUMENT_ROOM];
-                build_command what = {null, tree, null, false, false};
+                build_command what = {.directory = tree};
                 positive at = 0;
                 bool good = true;
 
@@ -4670,7 +4536,7 @@ static b32 build_local(string_address address_to profiles, positive count)
 
         {
                 string_address words[4];
-                build_command what = {null, null, null, false, true};
+                build_command what = {.privileged = true};
 
                 words[0] = "cp";
                 words[1] = kernel_image;
@@ -5023,7 +4889,7 @@ static b32 build_remote_fetch(string_address host, string_address remote,
             build_output_directory_safe);
         bipolar stage;
         bipolar handle;
-        b32 child;
+        build_command fetch = {0};
         bool failed;
         bool renamed = false;
         file_facts opened;
@@ -5057,25 +4923,10 @@ static b32 build_remote_fetch(string_address host, string_address remote,
         words[3] = build_remote_command(
             remote, (string_address address_to)request, 3);
         words[4] = null;
+        fetch.words = (string_address address_to)words;
+        fetch.output = (b32)handle;
 
-        log_flush();
-        child = fork();
-
-        if (child == 0)
-        {
-                string_address found = build_resolve(words[0]);
-
-                if (dup2((b32)handle, 1) < 0)
-                        exit(127);
-                system_close(handle);
-
-                if (found)
-                        execve(found, (string_address address_to)words, environ);
-
-                exit(127);
-        }
-
-        failed = child < 0 || build_wait(child);
+        failed = build_execute(address_of fetch) != 0;
         if (!failed && system_call_2(syscall(fchmod), (positive)handle,
                                      0644) < 0)
                 failed = true;
@@ -5193,7 +5044,7 @@ static b32 build_remote(string_address host, string_address remote,
                 words[at++] = build_join(host, ":./", null);
                 words[at] = null;
 
-                if (build_run_words((string_address address_to)words, null))
+                if (build_run_words((string_address address_to)words))
                         return build_die("copying the tree failed");
         }
 
@@ -5489,7 +5340,7 @@ static b32 build_boot(string_address image, bool console)
                 words[count++] = "mon:stdio";
                 words[count] = null;
 
-                return build_run_words((string_address address_to)words, null);
+                return build_run_words((string_address address_to)words);
         }
 
         {
@@ -5521,7 +5372,7 @@ static b32 build_boot(string_address image, bool console)
         words[count++] = "mon:stdio";
         words[count] = null;
 
-        return build_run_words((string_address address_to)words, null);
+        return build_run_words((string_address address_to)words);
 }
 
 /*
