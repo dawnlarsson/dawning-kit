@@ -4037,25 +4037,18 @@ static b32 util_linux_lsclocks()
         string_address selected = file_option_value(address_of taking, 'o');
         if (!selected) selected = file_environment("LSCLOCKS_COLUMNS");
         p8 unknown[UL_COLUMN_NAME];
-        b32 fault = selected
-            ? ul_table_column_list(selected, ul_lsclock_columns,
-                                   UL_LSCLOCK_COLUMNS, defaults,
-                                   array_count(defaults), columns,
-                                   address_of column_count, unknown)
-            : UL_COLUMNS_OK;
+        b32 fault = ul_table_column_list(selected, ul_lsclock_columns,
+                                         UL_LSCLOCK_COLUMNS, defaults,
+                                         array_count(defaults), columns,
+                                         address_of column_count, unknown);
         if (fault)
                 return text_done(fault == UL_COLUMNS_EMPTY ? 1
                     : string_diagnostic(address_of text_diagnostic, 1,
                                         "unknown column",
                                         (string_address)unknown));
-        if (!selected)
-        {
-                positive limit = taking.flags & FILE_FLAG('A')
-                    ? UL_LSCLOCK_COLUMNS : array_count(defaults);
-                for (positive at = 0; at < limit; at++)
-                        columns[column_count++] = taking.flags & FILE_FLAG('A')
-                            ? (p8)at : defaults[at];
-        }
+        if (!selected && (taking.flags & FILE_FLAG('A')))
+                for (column_count = 0; column_count < UL_LSCLOCK_COLUMNS; column_count++)
+                        columns[column_count] = (p8)column_count;
 
         p8 monotonic[32], boottime[32];
         bool want_offset = false;
@@ -10225,24 +10218,6 @@ static const argument_option ul_lscpu_options[] = {
     {"version", 'V'}, {null},
 };
 
-static bool ul_lscpu_unsupported_column(string_address text)
-{
-        while (string_get(text))
-        {
-                positive length = string_first_of(text, ',')
-                                      ? (positive)(string_first_of(text, ',') - text)
-                                      : string_length(text);
-                if (file_same_word(text, length, "address") ||
-                    file_same_word(text, length, "configured"))
-                        return true;
-                text += length;
-                if (!string_get(text))
-                        break;
-                text++;
-        }
-        return false;
-}
-
 static b32 util_linux_lscpu()
 {
         file_taking taking = {
@@ -10286,9 +10261,6 @@ static b32 util_linux_lscpu()
                 selected = output;
         if (selected && string_is(selected, '='))
                 selected++;
-        if (selected && ul_lscpu_unsupported_column(selected))
-                return string_report(log_error, 1, "%s: %s\n", "lscpu", "physical-address/configured columns are not supported");
-
         utility_arena.used = 0;
         ul_lscpu_failed = false;
         if (!ul_lscpu_take())
@@ -10702,26 +10674,6 @@ static string_address ul_lsmem_field(address_any row, p8 column,
         }
 }
 
-static bool ul_lsmem_unsupported_column(string_address text)
-{
-        while (text && string_get(text))
-        {
-                if (string_is(text, '+'))
-                        text++;
-                string_address comma = string_first_of(text, ',');
-                positive length = comma ? (positive)(comma - text)
-                                        : string_length(text);
-                if (file_same_word(text, length, "configured") ||
-                    file_same_word(text, length, "memmap-on-memory"))
-                        return true;
-                text += length;
-                if (!string_get(text))
-                        break;
-                text++;
-        }
-        return false;
-}
-
 static fn ul_lsmem_summary()
 {
         ul_summary_item items[4];
@@ -10786,10 +10738,6 @@ static b32 util_linux_lsmem()
 
         string_address selected = file_option_value(address_of taking, 'o');
         string_address splitting = file_option_value(address_of taking, 'S');
-        if (ul_lsmem_unsupported_column(selected) ||
-            ul_lsmem_unsupported_column(splitting))
-                return string_report(log_error, 1, "%s: %s\n", "lsmem", "configured/memmap columns are not supported");
-
         static const p8 defaults[] = {
             UL_LSMEM_RANGE, UL_LSMEM_SIZE, UL_LSMEM_STATE,
             UL_LSMEM_REMOVABLE, UL_LSMEM_BLOCK,
