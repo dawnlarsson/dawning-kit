@@ -46,8 +46,6 @@ static const p8 bowl_usage_text[] = bowl_label
 #define BOWL_ACCESS_EXECUTE 1
 #define BOWL_WRAP_ARGV 96
 
-#define MNT_DETACH 2
-
 struct bowl_mount_point
 {
         string_address source;
@@ -197,27 +195,18 @@ static bipolar bowl_bind_ro(string_address source, string_address target)
 */
 static bool bowl_needs_isolated(string_address program)
 {
+        static string_address managers[] = {
+            "pacman", "pacman-key", "makepkg", "apt", "apt-get", "dpkg", "apk",
+            "dnf", "dnf5", "rpm", "yum", "nix", "nix-env", "nix-build",
+            "nix-shell"};
         p8 name[256];
 
         if (!program || program[0] != '/')
                 return false;
 
         path_tail_copy(name, sizeof(name), program);
-        return string_equals(name, "pacman") ||
-               string_equals(name, "pacman-key") ||
-               string_equals(name, "makepkg") ||
-               string_equals(name, "apt") ||
-               string_equals(name, "apt-get") ||
-               string_equals(name, "dpkg") ||
-               string_equals(name, "apk") ||
-               string_equals(name, "dnf") ||
-               string_equals(name, "dnf5") ||
-               string_equals(name, "rpm") ||
-               string_equals(name, "yum") ||
-               string_equals(name, "nix") ||
-               string_equals(name, "nix-env") ||
-               string_equals(name, "nix-build") ||
-               string_equals(name, "nix-shell");
+        return string_table_find(name, managers, sizeof(managers[0]),
+                                 array_count(managers)) < array_count(managers);
 }
 
 static b32 bowl_expose_program(string_address root, string_address program,

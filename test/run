@@ -4981,8 +4981,12 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
 #include "src/sh/pty.c"
-// The terminal fixture does not execute the desktop launcher.
+// The terminal fixture does not execute the desktop launcher, so what its
+// child would call has only to be declared.
 #define BOWL_DEFAULT_PATH "/fixture/bin"
+fn host_terminal_opening(void);
+bipolar shell_exec_file(string_address path, string_address address_to arguments,
+                        positive count, string_address address_to environment);
 #include "src/sh/screen.c"
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
@@ -5723,6 +5727,7 @@ group malformed
 #       that stopped short is one character that never arrived, and the byte
 #       that interrupted it is another that did.
 same 'cut short'      '[a<fffd>z]'               8 2 in 'a\xc3z' row 0
+same 'cut by a lead'  '[<fffd><00e9>]'           8 2 in '\xe2\xc3\xa9' row 0
 same 'stray continuation' '[<fffd>a]'            8 2 in '\x80a' row 0
 same 'overlong'       '[<fffd>]'                 8 2 in '\xc0\xaf' row 0
 same 'a surrogate half' '[<fffd>]'               8 2 in '\xed\xa0\x80' row 0

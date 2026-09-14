@@ -764,7 +764,6 @@ static positive shell_syntax_generation;
 #define SHELL_PARSER_SOURCE_MEMORY 0
 #define SHELL_PARSER_SOURCE_SEALED_FILE 1
 #define SHELL_PARSER_SOURCE_REGULAR_FILE 2
-#define SHELL_PARSER_SOURCE_SOCKET 3
 #define SHELL_PARSER_SOURCE_MUTABLE 4
 #define SHELL_PARSER_SOURCE_AMBIGUOUS 5
 
@@ -968,10 +967,8 @@ static fn shell_parser_source_refresh()
                         shell_parser_source_kind =
                             SHELL_PARSER_SOURCE_REGULAR_FILE;
         }
-        else if ((facts.mode & MODE_FORMAT) == MODE_SOCKET)
-                shell_parser_source_kind = SHELL_PARSER_SOURCE_SOCKET;
         else
-                /* Terminals, block devices and every other concrete source
+                /* Sockets, terminals, block devices and every other source
                    remain externally mutable while the shell streams later
                    parser bytes from them. A PTY's influencing master can be
                    held by an outside same-UID process, beyond this child's
@@ -1173,42 +1170,16 @@ static p8 shell_assignment_kind(string_address word,
         }
 
         /* A subscript is part of the name being assigned to. a[i+1]=v and
-           m[a key]=v each name one element, and what follows the closing
-           bracket is what says whether this is an assignment at all. */
+           m[a key]=v each name one element. The lexer's walk says where it
+           closes -- a ] held in quotes or a substitution closes nothing --
+           and whether = or += follows. An empty subscript names nothing. */
         if (string_get(word + length) == '[')
         {
-                positive depth = 1;
-                positive at = length + 1;
+                string_address stop =
+                    lex_assignment_subscript_end(word + length + 1);
 
-                while (string_get(word + at) && depth)
-                {
-                        p8 value = string_get(word + at);
-
-                        // A bracket inside quoting closes nothing: m["a]b"]
-                        // is one subscript and not a broken one.
-                        if (value == '\\' && string_get(word + at + 1))
-                                at++;
-                        else if (value == '\'' || value == '"')
-                        {
-                                at++;
-
-                                while (string_get(word + at) &&
-                                       string_get(word + at) != value)
-                                        at++;
-
-                                if (!string_get(word + at))
-                                        break;
-                        }
-                        else if (value == '[')
-                                depth++;
-                        else if (value == ']')
-                                depth--;
-
-                        at++;
-                }
-
-                if (!depth && at > length + 2)
-                        length = at;
+                if (stop && stop - (word + length) > 2)
+                        length = (positive)(stop - word);
         }
 
         if (name_length)
@@ -1574,10 +1545,7 @@ static bipolar shell_spawn_tool_preflighted(
 bipolar shell_spawn_tool(string_address address_to arguments,
                          b32 output, bool quiet)
 {
-        positive count = 0;
-
-        while (arguments[count])
-                count++;
+        positive count = pointer_vector_count(arguments);
 
         if (floodlight_launch_decide(null, arguments, count, true,
                                      false, false, null) !=
@@ -1590,13 +1558,12 @@ bipolar shell_spawn_tool(string_address address_to arguments,
 fn shell_execute_command()
 {
         bipolar child = -1;
-        positive count = 0;
+        positive count;
         b32 policy;
 
         log_flush();
 
-        while (shell_argv[count])
-                count++;
+        count = pointer_vector_count(shell_argv);
         policy = floodlight_launch_decide(shell_argv[0], shell_argv, count,
                                           false, false, false, null);
 
@@ -1770,6 +1737,29 @@ bool shell_reading_more()
 
 /* Defined above the included readers, which trace under it. */
 
+/*
+        A syntax error drops what was parsed and moves the generation, which
+        is how a nested reader learns to stop. A terminal recovers at its next
+        prompt. A direct script, file, stdin stream or -c string has no
+        enclosing builtin to receive the error, so when it is fatal the rest
+        of that input must not run; the ordinary fatal boundary still honors
+        an installed EXIT trap.
+*/
+static fn shell_syntax_fatal(b32 status, bool fatal)
+{
+        shell_status = status;
+        parse_reset();
+        shell_more = false;
+        shell_syntax_generation += 2;
+        if (fatal && shell_run_depth == 1 && !shell_source_depth)
+        {
+                if (string_is(shell_option_flags, 'c'))
+                        exec_child_leave(shell_status);
+                if (!shell_is_interactive)
+                        expand_fatal_status(shell_status);
+        }
+}
+
 static fn run_line_inner(string_address line)
 {
         string_address waiting = parse_here_open();
@@ -1798,17 +1788,7 @@ static fn run_line_inner(string_address line)
         {
                 if (parse_here_limit_exceeded())
                 {
-                        shell_status = 2;
-                        parse_reset();
-                        shell_more = false;
-                        shell_syntax_generation += 2;
-                        if (shell_run_depth == 1 && !shell_source_depth)
-                        {
-                                if (string_is(shell_option_flags, 'c'))
-                                        exec_child_leave(shell_status);
-                                if (!shell_is_interactive)
-                                        expand_fatal_status(shell_status);
-                        }
+                        shell_syntax_fatal(2, true);
                         return;
                 }
 
@@ -1838,17 +1818,7 @@ static fn run_line_inner(string_address line)
         {
                 if (parse_here_limit_exceeded())
                 {
-                        shell_status = 2;
-                        parse_reset();
-                        shell_more = false;
-                        shell_syntax_generation += 2;
-                        if (shell_run_depth == 1 && !shell_source_depth)
-                        {
-                                if (string_is(shell_option_flags, 'c'))
-                                        exec_child_leave(shell_status);
-                                if (!shell_is_interactive)
-                                        expand_fatal_status(shell_status);
-                        }
+                        shell_syntax_fatal(2, true);
                         return;
                 }
 
@@ -1888,27 +1858,9 @@ static fn run_line_inner(string_address line)
                                       tok->text);
                 /* Compound-assignment interior errors are not the fatal
                    status-2 class: bash answers 1 and keeps the rest of the
-                   script, and its POSIX mode exits 127. */
-                shell_status = compound ? (shell_posix_on() ? 127 : 1) : 2;
-                parse_reset();
-
-                shell_syntax_generation += 2;
-
-                /* A terminal recovers at its next prompt. A direct script,
-                   file, stdin stream or -c string has no enclosing builtin
-                   to receive this error, so the rest of that input must not
-                   run. Use the ordinary fatal boundary so an installed EXIT
-                   trap is still honored. Recoverable compound errors are the
-                   exception under bash without POSIX. */
-                if (!(compound && !shell_posix_on()) &&
-                    shell_run_depth == 1 && !shell_source_depth)
-                {
-                        if (string_is(shell_option_flags, 'c'))
-                                exec_child_leave(shell_status);
-                        if (!shell_is_interactive)
-                                expand_fatal_status(shell_status);
-                }
-
+                   script, and its POSIX mode exits 127 and stops. */
+                shell_syntax_fatal(compound ? (shell_posix_on() ? 127 : 1) : 2,
+                                   !(compound && !shell_posix_on()));
                 return;
         }
 
@@ -2054,13 +2006,10 @@ fn run_lines(string_address text)
                         lex_physical_newline(false);
 
                 {
-                        string_address rest = stop;
+                        positive left = (positive)(copy + length - stop);
 
-                        shell_line_has_more = false;
-                        while (string_get(rest) == '\n')
-                                rest++;
-                        if (string_get(rest))
-                                shell_line_has_more = true;
+                        shell_line_has_more =
+                            memory_span_byte(stop, '\n', left) < left;
                 }
 
                 // An empty line is a line: it is a body line of a
