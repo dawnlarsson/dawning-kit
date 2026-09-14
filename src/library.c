@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        290 routines (279 public, 11 local), 289 of them on all three and 1 local to one.
+        291 routines (280 public, 11 local), 290 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -137,6 +137,7 @@
           file_valid                     public  yes     yes     yes
           file_write                     public  yes     yes     yes
           get_cpu_time                   public  yes     yes     yes
+          ghash_blocks                   public  yes     yes     yes
           hash_crc32                     public  yes     yes     yes
           hash_crc64                     public  yes     yes     yes
           hash_xxh64                     public  yes     yes     yes
@@ -3140,6 +3141,178 @@ __asm__(
     "35: bsf %rcx, %rcx\n" LEAVE                                              \
     "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n" \
     ASM_RET
+#endif
+
+/*
+        GHASH's carry-less multiply, spelled once per machine.
+
+        ghash_blocks runs six of these products a block on all three, and each
+        is sixteen integer multiplies folded into four lanes, so a product is
+        written here as text and expanded where it is used rather than called.
+        The x86_64 body of ghash_blocks carries the reasoning.
+*/
+#if X64
+//      The four lanes of %reg into the four stack slots from at. Uses rbx.
+#define GHASH_X64_LANES(reg, at)                                              \
+    "mov %" reg ", %rbx\n   and .Lghash_x64_k(%rip), %rbx\n"                    \
+    "mov %rbx, " at "(%rsp)\n"                                                \
+    "mov %" reg ", %rbx\n   and .Lghash_x64_k+8(%rip), %rbx\n"                  \
+    "mov %rbx, " at "+8(%rsp)\n"                                              \
+    "mov %" reg ", %rbx\n   and .Lghash_x64_k+16(%rip), %rbx\n"                 \
+    "mov %rbx, " at "+16(%rsp)\n"                                             \
+    "mov %" reg ", %rbx\n   and .Lghash_x64_k+24(%rip), %rbx\n"                 \
+    "mov %rbx, " at "+24(%rsp)\n"
+
+//      %reg bit reversed in place: bits, pairs and nibbles swapped, then the
+//      bytes. Uses rbx.
+#define GHASH_X64_REVERSE(reg)                                                \
+    "mov %" reg ", %rbx\n   shr $1, %" reg "\n"                                 \
+    "and .Lghash_x64_k+32(%rip), %" reg "\n   and .Lghash_x64_k+32(%rip), %rbx\n" \
+    "add %rbx, %rbx\n   or %rbx, %" reg "\n"                                    \
+    "mov %" reg ", %rbx\n   shr $2, %" reg "\n"                                 \
+    "and .Lghash_x64_k+40(%rip), %" reg "\n   and .Lghash_x64_k+40(%rip), %rbx\n" \
+    "shl $2, %rbx\n   or %rbx, %" reg "\n"                                      \
+    "mov %" reg ", %rbx\n   shr $4, %" reg "\n"                                 \
+    "and .Lghash_x64_k+48(%rip), %" reg "\n   and .Lghash_x64_k+48(%rip), %rbx\n" \
+    "shl $4, %rbx\n   or %rbx, %" reg "\n"                                      \
+    "bswap %" reg "\n"
+
+//      The low 64 bits of r10 times the operand whose lanes sit at at, in
+//      rax. Lane r of the answer is every product of lanes a and b with
+//      a + b = r mod 4. Uses r10 to r13, rbx and rbp.
+#define GHASH_X64_BMUL(at)                                                    \
+    "mov %r10, %r11\n   and .Lghash_x64_k(%rip), %r11\n"                        \
+    "mov %r10, %r12\n   and .Lghash_x64_k+8(%rip), %r12\n"                      \
+    "mov %r10, %r13\n   and .Lghash_x64_k+16(%rip), %r13\n"                     \
+    "and .Lghash_x64_k+24(%rip), %r10\n"                                      \
+    "mov %r11, %rax\n   imul " at "(%rsp), %rax\n"                              \
+    "mov %r12, %rbx\n   imul " at "+24(%rsp), %rbx\n   xor %rbx, %rax\n"        \
+    "mov %r13, %rbx\n   imul " at "+16(%rsp), %rbx\n   xor %rbx, %rax\n"        \
+    "mov %r10, %rbx\n   imul " at "+8(%rsp), %rbx\n   xor %rbx, %rax\n"         \
+    "and .Lghash_x64_k(%rip), %rax\n"                                         \
+    "mov %r11, %rbp\n   imul " at "+8(%rsp), %rbp\n"                            \
+    "mov %r12, %rbx\n   imul " at "(%rsp), %rbx\n   xor %rbx, %rbp\n"           \
+    "mov %r13, %rbx\n   imul " at "+24(%rsp), %rbx\n   xor %rbx, %rbp\n"        \
+    "mov %r10, %rbx\n   imul " at "+16(%rsp), %rbx\n   xor %rbx, %rbp\n"        \
+    "and .Lghash_x64_k+8(%rip), %rbp\n   or %rbp, %rax\n"                       \
+    "mov %r11, %rbp\n   imul " at "+16(%rsp), %rbp\n"                           \
+    "mov %r12, %rbx\n   imul " at "+8(%rsp), %rbx\n   xor %rbx, %rbp\n"         \
+    "mov %r13, %rbx\n   imul " at "(%rsp), %rbx\n   xor %rbx, %rbp\n"           \
+    "mov %r10, %rbx\n   imul " at "+24(%rsp), %rbx\n   xor %rbx, %rbp\n"        \
+    "and .Lghash_x64_k+16(%rip), %rbp\n   or %rbp, %rax\n"                      \
+    "mov %r11, %rbp\n   imul " at "+24(%rsp), %rbp\n"                           \
+    "mov %r12, %rbx\n   imul " at "+16(%rsp), %rbx\n   xor %rbx, %rbp\n"        \
+    "mov %r13, %rbx\n   imul " at "+8(%rsp), %rbx\n   xor %rbx, %rbp\n"         \
+    "mov %r10, %rbx\n   imul " at "(%rsp), %rbx\n   xor %rbx, %rbp\n"           \
+    "and .Lghash_x64_k+24(%rip), %rbp\n   or %rbp, %rax\n"
+#elif ARM64
+//      The four lanes of reg into the four stack slots from at. The masks
+//      are logical immediates. Uses x4 and x5.
+#define GHASH_ARM64_LANES(reg, at)                                            \
+    "and x4, " reg ", #0x1111111111111111\n"                                   \
+    "and x5, " reg ", #0x2222222222222222\n"                                   \
+    "stp x4, x5, [sp, #" at "]\n"                                             \
+    "and x4, " reg ", #0x4444444444444444\n"                                   \
+    "and x5, " reg ", #0x8888888888888888\n"                                   \
+    "stp x4, x5, [sp, #" at "+16]\n"
+
+//      The low 64 bits of x9 times the operand whose lanes sit at at, in
+//      x10. Uses x4 to x7 and x10 to x16.
+#define GHASH_ARM64_BMUL(at)                                                  \
+    "ldp x12, x13, [sp, #" at "]\n   ldp x14, x15, [sp, #" at "+16]\n"         \
+    "and x4, x9, #0x1111111111111111\n   and x5, x9, #0x2222222222222222\n"    \
+    "and x6, x9, #0x4444444444444444\n   and x7, x9, #0x8888888888888888\n"    \
+    "mul x10, x4, x12\n   mul x11, x5, x15\n   eor x10, x10, x11\n"             \
+    "mul x11, x6, x14\n   eor x10, x10, x11\n"                                  \
+    "mul x11, x7, x13\n   eor x10, x10, x11\n"                                  \
+    "and x10, x10, #0x1111111111111111\n"                                      \
+    "mul x16, x4, x13\n   mul x11, x5, x12\n   eor x16, x16, x11\n"             \
+    "mul x11, x6, x15\n   eor x16, x16, x11\n"                                  \
+    "mul x11, x7, x14\n   eor x16, x16, x11\n"                                  \
+    "and x16, x16, #0x2222222222222222\n   orr x10, x10, x16\n"                 \
+    "mul x16, x4, x14\n   mul x11, x5, x13\n   eor x16, x16, x11\n"             \
+    "mul x11, x6, x12\n   eor x16, x16, x11\n"                                  \
+    "mul x11, x7, x15\n   eor x16, x16, x11\n"                                  \
+    "and x16, x16, #0x4444444444444444\n   orr x10, x10, x16\n"                 \
+    "mul x16, x4, x15\n   mul x11, x5, x14\n   eor x16, x16, x11\n"             \
+    "mul x11, x6, x13\n   eor x16, x16, x11\n"                                  \
+    "mul x11, x7, x12\n   eor x16, x16, x11\n"                                  \
+    "and x16, x16, #0x8888888888888888\n   orr x10, x10, x16\n"
+#elif RISCV64
+//      Eight bytes, most significant first, from o0..o7(base) into dst.
+//      Byte loads: a word load here may take a misaligned-access trap.
+//      Uses t5.
+#define GHASH_RISCV_LOAD(base, dst, o0, o1, o2, o3, o4, o5, o6, o7)          \
+    "lbu " dst ", " o0 "(" base ")\n"                                          \
+    "lbu t5, " o1 "(" base ")\n   slli " dst ", " dst ", 8\n"                   \
+    "or " dst ", " dst ", t5\n"                                               \
+    "lbu t5, " o2 "(" base ")\n   slli " dst ", " dst ", 8\n"                   \
+    "or " dst ", " dst ", t5\n"                                               \
+    "lbu t5, " o3 "(" base ")\n   slli " dst ", " dst ", 8\n"                   \
+    "or " dst ", " dst ", t5\n"                                               \
+    "lbu t5, " o4 "(" base ")\n   slli " dst ", " dst ", 8\n"                   \
+    "or " dst ", " dst ", t5\n"                                               \
+    "lbu t5, " o5 "(" base ")\n   slli " dst ", " dst ", 8\n"                   \
+    "or " dst ", " dst ", t5\n"                                               \
+    "lbu t5, " o6 "(" base ")\n   slli " dst ", " dst ", 8\n"                   \
+    "or " dst ", " dst ", t5\n"                                               \
+    "lbu t5, " o7 "(" base ")\n   slli " dst ", " dst ", 8\n"                   \
+    "or " dst ", " dst ", t5\n"
+
+//      And back out, most significant first. Uses t5.
+#define GHASH_RISCV_STORE(base, src, o0, o1, o2, o3, o4, o5, o6, o7)         \
+    "srli t5, " src ", 56\n   sb t5, " o0 "(" base ")\n"                        \
+    "srli t5, " src ", 48\n   sb t5, " o1 "(" base ")\n"                        \
+    "srli t5, " src ", 40\n   sb t5, " o2 "(" base ")\n"                        \
+    "srli t5, " src ", 32\n   sb t5, " o3 "(" base ")\n"                        \
+    "srli t5, " src ", 24\n   sb t5, " o4 "(" base ")\n"                        \
+    "srli t5, " src ", 16\n   sb t5, " o5 "(" base ")\n"                        \
+    "srli t5, " src ", 8\n   sb t5, " o6 "(" base ")\n"                         \
+    "sb " src ", " o7 "(" base ")\n"
+
+//      The four lanes of reg into the stack slots a, b, c and d. The lane
+//      masks are in s0 to s3. Uses t5.
+#define GHASH_RISCV_LANES(reg, a, b, c, d)                                    \
+    "and t5, " reg ", s0\n   sd t5, " a "(sp)\n"                               \
+    "and t5, " reg ", s1\n   sd t5, " b "(sp)\n"                               \
+    "and t5, " reg ", s2\n   sd t5, " c "(sp)\n"                               \
+    "and t5, " reg ", s3\n   sd t5, " d "(sp)\n"
+
+//      reg bit reversed in place. There is no rev8 or bswap below Zbb, so
+//      all six swaps are shifts and masks; the masks are in s4 to s8.
+//      Uses t5.
+#define GHASH_RISCV_REVERSE(reg)                                              \
+    "srli t5, " reg ", 1\n   and t5, t5, s4\n   and " reg ", " reg ", s4\n"      \
+    "slli " reg ", " reg ", 1\n   or " reg ", " reg ", t5\n"                    \
+    "srli t5, " reg ", 2\n   and t5, t5, s5\n   and " reg ", " reg ", s5\n"      \
+    "slli " reg ", " reg ", 2\n   or " reg ", " reg ", t5\n"                    \
+    "srli t5, " reg ", 4\n   and t5, t5, s6\n   and " reg ", " reg ", s6\n"      \
+    "slli " reg ", " reg ", 4\n   or " reg ", " reg ", t5\n"                    \
+    "srli t5, " reg ", 8\n   and t5, t5, s7\n   and " reg ", " reg ", s7\n"      \
+    "slli " reg ", " reg ", 8\n   or " reg ", " reg ", t5\n"                    \
+    "srli t5, " reg ", 16\n   and t5, t5, s8\n   and " reg ", " reg ", s8\n"     \
+    "slli " reg ", " reg ", 16\n   or " reg ", " reg ", t5\n"                   \
+    "srli t5, " reg ", 32\n   slli " reg ", " reg ", 32\n"                      \
+    "or " reg ", " reg ", t5\n"
+
+//      The low 64 bits of t0 times the operand whose lanes sit in the stack
+//      slots a, b, c and d, in a1. Uses t1 to t6 and a4 to a7.
+#define GHASH_RISCV_BMUL(a, b, c, d)                                          \
+    "ld a4, " a "(sp)\n   ld a5, " b "(sp)\n"                                   \
+    "ld a6, " c "(sp)\n   ld a7, " d "(sp)\n"                                   \
+    "and t1, t0, s0\n   and t2, t0, s1\n   and t3, t0, s2\n   and t4, t0, s3\n"  \
+    "mul a1, t1, a4\n   mul t5, t2, a7\n   xor a1, a1, t5\n"                    \
+    "mul t5, t3, a6\n   xor a1, a1, t5\n   mul t5, t4, a5\n   xor a1, a1, t5\n"  \
+    "and a1, a1, s0\n"                                                        \
+    "mul t6, t1, a5\n   mul t5, t2, a4\n   xor t6, t6, t5\n"                    \
+    "mul t5, t3, a7\n   xor t6, t6, t5\n   mul t5, t4, a6\n   xor t6, t6, t5\n"  \
+    "and t6, t6, s1\n   or a1, a1, t6\n"                                      \
+    "mul t6, t1, a6\n   mul t5, t2, a5\n   xor t6, t6, t5\n"                    \
+    "mul t5, t3, a4\n   xor t6, t6, t5\n   mul t5, t4, a7\n   xor t6, t6, t5\n"  \
+    "and t6, t6, s2\n   or a1, a1, t6\n"                                      \
+    "mul t6, t1, a7\n   mul t5, t2, a6\n   xor t6, t6, t5\n"                    \
+    "mul t5, t3, a5\n   xor t6, t6, t5\n   mul t5, t4, a4\n   xor t6, t6, t5\n"  \
+    "and t6, t6, s3\n   or a1, a1, t6\n"
 #endif
 
 #if X64
@@ -6213,6 +6386,124 @@ __asm__(
     ".long 0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n"
     ASM_SECTION
     ASM_END(sha256_compress)
+
+    /* GHASH over whole blocks, on the integer floor.
+
+       For each 16-byte block, state = (state ^ block) * key in GF(2^128)
+       with GCM's bit order, where the first byte's high bit is x^0. Read as
+       two big-endian words the 128-bit value needs no reversal of its own:
+       the product comes back shifted left by one and reduced from the low
+       end with the reflected polynomial.
+
+       This replaces a bit-serial multiply that was 91% of wget's CPU on a
+       126 MB download. PCLMULQDQ, PMULL and Zbc are all above the floor, so
+       the carry-less product is made from ordinary multiplies. Each 64-bit
+       operand is cut into four lanes holding every fourth bit. Two lanes
+       multiply without any carry reaching the next bit of their own lane
+       below bit 64: at most sixteen ones meet in a column, and only at
+       columns 60 to 63, whose carry leaves the word. So the four products
+       that land in a lane, xored and masked, are the low half of the
+       carry-less product: sixteen multiplies. The high half is the same
+       low product of the bit-reversed operands, reversed back, which is
+       bits 63 to 126. Karatsuba makes 128 bits three such products, so a
+       block costs 96 multiplies and five reversals, and nothing in it
+       branches or indexes on the key, the state or the data. A 4-bit
+       table would be faster and would index on the key. That makes the
+       timing the multiply's own: operand-independent on the x86_64 and
+       arm64 multipliers in use, and not promised on RISC-V, where a core
+       may finish small products early.
+
+       With lo0, lo1 and lom the low halves of x0*h0, x1*h1 and
+       (x0^x1)*(h0^h1), and hi0, hi1, him their high halves, the product
+       shifted left by one is four words, w0 lowest:
+
+           w0 = lo0 << 1             w1 = hi0 ^ (lo0 ^ lo1 ^ lom) << 1
+           w2 = (hi0 ^ hi1 ^ him) ^ lo1 << 1          w3 = hi1
+
+       w0 folds into w2 and w1 through x^128 = x^7 + x^2 + x + 1, then w1,
+       which the first fold reached, into w3 and w2. The new state is w3:w2.
+
+       The key's twenty four lanes, plain and reversed, are cut once a call
+       into the frame, which is wiped before return. Measured and proved
+       against the bit-serial multiply in CHECK_net and test/hardware_floor.c. */
+    ASM_FUNC(ghash_blocks)
+    "test %rcx, %rcx\n   jz .Lghash_x64_none\n"
+    "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $240, %rsp\n"
+    //  h1 in r14 and h0 in r15; lanes of h0, h1 and h0^h1 at 0, 32 and 64,
+    //  and of the same three reversed at 96, 128 and 160.
+    "mov (%rsi), %r14\n   bswap %r14\n   mov 8(%rsi), %r15\n   bswap %r15\n"
+    GHASH_X64_LANES("r15", "0")
+    GHASH_X64_LANES("r14", "32")
+    "mov %r14, %r10\n   xor %r15, %r10\n"
+    GHASH_X64_LANES("r10", "64")
+    GHASH_X64_REVERSE("r15")
+    GHASH_X64_LANES("r15", "96")
+    GHASH_X64_REVERSE("r14")
+    GHASH_X64_LANES("r14", "128")
+    "xor %r15, %r14\n"
+    GHASH_X64_LANES("r14", "160")
+    "mov (%rdi), %r8\n   bswap %r8\n   mov 8(%rdi), %r9\n   bswap %r9\n"
+    ".balign 16\n"
+    ".Lghash_x64_block:\n"
+    "mov (%rdx), %r10\n   bswap %r10\n   xor %r10, %r8\n"
+    "mov 8(%rdx), %r10\n   bswap %r10\n   xor %r10, %r9\n"
+    //  x1 in r8, x0 in r9. The low halves go to 192, 200 and 208.
+    "mov %r9, %r10\n" GHASH_X64_BMUL("0") "mov %rax, 192(%rsp)\n"
+    "mov %r8, %r10\n" GHASH_X64_BMUL("32") "mov %rax, 200(%rsp)\n"
+    "mov %r8, %r10\n   xor %r9, %r10\n" GHASH_X64_BMUL("64")
+    "mov %rax, 208(%rsp)\n"
+    //  The high halves: reversed operands, reversed answers. x0 and x1 are
+    //  not needed plain again.
+    GHASH_X64_REVERSE("r9")
+    GHASH_X64_REVERSE("r8")
+    "mov %r9, %r10\n" GHASH_X64_BMUL("96") GHASH_X64_REVERSE("rax")
+    "mov %rax, 216(%rsp)\n"
+    "mov %r8, %r10\n" GHASH_X64_BMUL("128") GHASH_X64_REVERSE("rax")
+    "mov %rax, 224(%rsp)\n"
+    "mov %r8, %r10\n   xor %r9, %r10\n" GHASH_X64_BMUL("160")
+    GHASH_X64_REVERSE("rax")
+    //  w0 in r12, w1 in r11, w2 in r14, w3 in r15.
+    "xor 216(%rsp), %rax\n   xor 224(%rsp), %rax\n"
+    "mov 208(%rsp), %r11\n   xor 192(%rsp), %r11\n   xor 200(%rsp), %r11\n"
+    "add %r11, %r11\n   xor 216(%rsp), %r11\n"
+    "mov 192(%rsp), %r12\n   add %r12, %r12\n"
+    "mov 200(%rsp), %r14\n   add %r14, %r14\n   xor %rax, %r14\n"
+    "mov 224(%rsp), %r15\n"
+    //  w0 into w2 and w1, then w1 into w3 and w2.
+    "xor %r12, %r14\n"
+    "mov %r12, %rbx\n   shr $1, %rbx\n   xor %rbx, %r14\n"
+    "mov %r12, %rbx\n   shr $2, %rbx\n   xor %rbx, %r14\n"
+    "mov %r12, %rbx\n   shr $7, %rbx\n   xor %rbx, %r14\n"
+    "mov %r12, %rbx\n   shl $63, %rbx\n   xor %rbx, %r11\n"
+    "mov %r12, %rbx\n   shl $62, %rbx\n   xor %rbx, %r11\n"
+    "shl $57, %r12\n   xor %r12, %r11\n"
+    "xor %r11, %r15\n"
+    "mov %r11, %rbx\n   shr $1, %rbx\n   xor %rbx, %r15\n"
+    "mov %r11, %rbx\n   shr $2, %rbx\n   xor %rbx, %r15\n"
+    "mov %r11, %rbx\n   shr $7, %rbx\n   xor %rbx, %r15\n"
+    "mov %r11, %rbx\n   shl $63, %rbx\n   xor %rbx, %r14\n"
+    "mov %r11, %rbx\n   shl $62, %rbx\n   xor %rbx, %r14\n"
+    "shl $57, %r11\n   xor %r11, %r14\n"
+    "mov %r15, %r8\n   mov %r14, %r9\n"
+    "add $16, %rdx\n   dec %rcx\n   jnz .Lghash_x64_block\n"
+    "bswap %r8\n   mov %r8, (%rdi)\n   bswap %r9\n   mov %r9, 8(%rdi)\n"
+    //  rcx is zero here. The lanes and halves are key material.
+    "xor %eax, %eax\n   mov $232, %ecx\n"
+    ".Lghash_x64_wipe:\n   mov %rax, -8(%rsp,%rcx)\n   sub $8, %rcx\n"
+    "jnz .Lghash_x64_wipe\n"
+    "add $240, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n   pop %rbp\n"
+    ".Lghash_x64_none:\n"
+    ASM_RET
+    ".section .rodata\n   .balign 16\n"
+    ".Lghash_x64_k:\n"
+    ".quad 0x1111111111111111, 0x2222222222222222\n"
+    ".quad 0x4444444444444444, 0x8888888888888888\n"
+    ".quad 0x5555555555555555, 0x3333333333333333\n"
+    ".quad 0x0f0f0f0f0f0f0f0f\n"
+    ASM_SECTION
+    ASM_END(ghash_blocks)
 
     /* A NUL-terminated name normally needs both of these answers. Returning
        them together keeps the bytes in one hardware-floor pass: hash in rax,
@@ -13976,6 +14267,70 @@ __asm__(
     ASM_SECTION
     ASM_END(sha256_compress)
 
+    // See the x86_64 body for the field, the lanes, the high half and why
+    // there is no table. rbit is baseline here, so a reversal is one
+    // instruction, and eor takes its shift, so the fold is one a term.
+    ASM_FUNC(ghash_blocks)
+    "cbz x3, .Lghash_arm64_none\n"
+    "sub sp, sp, #256\n"
+    "stp x19, x20, [sp, #192]\n   stp x21, x22, [sp, #208]\n"
+    "stp x23, x24, [sp, #224]\n   stp x25, x26, [sp, #240]\n"
+    //  h1 in x9 and h0 in x10; lanes of h0, h1 and h0^h1 at 0, 32 and 64,
+    //  and of the same three reversed at 96, 128 and 160.
+    "ldr x9, [x1]\n   rev x9, x9\n   ldr x10, [x1, #8]\n   rev x10, x10\n"
+    GHASH_ARM64_LANES("x10", "0")
+    GHASH_ARM64_LANES("x9", "32")
+    "eor x11, x9, x10\n"
+    GHASH_ARM64_LANES("x11", "64")
+    "rbit x10, x10\n"
+    GHASH_ARM64_LANES("x10", "96")
+    "rbit x9, x9\n"
+    GHASH_ARM64_LANES("x9", "128")
+    "eor x11, x9, x10\n"
+    GHASH_ARM64_LANES("x11", "160")
+    "ldr x20, [x0]\n   rev x20, x20\n   ldr x21, [x0, #8]\n   rev x21, x21\n"
+    ".Lghash_arm64_block:\n"
+    "ldr x9, [x2]\n   rev x9, x9\n   eor x20, x20, x9\n"
+    "ldr x9, [x2, #8]\n   rev x9, x9\n   eor x21, x21, x9\n"
+    //  x1 in x20, x0 in x21. Low halves in x22 to x24, high in x25, x26, x10.
+    "mov x9, x21\n" GHASH_ARM64_BMUL("0") "mov x22, x10\n"
+    "mov x9, x20\n" GHASH_ARM64_BMUL("32") "mov x23, x10\n"
+    "eor x9, x20, x21\n" GHASH_ARM64_BMUL("64") "mov x24, x10\n"
+    "rbit x9, x21\n" GHASH_ARM64_BMUL("96") "rbit x25, x10\n"
+    "rbit x9, x20\n" GHASH_ARM64_BMUL("128") "rbit x26, x10\n"
+    "eor x9, x20, x21\n   rbit x9, x9\n" GHASH_ARM64_BMUL("160")
+    "rbit x10, x10\n"
+    //  w0 in x4, w1 in x5, w2 in x6, w3 in x7.
+    "eor x10, x10, x25\n   eor x10, x10, x26\n"
+    "eor x11, x24, x22\n   eor x11, x11, x23\n"
+    "lsl x4, x22, #1\n"
+    "eor x5, x25, x11, lsl #1\n"
+    "eor x6, x10, x23, lsl #1\n"
+    "mov x7, x26\n"
+    "eor x6, x6, x4\n   eor x6, x6, x4, lsr #1\n"
+    "eor x6, x6, x4, lsr #2\n   eor x6, x6, x4, lsr #7\n"
+    "eor x5, x5, x4, lsl #63\n   eor x5, x5, x4, lsl #62\n"
+    "eor x5, x5, x4, lsl #57\n"
+    "eor x7, x7, x5\n   eor x7, x7, x5, lsr #1\n"
+    "eor x7, x7, x5, lsr #2\n   eor x7, x7, x5, lsr #7\n"
+    "eor x6, x6, x5, lsl #63\n   eor x6, x6, x5, lsl #62\n"
+    "eor x6, x6, x5, lsl #57\n"
+    "mov x20, x7\n   mov x21, x6\n"
+    "add x2, x2, #16\n   subs x3, x3, #1\n   b.ne .Lghash_arm64_block\n"
+    "rev x20, x20\n   str x20, [x0]\n   rev x21, x21\n   str x21, [x0, #8]\n"
+    "stp xzr, xzr, [sp, #0]\n   stp xzr, xzr, [sp, #16]\n"
+    "stp xzr, xzr, [sp, #32]\n   stp xzr, xzr, [sp, #48]\n"
+    "stp xzr, xzr, [sp, #64]\n   stp xzr, xzr, [sp, #80]\n"
+    "stp xzr, xzr, [sp, #96]\n   stp xzr, xzr, [sp, #112]\n"
+    "stp xzr, xzr, [sp, #128]\n   stp xzr, xzr, [sp, #144]\n"
+    "stp xzr, xzr, [sp, #160]\n   stp xzr, xzr, [sp, #176]\n"
+    "ldp x19, x20, [sp, #192]\n   ldp x21, x22, [sp, #208]\n"
+    "ldp x23, x24, [sp, #224]\n   ldp x25, x26, [sp, #240]\n"
+    "add sp, sp, #256\n"
+    ".Lghash_arm64_none:\n"
+    ASM_RET
+    ASM_END(ghash_blocks)
+
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
     "mov x2, #5381\n   mov x1, #0\n"
@@ -19941,6 +20296,89 @@ __asm__(
     ASM_SECTION
     ASM_END(sha256_compress)
 
+    // See the x86_64 body for the field, the lanes, the high half and why
+    // there is no table. Without Zbb there is no rev8, so the reversals are
+    // six mask-and-shift swaps each, and the masks are built once into
+    // s0 to s8: lanes in s0 to s3, swap masks in s4 to s8.
+    ASM_FUNC(ghash_blocks)
+    "bnez a3, 1f\n"
+    ASM_RET
+    "1:  addi sp, sp, -336\n"
+    "sd s0, 232(sp)\n   sd s1, 240(sp)\n   sd s2, 248(sp)\n   sd s3, 256(sp)\n"
+    "sd s4, 264(sp)\n   sd s5, 272(sp)\n   sd s6, 280(sp)\n   sd s7, 288(sp)\n"
+    "sd s8, 296(sp)\n   sd s9, 304(sp)\n   sd s10, 312(sp)\n   sd s11, 320(sp)\n"
+    "li s0, 0x1111111111111111\n   slli s1, s0, 1\n"
+    "slli s2, s0, 2\n   slli s3, s0, 3\n"
+    "li s4, 0x5555555555555555\n   li s5, 0x3333333333333333\n"
+    "li s6, 0x0f0f0f0f0f0f0f0f\n   li s7, 0x00ff00ff00ff00ff\n"
+    "li s8, 0x0000ffff0000ffff\n"
+    //  h1 in a4 and h0 in a5; lanes of h0, h1 and h0^h1 at 0, 32 and 64,
+    //  and of the same three reversed at 96, 128 and 160.
+    GHASH_RISCV_LOAD("a1", "a4", "0", "1", "2", "3", "4", "5", "6", "7")
+    GHASH_RISCV_LOAD("a1", "a5", "8", "9", "10", "11", "12", "13", "14", "15")
+    GHASH_RISCV_LANES("a5", "0", "8", "16", "24")
+    GHASH_RISCV_LANES("a4", "32", "40", "48", "56")
+    "xor a6, a4, a5\n"
+    GHASH_RISCV_LANES("a6", "64", "72", "80", "88")
+    GHASH_RISCV_REVERSE("a5")
+    GHASH_RISCV_LANES("a5", "96", "104", "112", "120")
+    GHASH_RISCV_REVERSE("a4")
+    GHASH_RISCV_LANES("a4", "128", "136", "144", "152")
+    "xor a6, a4, a5\n"
+    GHASH_RISCV_LANES("a6", "160", "168", "176", "184")
+    GHASH_RISCV_LOAD("a0", "s9", "0", "1", "2", "3", "4", "5", "6", "7")
+    GHASH_RISCV_LOAD("a0", "s10", "8", "9", "10", "11", "12", "13", "14", "15")
+    ".Lghash_rv_block:\n"
+    GHASH_RISCV_LOAD("a2", "t0", "0", "1", "2", "3", "4", "5", "6", "7")
+    "xor s9, s9, t0\n"
+    GHASH_RISCV_LOAD("a2", "t0", "8", "9", "10", "11", "12", "13", "14", "15")
+    "xor s10, s10, t0\n"
+    //  x1 in s9, x0 in s10. Low halves to 192, 200 and 208, high to 216,
+    //  224 and a1.
+    "mv t0, s10\n" GHASH_RISCV_BMUL("0", "8", "16", "24") "sd a1, 192(sp)\n"
+    "mv t0, s9\n" GHASH_RISCV_BMUL("32", "40", "48", "56") "sd a1, 200(sp)\n"
+    "xor t0, s9, s10\n" GHASH_RISCV_BMUL("64", "72", "80", "88")
+    "sd a1, 208(sp)\n"
+    "mv t0, s10\n" GHASH_RISCV_REVERSE("t0")
+    GHASH_RISCV_BMUL("96", "104", "112", "120") GHASH_RISCV_REVERSE("a1")
+    "sd a1, 216(sp)\n"
+    "mv t0, s9\n" GHASH_RISCV_REVERSE("t0")
+    GHASH_RISCV_BMUL("128", "136", "144", "152") GHASH_RISCV_REVERSE("a1")
+    "sd a1, 224(sp)\n"
+    "xor t0, s9, s10\n" GHASH_RISCV_REVERSE("t0")
+    GHASH_RISCV_BMUL("160", "168", "176", "184") GHASH_RISCV_REVERSE("a1")
+    //  w0 in t3, w1 in t6, w2 in t4, w3 in t2.
+    "ld t1, 216(sp)\n   ld t2, 224(sp)\n   ld t3, 192(sp)\n"
+    "ld t4, 200(sp)\n   ld t6, 208(sp)\n"
+    "xor a1, a1, t1\n   xor a1, a1, t2\n"
+    "xor t6, t6, t3\n   xor t6, t6, t4\n"
+    "slli t3, t3, 1\n"
+    "slli t6, t6, 1\n   xor t6, t6, t1\n"
+    "slli t4, t4, 1\n   xor t4, t4, a1\n"
+    "xor t4, t4, t3\n"
+    "srli t5, t3, 1\n   xor t4, t4, t5\n   srli t5, t3, 2\n   xor t4, t4, t5\n"
+    "srli t5, t3, 7\n   xor t4, t4, t5\n"
+    "slli t5, t3, 63\n   xor t6, t6, t5\n   slli t5, t3, 62\n   xor t6, t6, t5\n"
+    "slli t5, t3, 57\n   xor t6, t6, t5\n"
+    "xor t2, t2, t6\n"
+    "srli t5, t6, 1\n   xor t2, t2, t5\n   srli t5, t6, 2\n   xor t2, t2, t5\n"
+    "srli t5, t6, 7\n   xor t2, t2, t5\n"
+    "slli t5, t6, 63\n   xor t4, t4, t5\n   slli t5, t6, 62\n   xor t4, t4, t5\n"
+    "slli t5, t6, 57\n   xor t4, t4, t5\n"
+    "mv s9, t2\n   mv s10, t4\n"
+    "addi a2, a2, 16\n   addi a3, a3, -1\n   bnez a3, .Lghash_rv_block\n"
+    GHASH_RISCV_STORE("a0", "s9", "0", "1", "2", "3", "4", "5", "6", "7")
+    GHASH_RISCV_STORE("a0", "s10", "8", "9", "10", "11", "12", "13", "14", "15")
+    "mv t0, sp\n   addi t1, sp, 232\n"
+    ".Lghash_rv_wipe:\n   sd zero, 0(t0)\n   addi t0, t0, 8\n"
+    "bltu t0, t1, .Lghash_rv_wipe\n"
+    "ld s0, 232(sp)\n   ld s1, 240(sp)\n   ld s2, 248(sp)\n   ld s3, 256(sp)\n"
+    "ld s4, 264(sp)\n   ld s5, 272(sp)\n   ld s6, 280(sp)\n   ld s7, 288(sp)\n"
+    "ld s8, 296(sp)\n   ld s9, 304(sp)\n   ld s10, 312(sp)\n   ld s11, 320(sp)\n"
+    "addi sp, sp, 336\n"
+    ASM_RET
+    ASM_END(ghash_blocks)
+
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
     "mv t0, a0\n   li a2, 5381\n   li a1, 0\n"
@@ -25855,6 +26293,12 @@ PURE READS(1, 2) positive memory_hash_33(address_any block, positive size);
    block is 64 big-endian bytes. Rotates stay on the floor: ror, not
    rorx or SHA-NI, and RISC-V builds the same rotate from a shift pair. */
 fn sha256_compress(p32 address_to state, p8 address_to block);
+/* GHASH, the GCM authenticator, over whole 16-byte blocks: for each block
+   state = (state ^ block) * key in GF(2^128). state and key are 16 bytes in
+   GCM order. Nothing branches or indexes on key, state or data, so the
+   timing is the multiply's; zero blocks reads no data. */
+fn ghash_blocks(p8 address_to state, const p8 address_to key,
+                const p8 address_to data, positive blocks);
 PURE READS(1, 2) p32 memory_sum_bytes(address_any block, positive size);
 // Writes exactly 2*size lowercase hex bytes, without a terminator, and returns
 // that length. Source and destination must not overlap; size must fit when

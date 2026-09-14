@@ -11,10 +11,10 @@
             Darwin (lifted ARM64 bodies):
                 python3 test/differential.py --harness native_extract \
                     src/library.c $NAMES > /tmp/lifted.h
-                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_HEX \
+                cc -O2 -fno-builtin -DUSE_LIFTED -DSKIP_SHA256 -DSKIP_GHASH -DSKIP_HEX \
                     -DSKIP_ITOA -I/tmp test/hardware_floor.c -o /tmp/hwfloor
 
-            Darwin names (sha256/hex/itoa skipped: Mach-O :lo12: tables):
+            Darwin names (sha256/ghash/hex/itoa skipped: Mach-O :lo12: tables):
                 memory_copy_apart memory_copy memory_fill memory_fill_32
                 memory_fill_64 memory_reverse memory_frob
                 memory_to_lower_ascii memory_to_upper_ascii
@@ -229,6 +229,10 @@ unsigned long long hash_xxh64(const void *, unsigned long, unsigned long long);
 unsigned memory_checksum_bsd16(const void *, unsigned long, unsigned);
 #ifndef SKIP_SHA256
 void sha256_compress(unsigned int *, unsigned char *);
+#endif
+#ifndef SKIP_GHASH
+void ghash_blocks(unsigned char *, const unsigned char *,
+                  const unsigned char *, unsigned long);
 #endif
 #ifndef SKIP_HEX
 unsigned long memory_into_hex(void *, const void *, unsigned long);
@@ -552,6 +556,112 @@ static void sha_w(unsigned long size, unsigned long rounds)
 }
 #endif
 
+#ifndef SKIP_GHASH
+/*
+        GHASH against the same integer carry-less multiply written in C, so
+        the floor column is the compiler's arrangement of the algorithm the
+        assembly spells by hand: the thing to beat, not a traffic bound.
+*/
+static const unsigned char ghash_key[16] = {
+    0x66, 0xe9, 0x4b, 0xd4, 0xef, 0x8a, 0x2c, 0x3b,
+    0x88, 0x4c, 0xfa, 0x59, 0xca, 0x34, 0x2b, 0x2e};
+static unsigned char ghash_state[16];
+
+static uint64_t ghash_c_load(const unsigned char *at)
+{
+        uint64_t value = 0;
+        for (int i = 0; i < 8; i++)
+                value = value << 8 | at[i];
+        return value;
+}
+
+static void ghash_c_store(unsigned char *at, uint64_t value)
+{
+        for (int i = 7; i >= 0; i--)
+        {
+                at[i] = (unsigned char)value;
+                value >>= 8;
+        }
+}
+
+static uint64_t ghash_c_reverse(uint64_t x)
+{
+        x = ((x >> 1) & 0x5555555555555555ull) | ((x & 0x5555555555555555ull) << 1);
+        x = ((x >> 2) & 0x3333333333333333ull) | ((x & 0x3333333333333333ull) << 2);
+        x = ((x >> 4) & 0x0f0f0f0f0f0f0f0full) | ((x & 0x0f0f0f0f0f0f0f0full) << 4);
+        return __builtin_bswap64(x);
+}
+
+static uint64_t ghash_c_low(uint64_t x, uint64_t y)
+{
+        uint64_t x0 = x & 0x1111111111111111ull, x1 = x & 0x2222222222222222ull;
+        uint64_t x2 = x & 0x4444444444444444ull, x3 = x & 0x8888888888888888ull;
+        uint64_t y0 = y & 0x1111111111111111ull, y1 = y & 0x2222222222222222ull;
+        uint64_t y2 = y & 0x4444444444444444ull, y3 = y & 0x8888888888888888ull;
+        uint64_t z0 = (x0 * y0) ^ (x1 * y3) ^ (x2 * y2) ^ (x3 * y1);
+        uint64_t z1 = (x0 * y1) ^ (x1 * y0) ^ (x2 * y3) ^ (x3 * y2);
+        uint64_t z2 = (x0 * y2) ^ (x1 * y1) ^ (x2 * y0) ^ (x3 * y3);
+        uint64_t z3 = (x0 * y3) ^ (x1 * y2) ^ (x2 * y1) ^ (x3 * y0);
+
+        return (z0 & 0x1111111111111111ull) | (z1 & 0x2222222222222222ull) |
+               (z2 & 0x4444444444444444ull) | (z3 & 0x8888888888888888ull);
+}
+
+static void ghash_c_blocks(unsigned char *state, const unsigned char *key,
+                           const unsigned char *data, unsigned long blocks)
+{
+        uint64_t h1 = ghash_c_load(key), h0 = ghash_c_load(key + 8);
+        uint64_t h1r = ghash_c_reverse(h1), h0r = ghash_c_reverse(h0);
+        uint64_t hm = h0 ^ h1, hmr = h0r ^ h1r;
+        uint64_t s1 = ghash_c_load(state), s0 = ghash_c_load(state + 8);
+
+        while (blocks--)
+        {
+                uint64_t x1 = s1 ^ ghash_c_load(data);
+                uint64_t x0 = s0 ^ ghash_c_load(data + 8);
+                uint64_t lo0 = ghash_c_low(x0, h0), lo1 = ghash_c_low(x1, h1);
+                uint64_t lom = ghash_c_low(x0 ^ x1, hm);
+                uint64_t hi0 = ghash_c_reverse(ghash_c_low(ghash_c_reverse(x0), h0r));
+                uint64_t hi1 = ghash_c_reverse(ghash_c_low(ghash_c_reverse(x1), h1r));
+                uint64_t him = ghash_c_reverse(
+                    ghash_c_low(ghash_c_reverse(x0 ^ x1), hmr));
+                uint64_t w0 = lo0 << 1;
+                uint64_t w1 = hi0 ^ ((lo0 ^ lo1 ^ lom) << 1);
+                uint64_t w2 = (hi0 ^ hi1 ^ him) ^ (lo1 << 1);
+                uint64_t w3 = hi1;
+
+                w2 ^= w0 ^ (w0 >> 1) ^ (w0 >> 2) ^ (w0 >> 7);
+                w1 ^= (w0 << 63) ^ (w0 << 62) ^ (w0 << 57);
+                w3 ^= w1 ^ (w1 >> 1) ^ (w1 >> 2) ^ (w1 >> 7);
+                w2 ^= (w1 << 63) ^ (w1 << 62) ^ (w1 << 57);
+                s1 = w3;
+                s0 = w2;
+                data += 16;
+        }
+
+        ghash_c_store(state, s1);
+        ghash_c_store(state + 8, s0);
+}
+
+static void ghash_w(unsigned long size, unsigned long rounds)
+{
+        unsigned long i;
+        for (i = 0; i < rounds; i++) {
+                ghash_blocks(ghash_state, ghash_key, src, size / 16);
+                sink += ghash_state[0];
+        }
+}
+
+static void ghash_c_w(unsigned long size, unsigned long rounds)
+{
+        unsigned long i;
+        for (i = 0; i < rounds; i++) {
+                ghash_c_blocks(ghash_state, ghash_key, src, size / 16);
+                sink += ghash_state[0];
+        }
+}
+#endif
+
 static void span_byte_w(unsigned long size, unsigned long rounds)
 {
         unsigned long i;
@@ -840,6 +950,10 @@ int main(void)
 
 #ifndef SKIP_SHA256
         row("sha256_compress", "block", "compute", 64, sha_w, floor_one_w, 20);
+#endif
+#ifndef SKIP_GHASH
+        row("ghash_blocks", "record", "compute", 16384, ghash_w, ghash_c_w,
+            60000);
 #endif
         return 0;
 }

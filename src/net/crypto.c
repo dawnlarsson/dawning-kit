@@ -652,45 +652,25 @@ static fn crypto_aes128_encrypt(p8 address_to round, p8 address_to in,
         crypto_aes128_encrypt_portable(round, in, out);
 }
 
-static fn crypto_ghash_times(p8 address_to x, p8 address_to y)
+/*
+        GHASH over a span, the last partial block zero padded. The multiply
+        is ghash_blocks in library.c; GCM's framing stays here.
+*/
+static fn crypto_ghash_span(p8 address_to state, p8 address_to h,
+                            p8 address_to bytes, positive length)
 {
-        p8 z[16];
-        p8 v[16];
-        positive i;
-        positive bit;
+        positive whole = length / 16;
+        p8 padded[16];
 
-        memory_fill(z, 0, 16);
-        memory_copy(v, y, 16);
+        ghash_blocks(state, h, bytes, whole);
 
-        for (i = 0; i < 16; i++)
-                for (bit = 0; bit < 8; bit++)
-                {
-                        p8 selected = (p8)(0 - ((x[i] >> (7 - bit)) & 1));
-                        positive k;
-
-                        for (k = 0; k < 16; k++)
-                                z[k] ^= v[k] & selected;
-
-                        {
-                                p8 lsb = v[15] & 1;
-                                for (k = 15; k > 0; k--)
-                                        v[k] = (p8)((v[k] >> 1) | (v[k - 1] << 7));
-                                v[0] >>= 1;
-                                v[0] ^= 0xe1 & (p8)(0 - lsb);
-                        }
-                }
-
-        memory_copy(x, z, 16);
-        crypto_forget(z, sizeof z);
-        crypto_forget(v, sizeof v);
-}
-
-static fn crypto_ghash_add(p8 address_to state, p8 address_to block)
-{
-        positive i;
-
-        for (i = 0; i < 16; i++)
-                state[i] ^= block[i];
+        if (length % 16)
+        {
+                memory_fill(padded, 0, 16);
+                memory_copy(padded, bytes + whole * 16, length % 16);
+                ghash_blocks(state, h, padded, 1);
+                crypto_forget(padded, sizeof padded);
+        }
 }
 
 static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
@@ -722,26 +702,18 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
         memory_copy(counter, j0, 16);
         memory_fill(s, 0, 16);
 
-        at = 0;
-        while (at + 16 <= aad_length)
-        {
-                crypto_ghash_add(s, aad + at);
-                crypto_ghash_times(s, h);
-                at += 16;
-        }
-        if (at < aad_length)
-        {
-                memory_fill(padded, 0, 16);
-                memory_copy(padded, aad + at, aad_length - at);
-                crypto_ghash_add(s, padded);
-                crypto_ghash_times(s, h);
-        }
+        crypto_ghash_span(s, h, aad, aad_length);
+
+        //      GHASH reads the ciphertext both ways: before the counter
+        //      stream comes off it on the way in, after it goes on on the
+        //      way out. So the whole span is hashed in one call.
+        if (!encrypt)
+                crypto_ghash_span(s, h, text, text_length);
 
         at = 0;
         while (at < text_length)
         {
                 positive take = text_length - at;
-                p8 block[16];
 
                 if (take > 16)
                         take = 16;
@@ -752,35 +724,20 @@ static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
                 }
 
                 crypto_aes128_encrypt(round, counter, enc);
-                memory_copy(block, text + at, take);
-                memory_fill(block + take, 0, 16 - take);
-
-                if (!encrypt)
-                {
-                        crypto_ghash_add(s, block);
-                        crypto_ghash_times(s, h);
-                }
 
                 for (i = 0; i < take; i++)
                         text[at + i] ^= enc[i];
 
-                if (encrypt)
-                {
-                        memory_copy(block, text + at, take);
-                        memory_fill(block + take, 0, 16 - take);
-                        crypto_ghash_add(s, block);
-                        crypto_ghash_times(s, h);
-                }
-
-                crypto_forget(block, sizeof block);
                 at += take;
         }
+
+        if (encrypt)
+                crypto_ghash_span(s, h, text, text_length);
 
         memory_fill(padded, 0, 16);
         crypto_put_be64(padded, (p64)aad_length * 8);
         crypto_put_be64(padded + 8, (p64)text_length * 8);
-        crypto_ghash_add(s, padded);
-        crypto_ghash_times(s, h);
+        ghash_blocks(s, h, padded, 1);
 
         crypto_aes128_encrypt(round, j0, enc);
         for (i = 0; i < 16; i++)

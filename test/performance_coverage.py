@@ -342,6 +342,10 @@ cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'deflate_deco
 cover('correctness_only', 'test/hardware_floor.c', 'sha256_compress',
       'one 64-byte compression; timed in the hardware-floor harness, not the '
       'test/run bench catalogue')
+cover('correctness_only', 'test/checks.c#CHECK_net', 'ghash_blocks',
+      'bit-serial differential on all three floors; timed against the same '
+      'carry-less multiply compiled from C in test/hardware_floor.c, which '
+      'test/run bench does not dispatch')
 
 cover('correctness_only', 'test/checks.c#CHECK_zstd', '''
 zstd_bits_open zstd_bits_reload zstd_bits_get

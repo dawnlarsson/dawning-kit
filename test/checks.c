@@ -41434,6 +41434,125 @@ static fn crypto_floor(void)
         }
 }
 
+/*
+        ghash_blocks against the bit-serial multiply it replaced.
+
+        The oracle is the former crypto_ghash_times, one masked select a bit,
+        with nothing in common with the assembly: no lanes, no reversal, no
+        Karatsuba. Single-bit keys walk every lane of the key and every bit a
+        reversal moves; single-bit states with zero data do the same for the
+        operand; all-ones and zero keys take the extremes. The rest is random
+        state, key and runs of zero to nine blocks, which is what the loop
+        and its carried state need. The key and the data must come back
+        untouched, and zero blocks must not read the data at all.
+*/
+static fn ghash_reference_times(p8 address_to x, const p8 address_to y)
+{
+        p8 z[16];
+        p8 v[16];
+
+        memory_fill(z, 0, 16);
+        memory_copy(v, y, 16);
+
+        for (positive i = 0; i < 16; i++)
+                for (positive bit = 0; bit < 8; bit++)
+                {
+                        p8 selected = (p8)(0 - ((x[i] >> (7 - bit)) & 1));
+                        p8 low = v[15] & 1;
+
+                        for (positive k = 0; k < 16; k++)
+                                z[k] ^= v[k] & selected;
+
+                        for (positive k = 15; k > 0; k--)
+                                v[k] = (p8)((v[k] >> 1) | (v[k - 1] << 7));
+                        v[0] >>= 1;
+                        v[0] ^= 0xe1 & (p8)(0 - low);
+                }
+
+        memory_copy(x, z, 16);
+}
+
+static p64 ghash_check_seed = 0x9e3779b97f4a7c15ull;
+
+static p8 ghash_check_byte(void)
+{
+        ghash_check_seed ^= ghash_check_seed << 13;
+        ghash_check_seed ^= ghash_check_seed >> 7;
+        ghash_check_seed ^= ghash_check_seed << 17;
+        return (p8)(ghash_check_seed >> 29);
+}
+
+static fn crypto_floor_ghash(void)
+{
+        p8 key[16];
+        p8 key_kept[16];
+        p8 state[16];
+        p8 expect[16];
+        p8 data[16 * 9];
+        p8 data_kept[16 * 9];
+        positive wrong = 0;
+        positive rounds = 3000;
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                positive blocks = 1 + ghash_check_byte() % 9;
+
+                for (positive i = 0; i < 16; i++)
+                {
+                        key[i] = ghash_check_byte();
+                        state[i] = ghash_check_byte();
+                }
+                for (positive i = 0; i < sizeof data; i++)
+                        data[i] = ghash_check_byte();
+
+                if (round < 128)
+                {
+                        memory_fill(key, 0, 16);
+                        key[round / 8] = (p8)(0x80 >> (round % 8));
+                        blocks = 1;
+                }
+                else if (round < 256)
+                {
+                        memory_fill(state, 0, 16);
+                        memory_fill(data, 0, 16);
+                        state[(round - 128) / 8] = (p8)(0x80 >> (round % 8));
+                        blocks = 1;
+                }
+                else if (round == 256)
+                        memory_fill(key, 0xff, 16);
+                else if (round == 257)
+                {
+                        memory_fill(key, 0xff, 16);
+                        memory_fill(state, 0xff, 16);
+                        memory_fill(data, 0, sizeof data);
+                }
+                else if (round == 258)
+                        memory_fill(key, 0, 16);
+                else if (round % 10 == 0)
+                        blocks = 0;
+
+                memory_copy(key_kept, key, 16);
+                memory_copy(data_kept, data, sizeof data);
+                memory_copy(expect, state, 16);
+
+                for (positive b = 0; b < blocks; b++)
+                {
+                        for (positive i = 0; i < 16; i++)
+                                expect[i] ^= data[b * 16 + i];
+                        ghash_reference_times(expect, key);
+                }
+
+                ghash_blocks(state, key, blocks ? data : null, blocks);
+
+                if (memory_compare(state, expect, 16) != 0 ||
+                    memory_compare(key, key_kept, 16) != 0 ||
+                    memory_compare(data, data_kept, sizeof data) != 0)
+                        wrong++;
+        }
+
+        check("GHASH blocks agree with the bit-serial multiply", wrong == 0);
+}
+
 static fn crypto_floor_aes(void)
 {
         p8 key[16];
@@ -42934,6 +43053,7 @@ b32 main(void)
         tls_post_handshake_framing();
         tls_certificate_framing();
         crypto_floor();
+        crypto_floor_ghash();
         crypto_floor_aes();
         redirect_urls();
         fetching_for_real();
