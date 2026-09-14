@@ -3882,6 +3882,31 @@ done:
 */
 static fn expand_substitution_body(string_address command, bool capture);
 
+//      A substitution's bytes, read to the end of fd, which is then closed.
+//      The newlines at the end go, and only the ones at the end: that is the
+//      single piece of editing a substitution is allowed.
+static fn expand_read_substitution(b32 fd, p8 mark, positive start)
+{
+        p8 block[512];
+        bipolar got;
+
+        while ((got = system_read_retry((positive)fd, block, sizeof(block))) > 0)
+                expand_push_run(block, (positive)got, mark);
+
+        system_close(fd);
+
+        while (expand_length > start && expand_text[expand_length - 1] == '\n')
+                expand_length--;
+}
+
+static fn expand_substitution_done(b32 status)
+{
+        shell_substitution_status = status;
+        shell_substitution_generation++;
+        if (shell_bash_compat)
+                shell_status = status;
+}
+
 static fn expand_run(string_address command, bool quoted)
 {
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
@@ -3914,45 +3939,23 @@ static fn expand_run(string_address command, bool quoted)
 
         system_close(channel[1]);
 
-        if (child > 0)
+        if (child <= 0)
         {
-                while (1)
-                {
-                        p8 block[512];
-                        bipolar got = system_read_retry((positive)channel[0],
-                                                        block, sizeof(block));
-
-                        if (got <= 0)
-                                break;
-
-                        expand_push_run(block, (positive)got, mark);
-                }
+                system_close(channel[0]);
+                return;
         }
 
-        system_close(channel[0]);
+        expand_read_substitution(channel[0], mark, start);
+        system_wait4_retry(child, address_of status, 0, null);
 
-        if (child > 0)
-                system_wait4_retry(child, address_of status, 0, null);
+        /* A substitution that went through a child shell already wrote this
+           line there. A direct spawn has no such child, and dash still names
+           the signal the way lima 0.5.x does. Bash keeps substitutions
+           silent. */
+        if (!shell_bash_compat)
+                shell_child_death(child, status, true);
 
-        // The newlines at the end go, and only the ones at the end: that is the
-        // single piece of editing a substitution is allowed.
-        while (expand_length > start && expand_text[expand_length - 1] == '\n')
-                expand_length--;
-
-        if (child > 0)
-        {
-                /* A substitution that went through a child shell already
-                   wrote this line there. A direct spawn has no such child,
-                   and dash still names the signal the way lima 0.5.x does.
-                   Bash keeps substitutions silent. */
-                if (!shell_bash_compat)
-                        shell_child_death(child, status, true);
-
-                shell_substitution_status = wait_status_code(status);
-                shell_substitution_generation++;
-                if (shell_bash_compat)
-                        shell_status = shell_substitution_status;
-        }
+        expand_substitution_done(wait_status_code(status));
 }
 
 /*
@@ -3971,8 +3974,6 @@ static bool expand_command_file(string_address text, bool quoted)
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         positive start = expand_length;
         bipolar opened;
-        bool single = false;
-        bool dquote = false;
 
         if (!shell_bash_compat)
                 return false;
@@ -3994,54 +3995,24 @@ static bool expand_command_file(string_address text, bool quoted)
 
         name = at;
 
+        // The name ends at a blank or an operator outside anything quoted or
+        // nested: $(<fo$(echo o)) reads foo, as bash does.
         while (string_get(at))
         {
                 p8 c = string_get(at);
+                b32 skipped = lex_skip_held(address_of at);
 
-                if (single)
-                {
-                        if (c == '\'')
-                                single = false;
-                        at++;
+                if (skipped == LEX_SKIP_UNCLOSED)
+                        return false;
+                if (skipped)
                         continue;
-                }
-
-                if (c == '\\' && string_get(at + 1))
-                {
-                        at += 2;
-                        continue;
-                }
-
-                if (dquote)
-                {
-                        if (c == '"')
-                                dquote = false;
-                        at++;
-                        continue;
-                }
-
-                if (c == '\'')
-                {
-                        single = true;
-                        at++;
-                        continue;
-                }
-
-                if (c == '"')
-                {
-                        dquote = true;
-                        at++;
-                        continue;
-                }
-
                 if (lex_is_space(c) || c == ';' || c == '|' || c == '&' ||
                     c == '<' || c == '>')
                         break;
-
                 at++;
         }
 
-        if (single || dquote || at == name)
+        if (at == name)
                 return false;
 
         name_end = at;
@@ -4071,35 +4042,12 @@ static bool expand_command_file(string_address text, bool quoted)
 
         if (opened < 0)
         {
-                shell_substitution_status = 1;
-                shell_substitution_generation++;
-                if (shell_bash_compat)
-                        shell_status = 1;
+                expand_substitution_done(1);
                 return true;
         }
 
-        while (1)
-        {
-                p8 block[512];
-                bipolar got = system_read_retry((positive)opened, block,
-                                                sizeof(block));
-
-                if (got <= 0)
-                        break;
-
-                expand_push_run(block, (positive)got, mark);
-        }
-
-        system_close(opened);
-
-        while (expand_length > start && expand_text[expand_length - 1] == '\n')
-                expand_length--;
-
-        shell_substitution_status = 0;
-        shell_substitution_generation++;
-        if (shell_bash_compat)
-                shell_status = 0;
-
+        expand_read_substitution((b32)opened, mark, start);
+        expand_substitution_done(0);
         return true;
 }
 
@@ -4676,12 +4624,6 @@ static HOT string_address expand_arithmetic_finish(string_address ready,
         than a dollar followed by the source text. Bash extracts `$(`
         first and only then asks whether the body is `(expr)`.
 */
-static COLD string_address expand_arithmetic_as_command(string_address step,
-                                                        bool quoted)
-{
-        return expand_command(step, quoted);
-}
-
 static COLD string_address expand_arithmetic_complex(string_address step,
                                                      bool quoted)
 {
@@ -4693,7 +4635,7 @@ static COLD string_address expand_arithmetic_complex(string_address step,
         positive length;
 
         if (!stop || string_get(stop + 1) != ')')
-                return expand_arithmetic_as_command(step, quoted);
+                return expand_command(step, quoted);
 
         length = (positive)(stop - inner);
         text = expand_hold(inner, length, text_local, sizeof(text_local));
@@ -4740,7 +4682,7 @@ static HOT __attribute__((noinline)) string_address expand_arithmetic(
 
         if (!string_get(at) ||
             (string_get(at) == ')' && string_get(at + 1) != ')'))
-                return expand_arithmetic_as_command(step, quoted);
+                return expand_command(step, quoted);
 
         return expand_arithmetic_complex(step, quoted);
 }
