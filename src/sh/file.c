@@ -3459,6 +3459,14 @@ static bipolar file_copy_sparse(bipolar in, bipolar out,
             facts->size > (p64)b64_max)
                 return 0;
 
+        /* A file whose allocated blocks cover its length has no hole worth
+           finding, which is the test the reference cp applies before it
+           looks for extents: the probe is three seeks and a truncate a file,
+           and nearly every file answers it with one extent. Preallocation
+           past the end can hide a hole from this, as it does from cp. */
+        if (facts->blocks >= facts->size / 512)
+                return 0;
+
         bipolar data = system_seek(in, 0, 3);
 
         if (data == -ERROR_NO_DEVICE_ADDRESS)
@@ -3513,12 +3521,12 @@ static bipolar file_open_same(bipolar directory, string_address name,
         return handle;
 }
 
-static bool file_copy_handles(bipolar in, bipolar out)
+/* facts must have been read from in itself, so the extent probe and the
+   stream agree on one length. */
+static bool file_copy_handles_known(bipolar in, bipolar out,
+                                    file_facts address_to facts)
 {
-        file_facts facts;
-        bipolar sparse = file_look(in, (string_address)"", AT_EMPTY_PATH,
-                                   address_of facts)
-                             ? file_copy_sparse(in, out, address_of facts) : 0;
+        bipolar sparse = file_copy_sparse(in, out, facts);
         bool complete = sparse > 0;
 
         if (!sparse)
@@ -3530,6 +3538,16 @@ static bool file_copy_handles(bipolar in, bipolar out)
                                             address_of send_copy, null);
         }
         return complete;
+}
+
+static bool file_copy_handles(bipolar in, bipolar out)
+{
+        file_facts facts;
+
+        // A look that fails leaves the facts zeroed, which is the stream.
+        (void)file_look(in, (string_address)"", AT_EMPTY_PATH,
+                        address_of facts);
+        return file_copy_handles_known(in, out, address_of facts);
 }
 
 /* Existing names are checked before truncation; new names are exclusive. */
@@ -19524,6 +19542,37 @@ static positive file_copy_creation_mode(file_facts address_to facts)
                ~(MODE_SET_USER | MODE_SET_GROUP);
 }
 
+/* What a caller already knows about one copy.
+
+   FILE_COPY_FRESH: the destination directory was made by this command and
+   sits behind its outermost private stage until that is published, so no
+   name in it exists and nobody else can reach it to claim one.  A name in
+   it is created where it will stay, with O_EXCL, and nothing is staged a
+   second time: the stage per name was a directory made, renamed out of and
+   removed for every file, four fifths of cp -r's system calls.
+
+   FILE_COPY_FACTS_HELD: known_source was read from known_source_handle
+   itself, so there is nothing to compare it against. */
+#define FILE_COPY_FRESH 1
+#define FILE_COPY_FACTS_HELD 2
+
+/* A directory made inside a fresh one.  Owner bits the umask would take
+   away are kept the way the stage keeps them, or the copy could not write
+   its own contents; the mode it ends with is set once they are in. */
+static bipolar file_copy_directory_fresh(bipolar directory,
+                                         string_address name)
+{
+        bipolar made = cp_umask & 0700
+                           ? system_make_directory_exact_at(directory, name,
+                                                            0700)
+                           : system_make_directory_at(directory, name, 0700);
+
+        return made < 0 ? made
+                        : system_open_at(directory, name,
+                                         FILE_READ | O_DIRECTORY |
+                                             O_NOFOLLOW | O_CLOEXEC);
+}
+
 /* Ownership and set-ID preservation are one invariant. If fchown cannot
    establish the requested owner, never make the caller-owned copy set-ID. */
 static bipolar file_preserve_owner_mode(
@@ -19908,10 +19957,13 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                           positive depth, bool named, bool moving,
                           bool remove_source,
                           file_facts address_to known_source,
-                          bipolar known_source_handle)
+                          bipolar known_source_handle, positive how)
 {
         file_facts facts;
         file_facts there;
+        bool fresh = (how & FILE_COPY_FRESH) != 0;
+        bool facts_held = (how & FILE_COPY_FACTS_HELD) != 0 &&
+                          known_source && known_source_handle >= 0;
         string_address program = moving ? (string_address)"mv" : (string_address)"cp";
         bool follow = !moving &&
                       (cp_dereference == 1 || (cp_dereference == 2 && named));
@@ -19922,10 +19974,12 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 file_facts pinned;
                 looked = known_source_handle < 0
                              ? -ERROR_BAD_DESCRIPTOR
+                         : facts_held
+                             ? 0
                              : file_look_code(
                                    known_source_handle, (string_address)"",
                                    AT_EMPTY_PATH, address_of pinned);
-                if (looked >= 0 &&
+                if (looked >= 0 && !facts_held &&
                     (!file_same_identity(address_of facts,
                                          address_of pinned) ||
                      (facts.mode & MODE_FORMAT) !=
@@ -19952,13 +20006,25 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         positive destination_flags = moving ||
                                              (kind == MODE_LINK && !follow)
                                          ? AT_SYMLINK_NOFOLLOW : 0;
-        bool destination_exists =
-            file_look_code(destination_directory, destination,
-                           destination_flags, address_of there) == 0;
         file_facts destination_entry;
-        bool destination_entry_exists = file_look(
-            destination_directory, destination, AT_SYMLINK_NOFOLLOW,
-            address_of destination_entry);
+        bool destination_exists = false;
+        bool destination_entry_exists = false;
+
+        if (fresh)
+        {
+                memory_fill(address_of there, 0, sizeof(there));
+                memory_fill(address_of destination_entry, 0,
+                            sizeof(destination_entry));
+        }
+        else
+        {
+                destination_exists =
+                    file_look_code(destination_directory, destination,
+                                   destination_flags, address_of there) == 0;
+                destination_entry_exists = file_look(
+                    destination_directory, destination, AT_SYMLINK_NOFOLLOW,
+                    address_of destination_entry);
+        }
         bool destination_is_link = destination_entry_exists &&
             (destination_entry.mode & MODE_FORMAT) == MODE_LINK;
 
@@ -20192,7 +20258,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 if (in < 0)
                 {
                         if (!moving)
-                                string_format(log_error, "cp: cannot open '%w': %s\n",
+                                string_format(log_error, "cp: cannot open '%w' for reading: %s\n",
                                               writer_terminal_quoted_name, source_shown,
                                               file_reason(in));
                         return false;
@@ -20201,9 +20267,11 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 /* Existing destinations retain their inode, ownership and
                    hard-link contract unless replacement was explicitly
                    requested.  Missing names and replacements are prepared
-                   privately and published only after a complete copy. */
-                bool staged = moving || cp_replace || destination_is_link ||
-                              !destination_exists;
+                   privately and published only after a complete copy,
+                   unless the directory they land in is a fresh one. */
+                bool staged = !fresh &&
+                              (moving || cp_replace || destination_is_link ||
+                               !destination_exists);
                 system_path_stage protected;
                 system_path_stage_reset(address_of protected);
                 bipolar out = staged
@@ -20212,8 +20280,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                           destination, 0600)
                     : file_copy_destination_open(
                           destination_directory, destination,
-                          facts.mode & 07777, destination_exists,
-                          address_of there, true);
+                          file_copy_creation_mode(address_of facts),
+                          destination_exists, address_of there, true);
 
                 if (out < 0 && cp_force && !moving)
                 {
@@ -20234,7 +20302,10 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         return false;
                 }
 
-                bool complete = file_copy_handles(in, out);
+                bool complete = facts_held
+                                    ? file_copy_handles_known(in, out,
+                                                              address_of facts)
+                                    : file_copy_handles(in, out);
                 if (known_source_handle < 0)
                         system_close(in);
 
@@ -20300,7 +20371,11 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                               writer_terminal_quoted_name, source_shown);
         }
 
-        bipolar source_handle = known_source_handle >= 0
+        // A handle the walk opened for reading is read from directly; the
+        // caller closes it.
+        bipolar source_handle = facts_held
+            ? known_source_handle
+            : known_source_handle >= 0
             ? system_open_at(
                   known_source_handle, (string_address)".",
                   FILE_READ | O_DIRECTORY | O_CLOEXEC)
@@ -20316,15 +20391,18 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 return false;
         }
 
-        bool staged = moving || !destination_exists;
+        bool staged = !fresh && (moving || !destination_exists);
         system_path_stage protected;
         system_path_stage_reset(address_of protected);
-        bipolar destination_handle = file_copy_directory_open(
-            address_of protected, destination_directory, destination,
-            destination_exists, address_of there, staged);
+        bipolar destination_handle = fresh
+            ? file_copy_directory_fresh(destination_directory, destination)
+            : file_copy_directory_open(
+                  address_of protected, destination_directory, destination,
+                  destination_exists, address_of there, staged);
         if (destination_handle < 0)
         {
-                system_close(source_handle);
+                if (!facts_held)
+                        system_close(source_handle);
                 string_format(log_error, "%s: cannot open directory '%w': %s\n", program,
                               writer_terminal_quoted_name, destination_shown,
                               file_reason(destination_handle));
@@ -20366,10 +20444,47 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                         continue;
                 }
 
+                /* A file or directory the listing names is opened first and
+                   looked at through what was opened: one look, where naming
+                   it costs a look, an open and a second look to prove the
+                   two saw the same object.  A name that changed kind, or
+                   that will not open, goes the long way and is reported
+                   there. */
+                file_facts child_facts;
+                bipolar held = -1;
+
+                if (!cp_hard && !cp_symbolic && !cp_attributes_only &&
+                    (child->d_type == DT_REG || child->d_type == DT_DIR))
+                {
+                        bool is_directory = child->d_type == DT_DIR;
+
+                        held = system_open_at(
+                            walk.handle, child->d_name,
+                            FILE_READ | O_NOFOLLOW | O_CLOEXEC |
+                                (is_directory ? O_DIRECTORY : O_NONBLOCK));
+                        if (held >= 0 &&
+                            (file_look_code(held, (string_address)"",
+                                            AT_EMPTY_PATH,
+                                            address_of child_facts) < 0 ||
+                             (child_facts.mode & MODE_FORMAT) !=
+                                 (is_directory ? MODE_DIRECTORY : MODE_FILE)))
+                        {
+                                system_close(held);
+                                held = -1;
+                        }
+                }
+
                 if (!file_copy_one(walk.handle, child->d_name, from,
                                    destination_handle, child->d_name, to,
-                                   depth - 1, false, moving, false, null, -1))
+                                   depth - 1, false, moving, false,
+                                   held >= 0 ? address_of child_facts : null,
+                                   held,
+                                   (staged || fresh ? FILE_COPY_FRESH : 0) |
+                                       (held >= 0 ? FILE_COPY_FACTS_HELD : 0)))
                         complete = false;
+
+                if (held >= 0)
+                        system_close(held);
         }
 
         if (walk.error < 0)
@@ -20379,7 +20494,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 mv_across_said |= moving;
                 complete = false;
         }
-        file_walk_close(address_of walk);
+        if (!facts_held)
+                file_walk_close(address_of walk);
 
         complete &= !skipped;
 
@@ -20392,15 +20508,19 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                                        staged ? protected.directory : -1,
                                        staged ? SYSTEM_PATH_STAGE_LEAF : null,
                                        address_of facts)
-                                 : staged
+                                 : staged || fresh
                                        ? file_change_mode_handle(
                                              destination_handle,
                                              file_copy_creation_mode(
                                                  address_of facts))
                                        : 0;
 
+        /* cp leaves what it could copy, as the reference does, and answers
+           1 for what it could not; mv publishes only a whole tree, because
+           the source goes once the copy is out. */
+        bool publish = staged && attributed >= 0 && (complete || !moving);
         bipolar published = 0;
-        if (staged && complete && attributed >= 0)
+        if (publish)
                 published = file_copy_publish(
                     address_of protected, destination_directory,
                     destination, destination_handle, attributed, moving,
@@ -20414,7 +20534,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                     program, writer_terminal_quoted_name,
                     destination_shown, file_reason(attributed));
 
-        if (staged && (!complete || attributed < 0 || published < 0))
+        if (staged && (!publish || published < 0))
         {
                 file_facts staged_facts;
                 if (file_look(protected.directory,
@@ -20426,8 +20546,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                             address_of staged_facts, FILE_MAX_DEPTH);
                 system_path_stage_release(address_of protected);
         }
-        bipolar closed = staged && complete && attributed >= 0
-                             ? 0 : system_close(destination_handle);
+        bipolar closed = publish ? 0 : system_close(destination_handle);
 
         if (staged)
         {
@@ -20599,7 +20718,7 @@ static fn cp_pair(string_address source, string_address destination)
         if (!file_copy_one(source_directory, source_leaf, source,
                            destination_directory, destination_leaf,
                            destination, FILE_MAX_DEPTH, true, false, false,
-                           address_of source_facts, source_pinned))
+                           address_of source_facts, source_pinned, 0))
                 cp_status = 1;
         system_close(source_pinned);
         system_close(source_directory);
@@ -21460,7 +21579,7 @@ static fn mv_one(string_address source, string_address destination)
                             source_directory, source_leaf, source,
                             destination_directory, destination_leaf,
                             destination, FILE_MAX_DEPTH, true, true, true,
-                            address_of from, copy_handle);
+                            address_of from, copy_handle, 0);
 
                 if (copy_handle_owned)
                         system_close(copy_handle);
@@ -21569,6 +21688,9 @@ static b32 file_mv()
                 return 1;
 
         mv_newer_only = (taking.flags & FILE_FLAG('u')) != 0;
+        // A tree mv copies across devices is made under the same mask cp
+        // reads, so a directory it makes can always be written into.
+        cp_umask = file_umask();
 
         positive first = taking.first;
 
