@@ -2288,14 +2288,11 @@ static b32 util_linux_flock()
                                   conflict, verbose, address_of blocked);
         if (!blocked && verbose)
         {
-                positive elapsed = clock_monotonic_nanoseconds() - began;
-                p8 fraction_text[32];
-                positive_into_string(fraction_text,
-                                     (elapsed % 1000000000) / 1000);
-                string_format(log, "flock: getting lock took %p.",
-                              elapsed / 1000000000);
-                string_to_field_bulk(log, fraction_text, 6, '0', false);
-                string_format(log, " seconds\n");
+                fixed_decimal took = fixed_decimal_prepare(
+                    (clock_monotonic_nanoseconds() - began) / 1000, 6, false, 0, 6, 0);
+                log("flock: getting lock took ", 0);
+                fixed_decimal_write(log, address_of took);
+                log(" seconds\n", 0);
         }
         if (blocked || descriptor)
         {
@@ -10015,11 +10012,9 @@ static string_address ul_lscpu_frequency(p8 address_to text, positive khz)
 {
         if (!khz)
                 return (string_address)"";
-        positive used = positive_into_string(text, khz / 1000);
-        text[used++] = '.';
-        used += positive_into_padded(text + used, khz % 1000, 3, '0');
-        text[used++] = '0';
-        text[used] = end;
+        /* MHz to four places, the last always 0: the kernel counts kHz. */
+        fixed_decimal mhz = fixed_decimal_prepare(khz, 3, false, 0, 4, 0);
+        text[fixed_decimal_into(text, 40, address_of mhz)] = end;
         return text;
 }
 

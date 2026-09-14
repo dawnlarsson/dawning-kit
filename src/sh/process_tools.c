@@ -1813,10 +1813,8 @@ static bool process_script_timing_line(process_script_state address_to state,
                 line[used++] = stream;
                 line[used++] = ' ';
         }
-        used += positive_into(line + used, elapsed / 1000000000);
-        line[used++] = '.';
-        used += positive_into_padded(line + used,
-                                     elapsed % 1000000000 / 1000, 6, '0');
+        fixed_decimal seconds = fixed_decimal_prepare(elapsed / 1000, 6, false, 0, 6, 0);
+        used += fixed_decimal_into(line + used, sizeof(line) - used, address_of seconds);
         line[used++] = ' ';
         used += positive_into(line + used, length);
         line[used++] = '\n';
@@ -2594,12 +2592,8 @@ static b32 process_script()
                 positive now = clock_monotonic_nanoseconds();
                 positive elapsed = now >= state.began ? now - state.began : 0;
                 p8 value[48];
-                positive used = positive_into(value, elapsed / 1000000000);
-                value[used++] = '.';
-                used += positive_into_padded(value + used,
-                                             elapsed % 1000000000 / 1000,
-                                             6, '0');
-                value[used] = end;
+                fixed_decimal seconds = fixed_decimal_prepare(elapsed / 1000, 6, false, 0, 6, 0);
+                value[fixed_decimal_into(value, sizeof(value) - 1, address_of seconds)] = end;
                 good &= process_script_timing_header(
                     address_of state, (string_address)"DURATION", value);
                 positive_into_string(value, (positive)status);
