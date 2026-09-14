@@ -354,9 +354,22 @@ static bool exec_child_process();
 static bool job_any_stopped();
 static bool exec_inplace_ready(bool restricted);
 static bool floodlight_parent_prepare(bool supervise);
+/* Only a shell process may establish the protected-launcher contract.  A
+   directly invoked applet is somebody else's child: making that applet
+   nondumpable cannot protect the external shell which may still be parsing
+   an inherited pipe.  Forked shell children inherit both this role and the
+   protection bit; a fresh exec or Spark image starts with neither. */
+static bool floodlight_parent_role;
 static bool floodlight_parent_protected;
 static bool floodlight_parent_subreaper;
+static bool floodlight_parent_subreaper_owned;
 static bool floodlight_parent_supervised;
+static bool floodlight_parent_dumpable_owned;
+static bipolar floodlight_parent_dumpable_prior;
+/* An authenticated no-descendant transition may replace this shell directly.
+   Once final confinement starts changing descriptors or process policy, a
+   failed exec is terminal: continuing the broader shell would retain those
+   irreversible changes. Fork children clear both inherited markers. */
 static bool floodlight_inplace_requested;
 static bool floodlight_inplace_final;
 static bool floodlight_inplace_descendants_checked;
@@ -402,7 +415,6 @@ static b32 floodlight_launch_decide(
     positive count, bool tool, bool final, bool diagnose,
     floodlight_executable address_to pinned);
 
-static DEAD_END fn floodlight_silent_stop();
 static bool floodlight_external_final(
     string_address executable, string_address address_to arguments,
     positive count, floodlight_executable address_to pinned);
@@ -776,8 +788,7 @@ static bipolar floodlight_child_next(p8 address_to address_to at,
                 return 0;
 
         while (address_to at < stop &&
-               address_to address_to at >= '0' &&
-               address_to address_to at <= '9')
+               byte_is_digit(address_to address_to at))
         {
                 positive digit = address_to address_to at - '0';
 
@@ -940,9 +951,7 @@ static bool floodlight_shebang_prepare(
                (line[line_end - 1] == ' ' || line[line_end - 1] == '\t'))
                 line_end--;
 
-        at = 2;
-        while (at < line_end && (line[at] == ' ' || line[at] == '\t'))
-                at++;
+        at = 2 + string_span_max(line + 2, line_end - 2, string_set_blanks);
 
         first = at;
         while (at < line_end && line[at] != ' ' && line[at] != '\t')
@@ -954,8 +963,7 @@ static bool floodlight_shebang_prepare(
         memory_copy_apart(script->interpreter, line + first, at - first);
         script->interpreter[at - first] = end;
 
-        while (at < line_end && (line[at] == ' ' || line[at] == '\t'))
-                at++;
+        at += string_span_max(line + at, line_end - at, string_set_blanks);
 
         if (at < line_end)
         {
@@ -2776,11 +2784,9 @@ static bool env_write_noted(const_string name, positive length, bool written)
         if (!shell_bash_compat || !written)
                 return written;
 
-        if (length == 15 &&
-            !memory_compare((address_any)name, "POSIXLY_CORRECT", 15))
+        if (memory_is_word((address_any)name, length, "POSIXLY_CORRECT"))
                 shell_posix_changed(true);
-        else if (length == 6 &&
-                 !memory_compare((address_any)name, "OPTIND", 6))
+        else if (memory_is_word((address_any)name, length, "OPTIND"))
                 shell_getopts_index_changed();
         return written;
 }
@@ -3045,13 +3051,7 @@ static bool env_assign_hashed_span(const_string name, positive name_len,
 */
 static PURE positive array_index_of(const_string key, positive key_length)
 {
-        positive value = 0;
-
-        for (positive at = 0; at < key_length; at++)
-                value = value * 10 +
-                        (positive)(((string_address)key)[at] - '0');
-
-        return value;
+        return string_digits_max((string_address)key, key_length, null);
 }
 
 typedef struct
@@ -4256,14 +4256,12 @@ COLD bool shell_dynamic_wanted(const_string name, positive length)
         if (shell_pipe_status_wanted(name, length))
                 return true;
 
-        if (length == 13 &&
-            shell_bash_compat &&
-            !memory_compare((address_any)name, "BASH_VERSINFO", 13))
+        if (shell_bash_compat &&
+            memory_is_word((address_any)name, length, "BASH_VERSINFO"))
                 which = SHELL_DYNAMIC_VERSINFO;
-        else if (length == 6 && !memory_compare((address_any)name, "GROUPS", 6))
+        else if (memory_is_word((address_any)name, length, "GROUPS"))
                 which = SHELL_DYNAMIC_GROUPS;
-        else if (length == 8 &&
-                 !memory_compare((address_any)name, "DIRSTACK", 8))
+        else if (memory_is_word((address_any)name, length, "DIRSTACK"))
                 which = SHELL_DYNAMIC_DIRSTACK;
         else
                 return false;
@@ -4489,7 +4487,7 @@ COLD bool shell_dynamic_assign(const_string name, positive length,
         string_address text = env_reading(name);
         string_address said = env_reading(value);
 
-        if (length == 6 && !memory_compare((address_any)text, "RANDOM", 6))
+        if (memory_is_word((address_any)text, length, "RANDOM"))
         {
                 bool good;
                 bipolar asked = shell_signed(said, address_of good);
@@ -4501,7 +4499,7 @@ COLD bool shell_dynamic_assign(const_string name, positive length,
                 return true;
         }
 
-        if (length == 7 && !memory_compare((address_any)text, "SECONDS", 7))
+        if (memory_is_word((address_any)text, length, "SECONDS"))
         {
                 //      bash reads SECONDS as it reads any number: a word
                 //      past the range or with a stray byte in it is zero.
@@ -6453,14 +6451,14 @@ PURE bool word_is(string_address word, string_address text)
 static COLD fn env_unset_noted(string_address name, positive length)
 {
         env_locale_touch(name, length);
-        if (length == 15 && !memory_compare(name, "POSIXLY_CORRECT", 15))
+        if (memory_is_word(name, length, "POSIXLY_CORRECT"))
                 shell_posix_changed(false);
-        else if (length == 6 && !memory_compare(name, "OPTIND", 6))
+        else if (memory_is_word(name, length, "OPTIND"))
         {
                 shell_getopts_index_changed();
                 shell_getopts_parameters_changed();
         }
-        else if (length == 7 && !memory_compare(name, "BASHPID", 7))
+        else if (memory_is_word(name, length, "BASHPID"))
                 shell_bashpid_cleared = true;
 }
 
@@ -7181,9 +7179,9 @@ static PURE bool env_optlist_name(const_string name, positive length)
 {
         if (!shell_bash_compat || !name)
                 return false;
-        if (length == 9 && !memory_compare((address_any)name, "SHELLOPTS", 9))
+        if (memory_is_word((address_any)name, length, "SHELLOPTS"))
                 return true;
-        if (length == 8 && !memory_compare((address_any)name, "BASHOPTS", 8))
+        if (memory_is_word((address_any)name, length, "BASHOPTS"))
                 return true;
         return false;
 }
@@ -7199,14 +7197,13 @@ static PURE bool env_bash_readonly_name(const_string name, positive length)
                 return true;
         if (!shell_bash_compat || !name)
                 return false;
-        if (length == 3 && !memory_compare((address_any)name, "UID", 3))
+        if (memory_is_word((address_any)name, length, "UID"))
                 return true;
         if (length == 4 &&
             (!memory_compare((address_any)name, "EUID", 4) ||
              !memory_compare((address_any)name, "PPID", 4)))
                 return true;
-        if (length == 13 &&
-            !memory_compare((address_any)name, "BASH_VERSINFO", 13))
+        if (memory_is_word((address_any)name, length, "BASH_VERSINFO"))
                 return true;
         return false;
 }
@@ -7312,7 +7309,7 @@ static COLD bool env_optlist_take(string_address entry)
 {
         if (!shell_bash_compat || !entry)
                 return false;
-        if (!string_compare_max(entry, "SHELLOPTS=", 10))
+        if (string_has_prefix(entry, "SHELLOPTS="))
         {
                 /* Restricted and privileged Bash consume these transport
                    names without letting the parent turn parser policy on. */
@@ -7320,7 +7317,7 @@ static COLD bool env_optlist_take(string_address entry)
                         shell_optlist_apply(entry + 10, false);
                 return true;
         }
-        if (!string_compare_max(entry, "BASHOPTS=", 9))
+        if (string_has_prefix(entry, "BASHOPTS="))
         {
                 if (!shell_restricted && !shell_startup_privileged)
                         shell_optlist_apply(entry + 9, true);
@@ -8029,8 +8026,7 @@ static bool shell_unset_variable(const_string name, positive length)
                 return false;
         }
 
-        if (shell_bash_compat && length == 7 &&
-            !memory_compare((address_any)name, "BASHPID", 7))
+        if (shell_bash_compat && memory_is_word((address_any)name, length, "BASHPID"))
                 shell_bashpid_cleared = true;
 
         b32 detached = exec_unset_prefix(name, length);
@@ -8323,7 +8319,7 @@ static bool local_options_kept[SHELL_LOCAL_OPTIONS_MAX];
 
 static PURE bool local_getopts_scope(string_address name, positive length)
 {
-        return length == 6 && !memory_compare(name, "OPTIND", 6);
+        return memory_is_word(name, length, "OPTIND");
 }
 
 static PURE p8 address_to local_getopts_saved(shell_local_entry address_to entry)
@@ -8417,12 +8413,20 @@ fn shell_local_leave()
 // -1 is allocation failure, zero was already local in this frame, and one is
 // the first declaration here. Callers need that distinction because Bash
 // `declare x` hides an outer value but a second declaration keeps the local.
-static b32 local_remember(string_address name)
+static PURE shell_local_entry address_to local_find(string_address name,
+                                                    positive begin)
 {
-        positive begin = local_depth ? local_from[local_depth - 1] : 0;
         for (positive at = begin; at < local_count; at++)
                 if (!local_table[at].detached && !string_compare(local_table[at].binding.name, name))
-                        return 0;
+                        return local_table + at;
+
+        return null;
+}
+
+static b32 local_remember(string_address name)
+{
+        if (local_find(name, local_depth ? local_from[local_depth - 1] : 0))
+                return 0;
         if (local_count == positive_max ||
             !shell_array_room(local_table, local_room, local_count + 1))
                 return -1;
@@ -8443,15 +8447,6 @@ static b32 local_remember(string_address name)
         }
         local_count++;
         return 1;
-}
-
-static PURE shell_local_entry address_to local_saved_global(string_address name)
-{
-        for (positive at = 0; at < local_count; at++)
-                if (!local_table[at].detached && !string_compare(local_table[at].binding.name, name))
-                        return local_table + at;
-
-        return null;
 }
 
 #define DECLARE_EXPORT 1
@@ -8569,17 +8564,40 @@ static bool shell_declare_options(shell_declare_state address_to state)
         return true;
 }
 
+//      $'...' with every byte that is not typed back as itself escaped. high
+//      says whether a byte past ASCII is one of those.
+static fn shell_ansi_quoted(writer write, string_address text, bool high)
+{
+        write("$'", 2);
+
+        while (string_get(text))
+        {
+                positive run = string_span(text, shell_quote_ansi);
+                p8 escaped[4];
+
+                if (run)
+                {
+                        write(text, run);
+                        text += run;
+                }
+                if (!string_get(text))
+                        break;
+                write(escaped, shell_ansi_byte(escaped, string_get(text++), high));
+        }
+
+        write("'", 1);
+}
+
 static fn shell_declare_quoted(writer write, string_address value)
 {
-        bool control = string_get(value +
-                                  string_span(value, shell_quote_printable));
+        if (string_get(value + string_span(value, shell_quote_printable)))
+                return shell_ansi_quoted(write, value, true);
 
-        write(control ? "$'" : "\"", 2 - !control);
+        write("\"", 1);
 
         while (string_get(value))
         {
-                positive run = string_span(value, control ? shell_quote_ansi
-                                                          : shell_quote_double);
+                positive run = string_span(value, shell_quote_double);
                 if (run)
                 {
                         write(value, run);
@@ -8589,21 +8607,12 @@ static fn shell_declare_quoted(writer write, string_address value)
                         break;
                 p8 byte = string_get(value++);
 
-                if (control)
-                {
-                        p8 escaped[4];
-                        write(escaped, shell_ansi_byte(escaped, byte, true));
-                }
-                else
-                {
-                        if (byte == '\\' || byte == '"' || byte == '$' ||
-                            byte == '`')
-                                write("\\", 1);
-                        write(address_of byte, 1);
-                }
+                if (byte == '\\' || byte == '"' || byte == '$' || byte == '`')
+                        write("\\", 1);
+                write(address_of byte, 1);
         }
 
-        write(control ? "'" : "\"", 1);
+        write("\"", 1);
 }
 
 // A subscript is written bare when it could be typed back bare, and quoted
@@ -8679,9 +8688,24 @@ static COLD fn shell_declare_elements(writer write, string_address name,
         shell_store_rewind(address_of expand_store, held);
 }
 
+//      What a listing writes after NAME=: the variable's own value, or the
+//      option list SHELLOPTS or BASHOPTS stands for, or null for neither.
+static COLD string_address shell_listed_value(const_string name,
+                                              positive length,
+                                              env_variable address_to variable)
+{
+        if (variable && env_variable_has_value(variable))
+                return variable->text + length + 1;
+
+        return env_optlist_name(name, length)
+                   ? shell_optlist_value(length == 8, null)
+                   : null;
+}
+
 static bool shell_declare_print_one(writer write, string_address name,
                                     positive length, b32 filter)
 {
+        string_address value;
         shell_pipe_status_wanted(name, length);
         positive found = env_find_span(name, length);
         env_variable address_to variable =
@@ -8721,16 +8745,10 @@ static bool shell_declare_print_one(writer write, string_address name,
                             write, name, length,
                             (attributes & SHELL_ARRAY_ASSOCIATIVE) != 0);
         }
-        else if (variable && env_variable_has_value(variable))
+        else if ((value = shell_listed_value(name, length, variable)))
         {
                 write("=", 1);
-                shell_declare_quoted(write,
-                                     variable->text + length + 1);
-        }
-        else if (env_optlist_name(name, length))
-        {
-                write("=", 1);
-                shell_declare_quoted(write, shell_optlist_value(length == 8, null));
+                shell_declare_quoted(write, value);
         }
 
         write("\n", 1);
@@ -9064,7 +9082,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                                 global_meta = global_scope;
                 }
                 saved_global = !local_mode && !global_scope && (state->set & DECLARE_GLOBAL)
-                                   ? local_saved_global(word)
+                                   ? local_find(word, 0)
                                    : null;
                 saved_scalar = saved_global && !subscript;
 
@@ -9692,23 +9710,15 @@ static fn shell_marked_written(writer write, string_address name,
 
         write(name, length);
 
-        if (variable && env_variable_has_value(variable))
+        string_address value = shell_listed_value(name, length, variable);
+
+        if (value)
         {
                 write("=", 1);
                 if (shell_bash_compat)
-                        shell_declare_quoted(write,
-                                             variable->text + length + 1);
+                        shell_declare_quoted(write, value);
                 else
-                        shell_quoted(write, variable->text + length + 1);
-        }
-        else if (env_optlist_name(name, length))
-        {
-                write("=", 1);
-                if (shell_bash_compat)
-                        shell_declare_quoted(write,
-                                             shell_optlist_value(length == 8, null));
-                else
-                        shell_quoted(write, shell_optlist_value(length == 8, null));
+                        shell_quoted(write, value);
         }
 
         write("\n", 1);
@@ -10270,66 +10280,11 @@ static inline INLINE HOT bool test_digits_compare(string_address left,
         return true;
 }
 
+//      bash's legal_number and dash's getn: strtoimax, blanks either side, and
+//      a word past the range is no number.
 static HOT bool test_integer(string_address word, bipolar address_to out)
 {
-        p8 byte;
-        bool negative;
-        positive magnitude;
-        positive bound;
-        p8 digit;
-
-        if (!word)
-                return false;
-
-        byte = string_get(word);
-        while (byte == ' ' || byte == '\t')
-        {
-                word++;
-                byte = string_get(word);
-        }
-
-        negative = false;
-        if (byte == '-' || byte == '+')
-        {
-                negative = byte == '-';
-                word++;
-                byte = string_get(word);
-        }
-
-        if ((p8)(byte - '0') > 9)
-                return false;
-
-        while (byte == '0' && (p8)(string_get(word + 1) - '0') <= 9)
-        {
-                word++;
-                byte = string_get(word);
-        }
-
-        magnitude = 0;
-        bound = negative ? (positive)bipolar_max + 1 : (positive)bipolar_max;
-        do
-        {
-                digit = (p8)(byte - '0');
-                if (magnitude > bound / 10 ||
-                    (magnitude == bound / 10 && (positive)digit > bound % 10))
-                        return false;
-
-                magnitude = magnitude * 10 + (positive)digit;
-                word++;
-                byte = string_get(word);
-        } while ((p8)(byte - '0') <= 9);
-
-        while (byte == ' ' || byte == '\t')
-        {
-                word++;
-                byte = string_get(word);
-        }
-
-        if (byte)
-                return false;
-
-        address_to out = negative ? (bipolar)(0 - magnitude) : (bipolar)magnitude;
-        return true;
+        return word && exec_control_integer(word, out);
 }
 
 static inline INLINE HOT bool test_integer_pair(string_address left, string_address op,
@@ -11011,25 +10966,7 @@ COLD fn printf_reusable(writer write, string_address text)
                 return write("''", 2);
 
         if (control)
-        {
-                write("$'", 2);
-
-                while (string_get(step))
-                {
-                        if (shell_quote_ansi[string_get(step)])
-                        {
-                                positive run = string_span(step, shell_quote_ansi);
-                                write(step, run);
-                                step += run;
-                                continue;
-                        }
-                        p8 escaped[4];
-                        write(escaped,
-                              shell_ansi_byte(escaped, string_get(step++), false));
-                }
-
-                return write("'", 1);
-        }
+                return shell_ansi_quoted(write, text, false);
 
         for (step = text; string_get(step); step++)
         {
@@ -12787,17 +12724,9 @@ COLD fn shell_getopts(writer write, string_address input)
                                       shell_argc - index + 1))
                         return shell_answer(2);
 
-                positive listed = shell_argc - index;
-
-                if (listed >= 4)
-                {
-                        memory_copy_apart(shell_getopts_list, shell_argv + index,
-                                          listed * sizeof(string_address));
-                        count = listed;
-                }
-                else
-                        while (index < shell_argc)
-                                shell_getopts_list[count++] = shell_argv[index++];
+                count = shell_argc - index;
+                memory_copy_apart(shell_getopts_list, shell_argv + index,
+                                  count * sizeof(string_address));
         }
         else
         {
@@ -12805,19 +12734,9 @@ COLD fn shell_getopts(writer write, string_address input)
                                       shell_parameter_count + 1))
                         return shell_answer(2);
 
-                if (shell_parameter_count >= 4)
-                {
-                        memory_copy_apart(shell_getopts_list, shell_parameter,
-                                          shell_parameter_count *
-                                              sizeof(string_address));
-                        count = shell_parameter_count;
-                }
-                else
-                        while (count < shell_parameter_count)
-                        {
-                                shell_getopts_list[count] = shell_parameter[count];
-                                count++;
-                        }
+                count = shell_parameter_count;
+                memory_copy_apart(shell_getopts_list, shell_parameter,
+                                  count * sizeof(string_address));
         }
 
         optind = shell_dash_compat ? getopts_next + 1
@@ -13141,7 +13060,7 @@ COLD fn shell_umask(writer write, string_address input)
                 //      A leading digit means a number, whichever digit it
                 //      is: "umask 8" is a number out of range to both
                 //      shells and a mode to neither.
-                if (string_get(word) >= '0' && string_get(word) <= '9')
+                if (byte_is_digit(string_get(word)))
                 {
                         positive used;
                         positive value = string_digits_octal_max(
@@ -14836,26 +14755,6 @@ static positive floodlight_row_count;
 static p8 floodlight_report_state;
 static bool floodlight_report_promised;
 static bool floodlight_inherited_seccomp;
-/* Only a shell process may establish the protected-launcher contract.  A
-   directly invoked applet is somebody else's child: making that applet
-   nondumpable cannot protect the external shell which may still be parsing
-   an inherited pipe.  Forked shell children inherit both this role and the
-   protection bit; a fresh exec or Spark image starts with neither. */
-static bool floodlight_parent_role;
-static bool floodlight_parent_protected;
-static bool floodlight_parent_subreaper;
-static bool floodlight_parent_subreaper_owned;
-static bool floodlight_parent_supervised;
-static bool floodlight_parent_dumpable_owned;
-static bipolar floodlight_parent_dumpable_prior;
-/* An authenticated no-descendant transition may replace this shell directly.
-   Once final confinement starts changing descriptors or process policy, a
-   failed exec is terminal: continuing the broader shell would retain those
-   irreversible changes. Fork children clear both inherited markers. */
-static bool floodlight_inplace_requested;
-static bool floodlight_inplace_final;
-static bool floodlight_inplace_descendants_checked;
-static bool floodlight_inplace_terminal;
 /* Set only after this image installs its own verified filter.  Forks inherit
    both the bit and the filter; exec starts a fresh image with the bit clear. */
 static bool floodlight_own_seccomp;
@@ -15097,11 +14996,7 @@ static bool floodlight_report_number(floodlight_token word, bool seconds)
         if (!digits || (seconds && word.at[word.length - 1] != 's'))
                 return false;
 
-        for (positive at = 0; at < digits; at++)
-                if (word.at[at] < '0' || word.at[at] > '9')
-                        return false;
-
-        return true;
+        return string_span_max(word.at, digits, string_set_digits) == digits;
 }
 
 /* Parse into caller-owned staging rows. Nothing becomes an active answer
@@ -15122,17 +15017,15 @@ static bool floodlight_take(string_address text, positive length,
 
         while (at < end_at)
         {
-                string_address line_end = at;
+                string_address line_end =
+                    memory_first_of(at, '\n', (positive)(end_at - at));
                 floodlight_token subject, said, state, detail = {null, 0};
                 floodlight_token origin, tail;
                 floodlight_row address_to row;
                 positive i;
 
-                while (line_end < end_at && address_to line_end != '\n')
-                        line_end++;
-
                 /* The length check above makes every line newline-terminated. */
-                if (line_end >= end_at)
+                if (!line_end)
                         return false;
 
                 address_to line_end = end;
