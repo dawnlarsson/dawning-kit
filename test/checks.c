@@ -66042,6 +66042,233 @@ b32 main(void)
 }
 #endif /* BENCH_pool */
 
+#ifdef BENCH_ordered
+/* parallel_ordered with outputs big enough that writing them is real work.
+   heavy: 23 jobs, each filling 25 MiB with a generator run over it several
+   times, about 110 ms apiece at width 1 -- the shape of a multi-block xz -d
+   -- written to the file named by the first argument (default ordered.out
+   under TMPDIR or /tmp); a second and third argument change the job count
+   and the passes. light: 4096 jobs hashing 256 KiB each and handing
+   back eight bytes, written to /dev/null. Each prints wall, user and system
+   milliseconds, best wall of three, at the affinity width. */
+#include "../src/compiler_memory.c"
+
+#define ORDERED_HEAVY_JOBS 23
+#define ORDERED_HEAVY_BYTES (25u << 20)
+#define ORDERED_HEAVY_PASSES 24
+#define ORDERED_LIGHT_JOBS 4096
+#define ORDERED_LIGHT_BYTES (256u << 10)
+
+static bipolar ordered_bench_out;
+static p8 address_to ordered_light_data;
+static positive ordered_heavy_jobs = ORDERED_HEAVY_JOBS;
+static positive ordered_heavy_passes = ORDERED_HEAVY_PASSES;
+
+//      When each heavy job finished and when the sink took it, so the time a
+//      finished output waited can be printed beside the wall clock.
+#define ORDERED_TIMED_JOBS 256
+static positive ordered_done[ORDERED_TIMED_JOBS];
+static positive ordered_sunk[ORDERED_TIMED_JOBS];
+static positive ordered_length[ORDERED_TIMED_JOBS];
+
+static positive ordered_bench_clock(void);
+
+static fn ordered_heavy_job(address_any context, positive index,
+                           parallel_output address_to output)
+{
+        p8 address_to span = parallel_reserve(output, ORDERED_HEAVY_BYTES);
+        positive pass;
+
+        (void)context;
+
+        if (!span)
+                return;
+
+        for (pass = 0; pass < ordered_heavy_passes; pass++)
+        {
+                positive state = 0x9e3779b97f4a7c15ull * (index + 1) + pass;
+                positive at;
+
+                for (at = 0; at + 8 <= ORDERED_HEAVY_BYTES; at += 8)
+                {
+                        positive word;
+
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        memory_copy(address_of word, span + at, 8);
+                        word = pass ? word ^ state : state;
+                        memory_copy(span + at, address_of word, 8);
+                }
+        }
+
+        if (index < ORDERED_TIMED_JOBS)
+                ordered_done[index] = ordered_bench_clock();
+}
+
+static fn ordered_light_job(address_any context, positive index,
+                           parallel_output address_to output)
+{
+        positive sum = memory_hash_33(ordered_light_data + index % 64, ORDERED_LIGHT_BYTES);
+
+        (void)context;
+        parallel_write(output, address_of sum, 8);
+}
+
+static bool ordered_bench_sink(address_any context, positive index,
+                               address_any data, positive length)
+{
+        (void)context;
+
+        if (index < ORDERED_TIMED_JOBS)
+        {
+                ordered_sunk[index] = ordered_bench_clock();
+                ordered_length[index] = length;
+        }
+
+        return system_write_all((positive)ordered_bench_out, data, length) == length;
+}
+
+static positive ordered_bench_clock(void)
+{
+        positive when[2] = {0, 0};
+
+        system_call_2(syscall(clock_gettime), 1, (positive)address_of when);
+        return when[0] * 1000000000ull + when[1];
+}
+
+//      user and system time so far, in microseconds.
+static positive2 ordered_bench_usage(void)
+{
+        positive usage[18] = {0};
+
+        system_call_2(syscall(getrusage), 0, (positive)usage);
+        return (positive2){usage[0] * 1000000ull + usage[1],
+                           usage[2] * 1000000ull + usage[3]};
+}
+
+static fn ordered_bench_run(string_address label, string_address path, bool heavy)
+{
+        positive best = positive_max;
+        positive best_user = 0;
+        positive best_system = 0;
+        positive best_held = 0;
+        positive best_early = 0;
+        positive round;
+
+        for (round = 0; round < 3; round++)
+        {
+                positive started;
+                positive2 before;
+                positive2 after;
+
+                ordered_bench_out = system_open_at_mode(
+                        AT_FDCWD, path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+
+                if (ordered_bench_out < 0)
+                        return;
+
+                before = ordered_bench_usage();
+                started = ordered_bench_clock();
+
+                if (heavy)
+                        parallel_ordered(ordered_heavy_job, ordered_bench_sink, null,
+                                         ordered_heavy_jobs, PARALLEL_SPREAD);
+                else
+                        parallel_ordered(ordered_light_job, ordered_bench_sink, null,
+                                         ORDERED_LIGHT_JOBS, PARALLEL_SPREAD);
+
+                started = ordered_bench_clock() - started;
+                after = ordered_bench_usage();
+                system_close(ordered_bench_out);
+
+                if (started < best)
+                {
+                        positive jobs = heavy ? ordered_heavy_jobs : 0;
+                        positive last = 0;
+                        positive held = 0;
+                        positive early = 0;
+                        positive total = 0;
+                        positive at;
+
+                        if (jobs > ORDERED_TIMED_JOBS)
+                                jobs = ORDERED_TIMED_JOBS;
+
+                        for (at = 0; at < jobs; at++)
+                                if (ordered_done[at] > last)
+                                        last = ordered_done[at];
+
+                        for (at = 0; at < jobs; at++)
+                        {
+                                held += ordered_sunk[at] - ordered_done[at];
+                                total += ordered_length[at];
+                                early += ordered_sunk[at] < last ? ordered_length[at] : 0;
+                        }
+
+                        best = started;
+                        best_user = after.x - before.x;
+                        best_system = after.y - before.y;
+                        best_held = held / 1000000;
+                        best_early = total ? early * 100 / total : 0;
+                }
+        }
+
+        string_format(log, "%s width %p, %p heavy jobs x %p passes: %p ms wall, %p ms user, %p ms system, outputs waited %p ms in all, %p%% of bytes handed over before the last job finished\n",
+                      label, parallel_width(), ordered_heavy_jobs, ordered_heavy_passes,
+                      best / 1000000, best_user / 1000, best_system / 1000,
+                      best_held, best_early);
+        log_flush();
+}
+
+b32 main(void)
+{
+        p8 path[256];
+        string_address place = (string_address)getenv("TMPDIR");
+        positive at;
+
+        if (program_argument_count() > 1)
+        {
+                at = string_length(program_argument(1));
+                if (at > 250)
+                        return 2;
+                memory_copy(path, program_argument(1), at + 1);
+        }
+        else
+        {
+                if (!place || !string_get(place) || string_length(place) > 200)
+                        place = (string_address)"/tmp";
+                at = string_length(place);
+                memory_copy(path, place, at);
+                memory_copy(path + at, "/ordered.out", 13);
+        }
+
+        if (program_argument_count() > 2)
+                ordered_heavy_jobs = string_to_positive(program_argument(2));
+
+        if (program_argument_count() > 3)
+                ordered_heavy_passes = string_to_positive(program_argument(3));
+
+        if (!ordered_heavy_jobs || !ordered_heavy_passes)
+                return 2;
+
+        ordered_light_data = (p8 address_to)memory(ORDERED_LIGHT_BYTES + 64);
+
+        if (!ordered_light_data || system_failed((positive)ordered_light_data))
+                return 1;
+
+        for (at = 0; at < ORDERED_LIGHT_BYTES + 64; at++)
+                ordered_light_data[at] = (p8)(at * 2654435761u >> 11);
+
+        parallel_reset(0);
+        ordered_bench_run((string_address)"heavy to a file", path, true);
+        ordered_bench_run((string_address)"light to /dev/null", (string_address)"/dev/null", false);
+        system_call_3(syscall(unlinkat), (positive)AT_FDCWD, (positive)path, 0);
+        parallel_reset(0);
+
+        return 0;
+}
+#endif /* BENCH_ordered */
+
 #ifdef BENCH_tree
 /* parallel_tree as find and as du, over a directory named on the command
    line (the Linux tree tree-mt measures by default), at widths 1, 2, 4, 8 up
