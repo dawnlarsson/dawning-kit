@@ -230,6 +230,10 @@ unsigned memory_checksum_bsd16(const void *, unsigned long, unsigned);
 #ifndef SKIP_SHA256
 void sha256_compress(unsigned int *, unsigned char *);
 #endif
+#ifndef SKIP_AES
+void aes128_ctr_blocks(const unsigned char *, unsigned char *,
+                       const unsigned char *, unsigned char *, unsigned long);
+#endif
 #ifndef SKIP_GHASH
 void ghash_key(unsigned char *, const unsigned char *);
 void ghash_blocks(unsigned char *, const unsigned char *,
@@ -669,6 +673,99 @@ static void ghash_c_w(unsigned long size, unsigned long rounds)
 }
 #endif
 
+#ifndef SKIP_AES
+/*
+        AES-128 counter mode against FIPS-197 written with an S-box table in
+        C: the floor column is a table AES, which indexes on the key and the
+        data and is faster than any constant-time software AES, so a ratio
+        under one is the hardware body (VAES, AES-NI, the AES extension or
+        Zvkned) and over one is the bitsliced floor paying for constant time.
+        ISA references for a 16 KiB record on the 9950X: OpenSSL AES-128-CTR
+        15.5 GB/s (AES-NI) and AES-128-GCM 27.2 GB/s.
+*/
+static unsigned char aes_round[176];
+static unsigned char aes_counter[16];
+static unsigned char aes_sbox[256];
+
+static unsigned char aes_c_xtime(unsigned char v)
+{
+        return (unsigned char)((v << 1) ^ (v & 0x80 ? 0x1b : 0));
+}
+
+static void aes_c_setup(void)
+{
+        static const unsigned char rcon[10] = {1, 2, 4, 8, 16, 32, 64, 128, 0x1b, 0x36};
+        unsigned char p = 1, q = 1;
+        if (aes_sbox[0])
+                return;
+        do {
+                p = p ^ (unsigned char)(p << 1) ^ (p & 0x80 ? 0x1b : 0);
+                q ^= q << 1; q ^= q << 2; q ^= q << 4;
+                if (q & 0x80) q ^= 0x09;
+                aes_sbox[p] = q ^ (unsigned char)(q << 1 | q >> 7) ^ (unsigned char)(q << 2 | q >> 6) ^
+                              (unsigned char)(q << 3 | q >> 5) ^ (unsigned char)(q << 4 | q >> 4) ^ 0x63;
+        } while (p != 1);
+        aes_sbox[0] = 0x63;
+        for (int i = 0; i < 16; i++)
+                aes_round[i] = (unsigned char)(i * 29 + 7);
+        for (int i = 16; i < 176; i += 4) {
+                unsigned char t[4] = {aes_round[i - 4], aes_round[i - 3], aes_round[i - 2], aes_round[i - 1]};
+                if (i % 16 == 0) {
+                        unsigned char k = t[0];
+                        t[0] = aes_sbox[t[1]] ^ rcon[i / 16 - 1];
+                        t[1] = aes_sbox[t[2]]; t[2] = aes_sbox[t[3]]; t[3] = aes_sbox[k];
+                }
+                for (int j = 0; j < 4; j++)
+                        aes_round[i + j] = aes_round[i - 16 + j] ^ t[j];
+        }
+}
+
+static void aes_c_blocks(const unsigned char *round, unsigned char *counter,
+                         const unsigned char *in, unsigned char *out, unsigned long blocks)
+{
+        static const unsigned char shift[16] = {0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11};
+        for (; blocks; blocks--, in += 16, out += 16) {
+                unsigned char s[16], n[16];
+                for (int i = 0; i < 16; i++) s[i] = counter[i] ^ round[i];
+                for (int r = 1; r <= 10; r++) {
+                        for (int i = 0; i < 16; i++) n[i] = aes_sbox[s[shift[i]]];
+                        if (r < 10)
+                                for (int i = 0; i < 16; i += 4) {
+                                        unsigned char a = n[i], b = n[i + 1], c = n[i + 2], d = n[i + 3];
+                                        n[i] = aes_c_xtime(a) ^ aes_c_xtime(b) ^ b ^ c ^ d;
+                                        n[i + 1] = a ^ aes_c_xtime(b) ^ aes_c_xtime(c) ^ c ^ d;
+                                        n[i + 2] = a ^ b ^ aes_c_xtime(c) ^ aes_c_xtime(d) ^ d;
+                                        n[i + 3] = aes_c_xtime(a) ^ a ^ b ^ c ^ aes_c_xtime(d);
+                                }
+                        for (int i = 0; i < 16; i++) s[i] = n[i] ^ round[16 * r + i];
+                }
+                for (int i = 0; i < 16; i++) out[i] = in[i] ^ s[i];
+                for (int i = 15; i >= 12; i--)
+                        if (++counter[i]) break;
+        }
+}
+
+static void aes_w(unsigned long size, unsigned long rounds)
+{
+        unsigned long i;
+        aes_c_setup();
+        for (i = 0; i < rounds; i++) {
+                aes128_ctr_blocks(aes_round, aes_counter, src, dst, size / 16);
+                sink += dst[0];
+        }
+}
+
+static void aes_c_w(unsigned long size, unsigned long rounds)
+{
+        unsigned long i;
+        aes_c_setup();
+        for (i = 0; i < rounds; i++) {
+                aes_c_blocks(aes_round, aes_counter, src, dst, size / 16);
+                sink += dst[0];
+        }
+}
+#endif
+
 static void span_byte_w(unsigned long size, unsigned long rounds)
 {
         unsigned long i;
@@ -961,6 +1058,10 @@ int main(void)
 #ifndef SKIP_GHASH
         row("ghash_blocks", "record", "compute", 16384, ghash_w, ghash_c_w,
             60000);
+#endif
+#ifndef SKIP_AES
+        row("aes128_ctr_blocks", "record", "compute", 16384, aes_w, aes_c_w,
+            20000);
 #endif
         return 0;
 }

@@ -477,12 +477,6 @@ static p8 crypto_aes_substitute(p8 value)
                     ((inverse << 4) | (inverse >> 4)) ^ 0x63);
 }
 
-static p8 crypto_xtime(p8 value)
-{
-        return (p8)((value << 1) ^
-                    (0x1b & (p8)(0 - (value >> 7))));
-}
-
 /* Unlike memory_fill, these stores cannot be discarded after the final use. */
 static fn crypto_forget(address_any secret, positive length)
 {
@@ -525,133 +519,6 @@ static fn crypto_aes128_expand(p8 address_to key, p8 address_to round)
         }
 }
 
-#if X64
-typedef p64 crypto_aes_vector
-    __attribute__((vector_size(16), aligned(1), may_alias));
-typedef long long crypto_aes_vector_signed __attribute__((vector_size(16)));
-
-static p8 crypto_aes_hardware_state;
-
-static bool crypto_aes_hardware(void)
-{
-        if (!crypto_aes_hardware_state)
-        {
-                p32 leaf = 1;
-                p32 ebx;
-                p32 features = 0;
-                p32 edx;
-
-                __asm__ volatile("cpuid"
-                                 : "+a"(leaf), "=b"(ebx), "+c"(features),
-                                   "=d"(edx));
-                (void)ebx;
-                (void)edx;
-                crypto_aes_hardware_state =
-                    features & ((p32)1 << 25) ? 2 : 1;
-        }
-
-        return crypto_aes_hardware_state == 2;
-}
-
-static __attribute__((target("aes,sse2"))) fn
-crypto_aes128_encrypt_hardware(p8 address_to round, p8 address_to in,
-                               p8 address_to out)
-{
-        crypto_aes_vector round_key =
-            *(crypto_aes_vector address_to)round;
-        crypto_aes_vector state =
-            *(crypto_aes_vector address_to)in ^ round_key;
-        positive round_at;
-
-        for (round_at = 1; round_at < 10; round_at++)
-        {
-                round_key = *(crypto_aes_vector address_to)
-                    (round + round_at * 16);
-                state = (crypto_aes_vector)__builtin_ia32_aesenc128(
-                    (crypto_aes_vector_signed)state,
-                    (crypto_aes_vector_signed)round_key);
-        }
-        round_key = *(crypto_aes_vector address_to)(round + 160);
-        state = (crypto_aes_vector)__builtin_ia32_aesenclast128(
-            (crypto_aes_vector_signed)state,
-            (crypto_aes_vector_signed)round_key);
-        *(crypto_aes_vector address_to)out = state;
-
-        state ^= state;
-        round_key ^= round_key;
-        __asm__ volatile("" : "+x"(state), "+x"(round_key));
-}
-#endif
-
-static fn crypto_aes128_encrypt_portable(p8 address_to round, p8 address_to in,
-                                         p8 address_to out)
-{
-        p8 s[16];
-        p8 n[16];
-        positive round_at;
-        positive i;
-
-        memory_copy(s, in, 16);
-
-        for (i = 0; i < 4; i++)
-        {
-                p32 word = crypto_be32(s + i * 4) ^
-                           crypto_be32(round + i * 4);
-                crypto_put_be32(s + i * 4, word);
-        }
-
-        for (round_at = 1; round_at <= 10; round_at++)
-        {
-                static const p8 shift[16] = {0, 5, 10, 15, 4, 9, 14, 3,
-                                             8, 13, 2, 7, 12, 1, 6, 11};
-
-                for (i = 0; i < 16; i++)
-                        n[i] = crypto_aes_substitute(s[shift[i]]);
-
-                if (round_at < 10)
-                {
-                        for (i = 0; i < 16; i += 4)
-                        {
-                                p8 a = n[i], b = n[i + 1], c = n[i + 2],
-                                   d = n[i + 3];
-                                n[i] = crypto_xtime(a) ^ crypto_xtime(b) ^ b ^ c ^
-                                       d;
-                                n[i + 1] = a ^ crypto_xtime(b) ^ crypto_xtime(c) ^
-                                           c ^ d;
-                                n[i + 2] = a ^ b ^ crypto_xtime(c) ^ crypto_xtime(d) ^
-                                           d;
-                                n[i + 3] = crypto_xtime(a) ^ a ^ b ^ c ^
-                                           crypto_xtime(d);
-                        }
-                }
-
-                memory_copy(s, n, 16);
-                for (i = 0; i < 4; i++)
-                {
-                        p32 word = crypto_be32(s + i * 4) ^
-                                   crypto_be32(round + round_at * 16 + i * 4);
-                        crypto_put_be32(s + i * 4, word);
-                }
-        }
-
-        memory_copy(out, s, 16);
-        crypto_forget(n, sizeof n);
-        crypto_forget(s, sizeof s);
-}
-
-static fn crypto_aes128_encrypt(p8 address_to round, p8 address_to in,
-                                p8 address_to out)
-{
-#if X64
-        if (crypto_aes_hardware())
-        {
-                crypto_aes128_encrypt_hardware(round, in, out);
-                return;
-        }
-#endif
-        crypto_aes128_encrypt_portable(round, in, out);
-}
-
 /*
         GHASH over a span, the last partial block zero padded. The multiply
         is ghash_blocks in library.c over the table ghash_key made; GCM's
@@ -674,102 +541,101 @@ static fn crypto_ghash_span(p8 address_to state, p8 address_to table,
         }
 }
 
-static fn crypto_aesgcm_crypt(p8 address_to key, p8 address_to iv,
-                              p8 address_to aad, positive aad_length,
-                              p8 address_to text, positive text_length,
-                              p8 address_to tag, bool encrypt)
+/*
+        An AES-128-GCM key prepared once: the FIPS-197 schedule and the GHASH
+        table of H's powers. Preparing costs the key expansion, one block and
+        forty seven carry-less multiplies, which a connection pays when it
+        installs a traffic key rather than on every record. It is key
+        material; wipe it with the key.
+*/
+typedef struct
 {
         p8 round[176];
-        p8 h[16];
         p8 table[GHASH_KEY_SIZE] __attribute__((aligned(64)));
+} crypto_aesgcm_key;
+
+static fn crypto_aesgcm_prepare(crypto_aesgcm_key address_to key,
+                                p8 address_to raw)
+{
+        p8 counter[16];
+        p8 h[16];
+
+        crypto_aes128_expand(raw, key->round);
+        memory_fill(counter, 0, 16);
+        memory_fill(h, 0, 16);
+        aes128_ctr_blocks(key->round, counter, h, h, 1);
+        ghash_key(key->table, h);
+        crypto_forget(h, sizeof h);
+}
+
+static fn crypto_aesgcm_crypt(crypto_aesgcm_key address_to key,
+                              p8 address_to iv, p8 address_to aad,
+                              positive aad_length, p8 address_to text,
+                              positive text_length, p8 address_to tag,
+                              bool encrypt)
+{
         p8 j0[16];
         p8 counter[16];
         p8 s[16];
-        p8 zero[16];
-        p8 enc[16];
         p8 padded[16];
-        positive i;
-        positive at;
-
-        crypto_aes128_expand(key, round);
-        memory_fill(zero, 0, 16);
-        crypto_aes128_encrypt(round, zero, h);
-        ghash_key(table, h);
+        positive whole = text_length / 16;
+        positive rest = text_length % 16;
 
         memory_copy(j0, iv, 12);
         j0[12] = 0;
         j0[13] = 0;
         j0[14] = 0;
         j0[15] = 1;
-
         memory_copy(counter, j0, 16);
+        counter[15] = 2;
         memory_fill(s, 0, 16);
 
-        crypto_ghash_span(s, table, aad, aad_length);
+        crypto_ghash_span(s, key->table, aad, aad_length);
 
         //      GHASH reads the ciphertext both ways: before the counter
         //      stream comes off it on the way in, after it goes on on the
-        //      way out. So the whole span is hashed in one call.
+        //      way out.
         if (!encrypt)
-                crypto_ghash_span(s, table, text, text_length);
+                crypto_ghash_span(s, key->table, text, text_length);
 
-        at = 0;
-        while (at < text_length)
+        aes128_ctr_blocks(key->round, counter, text, text, whole);
+        if (rest)
         {
-                positive take = text_length - at;
-
-                if (take > 16)
-                        take = 16;
-
-                {
-                        p32 n = crypto_be32(counter + 12) + 1;
-                        crypto_put_be32(counter + 12, n);
-                }
-
-                crypto_aes128_encrypt(round, counter, enc);
-
-                for (i = 0; i < take; i++)
-                        text[at + i] ^= enc[i];
-
-                at += take;
+                memory_fill(padded, 0, 16);
+                memory_copy(padded, text + whole * 16, rest);
+                aes128_ctr_blocks(key->round, counter, padded, padded, 1);
+                memory_copy(text + whole * 16, padded, rest);
         }
 
         if (encrypt)
-                crypto_ghash_span(s, table, text, text_length);
+                crypto_ghash_span(s, key->table, text, text_length);
 
         memory_fill(padded, 0, 16);
         crypto_put_be64(padded, (p64)aad_length * 8);
         crypto_put_be64(padded + 8, (p64)text_length * 8);
-        ghash_blocks(s, table, padded, 1);
+        ghash_blocks(s, key->table, padded, 1);
 
-        crypto_aes128_encrypt(round, j0, enc);
-        for (i = 0; i < 16; i++)
-                tag[i] = s[i] ^ enc[i];
+        aes128_ctr_blocks(key->round, j0, s, tag, 1);
 
-        crypto_forget(round, sizeof round);
-        crypto_forget(h, sizeof h);
-        crypto_forget(table, sizeof table);
         crypto_forget(j0, sizeof j0);
         crypto_forget(counter, sizeof counter);
         crypto_forget(s, sizeof s);
-        crypto_forget(zero, sizeof zero);
-        crypto_forget(enc, sizeof enc);
         crypto_forget(padded, sizeof padded);
 }
 
-static fn crypto_aesgcm_encrypt(p8 address_to key, p8 address_to iv,
-                                p8 address_to aad, positive aad_length,
-                                p8 address_to text, positive text_length,
-                                p8 address_to tag)
+static fn crypto_aesgcm_seal(crypto_aesgcm_key address_to key,
+                             p8 address_to iv, p8 address_to aad,
+                             positive aad_length, p8 address_to text,
+                             positive text_length, p8 address_to tag)
 {
         crypto_aesgcm_crypt(key, iv, aad, aad_length, text, text_length, tag,
                             true);
 }
 
-static bool crypto_aesgcm_decrypt(p8 address_to key, p8 address_to iv,
-                                  p8 address_to aad, positive aad_length,
-                                  p8 address_to text, positive text_length,
-                                  p8 address_to tag)
+static bool crypto_aesgcm_open(crypto_aesgcm_key address_to key,
+                               p8 address_to iv, p8 address_to aad,
+                               positive aad_length, p8 address_to text,
+                               positive text_length, p8 address_to tag)
 {
         p8 got[16];
         positive i;

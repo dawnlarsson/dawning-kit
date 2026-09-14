@@ -41620,6 +41620,35 @@ static fn crypto_private_scalar_probe(
         crypto_forget(address_of second, sizeof second);
 }
 
+/* AES-GCM from a raw key for the vectors below: prepare, seal or open, wipe. */
+static fn checks_aesgcm_encrypt(p8 address_to raw, p8 address_to iv,
+                                p8 address_to aad, positive aad_length,
+                                p8 address_to text, positive text_length,
+                                p8 address_to tag)
+{
+        static crypto_aesgcm_key key;
+
+        crypto_aesgcm_prepare(address_of key, raw);
+        crypto_aesgcm_seal(address_of key, iv, aad, aad_length, text,
+                           text_length, tag);
+        crypto_forget(address_of key, sizeof key);
+}
+
+static bool checks_aesgcm_decrypt(p8 address_to raw, p8 address_to iv,
+                                  p8 address_to aad, positive aad_length,
+                                  p8 address_to text, positive text_length,
+                                  p8 address_to tag)
+{
+        static crypto_aesgcm_key key;
+        bool valid;
+
+        crypto_aesgcm_prepare(address_of key, raw);
+        valid = crypto_aesgcm_open(address_of key, iv, aad, aad_length, text,
+                                   text_length, tag);
+        crypto_forget(address_of key, sizeof key);
+        return valid;
+}
+
 static fn crypto_floor(void)
 {
         p8 out[64];
@@ -41659,7 +41688,7 @@ static fn crypto_floor(void)
 
                 memory_fill(key, 0, 16);
                 memory_fill(iv, 0, 12);
-                crypto_aesgcm_encrypt(key, iv, null, 0, (p8 address_to) "", 0, tag);
+                checks_aesgcm_encrypt(key, iv, null, 0, (p8 address_to) "", 0, tag);
                 check("AES-GCM empty NIST",
                       crypto_bytes_are(tag, 16, "58e2fccefa7e3061367f1d57a4e7455a"));
         }
@@ -41813,6 +41842,163 @@ static fn crypto_floor_ghash(void)
         check("GHASH blocks agree with the bit-serial multiply", wrong == 0);
 }
 
+/*
+        aes128_ctr_blocks against a byte-oriented AES.
+
+        The reference is FIPS-197 read literally, with an S-box table built
+        from crypto_aes_substitute, ShiftRows by index and MixColumns by
+        xtime: it indexes on the data, which only a test may do. Each round
+        runs every body this machine has -- the VAES turn, the AES-NI turn and
+        the bitsliced floor on x86_64 -- by writing the feature bytes down and
+        putting them back, over counters that wrap inside a turn, zero to
+        forty blocks, in place and apart. The byte past the last block, the
+        key schedule and the counter's twelve fixed bytes come back untouched.
+*/
+static p8 aes_reference_sbox[256];
+
+static p8 aes_reference_xtime(p8 value)
+{
+        return (p8)((value << 1) ^ (0x1b & (p8)(0 - (value >> 7))));
+}
+
+static fn aes_reference_encrypt(const p8 address_to round,
+                                const p8 address_to in, p8 address_to out)
+{
+        static const p8 shift[16] = {0, 5, 10, 15, 4, 9, 14, 3,
+                                     8, 13, 2, 7, 12, 1, 6, 11};
+        p8 s[16];
+        p8 n[16];
+
+        for (positive i = 0; i < 16; i++)
+                s[i] = in[i] ^ round[i];
+        for (positive r = 1; r <= 10; r++)
+        {
+                for (positive i = 0; i < 16; i++)
+                        n[i] = aes_reference_sbox[s[shift[i]]];
+                if (r < 10)
+                        for (positive i = 0; i < 16; i += 4)
+                        {
+                                p8 a = n[i], b = n[i + 1], c = n[i + 2],
+                                   d = n[i + 3];
+                                n[i] = aes_reference_xtime(a) ^
+                                       aes_reference_xtime(b) ^ b ^ c ^ d;
+                                n[i + 1] = a ^ aes_reference_xtime(b) ^
+                                           aes_reference_xtime(c) ^ c ^ d;
+                                n[i + 2] = a ^ b ^ aes_reference_xtime(c) ^
+                                           aes_reference_xtime(d) ^ d;
+                                n[i + 3] = aes_reference_xtime(a) ^ a ^ b ^
+                                           c ^ aes_reference_xtime(d);
+                        }
+                for (positive i = 0; i < 16; i++)
+                        s[i] = n[i] ^ round[16 * r + i];
+        }
+        memory_copy(out, s, 16);
+}
+
+#define AES_CHECK_BLOCKS 41
+
+static fn crypto_floor_aes_ctr(void)
+{
+        static p8 text[16 * AES_CHECK_BLOCKS + 1];
+        static p8 expect[16 * AES_CHECK_BLOCKS + 1];
+        static p8 got[16 * AES_CHECK_BLOCKS + 1];
+        p8 key[16];
+        p8 round[176];
+        p8 round_kept[176];
+        p8 counter[16];
+        p8 expect_counter[16];
+        p8 got_counter[16];
+        p8 stream[16];
+        p8 vaes = cpu_has_vaes;
+        p8 aes = cpu_has_aes;
+        positive wrong = 0;
+        positive vector_wrong = 0;
+
+        for (positive v = 0; v < 256; v++)
+                aes_reference_sbox[v] = crypto_aes_substitute((p8)v);
+
+        for (positive round_at = 0; round_at < 246; round_at++)
+        {
+                positive blocks = round_at % AES_CHECK_BLOCKS;
+
+                for (positive i = 0; i < 16; i++)
+                {
+                        key[i] = ghash_check_byte();
+                        counter[i] = ghash_check_byte();
+                }
+                if (round_at % 5 == 0)
+                {
+                        counter[12] = 0xff;
+                        counter[13] = 0xff;
+                        counter[14] = 0xff;
+                        counter[15] = (p8)(0xf8 + round_at % 8);
+                }
+                for (positive i = 0; i < sizeof text; i++)
+                        text[i] = ghash_check_byte();
+
+                crypto_aes128_expand(key, round);
+                memory_copy(round_kept, round, 176);
+                memory_copy(expect_counter, counter, 16);
+                memory_copy(expect, text, sizeof expect);
+                for (positive b = 0; b < blocks; b++)
+                {
+                        aes_reference_encrypt(round, expect_counter, stream);
+                        for (positive i = 0; i < 16; i++)
+                                expect[16 * b + i] ^= stream[i];
+                        for (positive i = 15; i >= 12; i--)
+                                if (++expect_counter[i])
+                                        break;
+                }
+
+                for (positive body = 0; body < 3; body++)
+                {
+                        cpu_has_vaes = body == 0 ? vaes : 0;
+                        cpu_has_aes = body == 2 ? 0 : aes;
+                        memory_copy(got_counter, counter, 16);
+                        memory_copy(got, text, sizeof got);
+                        if (round_at % 2)
+                                aes128_ctr_blocks(round, got_counter, got, got,
+                                                  blocks);
+                        else
+                                aes128_ctr_blocks(round, got_counter, text, got,
+                                                  blocks);
+                        if (memory_compare(got, expect, sizeof got) != 0 ||
+                            memory_compare(got_counter, expect_counter, 16) != 0 ||
+                            memory_compare(round, round_kept, 176) != 0)
+                                wrong++;
+                }
+        }
+
+        for (positive body = 0; body < 3; body++)
+        {
+                //      NIST SP 800-38A F.5.1, the first block.
+                static const p8 f51_key[16] = {
+                    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+                    0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c};
+                static const p8 f51_plain[16] = {
+                    0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
+                    0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a};
+                p8 f51_counter[16] = {
+                    0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+                    0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff};
+
+                cpu_has_vaes = body == 0 ? vaes : 0;
+                cpu_has_aes = body == 2 ? 0 : aes;
+                crypto_aes128_expand((p8 address_to)f51_key, round);
+                aes128_ctr_blocks(round, f51_counter, f51_plain, stream, 1);
+                if (!crypto_bytes_are(stream, 16,
+                                      "874d6191b620e3261bef6864990db6ce"))
+                        vector_wrong++;
+        }
+        cpu_has_vaes = vaes;
+        cpu_has_aes = aes;
+
+        check("AES-128 CTR NIST SP 800-38A F.5.1 on every body",
+              vector_wrong == 0);
+        check("AES-128 CTR blocks agree with the byte-oriented reference",
+              wrong == 0);
+}
+
 static fn crypto_floor_aes(void)
 {
         p8 key[16];
@@ -41836,25 +42022,12 @@ static fn crypto_floor_aes(void)
         p8 ba[32];
         p8 zero[32] = {0};
 
-        {
-                p8 portable_round[176];
-
-                memory_fill(key, 0, 16);
-                memory_fill(block, 0, 16);
-                crypto_aes128_expand(key, portable_round);
-                crypto_aes128_encrypt_portable(
-                    portable_round, block, block);
-                crypto_forget(portable_round, sizeof portable_round);
-                check("portable AES-128 fallback",
-                      crypto_bytes_are(
-                          block, 16,
-                          "66e94bd4ef8a2c3b884cfa59ca342b2e"));
-        }
+        crypto_floor_aes_ctr();
 
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
         memory_fill(block, 0, 16);
-        crypto_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
+        checks_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
         check("AES-GCM one block",
               crypto_bytes_are(block, 16, "0388dace60b6a392f328c2b971b2fe78") &&
                   crypto_bytes_are(tag, 16, "ab6e47d42cec13bdf53a67b21257bddf"));
@@ -41862,16 +42035,16 @@ static fn crypto_floor_aes(void)
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
         check("AES-GCM decrypt",
-              crypto_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
+              checks_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
                   crypto_bytes_are(block, 16, "00000000000000000000000000000000"));
 
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
         memory_fill(block, 0xaa, 16);
-        crypto_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
+        checks_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
         tag[0] ^= 1;
         check("AES-GCM bad tag wipes",
-              !crypto_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
+              !checks_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
                   crypto_bytes_are(block, 16, "00000000000000000000000000000000"));
 
         {
@@ -41895,7 +42068,7 @@ static fn crypto_floor_aes(void)
                     0xb1, 0x6a, 0xed, 0xf5, 0xaa, 0x0d, 0xe6, 0x57,
                     0xba, 0x63, 0x7b, 0x39};
 
-                crypto_aesgcm_encrypt((p8 address_to)varied_key,
+                checks_aesgcm_encrypt((p8 address_to)varied_key,
                                       (p8 address_to)varied_iv,
                                       (p8 address_to)varied_aad,
                                       sizeof varied_aad, varied_text,
@@ -41908,7 +42081,7 @@ static fn crypto_floor_aes(void)
                               tag, sizeof tag,
                               "5bc94fbc3221a5db94fae95ae7121a47"));
                 check("AES-GCM partial block and AAD decrypt",
-                      crypto_aesgcm_decrypt(
+                      checks_aesgcm_decrypt(
                           (p8 address_to)varied_key,
                           (p8 address_to)varied_iv,
                           (p8 address_to)varied_aad, sizeof varied_aad,

@@ -106,6 +106,8 @@ typedef struct
         p8 s_key[16];
         p8 c_iv[12];
         p8 s_iv[12];
+        crypto_aesgcm_key c_gcm;
+        crypto_aesgcm_key s_gcm;
         p64 seq_read;
         p64 seq_write;
         p8 leaf_qx[48];
@@ -259,7 +261,7 @@ static bipolar tls_send_enc(tls_conn address_to tls, p8 inner_type,
         memory_copy(aad, header, 5);
 
         tls_nonce(tls->c_iv, tls->seq_write, nonce);
-        crypto_aesgcm_encrypt(tls->c_key, nonce, aad, 5, inner, inner_length,
+        crypto_aesgcm_seal(address_of tls->c_gcm, nonce, aad, 5, inner, inner_length,
                               tag);
         tls->seq_write++;
 
@@ -295,7 +297,7 @@ static bipolar tls_decrypt_record(tls_conn address_to tls, p8 address_to payload
                 memory_copy(inner, payload, payload_length - 16);
         memory_copy(tag, payload + payload_length - 16, 16);
         tls_nonce(tls->s_iv, tls->seq_read, nonce);
-        if (!crypto_aesgcm_decrypt(tls->s_key, nonce, aad, 5, inner,
+        if (!crypto_aesgcm_open(address_of tls->s_gcm, nonce, aad, 5, inner,
                                    payload_length - 16, tag))
                 goto done;
 
@@ -1969,6 +1971,8 @@ static bipolar tls_install_handshake_keys(tls_conn address_to tls,
                           address_of tls->transcript, tls->s_hs_traffic);
         tls_traffic_keys(tls->c_hs_traffic, tls->c_key, tls->c_iv);
         tls_traffic_keys(tls->s_hs_traffic, tls->s_key, tls->s_iv);
+        crypto_aesgcm_prepare(address_of tls->c_gcm, tls->c_key);
+        crypto_aesgcm_prepare(address_of tls->s_gcm, tls->s_key);
         tls->seq_read = 0;
         tls->seq_write = 0;
         tls->encrypted = true;
@@ -2007,6 +2011,8 @@ static fn tls_use_app_keys(tls_conn address_to tls)
 {
         tls_traffic_keys(tls->c_ap_traffic, tls->c_key, tls->c_iv);
         tls_traffic_keys(tls->s_ap_traffic, tls->s_key, tls->s_iv);
+        crypto_aesgcm_prepare(address_of tls->c_gcm, tls->c_key);
+        crypto_aesgcm_prepare(address_of tls->s_gcm, tls->s_key);
         tls->seq_read = 0;
         tls->seq_write = 0;
         tls->application = true;
