@@ -3021,8 +3021,29 @@ fn shell_kill(writer write, string_address input)
 
                 if (string_get(word) != '%')
                 {
-                        if (job_signal(string_to_bipolar(word),
-                                       (positive)number) < 0)
+                        bipolar pid;
+
+                        //      A word that is no number names nobody. Read
+                        //      as zero it would signal this shell's own
+                        //      group. Bash says so and walks on; dash calls
+                        //      the digits after a sign an illegal number and
+                        //      reads no further.
+                        if (!exec_control_integer(word, address_of pid) ||
+                            pid != (b32)pid)
+                        {
+                                shell_diagnostic_where();
+                                if (!shell_bash_compat)
+                                        return shell_answer(string_report(
+                                            log_error, 2,
+                                            "kill: Illegal number: %s\n",
+                                            word + (string_get(word) == '-')));
+                                answer = string_report(log_error, 1,
+                                    "kill: `%s': not a pid or valid job spec\n",
+                                    word);
+                                continue;
+                        }
+
+                        if (job_signal(pid, (positive)number) < 0)
                         {
                                 string_format(log_error,
                                               "kill: %s: no such process\n",
@@ -3137,11 +3158,23 @@ static b32 job_wait_job(positive found, string_address into,
 {
         bipolar last = job_table[found].last;
         b32 answer;
+        positive raw;
 
         if (into)
                 env_set_number(into, (positive)last);
 
-        answer = shell_wait_one(last, interrupted, forget, false);
+        answer = shell_wait_one(last, interrupted, false, false);
+
+        //      The last child's own wait word, so an exit code past 128 is
+        //      filed as an exit and not as the signal it would spell.
+        raw = answer > 128 ? (positive)(answer - 128) : (positive)answer << 8;
+        for (positive at = 0; at < shell_wait_count; at++)
+                if (shell_wait_table[at].job == last &&
+                    (shell_wait_table[at].flags & SHELL_WAIT_LAST) &&
+                    (shell_wait_table[at].flags & SHELL_WAIT_DONE))
+                        raw = shell_wait_table[at].status;
+        if (forget && !address_to interrupted)
+                shell_wait_drop(last);
         found = job_find(last, true);
 
         if (found < job_count)
@@ -3152,9 +3185,7 @@ static b32 job_wait_job(positive found, string_address into,
                 {
                         job_table[found].state = JOB_FINISHED;
                         job_table[found].reported = false;
-                        job_table[found].status =
-                            answer > 128 ? (positive)(answer - 128)
-                                         : (positive)answer << 8;
+                        job_table[found].status = raw;
                 }
         }
 
@@ -5009,7 +5040,12 @@ fn shell_history(writer write, string_address input)
                         if (!named)
                                 return shell_answer(string_report(log_error, 2, "history: -d wants an offset\n"));
 
-                        offset = string_to_bipolar(named);
+                        if (!exec_control_integer(named, address_of offset))
+                        {
+                                shell_diagnostic_where();
+                                return shell_answer(string_report(log_error, 1,
+                                    "history: %s: invalid number\n", named));
+                        }
 
                         if (offset < 0)
                                 offset += (bipolar)(history_first +
