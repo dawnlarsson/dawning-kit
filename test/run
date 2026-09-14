@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
 
 describe()
 {
@@ -121,10 +121,12 @@ describe()
         awk)      echo "awk against the one on the machine, from generated programs" ;;
         checksum) echo "the cksum CRC against a bitwise model, in every mode, on three machines" ;;
         storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
+        storage_format) echo "GPT, FAT32 and ext4 as an install writes them, checked by sfdisk and e2fsck" ;;
         term)     echo "the emulator driven a byte at a time, and the line being edited" ;;
         edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
         kit)      echo "build, source-inventory, remote-host and firmware tooling" ;;
         boot)     echo "the image boots, init starts, and the shell answers" ;;
+        install)  echo "Moonwater installed to a disk, started from it, asked about and updated from a stick" ;;
         canvas)   echo "what is actually on the screen, read back a pixel at a time" ;;
         esac
 }
@@ -1935,6 +1937,76 @@ lane_fixed()     { freestanding_checks_lane fixed fixed; }
 lane_table()     { freestanding_checks_lane table table; }
 lane_storage_io() { freestanding_checks_lane storage_io storage_io; }
 
+#
+#       What an install writes, judged by the tools that own the formats.
+#
+#       The checks section asks the arithmetic on all three machines. Run once
+#       more natively and given a directory, it writes ext4 filesystems from
+#       64 MiB to 2 TiB and two whole disks laid out the way an install lays
+#       one out, and e2fsck -fn and sfdisk --verify -- which are not this
+#       project's code -- say whether the bytes are what they claim to be.
+#
+lane_storage_format()
+{
+        outcome=0
+        freestanding_checks_lane storage_format storage_format || outcome=$?
+        [ "$outcome" != 1 ] || return 1
+
+        if ! command -v e2fsck > /dev/null 2>&1 ||
+                ! command -v sfdisk > /dev/null 2>&1; then
+                note "storage_format images: NOT RUN -- no e2fsck or sfdisk here"
+                return 2
+        fi
+
+        writer="$work/storage_format.$host_arch"
+        if [ ! -x "$writer" ]; then
+                note "storage_format images: NOT RUN -- no native checks binary"
+                return 2
+        fi
+
+        images="$work/storage_format.images"
+        rm -rf "$images" && mkdir -p "$images" || return 1
+
+        if ! "$writer" "$images" > "$images.out" 2>&1; then
+                sed -n '/FAIL/p' "$images.out"
+                rm -rf "$images"
+                return 1
+        fi
+
+        checked=0
+        refused=0
+
+        for image in "$images"/ext4-*.img; do
+                checked=$((checked + 1))
+                if ! e2fsck -fn "$image" > "$images.fsck" 2>&1; then
+                        refused=$((refused + 1))
+                        note "e2fsck -fn refused ${image##*/}"
+                        sed 's/^/    /' "$images.fsck" | head -8
+                fi
+        done
+
+        for image in "$images"/disk-*.img; do
+                checked=$((checked + 2))
+                if ! sfdisk --verify "$image" > "$images.sfdisk" 2>&1; then
+                        refused=$((refused + 1))
+                        note "sfdisk --verify refused ${image##*/}"
+                        sed 's/^/    /' "$images.sfdisk" | head -8
+                fi
+
+                offset=$(sfdisk -d "$image" 2>/dev/null |
+                        awk -F '[=,]' '/name="moonwater-data"/ { print $2 * 512; exit }')
+                if [ -z "$offset" ] ||
+                        ! e2fsck -fn "$image?offset=$offset" > "$images.fsck" 2>&1; then
+                        refused=$((refused + 1))
+                        note "e2fsck -fn refused the data partition of ${image##*/}"
+                        sed 's/^/    /' "$images.fsck" | head -8
+                fi
+        done
+
+        rm -rf "$images" "$images.out" "$images.fsck" "$images.sfdisk"
+        tally storage_format-images "$((checked - refused))" "$checked"
+        [ "$refused" = 0 ]
+}
 lane_leaving()   { freestanding_checks_lane leaving leaving; }
 lane_numbers()   { freestanding_checks_lane numbers number; }
 lane_scan()      { freestanding_checks_lane scan scan; }
@@ -8826,6 +8898,348 @@ fi
 printf '  %-12s %s of %s\n' boot "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||
         printf 'boot %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
+
+[ "$fail" = 0 ]
+)
+
+#
+#       Moonwater put on a disk, and found there again.
+#
+#           sh test/run install       (MOONWATER_IMAGE names the image)
+#
+#       Four boots share one NVMe disk. The first is a live session beside a
+#       USB stick carrying the image, and installs to the disk. The second
+#       starts with the disk alone and must find its data waiting. The third
+#       starts beside the stick after the disk's image has been made another
+#       build, and must ask, and update when told to. The fourth asks again,
+#       is told to leave the disk alone, and then uses the disk's data without
+#       updating it. Between boots the host reads the disk with its own tools:
+#       sfdisk the table, e2fsck the data partition, which is the only judge
+#       here that is not this project's code. Where OVMF is installed, UEFI
+#       firmware starts the disk last with no -kernel at all.
+#
+#       The stick is QEMU's vvfat view of a directory, attached as USB mass
+#       storage so it arrives late the way a real one does; the disk is NVMe,
+#       because the image has no virtio-blk. Answers are reversed or made
+#       arithmetic, as in the boot lane, so the command echo cannot pass.
+#
+lane_install()
+(
+image=${MOONWATER_IMAGE:-dist/bootx64.efi}
+
+for tool in qemu-system-x86_64 timeout truncate; do
+        if ! command -v "$tool" > /dev/null 2>&1; then
+                echo "  install      NOT RUN -- no $tool"
+                exit 2
+        fi
+done
+
+if [ ! -f "$image" ]; then
+        echo "  install      NOT RUN -- no image at $image"
+        exit 2
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+pass=0
+fail=0
+
+mkdir -p "$work/stick/EFI/BOOT" &&
+        cp "$image" "$work/stick/EFI/BOOT/BOOTX64.EFI" &&
+        truncate -s 4G "$work/disk.img" || exit 1
+
+cpu="-cpu Nehalem"
+[ -r /dev/kvm ] && [ -w /dev/kvm ] && cpu="-enable-kvm -cpu host"
+stick="-drive if=none,id=stick,format=raw,file=fat:ro:$work/stick,readonly=on"
+stick="$stick -device usb-storage,bus=xhci.0,drive=stick,removable=on"
+
+#
+#       The commands wait for the console shell's prompt.
+#
+#       Piped in at power on, they arrive while the kernel is still writing its
+#       log to the same UART, and the receive FIFO overruns: one boot here lost
+#       the closing quote of its second line and spent the rest of the run
+#       inside a string. The boot lane only loses the start of its first line,
+#       because its shell starts at once. This one starts after moonwater boot
+#       has settled the disks, a USB stick included, so the commands go through
+#       a FIFO and are written once the prompt is on the line.
+#
+install_boot()
+{
+        name=$1
+        shift
+        rm -f "$work/serial.in"
+        mkfifo "$work/serial.in" || exit 1
+        # shellcheck disable=SC2086
+        timeout 240 qemu-system-x86_64 -m 2G -smp 2 $cpu \
+                -kernel "$image" -no-reboot -display none -serial stdio \
+                -append "console=ttyS0 drm_client_lib.active=" \
+                -device qemu-xhci,id=xhci \
+                -drive if=none,id=disk,format=raw,file="$work/disk.img" \
+                -device nvme,serial=moonwater,drive=disk \
+                "$@" < "$work/serial.in" > "$work/$name" 2>&1 &
+        booting=$!
+        exec 9> "$work/serial.in"
+
+        waited=0
+        until grep -q -F ' $ ' "$work/$name" 2>/dev/null; do
+                kill -0 "$booting" 2>/dev/null || break
+                [ "$waited" -lt 180 ] || break
+                sleep 1
+                waited=$((waited + 1))
+        done
+
+        cat "$work/$name.commands" >&9
+        exec 9>&-
+        wait "$booting" 2>/dev/null || true
+
+        says "$name" "$name powered down" 'reboot: Power down'
+        never "$name" "$name without a panic" 'Kernel panic'
+        never "$name" "$name without an oops" 'Oops:'
+        never "$name" "$name without ext4 errors" 'EXT4-fs error'
+}
+
+says()
+{
+        if grep -q -F -- "$3" "$work/$1"; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-30s no %s in the %s boot\n' "$2" "$3" "$1"
+}
+
+never()
+{
+        if grep -q -F -- "$3" "$work/$1"; then
+                fail=$((fail + 1))
+                printf '  %-30s %s is in the %s boot\n' "$2" "$3" "$1"
+                return 0
+        fi
+
+        pass=$((pass + 1))
+}
+
+#       What the host's own tools make of the disk after a boot.
+disk_checks()
+{
+        if ! command -v sfdisk > /dev/null 2>&1 ||
+                ! command -v e2fsck > /dev/null 2>&1; then
+                printf '  %-30s no sfdisk or e2fsck here to read it\n' "$1 disk"
+                return
+        fi
+
+        if sfdisk --verify "$work/disk.img" > "$work/sfdisk" 2>&1; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-30s sfdisk --verify refused the table\n' "$1 disk"
+                sed 's/^/    /' "$work/sfdisk" | head -8
+        fi
+
+        offset=$(sfdisk -d "$work/disk.img" 2>/dev/null |
+                awk -F '[=,]' '/name="moonwater-data"/ { print $2 * 512; exit }')
+
+        if [ -n "$offset" ] &&
+                e2fsck -fn "$work/disk.img?offset=$offset" > "$work/fsck" 2>&1; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-30s e2fsck -fn is not clean\n' "$1 disk"
+                sed 's/^/    /' "$work/fsck" | head -12
+        fi
+}
+
+cat > "$work/live.commands" <<'COMMANDS'
+this line is eaten by the console
+printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+moonwater status > /tmp/status 2>&1
+printf 'status-live-%s\n' $(( $(grep -c 'live: nothing is kept' /tmp/status) * 7 ))
+printf 'status-none-%s\n' $(( $(grep -c 'not installed on any disk' /tmp/status) * 7 ))
+printf 'status-stick-%s\n' $(( $(grep -c 'this image is on sda1' /tmp/status) * 7 ))
+mkdir -p /bowls/probe
+printf 'kept\n' > /bowls/probe/file
+printf 'home\n' > /root/probe
+printf 'no\n' | moonwater install nvme0n1 > /tmp/refused 2>&1
+printf 'unconfirmed-%s\n' $(( $? + 40 ))
+printf 'sda\n' | moonwater install sda > /tmp/removable 2>&1
+printf 'removable-%s\n' $(( $? + 40 ))
+printf 'nvme0n1\n' | moonwater install nvme0n1 > /tmp/install 2>&1
+printf 'installed-%s\n' $(( $? + 40 ))
+cat /tmp/install
+printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+printf 'bound-%s\n' "$(rev < /root/probe)"
+printf 'mounts-%s\n' $(( $(grep -c -e ' /root ' -e ' /home ' -e ' /bowls ' /proc/self/mounts) * 11 ))
+poweroff
+COMMANDS
+
+# shellcheck disable=SC2086
+install_boot live $stick
+says live 'a first boot is live'        'verdict-evil'
+says live 'status says live'            'status-live-7'
+says live 'status finds no install'     'status-none-7'
+says live 'status finds the stick'      'status-stick-7'
+says live 'a wrong answer writes nothing' 'unconfirmed-41'
+says live 'removable media is refused'  'removable-41'
+says live 'the install succeeds'        'installed-40'
+says live 'the session keeps the disk'  'verdict-1n0emvn ksid'
+says live 'live files went along'       'bound-emoh'
+says live 'three directories are bound' 'mounts-33'
+disk_checks live
+
+cat > "$work/disk.commands" <<'COMMANDS'
+this line is eaten by the console
+printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+printf 'kept-%s\n' "$(rev < /bowls/probe/file)"
+printf 'root-%s\n' "$(rev < /root/probe)"
+printf 'second\n' > /root/second
+moonwater status > /tmp/status 2>&1
+printf 'status-same-%s\n' $(( $(grep -c 'installed on nvme0n1, this build' /tmp/status) * 5 ))
+mkdir -p /mnt
+mount -t vfat /dev/nvme0n1p1 /mnt
+at=$(od -An -tu2 -j526 -N2 /mnt/EFI/BOOT/BOOTX64.EFI)
+printf X | dd of=/mnt/EFI/BOOT/BOOTX64.EFI bs=1 seek=$((512 + at)) conv=notrunc 2>/dev/null
+umount /mnt
+moonwater status > /tmp/status 2>&1
+printf 'status-other-%s\n' $(( $(grep -c 'installed on nvme0n1, another build' /tmp/status) * 5 ))
+poweroff
+COMMANDS
+
+install_boot disk
+says disk 'the disk alone is found'      'verdict-1n0emvn ksid'
+says disk 'the bowl probe was kept'      'kept-tpek'
+says disk 'root was kept'                'root-emoh'
+says disk 'status sees this build'       'status-same-5'
+says disk 'a patched image is another'   'status-other-5'
+disk_checks disk
+
+cat > "$work/update.commands" <<'COMMANDS'
+this line is eaten by the console
+printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+[ -e /root/second ] || printf 'unmounted-%s\n' "$(printf live | rev)"
+printf '2\n' | moonwater ask > /tmp/ask 2>&1
+printf 'answered-%s\n' $(( $? + 50 ))
+cat /tmp/ask
+printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+printf 'updated-root-%s\n' "$(rev < /root/second)"
+moonwater status > /tmp/status 2>&1
+printf 'status-updated-%s\n' $(( $(grep -c 'installed on nvme0n1, this build' /tmp/status) * 5 ))
+mkdir -p /mnt
+mount -t vfat /dev/nvme0n1p1 /mnt
+cmp /mnt/EFI/BOOT/BOOTX64.EFI /mnt/EFI/moonwater/previous.efi > /dev/null 2>&1
+printf 'previous-differs-%s\n' $(( $? * 9 ))
+at=$(od -An -tu2 -j526 -N2 /mnt/EFI/BOOT/BOOTX64.EFI)
+printf X | dd of=/mnt/EFI/BOOT/BOOTX64.EFI bs=1 seek=$((512 + at)) conv=notrunc 2>/dev/null
+umount /mnt
+poweroff
+COMMANDS
+
+# shellcheck disable=SC2086
+install_boot update $stick
+says update 'another build is asked about' 'verdict-1n0emvn ksa'
+says update 'boot told the console'      'has Moonwater installed from another build'
+says update 'nothing mounted before'     'unmounted-evil'
+says update 'the answer was taken'       'answered-50'
+says update 'answering keeps the disk'   'verdict-1n0emvn ksid'
+says update 'the data came with it'      'updated-root-dnoces'
+says update 'the disk has this build'    'status-updated-5'
+says update 'the old image was kept'     'previous-differs-9'
+disk_checks update
+
+cat > "$work/use.commands" <<'COMMANDS'
+this line is eaten by the console
+printf '3\n' | moonwater ask > /tmp/ask 2>&1
+printf 'left-%s\n' "$(rev < /run/moonwater/verdict)"
+moonwater ask > /dev/null 2>&1
+printf 'asked-once-%s\n' $(( $? + 60 ))
+moonwater use > /tmp/use 2>&1
+printf 'used-%s\n' $(( $? + 70 ))
+printf 'used-root-%s\n' "$(rev < /root/second)"
+moonwater status > /tmp/status 2>&1
+printf 'status-kept-other-%s\n' $(( $(grep -c 'installed on nvme0n1, another build' /tmp/status) * 3 ))
+moonwater update > /tmp/update 2>&1
+printf 'updated-beneath-%s\n' $(( $? + 80 ))
+moonwater status > /tmp/status 2>&1
+printf 'status-current-%s\n' $(( $(grep -c 'installed on nvme0n1, this build' /tmp/status) * 3 ))
+poweroff
+COMMANDS
+
+# shellcheck disable=SC2086
+install_boot use $stick
+says use 'leaving the disk alone is live' 'left-evil'
+says use 'a question is asked once'      'asked-once-61'
+says use 'use succeeds'                  'used-70'
+says use 'use brings the data'           'used-root-dnoces'
+says use 'use leaves the build alone'    'status-kept-other-3'
+says use 'update under kept data works'  'updated-beneath-80'
+says use 'and the disk has this build'   'status-current-3'
+disk_checks use
+
+#       The firmware, finally: no -kernel, just the disk.
+#
+#       A machine started from its own disk has no console on the serial line:
+#       nothing puts console= on the command line of an image the firmware
+#       loads, so nothing the kernel says reaches this transcript. The firmware
+#       can say it loaded the image from the disk, and the disk can say the rest.
+#       Moonwater started from it finds its own build there and mounts the
+#       data partition, and ext4 counts every mount in its superblock -- so a
+#       count that went up while the firmware had the disk is Moonwater, from
+#       firmware to init to moonwater boot, and nothing else could have done it.
+#
+firmware=""
+for candidate in /usr/share/edk2/x64/OVMF_CODE.4m.fd \
+        /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
+        /usr/share/edk2-ovmf/x64/OVMF_CODE.fd; do
+        [ -f "$candidate" ] && firmware=$candidate && break
+done
+
+#       The superblock is 1024 bytes into the partition: s_mnt_count is at
+#       52 in it and the ext4 magic, 0xef53, at 56.
+mounts_of()
+{
+        offset=$(sfdisk -d "$work/disk.img" 2>/dev/null |
+                awk -F '[=,]' '/name="moonwater-data"/ { print $2 * 512; exit }')
+        [ -n "$offset" ] &&
+                [ "$(od -An -tx2 -j $((offset + 1080)) -N 2 "$work/disk.img" | tr -d ' ')" = ef53 ] &&
+                od -An -tu2 -j $((offset + 1076)) -N 2 "$work/disk.img" | tr -d ' '
+}
+
+if [ -z "$firmware" ] || [ ! -f "${firmware%CODE*}VARS${firmware##*CODE}" ]; then
+        printf '  %-30s no OVMF here, the firmware boot did not run\n' 'firmware'
+elif ! command -v sfdisk > /dev/null 2>&1; then
+        printf '  %-30s no sfdisk here to find the data partition\n' 'firmware'
+else
+        cp "${firmware%CODE*}VARS${firmware##*CODE}" "$work/vars.fd"
+        before=$(mounts_of)
+        # shellcheck disable=SC2086
+        timeout 60 qemu-system-x86_64 -m 2G -smp 2 $cpu -machine q35 \
+                -drive if=pflash,format=raw,readonly=on,file="$firmware" \
+                -drive if=pflash,format=raw,file="$work/vars.fd" \
+                -drive if=none,id=disk,format=raw,file="$work/disk.img" \
+                -device nvme,serial=moonwater,drive=disk \
+                -display none -serial stdio -no-reboot \
+                < /dev/null > "$work/firmware" 2>&1 || true
+        after=$(mounts_of)
+
+        says firmware 'the firmware loads it from the disk' 'BdsDxe: starting Boot'
+        says firmware 'from the NVMe disk'               'NVMe Ctrl moonwater'
+        never firmware 'the image loads'                 'failed to load'
+        never firmware 'nothing falls through'           'EFI Internal Shell'
+
+        if [ -n "$before" ] && [ -n "$after" ] && [ "$after" -gt "$before" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-30s the data was never mounted (mount count %s, then %s)\n' \
+                        'Moonwater came up from disk' "${before:-unread}" "${after:-unread}"
+        fi
+fi
+
+printf '  %-12s %s of %s\n' install "$pass" "$((pass + fail))"
+[ -z "${TEST_TALLY:-}" ] ||
+        printf 'install %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
 
 [ "$fail" = 0 ]
 )

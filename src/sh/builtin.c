@@ -6455,6 +6455,7 @@ fn shell_stop(writer write, positive command)
         log_flush();
 
         system_call(syscall(sync));
+        host_quiesce();
 
         bipolar result = system_call_4(syscall(reboot), REBOOT_MAGIC, REBOOT_MAGIC_SECOND, command, 0);
 

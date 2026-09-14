@@ -164,6 +164,10 @@ static b32 screen_term()
                 if (process_pty_child_setup(master, slave, -1, -1) < 0)
                         system_call_1(syscall(exit), 126);
 
+                //      Boot may still be looking for an installed disk, and
+                //      may have a question for whoever is at this window.
+                host_terminal_opening();
+
                 (void)shell_exec_file((string_address)SHELL, argv, 1, envp);
                 system_call_1(syscall(exit), 127);
         }

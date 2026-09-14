@@ -47220,7 +47220,276 @@ b32 main(void)
 }
 #endif /* CHECK_storage_io */
 
+#ifdef CHECK_storage_format
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#include "../src/sh/shell.c"
 
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+/*
+        What an install writes, asked before any disk is handed to it.
+
+        The arithmetic runs on every machine: both checksums against their
+        published check values, and the ext4 layout across a grammar of sizes
+        -- each group count with its last group at the sizes mke2fs keeps and
+        drops, the sparse backup groups, random sizes up to the 16 TiB
+        ceiling and a block either side of both ends. Given a directory it
+        also writes images there, and the install lane hands those to e2fsck
+        and sfdisk, which are the judges of the bytes.
+*/
+static fn format_layout_holds(p64 asked)
+{
+        storage_ext4_plan plan;
+        bool made = storage_ext4_layout(address_of plan,
+                                        asked * STORAGE_EXT4_BLOCK);
+        p64 last;
+        p64 used = 0;
+
+        check("ext4 layouts exist exactly between 64 MiB and 2^32 blocks",
+              made == (asked >= STORAGE_EXT4_FEWEST &&
+                       asked <= STORAGE_EXT4_MOST));
+        if (!made)
+                return;
+
+        last = storage_ext4_group_blocks(address_of plan, plan.groups - 1);
+
+        check("ext4 groups cover the blocks with none spare",
+              plan.groups == (plan.blocks + STORAGE_EXT4_PER_GROUP - 1) /
+                                 STORAGE_EXT4_PER_GROUP);
+        check("ext4 only drops a last group, and only one",
+              plan.blocks <= asked &&
+                  asked - plan.blocks < STORAGE_EXT4_PER_GROUP);
+        check("ext4 keeps a last group only with its metadata and fifty blocks",
+              plan.groups == 1 ||
+                  last >= storage_ext4_overhead(address_of plan,
+                                                plan.groups - 1) + 50);
+        check("ext4 inode tables are whole blocks and one bitmap block",
+              plan.inodes_per_group % STORAGE_EXT4_INODES_PER_BLOCK == 0 &&
+                  plan.inodes_per_group >= STORAGE_EXT4_INODES_PER_BLOCK &&
+                  plan.inodes_per_group <= STORAGE_EXT4_BLOCK * 8 &&
+                  plan.table_blocks * STORAGE_EXT4_INODES_PER_BLOCK ==
+                      plan.inodes_per_group);
+        check("ext4 descriptors fill their blocks without a spare one",
+              (p64)plan.descriptor_blocks * STORAGE_EXT4_BLOCK >=
+                      (p64)plan.groups * STORAGE_EXT4_DESCRIPTOR &&
+                  ((p64)plan.descriptor_blocks - 1) * STORAGE_EXT4_BLOCK <
+                      (p64)plan.groups * STORAGE_EXT4_DESCRIPTOR);
+        check("ext4 journal follows the e2fsprogs size table up to 64 MiB",
+              plan.journal_blocks == (plan.blocks < 32768           ? 1024
+                                      : plan.blocks < 256 * 1024     ? 4096
+                                      : plan.blocks < 512 * 1024     ? 8192
+                                                                     : 16384));
+        check("ext4 root and lost+found sit right after group 0's table",
+              plan.root_block == storage_ext4_overhead(address_of plan, 0) &&
+                  storage_ext4_used(address_of plan, 0) <=
+                      storage_ext4_group_blocks(address_of plan, 0));
+        check("ext4 journal is one extent inside its group's free blocks",
+              plan.journal_group < plan.groups &&
+                  plan.journal_start ==
+                      (p64)plan.journal_group * STORAGE_EXT4_PER_GROUP +
+                          storage_ext4_overhead(address_of plan,
+                                                plan.journal_group) +
+                          (plan.journal_group ? 0
+                                              : 1 + STORAGE_EXT4_LOST_BLOCKS) &&
+                  plan.journal_start + plan.journal_blocks <=
+                      (p64)plan.journal_group * STORAGE_EXT4_PER_GROUP +
+                          storage_ext4_group_blocks(address_of plan,
+                                                    plan.journal_group));
+
+        for (p64 group = 0; group < plan.groups; group++)
+                used += storage_ext4_used(address_of plan, group);
+
+        check("ext4 allocates no more blocks than it has", used <= plan.blocks);
+}
+
+static fn format_layouts(void)
+{
+        static const p64 shaped[] = {3, 5, 7, 9, 25, 27, 49, 81, 125, 243,
+                                     343, 625, 729, 2187, 2401, 3125, 6561};
+        static const p64 remainders[] = {1, 2, 49, 50, 51, 300, 469, 470,
+                                         520, 521, 571, 1100, 1600, 32767,
+                                         32768};
+        p64 random = 0x9e3779b97f4a7c15;
+
+        format_layout_holds(STORAGE_EXT4_FEWEST - 1);
+        format_layout_holds(STORAGE_EXT4_FEWEST);
+        format_layout_holds(STORAGE_EXT4_MOST);
+        format_layout_holds(STORAGE_EXT4_MOST + 1);
+
+        for (p64 groups = 1; groups <= 64; groups++)
+                for (positive at = 0; at < array_count(remainders); at++)
+                        format_layout_holds((groups - 1) * STORAGE_EXT4_PER_GROUP +
+                                            remainders[at]);
+
+        for (positive at = 0; at < array_count(shaped); at++)
+                for (positive rest = 0; rest < array_count(remainders); rest++)
+                        format_layout_holds(shaped[at] * STORAGE_EXT4_PER_GROUP +
+                                            remainders[rest]);
+
+        for (positive round = 0; round < 4096; round++)
+        {
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                format_layout_holds(STORAGE_EXT4_FEWEST +
+                                    random % (STORAGE_EXT4_MOST -
+                                              STORAGE_EXT4_FEWEST + 1));
+        }
+}
+
+static fn format_sums(void)
+{
+        static const p8 digits[] = "123456789";
+
+        check("CRC-32C of 123456789 is its published check value",
+              (storage_crc32c(~(p32)0, digits, 9) ^ ~(p32)0) == 0xe3069283);
+        check("CRC-32 of 123456789 is its published check value",
+              ~hash_crc32(~(p32)0, digits, 9) == 0xcbf43926);
+        check("CRC-32C chains across a split",
+              storage_crc32c(storage_crc32c(~(p32)0, digits, 4), digits + 4, 5) ==
+                  storage_crc32c(~(p32)0, digits, 9));
+        check("the backup superblock groups are 0, 1 and powers of 3, 5 and 7",
+              storage_ext4_backup(0) && storage_ext4_backup(1) &&
+                  storage_ext4_backup(3) && storage_ext4_backup(25) &&
+                  storage_ext4_backup(343) && storage_ext4_backup(2187) &&
+                  !storage_ext4_backup(2) && !storage_ext4_backup(15) &&
+                  !storage_ext4_backup(21) && !storage_ext4_backup(6560));
+}
+
+static fn format_spans(void)
+{
+        p64 first;
+        p64 last;
+
+        check("a GPT on 512-byte sectors leaves 34 sectors at each end",
+              storage_gpt_span(1 << 20, 512, address_of first, address_of last) &&
+                  first == 34 && last == (1 << 20) - 34);
+        check("a GPT on 4096-byte sectors leaves 6 sectors at each end",
+              storage_gpt_span(1 << 20, 4096, address_of first, address_of last) &&
+                  first == 6 && last == (1 << 20) - 6);
+        check("a GPT refuses sector sizes it has no layout for",
+              !storage_gpt_span(1 << 20, 1000, address_of first, address_of last) &&
+                  !storage_gpt_span(1 << 20, 256, address_of first, address_of last) &&
+                  !storage_gpt_span(1 << 20, 8192, address_of first, address_of last));
+        check("a GPT refuses a disk too small for both tables",
+              !storage_gpt_span(68, 512, address_of first, address_of last) &&
+                  storage_gpt_span(69, 512, address_of first, address_of last));
+}
+
+static bipolar format_image(string_address directory, string_address name,
+                            p64 bytes, p8 stamp)
+{
+        p8 path[4096];
+        bipolar handle;
+        bipolar failed;
+        storage_format_identity identity;
+
+        path_join(path, sizeof(path), directory, name);
+        handle = system_open_at_mode(AT_FDCWD, path,
+                                     FILE_READ_WRITE | FILE_CREATE |
+                                         FILE_TRUNCATE | O_CLOEXEC,
+                                     0644);
+        if (handle < 0)
+                return handle;
+
+        failed = system_call_2(syscall(ftruncate), (positive)handle, bytes);
+
+        memory_fill(identity.uuid, stamp, 16);
+        memory_fill(identity.hash_seed, (p8)~stamp, 16);
+        identity.uuid[6] = 0x40 | (stamp & 0x0f);
+        identity.uuid[8] = 0x80 | (stamp & 0x3f);
+        identity.time = 1757721600;
+        identity.label = "moonwater";
+
+        if (!failed && name[0] == 'e')
+                failed = storage_format_ext4(handle, 0, bytes, address_of identity);
+
+        //      A disk: a 512 MiB system partition, then the rest as ext4.
+        if (!failed && name[0] == 'd')
+        {
+                storage_format_partition parts[2];
+                p64 sectors = bytes / 512;
+                p64 first;
+                p64 last;
+
+                storage_gpt_span(sectors, 512, address_of first, address_of last);
+                memory_zero(parts, sizeof(parts));
+                memory_copy(parts[0].type, storage_gpt_system_type, 16);
+                memory_copy(parts[1].type, storage_gpt_linux_type, 16);
+                memory_fill(parts[0].unique, stamp + 1, 16);
+                memory_fill(parts[1].unique, stamp + 2, 16);
+                parts[0].first = 2048;
+                parts[0].last = 2048 + (1 << 20) - 1;
+                parts[0].name = "moonwater-boot";
+                parts[1].first = parts[0].last + 1;
+                parts[1].last = (last + 1) / 2048 * 2048 - 1;
+                parts[1].name = "moonwater-data";
+
+                failed = storage_format_gpt(handle, sectors, 512, identity.uuid,
+                                            parts, 2);
+                if (!failed)
+                        failed = storage_format_fat32(handle, parts[0].first * 512,
+                                                      (parts[0].last - parts[0].first + 1) * 512,
+                                                      512, parts[0].first,
+                                                      address_of identity);
+                if (!failed)
+                        failed = storage_format_ext4(handle, parts[1].first * 512,
+                                                     (parts[1].last - parts[1].first + 1) * 512,
+                                                     address_of identity);
+        }
+
+        system_close(handle);
+        return failed;
+}
+
+static fn format_images(string_address directory)
+{
+        static const struct
+        {
+                string_address name;
+                p64 bytes;
+        } images[] = {
+            {"ext4-64m.img", (p64)64 << 20},
+            {"ext4-64m-odd.img", ((p64)64 << 20) + 4095},
+            {"ext4-128m-less.img", ((p64)128 << 20) - 4096},
+            {"ext4-128m.img", (p64)128 << 20},
+            {"ext4-130m.img", (p64)130 << 20},
+            {"ext4-700m.img", (p64)700 << 20},
+            {"ext4-3g.img", ((p64)3 << 30) + 12345},
+            {"ext4-20g.img", (p64)20 << 30},
+            {"ext4-300g.img", (p64)300 << 30},
+            {"ext4-2t.img", ((p64)2 << 40) + ((p64)7 << 20)},
+            {"disk-2g.img", (p64)2 << 30},
+            {"disk-33g.img", ((p64)33 << 30) + 511},
+        };
+
+        for (positive at = 0; at < array_count(images); at++)
+        {
+                bipolar failed = format_image(directory, images[at].name,
+                                              images[at].bytes, (p8)(0x21 + at));
+
+                check("every image formats", !failed);
+                if (failed)
+                        string_format(log, "  %s: %s\n", images[at].name,
+                                      file_reason(failed));
+        }
+}
+
+b32 main(void)
+{
+        format_sums();
+        format_spans();
+        format_layouts();
+
+        if (program_argument_count() > 1)
+                format_images(program_argument_list()[1]);
+
+        return test_report(null);
+}
+#endif /* CHECK_storage_format */
 
 #ifdef CHECK_probe
 #include "../src/compiler_memory.c"

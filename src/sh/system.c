@@ -56,6 +56,23 @@ string_address init_envp[] = {null};
 string_address network_argv[] = {(string_address)network_program,
                                  (string_address) "watch", null};
 
+/*
+        The disks, settled before any shell starts.
+
+        moonwater boot finds an installed Moonwater and mounts its data over
+        the directories it keeps, or leaves a question for the first terminal.
+        The shell waits for it because a shell that started first would have
+        read /root before the disk's /root was there -- but only so long: a
+        service stuck on a bad disk costs this wait and no more, and the
+        shell starts anyway.
+*/
+#define settle_program "/moonwater"
+#define SETTLE_WAIT_NS 20000000000
+#define WAIT_NO_HANG 1
+
+string_address settle_argv[] = {(string_address)settle_program,
+                                (string_address) "boot", null};
+
 //      A watcher that dies this quickly is not going to work on the next try
 //      either -- a missing /ip, most likely -- so say so once and stop.
 #define NETWORK_SETTLED_NS 1000000000
@@ -91,6 +108,27 @@ static fn pause_for(positive nanoseconds)
         timespec span = {nanoseconds / 1000000000, nanoseconds % 1000000000};
 
         sleep(address_of span);
+}
+
+static fn wait_for_settling(bipolar service)
+{
+        positive started = clock_monotonic_nanoseconds();
+
+        while (service > 0 &&
+               clock_monotonic_nanoseconds() - started < SETTLE_WAIT_NS)
+        {
+                positive status = 0;
+                bipolar reaped = system_call_4(syscall(wait4), service,
+                                               (positive)address_of status,
+                                               WAIT_NO_HANG, 0);
+
+                if (reaped == ERROR_INTERRUPTED)
+                        continue;
+                if (reaped != 0)
+                        return;
+
+                pause_for(20000000);
+        }
 }
 
 static bipolar start_shell_until_ready(positive address_to started)
@@ -147,6 +185,8 @@ static DEAD_END b32 system_init()
         system_call(syscall(setsid));
         mount_devpts();
 
+        bipolar settling = start_service((string_address)settle_program,
+                                         settle_argv, 2);
         positive quick_exits = 0;
         positive backoff = 0;
         positive started = clock_monotonic_nanoseconds();
@@ -157,6 +197,9 @@ static DEAD_END b32 system_init()
         positive network_started = clock_monotonic_nanoseconds();
         positive network_failures = 0;
 #endif
+
+        wait_for_settling(settling);
+        started = clock_monotonic_nanoseconds();
 
         // Returning from PID 1 panics the kernel, which on a machine with no
         // serial console says nothing at all. Retrying at a bounded rate keeps
