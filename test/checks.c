@@ -29859,6 +29859,13 @@ b32 main(void)
 #endif /* CHECK_leaving */
 
 #ifdef CHECK_number
+//      The widest integer the comparison tier builds, watched through the
+//      hook standard.c leaves for it, so the limb count stays a measured
+//      claim rather than an arithmetic one.
+static int number_widest_limbs;
+#define NUMBERS_BIG_WATCH(limbs)                                              \
+        (number_widest_limbs = (limbs) > number_widest_limbs ? (limbs)        \
+                                                             : number_widest_limbs)
 #include "../src/compiler_memory.c"
 
 /*
@@ -31249,6 +31256,79 @@ number_case(short_agrees)
         return number_failures == 0;
 }
 
+/*
+        The comparison tier, held to the register it replaced.
+
+        numbers_compared answers binary64 and binary32 when the fast tiers
+        decline, and numbers_assemble is the decimal register that answered
+        before it and still answers long double. Both are static in this
+        translation unit, so every decimal the generator makes is put through
+        both, for both formats, and the bits and the errno condition have to
+        agree -- on every input, not only the ones the fast tiers leave, which
+        is what makes the tininess trial, the exactness question and the
+        truncated register all reachable in a lane with no glibc under it. The
+        comparison is also required never to decline for want of room: its
+        fallback exists for safety, and a generator input that reaches it is
+        a sizing error.
+*/
+number_case(compared_agrees)
+{
+        static const numbers_format address_to formats[2] = {
+                address_of numbers_binary64, address_of numbers_binary32};
+        positive declined = 0;
+        positive compared = 0;
+        positive index;
+
+        ns_seed(0x434d50);
+
+        for (index = 0; index < NS_BLOCK; index++)
+        {
+                numbers_scan scan;
+                b32 which;
+
+                ns_case();
+                numbers_read((string_address)ns_text, address_of scan);
+
+                if (scan.kind != NUMBERS_NUMBER || scan.hexadecimal)
+                        continue;
+
+                for (which = 0; which < 2; which++)
+                {
+                        numbers_scan copy;
+                        p64 bits = 0;
+                        p64 register_bits;
+                        b32 fresh = -1;
+                        b32 old = -1;
+
+                        if (!numbers_compared(address_of scan, formats[which],
+                                              address_of bits, address_of fresh))
+                        {
+                                declined++;
+                                continue;
+                        }
+
+                        compared++;
+                        memory_copy(address_of copy, address_of scan, sizeof copy);
+                        register_bits = (p64)numbers_assemble(address_of copy, formats[which],
+                                                              address_of old);
+
+                        number_note(bits == register_bits, (string_address)ns_text, bits,
+                                    register_bits);
+                        number_note(fresh == old, (string_address)ns_text, (positive)fresh,
+                                    (positive)old);
+                }
+        }
+
+        //      declined is the sizing proof and does not depend on how deep the
+        //      generator reaches; the widest comparison is printed so the
+        //      measurement standard.c quotes can be read off a run.
+        number_note(declined == 0, text("compared ran out of room"), declined, 0);
+        number_note(compared > 50000, text("compared took a share"), compared, 50000);
+        string_format(log, "  (comparison widest: %p limbs) ", (positive)number_widest_limbs);
+
+        return number_failures == 0;
+}
+
 typedef struct
 {
         const char address_to name;
@@ -31257,6 +31337,7 @@ typedef struct
 
 static const number_entry number_entries[] = {
         {"short agrees", number_test_short_agrees},
+        {"compared agrees", number_test_compared_agrees},
         {"integers", number_test_integers},
         {"against glibc", number_test_against_glibc},
         {"extended", number_test_extended},

@@ -1905,6 +1905,13 @@ static positive strtoumax(string_address input, string_address address_to stoppe
            holds. This is slow -- a few microseconds for a hard input -- and
            it is never wrong.
 
+           For binary64 and binary32 the register is only the fallback now.
+           In front of it the estimate names two neighbours and one exact
+           integer comparison against the midpoint between them picks one,
+           which took the largest subnormal from 135,358 instructions to
+           2,049; THE SLOW TIER FOR THE TWO FORMATS A PROGRAM CONVERTS IN A
+           LOOP, below, says how. long double keeps the register.
+
         The three tiers agree by construction, and the test lane checks that
         rather than trusting it: it runs the same inputs with tiers one and
         two disabled and diffs, so a defect in either fast tier shows up
@@ -1943,8 +1950,9 @@ static positive strtoumax(string_address input, string_address address_to stoppe
         all, string_compare_folded_max is strncasecmp and recognises
         "infinity", "inf" and "nan" without a byte loop of its own, strtoull
         reads the payload inside a NaN's brackets, bits_leading_zeros
-        normalises the significand for the estimating tier, and memory_copy
-        takes the register aside for the tininess trial.
+        normalises the significand for the estimating tier and the candidate
+        of the comparison behind it, and memory_copy takes the register aside
+        for long double's tininess trial and hands the comparison its digits.
 
         What the floor cannot give is the digit walk itself, and the reason is
         worth writing down rather than leaving as an absence. The obvious
@@ -4152,6 +4160,447 @@ NUMBERS_EXACT(numbers_exact_narrow, f32, 24, 10, numbers_narrow_power_of_ten)
 #undef NUMBERS_EXACT
 
 /*
+        THE SLOW TIER FOR THE TWO FORMATS A PROGRAM CONVERTS IN A LOOP
+
+        When both fast tiers decline, the decimal register above can answer
+        anything, and for binary64 and binary32 it was far too slow to be the
+        answer. "2.2250738585072011e-308" -- the largest subnormal, which the
+        estimating tier refuses because only an exact tier can decide its
+        errno -- cost 135,358 instructions, 55 times glibc's 2,468: halving
+        and doubling a decimal register of up to 832 digits in steps of 27 to
+        60 bits, and copying the whole scan record for the tininess trial.
+
+        What those two formats get instead is a comparison, the idea of
+        Clinger's AlgorithmR as fast_float shapes it. The estimate is already
+        close: the first nineteen digits times the high half of the power's
+        table entry is within two to the minus fifty nine of the true value,
+        which is sixteen times closer than a quarter of the gap between two
+        doubles at any exponent. So the candidate that estimate truncates to
+        is either the answer or the one below it, and one question decides
+        which: is the value below, at or above the point halfway between the
+        candidate and the next one up? That question is exact in integers.
+        The value is D times ten to a power, D the register's digits; the
+        halfway point is an odd number times two to a power; multiply the
+        side with the negative power of ten by five to its magnitude, shift
+        whichever side has the higher power of two, and compare. Nothing
+        divides, and a 64 by 64 multiply is the widest operation, which the
+        compiler writes out inline on all three machines -- there is no libgcc
+        under a -nostdlib link to call.
+
+        The estimate being close is also why this is sound for subnormals and
+        at both ends of the range: a subnormal candidate is the truncation at
+        the fixed last place of the subnormals, a candidate past the largest
+        exponent is an overflow the value cannot escape, and a round up that
+        carries into a new bit moves the exponent the way the register's does.
+
+        errno is the three questions the register's comment lists, answered
+        separately. Overflow is a result that saturated. Tininess after
+        rounding can only differ from "came out subnormal" when the result is
+        the smallest normal, and there it is one more comparison, against the
+        smallest normal less a quarter of the spacing below it -- the point
+        where rounding at full precision stops reaching the smallest normal.
+        And inexactness is only asked of a tiny result: a truncated register
+        or a tie is inexact, and so is any D shorter than 0.6 digits for each
+        power of ten it is divided by, because D would have to be a multiple
+        of five to that power to land on a binary fraction; past that it is
+        one comparison against the result itself.
+
+        A tie is where a number that is a tie differs from a number that only
+        looks like one, and the register's truncated flag carries that here
+        too: when digits were dropped, D is the kept digits with a one after
+        them, placed past the 767th significant digit so that no midpoint --
+        the longest in binary64 has 767 -- can fall between the value and the
+        stand-in. The widest integer this ever builds is 2,816 bits, a digit
+        string of 833 digits at the bottom of the subnormals; the limbs hold
+        4,096, and a number that would outgrow them is not answered here at
+        all -- the register runs instead, which no input the lane can make has
+        needed.
+
+        long double keeps the register. Its midpoints run to eleven thousand
+        digits and its significand does not fit the estimate, and a format a
+        program converts once does not need this.
+*/
+#define NUMBERS_BIG_LIMBS 64
+
+//      The numbers lane defines this to see the widest comparison it made.
+#ifndef NUMBERS_BIG_WATCH
+#define NUMBERS_BIG_WATCH(limbs) ((void)0)
+#endif
+
+typedef struct
+{
+        p64 limb[NUMBERS_BIG_LIMBS];
+        b32 used;
+        bool spilled;
+} numbers_big;
+
+static const p64 numbers_integer_fives[27] = {
+        1ULL, 5ULL, 25ULL, 125ULL, 625ULL, 3125ULL, 15625ULL, 78125ULL,
+        390625ULL, 1953125ULL, 9765625ULL, 48828125ULL, 244140625ULL,
+        1220703125ULL, 6103515625ULL, 30517578125ULL, 152587890625ULL,
+        762939453125ULL, 3814697265625ULL, 19073486328125ULL,
+        95367431640625ULL, 476837158203125ULL, 2384185791015625ULL,
+        11920928955078125ULL, 59604644775390625ULL, 298023223876953125ULL,
+        1490116119384765625ULL};
+
+static const p64 numbers_integer_tens[20] = {
+        1ULL, 10ULL, 100ULL, 1000ULL, 10000ULL, 100000ULL, 1000000ULL,
+        10000000ULL, 100000000ULL, 1000000000ULL, 10000000000ULL,
+        100000000000ULL, 1000000000000ULL, 10000000000000ULL,
+        100000000000000ULL, 1000000000000000ULL, 10000000000000000ULL,
+        100000000000000000ULL, 1000000000000000000ULL,
+        10000000000000000000ULL};
+
+//      big * factor + addend, limb by limb with the high half as the carry.
+static fn numbers_big_scale(numbers_big address_to big, p64 factor, p64 addend)
+{
+        p64 carry = addend;
+        b32 index;
+
+        for (index = 0; index < big->used; index++)
+        {
+                p128 product = (p128)big->limb[index] * (p128)factor + (p128)carry;
+
+                big->limb[index] = (p64)product;
+                carry = (p64)(product >> 64);
+        }
+
+        if (carry == 0)
+                return;
+
+        if (big->used == NUMBERS_BIG_LIMBS)
+        {
+                big->spilled = true;
+                return;
+        }
+
+        big->limb[big->used] = carry;
+        big->used++;
+}
+
+//      Five to the power, twenty seven at a time: five to the twenty seventh
+//      is the largest power of five under two to the sixty third.
+static fn numbers_big_five(numbers_big address_to big, b32 power)
+{
+        while (power >= 27)
+        {
+                numbers_big_scale(big, 7450580596923828125ULL, 0);
+                power -= 27;
+        }
+
+        if (power > 0)
+                numbers_big_scale(big, numbers_integer_fives[power], 0);
+}
+
+static fn numbers_big_shift(numbers_big address_to big, b32 places)
+{
+        b32 whole = places >> 6;
+        b32 part = places & 63;
+        b32 index;
+
+        if (big->used == 0 || places <= 0)
+                return;
+
+        if (big->used + whole + 1 > NUMBERS_BIG_LIMBS)
+        {
+                big->spilled = true;
+                return;
+        }
+
+        if (part != 0)
+        {
+                p64 carry = 0;
+
+                for (index = 0; index < big->used; index++)
+                {
+                        p64 limb = big->limb[index];
+
+                        big->limb[index] = (limb << part) | carry;
+                        carry = limb >> (64 - part);
+                }
+
+                if (carry != 0)
+                {
+                        big->limb[big->used] = carry;
+                        big->used++;
+                }
+        }
+
+        if (whole != 0)
+        {
+                for (index = big->used - 1; index >= 0; index--)
+                        big->limb[index + whole] = big->limb[index];
+
+                for (index = 0; index < whole; index++)
+                        big->limb[index] = 0;
+
+                big->used += whole;
+        }
+}
+
+//      Every operation above keeps the top limb nonzero, so the longer
+//      number is the larger one and equal lengths compare from the top.
+static b32 numbers_big_order(const numbers_big address_to left,
+                             const numbers_big address_to right)
+{
+        b32 index;
+
+        if (left->used != right->used)
+                return left->used < right->used ? -1 : 1;
+
+        for (index = left->used - 1; index >= 0; index--)
+        {
+                if (left->limb[index] != right->limb[index])
+                        return left->limb[index] < right->limb[index] ? -1 : 1;
+        }
+
+        return 0;
+}
+
+//      The register's digits as one integer, and the power of ten it stands
+//      at. A truncated register becomes its digits with a one placed past the
+//      767th significant digit, as the comment above says.
+static fn numbers_big_digits(numbers_scan address_to number,
+                             numbers_big address_to big, b32 address_to scale)
+{
+        b32 count = number->count;
+        b32 index = 0;
+
+        big->used = 0;
+        big->spilled = false;
+
+        while (index < count)
+        {
+                b32 take = count - index < 19 ? count - index : 19;
+                p64 chunk = 0;
+                b32 at;
+
+                for (at = 0; at < take; at++)
+                        chunk = chunk * 10 + number->digits[index + at];
+
+                numbers_big_scale(big, numbers_integer_tens[take], chunk);
+                index += take;
+        }
+
+        address_to scale = number->point - count;
+
+        if (number->truncated)
+        {
+                b32 place = count > 767 ? count + 1 : 768;
+                b32 pad = place - count;
+
+                while (pad > 19)
+                {
+                        numbers_big_scale(big, numbers_integer_tens[19], 0);
+                        pad -= 19;
+                }
+
+                numbers_big_scale(big, numbers_integer_tens[pad], 1);
+                address_to scale = number->point - place;
+        }
+}
+
+//      Whether digits times ten to scale is below, at or above mantissa
+//      times two to twos: -1, 0 or 1, or 2 when a number outgrew its limbs.
+static b32 numbers_order(const numbers_big address_to digits, b32 scale,
+                         p64 mantissa, b32 twos)
+{
+        numbers_big left;
+        numbers_big right;
+        b32 low;
+
+        left.used = digits->used;
+        left.spilled = false;
+        memory_copy(left.limb, digits->limb, (positive)digits->used * sizeof(p64));
+
+        right.limb[0] = mantissa;
+        right.used = mantissa != 0;
+        right.spilled = false;
+
+        if (scale >= 0)
+                numbers_big_five(address_of left, scale);
+        else
+                numbers_big_five(address_of right, -scale);
+
+        low = scale < twos ? scale : twos;
+        numbers_big_shift(address_of left, scale - low);
+        numbers_big_shift(address_of right, twos - low);
+
+        if (left.spilled || right.spilled)
+                return 2;
+
+        NUMBERS_BIG_WATCH(left.used > right.used ? left.used : right.used);
+
+        return numbers_big_order(address_of left, address_of right);
+}
+
+static bool numbers_compared(numbers_scan address_to number,
+                             const numbers_format address_to shape,
+                             p64 address_to answer, b32 address_to condition)
+{
+        b32 places = shape->significand_place;
+        b32 lowest = shape->bias + 1;
+        b32 limit = ((b32)1 << shape->exponent_bits) - 1;
+        p64 unit = (p64)1 << places;
+        p64 sign = number->negative
+                           ? (p64)1 << (shape->exponent_place + shape->exponent_bits)
+                           : 0;
+        numbers_big digits;
+        p128 product;
+        p64 mantissa;
+        p64 bits;
+        b32 power;
+        b32 lead;
+        b32 upper;
+        b32 exponent;
+        b32 twos;
+        b32 scale;
+        b32 order;
+        bool tiny = false;
+
+        address_to condition = NUMBERS_FINE;
+
+        if (number->count == 0)
+        {
+                address_to answer = sign;
+                return true;
+        }
+
+        if (number->point > shape->point_high)
+                goto over;
+
+        power = number->point - number->packed_count;
+
+        if (number->point < shape->point_low || power < NUMBERS_SMALLEST_POWER)
+        {
+                address_to answer = sign;
+                address_to condition = NUMBERS_UNDERFLOW;
+                return true;
+        }
+
+        if (power > NUMBERS_LARGEST_POWER)
+                goto over;
+
+        //      The candidate, truncated at the format's last place, or at the
+        //      subnormals' fixed last place when it falls below the smallest
+        //      normal. twos is the power of two that last place stands for.
+        lead = (b32)bits_leading_zeros(number->packed);
+        product = (p128)(number->packed << lead) *
+                  (p128)numbers_power_of_five[power - NUMBERS_SMALLEST_POWER][1];
+        upper = (b32)(product >> 127);
+        exponent = numbers_binary_power(power) + upper - lead;
+
+        if (exponent > -shape->bias)
+                goto over;
+
+        if (exponent >= lowest)
+        {
+                mantissa = (p64)(product >> (126 + upper - places));
+                twos = exponent - places;
+        }
+        else
+        {
+                b32 shift = 126 + upper - places + (lowest - exponent);
+
+                mantissa = shift >= 128 ? 0 : (p64)(product >> shift);
+                twos = lowest - places;
+        }
+
+        numbers_big_digits(number, address_of digits, address_of scale);
+
+        if (digits.spilled)
+                return false;
+
+        order = numbers_order(address_of digits, scale, 2 * mantissa + 1, twos - 1);
+
+        if (order == 2)
+                return false;
+
+        if (order > 0 || (order == 0 && (mantissa & 1) != 0))
+                mantissa++;
+
+        if (mantissa == unit << 1)
+        {
+                mantissa = unit;
+                twos++;
+        }
+
+        if (mantissa >= unit)
+        {
+                b32 field = twos + places - shape->bias;
+
+                if (field >= limit)
+                        goto over;
+
+                bits = ((p64)(p32)field << shape->exponent_place) | (mantissa & (unit - 1));
+
+                //      The smallest normal is the one result whose tininess
+                //      the result alone does not say.
+                if (field == 1 && mantissa == unit)
+                {
+                        b32 trial = NUMBERS_TININESS_AFTER_ROUNDING
+                                            ? numbers_order(address_of digits, scale,
+                                                            (unit << 2) - 1, lowest - places - 2)
+                                            : numbers_order(address_of digits, scale, 1, lowest);
+
+                        if (trial == 2)
+                                return false;
+
+                        tiny = trial < 0;
+                }
+        }
+        else
+        {
+                bits = mantissa;
+                tiny = true;
+        }
+
+        if (tiny)
+        {
+                bool exact = !number->truncated && order != 0 && mantissa != 0;
+
+                if (exact && scale < 0 &&
+                    (positive)number->count * 10 <= (positive)-scale * 6)
+                        exact = false;
+
+                if (exact)
+                {
+                        b32 same = numbers_order(address_of digits, scale, mantissa, twos);
+
+                        if (same == 2)
+                                return false;
+
+                        exact = same == 0;
+                }
+
+                if (!exact)
+                        address_to condition = NUMBERS_UNDERFLOW;
+        }
+
+        address_to answer = bits | sign;
+        return true;
+
+over:
+        address_to answer = ((p64)(p32)limit << shape->exponent_place) | sign;
+        address_to condition = NUMBERS_OVERFLOW;
+        return true;
+}
+
+//      The slow tier as binary64 and binary32 call it: the comparison, and
+//      the register only for a number the comparison had no room for.
+static p64 numbers_settled(numbers_scan address_to number,
+                           const numbers_format address_to shape,
+                           b32 address_to condition)
+{
+        p64 bits;
+
+        if (numbers_compared(number, shape, address_of bits, condition))
+                return bits;
+
+        return (p64)numbers_assemble(number, shape, condition);
+}
+
+/*
         The two answers that are not numbers, built out of the format rather
         than out of a constant, so that one body serves all four widths.
 
@@ -4204,9 +4653,12 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
 
         NUMBERS_SLOW_TIER_ONLY exists for the test lane and for nothing else.
         Defined, both fast tiers are compiled out and every conversion goes
-        through the decimal register, so the lane can run identical inputs
-        through both and diff -- which is how a defect in a fast tier gets
-        found without a reference library being in the loop.
+        through the slow tier -- the comparison for binary64 and binary32,
+        the decimal register for long double -- so the lane can run identical
+        inputs through both and diff, which is how a defect in a fast tier
+        gets found without a reference library being in the loop. The
+        comparison and the register are held to each other the same way, by
+        CHECK_number calling both on every generated decimal.
 */
 #ifndef NUMBERS_SLOW_TIER_ONLY
 #define NUMBERS_FAST(type, exact, format, bits_type)                         \
@@ -4228,7 +4680,7 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
 #define NUMBERS_FAST(type, exact, format, bits_type) do { } while (0)
 #endif
 
-#define NUMBERS_TO(name, type, shape_type, format, bits_type, fast)   \
+#define NUMBERS_TO(name, type, shape_type, format, bits_type, fast, slow) \
         static type name(string_address input,                              \
                          string_address address_to stopped)                  \
         {                                                                    \
@@ -4259,7 +4711,7 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
                 else                                                         \
                 {                                                            \
                         fast;                                                \
-                        shape.bits = (bits_type)numbers_assemble(            \
+                        shape.bits = (bits_type)slow(                        \
                             address_of number, address_of format,            \
                             address_of condition);                           \
                 }                                                            \
@@ -4275,7 +4727,7 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
 */
 NUMBERS_TO(string_to_decimal_general, decimal, numbers_shape, numbers_binary64,
            p64, NUMBERS_FAST(decimal, numbers_exact_double, numbers_binary64,
-                             p64))
+                             p64), numbers_settled)
 
 static decimal string_to_decimal(string_address input,
                                  string_address address_to stopped)
@@ -4288,7 +4740,8 @@ static decimal string_to_decimal(string_address input,
         return string_to_decimal_general(input, stopped);
 }
 NUMBERS_TO(string_to_narrow, f32, numbers_narrow_shape, numbers_binary32, p32,
-           NUMBERS_FAST(f32, numbers_exact_narrow, numbers_binary32, p32))
+           NUMBERS_FAST(f32, numbers_exact_narrow, numbers_binary32, p32),
+           numbers_settled)
 
 /*
         long double, which is eighty bit x87 on x86_64 and binary128 on arm64
@@ -4310,7 +4763,7 @@ NUMBERS_TO(string_to_narrow, f32, numbers_narrow_shape, numbers_binary32, p32,
         call to __letf2 that would not resolve.
 */
 NUMBERS_TO(string_to_extended, f128, numbers_extended_shape, numbers_extended,
-           p128, (void)0)
+           p128, (void)0, numbers_assemble)
 #undef NUMBERS_TO
 #undef NUMBERS_FAST
 
