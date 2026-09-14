@@ -23686,6 +23686,35 @@ def harness_compression(argv):
                     pb = call(command(refs[codec], codec, level=level, reference=True), b).stdout
                     joined = call(decode, pa + pb)
                     check(label + '/' + codec + '/concatenation', joined.returncode == 0 and joined.stdout == a + b)
+                    if codec == 'xz':
+                        # Blocks written with both sizes take the parallel
+                        # decoder: every check type, -T1 on the same bytes, a
+                        # sizeless stream between sized ones, and damage.
+                        data = data_sets[-1][1] + data_sets[-2][1]
+                        parts = []
+                        for check_type in ('crc32', 'crc64', 'none'):
+                            blocks = call([refs['xz'], '-c', '-1', '-T2', '--block-size=65536',
+                                           '-C', check_type], data)
+                            back = call(decode, blocks.stdout)
+                            serial = call(decode + ['-T1'], blocks.stdout)
+                            check(label + '/xz/multi-block-' + check_type,
+                                  blocks.returncode == back.returncode == serial.returncode == 0 and
+                                  back.stdout == data and serial.stdout == data,
+                                  back.stderr.decode(errors='replace') + serial.stderr.decode(errors='replace'))
+                            parts.append(blocks.stdout)
+                        sizeless = call([refs['xz'], '-c', '-1', '-T1', '--block-size=65536'], data).stdout
+                        mixed = call(decode, parts[0] + sizeless + b'\0' * 4 + parts[1])
+                        check(label + '/xz/sized-sizeless-padding-sized',
+                              mixed.returncode == 0 and mixed.stdout == data * 3,
+                              mixed.stderr.decode(errors='replace'))
+                        for cut, what in ((1, 'last-byte'), (len(parts[1]) // 2, 'half')):
+                            broken = call(decode, parts[1][:-cut])
+                            check(label + '/xz/multi-block-truncated-' + what, broken.returncode != 0)
+                        damaged = bytearray(parts[1])
+                        damaged[len(damaged) // 3] ^= 0x55
+                        broken = call(decode, bytes(damaged))
+                        check(label + '/xz/multi-block-damaged', broken.returncode != 0)
+
                     # Different search budgets and reset paths must remain interoperable.
                     for other_level in ('1', '6', '9'):
                         if other_level == level:

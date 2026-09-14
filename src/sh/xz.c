@@ -3186,12 +3186,535 @@ static bool xz_encode_begin(bipolar out, p8 level)
 
 #ifndef XZ_CORE_ONLY
 
+/*
+        Multi-block decode.
+
+        xz -T and this encoder write both sizes into every block header, so a
+        block can be read whole without decoding it. While blocks carry sizes,
+        the calling thread reads them exactly, a batch at a time, and each is
+        one job that its worker's decoder turns into exactly its uncompressed
+        size; the sink writes the blocks in order and the index is checked
+        against the blocks seen. The first block without sizes hands the rest
+        of the input to the serial decoder, whose prefix is only the bytes
+        read for that block header (and its stream header), so it never needs
+        a byte read ahead. A batch holds at most an eighth of physical memory
+        of output, never fewer than two blocks, so what waits in the pool is
+        bounded by the data and not by the width.
+
+        Limit, measured on arch.tar.xz (23 blocks) at 16 CPUs: 0.30 s into
+        /dev/null but 0.59 s into a file, against GNU's 0.35 s. The pool's
+        caller runs the sink and also claims jobs, so finished blocks wait
+        for it and the page-cache writes queue after the decoding instead of
+        overlapping it; the pool fix needs no change here.
+*/
+
+/* SHA-256 streams stay serial until the decoder verifies that check. */
+#define XZ_CHECK_SHA256 0x100
+#define XZ_PAR_BLOCKS_MAX 256
+#define XZ_PAR_HEADER_MAX 1024
+
+typedef struct
+{
+        positive at;            /* offset of the block header in the batch buffer */
+        positive total;         /* header + compressed + padding + check */
+        p64 unpadded;           /* header + compressed + check, for the index */
+        p64 uncompressed;
+        string_address why;     /* the job's verdict, reported by the sink */
+} xz_par_block;
+
+typedef struct
+{
+        bipolar in;
+        bipolar out;
+        p8 check;
+        positive check_size;
+        /* the batch: compressed blocks read exactly */
+        p8 address_to bytes;
+        positive room;
+        positive used;
+        xz_par_block blocks[XZ_PAR_BLOCKS_MAX];
+        positive count;
+        /* the index to verify, whole stream */
+        p8 address_to records;
+        positive records_room;
+        positive records_used;
+        p64 record_count;
+        /* per-slot decoders */
+        address_any address_to slots;
+        positive slot_count;
+        /* what the serial fallback needs: bytes consumed for the pending headers */
+        p8 prefix[12 + XZ_PAR_HEADER_MAX];
+        positive prefix_n;
+        bool in_stream;
+        bool failed;
+        string_address why;
+        p64 in_abs;
+} xz_par;
+
+static bool xz_par_fail(xz_par address_to r, string_address why)
+{
+        if (!r->why)
+                r->why = why;
+        r->failed = true;
+        return false;
+}
+
+/* Exactly n bytes or a clean end: 1 read, 0 end before the first byte,
+   -1 truncated or failed. */
+static bipolar xz_par_read(xz_par address_to r, p8 address_to into, positive n)
+{
+        positive got = 0;
+
+        while (got < n)
+        {
+                bipolar k = system_read_retry((positive)r->in, into + got, n - got);
+
+                if (k < 0)
+                        return xz_par_fail(r, "xz read failed"), -1;
+                if (!k)
+                        return got ? (xz_par_fail(r, "xz truncated input"), -1) : 0;
+                got += (positive)k;
+        }
+        r->in_abs += n;
+        return 1;
+}
+
+static bool xz_par_grow(p8 address_to address_to area, positive address_to room,
+                        positive used, positive need)
+{
+        if (address_to room >= need)
+                return true;
+
+        positive grown = address_to room ? address_to room : 1u << 20;
+
+        while (grown < need)
+                grown *= 2;
+
+        p8 address_to bytes = (p8 address_to)memory(grown);
+
+        if (!bytes || system_failed(bytes))
+                return false;
+        if (address_to area)
+        {
+                memory_copy_apart(bytes, address_to area, used);
+                memory_free(address_to area, address_to room);
+        }
+        address_to area = bytes;
+        address_to room = grown;
+        return true;
+}
+
+static positive xz_par_vli(p8 address_to p, positive n, p64 address_to value)
+{
+        p64 v = 0;
+
+        for (positive i = 0; i < n && i < 9; i++)
+        {
+                v |= (p64)(p[i] & 0x7f) << (7 * i);
+                if (!(p[i] & 0x80))
+                {
+                        if (i && !p[i])
+                                return 0;
+                        address_to value = v;
+                        return i + 1;
+                }
+        }
+        return 0;
+}
+
+/* Parse a block header already in the batch at `at`. 1 with both sizes,
+   0 when a size is missing (serial from here), -1 malformed. */
+static bipolar xz_par_header(xz_par address_to r, p8 address_to h, positive size,
+                             p64 address_to compressed, p64 address_to uncompressed)
+{
+        p32 crc = 0;
+        positive at = 2;
+        p8 flags = h[1];
+
+        for (positive i = 0; i < 4; i++)
+                crc |= (p32)h[size - 4 + i] << (8 * i);
+        if (crc != ~hash_crc32(0xffffffffu, h, size - 4))
+                return xz_par_fail(r, "xz block header CRC"), -1;
+        if (flags & 0x3c)
+                return xz_par_fail(r, "xz reserved block flags"), -1;
+        if ((flags & 0xc0) != 0xc0)
+                return 0;
+
+        positive k = xz_par_vli(h + at, size - 4 - at, compressed);
+
+        if (!k || !address_to compressed)
+                return xz_par_fail(r, "xz block header"), -1;
+        at += k;
+        k = xz_par_vli(h + at, size - 4 - at, uncompressed);
+        if (!k)
+                return xz_par_fail(r, "xz block header"), -1;
+        return 1;
+}
+
+static bool xz_par_record(xz_par address_to r, p64 unpadded, p64 uncompressed)
+{
+        if (!xz_par_grow(address_of r->records, address_of r->records_room,
+                         r->records_used, r->records_used + 20))
+                return xz_par_fail(r, "xz cannot map the index");
+        r->records_used += xz_vli_put(r->records + r->records_used, unpadded);
+        r->records_used += xz_vli_put(r->records + r->records_used, uncompressed);
+        r->record_count++;
+        return true;
+}
+
+/* One block through a slot's decoder, from a
+   memory span of exactly its bytes into exactly its output. The decoder is
+   kept per slot so its dictionary mapping survives from block to block. */
+static string_address xz_par_block_decode(xz_par address_to r, positive slot,
+                                          p8 address_to bytes, positive total,
+                                          p8 address_to into, p64 uncompressed)
+{
+        xz_decoder address_to d = (xz_decoder address_to)r->slots[slot];
+
+        if (!d)
+        {
+                d = (xz_decoder address_to)memory(sizeof(xz_decoder));
+                if (!d || system_failed(d))
+                        return "xz cannot map a decoder";
+                r->slots[slot] = d;
+        }
+
+        byte_store store = {into, (positive)uncompressed, 0};
+
+        d->job.model = address_of d->models;
+        d->why = null;
+        d->store = address_of store;
+        d->out_fd = -1;
+        d->pull = false;
+        d->paused = false;
+        d->finished = false;
+        d->hdr_done = true;
+        d->block_live = false;
+        d->lz2_kind = 0;
+        d->in_abs = 0;
+        d->check = r->check;
+        byte_input_open_memory(address_of d->input, bytes, total, d->in_buf, XZ_DEC_IN);
+
+        bool ok = xz_dec_block(d) && xz_dec_drain(d);
+
+        d->input.mem = null;
+        d->store = null;
+        if (!ok)
+                return d->why ? d->why : (string_address)"xz block";
+        if (d->in_abs != total || store.used != uncompressed)
+                return "xz block size does not match its header";
+        return null;
+}
+
+/* One block, on any thread: its worker's decoder, exactly uncompressed bytes
+   into the job's output. A malformed block records why for the sink. */
+static fn xz_par_job(address_any context, positive index, parallel_output address_to output)
+{
+        xz_par address_to r = (xz_par address_to)context;
+        xz_par_block address_to b = r->blocks + index;
+        p8 address_to into = b->uncompressed ? parallel_reserve(output, b->uncompressed) : null;
+
+        if (b->uncompressed && !into)
+        {
+                b->why = "xz cannot map block output";
+                return;
+        }
+        b->why = xz_par_block_decode(r, parallel_slot(), r->bytes + b->at, b->total,
+                                     into, b->uncompressed);
+}
+
+static bool xz_par_sink(address_any context, positive index, address_any data, positive length)
+{
+        xz_par address_to r = (xz_par address_to)context;
+        xz_par_block address_to b = r->blocks + index;
+
+        if (b->why)
+                return xz_par_fail(r, b->why);
+        if (length && system_write_all((positive)r->out, data, length) != (bipolar)length)
+                return xz_par_fail(r, "xz write failed");
+        return true;
+}
+
+static bool xz_par_run_batch(xz_par address_to r)
+{
+        if (!r->count)
+                return true;
+
+        bool ok = parallel_ordered(xz_par_job, xz_par_sink, r, r->count,
+                                   xz_serial ? 0 : PARALLEL_SPREAD);
+
+        r->count = 0;
+        r->used = 0;
+        return ok && !r->failed ? true : xz_par_fail(r, "xz cannot decode a block");
+}
+
+/* The index and footer of the stream whose blocks were all seen: every
+   record must match, then the footer's backward size and flags. */
+static bool xz_par_index(xz_par address_to r)
+{
+        p8 head[10];
+        p64 count;
+        positive n = 1;
+
+        head[0] = 0;
+        /* the indicator byte was read by the block loop */
+        for (;; n++)
+        {
+                if (n >= sizeof(head) || xz_par_read(r, head + n, 1) != 1)
+                        return xz_par_fail(r, "xz truncated index");
+                if (!(head[n] & 0x80))
+                        break;
+        }
+        n++;
+        if (xz_par_vli(head + 1, n - 1, address_of count) != n - 1 || count != r->record_count)
+                return xz_par_fail(r, "xz index does not match the blocks");
+
+        positive size = n + r->records_used;
+        positive pad = (4 - (size & 3)) & 3;
+        p8 tail[8 + 12];
+        positive want = r->records_used;
+
+        if (!xz_par_grow(address_of r->bytes, address_of r->room, 0, want + 1))
+                return xz_par_fail(r, "xz cannot map the index");
+        if (want && xz_par_read(r, r->bytes, want) != 1)
+                return xz_par_fail(r, "xz truncated index");
+        if (memory_compare(r->bytes, r->records, want))
+                return xz_par_fail(r, "xz index does not match the blocks");
+        if (xz_par_read(r, tail, pad + 4 + 12) != 1)
+                return xz_par_fail(r, "xz truncated index");
+        for (positive i = 0; i < pad; i++)
+                if (tail[i])
+                        return xz_par_fail(r, "xz index padding");
+
+        p32 crc = hash_crc32(0xffffffffu, head, n);
+
+        crc = hash_crc32(crc, r->bytes, want);
+        crc = hash_crc32(crc, tail, pad);
+        if (memory_load_unaligned(p32, tail + pad) != ~crc)
+                return xz_par_fail(r, "xz index CRC");
+
+        p8 address_to footer = tail + pad + 4;
+
+        if (memory_load_unaligned(p32, footer) != ~hash_crc32(0xffffffffu, footer + 4, 6) ||
+            memory_load_unaligned(p32, footer + 4) != (size + pad + 4) / 4 - 1 ||
+            footer[8] || footer[9] != r->check || footer[10] != 'Y' || footer[11] != 'Z')
+                return xz_par_fail(r, "xz footer");
+        r->record_count = 0;
+        r->records_used = 0;
+        return true;
+}
+
+/* 1 decoded everything, 0 handed off to serial (prefix holds the consumed
+   bytes, in_stream says where), -1 failed. */
+static bipolar xz_par_walk(xz_par address_to r, positive batch_output)
+{
+        bool any = false;
+
+        for (;;)
+        {
+                p8 stream[12];
+                bipolar got;
+
+                /* Stream Padding after a stream, then the next header or the end. */
+                if (any)
+                {
+                        for (;;)
+                        {
+                                got = xz_par_read(r, stream, 4);
+                                if (got < 0)
+                                        return -1;
+                                if (!got)
+                                        return 1;
+                                if (memory_load_unaligned(p32, stream))
+                                        break;
+                        }
+                        if (xz_par_read(r, stream + 4, 8) != 1)
+                                return xz_par_fail(r, "xz truncated header"), -1;
+                }
+                else
+                {
+                        got = xz_par_read(r, stream, 12);
+                        if (got <= 0)
+                                return got < 0 ? -1 : (xz_par_fail(r, "xz empty input"), -1);
+                }
+                if (memory_compare(stream, "\xfd" "7zXZ\0", 6))
+                        return xz_par_fail(r, "xz bad magic"), -1;
+                if (stream[6] || (stream[7] & 0xf0) ||
+                    memory_load_unaligned(p32, stream + 8) != ~hash_crc32(0xffffffffu, stream + 6, 2))
+                        return xz_par_fail(r, "xz header CRC"), -1;
+                r->check = stream[7] & 15;
+                /* A check the decoder does not know goes to the serial path,
+                   which reports it exactly as a plain decode would. */
+                if (r->check != XZ_CHECK_NONE && r->check != XZ_CHECK_CRC32 &&
+                    r->check != XZ_CHECK_CRC64 && r->check != XZ_CHECK_SHA256)
+                {
+                        memory_copy_apart(r->prefix, stream, 12);
+                        r->prefix_n = 12;
+                        r->in_stream = false;
+                        return 0;
+                }
+                r->check_size = r->check == XZ_CHECK_SHA256 ? 32
+                              : r->check == XZ_CHECK_CRC64 ? 8
+                              : r->check == XZ_CHECK_CRC32 ? 4 : 0;
+                any = true;
+
+                positive held = 0;
+                bool first = true;
+
+                for (;;)
+                {
+                        p8 h0;
+
+                        if (xz_par_read(r, address_of h0, 1) != 1)
+                                return xz_par_fail(r, "xz truncated stream"), -1;
+                        if (!h0)
+                        {
+                                if (!xz_par_run_batch(r) || !xz_par_index(r))
+                                        return -1;
+                                break;
+                        }
+
+                        positive size = ((positive)h0 + 1) * 4;
+
+                        if (!xz_par_grow(address_of r->bytes, address_of r->room, r->used,
+                                         r->used + size))
+                                return xz_par_fail(r, "xz cannot map the input"), -1;
+
+                        p8 address_to h = r->bytes + r->used;
+
+                        h[0] = h0;
+                        if (xz_par_read(r, h + 1, size - 1) != 1)
+                                return xz_par_fail(r, "xz truncated block header"), -1;
+
+                        p64 compressed = 0;
+                        p64 uncompressed = 0;
+                        got = xz_par_header(r, h, size, address_of compressed,
+                                            address_of uncompressed);
+                        if (got < 0)
+                                return -1;
+                        if (!got)
+                        {
+                                /* Serial from this block on: what is decoded so
+                                   far is written first, then the stream header
+                                   (only for a first block) and this header. */
+                                if (!xz_par_run_batch(r))
+                                        return -1;
+                                r->prefix_n = 0;
+                                if (first)
+                                {
+                                        memory_copy_apart(r->prefix, stream, 12);
+                                        r->prefix_n = 12;
+                                }
+                                memory_copy_apart(r->prefix + r->prefix_n, r->bytes, size);
+                                r->prefix_n += size;
+                                r->in_stream = !first;
+                                return 0;
+                        }
+
+                        positive body = (positive)compressed;
+                        positive total = size + body + ((4 - ((size + body) & 3)) & 3) +
+                                         r->check_size;
+
+                        if (compressed > (p64)positive_max / 2 ||
+                            !xz_par_grow(address_of r->bytes, address_of r->room, r->used + size,
+                                         r->used + total))
+                                return xz_par_fail(r, "xz cannot map the input"), -1;
+                        if (xz_par_read(r, r->bytes + r->used + size, total - size) != 1)
+                                return xz_par_fail(r, "xz truncated block"), -1;
+                        r->blocks[r->count] = (xz_par_block){
+                            r->used, total, size + body + r->check_size, uncompressed, null};
+                        if (!xz_par_record(r, size + body + r->check_size, uncompressed))
+                                return -1;
+                        r->used += total;
+                        r->count++;
+                        held += (positive)uncompressed;
+                        first = false;
+                        if (r->count == XZ_PAR_BLOCKS_MAX ||
+                            (r->count >= 2 && held >= batch_output))
+                        {
+                                if (!xz_par_run_batch(r))
+                                        return -1;
+                                held = 0;
+                        }
+                }
+        }
+}
+
+/* Serial from the saved prefix on: a stream header, or a block header inside
+   the stream whose header the walk already read. */
+static bool xz_par_serial_rest(xz_par address_to r)
+{
+        xz_decoder address_to d = address_of xz_dec;
+
+        xz_dec_open(d);
+        byte_input_open_fd(address_of d->input, r->in, d->in_buf, XZ_DEC_IN);
+        memory_copy_apart(d->in_buf, r->prefix, r->prefix_n);
+        d->input.have = r->prefix_n;
+        d->input.at = 0;
+        d->out_fd = r->out;
+        if (r->in_stream)
+        {
+                d->hdr_done = true;
+                d->check = r->check;
+        }
+
+        bool ok = xz_dec_run(d);
+
+        xz_dec_dict_close(d);
+        if (!ok)
+                r->why = d->why;
+        return ok;
+}
+
+static bool xz_par_decode(bipolar in, bipolar out)
+{
+        xz_par address_to r = (xz_par address_to)memory(sizeof(xz_par));
+
+        if (!r || system_failed(r))
+                return xz_fail("xz cannot map the decoder");
+        r->in = in;
+        r->out = out;
+        r->slot_count = parallel_width();
+        r->slots = (address_any address_to)memory(r->slot_count * sizeof(address_any));
+
+        bool ok = false;
+
+        if (r->slots && !system_failed(r->slots))
+        {
+                bipolar got = xz_par_walk(r, xz_batch_room((positive)1 << 20));
+
+                ok = got > 0 || (got == 0 && xz_par_serial_rest(r));
+                for (positive i = 0; i < r->slot_count; i++)
+                {
+                        xz_decoder address_to d = (xz_decoder address_to)r->slots[i];
+
+                        if (d)
+                        {
+                                xz_dec_dict_close(d);
+                                memory_free(d, sizeof(xz_decoder));
+                        }
+                }
+                memory_free(r->slots, r->slot_count * sizeof(address_any));
+        }
+        else
+                r->why = "xz cannot map the decoder";
+        if (!ok)
+                xz_why = r->why ? r->why : (string_address)"xz decode failed";
+        memory_free(r->bytes, r->room);
+        memory_free(r->records, r->records_room);
+        memory_free(r, sizeof(xz_par));
+        return ok;
+}
+
 static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
 {
         bool ok;
 
         xz_status = 0;
-        if (decode)
+        xz_serial = file_codec_threads == 1;
+        if (decode && !xz_serial)
+                ok = xz_par_decode(in, out);
+        else if (decode)
         {
                 xz_decoder address_to d = address_of xz_dec;
 
@@ -3208,7 +3731,6 @@ static b32 xz_stream_cli(bipolar in, bipolar out, bool decode, p8 level)
                 byte_input_open_fd(address_of xz_input, in, xz_in_buf, XZ_IN);
                 xz_out_fd = out;
                 xz_output.bytes = null;
-                xz_serial = file_codec_threads == 1;
                 ok = xz_stream_encode(level);
         }
         if (!ok)
