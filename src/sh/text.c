@@ -18478,6 +18478,22 @@ static inline INLINE fn sort_view_span(sort_view address_to view, b32 stage,
                 sort_key_span(sort_keys + stage, view->at, view->length, from, to);
 }
 
+/*
+        Eight bytes as one big-endian word, the ones past the end masked off.
+        Every buffer keeps SORT_SLACK bytes beyond its last line, so the load
+        never leaves the mapping. Spelled as eight shifts because that is the
+        shape a compiler turns into one load and a byte swap where the
+        machine has one and into plain shifts where it has not.
+*/
+static inline INLINE p64 sort_window_load(p8 address_to at, positive length)
+{
+        p64 word = (p64)at[0] << 56 | (p64)at[1] << 48 | (p64)at[2] << 40 |
+                   (p64)at[3] << 32 | (p64)at[4] << 24 | (p64)at[5] << 16 |
+                   (p64)at[6] << 8 | (p64)at[7];
+
+        return length >= 8 ? word : word & ~(~(p64)0 >> (length * 8));
+}
+
 static PURE HOT bipolar sort_compare_views_keys(sort_view address_to a,
                                                 sort_view address_to b,
                                                 b32 first)
@@ -18516,7 +18532,14 @@ static PURE HOT bipolar sort_compare_views(sort_view address_to a,
         if (answer || sort_unique || sort_stable)
                 return answer;
 
-        answer = sort_compare_bytes(a->at, a->length, b->at, b->length, 0);
+        // Two masked windows that differ are the answer: a byte past the
+        // shorter line reads as zero and can only differ by being larger.
+        p64 one = sort_window_load(a->at, a->length);
+        p64 two = sort_window_load(b->at, b->length);
+
+        answer = one != two ? (one < two ? -1 : 1)
+                            : sort_compare_bytes(a->at, a->length, b->at,
+                                                 b->length, 0);
         return sort_reverse ? -answer : answer;
 }
 
@@ -18526,22 +18549,6 @@ static PURE HOT bipolar sort_compare_lines(p32 left, p32 right, b32 first)
         sort_view b = sort_view_of(right);
 
         return sort_compare_views(address_of a, address_of b, first);
-}
-
-/*
-        Eight bytes as one big-endian word, the ones past the end masked off.
-        Every buffer keeps SORT_SLACK bytes beyond its last line, so the load
-        never leaves the mapping. Spelled as eight shifts because that is the
-        shape a compiler turns into one load and a byte swap where the
-        machine has one and into plain shifts where it has not.
-*/
-static inline INLINE p64 sort_window_load(p8 address_to at, positive length)
-{
-        p64 word = (p64)at[0] << 56 | (p64)at[1] << 48 | (p64)at[2] << 40 |
-                   (p64)at[3] << 32 | (p64)at[4] << 24 | (p64)at[5] << 16 |
-                   (p64)at[6] << 8 | (p64)at[7];
-
-        return length >= 8 ? word : word & ~(~(p64)0 >> (length * 8));
 }
 
 // a..z to A..Z in every byte at once, as sort_compare_bytes folds: nothing
@@ -18571,14 +18578,21 @@ static inline INLINE p64 sort_window_fold(p64 word)
 static p64 sort_number_window(p8 address_to text, positive length,
                               bool address_to exact)
 {
-        positive at = string_span_max(text, length, string_set_blanks);
+        // A digit is never blank, so a key that starts with one skips the
+        // call; the digit and zero walks are a few bytes and stay inline.
+        positive at = length && (p8)(text[0] - '0') < 10
+                          ? 0
+                          : string_span_max(text, length, string_set_blanks);
         bool minus = at < length && text[at] == '-';
 
         at += minus;
         positive first = at;
 
-        at += string_span_max(text + at, length - at, string_set_digits);
-        first = sort_zero_prefix(text, first, at);
+        while (at < length && (p8)(text[at] - '0') < 10)
+                at++;
+
+        while (first < at && text[first] == '0')
+                first++;
 
         positive digits = at - first;
         positive fraction = at;
@@ -18586,7 +18600,9 @@ static p64 sort_number_window(p8 address_to text, positive length,
         if (at < length && text[at] == '.')
         {
                 fraction = ++at;
-                at += string_span_max(text + at, length - at, string_set_digits);
+
+                while (at < length && (p8)(text[at] - '0') < 10)
+                        at++;
 
                 while (at > fraction && text[at - 1] == '0')
                         at--;
@@ -18982,11 +18998,11 @@ static fn sort_writer_flush(sort_writer address_to out)
 static inline INLINE fn sort_writer_line(sort_writer address_to out,
                                          p8 address_to at, positive length)
 {
-        if (sort_out_room - sort_out_used <= length)
+        if (sort_out_room - sort_out_used <= length + SORT_SLACK)
         {
                 sort_writer_flush(out);
 
-                if (sort_out_room <= length)
+                if (sort_out_room <= length + SORT_SLACK)
                 {
                         if (system_write_all(out->handle, at, length) != length)
                                 out->failed = true;
@@ -18996,8 +19012,18 @@ static inline INLINE fn sort_writer_line(sort_writer address_to out,
                 }
         }
 
-        memory_copy_apart(sort_out + sort_out_used, at, length);
-        sort_out[sort_out_used + length] = text_delimiter;
+        p8 address_to into = sort_out + sort_out_used;
+
+        // Most lines are short. Sixteen bytes at a time, running into the
+        // slack every line source keeps past its end, is a few moves where a
+        // call was a function's worth of setup.
+        if (length <= 64)
+                for (positive copied = 0; copied < length; copied += 16)
+                        __builtin_memcpy(into + copied, at + copied, 16);
+        else
+                memory_copy_apart(into, at, length);
+
+        into[length] = text_delimiter;
         sort_out_used += length + 1;
 }
 
@@ -19008,6 +19034,16 @@ static fn sort_emit(sort_writer address_to out)
 
         for (positive at = 0; at < sort_lines_count; at++)
         {
+                // The answer walks the text in sorted order, which is no order
+                // at all to the cache: fetch a record sixteen items ahead and
+                // the line it names eight ahead.
+                if (at + 16 < sort_lines_count)
+                        __builtin_prefetch(sort_lines + sort_items[at + 16].line);
+
+                if (at + 8 < sort_lines_count)
+                        __builtin_prefetch(sort_text +
+                                           sort_lines[sort_items[at + 8].line].at);
+
                 sort_view view = sort_view_of(sort_items[at].line);
 
                 if (sort_unique)

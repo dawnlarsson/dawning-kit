@@ -24746,7 +24746,7 @@ REASONS = {
  "r27": "gawk's --copyright; refused with usage",
  "r270": "deliberate: GNU's execution trace and annotated-program diagnostic format, not command-result semantics. The interpreter rejects it rather than pretending to emit that debugging protocol.",
  "r271": "bug: more than one thing is wrong with this argv and sort names a different first cause from the reference's.",
- "r272": "deliberate: -T, --compress-program and --batch-size tune a temporary file this sort has not got: everything is ordered in one arena, so a directory that cannot hold a temporary and a compressor that cannot be run are not failures here.",
+ "r272": "deliberate: -S is honoured in this sort's own record size, and GNU's buffer also grows with its thread count, so a buffer of a kilobyte or two spills at a different line here than there; whether a -T directory that cannot hold a temporary is ever reached follows from that. --compress-program is never run, because compressing a temporary cannot change a byte of the answer.",
  "r273": "deliberate: a key ordering of g or R asks for the general-numeric or random comparison the whole sort refuses, and refusing the key is the same answer in the same place.",
  "r274": "deliberate: GNU's key annotation and diagnostic format, not ordering semantics. It is rejected rather than producing an incomplete diagnostic stream.",
  "r275": "deliberate: exact GNU behavior is strtold ordering, including signed NaNs, infinities, hexadecimal floats, exponents, long-double range and architecture-specific rounding. It needs a shared cross-ISA general-number parser/comparator; a decimal-only approximation would silently misorder data.",
