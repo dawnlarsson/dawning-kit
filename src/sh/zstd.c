@@ -1903,6 +1903,44 @@ typedef struct
         bool valid;
 } zstd_fse_prior;
 
+/* The optimal parser's statistics, libzstd's: counts of literal bytes,
+   literal length codes, match length codes and offset codes from the
+   sequences already chosen, and the cost in 1/256 bits of each whole. */
+typedef struct
+{
+        p32 lit[256];
+        p32 ll[36];
+        p32 ml[53];
+        p32 of[32];
+        p32 lit_sum;
+        p32 ll_sum;
+        p32 ml_sum;
+        p32 of_sum;
+        p32 lit_base;
+        p32 ll_base;
+        p32 ml_base;
+        p32 of_base;
+        bool predefined;
+} zstd_price;
+
+/* A position on the optimal path: its price, and the stretch that reaches
+   it (a match of mlen at offset value off, then litlen literals), with the
+   repeat offsets after it. */
+typedef struct
+{
+        bipolar price;
+        p32 off;
+        p32 mlen;
+        p32 litlen;
+        p32 rep[3];
+} zstd_opt_node;
+
+typedef struct
+{
+        p32 off;
+        p32 len;
+} zstd_opt_match;
+
 typedef struct
 {
         zstd_params p;
@@ -1928,6 +1966,13 @@ typedef struct
         p8 huf_length[256];
         bool huf_valid;
         zstd_fse_prior prior[3];
+        /* The binary-tree levels: a three-byte hash when min_match is 3,
+           the next index it takes, and the parser's statistics. */
+        p32 address_to hash3;
+        positive hash3_bytes;
+        p8 hash3_log;
+        p32 next3;
+        zstd_price price;
 } zstd_encoder;
 
 static zstd_encoder zstd_enc;
@@ -1942,6 +1987,10 @@ static p8 zstd_enc_block_out[ZSTD_BLOCK_MAX + 2048];
 static p8 zstd_packed_lits[ZSTD_BLOCK_MAX * 2 + 512];
 static p32 zstd_lit_table_new[256];
 static p8 zstd_lit_length_new[256];
+#define ZSTD_OPT_NUM 4096
+#define ZSTD_PRICE_MAX ((bipolar)1 << 30)
+static zstd_opt_node zstd_opt[ZSTD_OPT_NUM + 3];
+static zstd_opt_match zstd_matches[ZSTD_OPT_NUM + 3];
 
 static __attribute__((always_inline)) inline fn zstd_bout_add(zstd_bout address_to b, p64 v, p8 nbits)
 {
@@ -3040,6 +3089,703 @@ zstd_chain_find(zstd_encoder address_to e, p8 address_to ip, p8 address_to iend,
         return best > 3 ? best : 0;
 }
 
+/*
+        The binary-tree levels.  Under each hash a tree orders the earlier
+        positions by the bytes that follow them, smaller to the left, so one
+        walk down it finds each longer match and puts the position in;
+        chain holds two links an index, a cycle of 2^(chain_log - 1).
+        btlazy2 hands the longest match to lazy2's parse.  btopt, btultra and
+        btultra2 price every match and literal from the statistics of the
+        sequences already chosen and keep the cheapest path, as libzstd does.
+*/
+static __attribute__((always_inline)) inline positive
+zstd_hash3(p8 address_to p, p8 log)
+{
+        return (positive)(((p32)(memory_load_unaligned(p32, p) << 8) * 506832829u) >>
+                          (32 - log));
+}
+
+static __attribute__((always_inline)) inline bool
+zstd_same_start(p8 address_to a, p8 address_to b, positive bytes)
+{
+        p32 const mask = bytes == 3 ? 0xFFFFFFu : 0xFFFFFFFFu;
+
+        return ((memory_load_unaligned(p32, a) ^ memory_load_unaligned(p32, b)) & mask) == 0;
+}
+
+/* Puts index cur into its tree; answers how far the caller may step before
+   the next position goes in (a long repeat need not go in byte by byte). */
+static p32 zstd_bt_insert(zstd_encoder address_to e, p8 address_to ip,
+                          p8 address_to iend, p32 low, p8 mls)
+{
+        p8 address_to const base = e->base;
+        p32 address_to const bt = e->chain;
+        p32 const mask = ((p32)1 << (e->p.chain_log - 1)) - 1;
+        p32 const cur = (p32)(ip - base);
+        p32 const oldest = mask >= cur ? 0 : cur - mask;
+        positive const h = zstd_hash_bytes(ip, e->p.hash_log, mls);
+        positive const room = (positive)(iend - ip);
+        p32 address_to smaller = bt + 2 * (cur & mask);
+        p32 address_to larger = smaller + 1;
+        p32 candidate = e->hash[h];
+        p32 match_end = cur + 9;
+        p32 dummy;
+        positive best = 8;
+        positive common_smaller = 0;
+        positive common_larger = 0;
+        positive compares = (positive)1 << e->p.search_log;
+
+        e->hash[h] = cur;
+        for (; compares && candidate >= low; compares--)
+        {
+                p32 address_to const next = bt + 2 * (candidate & mask);
+                p8 address_to const match = base + candidate;
+                positive length = common_smaller < common_larger ? common_smaller
+                                                                 : common_larger;
+
+                length += memory_common_prefix(ip + length, match + length, room - length);
+                if (length > best)
+                {
+                        best = length;
+                        if (length > match_end - candidate)
+                                match_end = candidate + (p32)length;
+                }
+                if (length == room)
+                        break;
+                if (match[length] < ip[length])
+                {
+                        address_to smaller = candidate;
+                        common_smaller = length;
+                        if (candidate <= oldest)
+                        {
+                                smaller = address_of dummy;
+                                break;
+                        }
+                        smaller = next + 1;
+                        candidate = next[1];
+                }
+                else
+                {
+                        address_to larger = candidate;
+                        common_larger = length;
+                        if (candidate <= oldest)
+                        {
+                                larger = address_of dummy;
+                                break;
+                        }
+                        larger = next;
+                        candidate = next[0];
+                }
+        }
+        address_to smaller = 0;
+        address_to larger = 0;
+        {
+                p32 const skip = best > 384 ? (p32)(best - 384 < 192 ? best - 384 : 192) : 0;
+                p32 const reach = match_end - (cur + 8);
+
+                return reach > skip ? reach : skip;
+        }
+}
+
+/*
+        Every match at ip longer than the one before it: the repeat offsets
+        (rep[0] - 1 as a fourth after no literals), a three-byte hash when
+        min_match is 3, then the tree's walk, which also puts ip in.  Each
+        offset value is a repeat code (1-3) or the distance + 3.  Positions
+        a long match already covered are not searched.
+*/
+static positive zstd_opt_matches(zstd_encoder address_to e, p8 address_to ip,
+                                 p8 address_to iend, const p32 address_to rep,
+                                 bool ll0, zstd_opt_match address_to matches)
+{
+        p8 address_to const base = e->base;
+        p8 const mls = e->p.min_match < 3 ? 3 : e->p.min_match > 6 ? 6 : e->p.min_match;
+        positive const min_match = mls == 3 ? 3 : 4;
+        positive const sufficient = e->p.target_length < ZSTD_OPT_NUM - 1
+                                        ? e->p.target_length
+                                        : ZSTD_OPT_NUM - 1;
+        p32 const cur = (p32)(ip - base);
+        p32 const window = (p32)1 << e->p.window_log;
+        p32 const low = cur - e->start > window ? cur - window : e->start;
+        p32 address_to const bt = e->chain;
+        p32 const mask = ((p32)1 << (e->p.chain_log - 1)) - 1;
+        p32 const oldest = mask >= cur ? 0 : cur - mask;
+        positive const room = (positive)(iend - ip);
+        p32 address_to smaller;
+        p32 address_to larger;
+        p32 candidate;
+        p32 match_end = cur + 9;
+        p32 dummy;
+        positive h;
+        positive best = min_match - 1;
+        positive count = 0;
+        positive common_smaller = 0;
+        positive common_larger = 0;
+        positive compares = (positive)1 << e->p.search_log;
+
+        if (cur < e->next)
+                return 0;
+        for (p32 at = e->next < low ? low : e->next; at < cur;)
+                at += zstd_bt_insert(e, base + at, iend, low, mls);
+        e->next = cur;
+
+        for (positive code = ll0; code < 3 + (positive)ll0; code++)
+        {
+                p32 const offset = code == 3 ? rep[0] - 1 : rep[code];
+                positive length = 0;
+
+                if (offset - 1 < cur - e->start && cur - offset >= low &&
+                    zstd_same_start(ip, ip - offset, min_match))
+                        length = min_match +
+                                 memory_common_prefix(ip + min_match, ip + min_match - offset,
+                                                      room - min_match);
+                if (length > best)
+                {
+                        best = length;
+                        matches[count].off = (p32)(code - ll0 + 1);
+                        matches[count].len = (p32)length;
+                        count++;
+                        if (length > sufficient || length == room)
+                                return count;
+                }
+        }
+        if (mls == 3 && best < 3)
+        {
+                p32 at = e->next3 < low ? low : e->next3;
+                p32 found;
+
+                for (; at < cur; at++)
+                        e->hash3[zstd_hash3(base + at, e->hash3_log)] = at;
+                e->next3 = cur;
+                found = e->hash3[zstd_hash3(ip, e->hash3_log)];
+                if (found >= low && found < cur && cur - found < ((p32)1 << 18))
+                {
+                        positive const length = memory_common_prefix(ip, base + found, room);
+
+                        if (length >= 3)
+                        {
+                                best = length;
+                                matches[0].off = cur - found + 3;
+                                matches[0].len = (p32)length;
+                                count = 1;
+                                if (length > sufficient || length == room)
+                                {
+                                        e->next = cur + 1;
+                                        return 1;
+                                }
+                        }
+                }
+        }
+        h = zstd_hash_bytes(ip, e->p.hash_log, mls);
+        candidate = e->hash[h];
+        e->hash[h] = cur;
+        smaller = bt + 2 * (cur & mask);
+        larger = smaller + 1;
+        for (; compares && candidate >= low; compares--)
+        {
+                p32 address_to const next = bt + 2 * (candidate & mask);
+                p8 address_to const match = base + candidate;
+                positive length = common_smaller < common_larger ? common_smaller
+                                                                 : common_larger;
+
+                length += memory_common_prefix(ip + length, match + length, room - length);
+                if (length > best)
+                {
+                        if (length > match_end - candidate)
+                                match_end = candidate + (p32)length;
+                        best = length;
+                        matches[count].off = cur - candidate + 3;
+                        matches[count].len = (p32)length;
+                        count++;
+                        if (length > ZSTD_OPT_NUM || length == room)
+                                break;
+                }
+                if (match[length] < ip[length])
+                {
+                        address_to smaller = candidate;
+                        common_smaller = length;
+                        if (candidate <= oldest)
+                        {
+                                smaller = address_of dummy;
+                                break;
+                        }
+                        smaller = next + 1;
+                        candidate = next[1];
+                }
+                else
+                {
+                        address_to larger = candidate;
+                        common_larger = length;
+                        if (candidate <= oldest)
+                        {
+                                larger = address_of dummy;
+                                break;
+                        }
+                        larger = next;
+                        candidate = next[0];
+                }
+        }
+        address_to smaller = 0;
+        address_to larger = 0;
+        e->next = match_end - 8;
+        return count;
+}
+
+/* btlazy2's search: the tree's longest match, repeats left to the parse. */
+static positive zstd_bt_best(zstd_encoder address_to e, p8 address_to ip,
+                             p8 address_to iend, positive address_to distance)
+{
+        static const p32 none[3] = {0, 0, 0};
+        positive const count = zstd_opt_matches(e, ip, iend, none, false, zstd_matches);
+
+        if (!count)
+                return 0;
+        address_to distance = zstd_matches[count - 1].off - 3;
+        return zstd_matches[count - 1].len;
+}
+
+static __attribute__((always_inline)) inline p32 zstd_weight(p32 stat, bool fractional)
+{
+        p32 const s = stat + 1;
+        p32 const high = zstd_highbit32(s);
+
+        return high * 256 + (fractional ? (s << 8) >> high : 0);
+}
+
+static p32 zstd_price_downscale(p32 address_to table, positive count, p8 shift,
+                                bool floor_one)
+{
+        p32 sum = 0;
+
+        for (positive s = 0; s < count; s++)
+        {
+                table[s] = (floor_one ? 1 : table[s] > 0) + (table[s] >> shift);
+                sum += table[s];
+        }
+        return sum;
+}
+
+static p32 zstd_price_scale(p32 address_to table, positive count, p8 log)
+{
+        p32 sum = 0;
+
+        for (positive s = 0; s < count; s++)
+                sum += table[s];
+        if ((sum >> log) <= 1)
+                return sum;
+        return zstd_price_downscale(table, count, zstd_highbit32(sum >> log), true);
+}
+
+static fn zstd_price_bases(zstd_price address_to pr, bool fractional)
+{
+        pr->lit_base = zstd_weight(pr->lit_sum, fractional);
+        pr->ll_base = zstd_weight(pr->ll_sum, fractional);
+        pr->ml_base = zstd_weight(pr->ml_sum, fractional);
+        pr->of_base = zstd_weight(pr->of_sum, fractional);
+}
+
+/* At a block's start.  The frame's first block counts its own bytes for
+   literals and takes libzstd's guesses for lengths and offset codes (and
+   fixed prices when it is tiny); later blocks keep what the chosen
+   sequences counted, scaled down. */
+static fn zstd_price_begin(zstd_price address_to pr, p8 address_to src,
+                           positive n, bool fractional)
+{
+        static const p8 ll_seed[36] = {4, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+        static const p8 of_seed[32] = {6, 2, 1, 1, 2, 3, 4, 4, 4, 3, 2, 1,
+                                       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                       1, 1, 1, 1, 1, 1, 1, 1};
+
+        pr->predefined = false;
+        if (!pr->ll_sum)
+        {
+                pr->predefined = n <= 8;
+                memory_fill(pr->lit, 0, sizeof(pr->lit));
+                for (positive i = 0; i < n; i++)
+                        pr->lit[src[i]]++;
+                pr->lit_sum = zstd_price_downscale(pr->lit, 256, 8, false);
+                pr->ll_sum = 0;
+                for (positive i = 0; i < 36; i++)
+                        pr->ll_sum += pr->ll[i] = ll_seed[i];
+                for (positive i = 0; i < 53; i++)
+                        pr->ml[i] = 1;
+                pr->ml_sum = 53;
+                pr->of_sum = 0;
+                for (positive i = 0; i < 32; i++)
+                        pr->of_sum += pr->of[i] = of_seed[i];
+        }
+        else
+        {
+                pr->lit_sum = zstd_price_scale(pr->lit, 256, 12);
+                pr->ll_sum = zstd_price_scale(pr->ll, 36, 11);
+                pr->ml_sum = zstd_price_scale(pr->ml, 53, 11);
+                pr->of_sum = zstd_price_scale(pr->of, 32, 11);
+        }
+        zstd_price_bases(pr, fractional);
+}
+
+static __attribute__((always_inline)) inline bipolar
+zstd_price_literal(const zstd_price address_to pr, p8 byte, bool fractional)
+{
+        p32 weight;
+
+        if (pr->predefined)
+                return 6 * 256;
+        weight = zstd_weight(pr->lit[byte], fractional);
+        if (weight > pr->lit_base - 256)
+                weight = pr->lit_base - 256;
+        return (bipolar)(pr->lit_base - weight);
+}
+
+static __attribute__((always_inline)) inline bipolar
+zstd_price_litlen(const zstd_price address_to pr, positive length, bool fractional)
+{
+        p8 code;
+
+        if (pr->predefined)
+                return zstd_weight((p32)length, fractional);
+        if (length >= ZSTD_BLOCK_MAX)
+                return 256 + zstd_price_litlen(pr, ZSTD_BLOCK_MAX - 1, fractional);
+        code = length < 64 ? zstd_ll_codes[length]
+                           : (p8)(19 + zstd_highbit32((p32)length));
+        return (bipolar)(zstd_ll_extra[code] * 256 + pr->ll_base -
+                         zstd_weight(pr->ll[code], fractional));
+}
+
+static __attribute__((always_inline)) inline bipolar
+zstd_price_match(const zstd_price address_to pr, p32 off_base, positive length,
+                 bool fractional)
+{
+        p32 const code = zstd_highbit32(off_base);
+        p8 ml;
+        p32 price;
+
+        if (pr->predefined)
+                return zstd_weight((p32)length - 3, fractional) + (16 + code) * 256;
+        price = code * 256 + pr->of_base - zstd_weight(pr->of[code], fractional);
+        if (!fractional && code >= 20)
+                price += (code - 19) * 2 * 256;
+        ml = length < 131 ? zstd_ml_codes[length]
+                          : (p8)(36 + zstd_highbit32((p32)length - 3));
+        price += zstd_ml_extra[ml] * 256 + pr->ml_base - zstd_weight(pr->ml[ml], fractional);
+        return (bipolar)price + 256 / 5;
+}
+
+static fn zstd_price_update(zstd_price address_to pr, p8 address_to literals,
+                            positive run, p32 off_base, positive match)
+{
+        for (positive u = 0; u < run; u++)
+                pr->lit[literals[u]] += 2;
+        pr->lit_sum += (p32)run * 2;
+        pr->ll[run < 64 ? zstd_ll_codes[run] : 19 + zstd_highbit32((p32)run)]++;
+        pr->ll_sum++;
+        pr->of[zstd_highbit32(off_base)]++;
+        pr->of_sum++;
+        pr->ml[match < 131 ? zstd_ml_codes[match] : 36 + zstd_highbit32((p32)match - 3)]++;
+        pr->ml_sum++;
+}
+
+/* The repeat offsets after offset value off_base, as RFC 8878 moves them;
+   into may be rep. */
+static __attribute__((always_inline)) inline fn
+zstd_opt_rep(p32 address_to into, const p32 address_to rep, p32 off_base, bool ll0)
+{
+        p32 const r0 = rep[0], r1 = rep[1], r2 = rep[2];
+        p32 const code = off_base - 1 + (p32)ll0;
+
+        if (off_base > 3)
+        {
+                into[0] = off_base - 3;
+                into[1] = r0;
+                into[2] = r1;
+        }
+        else if (!code)
+        {
+                into[0] = r0;
+                into[1] = r1;
+                into[2] = r2;
+        }
+        else
+        {
+                into[0] = code == 3 ? r0 - 1 : code == 1 ? r1 : r2;
+                into[1] = r0;
+                into[2] = code >= 2 ? r1 : r2;
+        }
+}
+
+static __attribute__((always_inline)) inline p32
+zstd_opt_distance(const p32 address_to rep, p32 off_base, bool ll0)
+{
+        p32 const code = off_base - 1 + (p32)ll0;
+
+        return off_base > 3 ? off_base - 3 : code == 3 ? rep[0] - 1 : rep[code];
+}
+
+/*
+        libzstd's optimal parse.  From each position with a match, prices go
+        forward: every length of every match found, and one more literal at
+        each position, keep the cheapest way to reach each position up to
+        the longest match (at most ZSTD_OPT_NUM on).  Then the path goes
+        back from the end and its sequences are stored.  A match longer than
+        the target length is taken at once.  ultra is btultra's precision:
+        fractional bit costs, no penalty on far offsets, and a match that
+        one literal later would cost less; without it positions and lengths
+        that cannot win are skipped.
+*/
+static p8 address_to zstd_parse_opt(zstd_encoder address_to e, p32 from, p32 to,
+                                    bool ultra)
+{
+        p8 address_to const base = e->base;
+        p8 address_to const iend = base + to;
+        p8 address_to const ilimit = iend - 8;
+        zstd_price address_to const pr = address_of e->price;
+        zstd_opt_node address_to const opt = zstd_opt;
+        zstd_opt_match address_to const matches = zstd_matches;
+        positive const sufficient = e->p.target_length < ZSTD_OPT_NUM - 1
+                                        ? e->p.target_length
+                                        : ZSTD_OPT_NUM - 1;
+        positive const min_match = e->p.min_match == 3 ? 3 : 4;
+        p8 address_to ip = base + from;
+        p8 address_to anchor = ip;
+        p32 rep[3] = {e->rep[0], e->rep[1], e->rep[2]};
+
+        zstd_price_begin(pr, ip, to - from, ultra);
+        ip += ip == base + e->start;
+        while (ip < ilimit)
+        {
+                p32 const segment[3] = {rep[0], rep[1], rep[2]};
+                positive cur;
+                positive last_pos = 0;
+                zstd_opt_node last;
+
+                {
+                        positive const litlen = (positive)(ip - anchor);
+                        positive const count = zstd_opt_matches(e, ip, iend, rep, !litlen, matches);
+                        positive pos;
+
+                        if (!count)
+                        {
+                                ip++;
+                                continue;
+                        }
+                        opt[0].mlen = 0;
+                        opt[0].litlen = (p32)litlen;
+                        opt[0].price = zstd_price_litlen(pr, litlen, ultra);
+                        memory_copy_apart(opt[0].rep, rep, sizeof(rep));
+                        if (matches[count - 1].len > sufficient)
+                        {
+                                last.litlen = 0;
+                                last.mlen = matches[count - 1].len;
+                                last.off = matches[count - 1].off;
+                                cur = 0;
+                                last_pos = last.mlen;
+                                goto shortest;
+                        }
+                        for (pos = 1; pos < min_match; pos++)
+                        {
+                                opt[pos].price = ZSTD_PRICE_MAX;
+                                opt[pos].mlen = 0;
+                                opt[pos].litlen = (p32)(litlen + pos);
+                        }
+                        for (positive n = 0; n < count; n++)
+                        {
+                                p32 const off = matches[n].off;
+                                p32 const reach = matches[n].len;
+
+                                for (; pos <= reach; pos++)
+                                {
+                                        opt[pos].mlen = (p32)pos;
+                                        opt[pos].off = off;
+                                        opt[pos].litlen = 0;
+                                        opt[pos].price = opt[0].price +
+                                                         zstd_price_match(pr, off, pos, ultra) +
+                                                         zstd_price_litlen(pr, 0, ultra);
+                                }
+                        }
+                        last_pos = pos - 1;
+                        opt[pos].price = ZSTD_PRICE_MAX;
+                }
+                for (cur = 1; cur <= last_pos; cur++)
+                {
+                        p8 address_to const inr = ip + cur;
+
+                        {
+                                positive const litlen = opt[cur - 1].litlen + 1;
+                                bipolar const price = opt[cur - 1].price +
+                                                      zstd_price_literal(pr, ip[cur - 1], ultra) +
+                                                      zstd_price_litlen(pr, litlen, ultra) -
+                                                      zstd_price_litlen(pr, litlen - 1, ultra);
+
+                                if (price <= opt[cur].price)
+                                {
+                                        zstd_opt_node const previous = opt[cur];
+
+                                        opt[cur] = opt[cur - 1];
+                                        opt[cur].litlen = (p32)litlen;
+                                        opt[cur].price = price;
+                                        if (ultra && previous.litlen == 0 &&
+                                            zstd_price_litlen(pr, 1, ultra) < zstd_price_litlen(pr, 0, ultra) &&
+                                            inr < iend)
+                                        {
+                                                bipolar const with1 = previous.price +
+                                                    zstd_price_literal(pr, ip[cur], ultra) +
+                                                    zstd_price_litlen(pr, 1, ultra) -
+                                                    zstd_price_litlen(pr, 0, ultra);
+                                                bipolar const more = price +
+                                                    zstd_price_literal(pr, ip[cur], ultra) +
+                                                    zstd_price_litlen(pr, litlen + 1, ultra) -
+                                                    zstd_price_litlen(pr, litlen, ultra);
+
+                                                if (with1 < more && with1 < opt[cur + 1].price)
+                                                {
+                                                        positive const prev = cur - previous.mlen;
+
+                                                        opt[cur + 1] = previous;
+                                                        zstd_opt_rep(opt[cur + 1].rep, opt[prev].rep,
+                                                                     previous.off, opt[prev].litlen == 0);
+                                                        opt[cur + 1].litlen = 1;
+                                                        opt[cur + 1].price = with1;
+                                                        if (last_pos < cur + 1)
+                                                                last_pos = cur + 1;
+                                                }
+                                        }
+                                }
+                        }
+                        if (opt[cur].litlen == 0)
+                        {
+                                positive const prev = cur - opt[cur].mlen;
+
+                                zstd_opt_rep(opt[cur].rep, opt[prev].rep, opt[cur].off,
+                                             opt[prev].litlen == 0);
+                        }
+                        if (inr > ilimit)
+                                continue;
+                        if (cur == last_pos)
+                                break;
+                        if (!ultra && opt[cur + 1].price <= opt[cur].price + 128)
+                                continue;
+                        {
+                                bool const ll0 = opt[cur].litlen == 0;
+                                bipolar const base_price = opt[cur].price +
+                                                           zstd_price_litlen(pr, 0, ultra);
+                                positive const count = zstd_opt_matches(e, inr, iend, opt[cur].rep,
+                                                                        ll0, matches);
+
+                                if (!count)
+                                        continue;
+                                {
+                                        positive const longest = matches[count - 1].len;
+
+                                        if (longest > sufficient || cur + longest >= ZSTD_OPT_NUM ||
+                                            inr + longest >= iend)
+                                        {
+                                                last.mlen = (p32)longest;
+                                                last.off = matches[count - 1].off;
+                                                last.litlen = 0;
+                                                last_pos = cur + longest;
+                                                goto shortest;
+                                        }
+                                }
+                                for (positive n = 0; n < count; n++)
+                                {
+                                        p32 const off = matches[n].off;
+                                        positive const first = n ? matches[n - 1].len + 1 : min_match;
+
+                                        for (positive length = matches[n].len; length >= first; length--)
+                                        {
+                                                positive const pos = cur + length;
+                                                bipolar const price = base_price +
+                                                                      zstd_price_match(pr, off, length, ultra);
+
+                                                if (pos > last_pos || price < opt[pos].price)
+                                                {
+                                                        while (last_pos < pos)
+                                                        {
+                                                                last_pos++;
+                                                                opt[last_pos].price = ZSTD_PRICE_MAX;
+                                                                opt[last_pos].litlen = 1;
+                                                        }
+                                                        opt[pos].mlen = (p32)length;
+                                                        opt[pos].off = off;
+                                                        opt[pos].litlen = 0;
+                                                        opt[pos].price = price;
+                                                }
+                                                else if (!ultra)
+                                                        break;
+                                        }
+                                }
+                        }
+                        opt[last_pos + 1].price = ZSTD_PRICE_MAX;
+                }
+                last = opt[last_pos];
+                cur = last_pos - last.mlen;
+        shortest:
+                if (!last.mlen)
+                {
+                        ip += last_pos;
+                        continue;
+                }
+                if (!last.litlen)
+                        zstd_opt_rep(rep, opt[cur].rep, last.off, opt[cur].litlen == 0);
+                else
+                {
+                        memory_copy_apart(rep, last.rep, sizeof(rep));
+                        cur -= last.litlen;
+                }
+                {
+                        positive const store_end = cur + 2;
+                        positive store_start;
+                        positive stretch = cur;
+                        p32 path[3] = {segment[0], segment[1], segment[2]};
+
+                        if (last.litlen)
+                        {
+                                opt[store_end].litlen = last.litlen;
+                                opt[store_end].mlen = 0;
+                                store_start = store_end - 1;
+                                opt[store_start] = last;
+                        }
+                        else
+                        {
+                                store_start = store_end;
+                                opt[store_end] = last;
+                        }
+                        for (;;)
+                        {
+                                zstd_opt_node const step = opt[stretch];
+
+                                opt[store_start].litlen = step.litlen;
+                                if (!step.mlen)
+                                        break;
+                                store_start--;
+                                opt[store_start] = step;
+                                stretch -= step.litlen + step.mlen;
+                        }
+                        for (positive at = store_start; at <= store_end; at++)
+                        {
+                                positive const run = opt[at].litlen;
+                                positive const match = opt[at].mlen;
+                                p32 const off = opt[at].off;
+
+                                if (!match)
+                                {
+                                        ip = anchor + run;
+                                        continue;
+                                }
+                                zstd_price_update(pr, anchor, run, off, match);
+                                zstd_store(e, anchor, run, zstd_opt_distance(path, off, !run), match);
+                                zstd_opt_rep(path, path, off, !run);
+                                anchor += run + match;
+                                ip = anchor;
+                        }
+                        zstd_price_bases(pr, ultra);
+                }
+        }
+        return anchor;
+}
+
 /* The bits an offset value costs, near enough to weigh one match against
    another: none for the last offset repeated. */
 static __attribute__((always_inline)) inline bipolar
@@ -3057,7 +3803,7 @@ zstd_offset_cost(zstd_encoder address_to e, positive distance)
         into the literals before it.
 */
 static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
-                                     p32 to, p32 low, positive depth)
+                                     p32 to, p32 low, positive depth, bool tree)
 {
         p8 address_to const base = e->base;
         p8 address_to const lowest = base + low;
@@ -3086,7 +3832,8 @@ static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
                         if (!depth)
                                 goto store;
                 }
-                found = zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                found = tree ? zstd_bt_best(e, ip, iend, address_of found_distance)
+                             : zstd_chain_find(e, ip, iend, low, address_of found_distance);
                 if (found > match)
                 {
                         match = found;
@@ -3118,7 +3865,8 @@ static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
                                         start = ip;
                                 }
                         }
-                        found = zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                        found = tree ? zstd_bt_best(e, ip, iend, address_of found_distance)
+                             : zstd_chain_find(e, ip, iend, low, address_of found_distance);
                         if (found >= 4 &&
                             (bipolar)found * 4 - (bipolar)zstd_highbit32((p32)found_distance + 3) >
                                 (bipolar)match * 4 - zstd_offset_cost(e, distance) + 4)
@@ -3146,7 +3894,8 @@ static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
                                                 start = ip;
                                         }
                                 }
-                                found = zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                                found = tree ? zstd_bt_best(e, ip, iend, address_of found_distance)
+                             : zstd_chain_find(e, ip, iend, low, address_of found_distance);
                                 if (found >= 4 &&
                                     (bipolar)found * 4 - (bipolar)zstd_highbit32((p32)found_distance + 3) >
                                         (bipolar)match * 4 - zstd_offset_cost(e, distance) + 7)
@@ -3178,12 +3927,16 @@ static fn zstd_encoder_close(zstd_encoder address_to e)
                 memory_free(e->hash, e->hash_bytes);
         if (e->chain)
                 memory_free(e->chain, e->chain_bytes);
+        if (e->hash3)
+                memory_free(e->hash3, e->hash3_bytes);
         e->storage = null;
         e->hash = null;
         e->chain = null;
+        e->hash3 = null;
         e->storage_room = 0;
         e->hash_bytes = 0;
         e->chain_bytes = 0;
+        e->hash3_bytes = 0;
         e->filled = 0;
 }
 
@@ -3208,10 +3961,14 @@ static bool zstd_encoder_open(zstd_encoder address_to e,
         positive const hash_bytes = (positive)4 << p->hash_log;
         positive const chain_bytes =
             p->strategy == ZSTD_FAST ? 0 : (positive)4 << p->chain_log;
+        p8 const hash3_log = p->window_log < 17 ? p->window_log : 17;
+        positive const hash3_bytes = p->strategy >= ZSTD_BTOPT && p->min_match == 3
+                                         ? (positive)4 << hash3_log
+                                         : 0;
         p32 start;
 
         if (e->storage_room < room || e->hash_bytes != hash_bytes ||
-            e->chain_bytes != chain_bytes)
+            e->chain_bytes != chain_bytes || e->hash3_bytes != hash3_bytes)
         {
                 zstd_encoder_close(e);
                 if (!(e->storage = zstd_encoder_map(room)))
@@ -3223,6 +3980,9 @@ static bool zstd_encoder_open(zstd_encoder address_to e,
                 if (chain_bytes && !(e->chain = zstd_encoder_map(chain_bytes)))
                         return zstd_encoder_close(e), zstd_fail("zstd cannot map its tables");
                 e->chain_bytes = chain_bytes;
+                if (hash3_bytes && !(e->hash3 = zstd_encoder_map(hash3_bytes)))
+                        return zstd_encoder_close(e), zstd_fail("zstd cannot map its tables");
+                e->hash3_bytes = hash3_bytes;
         }
         start = e->filled ? e->filled + (p32)window + 1 : 1;
         if (start > 0x40000000u)
@@ -3230,8 +3990,13 @@ static bool zstd_encoder_open(zstd_encoder address_to e,
                 memory_fill(e->hash, 0, hash_bytes);
                 if (chain_bytes)
                         memory_fill(e->chain, 0, chain_bytes);
+                if (hash3_bytes)
+                        memory_fill(e->hash3, 0, hash3_bytes);
                 start = 1;
         }
+        e->hash3_log = hash3_log;
+        e->next3 = start;
+        memory_fill(address_of e->price, 0, sizeof(e->price));
         e->p = address_to p;
         e->checksum = checksum;
         e->start = start;
@@ -3280,11 +4045,14 @@ static fn zstd_encoder_reduce(zstd_encoder address_to e)
                 e->hash[i] = e->hash[i] > shift ? e->hash[i] - shift : 0;
         for (positive i = 0; i < e->chain_bytes / 4; i++)
                 e->chain[i] = e->chain[i] > shift ? e->chain[i] - shift : 0;
+        for (positive i = 0; i < e->hash3_bytes / 4; i++)
+                e->hash3[i] = e->hash3[i] > shift ? e->hash3[i] - shift : 0;
         e->start = e->start > shift ? e->start - shift : 1;
         e->block -= shift;
         e->filled -= shift;
         e->storage_index -= shift;
         e->next = e->next > shift + e->storage_index ? e->next - shift : e->storage_index;
+        e->next3 = e->next3 > shift + e->storage_index ? e->next3 - shift : e->storage_index;
         e->base = e->storage - e->storage_index;
 }
 
@@ -3330,6 +4098,26 @@ static bool zstd_encode_block(zstd_encoder address_to e, positive n, bool last)
 
                 e->nseq = 0;
                 e->nlit = 0;
+                /* btultra2 parses a frame's first block twice: the first
+                   pass only counts, then its bytes take new indices past
+                   the tables, so the second pass starts with no history
+                   and the counts of the first. */
+                if (e->p.strategy == ZSTD_BTULTRA2 && !e->price.ll_sum &&
+                    from == e->start)
+                {
+                        zstd_parse_opt(e, from, to, true);
+                        memory_copy_apart(e->rep, saved, sizeof(saved));
+                        e->nseq = 0;
+                        e->nlit = 0;
+                        e->base -= n;
+                        e->start += (p32)n;
+                        e->block += (p32)n;
+                        e->filled += (p32)n;
+                        e->storage_index += (p32)n;
+                        e->next = e->start;
+                        e->next3 = e->start;
+                        return zstd_encode_block(e, n, last);
+                }
                 switch (e->p.strategy)
                 {
                 case ZSTD_FAST:
@@ -3339,13 +4127,22 @@ static bool zstd_encode_block(zstd_encoder address_to e, positive n, bool last)
                         anchor = zstd_parse_dfast(e, from, to, low);
                         break;
                 case ZSTD_GREEDY:
-                        anchor = zstd_parse_lazy(e, from, to, low, 0);
+                        anchor = zstd_parse_lazy(e, from, to, low, 0, false);
                         break;
                 case ZSTD_LAZY:
-                        anchor = zstd_parse_lazy(e, from, to, low, 1);
+                        anchor = zstd_parse_lazy(e, from, to, low, 1, false);
+                        break;
+                case ZSTD_LAZY2:
+                        anchor = zstd_parse_lazy(e, from, to, low, 2, false);
+                        break;
+                case ZSTD_BTLAZY2:
+                        anchor = zstd_parse_lazy(e, from, to, low, 2, true);
+                        break;
+                case ZSTD_BTOPT:
+                        anchor = zstd_parse_opt(e, from, to, false);
                         break;
                 default:
-                        anchor = zstd_parse_lazy(e, from, to, low, 2);
+                        anchor = zstd_parse_opt(e, from, to, true);
                         break;
                 }
                 memory_copy_apart(zstd_enc_lits + e->nlit, anchor,

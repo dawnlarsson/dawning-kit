@@ -24055,8 +24055,8 @@ def harness_compression(argv):
             # the worker count never changes the bytes; a level past 19
             # without --ultra warns and is 19; windows outside 10-27 and a
             # --fast of 0 are refused; and at -1, -3 and -9 ours comes within
-            # RATIO_SLACK of the reference's size.
-            RATIO_SLACK = {'1': 1.03, '3': 1.03, '9': 1.03}
+            # RATIO_SLACK of the reference's size at -1, -3, -9, -13, -16 and -19.
+            RATIO_SLACK = {'1': 1.03, '3': 1.03, '9': 1.03, '13': 1.03, '16': 1.03, '19': 1.03}
             level_cases = ([['-%d' % l] for l in range(0, 20)] +
                            [['--ultra', '-%d' % l] for l in (20, 21, 22)] +
                            [['--fast'], ['--fast=5'], ['--long=24', '-3'], ['--no-check', '-3'],
