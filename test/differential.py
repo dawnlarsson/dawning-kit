@@ -16565,6 +16565,8 @@ struct window_key { unsigned code,character,flags,reserved; };
 #define REL_WHEEL 8
 #define REL_WHEEL_HI_RES 11
 #define BTN_LEFT 272
+#define BTN_RIGHT 273
+#define BTN_MIDDLE 274
 #define BTN_TOUCH 330
 #define ABS_X 0
 #define ABS_Y 1
@@ -16578,6 +16580,7 @@ static struct {
     unsigned abs_have;
     atomic_t pending_x,pending_y,motion_pending,shake_dir,shake_count,magnify,wheel;
     atomic_t button_x,button_y,button_down,button_changed;
+    atomic_t client_button,client_down,client_changed;
     atomic_t modifiers,key_head,key_tail,focus_steps,focus_commit,focus_cycling,minimize;
     struct window_key key_ring[WINDOW_KEYS];
     int input_lock;
