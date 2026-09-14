@@ -3,9 +3,10 @@
 
         Decode uses primary Huffman tables and a shared assembly token loop,
         with a canonical decoder for long codes and refill tails. Encode
-        is a 32 KiB hash chain with lazy matching and a
-        dynamic Huffman block, falling back to fixed or stored when the
-        tree would not pay. Match lengths are memory_common_prefix;
+        deflates fixed 1 MiB blocks, each with the previous 32 KiB as
+        history, through a 32 KiB hash chain with lazy matching and dynamic
+        Huffman blocks that fall back to fixed or stored when the tree would
+        not pay (see the encoder below). Match lengths are memory_common_prefix;
         checksums are hash_crc32. Concatenated members are accepted the
         way gzip -d accepts them. There is no encryption, no LZW, and no
         zlib wrapper.
@@ -90,9 +91,6 @@ static p16 gzip_code_symbol[19];
 static p16 gzip_lit_quick[2048];
 static p16 gzip_dist_quick[256];
 
-static p32 gzip_head[GZIP_HASH_SIZE];
-static p32 gzip_prev[GZIP_WINDOW];
-static p8 gzip_level;
 
 static bool gzip_fail(string_address why)
 {
@@ -189,15 +187,6 @@ static bool gzip_out_flush(void)
                             gzip_out_buf + gzip_out_fill - GZIP_WINDOW,
                             GZIP_WINDOW);
         gzip_out_fill = 0;
-        return true;
-}
-
-static bool gzip_out_reserve(positive need)
-{
-        if (gzip_out_failed || need > GZIP_OUT)
-                return false;
-        if (gzip_out_fill > GZIP_OUT - need && !gzip_out_flush())
-                return false;
         return true;
 }
 
@@ -866,42 +855,62 @@ static bipolar gzip_inflate_mem(p8 address_to src, positive src_len,
         return ok ? (bipolar)gzip_output.used : -1;
 }
 
-static __attribute__((always_inline)) inline bool gzip_put(p32 value, p8 n)
+/*
+        Encoder.
+
+        Input is deflated in fixed blocks of GZIP_BLOCK bytes. A gzip_encoder
+        sees the 32 KiB before its block as history, hashed but never
+        emitted, so matches still reach back across the cut, and it ends the
+        block on a byte boundary with an empty stored block. Blocks can so be
+        deflated side by side and concatenated as they are; the stream closes
+        with an empty final fixed block. Block size, history and every
+        boundary come from the input alone, never from how many blocks are
+        deflated at once or how the input arrived.
+*/
+
+#define GZIP_BLOCK (1u << 20)
+#define GZIP_TOKEN_LIMIT 16384
+
+typedef struct
 {
-        if (gzip_out_failed)
-                return false;
-        gzip_bits |= (p64)value << gzip_bitn;
-        gzip_bitn += n;
-        if (gzip_bitn >= 32)
+        p8 level;
+        /* history bytes, then the block: base[0, total) */
+        p8 address_to base;
+        positive total;
+        p32 head[GZIP_HASH_SIZE];
+        p32 prev[GZIP_WINDOW];
+        p32 mpos[GZIP_TOKEN_LIMIT];
+        p16 mlen[GZIP_TOKEN_LIMIT];
+        p16 mdist[GZIP_TOKEN_LIMIT];
+        p8 address_to out;
+        positive out_room;
+        positive out_n;
+        p64 bits;
+        p32 bitn;
+} gzip_encoder;
+
+static inline INLINE fn gzip_put_bits(gzip_encoder address_to e, p32 value, p32 n)
+{
+        e->bits |= (p64)value << e->bitn;
+        e->bitn += n;
+        if (e->bitn >= 32)
         {
-                if (!gzip_out_reserve(4))
-                        return false;
-                gzip_out_buf[gzip_out_fill] = (p8)gzip_bits;
-                gzip_out_buf[gzip_out_fill + 1] = (p8)(gzip_bits >> 8);
-                gzip_out_buf[gzip_out_fill + 2] = (p8)(gzip_bits >> 16);
-                gzip_out_buf[gzip_out_fill + 3] = (p8)(gzip_bits >> 24);
-                gzip_out_fill += 4;
-                gzip_bits >>= 32;
-                gzip_bitn -= 32;
-                if (gzip_out_fill == GZIP_OUT && !gzip_out_flush())
-                        return false;
+                memory_store_unaligned(p32, e->out + e->out_n, (p32)e->bits);
+                e->out_n += 4;
+                e->bits >>= 32;
+                e->bitn -= 32;
         }
-        return true;
 }
 
-static bool gzip_put_flush(void)
+static fn gzip_bits_align(gzip_encoder address_to e)
 {
-        while (gzip_bitn)
+        while (e->bitn)
         {
-                if (!gzip_out_reserve(1))
-                        return false;
-                gzip_out_buf[gzip_out_fill++] = (p8)gzip_bits;
-                gzip_bits >>= 8;
-                gzip_bitn = gzip_bitn > 8 ? gzip_bitn - 8 : 0;
-                if (gzip_out_fill == GZIP_OUT && !gzip_out_flush())
-                        return false;
+                e->out[e->out_n++] = (p8)e->bits;
+                e->bits >>= 8;
+                e->bitn = e->bitn > 8 ? e->bitn - 8 : 0;
         }
-        return gzip_out_flush();
+        e->bits = 0;
 }
 
 static fn gzip_lengths_to_codes(p8 address_to length, positive n,
@@ -981,175 +990,29 @@ static positive gzip_distance_code(positive dist)
         return (hb << 1) + ((v >> (hb - 1)) & 1);
 }
 
-static bool gzip_write_stored(p8 address_to src, positive length, bool last)
+/* Stored blocks of at most 65535 bytes; length zero is the byte-aligning
+   empty block that ends every deflated input block. */
+static fn gzip_write_stored(gzip_encoder address_to e, p8 address_to src, positive length,
+                            bool last)
 {
         do
         {
                 positive chunk = length > 65535 ? 65535 : length;
-                positive left = chunk;
-                if (!gzip_put(last && chunk == length, 1) ||
-                    !gzip_put(0, 2) || !gzip_put_flush() ||
-                    !gzip_out_reserve(4))
-                        return false;
-                gzip_out_buf[gzip_out_fill++] = (p8)chunk;
-                gzip_out_buf[gzip_out_fill++] = (p8)(chunk >> 8);
-                gzip_out_buf[gzip_out_fill++] = (p8)~chunk;
-                gzip_out_buf[gzip_out_fill++] = (p8)(~chunk >> 8);
-                while (left)
-                {
-                        if (!gzip_out_reserve(1))
-                                return false;
-                        positive room = GZIP_OUT - gzip_out_fill;
-                        positive take = left < room ? left : room;
-                        memory_copy(gzip_out_buf + gzip_out_fill, src, take);
-                        gzip_out_fill += take;
-                        src += take;
-                        left -= take;
-                        if (gzip_out_fill == GZIP_OUT && !gzip_out_flush())
-                                return false;
-                }
+
+                gzip_put_bits(e, last && chunk == length, 1);
+                gzip_put_bits(e, 0, 2);
+                gzip_bits_align(e);
+                e->out[e->out_n++] = (p8)chunk;
+                e->out[e->out_n++] = (p8)(chunk >> 8);
+                e->out[e->out_n++] = (p8)~chunk;
+                e->out[e->out_n++] = (p8)(~chunk >> 8);
+                if (chunk)
+                        memory_copy_apart(e->out + e->out_n, src, chunk);
+                e->out_n += chunk;
+                src += chunk;
                 length -= chunk;
         } while (length);
-        return true;
 }
-
-/*
-        Tokens: literal bytes, or matches stored as 0x8000|length plus dist.
-        A block is one array of those plus the source slice they describe.
-*/
-
-#define GZIP_TOK_LIT 0
-#define GZIP_TOK_MATCH 1
-
-/* Keep a full history and a full input slab. A 258-byte lookahead-only
-   buffer recopied 32 KiB after nearly every match and truncated chains. */
-static p8 gzip_src_hold[2 * GZIP_WINDOW + GZIP_MAX_MATCH];
-static positive gzip_src_fill;
-static positive gzip_src_at;
-static positive gzip_src_abs;
-static bool gzip_src_eof;
-static p8 address_to gzip_feed;
-static positive gzip_feed_len;
-static bool gzip_feed_last;
-
-static bool gzip_enc_pull(void)
-{
-        bipolar got;
-        positive room;
-
-        if (gzip_src_eof)
-                return true;
-
-        if (gzip_src_at >= 2 * GZIP_WINDOW)
-        {
-                positive drop = GZIP_WINDOW;
-
-                memory_copy_apart(gzip_src_hold, gzip_src_hold + drop,
-                                  gzip_src_fill - drop);
-                gzip_src_fill -= drop;
-                gzip_src_at -= drop;
-                gzip_src_abs += drop;
-                if (gzip_src_abs >= 0x80000000u)
-                {
-                        positive shift = gzip_src_abs - GZIP_WINDOW;
-                        for (positive i = 0; i < GZIP_HASH_SIZE; i++)
-                                gzip_head[i] = gzip_head[i] >= shift
-                                               ? gzip_head[i] - shift : 0;
-                        for (positive i = 0; i < GZIP_WINDOW; i++)
-                                gzip_prev[i] = gzip_prev[i] >= shift
-                                               ? gzip_prev[i] - shift : 0;
-                        gzip_src_abs -= shift;
-                }
-        }
-
-        room = sizeof(gzip_src_hold) - gzip_src_fill;
-        if (!room)
-                return true;
-        if (gzip_feed)
-        {
-                positive take = min(gzip_feed_len, room);
-                memory_copy(gzip_src_hold + gzip_src_fill, gzip_feed, take);
-                gzip_src_fill += take;
-                gzip_feed += take;
-                gzip_feed_len -= take;
-                if (!gzip_feed_len)
-                {
-                        gzip_feed = null;
-                        gzip_src_eof = gzip_feed_last;
-                }
-                return true;
-        }
-        if (gzip_input.fd < 0)
-                return true;
-        got = system_read_retry((positive)gzip_input.fd,
-                                gzip_src_hold + gzip_src_fill, room);
-        if (got < 0)
-                return gzip_fail("gzip read failed");
-        if (!got)
-                gzip_src_eof = true;
-        else
-                gzip_src_fill += (positive)got;
-        return true;
-}
-
-static positive gzip_match_at(positive pos, positive chain, positive nice,
-                              positive best, positive address_to dist)
-{
-        positive left = gzip_src_fill - pos;
-        positive current = gzip_src_abs + pos;
-        positive earliest = current > GZIP_WINDOW ? current - GZIP_WINDOW : 1;
-        positive steps = gzip_level >= 8 ? 4096 : gzip_level >= 6 ? 128
-                                               : gzip_level >= 4 ? 32 : 8;
-        p8 address_to here = gzip_src_hold + pos;
-        if (earliest < gzip_src_abs) earliest = gzip_src_abs;
-        if (!earliest) earliest = 1;
-        if (left > GZIP_MAX_MATCH) left = GZIP_MAX_MATCH;
-        if (left < GZIP_MIN_MATCH) return 0;
-        if (best >= left || chain >= current) return best;
-        if (best >= 8) steps >>= 2;
-        while (chain >= earliest && steps--)
-        {
-                positive old = chain;
-                /* Issue the dependent chain load beside the candidate load.
-                   Strictly decreasing links make the upper-bound check an
-                   entry check; only the window's lower bound remains hot. */
-                positive next = gzip_prev[old & GZIP_WMASK];
-                p8 address_to there = gzip_src_hold + (old - gzip_src_abs);
-                chain = next < old ? next : 0;
-                /* best is zero or at least three, and strictly below left.
-                   The two-byte end check rejects common suffix collisions
-                   before the front and full prefix loads. */
-                if ((best && memory_load_unaligned(p16, here + best - 1) !=
-                             memory_load_unaligned(p16, there + best - 1)) ||
-                    memory_load_unaligned(p16, here) != memory_load_unaligned(p16, there) ||
-                    here[2] != there[2] ||
-                    (best >= 8 && memory_load_unaligned(p64, here) !=
-                                  memory_load_unaligned(p64, there)))
-                        continue;
-                positive n = 3 + memory_common_prefix(here + 3, there + 3, left - 3);
-                if (n > best)
-                {
-                        best = n;
-                        address_to dist = current - old;
-                        if (best >= nice || best == left) break;
-                }
-        }
-        return best;
-}
-
-static fn gzip_insert(positive pos)
-{
-        p16 h;
-        p32 prev;
-
-        if (pos + 2 >= gzip_src_fill)
-                return;
-        h = compression_hash3(gzip_src_hold + pos);
-        prev = gzip_head[h];
-        gzip_prev[(gzip_src_abs + pos) & GZIP_WMASK] = prev;
-        gzip_head[h] = gzip_src_abs + pos;
-}
-
 
 static fn gzip_fixed_init(void)
 {
@@ -1174,52 +1037,56 @@ static fn gzip_fixed_init(void)
         gzip_fixed_codes = true;
 }
 
-static bool gzip_write_fixed(p8 address_to src, positive length,
-                             p32 address_to mpos, p16 address_to mlen,
-                             p16 address_to mdist, positive pairs, bool last)
+/* The tokens of one deflate block: literals from src, and pairs whose
+   positions are offsets into src, in order. */
+static fn gzip_write_tokens(gzip_encoder address_to e, p8 address_to src, positive length,
+                            positive pairs, p16 address_to lit_code, p8 address_to lit_len,
+                            p16 address_to dist_code, p8 address_to dist_len)
 {
         positive at = 0;
         positive pair = 0;
 
-        gzip_fixed_init();
-        if (!gzip_put(last ? 1 : 0, 1) || !gzip_put(1, 2))
-                return false;
         while (at < length)
         {
-                if (pair < pairs && mpos[pair] == at)
+                if (pair < pairs && e->mpos[pair] == at)
                 {
-                        positive lcode = gzip_length_code(mlen[pair]);
-                        positive dcode = gzip_distance_code(mdist[pair]);
+                        positive len = e->mlen[pair];
+                        positive dist = e->mdist[pair];
+                        positive lcode = gzip_length_code(len);
+                        positive dcode = gzip_distance_code(dist);
 
-                        if (!gzip_put(gzip_fixed_lit_code[257 + lcode],
-                                           gzip_fixed_lit_len[257 + lcode]) ||
-                            (gzip_len_extra[lcode] &&
-                             !gzip_put(mlen[pair] - gzip_len_base[lcode],
-                                       gzip_len_extra[lcode])) ||
-                            !gzip_put(gzip_fixed_dist_code[dcode],
-                                           gzip_fixed_dist_len[dcode]) ||
-                            (gzip_dist_extra[dcode] &&
-                             !gzip_put(mdist[pair] - gzip_dist_base[dcode],
-                                       gzip_dist_extra[dcode])))
-                                return false;
-                        at += mlen[pair];
+                        gzip_put_bits(e, lit_code[257 + lcode], lit_len[257 + lcode]);
+                        if (gzip_len_extra[lcode])
+                                gzip_put_bits(e, (p32)(len - gzip_len_base[lcode]),
+                                          gzip_len_extra[lcode]);
+                        gzip_put_bits(e, dist_code[dcode], dist_len[dcode]);
+                        if (gzip_dist_extra[dcode])
+                                gzip_put_bits(e, (p32)(dist - gzip_dist_base[dcode]),
+                                          gzip_dist_extra[dcode]);
+                        at += len;
                         pair++;
                 }
                 else
                 {
-                        if (!gzip_put(gzip_fixed_lit_code[src[at]],
-                                           gzip_fixed_lit_len[src[at]]))
-                                return false;
+                        gzip_put_bits(e, lit_code[src[at]], lit_len[src[at]]);
                         at++;
                 }
         }
-        return gzip_put(gzip_fixed_lit_code[256],
-                             gzip_fixed_lit_len[256]);
+        gzip_put_bits(e, lit_code[256], lit_len[256]);
 }
 
-static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
-                            p32 address_to mpos, p16 address_to mlen,
-                            p16 address_to mdist, positive pairs, bool last)
+static fn gzip_write_fixed(gzip_encoder address_to e, p8 address_to src, positive length,
+                           positive pairs, bool last)
+{
+        gzip_put_bits(e, last ? 1 : 0, 1);
+        gzip_put_bits(e, 1, 2);
+        gzip_write_tokens(e, src, length, pairs, gzip_fixed_lit_code, gzip_fixed_lit_len,
+                          gzip_fixed_dist_code, gzip_fixed_dist_len);
+}
+
+/* A dynamic block, or fixed or stored when the tree would not pay. */
+static fn gzip_block_emit(gzip_encoder address_to e, p8 address_to src, positive length,
+                          positive pairs, bool last)
 {
         p32 lit_freq[GZIP_MAXLIT];
         p32 dist_freq[GZIP_MAXDIST];
@@ -1232,25 +1099,22 @@ static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
         positive bits = 0, extra_bits = 0, fixed_bits = 3;
         positive chunks = length ? (length + 65534) / 65535 : 1;
         positive stored_bits = length * 8 + chunks * 40 +
-                               ((8 - ((gzip_bitn + 3) & 7)) & 7) - 5;
+                               ((8 - ((e->bitn + 3) & 7)) & 7) - 5;
 
         memory_fill(lit_freq, 0, sizeof(lit_freq));
         memory_fill(dist_freq, 0, sizeof(dist_freq));
         lit_freq[256] = 1;
-
-        at = 0;
-        pair = 0;
         while (at < length)
         {
-                if (pair < pairs && mpos[pair] == at)
+                if (pair < pairs && e->mpos[pair] == at)
                 {
-                        positive lcode = gzip_length_code(mlen[pair]);
-                        positive dcode = gzip_distance_code(mdist[pair]);
+                        positive lcode = gzip_length_code(e->mlen[pair]);
+                        positive dcode = gzip_distance_code(e->mdist[pair]);
 
                         lit_freq[257 + lcode]++;
                         dist_freq[dcode]++;
                         extra_bits += gzip_len_extra[lcode] + gzip_dist_extra[dcode];
-                        at += mlen[pair];
+                        at += e->mlen[pair];
                         pair++;
                 }
                 else
@@ -1260,7 +1124,6 @@ static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
                 }
         }
 
-        gzip_fixed_init();
         fixed_bits += extra_bits;
         for (positive i = 0; i < GZIP_MAXLIT; i++)
                 fixed_bits += lit_freq[i] * gzip_fixed_lit_len[i];
@@ -1273,9 +1136,8 @@ static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
                 lit_len[256] = 1;
         {
                 bool any_dist = false;
-                positive i;
 
-                for (i = 0; i < GZIP_MAXDIST; i++)
+                for (positive i = 0; i < GZIP_MAXDIST; i++)
                         if (dist_len[i])
                                 any_dist = true;
                 if (!any_dist)
@@ -1287,421 +1149,485 @@ static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
             !gzip_used_coded(dist_freq, dist_len, GZIP_MAXDIST))
         {
                 if (stored_bits <= fixed_bits)
-                        return gzip_write_stored(src, length, last);
-                return gzip_write_fixed(src, length, mpos, mlen, mdist, pairs,
-                                        last);
+                        gzip_write_stored(e, src, length, last);
+                else
+                        gzip_write_fixed(e, src, length, pairs, last);
+                return;
         }
         gzip_lengths_to_codes(lit_len, GZIP_MAXLIT, lit_code);
         gzip_lengths_to_codes(dist_len, GZIP_MAXDIST, dist_code);
 
         bits = extra_bits;
-        for (positive i = 0; i < GZIP_MAXLIT; i++) bits += lit_freq[i] * lit_len[i];
-        for (positive i = 0; i < GZIP_MAXDIST; i++) bits += dist_freq[i] * dist_len[i];
+        for (positive i = 0; i < GZIP_MAXLIT; i++)
+                bits += lit_freq[i] * lit_len[i];
+        for (positive i = 0; i < GZIP_MAXDIST; i++)
+                bits += dist_freq[i] * dist_len[i];
 
+        p8 clen[19];
+        p16 ccode[19];
+        p32 cfreq[19];
+        p8 seq[288 + 32];
+        positive nseq = 0;
+        positive i;
+        positive run;
+        positive hlit = 286, hdist = 30, hclen = 19;
+        p8 here;
+
+        while (hlit > 257 && !lit_len[hlit - 1])
+                hlit--;
+        while (hdist > 1 && !dist_len[hdist - 1])
+                hdist--;
+        for (i = 0; i < hlit; i++)
+                seq[nseq++] = lit_len[i];
+        for (i = 0; i < hdist; i++)
+                seq[nseq++] = dist_len[i];
+
+        memory_fill(cfreq, 0, sizeof(cfreq));
+        i = 0;
+        while (i < nseq)
         {
-                p8 clen[19];
-                p16 ccode[19];
-                p32 cfreq[19];
-                p8 seq[288 + 32];
-                positive nseq = 0;
-                positive i;
-                positive run;
-                positive hlit = 286, hdist = 30, hclen = 19;
-                p8 here;
-
-                while (hlit > 257 && !lit_len[hlit - 1]) hlit--;
-                while (hdist > 1 && !dist_len[hdist - 1]) hdist--;
-                for (i = 0; i < hlit; i++)
-                        seq[nseq++] = lit_len[i];
-                for (i = 0; i < hdist; i++)
-                        seq[nseq++] = dist_len[i];
-
-                memory_fill(cfreq, 0, sizeof(cfreq));
-                i = 0;
-                while (i < nseq)
+                here = seq[i];
+                run = 1;
+                i++;
+                while (i < nseq && seq[i] == here && run < 138)
                 {
-                        here = seq[i];
-                        run = 1;
+                        run++;
                         i++;
-                        while (i < nseq && seq[i] == here && run < 138)
-                        {
-                                run++;
-                                i++;
-                        }
-                        if (here)
-                        {
-                                cfreq[here]++;
-                                run--;
-                                if (run >= 3)
-                                {
-                                        while (run >= 3)
-                                        {
-                                                positive take = run > 6 ? 6 : run;
-
-                                                cfreq[16]++;
-                                                run -= take;
-                                        }
-                                }
-                                cfreq[here] += run;
-                        }
-                        else if (run >= 11)
-                                cfreq[18]++;
-                        else if (run >= 3)
-                                cfreq[17]++;
-                        else
-                                cfreq[0] += run;
                 }
-                compression_build_lengths(cfreq, 19, clen, 7);
-                if (!gzip_lengths_ok(clen, 19, 7) ||
-                    !gzip_used_coded(cfreq, clen, 19))
+                if (here)
                 {
-                        if (stored_bits <= fixed_bits)
-                                return gzip_write_stored(src, length, last);
-                        return gzip_write_fixed(src, length, mpos, mlen, mdist,
-                                                pairs, last);
+                        cfreq[here]++;
+                        run--;
+                        while (run >= 3)
+                        {
+                                positive take = run > 6 ? 6 : run;
+
+                                cfreq[16]++;
+                                run -= take;
+                        }
+                        cfreq[here] += run;
                 }
-                gzip_lengths_to_codes(clen, 19, ccode);
-
-                while (hclen > 4 && !clen[gzip_clen_order[hclen - 1]]) hclen--;
-                bits += 17 + hclen * 3 + cfreq[16] * 2 + cfreq[17] * 3 + cfreq[18] * 7;
-                for (positive c = 0; c < 19; c++) bits += cfreq[c] * clen[c];
-                if (stored_bits <= bits && stored_bits <= fixed_bits)
-                        return gzip_write_stored(src, length, last);
-                if (fixed_bits <= bits)
-                        return gzip_write_fixed(src, length, mpos, mlen, mdist,
-                                                pairs, last);
-                if (!gzip_put(last ? 1 : 0, 1) || !gzip_put(2, 2) ||
-                    !gzip_put(hlit - 257, 5) || !gzip_put(hdist - 1, 5) ||
-                    !gzip_put(hclen - 4, 4))
-                        return false;
-                for (i = 0; i < hclen; i++)
-                        if (!gzip_put(clen[gzip_clen_order[i]], 3))
-                                return false;
-
-                i = 0;
-                while (i < nseq)
-                {
-                        here = seq[i];
-                        run = 1;
-                        i++;
-                        while (i < nseq && seq[i] == here && run < 138)
-                        {
-                                run++;
-                                i++;
-                        }
-                        if (here)
-                        {
-                                if (!gzip_put(ccode[here], clen[here]))
-                                        return false;
-                                run--;
-                                while (run >= 3)
-                                {
-                                        positive take = run > 6 ? 6 : run;
-
-                                        if (!gzip_put(ccode[16], clen[16]) ||
-                                            !gzip_put(take - 3, 2))
-                                                return false;
-                                        run -= take;
-                                }
-                                while (run)
-                                {
-                                        if (!gzip_put(ccode[here], clen[here]))
-                                                return false;
-                                        run--;
-                                }
-                        }
-                        else if (run >= 11)
-                        {
-                                if (!gzip_put(ccode[18], clen[18]) ||
-                                    !gzip_put(run - 11, 7))
-                                        return false;
-                        }
-                        else if (run >= 3)
-                        {
-                                if (!gzip_put(ccode[17], clen[17]) ||
-                                    !gzip_put(run - 3, 3))
-                                        return false;
-                        }
-                        else
-                                while (run)
-                                {
-                                        if (!gzip_put(ccode[0], clen[0]))
-                                                return false;
-                                        run--;
-                                }
-                }
+                else if (run >= 11)
+                        cfreq[18]++;
+                else if (run >= 3)
+                        cfreq[17]++;
+                else
+                        cfreq[0] += run;
         }
-
-        at = 0;
-        pair = 0;
-        while (at < length)
+        compression_build_lengths(cfreq, 19, clen, 7);
+        if (!gzip_lengths_ok(clen, 19, 7) || !gzip_used_coded(cfreq, clen, 19))
         {
-                if (pair < pairs && mpos[pair] == at)
-                {
-                        positive lcode = gzip_length_code(mlen[pair]);
-                        positive dcode = gzip_distance_code(mdist[pair]);
+                if (stored_bits <= fixed_bits)
+                        gzip_write_stored(e, src, length, last);
+                else
+                        gzip_write_fixed(e, src, length, pairs, last);
+                return;
+        }
+        gzip_lengths_to_codes(clen, 19, ccode);
 
-                        if (!gzip_put(lit_code[257 + lcode],
-                                           lit_len[257 + lcode]) ||
-                            (gzip_len_extra[lcode] &&
-                             !gzip_put(mlen[pair] - gzip_len_base[lcode],
-                                       gzip_len_extra[lcode])) ||
-                            !gzip_put(dist_code[dcode], dist_len[dcode]) ||
-                            (gzip_dist_extra[dcode] &&
-                             !gzip_put(mdist[pair] - gzip_dist_base[dcode],
-                                       gzip_dist_extra[dcode])))
-                                return false;
-                        at += mlen[pair];
-                        pair++;
+        while (hclen > 4 && !clen[gzip_clen_order[hclen - 1]])
+                hclen--;
+        bits += 17 + hclen * 3 + cfreq[16] * 2 + cfreq[17] * 3 + cfreq[18] * 7;
+        for (positive c = 0; c < 19; c++)
+                bits += cfreq[c] * clen[c];
+        if (stored_bits <= bits && stored_bits <= fixed_bits)
+        {
+                gzip_write_stored(e, src, length, last);
+                return;
+        }
+        if (fixed_bits <= bits)
+        {
+                gzip_write_fixed(e, src, length, pairs, last);
+                return;
+        }
+        gzip_put_bits(e, last ? 1 : 0, 1);
+        gzip_put_bits(e, 2, 2);
+        gzip_put_bits(e, (p32)(hlit - 257), 5);
+        gzip_put_bits(e, (p32)(hdist - 1), 5);
+        gzip_put_bits(e, (p32)(hclen - 4), 4);
+        for (i = 0; i < hclen; i++)
+                gzip_put_bits(e, clen[gzip_clen_order[i]], 3);
+
+        i = 0;
+        while (i < nseq)
+        {
+                here = seq[i];
+                run = 1;
+                i++;
+                while (i < nseq && seq[i] == here && run < 138)
+                {
+                        run++;
+                        i++;
+                }
+                if (here)
+                {
+                        gzip_put_bits(e, ccode[here], clen[here]);
+                        run--;
+                        while (run >= 3)
+                        {
+                                positive take = run > 6 ? 6 : run;
+
+                                gzip_put_bits(e, ccode[16], clen[16]);
+                                gzip_put_bits(e, (p32)(take - 3), 2);
+                                run -= take;
+                        }
+                        while (run)
+                        {
+                                gzip_put_bits(e, ccode[here], clen[here]);
+                                run--;
+                        }
+                }
+                else if (run >= 11)
+                {
+                        gzip_put_bits(e, ccode[18], clen[18]);
+                        gzip_put_bits(e, (p32)(run - 11), 7);
+                }
+                else if (run >= 3)
+                {
+                        gzip_put_bits(e, ccode[17], clen[17]);
+                        gzip_put_bits(e, (p32)(run - 3), 3);
                 }
                 else
+                        while (run)
+                        {
+                                gzip_put_bits(e, ccode[0], clen[0]);
+                                run--;
+                        }
+        }
+        gzip_write_tokens(e, src, length, pairs, lit_code, lit_len, dist_code, dist_len);
+}
+
+/* Positions are offsets into base, stored plus one so zero is empty. */
+static positive gzip_match_at(gzip_encoder address_to e, positive pos, positive chain,
+                              positive nice, positive best, positive address_to dist)
+{
+        positive left = e->total - pos;
+        positive current = pos + 1;
+        positive earliest = current > GZIP_WINDOW ? current - GZIP_WINDOW : 1;
+        positive steps = e->level >= 8 ? 4096 : e->level >= 6 ? 128
+                                               : e->level >= 4 ? 32 : 8;
+        p8 address_to here = e->base + pos;
+
+        if (left > GZIP_MAX_MATCH) left = GZIP_MAX_MATCH;
+        if (left < GZIP_MIN_MATCH) return 0;
+        if (best >= left || chain >= current) return best;
+        if (best >= 8) steps >>= 2;
+        while (chain >= earliest && steps--)
+        {
+                positive old = chain;
+                /* Issue the dependent chain load beside the candidate load.
+                   Strictly decreasing links make the upper-bound check an
+                   entry check; only the window's lower bound remains hot. */
+                positive next = e->prev[old & GZIP_WMASK];
+                p8 address_to there = e->base + old - 1;
+                chain = next < old ? next : 0;
+                /* best is zero or at least three, and strictly below left.
+                   The two-byte end check rejects common suffix collisions
+                   before the front and full prefix loads. */
+                if ((best && memory_load_unaligned(p16, here + best - 1) !=
+                             memory_load_unaligned(p16, there + best - 1)) ||
+                    memory_load_unaligned(p16, here) != memory_load_unaligned(p16, there) ||
+                    here[2] != there[2] ||
+                    (best >= 8 && memory_load_unaligned(p64, here) !=
+                                  memory_load_unaligned(p64, there)))
+                        continue;
+                positive n = 3 + memory_common_prefix(here + 3, there + 3, left - 3);
+                if (n > best)
                 {
-                        if (!gzip_put(lit_code[src[at]], lit_len[src[at]]))
-                                return false;
-                        at++;
+                        best = n;
+                        address_to dist = current - old;
+                        if (best >= nice || best == left) break;
                 }
         }
-        return gzip_put(lit_code[256], lit_len[256]);
+        return best;
 }
 
-static bool gzip_block_emit(p8 address_to src, positive length,
-                            p32 address_to mpos, p16 address_to mlen,
-                            p16 address_to mdist, positive pairs, bool last)
+static inline INLINE fn gzip_insert(gzip_encoder address_to e, positive pos)
 {
-        gzip_crc = hash_crc32(gzip_crc, src, length);
-        gzip_isize += length;
-        return gzip_block_emit_dynamic(src, length, mpos, mlen, mdist, pairs,
-                                       last);
+        if (pos + 2 >= e->total)
+                return;
+        p16 h = compression_hash3(e->base + pos);
+        e->prev[(pos + 1) & GZIP_WMASK] = e->head[h];
+        e->head[h] = (p32)(pos + 1);
 }
 
-#define GZIP_TOKEN_LIMIT 16384
-#define GZIP_BLOCK_LIMIT (4 * 1024 * 1024)
-static p32 gzip_mpos[GZIP_TOKEN_LIMIT];
-static p16 gzip_mlen[GZIP_TOKEN_LIMIT];
-static p16 gzip_mdist[GZIP_TOKEN_LIMIT];
-static p8 gzip_blk[GZIP_BLOCK_LIMIT];
-static positive gzip_tokens;
-static positive gzip_used;
-static positive gzip_pairs;
-static bool gzip_hash_ready;
-static positive gzip_cached_at, gzip_cached_length, gzip_cached_distance;
-
-static bool gzip_deflate_pump(bool finish)
+/* Deflate data[0, n) after history bytes at data - history, ending on a
+   byte boundary. The output span must hold n + n / 8 + 4096 bytes. */
+static fn gzip_block_deflate(gzip_encoder address_to e, p8 address_to data,
+                             positive history, positive n)
 {
-        positive nice = gzip_level >= 8 ? 258 : gzip_level >= 6 ? 128
-                                                                : 16;
-        bool lazy = gzip_level >= 4;
+        positive nice = e->level >= 8 ? 258 : e->level >= 6 ? 128 : 16;
+        bool lazy = e->level >= 4;
+        positive cached_at = 0, cached_length = 0, cached_distance = 0;
+        positive start = history, pairs = 0, tokens = 0, pos = history;
 
-        if (!gzip_hash_ready)
-        {
-                memory_fill(gzip_head, 0, sizeof(gzip_head));
-                memory_fill(gzip_prev, 0, sizeof(gzip_prev));
-                gzip_used = 0;
-                gzip_pairs = 0;
-                gzip_tokens = 0;
-                gzip_cached_length = 0;
-                gzip_hash_ready = true;
-        }
+        e->base = data - history;
+        e->total = history + n;
+        e->out_n = 0;
+        e->bits = 0;
+        e->bitn = 0;
+        memory_fill(e->head, 0, sizeof(e->head));
+        memory_fill(e->prev, 0, sizeof(e->prev));
+        for (positive at = 0; at < history; at++)
+                gzip_insert(e, at);
 
-        for (;;)
+        while (pos < e->total)
         {
-                positive pos;
                 positive dist = 0;
-                positive match;
-                positive next_dist = 0;
-                positive next_match;
+                positive match = 0;
 
-                if (gzip_src_fill - gzip_src_at < GZIP_MAX_MATCH &&
-                    !gzip_src_eof)
+                gzip_insert(e, pos);
+                if (cached_length && cached_at == pos)
                 {
-                        if (!gzip_enc_pull())
-                                return false;
-                        if (gzip_src_fill - gzip_src_at < GZIP_MIN_MATCH &&
-                            !gzip_src_eof && !finish)
-                                break;
+                        match = cached_length;
+                        dist = cached_distance;
                 }
-                if (gzip_src_at >= gzip_src_fill)
-                {
-                        if (!gzip_src_eof && !finish)
-                                break;
-                        break;
-                }
-
-                pos = gzip_src_at;
-                gzip_insert(pos);
-                match = 0;
-                if (gzip_cached_length && gzip_cached_at == gzip_src_abs + pos)
-                {
-                        match = gzip_cached_length;
-                        dist = gzip_cached_distance;
-                }
-                else if (pos + GZIP_MIN_MATCH <= gzip_src_fill)
-                        match = gzip_match_at(pos, gzip_prev[(gzip_src_abs + pos) & GZIP_WMASK],
-                                              nice, 0, address_of dist);
-                gzip_cached_length = 0;
+                else if (pos + GZIP_MIN_MATCH <= e->total)
+                        match = gzip_match_at(e, pos, e->prev[(pos + 1) & GZIP_WMASK], nice,
+                                              0, address_of dist);
+                cached_length = 0;
 
                 if (lazy && match >= GZIP_MIN_MATCH && match < nice &&
-                    pos + 1 + GZIP_MIN_MATCH <= gzip_src_fill)
+                    pos + 1 + GZIP_MIN_MATCH <= e->total)
                 {
                         /* Probe without inserting: the next iteration (or
                            the accepted match) owns that position. Inserting
-                           twice makes its predecessor point to itself. */
-                        next_match = gzip_match_at(
-                            pos + 1, gzip_head[compression_hash3(gzip_src_hold + pos + 1)],
-                            nice, match, address_of next_dist);
+                           twice makes its predecessor point to itself. The
+                           block's end is fixed, so the probe stays valid. */
+                        positive next_dist = 0;
+                        positive next_match = gzip_match_at(
+                            e, pos + 1, e->head[compression_hash3(e->base + pos + 1)], nice,
+                            match, address_of next_dist);
+
                         if (next_match > match)
                         {
-                                /* No insertion occurs between this probe and
-                                   the next token. Retain it when its complete
-                                   258-byte lookahead survives an input refill. */
-                                if (gzip_src_fill - pos - 1 >= GZIP_MAX_MATCH)
-                                {
-                                        gzip_cached_at = gzip_src_abs + pos + 1;
-                                        gzip_cached_length = next_match;
-                                        gzip_cached_distance = next_dist;
-                                }
+                                cached_at = pos + 1;
+                                cached_length = next_match;
+                                cached_distance = next_dist;
                                 match = 0;
                         }
                 }
 
-                if (gzip_used >= sizeof(gzip_blk) - GZIP_MAX_MATCH ||
-                    gzip_tokens >= GZIP_TOKEN_LIMIT)
+                if (tokens >= GZIP_TOKEN_LIMIT)
                 {
-                        if (!gzip_block_emit(gzip_blk, gzip_used, gzip_mpos,
-                                             gzip_mlen, gzip_mdist, gzip_pairs,
-                                             false))
-                                return false;
-                        gzip_used = 0;
-                        gzip_pairs = 0;
-                        gzip_tokens = 0;
+                        gzip_block_emit(e, e->base + start, pos - start, pairs, false);
+                        start = pos;
+                        pairs = 0;
+                        tokens = 0;
                 }
-
-                gzip_tokens++;
+                tokens++;
                 if (match >= GZIP_MIN_MATCH && dist && dist <= GZIP_WINDOW)
                 {
                         positive step;
 
-                        gzip_mpos[gzip_pairs] = (p32)gzip_used;
-                        gzip_mlen[gzip_pairs] = (p16)match;
-                        gzip_mdist[gzip_pairs] = (p16)dist;
-                        gzip_pairs++;
-                        if (gzip_used + match <= sizeof(gzip_blk))
-                                memory_copy(gzip_blk + gzip_used,
-                                            gzip_src_hold + pos, match);
-                        gzip_used += match;
+                        e->mpos[pairs] = (p32)(pos - start);
+                        e->mlen[pairs] = (p16)match;
+                        e->mdist[pairs] = (p16)dist;
+                        pairs++;
                         /* A long short-period match repeats the same hash
                            keys. Keep the latest two periods instead of writing
                            the same buckets hundreds of times. */
                         step = match >= 128 && dist <= 16 ? match - 2 * dist : 1;
                         for (; step < match; step++)
-                                gzip_insert(pos + step);
-                        gzip_src_at += match;
+                                gzip_insert(e, pos + step);
+                        pos += match;
                 }
                 else
-                {
-                        p8 byte = gzip_src_hold[pos];
-
-                        gzip_blk[gzip_used++] = byte;
-                        gzip_src_at++;
-                }
+                        pos++;
         }
-
-        if (finish)
-        {
-                if (!gzip_block_emit(gzip_blk, gzip_used, gzip_mpos, gzip_mlen,
-                                     gzip_mdist, gzip_pairs, true))
-                        return false;
-                gzip_used = 0;
-                gzip_pairs = 0;
-                gzip_tokens = 0;
-                if (!gzip_put_flush())
-                        return false;
-        }
-        return !gzip_out_failed;
+        if (pos > start)
+                gzip_block_emit(e, e->base + start, pos - start, pairs, false);
+        gzip_write_stored(e, e->base + pos, 0, false);
 }
 
-
-static bool gzip_put32(p32 value)
+/*
+        The member around the blocks, on the calling thread: header, blocks
+        in input order, the empty final block, CRC-32 and size.
+*/
+typedef struct
 {
-        p8 at;
+        p8 level;
+        /* [0, GZIP_WINDOW) the history tail, then the block being filled */
+        p8 address_to input;
+        positive input_room;
+        positive history;
+        positive n;
+        gzip_encoder address_to encoder;
+        p32 crc;
+        p32 isize;
+        byte_store address_to store;
+        bipolar fd;
+        bool failed;
+} gzip_stream_writer;
 
-        for (at = 0; at < 4; at++)
+static gzip_stream_writer gzip_writer;
+
+static bool gzip_writer_emit(p8 address_to bytes, positive n)
+{
+        if (gzip_writer.failed)
+                return false;
+        if (gzip_writer.store)
         {
-                if (!gzip_put(value & 255, 8))
-                        return false;
-                value >>= 8;
+                if (!byte_store_append_exact(gzip_writer.store, bytes, n))
+                {
+                        gzip_writer.failed = true;
+                        return gzip_fail("gzip output is too small");
+                }
         }
+        else if (gzip_writer.fd >= 0 &&
+                 system_write_all((positive)gzip_writer.fd, bytes, n) != (bipolar)n)
+        {
+                gzip_writer.failed = true;
+                return gzip_fail("gzip write failed");
+        }
+        return true;
+}
+
+static fn gzip_writer_close(void)
+{
+        gzip_encoder address_to e = gzip_writer.encoder;
+
+        memory_free(gzip_writer.input, gzip_writer.input_room);
+        if (e)
+        {
+                memory_free(e->out, e->out_room);
+                memory_free(e, sizeof(gzip_encoder));
+        }
+        gzip_writer.input = null;
+        gzip_writer.input_room = 0;
+        gzip_writer.encoder = null;
+}
+
+static bool gzip_writer_block(void)
+{
+        gzip_encoder address_to e = gzip_writer.encoder;
+        p8 address_to data = gzip_writer.input + GZIP_WINDOW;
+        positive n = gzip_writer.n;
+
+        if (!n)
+                return !gzip_writer.failed;
+        if (!e)
+        {
+                e = (gzip_encoder address_to)memory(sizeof(gzip_encoder));
+                if (!e || system_failed(e))
+                        return gzip_fail("gzip cannot map the encoder");
+                e->out_room = GZIP_BLOCK + GZIP_BLOCK / 8 + 4096;
+                e->out = (p8 address_to)memory(e->out_room);
+                if (!e->out || system_failed(e->out))
+                {
+                        memory_free(e, sizeof(gzip_encoder));
+                        return gzip_fail("gzip cannot map the encoder");
+                }
+                e->level = gzip_writer.level;
+                gzip_writer.encoder = e;
+        }
+        gzip_block_deflate(e, data, gzip_writer.history, n);
+        gzip_writer.crc = hash_crc32(gzip_writer.crc, data, n);
+        gzip_writer.isize += (p32)n;
+        if (!gzip_writer_emit(e->out, e->out_n))
+                return false;
+
+        positive keep = gzip_writer.history + n;
+
+        if (keep > GZIP_WINDOW)
+                keep = GZIP_WINDOW;
+        memory_copy(gzip_writer.input + GZIP_WINDOW - keep, data + n - keep, keep);
+        gzip_writer.history = keep;
+        gzip_writer.n = 0;
         return true;
 }
 
 static bool gzip_encode_setup(p8 level)
 {
-        gzip_decoding = false;
-        p8 xfl = 0;
+        p8 header[10] = {GZIP_MAGIC0, GZIP_MAGIC1, GZIP_METHOD, 0, 0, 0, 0, 0, 0, 3};
 
+        gzip_writer_close();
         gzip_why = null;
-        gzip_out_failed = false;
-        gzip_level = level ? level : 6;
-        if (gzip_level < 1)
-                gzip_level = 1;
-        if (gzip_level > 9)
-                gzip_level = 9;
-        if (gzip_level == 1)
-                xfl = 4;
-        else if (gzip_level == 9)
-                xfl = 2;
-
-        gzip_out_fill = 0;
-        gzip_bits = 0;
-        gzip_bitn = 0;
-        gzip_crc = 0xffffffffu;
-        gzip_isize = 0;
-        gzip_src_fill = 0;
-        gzip_src_at = 0;
-        gzip_src_abs = 0;
-        gzip_src_eof = false;
-        gzip_hash_ready = false;
-        gzip_feed = null;
-        gzip_feed_last = false;
-
-        if (!gzip_out_reserve(10))
-                return false;
-        gzip_out_buf[gzip_out_fill++] = GZIP_MAGIC0;
-        gzip_out_buf[gzip_out_fill++] = GZIP_MAGIC1;
-        gzip_out_buf[gzip_out_fill++] = GZIP_METHOD;
-        gzip_out_buf[gzip_out_fill++] = 0;
-        gzip_out_buf[gzip_out_fill++] = 0;
-        gzip_out_buf[gzip_out_fill++] = 0;
-        gzip_out_buf[gzip_out_fill++] = 0;
-        gzip_out_buf[gzip_out_fill++] = 0;
-        gzip_out_buf[gzip_out_fill++] = xfl;
-        gzip_out_buf[gzip_out_fill++] = 3;
-        return true;
+        gzip_fixed_init();
+        level = level ? level : 6;
+        gzip_writer.level = level > 9 ? 9 : level;
+        header[8] = gzip_writer.level == 1 ? 4 : gzip_writer.level == 9 ? 2 : 0;
+        gzip_writer.history = 0;
+        gzip_writer.n = 0;
+        gzip_writer.crc = 0xffffffffu;
+        gzip_writer.isize = 0;
+        gzip_writer.failed = false;
+        gzip_writer.store = gzip_output.bytes ? address_of gzip_output : null;
+        gzip_writer.fd = gzip_out_fd;
+        gzip_writer.input_room = GZIP_WINDOW + GZIP_BLOCK;
+        gzip_writer.input = (p8 address_to)memory(gzip_writer.input_room);
+        if (!gzip_writer.input || system_failed(gzip_writer.input))
+        {
+                gzip_writer.input = null;
+                gzip_writer.input_room = 0;
+                return gzip_fail("gzip cannot map the block input");
+        }
+        return gzip_writer_emit(header, sizeof(header));
 }
 
 static bool gzip_encode_trailer(void)
 {
-        gzip_src_eof = true;
-        if (!gzip_deflate_pump(true))
-                return false;
-        if (!gzip_put32(~gzip_crc) || !gzip_put32(gzip_isize))
-                return false;
-        return gzip_put_flush();
+        p8 tail[10] = {0x03, 0x00};
+        bool ok = gzip_writer_block();
+
+        if (ok)
+        {
+                memory_store_unaligned(p32, tail + 2, ~gzip_writer.crc);
+                memory_store_unaligned(p32, tail + 6, gzip_writer.isize);
+                ok = gzip_writer_emit(tail, sizeof(tail));
+        }
+        gzip_writer_close();
+        return ok;
 }
 
 static bool gzip_stream_encode(void)
 {
         for (;;)
         {
-                if (!gzip_enc_pull())
-                        return false;
-                if (gzip_src_eof && gzip_src_at >= gzip_src_fill)
+                if (gzip_writer.n == GZIP_BLOCK && !gzip_writer_block())
                         break;
-                if (gzip_src_at >= gzip_src_fill)
-                        continue;
-                if (!gzip_deflate_pump(false))
+                bipolar got = system_read_retry(
+                    (positive)gzip_input.fd, gzip_writer.input + GZIP_WINDOW + gzip_writer.n,
+                    GZIP_BLOCK - gzip_writer.n);
+                if (got < 0)
+                {
+                        gzip_fail("gzip read failed");
+                        break;
+                }
+                if (!got)
+                        return gzip_encode_trailer();
+                gzip_writer.n += (positive)got;
+        }
+        gzip_writer_close();
+        return false;
+}
+
+static bool gzip_encode_begin(bipolar out, p8 level)
+{
+        gzip_out_fd = out;
+        gzip_output.bytes = null;
+        gzip_input.fd = -1;
+        return gzip_encode_setup(level);
+}
+
+static bool gzip_encode_write(p8 address_to src, positive n)
+{
+        while (n)
+        {
+                positive take = min(n, GZIP_BLOCK - gzip_writer.n);
+
+                memory_copy(gzip_writer.input + GZIP_WINDOW + gzip_writer.n, src, take);
+                gzip_writer.n += take;
+                src += take;
+                n -= take;
+                if (gzip_writer.n == GZIP_BLOCK && !gzip_writer_block())
                         return false;
         }
+        return !gzip_writer.failed;
+}
+
+static bool gzip_encode_end(void)
+{
         return gzip_encode_trailer();
 }
 
@@ -1715,14 +1641,10 @@ static bipolar gzip_deflate_mem(p8 address_to src, positive src_len,
         gzip_output.bytes = dst;
         gzip_output.room = dst_cap;
         gzip_output.used = 0;
-        ok = gzip_encode_setup(level);
-        gzip_feed = src;
-        gzip_feed_len = src_len;
-        gzip_feed_last = true;
-        gzip_src_eof = !src_len;
-        if (ok)
-                ok = gzip_stream_encode();
-        gzip_feed = null;
+        ok = gzip_encode_setup(level) && gzip_encode_write(src, src_len) &&
+             gzip_encode_trailer();
+        if (!ok)
+                gzip_writer_close();
         gzip_output.bytes = null;
         return ok ? (bipolar)gzip_output.used : -1;
 }
@@ -1818,36 +1740,6 @@ static bool gzip_decode_end(void)
         return gzip_why == null;
 }
 
-static bool gzip_encode_begin(bipolar out, p8 level)
-{
-        gzip_out_fd = out;
-        gzip_output.bytes = null;
-        gzip_input.fd = -1;
-        gzip_feed = null;
-        return gzip_encode_setup(level);
-}
-
-static bool gzip_encode_write(p8 address_to src, positive n)
-{
-        gzip_feed = src;
-        gzip_feed_len = n;
-        gzip_src_eof = false;
-        while (gzip_feed)
-        {
-                if (!gzip_enc_pull())
-                        return false;
-                if (!gzip_deflate_pump(false))
-                        return false;
-        }
-        return gzip_out_flush();
-}
-
-static bool gzip_encode_end(void)
-{
-        gzip_feed = null;
-        return gzip_encode_trailer();
-}
-
 #ifndef GZIP_CORE_ONLY
 
 static b32 gzip_stream(bipolar in, bipolar out, bool decode, p8 level)
@@ -1857,7 +1749,6 @@ static b32 gzip_stream(bipolar in, bipolar out, bool decode, p8 level)
         byte_input_open_fd(address_of gzip_input, in, gzip_in_buf, GZIP_IN);
         gzip_out_fd = out;
         gzip_output.bytes = null;
-        gzip_feed = null;
         gzip_status = 0;
         if (decode)
                 ok = gzip_stream_decode();
