@@ -582,7 +582,7 @@ bool file_exists(bipolar directory, string_address path)
 
 static CONST positive file_device(p32 major, p32 minor);
 
-static bool file_same_identity(file_facts address_to one, file_facts address_to two)
+static bool file_same_identity(const file_facts address_to one, const file_facts address_to two)
 {
         return one->inode == two->inode && one->device_major == two->device_major &&
                one->device_minor == two->device_minor;
@@ -2852,17 +2852,17 @@ static bool file_targets_told(string_address program, bool repeated)
         does not begin with a y is a no, and so is an input that has ended --
         which is what makes the tools safe to run with no input at all.
 */
-static bool file_answer_is_yes()
+static bool file_answer_is_yes(b32 from)
 {
         p8 answer[2];
-        bipolar got = system_read_once(0, answer, 1);
+        bipolar got = system_read_once(from, answer, 1);
 
         if (got != 1)
                 return false;
 
         bool yes = answer[0] == 'y' || answer[0] == 'Y';
 
-        while (answer[0] != '\n' && system_read_once(0, answer, 1) == 1)
+        while (answer[0] != '\n' && system_read_once(from, answer, 1) == 1)
                 ;
 
         return yes;
@@ -2873,7 +2873,7 @@ bool file_ask(string_address program, string_address question, string_address su
         string_format(log_error, "%s: %s '%w'? ", program, question, writer_terminal_quoted_name,
                       subject);
 
-        return file_answer_is_yes();
+        return file_answer_is_yes(0);
 }
 
 // file_letter_bit answers 62 for anything that is not a letter or a digit.
@@ -4829,9 +4829,20 @@ static positive ls_escape_byte(p8 byte, p8 address_to into, bool c_style)
         return 4;
 }
 
-static positive ls_escape_letter(p8 byte, p8 address_to into)
+// The byte a C escape letter names, the inverse of ls_escape_byte's letters,
+// or 0xff for a letter that names none.
+static CONST p8 byte_from_escape_letter(p8 letter)
 {
-        return ls_escape_byte(byte, into, true);
+        return letter == 'n'    ? '\n'
+               : letter == 't'  ? '\t'
+               : letter == 'r'  ? '\r'
+               : letter == 'b'  ? '\b'
+               : letter == 'f'  ? '\f'
+               : letter == 'v'  ? '\v'
+               : letter == 'a'  ? 7
+               : letter == '\\' ? '\\'
+               : letter == '0'  ? 0
+                                : 0xff;
 }
 
 static bool ls_byte_unprintable(p8 byte)
@@ -4903,7 +4914,7 @@ static fn ls_quote_shell(writer write, string_address name, positive length, boo
                         {
                                 p8 spelled[4];
 
-                                write(spelled, ls_escape_letter(string_get(name + at), spelled));
+                                write(spelled, ls_escape_byte(string_get(name + at), spelled, true));
                                 at++;
                         }
                         at--;
@@ -4949,7 +4960,7 @@ static fn ls_quote_c(writer write, string_address name, positive length, p8 styl
                 else if (style == 'b' && byte == ' ')
                         write("\\ ", 2);
                 else if (ls_byte_unprintable(byte))
-                        write(spelled, ls_escape_letter(byte, spelled));
+                        write(spelled, ls_escape_byte(byte, spelled, true));
                 else
                         write(name + at, 1);
         }
@@ -8549,13 +8560,20 @@ static b32 find_parse_or();
 
 // A time in whole units, the way find counts one: the fraction is dropped, so
 // a file touched thirty hours ago is one day old and not two.
+// The time a letter names in either case: access, status change, birth, and
+// modification for any other.
+static file_moment address_to file_moment_of(file_facts address_to facts, p8 letter)
+{
+        letter |= 32;
+        return letter == 'a'   ? address_of facts->accessed
+               : letter == 'c' ? address_of facts->changed
+               : letter == 'b' ? address_of facts->created
+                               : address_of facts->modified;
+}
+
 static b64 find_age(p8 which, b64 scale)
 {
-        file_moment address_to stamp = which == 'a'   ? address_of find_facts->accessed
-                                       : which == 'c' ? address_of find_facts->changed
-                                                      : address_of find_facts->modified;
-
-        return (find_moment - stamp->seconds) / scale;
+        return (find_moment - file_moment_of(find_facts, which)->seconds) / scale;
 }
 
 static b32 find_parse_primary()
@@ -8647,11 +8665,7 @@ static b32 find_parse_primary()
                                 return -1;
                         }
 
-                        file_moment address_to when =
-                            word[7] == 'a'   ? address_of facts.accessed
-                            : word[7] == 'B' ? address_of facts.created
-                            : word[7] == 'c' ? address_of facts.changed
-                                             : address_of facts.modified;
+                        file_moment address_to when = file_moment_of(address_of facts, word[7]);
 
                         made->number = when->seconds;
                         made->extra = when->nanoseconds;
@@ -9283,18 +9297,7 @@ static bool find_exec_asked(find_node address_to node, string_address subject)
         string_format(log_error, "< %w ... %w > ? ", writer_terminal_quoted_name,
                       program_argument((b32)node->number), writer_terminal_quoted_name, subject);
 
-        p8 answer[2];
-        bipolar got = system_read_once(0, answer, 1);
-
-        if (got != 1)
-                return false;
-
-        bool yes = answer[0] == 'y' || answer[0] == 'Y';
-
-        while (answer[0] != '\n' && system_read_once(0, answer, 1) == 1)
-                ;
-
-        return yes;
+        return file_answer_is_yes(0);
 }
 
 static bool find_exec_once(find_node address_to node)
@@ -9396,13 +9399,6 @@ static fn find_field_write(address_any text, positive length)
         find_field[find_field_output.used] = end;
 }
 
-static file_moment address_to find_moment_of(p8 letter)
-{
-        return letter == 'A'   ? address_of find_facts->accessed
-               : letter == 'C' ? address_of find_facts->changed
-               : letter == 'B' ? address_of find_facts->created
-                               : address_of find_facts->modified;
-}
 
 // The path below the starting point, which is what %P is: the walk's own
 // path with the root and the slash after it taken off.
@@ -9550,10 +9546,7 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
         case 'c':
         case 't':
         {
-                file_moment address_to when =
-                    letter == 'a'   ? address_of find_facts->accessed
-                    : letter == 'c' ? address_of find_facts->changed
-                                    : address_of find_facts->modified;
+                file_moment address_to when = file_moment_of(find_facts, letter);
 
                 date_shape(find_field_write, when->seconds,
                            (string_address) "%a %b %e %H:%M:%S.");
@@ -9566,7 +9559,7 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
         case 'C':
         case 'T':
         {
-                file_moment address_to when = find_moment_of(letter);
+                file_moment address_to when = file_moment_of(find_facts, letter);
                 p8 which = string_get(format + address_to at);
 
                 if (!which)
@@ -9628,16 +9621,7 @@ static fn find_printf_walk(string_address format, bipolar handle)
                 if (byte == '\\')
                 {
                         p8 next = string_get(format + at);
-                        p8 named = next == 'n'    ? '\n'
-                                   : next == 't'  ? '\t'
-                                   : next == 'r'  ? '\r'
-                                   : next == 'b'  ? '\b'
-                                   : next == 'f'  ? '\f'
-                                   : next == 'v'  ? '\v'
-                                   : next == 'a'  ? 7
-                                   : next == '\\' ? '\\'
-                                   : next == '0'  ? 0
-                                                  : 0xff;
+                        p8 named = byte_from_escape_letter(next);
 
                         if (next && named != 0xff)
                         {
@@ -9953,11 +9937,7 @@ static bool find_true(b32 which)
                 p8 which = node->kind == 'W' ? node->comparison
                            : node->comparison ? node->comparison
                                               : 'm';
-                file_moment address_to mine =
-                    which == 'a'   ? address_of find_facts->accessed
-                    : which == 'c' ? address_of find_facts->changed
-                    : which == 'B' ? address_of find_facts->created
-                                   : address_of find_facts->modified;
+                file_moment address_to mine = file_moment_of(find_facts, which);
 
                 if (mine->seconds != node->number)
                         return mine->seconds > node->number;
@@ -12977,9 +12957,7 @@ static bool namei_is_mountpoint(string_address path,
                 return false;
 
         return facts->mount_id != parent.mount_id ||
-               (facts->inode == parent.inode &&
-                facts->device_major == parent.device_major &&
-                facts->device_minor == parent.device_minor);
+               file_same_identity(facts, address_of parent);
 }
 
 static namei_row address_to namei_add(string_address name, positive length,
@@ -13002,23 +12980,6 @@ static namei_row address_to namei_add(string_address name, positive length,
         row->target_at = positive_max;
         row->depth = depth;
         return row;
-}
-
-static bool namei_join_component(p8 address_to into, string_address directory,
-                                 string_address component, positive length)
-{
-        positive head = string_length(directory);
-        positive slash = head && directory[head - 1] != '/';
-
-        if (head >= FILE_PATH_MAX || length >= FILE_PATH_MAX - head ||
-            slash >= FILE_PATH_MAX - head - length)
-                return false;
-
-        memory_copy_apart(into, directory, head);
-        if (slash)
-                into[head++] = '/';
-        memory_copy_apart_end(into + head, component, length);
-        return true;
 }
 
 /* Resolve one written sequence from base.  Symlink text is recursively
@@ -13068,8 +13029,11 @@ static bool namei_walk(string_address path, string_address base,
                         at++;
                 positive part = at - start;
                 p8 candidate[FILE_PATH_MAX];
-                if (!namei_join_component(candidate, current,
-                                          path + start, part))
+                p8 component[FILE_PATH_MAX];
+                positive kept = min(part, (positive)FILE_PATH_MAX - 1);
+
+                memory_copy_apart_end(component, path + start, kept);
+                if (kept < part || !file_path_join(candidate, current, component))
                 {
                         return string_report(log_error, false, "namei: %w: %s\n", writer_terminal_name,
                                       namei_operand, file_reason(-ERROR_NAME_TOO_LONG));
@@ -15325,9 +15289,7 @@ static bool file_same_as_input(bool protect, string_address name,
         if (!protect || !file_look_at(name, address_of existing))
                 return false;
 
-        return existing.inode == input->inode &&
-               existing.device_major == input->device_major &&
-               existing.device_minor == input->device_minor;
+        return file_same_identity(address_of existing, input);
 }
 
 static bool split_output_open(split_output address_to output)
@@ -17547,6 +17509,10 @@ static b32 file_hardlink()
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
         p8 delimiter = (taking.flags & FILE_FLAG('z')) ? 0 : '\n';
 
+        // The seen table and the compare buffers live in the shared arena,
+        // which another applet in this process may have reused since.
+        utility_arena.used = 0;
+        hardlink_seen_room = 0;
         hardlink_file_count = 0;
         hardlink_path_used = 0;
         hardlink_status = 0;
@@ -22269,7 +22235,7 @@ static b32 file_rm()
                                           : "rm: remove %p argument%s? ",
                                       named, named == 1 ? "" : "s");
 
-                        if (!file_answer_is_yes())
+                        if (!file_answer_is_yes(0))
                                 return 0;
                 }
         }
@@ -26387,13 +26353,7 @@ static bool rename_ask(string_address destination)
         string_format(log, "rename: overwrite '%w'? ", writer_terminal_quoted_name, destination);
         log_flush();
 
-        p8 answer;
-        bipolar got = system_read_once(0, address_of answer, 1);
-        bool yes = got == 1 && (answer == 'y' || answer == 'Y');
-
-        while (got == 1 && answer != '\n')
-                got = system_read_once(0, address_of answer, 1);
-        return yes;
+        return file_answer_is_yes(0);
 }
 
 /* Replace one symlink without first removing its public name.  Both the
@@ -27491,19 +27451,7 @@ static bool xargs_allowed(void)
 {
         log_error("?...", 4);
 
-        p8 answer[2];
-        bipolar got = system_read_once((b32)xargs_terminal, answer, 1);
-
-        if (got != 1)
-                return false;
-
-        bool yes = answer[0] == 'y' || answer[0] == 'Y';
-
-        while (answer[0] != '\n' &&
-               system_read_once((b32)xargs_terminal, answer, 1) == 1)
-                ;
-
-        return yes;
+        return file_answer_is_yes((b32)xargs_terminal);
 }
 
 static fn xargs_answer_raise(b32 answer)
@@ -28239,26 +28187,11 @@ static bool xargs_delimiter_read(string_address text, p8 address_to into)
 
         if (length >= 2 && string_is(text, '\\'))
         {
-                p8 letter = string_get(text + 1);
-                p8 named = letter == 'n'   ? '\n'
-                           : letter == 't' ? '\t'
-                           : letter == 'r' ? '\r'
-                           : letter == 'b' ? '\b'
-                           : letter == 'f' ? '\f'
-                           : letter == 'v' ? '\v'
-                           : letter == 'a' ? 7
-                           : letter == '\\' ? '\\'
-                                             : 0;
+                p8 named = byte_from_escape_letter(string_get(text + 1));
 
-                if (named && length == 2)
+                if (named != 0xff && length == 2)
                 {
                         address_to into = named;
-                        return true;
-                }
-
-                if (length == 2 && letter == '0')
-                {
-                        address_to into = 0;
                         return true;
                 }
 
