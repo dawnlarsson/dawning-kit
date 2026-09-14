@@ -17787,10 +17787,14 @@ static inline INLINE positive sort_field_edge(p8 address_to at,
                 return scan;
         }
 
+        // Fields are short: two table walks a field beat two calls a field.
         for (positive i = first; i < field && scan < length; i++)
         {
-                scan += string_span_max(at + scan, length - scan, string_set_blanks);
-                scan += string_span_max(at + scan, length - scan, text_set_inside);
+                while (scan < length && string_set_blanks[at[scan]])
+                        scan++;
+
+                while (scan < length && text_set_inside[at[scan]])
+                        scan++;
         }
 
         return scan;
@@ -17808,7 +17812,8 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
         positive finish = length;
 
         if (key->order.blanks[0])
-                begin += string_span_max(at + begin, length - begin, string_set_blanks);
+                while (begin < length && string_set_blanks[at[begin]])
+                        begin++;
 
         // A character position is counted from where the field starts and
         // may run past where it stops: GNU clamps it only at the end of the
@@ -17823,8 +17828,8 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
                         finish = sort_field_start(at, length, key->second_field);
 
                         if (key->order.blanks[1])
-                                finish += string_span_max(at + finish, length - finish,
-                                                          string_set_blanks);
+                                while (finish < length && string_set_blanks[at[finish]])
+                                        finish++;
 
                         finish += key->second_char;
                 }
@@ -18578,11 +18583,14 @@ static inline INLINE p64 sort_window_fold(p64 word)
 static p64 sort_number_window(p8 address_to text, positive length,
                               bool address_to exact)
 {
-        // A digit is never blank, so a key that starts with one skips the
-        // call; the digit and zero walks are a few bytes and stay inline.
-        positive at = length && (p8)(text[0] - '0') < 10
-                          ? 0
-                          : string_span_max(text, length, string_set_blanks);
+        // A key carries no blanks or a few, and a minus is as common as a
+        // digit, so every walk here is a table load a byte: a call to skip
+        // nothing was a quarter of sort -rn.
+        positive at = 0;
+
+        while (at < length && string_set_blanks[text[at]])
+                at++;
+
         bool minus = at < length && text[at] == '-';
 
         at += minus;
