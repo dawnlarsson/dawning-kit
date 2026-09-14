@@ -17810,15 +17810,11 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
         if (key->order.blanks[0])
                 begin += string_span_max(at + begin, length - begin, string_set_blanks);
 
+        // A character position is counted from where the field starts and
+        // may run past where it stops: GNU clamps it only at the end of the
+        // line, so -k1.3,1.5 on "ab cdefg" is " cd" and not nothing.
         if (key->first_char > 1)
-        {
-                positive step = key->first_char - 1;
-                positive limit = sort_field_stop(at, length, key->first_field);
-
-                begin += step;
-                if (begin > limit)
-                        begin = limit;
-        }
+                begin += key->first_char - 1;
 
         if (key->second_field)
         {
@@ -17831,11 +17827,6 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
                                                           string_set_blanks);
 
                         finish += key->second_char;
-
-                        positive limit = sort_field_stop(at, length, key->second_field);
-
-                        if (finish > limit)
-                                finish = limit;
                 }
                 else
                 {
@@ -18325,56 +18316,179 @@ static PURE bipolar sort_compare_kind(p8 kind, positive how, p8 address_to a, po
 }
 
 /*
-        The first key's bounds, or its exact normalized numeric view, found
-        once per line rather than once per comparison.
+        The sort engine.
 
-        Finding where -k3 starts means walking the line counting fields, and a
-        merge sort asks about a line some twenty times. Caching only the first
-        key is enough: the second is consulted only where the first ties.
+        Input is read into one growing block of text with a record per line
+        beside it: where the line starts and how long it is. Ordering moves
+        sixteen-byte items rather than lines -- up to eight bytes of the key
+        the current stage orders by, big endian, the line's index, and how
+        many key bytes are left -- so most questions a sort asks are answered
+        without reading a line at all.
+
+        A stage is one key, or the whole line as the last resort. A byte key,
+        plain or folded by -f, and a number or month, are ordered by radix
+        over their windows, and whatever ties there moves on to the next
+        stage in place. Distribution is stable, so a group that ties on
+        every stage is still in input order, which is what -s and -u need.
+        Only -h, -V, -d and -i ask the comparator every question, and they
+        get a stable merge.
+
+        When the text and its records outgrow the budget -- -S, or GNU's
+        default share of memory -- the chunk is sorted and written as a run
+        to an unnamed temporary file, and the runs are merged at the end with
+        the last chunk still in memory as one more source. Where a chunk was
+        cut reaches no output byte: a stable order is fixed by its input, and
+        the merge breaks every tie toward the earlier source.
 */
 typedef struct
 {
         positive from, to;
 } sort_span;
-static sort_span address_to sort_spans;
-static sort_number address_to sort_numbers;
 
-static PURE HOT bipolar sort_compare_keys(positive left, positive right)
+typedef struct
 {
-        text_slice address_to a = text_lines + left;
-        text_slice address_to b = text_lines + right;
-        b32 first_key = 0;
+        positive at;
+        positive length;
+} sort_line;
 
-        if (sort_numbers)
+typedef struct
+{
+        p64 window;
+        p32 line;
+        p32 left;
+} sort_item;
+
+typedef struct
+{
+        p8 address_to at;
+        positive length;
+        positive from, to;
+} sort_view;
+
+enum
+{
+        SORT_STAGE_COMPARE,
+        SORT_STAGE_BYTES,
+        SORT_STAGE_WINDOW,
+};
+
+enum
+{
+        // Bytes past the last one any buffer holds, so a window of eight is
+        // one load and a mask rather than a loop over what is left.
+        SORT_SLACK = 16,
+        SORT_SMALL = 24,
+        SORT_READ = 1 << 20,
+        SORT_SOURCE_BUFFER = 1 << 18,
+        SORT_WRITE_BUFFER = 1 << 20,
+        // Runs held open at once. Every run is a descriptor, so reaching this
+        // folds the runs so far into one before another is written.
+        SORT_FANIN = 128,
+        // GNU's floor for -S: sixteen merge inputs of two bytes and a record.
+        SORT_BUDGET_MINIMUM = 544,
+};
+
+static p8 sort_stage_kind[SORT_KEYS_MAX + 1];
+static bool sort_stage_reverse[SORT_KEYS_MAX + 1];
+static bool sort_stage_fold[SORT_KEYS_MAX + 1];
+
+static p8 address_to sort_text;
+static positive sort_text_room;
+static positive sort_text_used;
+static positive sort_line_start;
+static positive sort_scanned;
+static sort_line address_to sort_lines;
+static positive sort_lines_room;
+static positive sort_lines_count;
+static sort_span address_to sort_spans;
+static positive sort_spans_room;
+static sort_item address_to sort_items;
+static positive sort_items_room;
+static sort_item address_to sort_spare;
+static positive sort_spare_room;
+static positive sort_budget;
+static positive sort_line_cost;
+static bool sort_failed;
+
+static fn sort_stages_ready()
+{
+        for (b32 stage = 0; stage <= sort_key_count; stage++)
         {
-                bipolar answer = sort_compare_parsed(sort_numbers + left,
-                                                     sort_numbers + right);
-                if (answer)
-                        return sort_keys[0].order.reverse ? -answer : answer;
+                if (stage == sort_key_count)
+                {
+                        sort_stage_kind[stage] = SORT_STAGE_BYTES;
+                        sort_stage_reverse[stage] = sort_reverse;
+                        sort_stage_fold[stage] = false;
+                        continue;
+                }
 
-                first_key = 1;
+                sort_ordering address_to order = address_of sort_keys[stage].order;
+
+                sort_stage_reverse[stage] = order->reverse;
+                sort_stage_fold[stage] = (order->how & SORT_FOLD) != 0;
+                sort_stage_kind[stage] =
+                    order->kind == 'n' || order->kind == 'M' ? SORT_STAGE_WINDOW
+                    : !order->kind && !(order->how & ~(positive)SORT_FOLD)
+                        ? SORT_STAGE_BYTES
+                        : SORT_STAGE_COMPARE;
+        }
+}
+
+static inline INLINE sort_view sort_view_of(p32 line)
+{
+        sort_line address_to record = sort_lines + line;
+        sort_view view = {sort_text + record->at, record->length, 0,
+                          record->length};
+
+        if (sort_spans)
+        {
+                view.from = sort_spans[line].from;
+                view.to = sort_spans[line].to;
         }
 
-        for (b32 i = first_key; i < sort_key_count; i++)
+        return view;
+}
+
+// The first key's bounds, found once when a line becomes known.
+static inline INLINE fn sort_view_ready(sort_view address_to view)
+{
+        view->from = 0;
+        view->to = view->length;
+
+        if (!sort_keys[0].whole)
+                sort_key_span(sort_keys, view->at, view->length,
+                              address_of view->from, address_of view->to);
+}
+
+static inline INLINE fn sort_view_span(sort_view address_to view, b32 stage,
+                                       positive address_to from,
+                                       positive address_to to)
+{
+        if (!stage)
+        {
+                address_to from = view->from;
+                address_to to = view->to;
+        }
+        else if (stage >= sort_key_count || sort_keys[stage].whole)
+        {
+                address_to from = 0;
+                address_to to = view->length;
+        }
+        else
+                sort_key_span(sort_keys + stage, view->at, view->length, from, to);
+}
+
+static PURE HOT bipolar sort_compare_views_keys(sort_view address_to a,
+                                                sort_view address_to b,
+                                                b32 first)
+{
+        for (b32 i = first; i < sort_key_count; i++)
         {
                 sort_key address_to key = sort_keys + i;
-                positive from_a = 0, to_a = a->length;
-                positive from_b = 0, to_b = b->length;
+                positive from_a, to_a, from_b, to_b;
 
-                if (!i && sort_spans)
-                {
-                        from_a = sort_spans[left].from;
-                        to_a = sort_spans[left].to;
-                        from_b = sort_spans[right].from;
-                        to_b = sort_spans[right].to;
-                }
-                else if (!key->whole)
-                {
-                        sort_key_span(key, a->at, a->length, address_of from_a,
-                                      address_of to_a);
-                        sort_key_span(key, b->at, b->length, address_of from_b,
-                                      address_of to_b);
-                }
+                sort_view_span(a, i, address_of from_a, address_of to_a);
+                sort_view_span(b, i, address_of from_b, address_of to_b);
 
                 bipolar answer = sort_compare_kind(key->order.kind, key->order.how,
                                                    a->at + from_a, to_a - from_a,
@@ -18388,81 +18502,337 @@ static PURE HOT bipolar sort_compare_keys(positive left, positive right)
 }
 
 // The last resort, which is the whole line compared as bytes when every key
-// said the two were the same. -u drops what the keys called equal, so it
-// stops before this.
-static PURE HOT bipolar sort_compare(positive left, positive right)
+// said the two were the same. -u drops what the keys called equal and -s
+// keeps their order, so both stop before it. A first stage past the last
+// resort has nothing left to ask.
+static PURE HOT bipolar sort_compare_views(sort_view address_to a,
+                                           sort_view address_to b, b32 first)
 {
-        bipolar answer = sort_compare_keys(left, right);
-
-        if (answer)
-                return answer;
-
-        if (sort_unique || sort_stable)
+        if (first > sort_key_count)
                 return 0;
 
-        text_slice address_to a = text_lines + left;
-        text_slice address_to b = text_lines + right;
+        bipolar answer = sort_compare_views_keys(a, b, first);
+
+        if (answer || sort_unique || sort_stable)
+                return answer;
 
         answer = sort_compare_bytes(a->at, a->length, b->at, b->length, 0);
         return sort_reverse ? -answer : answer;
 }
 
-static positive address_to sort_order;
-static positive address_to sort_spare;
-
-static positive sort_radix_key(positive line, positive depth)
+static PURE HOT bipolar sort_compare_lines(p32 left, p32 right, b32 first)
 {
-        text_slice address_to item = text_lines + line;
+        sort_view a = sort_view_of(left);
+        sort_view b = sort_view_of(right);
 
-        return depth < item->length ? (positive)item->at[depth] + 1 : 0;
+        return sort_compare_views(address_of a, address_of b, first);
 }
 
-static fn sort_insertion(positive from, positive to)
+/*
+        Eight bytes as one big-endian word, the ones past the end masked off.
+        Every buffer keeps SORT_SLACK bytes beyond its last line, so the load
+        never leaves the mapping. Spelled as eight shifts because that is the
+        shape a compiler turns into one load and a byte swap where the
+        machine has one and into plain shifts where it has not.
+*/
+static inline INLINE p64 sort_window_load(p8 address_to at, positive length)
 {
-        for (positive at = from + 1; at < to; at++)
+        p64 word = (p64)at[0] << 56 | (p64)at[1] << 48 | (p64)at[2] << 40 |
+                   (p64)at[3] << 32 | (p64)at[4] << 24 | (p64)at[5] << 16 |
+                   (p64)at[6] << 8 | (p64)at[7];
+
+        return length >= 8 ? word : word & ~(~(p64)0 >> (length * 8));
+}
+
+// a..z to A..Z in every byte at once, as sort_compare_bytes folds: nothing
+// with the high bit set moves.
+static inline INLINE p64 sort_window_fold(p64 word)
+{
+        p64 ones = 0x0101010101010101ull;
+        p64 high = ones << 7;
+        p64 low = word & ~high;
+        p64 lower = (low + ones * (0x80 - 'a')) &
+                    ~(low + ones * (0x80 - 'z' - 1)) & ~word & high;
+
+        return word - (lower >> 2);
+}
+
+/*
+        A number as eight bytes that order the way sort_compare_parsed does.
+
+        The first byte is the signed width: 0x80 for zero, above it by the
+        count of integer digits plus one, below it by the same for a minus.
+        Then the significant digits, integer then fraction, seven of them,
+        zero-padded; a negative number's are inverted so a longer fraction
+        sorts first. Two different windows are a conclusive answer. Equal
+        windows are equal numbers only when both are exact -- every digit
+        held and a width that did not saturate -- which the caller is told.
+*/
+static p64 sort_number_window(p8 address_to text, positive length,
+                              bool address_to exact)
+{
+        positive at = string_span_max(text, length, string_set_blanks);
+        bool minus = at < length && text[at] == '-';
+
+        at += minus;
+        positive first = at;
+
+        at += string_span_max(text + at, length - at, string_set_digits);
+        first = sort_zero_prefix(text, first, at);
+
+        positive digits = at - first;
+        positive fraction = at;
+
+        if (at < length && text[at] == '.')
         {
-                positive value = sort_order[at];
-                positive into = at;
+                fraction = ++at;
+                at += string_span_max(text + at, length - at, string_set_digits);
 
-                while (into > from &&
-                       sort_compare(value, sort_order[into - 1]) < 0)
-                {
-                        sort_order[into] = sort_order[into - 1];
-                        into--;
-                }
+                while (at > fraction && text[at - 1] == '0')
+                        at--;
+        }
 
-                sort_order[into] = value;
+        positive places = at - fraction;
+
+        if (!digits && !places)
+        {
+                address_to exact = true;
+                return (p64)0x80 << 56;
+        }
+
+        positive rank = digits + 1;
+        p64 body = 0;
+        positive taken = 0;
+
+        if (rank < 127)
+        {
+                for (positive i = 0; i < digits && taken < 7; i++, taken++)
+                        body = body << 8 | text[first + i];
+
+                for (positive i = 0; i < places && taken < 7; i++, taken++)
+                        body = body << 8 | text[fraction + i];
+
+                body <<= 8 * (7 - taken);
+        }
+        else
+                rank = 127;
+
+        address_to exact = rank < 127 && digits + places <= 7;
+
+        if (minus)
+                return (p64)(0x80 - rank) << 56 | (~body & 0x00ffffffffffffffull);
+
+        return (p64)(0x80 + rank) << 56 | body;
+}
+
+// The window of one line for one stage, the key read from `depth` on. A
+// window stage says whether its eight bytes were the whole number in `left`:
+// eight exact, nine not.
+static inline INLINE fn sort_item_window(sort_item address_to item,
+                                         sort_view address_to view, b32 stage,
+                                         positive depth)
+{
+        positive from;
+        positive to;
+        p64 window;
+
+        sort_view_span(view, stage, address_of from, address_of to);
+
+        if (sort_stage_kind[stage] == SORT_STAGE_WINDOW)
+        {
+                bool exact = true;
+
+                window = sort_keys[stage].order.kind == 'n'
+                             ? sort_number_window(view->at + from, to - from,
+                                                  address_of exact)
+                             : (p64)sort_month_of(view->at + from, to - from) << 56;
+                item->left = exact ? 8 : 9;
+        }
+        else
+        {
+                positive length = to - from;
+                positive left = length > depth ? length - depth : 0;
+
+                window = left ? sort_window_load(view->at + from + depth, left) : 0;
+
+                if (sort_stage_fold[stage])
+                        window = sort_window_fold(window);
+
+                item->left = left > 0xffffffffu ? 0xffffffffu : (p32)left;
+        }
+
+        item->window = sort_stage_reverse[stage] ? ~window : window;
+}
+
+static fn sort_items_load(positive from, positive to, b32 stage, positive depth)
+{
+        for (positive at = from; at < to; at++)
+        {
+                sort_item address_to item = sort_items + at;
+                sort_view view = sort_view_of(item->line);
+
+                sort_item_window(item, address_of view, stage, depth);
         }
 }
 
 /*
-        The ordinary C-locale sort is bytes, so comparing whole prefixes at
-        every merge is avoidable. Partition on the next byte instead. Bucket
-        zero is end-of-line and bytes occupy one through 256, preserving the
-        exact length-aware order of memory_compare.
-
-        The largest child is continued in this frame and only smaller children
-        recurse, bounding stack depth even for adversarial tries. A single
-        common-byte bucket simply advances depth in the loop, so very long
-        equal prefixes do not consume stack.
+        What two windows loaded at the same depth of the same stage decide.
+        Nonzero is the answer; zero leaves it to the lines, from the stage
+        written into `next` -- this one again when the windows could not see
+        the whole key, the one after it when they saw the key end equal.
 */
-static fn sort_radix(positive from, positive to, positive depth)
+static inline INLINE bipolar sort_windows_order(sort_item address_to a,
+                                                sort_item address_to b,
+                                                b32 stage, b32 address_to next)
 {
-        while (to - from >= 16)
+        address_to next = stage;
+
+        if (sort_stage_kind[stage] == SORT_STAGE_COMPARE)
+                return 0;
+
+        if (a->window != b->window)
+                return a->window < b->window ? -1 : 1;
+
+        if (sort_stage_kind[stage] == SORT_STAGE_WINDOW)
         {
+                if (a->left == 8 && b->left == 8)
+                        address_to next = stage + 1;
+
+                return 0;
+        }
+
+        p32 one = a->left < 8 ? a->left : 8;
+        p32 two = b->left < 8 ? b->left : 8;
+
+        if (one != two)
+                return (one < two) != sort_stage_reverse[stage] ? -1 : 1;
+
+        if (one < 8)
+                address_to next = stage + 1;
+
+        return 0;
+}
+
+static fn sort_items_insert(positive from, positive to, b32 stage)
+{
+        for (positive at = from + 1; at < to; at++)
+        {
+                sort_item value = sort_items[at];
+                positive into = at;
+
+                while (into > from)
+                {
+                        b32 next;
+                        bipolar answer = sort_windows_order(
+                            address_of value, sort_items + into - 1, stage,
+                            address_of next);
+
+                        if (!answer)
+                                answer = sort_compare_lines(
+                                    value.line, sort_items[into - 1].line, next);
+
+                        if (answer >= 0)
+                                break;
+
+                        sort_items[into] = sort_items[into - 1];
+                        into--;
+                }
+
+                sort_items[into] = value;
+        }
+}
+
+#define SORT_ITEMS_ORDER(one, two)                                          \
+        sort_compare_lines((one).line, (two).line, stage)
+
+static fn sort_items_merge(positive from, positive to, b32 stage)
+{
+        positive count = to - from;
+
+        if (count < SORT_SMALL)
+        {
+                sort_items_insert(from, to, stage);
+                return;
+        }
+
+        sort_item address_to landed = array_merge_sort(
+            sort_items + from, sort_spare + from, count, SORT_ITEMS_ORDER);
+
+        if (landed != sort_items + from)
+                memory_copy_apart(sort_items + from, landed,
+                                  count * sizeof(sort_item));
+}
+
+#undef SORT_ITEMS_ORDER
+
+static fn sort_group(positive from, positive to, b32 stage);
+
+/*
+        One byte of the window a pass. Bucket zero is a key that has ended,
+        which sorts first -- last when the stage is reversed, because the
+        window was inverted and an ended key is then the largest. A bucket of
+        ended keys has tied on the whole stage and moves to the next.
+
+        The largest child is continued in this frame and only smaller ones
+        recurse, so the stack stays logarithmic however the keys fall, and a
+        byte every line shares advances the depth without moving anything.
+*/
+static fn sort_radix(positive from, positive to, b32 stage, positive depth)
+{
+        bool window = sort_stage_kind[stage] == SORT_STAGE_WINDOW;
+        positive base = sort_stage_reverse[stage] ? 0 : 1;
+        positive ended = sort_stage_reverse[stage] ? 256 : 0;
+
+        for (;;)
+        {
+                positive column = depth & 7;
+
+                if (!column && depth)
+                {
+                        if (window)
+                        {
+                                bool exact = true;
+
+                                for (positive at = from; at < to; at++)
+                                        exact &= sort_items[at].left == 8;
+
+                                if (exact)
+                                        sort_group(from, to, stage + 1);
+                                else
+                                        sort_items_merge(from, to, stage);
+
+                                return;
+                        }
+
+                        sort_items_load(from, to, stage, depth);
+                }
+
+                if (to - from < SORT_SMALL)
+                {
+                        sort_items_insert(from, to, stage);
+                        return;
+                }
+
                 positive boundary[258];
                 positive next[257];
-                positive largest = 0;
-                positive largest_size = 0;
+                p32 shift = 56 - 8 * (p32)column;
                 positive occupied = 0;
                 positive only = 0;
 
                 memory_fill(boundary, 0, sizeof(boundary));
 
                 for (positive at = from; at < to; at++)
-                        boundary[sort_radix_key(sort_order[at], depth) + 1]++;
+                {
+                        sort_item address_to item = sort_items + at;
+                        positive bucket = item->left > column
+                                              ? ((item->window >> shift) & 0xff) + base
+                                              : ended;
+
+                        boundary[bucket + 1]++;
+                }
 
                 boundary[0] = from;
+
                 for (positive bucket = 0; bucket < 257; bucket++)
                 {
                         if (boundary[bucket + 1])
@@ -18475,86 +18845,982 @@ static fn sort_radix(positive from, positive to, positive depth)
                         next[bucket] = boundary[bucket];
                 }
 
-                /* A common byte needs no partition at all. End-of-line is
-                   already fully ordered; any other byte advances the trie in
-                   this frame without moving an index twice. */
                 if (occupied == 1)
                 {
-                        if (!only)
+                        if (only == ended)
+                        {
+                                sort_group(from, to, stage + 1);
                                 return;
+                        }
 
                         depth++;
                         continue;
                 }
 
-                /*
-                        The spare index array is already paid for by every
-                        sort. Distribute into it in input order, then let the
-                        assembly copy return one contiguous span. The former
-                        in-place cycle walk chased a different bucket on each
-                        swap; on the ordinary byte sort it was the largest
-                        source of cache misses and branch work.
-
-                        This is stable within a bucket, although the default
-                        sort does not require that property. More importantly,
-                        both reads and writes are forward streams.
-                */
                 for (positive at = from; at < to; at++)
                 {
-                        positive line = sort_order[at];
-                        positive key = sort_radix_key(line, depth);
+                        sort_item address_to item = sort_items + at;
+                        positive bucket = item->left > column
+                                              ? ((item->window >> shift) & 0xff) + base
+                                              : ended;
 
-                        sort_spare[next[key]++] = line;
+                        sort_spare[next[bucket]++] = address_to item;
                 }
 
-                memory_copy_apart(sort_order + from, sort_spare + from,
-                                  (to - from) * sizeof(positive));
+                memory_copy_apart(sort_items + from, sort_spare + from,
+                                  (to - from) * sizeof(sort_item));
 
-                for (positive bucket = 1; bucket < 257; bucket++)
+                positive largest = 0;
+                positive largest_size = 0;
+
+                for (positive bucket = 0; bucket < 257; bucket++)
                 {
-                        positive size = boundary[bucket + 1] -
-                                        boundary[bucket];
+                        positive size = boundary[bucket + 1] - boundary[bucket];
 
-                        if (size > largest_size)
+                        if (size < 2)
+                                continue;
+
+                        if (bucket == ended)
                         {
-                                largest = bucket;
-                                largest_size = size;
+                                sort_group(boundary[bucket], boundary[bucket + 1],
+                                           stage + 1);
+                                continue;
                         }
+
+                        if (size <= largest_size)
+                        {
+                                sort_radix(boundary[bucket], boundary[bucket + 1],
+                                           stage, depth + 1);
+                                continue;
+                        }
+
+                        if (largest_size)
+                                sort_radix(boundary[largest], boundary[largest + 1],
+                                           stage, depth + 1);
+
+                        largest = bucket;
+                        largest_size = size;
                 }
 
-                if (largest_size < 2)
+                if (!largest_size)
                         return;
-
-                for (positive bucket = 1; bucket < 257; bucket++)
-                        if (bucket != largest &&
-                            boundary[bucket + 1] - boundary[bucket] > 1)
-                                sort_radix(boundary[bucket],
-                                           boundary[bucket + 1], depth + 1);
 
                 from = boundary[largest];
                 to = boundary[largest + 1];
                 depth++;
         }
+}
 
-        sort_insertion(from, to);
+// Lines that tied on every stage before this one, still in input order.
+static fn sort_group(positive from, positive to, b32 stage)
+{
+        if (to - from < 2 || stage > sort_key_count ||
+            (stage == sort_key_count && (sort_unique || sort_stable)))
+                return;
+
+        if (sort_stage_kind[stage] == SORT_STAGE_COMPARE)
+        {
+                sort_items_merge(from, to, stage);
+                return;
+        }
+
+        sort_items_load(from, to, stage, 0);
+        sort_radix(from, to, stage, 0);
+}
+
+static bool sort_chunk()
+{
+        positive count = sort_lines_count;
+
+        if (!array_store_reserve(sort_items, sort_items_room, 0, count + 1, 4096) ||
+            !array_store_reserve(sort_spare, sort_spare_room, 0, count + 1, 4096))
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+
+        for (positive at = 0; at < count; at++)
+                sort_items[at].line = (p32)at;
+
+        sort_group(0, count, 0);
+        return true;
 }
 
 /*
-        Stable bottom-up merge sort with the two index arrays changing roles.
-
-        The old recursive merge copied every completed run to spare and then
-        copied the entire run back, doubling index traffic at every level.
-        A pass already produces exactly the runs the next pass consumes, so
-        it can stay where it landed. Only line indexes move; line bytes never
-        do.
+        Writing. One writer is live at a time -- a run, a merge into a
+        temporary, or the answer -- so they share one buffer.
 */
-static fn sort_run(positive count)
+typedef struct
 {
-        if (count < 2)
-                return;
+        positive handle;
+        bool failed;
+} sort_writer;
 
-        sort_order = array_merge_sort(sort_order, sort_spare, count,
-                                      sort_compare);
+static p8 address_to sort_out;
+static positive sort_out_room;
+static positive sort_out_used;
+
+static bool sort_writer_ready(sort_writer address_to out, positive handle)
+{
+        out->handle = handle;
+        out->failed = false;
+        sort_out_used = 0;
+
+        if (sort_out || array_store_reserve(sort_out, sort_out_room, 0,
+                                             SORT_WRITE_BUFFER, SORT_WRITE_BUFFER))
+                return true;
+
+        return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+}
+
+static fn sort_writer_flush(sort_writer address_to out)
+{
+        if (sort_out_used &&
+            system_write_all(out->handle, sort_out, sort_out_used) != sort_out_used)
+                out->failed = true;
+
+        sort_out_used = 0;
+}
+
+static inline INLINE fn sort_writer_line(sort_writer address_to out,
+                                         p8 address_to at, positive length)
+{
+        if (sort_out_room - sort_out_used <= length)
+        {
+                sort_writer_flush(out);
+
+                if (sort_out_room <= length)
+                {
+                        if (system_write_all(out->handle, at, length) != length)
+                                out->failed = true;
+
+                        sort_out[sort_out_used++] = text_delimiter;
+                        return;
+                }
+        }
+
+        memory_copy_apart(sort_out + sort_out_used, at, length);
+        sort_out[sort_out_used + length] = text_delimiter;
+        sort_out_used += length + 1;
+}
+
+static fn sort_emit(sort_writer address_to out)
+{
+        sort_view last;
+        bool have_last = false;
+
+        for (positive at = 0; at < sort_lines_count; at++)
+        {
+                sort_view view = sort_view_of(sort_items[at].line);
+
+                if (sort_unique)
+                {
+                        if (have_last &&
+                            !sort_compare_views_keys(address_of last, address_of view, 0))
+                                continue;
+
+                        last = view;
+                        have_last = true;
+                }
+
+                sort_writer_line(out, view.at, view.length);
+        }
+}
+
+/*
+        Temporary files, which have no names.
+
+        O_TMPFILE makes an inode in the directory without ever linking a name
+        to it, so a sort killed by a signal leaves nothing behind and there is
+        nothing to clean up on any exit: the file goes when its descriptor
+        does. A filesystem without it gets a named file unlinked the moment it
+        is open. -T names the directories and they are taken in turn, as GNU
+        takes them; without -T it is TMPDIR, and without that /tmp.
+*/
+#define SORT_O_TMPFILE (020000000 | O_DIRECTORY)
+
+static string_address address_to sort_directories;
+static positive sort_directories_room;
+static positive sort_directories_count;
+static positive sort_directory_next;
+
+static bipolar sort_temporary_named(string_address directory)
+{
+        p8 path[TEXT_PATH_MAX + 32];
+        positive length = string_length(directory);
+        static positive serial;
+
+        if (length > TEXT_PATH_MAX)
+                return -36;
+
+        memory_copy_apart(path, directory, length);
+
+        for (b32 attempt = 0; attempt < 64; attempt++)
+        {
+                positive stamp = (positive)system_call_1(syscall(getpid), 0) *
+                                     0x9e3779b1u +
+                                 serial++;
+                p8 address_to at = path + length;
+
+                memory_copy_apart(at, "/sort", 5);
+                at += 5;
+
+                for (b32 digit = 0; digit < 12; digit++, stamp >>= 4)
+                        address_to at++ = "0123456789abcdef"[stamp & 15];
+
+                address_to at = 0;
+
+                bipolar handle = system_open_at_mode(
+                    AT_FDCWD, path,
+                    FILE_READ_WRITE | FILE_CREATE | FILE_EXCLUSIVE | O_CLOEXEC,
+                    0600);
+
+                // Another name was there first.
+                if (handle == -17)
+                        continue;
+
+                if (handle >= 0)
+                        system_remove_at(AT_FDCWD, path, 0);
+
+                return handle;
+        }
+
+        return -17;
+}
+
+static bipolar sort_temporary()
+{
+        string_address directory;
+
+        if (sort_directories_count)
+                directory = sort_directories[sort_directory_next++ %
+                                             sort_directories_count];
+        else
+        {
+                directory = file_environment("TMPDIR");
+
+                if (!directory)
+                        directory = (string_address) "/tmp";
+        }
+
+        bipolar handle = system_open_at_mode(AT_FDCWD, directory,
+                                             FILE_READ_WRITE | SORT_O_TMPFILE |
+                                                 O_CLOEXEC,
+                                             0600);
+
+        // Unsupported by the filesystem, or by a kernel that reads the flag
+        // as a directory opened for writing.
+        if (handle == -95 || handle == -21 || handle == -22)
+                handle = sort_temporary_named(directory);
+
+        if (handle >= 0)
+                return handle;
+
+        text_flush();
+        string_format(writer_stderr, "%s: cannot create temporary file in '%s': %s\n",
+                      text_name, directory, file_reason(handle));
+        return -1;
+}
+
+/*
+        Merging.
+
+        An entry is what a merge reads: a named input, a temporary run, or
+        the chunk still in memory. A source is an entry opened, with the line
+        at its front and that line's first-stage window. A loser tree over the
+        sources answers which comes next in one comparison per level, and a
+        tie goes to the lower index, which is the earlier input.
+*/
+enum
+{
+        SORT_ENTRY_NAMED = -1,
+        SORT_ENTRY_MEMORY = -2,
+};
+
+typedef struct
+{
+        string_address name;
+        bipolar handle;
+} sort_entry;
+
+typedef struct
+{
+        bipolar handle;
+        bool opened;
+        bool positional;
+        bool finished;
+        bool have;
+        p8 address_to buffer;
+        positive room;
+        positive filled;
+        positive position;
+        positive scanned;
+        positive offset;
+        positive next;
+        string_address name;
+        sort_view head;
+        sort_item key;
+} sort_source;
+
+static sort_entry address_to sort_entries;
+static positive sort_entries_room;
+static positive sort_entries_count;
+static sort_source address_to sort_sources;
+static positive sort_sources_room;
+static positive sort_sources_open_count;
+static p32 address_to sort_tree;
+static positive sort_tree_room;
+static p8 address_to sort_held;
+static positive sort_held_room;
+
+static bool sort_hold(sort_view address_to view, sort_view address_to into)
+{
+        if (!array_store_reserve(sort_held, sort_held_room, 0,
+                                 view->length + SORT_SLACK, 4096))
+        {
+                sort_failed = true;
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        }
+
+        memory_copy_apart(sort_held, view->at, view->length);
+        address_to into = address_to view;
+        into->at = sort_held;
+        return true;
+}
+
+static bool sort_source_next(sort_source address_to source)
+{
+        if (source->handle == SORT_ENTRY_MEMORY)
+        {
+                if (source->next >= sort_lines_count)
+                        return source->have = false;
+
+                source->head = sort_view_of(sort_items[source->next++].line);
+        }
+        else
+        {
+                for (;;)
+                {
+                        p8 address_to at = source->buffer + source->position;
+                        positive left = source->filled - source->position;
+                        positive seen = source->scanned - source->position;
+                        p8 address_to found =
+                            left > seen ? memory_first_of(at + seen, text_delimiter,
+                                                          left - seen)
+                                        : null;
+
+                        if (found)
+                        {
+                                source->head.at = at;
+                                source->head.length = (positive)(found - at);
+                                source->position += source->head.length + 1;
+                                source->scanned = source->position;
+                                break;
+                        }
+
+                        source->scanned = source->filled;
+
+                        if (source->finished)
+                        {
+                                // The last line of an input needs no delimiter
+                                // to be a line.
+                                if (!left)
+                                        return source->have = false;
+
+                                source->head.at = at;
+                                source->head.length = left;
+                                source->position = source->scanned = source->filled;
+                                break;
+                        }
+
+                        if (source->position)
+                        {
+                                memory_copy(source->buffer, at, left);
+                                source->filled = source->scanned = left;
+                                source->position = 0;
+                        }
+
+                        if (source->filled + SORT_SOURCE_BUFFER / 2 + SORT_SLACK >
+                                source->room &&
+                            !array_store_reserve(source->buffer, source->room,
+                                                 source->filled,
+                                                 source->filled + SORT_SOURCE_BUFFER +
+                                                     SORT_SLACK,
+                                                 SORT_SOURCE_BUFFER + SORT_SLACK))
+                        {
+                                sort_failed = true;
+                                string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+                                return source->have = false;
+                        }
+
+                        positive room = source->room - SORT_SLACK - source->filled;
+                        bipolar got = source->positional
+                                          ? system_call_4(syscall(pread64),
+                                                          (positive)source->handle,
+                                                          (positive)(source->buffer +
+                                                                     source->filled),
+                                                          room, source->offset)
+                                          : system_read_retry((positive)source->handle,
+                                                              source->buffer +
+                                                                  source->filled,
+                                                              room);
+
+                        if (got <= 0)
+                        {
+                                source->finished = true;
+
+                                if (got < 0)
+                                {
+                                        string_diagnostic(&text_diagnostic, 0,
+                                                          source->name, "Read error");
+                                        text_status = text_status ? text_status : 1;
+                                }
+
+                                continue;
+                        }
+
+                        source->filled += (positive)got;
+                        source->offset += (positive)got;
+                }
+
+                sort_view_ready(address_of source->head);
+        }
+
+        sort_item_window(address_of source->key, address_of source->head, 0, 0);
+        return source->have = true;
+}
+
+static bool sort_source_open(sort_source address_to source, sort_entry address_to entry)
+{
+        address_to source = (sort_source){
+            .handle = entry->handle,
+            .name = entry->name,
+        };
+
+        if (entry->handle >= 0)
+                source->positional = true;
+        else if (entry->handle == SORT_ENTRY_NAMED)
+        {
+                if (!entry->name || string_equals(entry->name, "-"))
+                        source->handle = 0;
+                else
+                {
+                        bipolar handle = system_open_at(AT_FDCWD, entry->name,
+                                                        FILE_READ | O_CLOEXEC);
+
+                        if (handle < 0)
+                        {
+                                string_diagnostic(&text_diagnostic, 0, entry->name,
+                                                  file_reason(handle));
+                                text_status = text_status ? text_status : 1;
+                                return false;
+                        }
+
+                        source->handle = handle;
+                        source->opened = true;
+                }
+        }
+
+        return true;
+}
+
+static fn sort_sources_close()
+{
+        for (positive at = 0; at < sort_sources_open_count; at++)
+        {
+                sort_source address_to source = sort_sources + at;
+                positive none = 0;
+
+                if (source->opened)
+                        system_close((positive)source->handle);
+
+                array_store_release(source->buffer, source->room, none);
+        }
+
+        sort_sources_open_count = 0;
+}
+
+// Every entry in [first, first + count) open and at its first line.
+static bool sort_sources_open(positive first, positive count)
+{
+        sort_sources_close();
+
+        if (!array_store_reserve(sort_sources, sort_sources_room, 0, count, 64) ||
+            !array_store_reserve(sort_tree, sort_tree_room, 0, count + 1, 64))
+        {
+                sort_failed = true;
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        }
+
+        for (positive at = 0; at < count; at++)
+        {
+                if (!sort_source_open(sort_sources + at, sort_entries + first + at))
+                        return false;
+
+                sort_sources_open_count++;
+        }
+
+        for (positive at = 0; at < count; at++)
+        {
+                sort_source_next(sort_sources + at);
+
+                if (sort_failed)
+                        return false;
+        }
+
+        return true;
+}
+
+static inline INLINE bool sort_source_before(sort_source address_to sources,
+                                             p32 one, p32 two)
+{
+        sort_source address_to a = sources + one;
+        sort_source address_to b = sources + two;
+
+        if (!a->have)
+                return false;
+
+        if (!b->have)
+                return true;
+
+        b32 next;
+        bipolar answer = sort_windows_order(address_of a->key, address_of b->key, 0,
+                                            address_of next);
+
+        if (!answer)
+                answer = sort_compare_views(address_of a->head, address_of b->head, next);
+
+        return answer < 0 || (!answer && one < two);
+}
+
+static p32 sort_tree_build(sort_source address_to sources, positive count,
+                           positive node)
+{
+        if (node >= count)
+                return (p32)(node - count);
+
+        p32 left = sort_tree_build(sources, count, node * 2);
+        p32 right = sort_tree_build(sources, count, node * 2 + 1);
+
+        if (sort_source_before(sources, right, left))
+        {
+                sort_tree[node] = left;
+                return right;
+        }
+
+        sort_tree[node] = right;
+        return left;
+}
+
+static bool sort_merge(positive count, sort_writer address_to out)
+{
+        sort_source address_to sources = sort_sources;
+        sort_view last;
+        bool have_last = false;
+
+        sort_tree[0] = sort_tree_build(sources, count, 1);
+
+        for (;;)
+        {
+                p32 winner = sort_tree[0];
+                sort_source address_to source = sources + winner;
+
+                if (!source->have)
+                        break;
+
+                if (!sort_unique)
+                        sort_writer_line(out, source->head.at, source->head.length);
+                else if (!have_last ||
+                         sort_compare_views_keys(address_of last,
+                                                 address_of source->head, 0))
+                {
+                        sort_writer_line(out, source->head.at, source->head.length);
+
+                        if (!sort_hold(address_of source->head, address_of last))
+                                return false;
+
+                        have_last = true;
+                }
+
+                sort_source_next(source);
+
+                if (sort_failed)
+                        return false;
+
+                for (positive node = (winner + count) / 2; node; node /= 2)
+                {
+                        if (sort_source_before(sources, sort_tree[node], winner))
+                        {
+                                p32 loser = sort_tree[node];
+
+                                sort_tree[node] = winner;
+                                winner = loser;
+                        }
+                }
+
+                sort_tree[0] = winner;
+        }
+
+        return true;
+}
+
+static fn sort_writer_failed(string_address directory)
+{
+        text_flush();
+        string_format(writer_stderr, "%s: write failed: %s\n", text_name,
+                      directory ? directory : (string_address) "temporary file");
+}
+
+// The entries in [first, first + count) merged into one new temporary.
+static bipolar sort_merge_temporary(positive first, positive count)
+{
+        bipolar handle = sort_temporary();
+        sort_writer out;
+
+        if (handle < 0)
+                return -1;
+
+        bool fine = sort_writer_ready(address_of out, (positive)handle) &&
+                    sort_sources_open(first, count) &&
+                    sort_merge(count, address_of out);
+
+        sort_sources_close();
+        sort_writer_flush(address_of out);
+
+        if (fine && out.failed)
+        {
+                sort_writer_failed(null);
+                fine = false;
+        }
+
+        if (!fine)
+        {
+                system_close((positive)handle);
+                return -1;
+        }
+
+        return handle;
+}
+
+static bool sort_entries_room_for(positive count)
+{
+        if (array_store_reserve(sort_entries, sort_entries_room, sort_entries_count,
+                                count, 64))
+                return true;
+
+        sort_failed = true;
+        return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+}
+
+static fn sort_entries_close(positive first, positive count)
+{
+        for (positive at = first; at < first + count; at++)
+        {
+                bipolar handle = sort_entries[at].handle;
+
+                if (handle < 0)
+                        continue;
+
+                // One temporary can stand for several entries: an input named
+                // twice that is also the output.
+                for (positive other = at; other < first + count; other++)
+                        if (sort_entries[other].handle == handle)
+                                sort_entries[other].handle = SORT_ENTRY_NAMED;
+
+                system_close((positive)handle);
+        }
+}
+
+/*
+        The chunk so far, sorted and written as the next run. The unfinished
+        line it was cut at moves to the front of the text. Runs are sorted
+        and in input order, so when their descriptors reach SORT_FANIN the
+        runs so far fold into one without changing what the merge will say.
+*/
+static bool sort_spill()
+{
+        if (!sort_chunk() || !sort_entries_room_for(sort_entries_count + 1))
+                return false;
+
+        bipolar handle = sort_temporary();
+        sort_writer out;
+
+        if (handle < 0)
+                return false;
+
+        sort_entries[sort_entries_count++] = (sort_entry){.handle = handle};
+
+        if (!sort_writer_ready(address_of out, (positive)handle))
+                return false;
+
+        sort_emit(address_of out);
+        sort_writer_flush(address_of out);
+
+        if (out.failed)
+        {
+                sort_writer_failed(null);
+                return false;
+        }
+
+        positive tail = sort_text_used - sort_line_start;
+
+        memory_copy(sort_text, sort_text + sort_line_start, tail);
+        sort_scanned -= sort_line_start;
+        sort_text_used = tail;
+        sort_line_start = 0;
+        sort_lines_count = 0;
+
+        if (sort_entries_count < SORT_FANIN)
+                return true;
+
+        bipolar merged = sort_merge_temporary(0, sort_entries_count);
+
+        if (merged < 0)
+                return false;
+
+        sort_entries_close(0, sort_entries_count);
+        sort_entries[0] = (sort_entry){.handle = merged};
+        sort_entries_count = 1;
+        return true;
+}
+
+static bool sort_line_record(positive stop)
+{
+        if (!array_store_reserve(sort_lines, sort_lines_room, sort_lines_count,
+                                 sort_lines_count + 1, 65536) ||
+            (!sort_keys[0].whole &&
+             !array_store_reserve(sort_spans, sort_spans_room, sort_lines_count,
+                                  sort_lines_count + 1, 65536)))
+        {
+                sort_failed = true;
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        }
+
+        sort_line address_to line = sort_lines + sort_lines_count;
+
+        line->at = sort_line_start;
+        line->length = stop - sort_line_start;
+
+        if (sort_spans)
+                sort_key_span(sort_keys, sort_text + line->at, line->length,
+                              address_of sort_spans[sort_lines_count].from,
+                              address_of sort_spans[sort_lines_count].to);
+
+        sort_lines_count++;
+        return true;
+}
+
+static bool sort_split()
+{
+        p8 address_to at = sort_text + sort_scanned;
+        p8 address_to stop = sort_text + sort_text_used;
+
+        while (at < stop)
+        {
+                p8 address_to found = memory_first_of(at, text_delimiter,
+                                                      (positive)(stop - at));
+
+                if (!found)
+                        break;
+
+                if (!sort_line_record((positive)(found - sort_text)))
+                        return false;
+
+                sort_line_start = (positive)(found - sort_text) + 1;
+                at = found + 1;
+        }
+
+        sort_scanned = sort_text_used;
+        return true;
+}
+
+/*
+        One input read straight into the text, a megabyte at a time, and cut
+        into lines as it arrives. A read error is said and ends that input,
+        and the sort goes on with the rest, as it always has here.
+*/
+static bool sort_gather(positive handle, string_address name)
+{
+        for (;;)
+        {
+                positive cost = sort_text_used + sort_lines_count * sort_line_cost;
+
+                if (sort_lines_count &&
+                    (cost >= sort_budget || sort_lines_count > 0xf0000000u))
+                {
+                        if (!sort_spill())
+                                return false;
+
+                        continue;
+                }
+
+                if (sort_text_used + SORT_READ / 4 + SORT_SLACK > sort_text_room)
+                {
+                        if (!array_store_reserve(sort_text, sort_text_room,
+                                                 sort_text_used,
+                                                 sort_text_used + SORT_READ + SORT_SLACK,
+                                                 4 * SORT_READ))
+                        {
+                                if (sort_lines_count)
+                                {
+                                        if (!sort_spill())
+                                                return false;
+
+                                        continue;
+                                }
+
+                                sort_failed = true;
+                                return string_diagnostic(&text_diagnostic, 0, null,
+                                                         "out of memory");
+                        }
+
+                        continue;
+                }
+
+                positive room = sort_text_room - SORT_SLACK - sort_text_used;
+                bipolar got = system_read_retry(handle, sort_text + sort_text_used,
+                                                room < SORT_READ ? room : SORT_READ);
+
+                if (got <= 0)
+                {
+                        if (got < 0)
+                        {
+                                string_diagnostic(&text_diagnostic, 0, name, "Read error");
+                                text_status = text_status ? text_status : 1;
+                        }
+
+                        break;
+                }
+
+                sort_text_used += (positive)got;
+
+                if (!sort_split())
+                        return false;
+        }
+
+        if (sort_line_start < sort_text_used && !sort_line_record(sort_text_used))
+                return false;
+
+        sort_line_start = sort_scanned = sort_text_used;
+        return true;
+}
+
+/*
+        How much a sort may hold before it spills. -S says so in GNU's units
+        -- a kibibyte when no suffix is written, b for bytes, % of physical
+        memory -- and the largest of several wins. Without it, GNU's default:
+        half the data and address-space limits, fifteen sixteenths of the
+        resident one, and no more than what is available or an eighth of all
+        memory, whichever is more. Zero means -S was not said, because a said
+        size is never below SORT_BUDGET_MINIMUM.
+*/
+static positive sort_size;
+static positive sort_batch = 16;
+
+// Linux's sysinfo record read as fourteen words: totalram is the fifth,
+// freeram the sixth, bufferram the eighth, and mem_unit the low half of the
+// last, on all three machines.
+static bool sort_memory(positive address_to total, positive address_to available)
+{
+        positive information[14];
+
+        if (system_call_1(syscall(sysinfo), (positive)information) < 0)
+                return false;
+
+        positive unit = (p32)information[13] ? (p32)information[13] : 1;
+
+        address_to total = information[4] * unit;
+        address_to available = (information[5] + information[7]) * unit;
+        return true;
+}
+
+static positive sort_default_budget()
+{
+        positive size = positive_max;
+        positive limit[2];
+        positive total;
+        positive available;
+
+        if (system_call_4(syscall(prlimit64), 0, 2, 0, (positive)limit) >= 0)
+                size = limit[0];
+
+        if (system_call_4(syscall(prlimit64), 0, 9, 0, (positive)limit) >= 0 &&
+            limit[0] < size)
+                size = limit[0];
+
+        size /= 2;
+
+        if (system_call_4(syscall(prlimit64), 0, 5, 0, (positive)limit) >= 0 &&
+            limit[0] / 16 * 15 < size)
+                size = limit[0] / 16 * 15;
+
+        if (sort_memory(address_of total, address_of available))
+        {
+                positive memory = available > total / 8 ? available : total / 8;
+
+                if (memory < size)
+                        size = memory;
+        }
+
+        return size > SORT_BUDGET_MINIMUM ? size : SORT_BUDGET_MINIMUM;
+}
+
+// A size sort_size_valid has already accepted, in bytes.
+static positive sort_size_bytes(string_address said)
+{
+        positive value = 0;
+        positive total = 0;
+        positive available = 0;
+        positive scale = 1024;
+        positive power = 1;
+
+        file_decimal_read(address_of said, true, address_of value);
+
+        if (said[0] == 'b')
+                return value;
+
+        if (said[0] == '%')
+        {
+                sort_memory(address_of total, address_of available);
+                return total / 100 && value > positive_max / (total / 100)
+                           ? positive_max
+                           : total / 100 * value;
+        }
+
+        if (said[0])
+        {
+                string_address letters = (string_address) "kmgtpezy";
+
+                power = (positive)(string_first_of(letters, (p8)(said[0] | 0x20)) -
+                                   letters) + 1;
+
+                if (said[1] == 'B')
+                        scale = 1000;
+        }
+
+        while (power--)
+                value = value > positive_max / scale ? positive_max : value * scale;
+
+        return value;
+}
+
+static fn sort_release()
+{
+        positive none = 0;
+
+        sort_sources_close();
+        sort_entries_close(0, sort_entries_count);
+        sort_entries_count = 0;
+        array_store_release(sort_text, sort_text_room, sort_text_used);
+        array_store_release(sort_lines, sort_lines_room, sort_lines_count);
+        array_store_release(sort_spans, sort_spans_room, none);
+        array_store_release(sort_items, sort_items_room, none);
+        array_store_release(sort_spare, sort_spare_room, none);
+        array_store_release(sort_out, sort_out_room, sort_out_used);
+        array_store_release(sort_tree, sort_tree_room, none);
+        array_store_release(sort_held, sort_held_room, none);
+        array_store_release(sort_sources, sort_sources_room, none);
+        array_store_release(sort_entries, sort_entries_room, none);
+        sort_line_start = 0;
+        sort_scanned = 0;
+        sort_failed = false;
 }
 
 static positive sort_key_flags(sort_key address_to key, string_address spec,
@@ -18659,12 +19925,11 @@ static bool sort_parse_key(string_address spec)
 /*
         The long spellings sort answers to.
 
-        -S, -T, --batch-size, --compress-program and --parallel are taken and
-        thrown away rather than refused. Every one of them tunes how much of
-        a sort is kept in memory and how much goes to a temporary file, and
-        there is one arena taken once here and no temporary file at all, so
-        there is nothing for them to say -- but a script that passes -S 64M
-        should still get its sorted output.
+        -S sizes what a sort holds before it spills to a temporary file, -T
+        names where those files go, and --batch-size is how many inputs -m
+        merges at once. --compress-program and --parallel are taken and
+        thrown away rather than refused: neither can change a byte of the
+        answer, and a script that passes them should still get it.
 
         Not here, and deliberately: --debug, which annotates every line with
         which bytes the key looked at; --random-sort and --random-source,
@@ -18799,6 +20064,26 @@ static bool sort_key_seen(p8 letter, string_address value)
                               text_name, value);
         }
 
+        if (letter == 'S')
+        {
+                positive bytes = sort_size_bytes(value);
+
+                if (bytes < SORT_BUDGET_MINIMUM)
+                        bytes = SORT_BUDGET_MINIMUM;
+
+                if (bytes > sort_size)
+                        sort_size = bytes;
+        }
+
+        if (letter == 'T' &&
+            !array_store_reserve(sort_directories, sort_directories_room,
+                                 sort_directories_count,
+                                 sort_directories_count + 1, 8))
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+
+        if (letter == 'T')
+                sort_directories[sort_directories_count++] = value;
+
         if (letter == 'B')
         {
                 positive number;
@@ -18820,6 +20105,8 @@ static bool sort_key_seen(p8 letter, string_address value)
                                       "%s: minimum --batch-size argument is '2'\n",
                                       text_name, value, text_name);
                 }
+
+                sort_batch = number;
         }
 
         if (letter == 'p')
@@ -18858,13 +20145,277 @@ static bool sort_key_seen(p8 letter, string_address value)
         return string_diagnostic(&text_diagnostic, 0, null, "invalid key");
 }
 
+/*
+        -o names a file that may also be an input. Everything a sort reads is
+        read before the output opens, but a merge reads as it writes, so an
+        input that is the output is copied to a temporary first, the way GNU
+        does it: by name, or by device and inode against the output --
+        standard output when there is no -o.
+*/
+static bool sort_protect_output(string_address output, positive count)
+{
+        file_status target;
+        file_status status;
+        bool known = (output ? system_status_at(AT_FDCWD, output, address_of target, 0)
+                             : system_file_status(1, address_of target)) >= 0;
+        bipolar copy = -1;
+
+        for (positive at = 0; at < count; at++)
+        {
+                sort_entry address_to entry = sort_entries + at;
+                bool from_input = !entry->name || string_equals(entry->name, "-");
+                bool same;
+
+                if (entry->handle != SORT_ENTRY_NAMED)
+                        continue;
+
+                if (output && !from_input && string_equals(output, entry->name))
+                        same = true;
+                else
+                {
+                        if (!known)
+                                break;
+
+                        same = (from_input
+                                    ? system_file_status(0, address_of status)
+                                    : system_status_at(AT_FDCWD, entry->name,
+                                                       address_of status, 0)) >= 0 &&
+                               status.device == target.device &&
+                               status.inode == target.inode;
+                }
+
+                if (!same)
+                        continue;
+
+                if (copy < 0 && (copy = sort_merge_temporary(at, 1)) < 0)
+                        return false;
+
+                entry->handle = copy;
+        }
+
+        return true;
+}
+
+static bipolar sort_output_handle;
+
+static bool sort_output_open(string_address output, sort_writer address_to out)
+{
+        if (output)
+        {
+                bipolar handle = text_open_handle(output, TEXT_WRITE, 0666);
+
+                if (handle < 0)
+                {
+                        string_diagnostic(&text_diagnostic, 2, output, "cannot open for writing");
+                        return false;
+                }
+
+                sort_output_handle = handle;
+                text_out_to((positive)handle);
+        }
+
+        text_flush();
+        return sort_writer_ready(out, text_out_handle);
+}
+
+static fn sort_output_close(sort_writer address_to out)
+{
+        sort_writer_flush(out);
+
+        if (out->failed)
+                text_out_failed = true;
+}
+
+// Every input into chunks and runs, then the answer: straight from memory
+// when nothing spilled, through the merge when something did.
+static b32 sort_inputs(string_address output)
+{
+        b32 inputs = text_input_count();
+        sort_writer out;
+
+        sort_budget = sort_size ? sort_size : sort_default_budget();
+
+        for (b32 i = 0; i < inputs; i++)
+        {
+                // A file that will not open ends sort before it writes a
+                // line, as it ends GNU's.
+                if (!text_open(text_file_name(i)))
+                        return 2;
+
+                bool gathered = sort_gather(text_input.handle, text_input.name);
+
+                text_close();
+
+                if (!gathered)
+                        return 2;
+        }
+
+        if (!sort_chunk())
+                return 2;
+
+        if (!sort_entries_count)
+        {
+                if (!sort_output_open(output, address_of out))
+                        return 2;
+
+                sort_emit(address_of out);
+                sort_output_close(address_of out);
+                return 0;
+        }
+
+        if (!sort_entries_room_for(sort_entries_count + 1))
+                return 2;
+
+        if (sort_lines_count)
+                sort_entries[sort_entries_count++] =
+                    (sort_entry){.handle = SORT_ENTRY_MEMORY};
+
+        if (!sort_sources_open(0, sort_entries_count) ||
+            !sort_output_open(output, address_of out))
+                return 2;
+
+        bool fine = sort_merge(sort_entries_count, address_of out);
+
+        sort_output_close(address_of out);
+        return fine ? 0 : 2;
+}
+
+/*
+        -m does not sort. It takes whichever input has the smallest line at
+        its front, over and over, which is the same answer as sorting when
+        every input was in order and a different one when they were not --
+        and GNU's answer is the different one. GNU also merges no more than
+        --batch-size inputs at once, into temporaries, and on inputs out of
+        order that schedule shows in the answer, so it is kept to the letter.
+*/
+static b32 sort_merge_inputs(string_address output)
+{
+        positive count = (positive)text_input_count();
+        sort_writer out;
+
+        if (!sort_entries_room_for(count))
+                return 2;
+
+        for (positive at = 0; at < count; at++)
+                sort_entries[at] = (sort_entry){.name = text_file_name(at),
+                                                .handle = SORT_ENTRY_NAMED};
+
+        sort_entries_count = count;
+
+        while (count > sort_batch)
+        {
+                positive in = 0;
+                positive written = 0;
+
+                for (; sort_batch <= count - in; written++)
+                {
+                        bipolar merged = sort_merge_temporary(in, sort_batch);
+
+                        if (merged < 0)
+                                return 2;
+
+                        sort_entries_close(in, sort_batch);
+                        sort_entries[written] = (sort_entry){.handle = merged};
+                        in += sort_batch;
+                }
+
+                positive remainder = count - in;
+                positive cheap = sort_batch - written % sort_batch;
+
+                if (cheap < remainder)
+                {
+                        positive shorter = remainder - cheap + 1;
+                        bipolar merged = sort_merge_temporary(in, shorter);
+
+                        if (merged < 0)
+                                return 2;
+
+                        sort_entries_close(in, shorter);
+                        sort_entries[written++] = (sort_entry){.handle = merged};
+                        in += shorter;
+                }
+
+                memory_copy(sort_entries + written, sort_entries + in,
+                            (count - in) * sizeof(sort_entry));
+                count -= in - written;
+                sort_entries_count = count;
+        }
+
+        if (!sort_protect_output(output, count) || !sort_sources_open(0, count) ||
+            !sort_output_open(output, address_of out))
+                return 2;
+
+        bool fine = sort_merge(count, address_of out);
+
+        sort_output_close(address_of out);
+        return fine ? 0 : 2;
+}
+
+// -c reads the lines and says whether they were already in order, one line
+// held at a time: it never sorts, so it never holds the input either.
+static b32 sort_check(bool quiet)
+{
+        string_address name = text_file_name(0);
+        sort_entry entry = {.name = name, .handle = SORT_ENTRY_NAMED};
+        sort_source source;
+        sort_view last;
+        positive number = 0;
+        b32 code = 0;
+
+        if (!sort_source_open(address_of source, address_of entry))
+                return 2;
+
+        while (sort_source_next(address_of source))
+        {
+                number++;
+
+                if (number > 1)
+                {
+                        bipolar answer = sort_compare_views(address_of last,
+                                                            address_of source.head, 0);
+
+                        if (answer > 0 || (!answer && sort_unique))
+                        {
+                                if (!quiet)
+                                {
+                                        text_flush();
+                                        string_format(writer_stderr, "%s: %s:%p: disorder: ",
+                                                      text_name,
+                                                      name ? name : (string_address) "-",
+                                                      number);
+                                        system_write_all(2, source.head.at,
+                                                         source.head.length);
+                                        writer_stderr("\n", 0);
+                                }
+
+                                code = 1;
+                                break;
+                        }
+                }
+
+                if (!sort_hold(address_of source.head, address_of last))
+                        break;
+        }
+
+        positive none = 0;
+
+        if (source.opened)
+                system_close((positive)source.handle);
+
+        array_store_release(source.buffer, source.room, none);
+
+        if (sort_failed)
+                return 2;
+
+        return code ? code : text_status ? 2 : 0;
+}
+
 static b32 text_sort()
 {
         file_taking taking = {
             .program = (string_address) "sort",
             // -g wants a floating point number parsed, and there is no
-            // floating point anywhere in this file. -S and -T tune a
-            // temporary file this sort has not got.
+            // floating point anywhere in this file.
             .options = sort_options,
             .operand = text_file_add,
             .seen = sort_key_seen,
@@ -18877,8 +20428,10 @@ static b32 text_sort()
         sort_tab_seen = false;
         sort_key_count = 0;
         sort_have_separator = false;
-        sort_numbers = null;
-        sort_spans = null;
+        sort_size = 0;
+        sort_batch = 16;
+        sort_directories_count = 0;
+        sort_directory_next = 0;
 
         if (!file_take(address_of taking))
                 return text_done(sort_option_status);
@@ -19070,182 +20623,34 @@ static b32 text_sort()
                              !key->second_field && !key->order.blanks[0];
         }
 
-        sort_key address_to first = sort_keys;
-        bool byte_order = first->whole && !first->order.kind && !first->order.how &&
-                          !first->order.reverse;
 
         if (null_data)
                 text_delimiter = '\0';
 
-        b32 inputs = text_input_count();
-        positive address_to run_stop = (positive address_to)utility_arena_take(
-            ((positive)inputs + 1) * sizeof(positive));
+        sort_release();
+        sort_stages_ready();
+        sort_line_cost = sizeof(sort_line) + 2 * sizeof(sort_item) +
+                         (sort_keys[0].whole ? 0 : sizeof(sort_span));
+        sort_output_handle = -1;
 
-        if (!run_stop)
-                return text_done(2);
+        b32 code = checking    ? sort_check(checking_quiet)
+                   : merging   ? sort_merge_inputs(output)
+                               : sort_inputs(output);
 
-        for (b32 i = 0; i < inputs; i++)
+        sort_release();
+
+        if (code)
         {
-                // A file that will not open ends sort before it writes a
-                // line, as it ends GNU's.
-                if (!text_open(text_file_name(i)))
-                        return text_done(2);
-
-                if (!text_lines_gather())
-                        return text_done(2);
-
-                text_close();
-                run_stop[i] = text_lines_count;
-        }
-
-        // -c reads the lines and says whether they were already in order. It
-        // never sorts, so it never allocates the index either.
-        if (checking)
-        {
-                string_address name = text_file_name(0);
-
-                if (!name)
-                        name = (string_address) "-";
-
-                for (positive i = 1; i < text_lines_count; i++)
+                if (sort_output_handle >= 0)
                 {
-                        bipolar answer = sort_compare(i - 1, i);
-
-                        if (answer < 0 || (!answer && !sort_unique))
-                                continue;
-
-                        if (!checking_quiet)
-                        {
-                                text_flush();
-                                string_format(writer_stderr, "%s: %s:%p: disorder: ",
-                                              text_name, name, i + 1);
-                                system_write_all(2, text_lines[i].at, text_lines[i].length);
-                                writer_stderr("\n", 0);
-                        }
-
-                        return text_done(1);
+                        text_out_to(1);
+                        system_close((positive)sort_output_handle);
                 }
 
-                return text_done(text_status ? 2 : 0);
+                return text_done(code);
         }
 
-        sort_order = (positive address_to)utility_arena_take(
-            (text_lines_count + 1) * sizeof(positive));
-        sort_spare = (positive address_to)utility_arena_take(
-            (text_lines_count + 1) * sizeof(positive));
-
-        if (!sort_order || !sort_spare)
-                return text_done(2);
-
-        for (positive i = 0; i < text_lines_count; i++)
-                sort_order[i] = i;
-
-        positive address_to head = merging
-            ? (positive address_to)utility_arena_take(
-                  ((positive)inputs + 1) * sizeof(positive))
-            : null;
-
-        if (merging && !head)
-                return text_done(2);
-
-        // A cache must not lower the input ceiling. Reserve mandatory merge
-        // heads first, then retain the original comparator/span path when
-        // the larger numeric views do not fit the remaining arena.
-        positive number_bytes = (text_lines_count + 1) * sizeof(sort_number);
-        positive span_bytes = (text_lines_count + 1) * sizeof(sort_span);
-
-        if (first->order.kind == 'n' &&
-            number_bytes <= UTILITY_ARENA_BYTES - utility_arena.used)
-        {
-                sort_numbers = (sort_number address_to)utility_arena_take(number_bytes);
-
-                if (!sort_numbers)
-                        return text_done(2);
-        }
-        else if (!first->whole && span_bytes <= UTILITY_ARENA_BYTES - utility_arena.used)
-        {
-                sort_spans = (sort_span address_to)utility_arena_take(span_bytes);
-
-                if (!sort_spans)
-                        return text_done(2);
-        }
-        if (sort_numbers || sort_spans)
-                for (positive i = 0; i < text_lines_count; i++)
-                {
-                        text_slice address_to line = text_lines + i;
-                        sort_span span;
-
-                        sort_key_span(first, line->at, line->length,
-                                      address_of span.from, address_of span.to);
-                        if (sort_numbers)
-                                sort_numbers[i] = sort_number_of(line->at + span.from,
-                                                                 span.to - span.from);
-                        else
-                                sort_spans[i] = span;
-                }
-
-        /*
-                -m does not sort. It takes whichever file has the smallest
-                line at its front, over and over, which is the same answer as
-                sorting when every file was in order and a different one when
-                they were not -- and GNU's answer is the different one.
-        */
-        if (merging)
-        {
-                for (b32 r = 0; r < inputs; r++)
-                        head[r] = r ? run_stop[r - 1] : 0;
-
-                for (positive out = 0; out < text_lines_count; out++)
-                {
-                        b32 best = -1;
-
-                        for (b32 r = 0; r < inputs; r++)
-                        {
-                                if (head[r] >= run_stop[r])
-                                        continue;
-
-                                if (best < 0 || sort_compare(head[r], head[best]) < 0)
-                                        best = r;
-                        }
-
-                        sort_order[out] = head[best]++;
-                }
-        }
-        else
-        {
-                if (byte_order)
-                        sort_radix(0, text_lines_count, 0);
-                else
-                        sort_run(text_lines_count);
-        }
-
-        // -o is opened after every line has been read, so sort -o f f still
-        // has a file to read.
-        bipolar handle = -1;
-
-        if (output)
-        {
-                handle = text_open_handle(output, TEXT_WRITE, 0666);
-
-                if (handle < 0)
-                        return text_done(string_diagnostic(&text_diagnostic, 2, output, "cannot open for writing"));
-
-                text_out_to((positive)handle);
-        }
-
-        for (positive i = 0; i < text_lines_count; i++)
-        {
-                text_slice address_to line = text_lines + sort_order[i];
-
-                if (sort_unique && i &&
-                    !sort_compare_keys(sort_order[i - 1], sort_order[i]))
-                        continue;
-
-                text_put(line->at, line->length);
-                text_put_character(text_delimiter);
-        }
-
-        return text_done_closing(text_status ? 2 : 0, handle);
+        return text_done_closing(text_status ? 2 : 0, sort_output_handle);
 }
 
 // cmp -------------------------------------------------------------
