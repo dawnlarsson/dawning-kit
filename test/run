@@ -211,6 +211,25 @@ counted()
         return "${1:-0}"
 }
 
+#       What a console transcript in $work said, and what it must never have.
+says()
+{
+        if grep -q -F -- "$3" "$work/$1"; then
+                won
+        else
+                lost "$2" "no $3 in $1"
+        fi
+}
+
+never()
+{
+        if grep -q -F -- "$3" "$work/$1"; then
+                lost "$2" "$3 is in $1"
+        else
+                won
+        fi
+}
+
 #       The link a spark program gets, which is what library.c ships inside.
 #       Without the script the placement is the toolchain's default, and
 #       riscv64 does not survive that. -flto is not here on purpose: the
@@ -1914,8 +1933,8 @@ KNOWN_FILES="exact_set needle bounded exact_scan exact_prefix exact_ascii_case h
 
 known_one()
 {
-        name=$1
-        runner=$3
+        name=$target
+        runner=$target_runner
         checks=0
         bad=0
 
@@ -2122,8 +2141,7 @@ fi
 #
 spool_one()
 {
-        target=$1
-        runner=$3
+        runner=$target_runner
         mkdir -p "$work/$target"
 
         if ! target_build freestanding_check spool "$work/spool.$target" \
@@ -2298,8 +2316,7 @@ fi
 #
 stream_one()
 {
-        target=$1
-        runner=$3
+        runner=$target_runner
         mkdir -p "$work/$target"
 
         if ! target_build freestanding_check stream "$work/t.$target" "$target" \
@@ -2493,8 +2510,8 @@ freestanding_checks_one()
 {
         suite=$1
         source=$2
-        name=$3
-        runner=$5
+        name=$target
+        runner=$target_runner
 
         case $source in
         *.c) target_build freestanding "$source" "$work/$suite.$name" "$name" ;;
@@ -2543,13 +2560,12 @@ target_lane()
         failed=0
         missing=0
 
+        #       The check reads target, target_compiler and target_runner.
         #       The status is target_tools' when the tools are missing and
         #       the check's when it ran.
         for target in x86_64 arm64 riscv64; do
                 outcome=0
-                target_tools "$target" &&
-                        "$check" "$@" "$target" "$target_compiler" "$target_runner" ||
-                        outcome=$?
+                target_tools "$target" && "$check" "$@" || outcome=$?
 
                 case $outcome in
                 0) ;;
@@ -7673,33 +7689,7 @@ python3 test/differential.py --harness image_nodes || exit 1
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
-current=""
-
-group() { current=$1; }
-
-won() { pass=$((pass + 1)); }
-
-lost()
-{
-        fail=$((fail + 1))
-        printf '  %-10s %-24s %s\n' "$current" "$1" "$2"
-}
-
-same()
-{
-        name=$1
-        want=$2
-        got=$3
-
-        if [ "$want" = "$got" ]; then
-                won
-                return 0
-        fi
-
-        lost "$name" "want [$want] got [$got]"
-}
+counting kit 10 24
 
 # The remote copy must not recursively ship agent worktrees. Stub the two
 # remote tools and fail the copy deliberately, before any build can start.
@@ -8301,11 +8291,7 @@ else
         printf '  %-10s %s\n' compact 'no python3, skipped'
 fi
 
-printf '  %-12s %s of %s\n' kit "$pass" "$((pass + fail))"
-[ -z "${TEST_TALLY:-}" ] ||
-        printf 'kit %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
-
-[ "$fail" = 0 ]
+counted
 )
 
 #
@@ -8375,8 +8361,7 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
+counting boot
 
 cat > "$work/commands" <<'COMMANDS'
 this line is eaten by the console
@@ -8565,28 +8550,6 @@ timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu Nehalem \
         -append "console=ttyS0 drm_client_lib.active=" \
         < "$work/commands" > "$work/transcript" 2>&1 || true
 
-says()
-{
-        if grep -q -F -- "$2" "$work/transcript"; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-24s no %s in the transcript\n' "$1" "$2"
-}
-
-never()
-{
-        if grep -q -F -- "$2" "$work/transcript"; then
-                fail=$((fail + 1))
-                printf '  %-24s %s is in the transcript\n' "$1" "$2"
-                return 0
-        fi
-
-        pass=$((pass + 1))
-}
-
 #
 #       The two that say the machine rejected what we shipped it.
 #
@@ -8604,17 +8567,17 @@ never()
 #       The register on a booted machine: present, saying what it was built
 #       saying, and actually stopping the applet it names.
 #
-says 'floodlight device'   'fl-device-thgildoolf #'
-says 'floodlight has awk'  'fl-awk-1'
-says 'floodlight has env'  'fl-env-1'
-says 'awk was asked'       'fl-esc-'
-never 'awk cannot escape'  'fl-esc-tuo'
-says 'a named applet runs' 'fl-named-ydaer'
-says 'nested parser alias' 'naelc-detsen-resrap-lf'
-says 'forked parser alias' 'naelc-noitutitsbus-resrap-lf'
-says 'bare exec parser'    'naelc-erab-resrap-lf'
-says 'moved script reader' 'naelc-redaer-resrap-lf'
-says 'ordinary fifo script' 'ydaer-elbitapmoc-ofif-lf'
+says transcript 'floodlight device'   'fl-device-thgildoolf #'
+says transcript 'floodlight has awk'  'fl-awk-1'
+says transcript 'floodlight has env'  'fl-env-1'
+says transcript 'awk was asked'       'fl-esc-'
+never transcript 'awk cannot escape'  'fl-esc-tuo'
+says transcript 'a named applet runs' 'fl-named-ydaer'
+says transcript 'nested parser alias' 'naelc-detsen-resrap-lf'
+says transcript 'forked parser alias' 'naelc-noitutitsbus-resrap-lf'
+says transcript 'bare exec parser'    'naelc-erab-resrap-lf'
+says transcript 'moved script reader' 'naelc-redaer-resrap-lf'
+says transcript 'ordinary fifo script' 'ydaer-elbitapmoc-ofif-lf'
 
 #
 #       The compositor put something on the screen.
@@ -8634,7 +8597,7 @@ says 'ordinary fifo script' 'ydaer-elbitapmoc-ofif-lf'
 #       asks for text cells, so the line is there when a terminal started
 #       and absent when one did not.
 #
-says 'a terminal opened'   'window grid 80x24'
+says transcript 'a terminal opened'   'window grid 80x24'
 
 #
 #       Nothing the kernel felt the need to warn about.
@@ -8645,78 +8608,78 @@ says 'a terminal opened'   'window grid 80x24'
 #       miscdevice in private_data and seq_open warns on anything it finds
 #       there -- and the boot lane said everything agreed.
 #
-never 'kernel warned'      'cut here'
+never transcript 'kernel warned'      'cut here'
 
-never 'no invalid opcode'  'invalid opcode'
-never 'no protection fault' 'general protection fault'
-never 'init survived'      'Attempted to kill init'
-never 'no kernel panic'    'Kernel panic'
+never transcript 'no invalid opcode'  'invalid opcode'
+never transcript 'no protection fault' 'general protection fault'
+never transcript 'init survived'      'Attempted to kill init'
+never transcript 'no kernel panic'    'Kernel panic'
 
-says 'init started'        'Run /init as init process'
-says 'arithmetic'          'answer42'
-says 'shifts'              'shift16'
-says 'uname'               'xuniL'
-says 'grep by its name'    'ahpla'
-says 'seq and tr'          '1,2,3,'
-says 'the spark device'    'kraps/ved/'
-says 'the shell on disk'   'llehs/'
-says 'a file written'      'nettirw'
-says 'and measured'        'bytes8'
-says 'empty init environment' 'bootenv-unset-unset'
-says 'cached environment'   'cache-first'
-says 'changed environment'  'cache-second'
-says 'cache process owner'  'owner-parent'
-says 'monitor at root'     'hs.rotinom/'
-says 'mointor alias'       'alias-hs.rotinom'
-says 'monitor linked'      'path-hs.rotinom/..'
-says 'mount linked'        'mount-link-llehs/..'
-says 'blkid linked'        'blkid-link-llehs/..'
-says 'bash linked'         'bash-link-llehs/..'
-says 'dash linked'         'dash-link-llehs/..'
-says 'coreutils conventional link' 'coreutils-link-llehs/..'
-says 'env conventional link' 'env-link-llehs/..'
-says 'env shebang execution' 'env-script-ready'
-says 'bash shebang policy' 'shell-gap-ready'
-says 'BASH_ENV startup'    'startup-ready'
-says 'onecmd first line'   'onecmd-63'
-says 'onecmd stopped'      'onecmd-end'
-says 'Bash signed return'  'return-255'
-says 'dash source failure trap' 'dot-exit-2'
-says 'Bash nameref array'  'nameref-ready'
-says 'Bash element nameref' 'element-ref-ready'
-says 'Bash keyword assignments' 'keyword-ready-one two'
-says 'Bash prefix lifetime' 'prefix-kept-old'
-says 'Bash prefix export'  'prefix-export-ready'
-says 'Bash privileged mode' 'privileged-ready'
-says 'Bash privileged reset' 'privileged-dropped'
-says 'POSIX prefix and mode' 'posix-prefix-ready-y'
-says 'child EXIT trap'      'child-trap-ready'
-says 'POSIX inherited errexit' 'inherit-errexit-1'
-says 'associative unset'    'assoc-unset-0'
-says 'readonly function'   'function-readonly-1'
-says 'exported function child' 'function-child-ready'
-says 'removed environment mark' 'unexported-absent'
-says 'UTF-8 character count' 'utf8-count-2'
-says 'UTF-8 character slice' 'utf8-slice-z'
-says 'UTF-8 pattern boundary' 'utf8-pattern-matched'
-says 'Z85 stream codec'     'S.Apv'
-says 'disabled builtin'    'disabled-colon-127'
-says 'Bash signed exit'    'signed-exit-255'
-says 'nested heredoc boundary' 'here-)'
-says 'root is mounted'     'storage-root'
-says 'findmnt linked'      'storage-target-/'
-says 'monitor ran'         '0monitor'
-says 'monitor was visible' 'cpu%'
-says 'monitor was clean'   'monitor-clean'
-says 'plain text script'   'plain-alpha'
-says 'plain text status'   '71text'
-says 'shebang policy'      'fl-policy-126-126'
-says 'powered down'        'reboot: Power down'
+says transcript 'init started'        'Run /init as init process'
+says transcript 'arithmetic'          'answer42'
+says transcript 'shifts'              'shift16'
+says transcript 'uname'               'xuniL'
+says transcript 'grep by its name'    'ahpla'
+says transcript 'seq and tr'          '1,2,3,'
+says transcript 'the spark device'    'kraps/ved/'
+says transcript 'the shell on disk'   'llehs/'
+says transcript 'a file written'      'nettirw'
+says transcript 'and measured'        'bytes8'
+says transcript 'empty init environment' 'bootenv-unset-unset'
+says transcript 'cached environment'   'cache-first'
+says transcript 'changed environment'  'cache-second'
+says transcript 'cache process owner'  'owner-parent'
+says transcript 'monitor at root'     'hs.rotinom/'
+says transcript 'mointor alias'       'alias-hs.rotinom'
+says transcript 'monitor linked'      'path-hs.rotinom/..'
+says transcript 'mount linked'        'mount-link-llehs/..'
+says transcript 'blkid linked'        'blkid-link-llehs/..'
+says transcript 'bash linked'         'bash-link-llehs/..'
+says transcript 'dash linked'         'dash-link-llehs/..'
+says transcript 'coreutils conventional link' 'coreutils-link-llehs/..'
+says transcript 'env conventional link' 'env-link-llehs/..'
+says transcript 'env shebang execution' 'env-script-ready'
+says transcript 'bash shebang policy' 'shell-gap-ready'
+says transcript 'BASH_ENV startup'    'startup-ready'
+says transcript 'onecmd first line'   'onecmd-63'
+says transcript 'onecmd stopped'      'onecmd-end'
+says transcript 'Bash signed return'  'return-255'
+says transcript 'dash source failure trap' 'dot-exit-2'
+says transcript 'Bash nameref array'  'nameref-ready'
+says transcript 'Bash element nameref' 'element-ref-ready'
+says transcript 'Bash keyword assignments' 'keyword-ready-one two'
+says transcript 'Bash prefix lifetime' 'prefix-kept-old'
+says transcript 'Bash prefix export'  'prefix-export-ready'
+says transcript 'Bash privileged mode' 'privileged-ready'
+says transcript 'Bash privileged reset' 'privileged-dropped'
+says transcript 'POSIX prefix and mode' 'posix-prefix-ready-y'
+says transcript 'child EXIT trap'      'child-trap-ready'
+says transcript 'POSIX inherited errexit' 'inherit-errexit-1'
+says transcript 'associative unset'    'assoc-unset-0'
+says transcript 'readonly function'   'function-readonly-1'
+says transcript 'exported function child' 'function-child-ready'
+says transcript 'removed environment mark' 'unexported-absent'
+says transcript 'UTF-8 character count' 'utf8-count-2'
+says transcript 'UTF-8 character slice' 'utf8-slice-z'
+says transcript 'UTF-8 pattern boundary' 'utf8-pattern-matched'
+says transcript 'Z85 stream codec'     'S.Apv'
+says transcript 'disabled builtin'    'disabled-colon-127'
+says transcript 'Bash signed exit'    'signed-exit-255'
+says transcript 'nested heredoc boundary' 'here-)'
+says transcript 'root is mounted'     'storage-root'
+says transcript 'findmnt linked'      'storage-target-/'
+says transcript 'monitor ran'         '0monitor'
+says transcript 'monitor was visible' 'cpu%'
+says transcript 'monitor was clean'   'monitor-clean'
+says transcript 'plain text script'   'plain-alpha'
+says transcript 'plain text status'   '71text'
+says transcript 'shebang policy'      'fl-policy-126-126'
+says transcript 'powered down'        'reboot: Power down'
 
-never 'no panic'           'Kernel panic'
-never 'no oops'            'Oops:'
-never 'nothing refused'    'Permission denied'
-never 'no missing command' 'failed with error: -2'
+never transcript 'no panic'           'Kernel panic'
+never transcript 'no oops'            'Oops:'
+never transcript 'nothing refused'    'Permission denied'
+never transcript 'no missing command' 'failed with error: -2'
 
 #
 #       And the other end of the same argument.
@@ -8746,22 +8709,18 @@ if [ -r /dev/kvm ]; then
                 -append "console=ttyS0 drm_client_lib.active=" \
                 < "$work/commands" > "$work/transcript" 2>&1 || true
 
-        says 'init started on this host'   'Run /init as init process'
-        says 'powered down on this host'   'reboot: Power down'
-        never 'nothing went unemulated'    'emulation failure'
-        never 'no invalid opcode here'     'invalid opcode'
-        never 'no protection fault here'   'general protection fault'
-        never 'no oops here'               'Oops:'
-        never 'no panic here'              'Kernel panic'
+        says transcript 'init started on this host'   'Run /init as init process'
+        says transcript 'powered down on this host'   'reboot: Power down'
+        never transcript 'nothing went unemulated'    'emulation failure'
+        never transcript 'no invalid opcode here'     'invalid opcode'
+        never transcript 'no protection fault here'   'general protection fault'
+        never transcript 'no oops here'               'Oops:'
+        never transcript 'no panic here'              'Kernel panic'
 else
         printf '  %-24s no /dev/kvm, the widest pass did not run\n' 'this host'
 fi
 
-printf '  %-12s %s of %s\n' boot "$pass" "$((pass + fail))"
-[ -z "${TEST_TALLY:-}" ] ||
-        printf 'boot %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
-
-[ "$fail" = 0 ]
+counted
 )
 
 #
@@ -8804,8 +8763,7 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
+counting install 12 30
 
 mkdir -p "$work/stick/EFI/BOOT" &&
         cp "$image" "$work/stick/EFI/BOOT/BOOTX64.EFI" &&
@@ -8867,28 +8825,6 @@ install_boot()
         never "$name" "$name without ext4 errors" 'EXT4-fs error'
 }
 
-says()
-{
-        if grep -q -F -- "$3" "$work/$1"; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-30s no %s in the %s boot\n' "$2" "$3" "$1"
-}
-
-never()
-{
-        if grep -q -F -- "$3" "$work/$1"; then
-                fail=$((fail + 1))
-                printf '  %-30s %s is in the %s boot\n' "$2" "$3" "$1"
-                return 0
-        fi
-
-        pass=$((pass + 1))
-}
-
 #       What the host's own tools make of the disk after a boot.
 disk_checks()
 {
@@ -8899,10 +8835,9 @@ disk_checks()
         fi
 
         if sfdisk --verify "$work/disk.img" > "$work/sfdisk" 2>&1; then
-                pass=$((pass + 1))
+                won
         else
-                fail=$((fail + 1))
-                printf '  %-30s sfdisk --verify refused the table\n' "$1 disk"
+                lost "$1 disk" 'sfdisk --verify refused the table'
                 sed 's/^/    /' "$work/sfdisk" | head -8
         fi
 
@@ -8911,10 +8846,9 @@ disk_checks()
 
         if [ -n "$offset" ] &&
                 e2fsck -fn "$work/disk.img?offset=$offset" > "$work/fsck" 2>&1; then
-                pass=$((pass + 1))
+                won
         else
-                fail=$((fail + 1))
-                printf '  %-30s e2fsck -fn is not clean\n' "$1 disk"
+                lost "$1 disk" 'e2fsck -fn is not clean'
                 sed 's/^/    /' "$work/fsck" | head -12
         fi
 }
@@ -9096,19 +9030,14 @@ else
         never firmware 'nothing falls through'           'EFI Internal Shell'
 
         if [ -n "$before" ] && [ -n "$after" ] && [ "$after" -gt "$before" ]; then
-                pass=$((pass + 1))
+                won
         else
-                fail=$((fail + 1))
-                printf '  %-30s the data was never mounted (mount count %s, then %s)\n' \
-                        'Moonwater came up from disk' "${before:-unread}" "${after:-unread}"
+                lost 'Moonwater came up from disk' \
+                        "the data was never mounted (mount count ${before:-unread}, then ${after:-unread})"
         fi
 fi
 
-printf '  %-12s %s of %s\n' install "$pass" "$((pass + fail))"
-[ -z "${TEST_TALLY:-}" ] ||
-        printf 'install %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
-
-[ "$fail" = 0 ]
+counted
 )
 
 #
@@ -9135,19 +9064,7 @@ lane_canvas()
 (
 image=${MOONWATER_IMAGE:-dist/bootx64.efi}
 
-pass=0
-fail=0
-
-check()
-{
-        if [ "$2" = "$3" ]; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-24s want %s   got %s\n' "$1" "$3" "$2"
-}
+counting canvas
 
 if ! command -v qemu-system-x86_64 > /dev/null 2>&1; then
         echo "  canvas       no qemu-system-x86_64, skipped"
@@ -10078,14 +9995,10 @@ if [ ! -s "$work/answers" ]; then
 fi
 
 while IFS='|' read -r name got want; do
-        check "$name" "$got" "$want"
+        same "$name" "$want" "$got"
 done < "$work/answers"
 
-printf '  %-12s %s of %s\n' canvas "$pass" "$((pass + fail))"
-[ -z "${TEST_TALLY:-}" ] ||
-        printf 'canvas %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
-
-[ "$fail" = 0 ]
+counted
 )
 
 #
@@ -10237,10 +10150,10 @@ bench_about()
 bench_target()
 {
         bench_name=$1
-        bench_arch=$2
-        bench_compiler=$3
-        bench_runner=$4
-        shift 4
+        bench_arch=$target
+        bench_compiler=$target_compiler
+        bench_runner=$target_runner
+        shift
 
         case $bench_arch in
         x86_64) bench_arch_flags=-march=x86-64 ;;
@@ -10276,31 +10189,11 @@ bench_target()
 #       ratio missing an architecture is not the comparison it looks like.
 bench_c()
 {
-        bench_c_name=$1
-        shift
-        bench_failed=0
-        bench_missing=0
-
-        for target in x86_64 arm64 riscv64; do
-                outcome=0
-                target_tools "$target" &&
-                        bench_target "$bench_c_name" "$target" \
-                                "$target_compiler" "$target_runner" "$@" ||
-                        outcome=$?
-
-                case $outcome in
-                0) ;;
-                2) bench_missing=1 ;;
-                *) bench_failed=1 ;;
-                esac
-        done
-
-        [ "$bench_failed" = 0 ] || return 1
-
-        if [ "$bench_missing" != 0 ]; then
-                echo "$bench_c_name: incomplete; every reported target above must run"
-                return 2
-        fi
+        target_lane bench_target "$@"
+        bench_outcome=$?
+        [ "$bench_outcome" != 2 ] ||
+                echo "$1: incomplete; every reported target above must run"
+        return "$bench_outcome"
 }
 
 #
