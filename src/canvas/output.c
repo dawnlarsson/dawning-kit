@@ -811,6 +811,58 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
 }
 
 /*
+        The first terminal waits for the initcalls.
+
+        A built-in canvas has a screen at device_initcall, but nothing in
+        userspace is meant to run before every initcall has -- floodlight, for
+        one, registers its device at late_initcall on exactly that promise. A
+        terminal started into that gap exited without opening a window, on
+        every boot, and left the log alone on the screen; the same /term run
+        once init had started opened one. So the first is held until the
+        initcalls are done, and a canvas that comes up after that -- a late
+        card, or the module loaded by init -- starts it at once.
+
+        Both sides under desktop.lock, which canvas_start already holds; the
+        spawn itself happens outside it on the initcall's side.
+*/
+#ifdef MODULE
+static _Bool canvas_initcalls_done = true;
+#else
+static _Bool canvas_initcalls_done;
+#endif
+static _Bool canvas_terminal_waiting;
+
+static void canvas_terminal_first(void)
+{
+        if (!canvas_initcalls_done)
+        {
+                canvas_terminal_waiting = true;
+                return;
+        }
+
+        pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());
+}
+
+#ifndef MODULE
+static int __init canvas_initcalls_finished(void)
+{
+        _Bool waiting;
+
+        mutex_lock(&desktop.lock);
+        canvas_initcalls_done = true;
+        waiting = canvas_terminal_waiting;
+        canvas_terminal_waiting = false;
+        mutex_unlock(&desktop.lock);
+
+        if (waiting)
+                pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());
+
+        return 0;
+}
+late_initcall_sync(canvas_initcalls_finished);
+#endif
+
+/*
         The biggest mode every screen offers, and what to do when it will not
         set.
 
@@ -897,7 +949,7 @@ static int canvas_start(struct canvas *canvas)
         if (!desktop.terminal)
         {
                 desktop.terminal = true;
-                pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());
+                canvas_terminal_first();
         }
 
         return 0;

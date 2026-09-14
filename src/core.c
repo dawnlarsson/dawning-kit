@@ -530,6 +530,8 @@ struct spawn_work
         unsigned int argc;
         bool shell_fallback;
         bool path_owned;
+        // spawn_terminal's, whose first window takes the keyboard.
+        bool terminal;
         struct file *stdio[3];
 };
 
@@ -596,6 +598,7 @@ static int spawn_terminal(void)
         work->arguments->vector[0] = work->path;
         work->arguments->vector[1] = NULL;
         work->argc = 1;
+        work->terminal = true;
 
         if (user_mode_thread(spawn_enter, work, SIGCHLD) <= 0)
         {
@@ -640,6 +643,18 @@ static int spawn_enter(void *data)
         int ret;
 
         spawn_default_signals();
+
+#ifdef CONFIG_MOONWATER_CANVAS
+        /*
+                The compositor's terminal says who it is before it becomes
+                /term, so the window it opens can be told from any other
+                program's. Recorded by the task itself, which is what puts it
+                ahead of that window; a newer terminal replaces one that never
+                opened a window at all.
+        */
+        if (work->terminal)
+                put_pid(xchg(&canvas_spawned, get_pid(task_tgid(current))));
+#endif
 
         /* Without the close-on-exec flag, so these three outlive the load
            while every other descriptor the caller happened to hold does
@@ -1351,6 +1366,7 @@ static void __exit exit_module(void)
         // Before anything else: printk must stop being pointed at cells that
         // are about to be freed.
         console_stop();
+        put_pid(xchg(&canvas_spawned, NULL));
 #endif
 
         misc_deregister(&device);

@@ -151,6 +151,13 @@ struct pane
         _Bool cascaded;
 
         /*
+                Opened by the terminal the compositor started, and so owed the
+                keyboard by the next desktop_refresh_panes -- once, whether or
+                not it can be given then.
+        */
+        _Bool spawned;
+
+        /*
                 One wake owed to the program, because it has been asked to
                 close.
 
@@ -366,6 +373,14 @@ static struct desktop
     .windows = LIST_HEAD_INIT(desktop.windows),
     .scale = 1,
 };
+
+/*
+        The terminal the compositor last started, as that task recorded itself
+        in spawn_enter, until the first window it opens takes it back in
+        window_ioctl_create. A reference: the pid it names cannot be freed and
+        handed to another task while it is held here.
+*/
+static struct pid *canvas_spawned;
 
 static DEFINE_MUTEX(canvas_list_lock);
 static LIST_HEAD(canvas_list);

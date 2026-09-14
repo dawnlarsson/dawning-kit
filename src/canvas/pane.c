@@ -1350,6 +1350,30 @@ static void desktop_refresh_panes(void)
                 desktop.damage_all = true;
         }
 
+        /*
+                A terminal the compositor started takes the keyboard.
+
+                Opened at boot or asked for with Control-Shift-T, it is the
+                window about to be typed into, and nothing else would give it
+                focus: create does not, so that no program can take the
+                keyboard by opening a window. The mark is spent on the first
+                pass that sees it, and given only to a pane that can be seen
+                and clicked, so it is never a claim left standing.
+        */
+        list_for_each_entry(pane, &desktop.windows, link)
+        {
+                if (!pane->spawned)
+                        continue;
+
+                pane->spawned = false;
+
+                if (pane_focusable(pane, false))
+                {
+                        pane_focus(pane);
+                        desktop.damage_all = true;
+                }
+        }
+
         list_sort(NULL, &desktop.windows, pane_by_z);
 }
 
@@ -1399,6 +1423,24 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
                 bytes and mapping. Free on x86, a compiler barrier only.
         */
         smp_store_release(&context->pane, pane);
+
+        /*
+                Marked, never focused here. Only the task spawn_terminal
+                started matches, and taking its pid back means only the first
+                window it opens is marked. current holds its own pid alive, so
+                a match cannot be a freed pid reused.
+        */
+        {
+                struct pid *spawned = READ_ONCE(canvas_spawned);
+
+                if (spawned && spawned == task_tgid(current) &&
+                    cmpxchg(&canvas_spawned, spawned, NULL) == spawned)
+                {
+                        pane->spawned = true;
+                        put_pid(spawned);
+                }
+        }
+
         desktop_redraw();
 
         mutex_unlock(&desktop.lock);
