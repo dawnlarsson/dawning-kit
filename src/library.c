@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        291 routines (280 public, 11 local), 290 of them on all three and 1 local to one.
+        302 routines (290 public, 12 local), 301 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -76,6 +76,7 @@
           absolute                       public  yes     yes     yes
           absolute_whole                 public  yes     yes     yes
           absolute_wide                  public  yes     yes     yes
+          aes128_ctr_blocks              public  yes     yes     yes
           bipolar_into                   public  yes     yes     yes
           bipolar_into_core              local   yes     yes     yes
           bipolar_into_string            public  yes     yes     yes
@@ -138,6 +139,8 @@
           file_write                     public  yes     yes     yes
           get_cpu_time                   public  yes     yes     yes
           ghash_blocks                   public  yes     yes     yes
+          ghash_integer                  local   yes     yes     yes
+          ghash_key                      public  yes     yes     yes
           hash_crc32                     public  yes     yes     yes
           hash_crc64                     public  yes     yes     yes
           hash_xxh64                     public  yes     yes     yes
@@ -229,6 +232,14 @@
           network_load_32                public  yes     yes     yes
           network_store_16               public  yes     yes     yes
           network_store_32               public  yes     yes     yes
+          p256_add                       public  yes     yes     yes
+          p256_multiply                  public  yes     yes     yes
+          p256_square                    public  yes     yes     yes
+          p256_subtract                  public  yes     yes     yes
+          p384_add                       public  yes     yes     yes
+          p384_multiply                  public  yes     yes     yes
+          p384_square                    public  yes     yes     yes
+          p384_subtract                  public  yes     yes     yes
           path_basename                  public  yes     yes     yes
           path_head_copy                 public  yes     yes     yes
           path_join                      public  yes     yes     yes
@@ -3205,6 +3216,70 @@ __asm__(
     "mov %r13, %rbx\n   imul " at "+8(%rsp), %rbx\n   xor %rbx, %rbp\n"         \
     "mov %r10, %rbx\n   imul " at "(%rsp), %rbx\n   xor %rbx, %rbp\n"           \
     "and .Lghash_x64_k+24(%rip), %rbp\n   or %rbp, %rax\n"
+//      NIST P-256 and P-384 field arithmetic. The x86_64 bodies of
+//      p256_multiply carry the reasoning; these are the rows, reduction
+//      steps and final subtractions the three blocks repeat.
+
+#define FIELD_X64_P256_ROW(off, t0, t1, t2, t3, t4)                                      \
+    "mov " off "(%rbx), %rcx\n"                                                \
+    "mov (%rsi), %rax\n mul %rcx\n add %rax, " t0 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 8(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " t1 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 16(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " t2 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 24(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " t3 "\n adc $0, %rdx\n mov %rdx, " t4 "\n"
+
+/* q = w0; W + q p = q 2^96 + w1 2^64 + w2 2^128 + (w3 + q p3) 2^192 with
+   p3 = 2^64 - 2^32 + 1, by shifts: q p3 = (q - q>>32 - borrow, q - q<<32).
+   The new top limb lands in w0, so the window becomes (w1, w2, w3, w0). */
+#define FIELD_X64_P256_REDUCE(w0, w1, w2, w3)                                            \
+    "mov " w0 ", %rax\n shl $32, %rax\n mov " w0 ", %rdx\n shr $32, %rdx\n"     \
+    "mov " w0 ", %rbp\n sub %rax, %rbp\n sbb %rdx, " w0 "\n"                    \
+    "add %rax, " w1 "\n adc %rdx, " w2 "\n adc %rbp, " w3 "\n adc $0, " w0 "\n"
+
+#define FIELD_X64_P256_TAIL                                                              \
+    "mov $0xffffffff00000001, %rcx\n"                                          \
+    FIELD_X64_P256_REDUCE("%r8", "%r9", "%r10", "%r11")                                  \
+    FIELD_X64_P256_REDUCE("%r9", "%r10", "%r11", "%r8")                                  \
+    FIELD_X64_P256_REDUCE("%r10", "%r11", "%r8", "%r9")                                  \
+    FIELD_X64_P256_REDUCE("%r11", "%r8", "%r9", "%r10")                                  \
+    "xor %ebp, %ebp\n"                                                         \
+    "add %r12, %r8\n adc %r13, %r9\n adc %r14, %r10\n adc %r15, %r11\n adc $0, %rbp\n" \
+    "mov %r8, %rax\n mov %r9, %rdx\n mov %r10, %rbx\n mov %r11, %rsi\n"         \
+    "mov $0xffffffff, %r12d\n"                                                 \
+    "sub $-1, %rax\n sbb %r12, %rdx\n sbb $0, %rbx\n sbb %rcx, %rsi\n sbb $0, %rbp\n" \
+    "cmovnc %rax, %r8\n cmovnc %rdx, %r9\n cmovnc %rbx, %r10\n cmovnc %rsi, %r11\n" \
+    "mov %r8, (%rdi)\n mov %r9, 8(%rdi)\n mov %r10, 16(%rdi)\n mov %r11, 24(%rdi)\n" \
+    "pop %r15\n pop %r14\n pop %r13\n pop %r12\n pop %rbp\n pop %rbx\n"      \
+    ASM_RET
+
+/* P-384, interleaved.  Row: T += a b_i over w0..w5 with carries into w6 and
+   w7; q = w0 (2^32 + 1); T += q p as
+       + q 2^32 (w0, w1) + q 2^384 (w6)   then
+       - q - q 2^96 - q 2^128 (w0, w1, w2 = q + q>>32 with carry into w3).
+   w0 ends zero and the window moves up one register. */
+#define FIELD_X64_P384_ROW(off, w0, w1, w2, w3, w4, w5, w6, w7)                          \
+    "mov " off "(%rbx), %rcx\n"                                                \
+    "mov (%rsi), %rax\n mul %rcx\n add %rax, " w0 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 8(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " w1 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 16(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " w2 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 24(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " w3 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 32(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " w4 "\n adc $0, %rdx\n mov %rdx, %rbp\n" \
+    "mov 40(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, " w5 "\n adc $0, %rdx\n" \
+    "add %rdx, " w6 "\n mov $0, " w7 "\n adc $0, " w7 "\n"                     \
+    "mov " w0 ", %rcx\n shl $32, %rcx\n add " w0 ", %rcx\n"                    \
+    "mov %rcx, %rax\n shl $32, %rax\n mov %rcx, %rdx\n shr $32, %rdx\n"         \
+    "add %rax, " w0 "\n adc %rdx, " w1 "\n adc $0, " w2 "\n adc $0, " w3 "\n adc $0, " w4 "\n adc $0, " w5 "\n adc %rcx, " w6 "\n adc $0, " w7 "\n" \
+    "mov %rcx, %rbp\n add %rdx, %rbp\n sbb %rdx, %rdx\n neg %rdx\n"             \
+    "sub %rcx, " w0 "\n sbb %rax, " w1 "\n sbb %rbp, " w2 "\n sbb %rdx, " w3 "\n sbb $0, " w4 "\n sbb $0, " w5 "\n sbb $0, " w6 "\n sbb $0, " w7 "\n"
+
+/* Separate REDC step on a six-limb window with the new top limb in tp:
+   (W + q p) / 2^64 < 2^384 always fits, so no carry leaves the window. */
+#define FIELD_X64_P384_REDUCE(w0, w1, w2, w3, w4, w5, tp)                                \
+    "mov " w0 ", %rcx\n shl $32, %rcx\n add " w0 ", %rcx\n"                    \
+    "mov %rcx, %rax\n shl $32, %rax\n mov %rcx, %rdx\n shr $32, %rdx\n mov %rcx, " tp "\n" \
+    "add %rax, " w0 "\n adc %rdx, " w1 "\n adc $0, " w2 "\n adc $0, " w3 "\n adc $0, " w4 "\n adc $0, " w5 "\n adc $0, " tp "\n" \
+    "mov %rcx, %rbp\n add %rdx, %rbp\n sbb %rdx, %rdx\n neg %rdx\n"             \
+    "sub %rcx, " w0 "\n sbb %rax, " w1 "\n sbb %rbp, " w2 "\n sbb %rdx, " w3 "\n sbb $0, " w4 "\n sbb $0, " w5 "\n sbb $0, " tp "\n"
+
 #elif ARM64
 //      The four lanes of reg into the four stack slots from at. The masks
 //      are logical immediates. Uses x4 and x5.
@@ -3238,6 +3313,163 @@ __asm__(
     "mul x11, x6, x13\n   eor x16, x16, x11\n"                                  \
     "mul x11, x7, x12\n   eor x16, x16, x11\n"                                  \
     "and x16, x16, #0x8888888888888888\n   orr x10, x10, x16\n"
+// P-256.  Row i of the interleaved multiply adds a*b_i into the window
+// (w0..w4, carry into w5), low products first and high second: mul and
+// umulh leave the flags alone, so each product feeds its adcs directly.
+// Reduction by q = w0 needs no multiply: q*p3 for p3 = 2^64 - 2^32 + 1 is
+// (q - (q>>32) - borrow, q - (q<<32)), and q*2^96 is (q>>32, q<<32).
+#define FIELD_ARM64_P256_ROW(off, w0, w1, w2, w3, w4, w5) \
+    "ldr x13, [x2, #" off "]\n" \
+    "mul x14, x3, x13\n" \
+    "adds " w0 ", " w0 ", x14\n" \
+    "mul x14, x4, x13\n" \
+    "adcs " w1 ", " w1 ", x14\n" \
+    "mul x14, x5, x13\n" \
+    "adcs " w2 ", " w2 ", x14\n" \
+    "mul x14, x6, x13\n" \
+    "adcs " w3 ", " w3 ", x14\n" \
+    "adc " w4 ", " w4 ", xzr\n" \
+    "umulh x14, x3, x13\n" \
+    "adds " w1 ", " w1 ", x14\n" \
+    "umulh x14, x4, x13\n" \
+    "adcs " w2 ", " w2 ", x14\n" \
+    "umulh x14, x5, x13\n" \
+    "adcs " w3 ", " w3 ", x14\n" \
+    "umulh x14, x6, x13\n" \
+    "adcs " w4 ", " w4 ", x14\n" \
+    "adc " w5 ", xzr, xzr\n" \
+    "lsl x14, " w0 ", #32\n" \
+    "lsr x15, " w0 ", #32\n" \
+    "subs x16, " w0 ", x14\n" \
+    "sbc x17, " w0 ", x15\n" \
+    "adds " w1 ", " w1 ", x14\n" \
+    "adcs " w2 ", " w2 ", x15\n" \
+    "adcs " w3 ", " w3 ", x16\n" \
+    "adcs " w4 ", " w4 ", x17\n" \
+    "adc " w5 ", " w5 ", xzr\n"
+// Separate reduction step on a four-limb window; the new top limb lands in
+// w0's register, so four steps rotate back to where they started.
+#define FIELD_ARM64_P256_REDUCE(w0, w1, w2, w3) \
+    "lsl x14, " w0 ", #32\n" \
+    "lsr x15, " w0 ", #32\n" \
+    "subs x16, " w0 ", x14\n" \
+    "sbc x17, " w0 ", x15\n" \
+    "adds " w1 ", " w1 ", x14\n" \
+    "adcs " w2 ", " w2 ", x15\n" \
+    "adcs " w3 ", " w3 ", x16\n" \
+    "adc " w0 ", x17, xzr\n"
+// (r0..r3, top) - p, kept when it does not borrow.  x - (2^64 - 1) - borrow
+// is x + carry with the same carry out, so p0 is an adds of one.
+#define FIELD_ARM64_P256_FINAL(r0, r1, r2, r3, top) \
+    "mov x1, #0xffffffff\n" \
+    "mov x2, #1\n" \
+    "movk x2, #0xffff, lsl #32\n" \
+    "movk x2, #0xffff, lsl #48\n" \
+    "adds x3, " r0 ", #1\n" \
+    "sbcs x4, " r1 ", x1\n" \
+    "sbcs x5, " r2 ", xzr\n" \
+    "sbcs x6, " r3 ", x2\n" \
+    "sbcs x1, " top ", xzr\n" \
+    "csel " r0 ", " r0 ", x3, lo\n" \
+    "csel " r1 ", " r1 ", x4, lo\n" \
+    "csel " r2 ", " r2 ", x5, lo\n" \
+    "csel " r3 ", " r3 ", x6, lo\n" \
+    "stp " r0 ", " r1 ", [x0]\n" \
+    "stp " r2 ", " r3 ", [x0, #16]\n" \
+    ASM_RET
+#define FIELD_ARM64_P384_ROW(off, w0, w1, w2, w3, w4, w5, w6, w7) \
+    "ldr x17, [x2, #" off "]\n" \
+    "mul x1, x3, x17\n" \
+    "adds " w0 ", " w0 ", x1\n" \
+    "mul x1, x4, x17\n" \
+    "adcs " w1 ", " w1 ", x1\n" \
+    "mul x1, x5, x17\n" \
+    "adcs " w2 ", " w2 ", x1\n" \
+    "mul x1, x6, x17\n" \
+    "adcs " w3 ", " w3 ", x1\n" \
+    "mul x1, x7, x17\n" \
+    "adcs " w4 ", " w4 ", x1\n" \
+    "mul x1, x8, x17\n" \
+    "adcs " w5 ", " w5 ", x1\n" \
+    "adcs " w6 ", " w6 ", xzr\n" \
+    "adc " w7 ", xzr, xzr\n" \
+    "umulh x1, x3, x17\n" \
+    "adds " w1 ", " w1 ", x1\n" \
+    "umulh x1, x4, x17\n" \
+    "adcs " w2 ", " w2 ", x1\n" \
+    "umulh x1, x5, x17\n" \
+    "adcs " w3 ", " w3 ", x1\n" \
+    "umulh x1, x6, x17\n" \
+    "adcs " w4 ", " w4 ", x1\n" \
+    "umulh x1, x7, x17\n" \
+    "adcs " w5 ", " w5 ", x1\n" \
+    "umulh x1, x8, x17\n" \
+    "adcs " w6 ", " w6 ", x1\n" \
+    "adc " w7 ", " w7 ", xzr\n" \
+    "lsl x1, " w0 ", #32\n" \
+    "add x17, " w0 ", x1\n" \
+    "lsl x19, x17, #32\n" \
+    "lsr x20, x17, #32\n" \
+    "adds " w0 ", " w0 ", x19\n" \
+    "adcs " w1 ", " w1 ", x20\n" \
+    "adcs " w2 ", " w2 ", xzr\n" \
+    "adcs " w3 ", " w3 ", xzr\n" \
+    "adcs " w4 ", " w4 ", xzr\n" \
+    "adcs " w5 ", " w5 ", xzr\n" \
+    "adcs " w6 ", " w6 ", x17\n" \
+    "adc " w7 ", " w7 ", xzr\n" \
+    "adds x1, x17, x20\n" \
+    "cset x20, cs\n" \
+    "subs " w0 ", " w0 ", x17\n" \
+    "sbcs " w1 ", " w1 ", x19\n" \
+    "sbcs " w2 ", " w2 ", x1\n" \
+    "sbcs " w3 ", " w3 ", x20\n" \
+    "sbcs " w4 ", " w4 ", xzr\n" \
+    "sbcs " w5 ", " w5 ", xzr\n" \
+    "sbcs " w6 ", " w6 ", xzr\n" \
+    "sbc " w7 ", " w7 ", xzr\n"
+#define FIELD_ARM64_P384_REDUCE(w0, w1, w2, w3, w4, w5, tp) \
+    "lsl x1, " w0 ", #32\n" \
+    "add x17, " w0 ", x1\n" \
+    "lsl x19, x17, #32\n" \
+    "lsr x20, x17, #32\n" \
+    "adds " w0 ", " w0 ", x19\n" \
+    "adcs " w1 ", " w1 ", x20\n" \
+    "adcs " w2 ", " w2 ", xzr\n" \
+    "adcs " w3 ", " w3 ", xzr\n" \
+    "adcs " w4 ", " w4 ", xzr\n" \
+    "adcs " w5 ", " w5 ", xzr\n" \
+    "adc " tp ", x17, xzr\n" \
+    "adds x1, x17, x20\n" \
+    "cset x20, cs\n" \
+    "subs " w0 ", " w0 ", x17\n" \
+    "sbcs " w1 ", " w1 ", x19\n" \
+    "sbcs " w2 ", " w2 ", x1\n" \
+    "sbcs " w3 ", " w3 ", x20\n" \
+    "sbcs " w4 ", " w4 ", xzr\n" \
+    "sbcs " w5 ", " w5 ", xzr\n" \
+    "sbc " tp ", " tp ", xzr\n"
+#define FIELD_ARM64_P384_FINAL(r0, r1, r2, r3, r4, r5, top) \
+    "mov x1, #0xffffffff\n" \
+    "subs x3, " r0 ", x1\n" \
+    "mvn x1, x1\n" \
+    "sbcs x4, " r1 ", x1\n" \
+    "mov x1, #-2\n" \
+    "sbcs x5, " r2 ", x1\n" \
+    "adcs x6, " r3 ", xzr\n" \
+    "adcs x7, " r4 ", xzr\n" \
+    "adcs x8, " r5 ", xzr\n" \
+    "sbcs x1, " top ", xzr\n" \
+    "csel " r0 ", " r0 ", x3, lo\n" \
+    "csel " r1 ", " r1 ", x4, lo\n" \
+    "csel " r2 ", " r2 ", x5, lo\n" \
+    "csel " r3 ", " r3 ", x6, lo\n" \
+    "csel " r4 ", " r4 ", x7, lo\n" \
+    "csel " r5 ", " r5 ", x8, lo\n" \
+    "stp " r0 ", " r1 ", [x0]\n" \
+    "stp " r2 ", " r3 ", [x0, #16]\n" \
+    "stp " r4 ", " r5 ", [x0, #32]\n"
+
 #elif RISCV64
 //      Eight bytes, most significant first, from o0..o7(base) into dst.
 //      Byte loads: a word load here may take a misaligned-access trap.
@@ -3313,6 +3545,174 @@ __asm__(
     "mul t6, t1, a7\n   mul t5, t2, a6\n   xor t6, t6, t5\n"                    \
     "mul t5, t3, a5\n   xor t6, t6, t5\n   mul t5, t4, a4\n   xor t6, t6, t5\n"  \
     "and t6, t6, s3\n   or a1, a1, t6\n"
+
+/* dst += src + c, carry out in c; s10 and s11 scratch. */
+#define FIELD_RV_ADC(dst, src, c)                                                    \
+    "add " dst ", " dst ", " src "\n sltu s10, " dst ", " src "\n"             \
+    "add " dst ", " dst ", " c "\n sltu s11, " dst ", " c "\n or " c ", s10, s11\n"
+
+/* dst -= src + b, borrow out in b; s10 and s11 scratch. */
+#define FIELD_RV_SBB(dst, src, b)                                                    \
+    "sltu s10, " dst ", " src "\n sub " dst ", " dst ", " src "\n"             \
+    "sltu s11, " dst ", " b "\n sub " dst ", " dst ", " b "\n or " b ", s10, s11\n"
+
+/* x = y ^ ((x ^ y) & m): x where m is zero, y where m is all ones. */
+#define FIELD_RV_PICK(x, y, m)                                                       \
+    "xor s10, " x ", " y "\n and s10, s10, " m "\n xor " x ", " x ", s10\n"
+
+/* ---- P-256 ----
+   Row i adds a*b_i into (w0..w3, w4) low products first, then high ones,
+   carry in a1; then reduces by q = w0 with shifts alone:
+       q*p3 = (q - (q>>32) - borrow) 2^64 + (q - (q<<32)),  q*2^96 = (q>>32, q<<32).
+   a limbs t0..t3, b_i t4, product t6; reduction scratch s0..s3. */
+#define FIELD_RV_P256_ROW(off, w0, w1, w2, w3, w4, w5)                               \
+    "ld t4, " off "(a2)\n"                                                     \
+    "mul t6, t0, t4\n add " w0 ", " w0 ", t6\n sltu a1, " w0 ", t6\n"          \
+    "mul t6, t1, t4\n" FIELD_RV_ADC(w1, "t6", "a1")                                  \
+    "mul t6, t2, t4\n" FIELD_RV_ADC(w2, "t6", "a1")                                  \
+    "mul t6, t3, t4\n" FIELD_RV_ADC(w3, "t6", "a1")                                  \
+    "add " w4 ", " w4 ", a1\n"                                                 \
+    "mulhu t6, t0, t4\n add " w1 ", " w1 ", t6\n sltu a1, " w1 ", t6\n"        \
+    "mulhu t6, t1, t4\n" FIELD_RV_ADC(w2, "t6", "a1")                                \
+    "mulhu t6, t2, t4\n" FIELD_RV_ADC(w3, "t6", "a1")                                \
+    "mulhu t6, t3, t4\n" FIELD_RV_ADC(w4, "t6", "a1")                                \
+    "mv " w5 ", a1\n"                                                          \
+    "slli s0, " w0 ", 32\n srli s1, " w0 ", 32\n"                              \
+    "sub s2, " w0 ", s0\n sltu s3, " w0 ", s0\n"                               \
+    "sub " w0 ", " w0 ", s1\n sub " w0 ", " w0 ", s3\n"                        \
+    "add " w1 ", " w1 ", s0\n sltu a1, " w1 ", s0\n"                           \
+    FIELD_RV_ADC(w2, "s1", "a1") FIELD_RV_ADC(w3, "s2", "a1") FIELD_RV_ADC(w4, w0, "a1")         \
+    "add " w5 ", " w5 ", a1\n"
+
+/* Separate reduction step on (w0..w3); the new top limb lands in w0. */
+#define FIELD_RV_P256_REDUCE(w0, w1, w2, w3)                                         \
+    "slli s0, " w0 ", 32\n srli s1, " w0 ", 32\n"                              \
+    "sub s2, " w0 ", s0\n sltu s3, " w0 ", s0\n"                               \
+    "sub " w0 ", " w0 ", s1\n sub " w0 ", " w0 ", s3\n"                        \
+    "add " w1 ", " w1 ", s0\n sltu a1, " w1 ", s0\n"                           \
+    FIELD_RV_ADC(w2, "s1", "a1") FIELD_RV_ADC(w3, "s2", "a1")                              \
+    "add " w0 ", " w0 ", a1\n"
+
+/* (r0..r3, top) - p kept unless it borrows; writes d (a0).  p0 = 2^64 - 1
+   subtracts as +1 with a borrow unless the result is zero.  s0..s3 hold the
+   difference, s4 the borrow, s5 p1 then p3. */
+#define FIELD_RV_P256_FINAL(r0, r1, r2, r3, top)                                     \
+    "addi s0, " r0 ", 1\n snez s4, s0\n"                                        \
+    "addi s5, zero, -1\n srli s5, s5, 32\n"                                    \
+    "mv s1, " r1 "\n" FIELD_RV_SBB("s1", "s5", "s4")                                 \
+    "sltu s10, " r2 ", s4\n sub s2, " r2 ", s4\n mv s4, s10\n"                 \
+    "xori s5, s5, -1\n addi s5, s5, 1\n"                                       \
+    "mv s3, " r3 "\n" FIELD_RV_SBB("s3", "s5", "s4")                                 \
+    "sltu s4, " top ", s4\n addi s4, s4, -1\n"                                 \
+    FIELD_RV_PICK(r0, "s0", "s4") FIELD_RV_PICK(r1, "s1", "s4")                            \
+    FIELD_RV_PICK(r2, "s2", "s4") FIELD_RV_PICK(r3, "s3", "s4")                            \
+    "sd " r0 ", 0(a0)\n sd " r1 ", 8(a0)\n sd " r2 ", 16(a0)\n sd " r3 ", 24(a0)\n"
+
+#define FIELD_RV_SAVE                                                             \
+    "addi sp, sp, -64\n sd s0, 0(sp)\n sd s1, 8(sp)\n sd s2, 16(sp)\n"         \
+    "sd s3, 24(sp)\n sd s4, 32(sp)\n sd s5, 40(sp)\n sd s10, 48(sp)\n sd s11, 56(sp)\n"
+#define FIELD_RV_RESTORE                                                             \
+    "ld s0, 0(sp)\n ld s1, 8(sp)\n ld s2, 16(sp)\n ld s3, 24(sp)\n"            \
+    "ld s4, 32(sp)\n ld s5, 40(sp)\n ld s10, 48(sp)\n ld s11, 56(sp)\n addi sp, sp, 64\n"                                        \
+    ASM_RET
+
+
+/* ---- P-384 ----
+   Row i adds a*b_i into (w0..w5, w6) with the carry into w7, then reduces by
+   q = w0 (2^32 + 1): adds q<<32, q>>32 at w0, w1 and q at w6; subtracts q,
+   q<<32 and q + q>>32 (65 bits) at w0, w1, w2, w3.  a limbs t0..t5, b_i t6,
+   products s6; reduction scratch s0..s4. */
+#define FIELD_RV_P384_ROW(off, w0, w1, w2, w3, w4, w5, w6, w7)                       \
+    "ld t6, " off "(a2)\n"                                                     \
+    "mul s6, t0, t6\n add " w0 ", " w0 ", s6\n sltu a1, " w0 ", s6\n"          \
+    "mul s6, t1, t6\n" FIELD_RV_ADC(w1, "s6", "a1")                                  \
+    "mul s6, t2, t6\n" FIELD_RV_ADC(w2, "s6", "a1")                                  \
+    "mul s6, t3, t6\n" FIELD_RV_ADC(w3, "s6", "a1")                                  \
+    "mul s6, t4, t6\n" FIELD_RV_ADC(w4, "s6", "a1")                                  \
+    "mul s6, t5, t6\n" FIELD_RV_ADC(w5, "s6", "a1")                                  \
+    "add " w6 ", " w6 ", a1\n"                                                 \
+    "mulhu s6, t0, t6\n add " w1 ", " w1 ", s6\n sltu a1, " w1 ", s6\n"        \
+    "mulhu s6, t1, t6\n" FIELD_RV_ADC(w2, "s6", "a1")                                \
+    "mulhu s6, t2, t6\n" FIELD_RV_ADC(w3, "s6", "a1")                                \
+    "mulhu s6, t3, t6\n" FIELD_RV_ADC(w4, "s6", "a1")                                \
+    "mulhu s6, t4, t6\n" FIELD_RV_ADC(w5, "s6", "a1")                                \
+    "mulhu s6, t5, t6\n" FIELD_RV_ADC(w6, "s6", "a1")                                \
+    "mv " w7 ", a1\n"                                                          \
+    FIELD_RV_P384_FOLD(w0, w1, w2, w3, w4, w5, w6, w7)
+
+/* T += q p on (w0..w7) with q = w0 (2^32 + 1). */
+#define FIELD_RV_P384_FOLD(w0, w1, w2, w3, w4, w5, w6, w7)                           \
+    "slli s0, " w0 ", 32\n add s0, s0, " w0 "\n"                               \
+    "slli s1, s0, 32\n srli s2, s0, 32\n"                                      \
+    "add " w0 ", " w0 ", s1\n sltu a1, " w0 ", s1\n"                           \
+    FIELD_RV_ADC(w1, "s2", "a1")                                                     \
+    "add " w2 ", " w2 ", a1\n sltu a1, " w2 ", a1\n"                           \
+    "add " w3 ", " w3 ", a1\n sltu a1, " w3 ", a1\n"                           \
+    "add " w4 ", " w4 ", a1\n sltu a1, " w4 ", a1\n"                           \
+    "add " w5 ", " w5 ", a1\n sltu a1, " w5 ", a1\n"                           \
+    FIELD_RV_ADC(w6, "s0", "a1")                                                     \
+    "add " w7 ", " w7 ", a1\n"                                                 \
+    "add s3, s0, s2\n sltu s4, s3, s0\n"                                       \
+    "sltu a1, " w0 ", s0\n sub " w0 ", " w0 ", s0\n"                           \
+    FIELD_RV_SBB(w1, "s1", "a1") FIELD_RV_SBB(w2, "s3", "a1") FIELD_RV_SBB(w3, "s4", "a1")       \
+    "sltu s10, " w4 ", a1\n sub " w4 ", " w4 ", a1\n mv a1, s10\n"             \
+    "sltu s10, " w5 ", a1\n sub " w5 ", " w5 ", a1\n mv a1, s10\n"             \
+    "sltu s10, " w6 ", a1\n sub " w6 ", " w6 ", a1\n mv a1, s10\n"             \
+    "sub " w7 ", " w7 ", a1\n"
+
+/* Separate REDC step on (w0..w5): the new top limb lands in tp (in which
+   the caller has nothing), with no carry leaving the window. */
+#define FIELD_RV_P384_REDUCE(w0, w1, w2, w3, w4, w5, tp)                             \
+    "mv " tp ", zero\n"                                                        \
+    "slli s0, " w0 ", 32\n add s0, s0, " w0 "\n"                               \
+    "slli s1, s0, 32\n srli s2, s0, 32\n"                                      \
+    "add " w0 ", " w0 ", s1\n sltu a1, " w0 ", s1\n"                           \
+    FIELD_RV_ADC(w1, "s2", "a1")                                                     \
+    "add " w2 ", " w2 ", a1\n sltu a1, " w2 ", a1\n"                           \
+    "add " w3 ", " w3 ", a1\n sltu a1, " w3 ", a1\n"                           \
+    "add " w4 ", " w4 ", a1\n sltu a1, " w4 ", a1\n"                           \
+    "add " w5 ", " w5 ", a1\n sltu a1, " w5 ", a1\n"                           \
+    "add " tp ", s0, a1\n"                                                     \
+    "add s3, s0, s2\n sltu s4, s3, s0\n"                                       \
+    "sltu a1, " w0 ", s0\n sub " w0 ", " w0 ", s0\n"                           \
+    FIELD_RV_SBB(w1, "s1", "a1") FIELD_RV_SBB(w2, "s3", "a1") FIELD_RV_SBB(w3, "s4", "a1")       \
+    "sltu s10, " w4 ", a1\n sub " w4 ", " w4 ", a1\n mv a1, s10\n"             \
+    "sltu s10, " w5 ", a1\n sub " w5 ", " w5 ", a1\n mv a1, s10\n"             \
+    "sub " tp ", " tp ", a1\n"
+
+/* (r0..r5, top) - p kept unless it borrows; writes d.  Limbs of p that are
+   all ones subtract as +borrow-complement: x - (2^64-1) - b = x + 1 - b,
+   borrowing unless x + 1 - b wraps to... computed explicitly below.  s0..s5
+   the difference, s6 the borrow, s7 a constant. */
+#define FIELD_RV_P384_ONES(dst, src)                                                 \
+    "addi s10, s6, -1\n sub " dst ", " src ", s10\n"                            \
+    "sltu s11, " src ", s10\n or s11, s11, zero\n"                              \
+    "snez s10, " dst "\n or s6, s11, s10\n"
+
+#define FIELD_RV_P384_FINAL(r0, r1, r2, r3, r4, r5, top)                             \
+    "addi s7, zero, -1\n srli s7, s7, 32\n"                                    \
+    "sltu s6, " r0 ", s7\n sub s0, " r0 ", s7\n"                               \
+    "xori s7, s7, -1\n mv s1, " r1 "\n" FIELD_RV_SBB("s1", "s7", "s6")               \
+    "addi s7, zero, -2\n mv s2, " r2 "\n" FIELD_RV_SBB("s2", "s7", "s6")             \
+    "addi s7, zero, -1\n mv s3, " r3 "\n" FIELD_RV_SBB("s3", "s7", "s6")             \
+    "mv s4, " r4 "\n" FIELD_RV_SBB("s4", "s7", "s6")                                 \
+    "mv s5, " r5 "\n" FIELD_RV_SBB("s5", "s7", "s6")                                 \
+    "sltu s6, " top ", s6\n addi s6, s6, -1\n"                                 \
+    FIELD_RV_PICK(r0, "s0", "s6") FIELD_RV_PICK(r1, "s1", "s6") FIELD_RV_PICK(r2, "s2", "s6")    \
+    FIELD_RV_PICK(r3, "s3", "s6") FIELD_RV_PICK(r4, "s4", "s6") FIELD_RV_PICK(r5, "s5", "s6")    \
+    "sd " r0 ", 0(a0)\n sd " r1 ", 8(a0)\n sd " r2 ", 16(a0)\n"                \
+    "sd " r3 ", 24(a0)\n sd " r4 ", 32(a0)\n sd " r5 ", 40(a0)\n"
+
+#define FIELD_RV_SAVE_WIDE                                                           \
+    "addi sp, sp, -96\n sd s0, 0(sp)\n sd s1, 8(sp)\n sd s2, 16(sp)\n sd s3, 24(sp)\n" \
+    "sd s4, 32(sp)\n sd s5, 40(sp)\n sd s6, 48(sp)\n sd s7, 56(sp)\n sd s8, 64(sp)\n" \
+    "sd s9, 72(sp)\n sd s10, 80(sp)\n sd s11, 88(sp)\n"
+#define FIELD_RV_RESTORE_WIDE                                                        \
+    "ld s0, 0(sp)\n ld s1, 8(sp)\n ld s2, 16(sp)\n ld s3, 24(sp)\n"            \
+    "ld s4, 32(sp)\n ld s5, 40(sp)\n ld s6, 48(sp)\n ld s7, 56(sp)\n ld s8, 64(sp)\n" \
+    "ld s9, 72(sp)\n ld s10, 80(sp)\n ld s11, 88(sp)\n addi sp, sp, 96\n"                                        \
+    ASM_RET
+
 #endif
 
 #if X64
@@ -6435,7 +6835,7 @@ __asm__(
        The key's twenty four lanes, plain and reversed, are cut once a call
        into the frame, which is wiped before return. Measured and proved
        against the bit-serial multiply in CHECK_net and test/hardware_floor.c. */
-    ASM_FUNC(ghash_blocks)
+    ASM_LOCAL_FUNC(ghash_integer)
     "test %rcx, %rcx\n   jz .Lghash_x64_none\n"
     "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "sub $240, %rsp\n"
@@ -6512,7 +6912,1249 @@ __asm__(
     ".quad 0x5555555555555555, 0x3333333333333333\n"
     ".quad 0x0f0f0f0f0f0f0f0f\n"
     ASM_SECTION
+    ASM_LOCAL_END(ghash_integer)
+
+    /* ghash_blocks over the table ghash_key made, and the two bodies above
+       the integer floor.
+
+       Both multiply by precomputed powers of H instead of by H each block:
+       with X the state and B1..Bk the blocks of a turn,
+
+           X' = (X ^ B1) H^k ^ B2 H^(k-1) ^ ... ^ Bk H
+
+       is k independent products and one reduction. Each power is stored
+       times x^-1, so the 256-bit carry-less product of two byte-reversed
+       values needs no one-bit shift: its high half is already the answer's
+       low end and its low half folds up in two carry-less multiplies by
+       0xc2 << 56, the reflected x^128 = x^7 + x^2 + x + 1.
+
+       The products are Karatsuba: low times low, high times high, and the
+       sum of the halves times the stored sum of the power's halves. The
+       middle term is that last product less the other two, and because
+       every term of a turn is summed before anything else happens, the
+       correction is one xor a turn rather than two a block. That is three
+       carry-less multiplies a block instead of four, and the multiply is
+       what these bodies wait on: on a 9950X the zmm body measured 2.75
+       instructions and 1.66 cycles a block, 50.7 GB/s over a 16 KiB
+       record, against 39.5 for the same loop with four multiplies and
+       37.0 for OpenSSL's GMAC (3.3 instructions, 2.3 cycles).
+
+       zmm, VPCLMULQDQ and AVX-512: 48 blocks a turn, 12 vectors of four,
+       paired so vpternlogq sums two products into each accumulator. 32
+       measured the same and 16 was 28 GB/s. zmm16 up only, so no
+       vzeroupper. The tails are four-block turns and then single blocks.
+
+       xmm, PCLMULQDQ and SSE: 8 blocks a turn, 12.1 GB/s against 7.4 for
+       4. Its memory operands are legacy SSE, which is why the table has to
+       be 16-byte aligned.
+
+       Registers the bodies leave holding products are cleared on the way
+       out; the powers themselves are only ever memory operands. */
+#define GHASH_ZMM_LOAD(at, reg)                                               \
+    "vmovdqu64 " at "(%rdx), %zmm" reg "\n"                                   \
+    "vpshufb %zmm31, %zmm" reg ", %zmm" reg "\n"
+#define GHASH_ZMM_SUM(reg, sum)                                               \
+    "vpsrldq $8, %zmm" reg ", %zmm" sum "\n"                                  \
+    "vpxorq %zmm" reg ", %zmm" sum ", %zmm" sum "\n"
+#define GHASH_ZMM_PRODUCTS(pa, pb, sa, sb, low, high, middle)                 \
+    "vpclmulqdq $0x00, " pa "(%rsi), %zmm16, %zmm19\n"                        \
+    "vpclmulqdq $0x00, " pb "(%rsi), %zmm18, %zmm20\n" low                    \
+    "vpclmulqdq $0x11, " pa "(%rsi), %zmm16, %zmm19\n"                        \
+    "vpclmulqdq $0x11, " pb "(%rsi), %zmm18, %zmm20\n" high                   \
+    "vpclmulqdq $0x00, " sa "(%rsi), %zmm24, %zmm19\n"                        \
+    "vpclmulqdq $0x00, " sb "(%rsi), %zmm25, %zmm20\n" middle
+#define GHASH_ZMM_PAIR_FIRST(da, db, pa, pb, sa, sb)                          \
+    GHASH_ZMM_LOAD(da, "16") "vpxorq %zmm17, %zmm16, %zmm16\n"                \
+    GHASH_ZMM_SUM("16", "24") GHASH_ZMM_LOAD(db, "18")                        \
+    GHASH_ZMM_SUM("18", "25")                                                 \
+    GHASH_ZMM_PRODUCTS(pa, pb, sa, sb,                                        \
+        "vpxorq %zmm20, %zmm19, %zmm21\n",                                    \
+        "vpxorq %zmm20, %zmm19, %zmm22\n",                                    \
+        "vpxorq %zmm20, %zmm19, %zmm23\n")
+#define GHASH_ZMM_PAIR(da, db, pa, pb, sa, sb)                                \
+    GHASH_ZMM_LOAD(da, "16") GHASH_ZMM_SUM("16", "24")                        \
+    GHASH_ZMM_LOAD(db, "18") GHASH_ZMM_SUM("18", "25")                        \
+    GHASH_ZMM_PRODUCTS(pa, pb, sa, sb,                                        \
+        "vpternlogq $0x96, %zmm20, %zmm19, %zmm21\n",                         \
+        "vpternlogq $0x96, %zmm20, %zmm19, %zmm22\n",                         \
+        "vpternlogq $0x96, %zmm20, %zmm19, %zmm23\n")
+//  Low half in xmm21 folds into high half xmm22; the state is xmm17.
+#define GHASH_EVEX_REDUCE                                                     \
+    "vpclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm21, %xmm19\n"       \
+    "vpshufd $0x4e, %xmm21, %xmm21\n   vpxorq %xmm19, %xmm21, %xmm21\n"       \
+    "vpclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm21, %xmm19\n"       \
+    "vpshufd $0x4e, %xmm21, %xmm21\n"                                         \
+    "vpternlogq $0x96, %xmm19, %xmm21, %xmm22\n"                              \
+    "vmovdqa64 %xmm22, %xmm17\n"
+//  Low zmm21, high zmm22, middle zmm23: split the middle, fold the four
+//  lanes of each half, reduce.
+#define GHASH_ZMM_SPLIT_FOLD                                                  \
+    "vpslldq $8, %zmm23, %zmm19\n   vpsrldq $8, %zmm23, %zmm23\n"             \
+    "vpxorq %zmm19, %zmm21, %zmm21\n   vpxorq %zmm23, %zmm22, %zmm22\n"       \
+    "vextracti64x4 $1, %zmm21, %ymm19\n   vpxorq %ymm19, %ymm21, %ymm21\n"    \
+    "vextracti32x4 $1, %ymm21, %xmm19\n   vpxorq %xmm19, %xmm21, %xmm21\n"    \
+    "vextracti64x4 $1, %zmm22, %ymm19\n   vpxorq %ymm19, %ymm22, %ymm22\n"    \
+    "vextracti32x4 $1, %ymm22, %xmm19\n   vpxorq %xmm19, %xmm22, %xmm22\n"    \
+    GHASH_EVEX_REDUCE
+#define GHASH_XMM_ZERO                                                        \
+    "pxor %xmm9, %xmm9\n   pxor %xmm10, %xmm10\n   pxor %xmm11, %xmm11\n"
+#define GHASH_XMM_BLOCK(at, power, sum, first)                                \
+    "movdqu " at "(%rdx), %xmm0\n   pshufb %xmm15, %xmm0\n" first             \
+    "movdqa %xmm0, %xmm1\n   pclmulqdq $0x00, " power "(%rsi), %xmm1\n"        \
+    "pxor %xmm1, %xmm9\n"                                                     \
+    "movdqa %xmm0, %xmm1\n   pclmulqdq $0x11, " power "(%rsi), %xmm1\n"        \
+    "pxor %xmm1, %xmm10\n"                                                    \
+    "movdqa %xmm0, %xmm1\n   psrldq $8, %xmm1\n   pxor %xmm0, %xmm1\n"         \
+    "pclmulqdq $0x00, " sum "(%rsi), %xmm1\n   pxor %xmm1, %xmm11\n"
+#define GHASH_XMM_FIRST "pxor %xmm8, %xmm0\n"
+#define GHASH_XMM_FINISH                                                      \
+    "pxor %xmm9, %xmm11\n   pxor %xmm10, %xmm11\n"                            \
+    "movdqa %xmm11, %xmm1\n   pslldq $8, %xmm1\n   psrldq $8, %xmm11\n"        \
+    "pxor %xmm1, %xmm9\n   pxor %xmm11, %xmm10\n"                             \
+    "movdqa %xmm9, %xmm1\n"                                                   \
+    "pclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm1\n"                 \
+    "pshufd $0x4e, %xmm9, %xmm9\n   pxor %xmm1, %xmm9\n"                      \
+    "movdqa %xmm9, %xmm1\n"                                                   \
+    "pclmulqdq $0x00, .Lghash_blocks_x64_poly(%rip), %xmm1\n"                 \
+    "pshufd $0x4e, %xmm9, %xmm9\n   pxor %xmm1, %xmm10\n   pxor %xmm9, %xmm10\n" \
+    "movdqa %xmm10, %xmm8\n"
+    ASM_FUNC(ghash_blocks)
+    "test %rcx, %rcx\n   jz .Lghash_blocks_x64_none\n"
+    ASM_USERSPACE_WIDE(
+    "cmpb $0, cpu_has_vpclmul(%rip)\n   je .Lghash_blocks_x64_narrow\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne .Lghash_blocks_x64_zmm\n"
+    ".Lghash_blocks_x64_narrow:\n"
+    "cmpb $0, cpu_has_pclmul(%rip)\n   jne .Lghash_blocks_x64_xmm\n"
+    )
+    "add $1536, %rsi\n   jmp ghash_integer\n"
+    ".Lghash_blocks_x64_none:\n"
+    ASM_RET
+    ASM_USERSPACE_WIDE(
+    ".Lghash_blocks_x64_zmm:\n"
+    "vbroadcasti64x2 .Lghash_blocks_x64_bswap(%rip), %zmm31\n"
+    "vmovdqu64 (%rdi), %xmm17\n   vpshufb %xmm31, %xmm17, %xmm17\n"
+    "cmp $48, %rcx\n   jb .Lghash_blocks_x64_zmm_four\n"
+    ".balign 16\n"
+    ".Lghash_blocks_x64_zmm_turn:\n"
+    GHASH_ZMM_PAIR_FIRST("0", "64", "0", "64", "768", "832")
+    GHASH_ZMM_PAIR("128", "192", "128", "192", "896", "960")
+    GHASH_ZMM_PAIR("256", "320", "256", "320", "1024", "1088")
+    GHASH_ZMM_PAIR("384", "448", "384", "448", "1152", "1216")
+    GHASH_ZMM_PAIR("512", "576", "512", "576", "1280", "1344")
+    GHASH_ZMM_PAIR("640", "704", "640", "704", "1408", "1472")
+    "vpternlogq $0x96, %zmm22, %zmm21, %zmm23\n"
+    GHASH_ZMM_SPLIT_FOLD
+    "add $768, %rdx\n   sub $48, %rcx\n   cmp $48, %rcx\n"
+    "jae .Lghash_blocks_x64_zmm_turn\n"
+    ".Lghash_blocks_x64_zmm_four:\n"
+    "cmp $4, %rcx\n   jb .Lghash_blocks_x64_zmm_one\n"
+    GHASH_ZMM_LOAD("0", "16") "vpxorq %zmm17, %zmm16, %zmm16\n"
+    "vpclmulqdq $0x00, 704(%rsi), %zmm16, %zmm21\n"
+    "vpclmulqdq $0x11, 704(%rsi), %zmm16, %zmm22\n"
+    "vpclmulqdq $0x01, 704(%rsi), %zmm16, %zmm19\n"
+    "vpclmulqdq $0x10, 704(%rsi), %zmm16, %zmm20\n"
+    "vpxorq %zmm20, %zmm19, %zmm23\n"
+    GHASH_ZMM_SPLIT_FOLD
+    "add $64, %rdx\n   sub $4, %rcx\n   jmp .Lghash_blocks_x64_zmm_four\n"
+    ".Lghash_blocks_x64_zmm_one:\n"
+    "test %rcx, %rcx\n   jz .Lghash_blocks_x64_zmm_done\n"
+    "vmovdqu64 (%rdx), %xmm16\n   vpshufb %xmm31, %xmm16, %xmm16\n"
+    "vpxorq %xmm17, %xmm16, %xmm16\n"
+    "vpclmulqdq $0x00, 752(%rsi), %xmm16, %xmm21\n"
+    "vpclmulqdq $0x11, 752(%rsi), %xmm16, %xmm22\n"
+    "vpclmulqdq $0x01, 752(%rsi), %xmm16, %xmm19\n"
+    "vpclmulqdq $0x10, 752(%rsi), %xmm16, %xmm20\n"
+    "vpxorq %xmm20, %xmm19, %xmm23\n"
+    "vpslldq $8, %xmm23, %xmm19\n   vpsrldq $8, %xmm23, %xmm23\n"
+    "vpxorq %xmm19, %xmm21, %xmm21\n   vpxorq %xmm23, %xmm22, %xmm22\n"
+    GHASH_EVEX_REDUCE
+    "add $16, %rdx\n   dec %rcx\n   jmp .Lghash_blocks_x64_zmm_one\n"
+    ".Lghash_blocks_x64_zmm_done:\n"
+    "vpshufb %xmm31, %xmm17, %xmm17\n   vmovdqu64 %xmm17, (%rdi)\n"
+    "vpxorq %xmm16, %xmm16, %xmm16\n   vpxorq %xmm17, %xmm17, %xmm17\n"
+    "vpxorq %xmm18, %xmm18, %xmm18\n   vpxorq %xmm19, %xmm19, %xmm19\n"
+    "vpxorq %xmm20, %xmm20, %xmm20\n   vpxorq %xmm21, %xmm21, %xmm21\n"
+    "vpxorq %xmm22, %xmm22, %xmm22\n   vpxorq %xmm23, %xmm23, %xmm23\n"
+    "vpxorq %xmm24, %xmm24, %xmm24\n   vpxorq %xmm25, %xmm25, %xmm25\n"
+    ASM_RET
+    ".Lghash_blocks_x64_xmm:\n"
+    "movdqa .Lghash_blocks_x64_bswap(%rip), %xmm15\n"
+    "movdqu (%rdi), %xmm8\n   pshufb %xmm15, %xmm8\n"
+    "cmp $8, %rcx\n   jb .Lghash_blocks_x64_xmm_four\n"
+    ".balign 16\n"
+    ".Lghash_blocks_x64_xmm_turn:\n"
+    GHASH_XMM_ZERO
+    GHASH_XMM_BLOCK("0", "640", "1408", GHASH_XMM_FIRST)
+    GHASH_XMM_BLOCK("16", "656", "1424", "")
+    GHASH_XMM_BLOCK("32", "672", "1440", "")
+    GHASH_XMM_BLOCK("48", "688", "1456", "")
+    GHASH_XMM_BLOCK("64", "704", "1472", "")
+    GHASH_XMM_BLOCK("80", "720", "1488", "")
+    GHASH_XMM_BLOCK("96", "736", "1504", "")
+    GHASH_XMM_BLOCK("112", "752", "1520", "")
+    GHASH_XMM_FINISH
+    "add $128, %rdx\n   sub $8, %rcx\n   cmp $8, %rcx\n"
+    "jae .Lghash_blocks_x64_xmm_turn\n"
+    ".Lghash_blocks_x64_xmm_four:\n"
+    "cmp $4, %rcx\n   jb .Lghash_blocks_x64_xmm_one\n"
+    GHASH_XMM_ZERO
+    GHASH_XMM_BLOCK("0", "704", "1472", GHASH_XMM_FIRST)
+    GHASH_XMM_BLOCK("16", "720", "1488", "")
+    GHASH_XMM_BLOCK("32", "736", "1504", "")
+    GHASH_XMM_BLOCK("48", "752", "1520", "")
+    GHASH_XMM_FINISH
+    "add $64, %rdx\n   sub $4, %rcx\n"
+    ".Lghash_blocks_x64_xmm_one:\n"
+    "test %rcx, %rcx\n   jz .Lghash_blocks_x64_xmm_done\n"
+    GHASH_XMM_ZERO
+    GHASH_XMM_BLOCK("0", "752", "1520", GHASH_XMM_FIRST)
+    GHASH_XMM_FINISH
+    "add $16, %rdx\n   dec %rcx\n   jmp .Lghash_blocks_x64_xmm_one\n"
+    ".Lghash_blocks_x64_xmm_done:\n"
+    "pshufb %xmm15, %xmm8\n   movdqu %xmm8, (%rdi)\n"
+    "pxor %xmm0, %xmm0\n   pxor %xmm1, %xmm1\n   pxor %xmm8, %xmm8\n"
+    "pxor %xmm9, %xmm9\n   pxor %xmm10, %xmm10\n   pxor %xmm11, %xmm11\n"
+    ASM_RET
+    ".section .rodata\n   .balign 64\n"
+    ".Lghash_blocks_x64_bswap:\n"
+    ".byte 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\n"
+    ".balign 16\n"
+    ".Lghash_blocks_x64_poly:\n   .quad 0xc200000000000000, 0\n"
+    ASM_SECTION
+    )
     ASM_END(ghash_blocks)
+
+    /* The table: H^48 down to H^1 at 16 bytes each from 0, each times x^-1
+       as (low, high) words of the byte-reversed value; the xor of each
+       entry's two words at 768 + the same offset; H itself at 1536. The
+       powers come from the integer multiply with a zero block, which is
+       forty seven calls once a key, so the table is the same on every
+       machine and nothing here branches on H. Multiplying by x^-1 is a
+       left shift of the reversed value with 0xc2 << 56 and 1 xored in
+       when the top bit falls out. */
+    ASM_FUNC(ghash_key)
+    "push %r12\n   push %r13\n   push %r14\n   sub $32, %rsp\n"
+    "mov %rdi, %r12\n   mov %rsi, %r13\n"
+    "mov (%rsi), %rax\n   mov %rax, 1536(%rdi)\n   mov %rax, (%rsp)\n"
+    "mov 8(%rsi), %rax\n   mov %rax, 1544(%rdi)\n   mov %rax, 8(%rsp)\n"
+    "movq $0, 16(%rsp)\n   movq $0, 24(%rsp)\n"
+    "mov $752, %r14d\n"
+    ".Lghash_key_x64_power:\n"
+    "mov (%rsp), %rax\n   bswap %rax\n   mov 8(%rsp), %rdx\n   bswap %rdx\n"
+    "mov %rax, %rcx\n   shr $63, %rcx\n"
+    "mov %rdx, %r8\n   shr $63, %r8\n   add %rax, %rax\n   or %r8, %rax\n"
+    "add %rdx, %rdx\n   xor %rcx, %rdx\n"
+    "neg %rcx\n   movabs $0xc200000000000000, %r8\n   and %r8, %rcx\n"
+    "xor %rcx, %rax\n"
+    "mov %rdx, (%r12,%r14)\n   mov %rax, 8(%r12,%r14)\n"
+    "xor %rax, %rdx\n   mov %rdx, 768(%r12,%r14)\n   movq $0, 776(%r12,%r14)\n"
+    "sub $16, %r14\n   jb .Lghash_key_x64_done\n"
+    "mov %rsp, %rdi\n   mov %r13, %rsi\n   lea 16(%rsp), %rdx\n   mov $1, %ecx\n"
+    "call ghash_integer\n"
+    "jmp .Lghash_key_x64_power\n"
+    ".Lghash_key_x64_done:\n"
+    "xor %eax, %eax\n   mov %rax, (%rsp)\n   mov %rax, 8(%rsp)\n"
+    "xor %edx, %edx\n   xor %ecx, %ecx\n   xor %r8d, %r8d\n"
+    "add $32, %rsp\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    ASM_RET
+    ASM_END(ghash_key)
+
+    /* aes128_ctr_blocks: AES-128 in GCM's counter mode, and the three
+       bodies under it.
+
+       zmm, VAES and AES-512: four counters a vector and four vectors a
+       turn. The counter block is kept byte-reversed, where GCM's 32-bit
+       big-endian counter is the low doubleword of each lane, so vpaddd with
+       a lane constant is exactly GCM's increment, wrap included; vpshufb
+       puts the bytes back. The last round takes the data with its key,
+       vaesenclast(state, key ^ data), which is the ciphertext in one
+       instruction. 60 GB/s over a 16 KiB record on a 9950X. Tails are
+       vectors of four and one masked vector; the masks are a table, not
+       BMI2.
+
+       xmm, AES-NI and SSE: eight counters a turn, each round eight aesenc
+       on eight registers against one key loaded once. 16.3 GB/s, where
+       OpenSSL's AES-NI CTR is 15.5. Round keys are loaded with movdqu,
+       because a legacy SSE memory operand has to be aligned and the key
+       schedule is the caller's.
+
+       The floor is AES bitsliced over eight blocks a turn, because an S-box
+       table indexes on the key and the data and the field inversion the C
+       used cost a millisecond a kilobyte. A plane holds bit i of every byte:
+       sixteen byte lanes in row-major order (lane 4r + c), bit b of a lane
+       belonging to block b, two words on a 64-bit register machine. SubBytes
+       is Boyar and Peralta's 128-gate circuit run once over the low words and
+       once over the high words; ShiftRows is two 32-bit rotations a word;
+       MixColumns takes rows +1 as (low >> 32 | high << 32), rows +2 as the
+       other word, and xtime as a permutation of planes. Keys and the IV are
+       sliced once a call, round zero's key folded into the IV; the counter
+       column is gathered each turn with one multiply a row. 270 to 380 MB/s
+       on the 9950X, against roughly 1 MB/s before. No vector instruction, so
+       a kernel build keeps it. The frame holds sliced key material and is
+       wiped before return. */
+    ASM_FUNC(aes128_ctr_blocks)
+    "test %r8, %r8\n   jz .Laes_ctr_x64_none\n"
+    ASM_USERSPACE_WIDE(
+    "cmpb $0, cpu_has_vaes(%rip)\n   je .Laes_ctr_x64_narrow\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne .Laes_ctr_x64_zmm\n"
+    ".Laes_ctr_x64_narrow:\n"
+    "cmpb $0, cpu_has_aes(%rip)\n   jne .Laes_ctr_x64_xmm\n"
+    )
+    "push %rbp\n   push %rbx\n   push %r12\n"
+    "push %r13\n   push %r14\n   push %r15\n"
+    "sub $1840, %rsp\n   mov %rsi, 368(%rsp)\n   mov %rdx, 376(%rsp)\n"
+    "mov %rcx, 384(%rsp)\n   mov %r8, 392(%rsp)\n   movabs $0x0101010101010101, %r10\n"
+    "xor %r13, %r13\n   shl $8, %r13\n   shl $8, %r13\n"
+    "movzbl 9(%rsi), %ebx\n   or %rbx, %r13\n   shl $8, %r13\n"
+    "movzbl 5(%rsi), %ebx\n   or %rbx, %r13\n   shl $8, %r13\n"
+    "movzbl 1(%rsi), %ebx\n   or %rbx, %r13\n   shl $8, %r13\n"
+    "shl $8, %r13\n   movzbl 8(%rsi), %ebx\n   or %rbx, %r13\n"
+    "shl $8, %r13\n   movzbl 4(%rsi), %ebx\n   or %rbx, %r13\n"
+    "shl $8, %r13\n   movzbl 0(%rsi), %ebx\n   or %rbx, %r13\n"
+    "xor %r14, %r14\n   shl $8, %r14\n   shl $8, %r14\n"
+    "movzbl 11(%rsi), %ebx\n   or %rbx, %r14\n   shl $8, %r14\n"
+    "movzbl 7(%rsi), %ebx\n   or %rbx, %r14\n   shl $8, %r14\n"
+    "movzbl 3(%rsi), %ebx\n   or %rbx, %r14\n   shl $8, %r14\n"
+    "shl $8, %r14\n   movzbl 10(%rsi), %ebx\n   or %rbx, %r14\n"
+    "shl $8, %r14\n   movzbl 6(%rsi), %ebx\n   or %rbx, %r14\n"
+    "shl $8, %r14\n   movzbl 2(%rsi), %ebx\n   or %rbx, %r14\n"
+    "lea 424(%rsp), %r11\n   mov $11, %r12d\n"
+    ".Laes_ctr_x64_floor_keys:\n"
+    "movzbl 13(%rdi), %eax\n   shl $8, %rax\n   movzbl 9(%rdi), %ebx\n"
+    "or %rbx, %rax\n   shl $8, %rax\n   movzbl 5(%rdi), %ebx\n"
+    "or %rbx, %rax\n   shl $8, %rax\n   movzbl 1(%rdi), %ebx\n"
+    "or %rbx, %rax\n   shl $8, %rax\n   movzbl 12(%rdi), %ebx\n"
+    "or %rbx, %rax\n   shl $8, %rax\n   movzbl 8(%rdi), %ebx\n"
+    "or %rbx, %rax\n   shl $8, %rax\n   movzbl 4(%rdi), %ebx\n"
+    "or %rbx, %rax\n   shl $8, %rax\n   movzbl 0(%rdi), %ebx\n"
+    "or %rbx, %rax\n   xor %r13, %rax\n   mov %rax, %rbx\n"
+    "and %r10, %rbx\n   imul $255, %rbx, %rbx\n   mov %rbx, 0(%r11)\n"
+    "mov %rax, %rbx\n   shr $1, %rbx\n   and %r10, %rbx\n"
+    "imul $255, %rbx, %rbx\n   mov %rbx, 16(%r11)\n   mov %rax, %rbx\n"
+    "shr $2, %rbx\n   and %r10, %rbx\n   imul $255, %rbx, %rbx\n"
+    "mov %rbx, 32(%r11)\n   mov %rax, %rbx\n   shr $3, %rbx\n"
+    "and %r10, %rbx\n   imul $255, %rbx, %rbx\n   mov %rbx, 48(%r11)\n"
+    "mov %rax, %rbx\n   shr $4, %rbx\n   and %r10, %rbx\n"
+    "imul $255, %rbx, %rbx\n   mov %rbx, 64(%r11)\n   mov %rax, %rbx\n"
+    "shr $5, %rbx\n   and %r10, %rbx\n   imul $255, %rbx, %rbx\n"
+    "mov %rbx, 80(%r11)\n   mov %rax, %rbx\n   shr $6, %rbx\n"
+    "and %r10, %rbx\n   imul $255, %rbx, %rbx\n   mov %rbx, 96(%r11)\n"
+    "mov %rax, %rbx\n   shr $7, %rbx\n   and %r10, %rbx\n"
+    "imul $255, %rbx, %rbx\n   mov %rbx, 112(%r11)\n   movzbl 15(%rdi), %eax\n"
+    "shl $8, %rax\n   movzbl 11(%rdi), %ebx\n   or %rbx, %rax\n"
+    "shl $8, %rax\n   movzbl 7(%rdi), %ebx\n   or %rbx, %rax\n"
+    "shl $8, %rax\n   movzbl 3(%rdi), %ebx\n   or %rbx, %rax\n"
+    "shl $8, %rax\n   movzbl 14(%rdi), %ebx\n   or %rbx, %rax\n"
+    "shl $8, %rax\n   movzbl 10(%rdi), %ebx\n   or %rbx, %rax\n"
+    "shl $8, %rax\n   movzbl 6(%rdi), %ebx\n   or %rbx, %rax\n"
+    "shl $8, %rax\n   movzbl 2(%rdi), %ebx\n   or %rbx, %rax\n"
+    "xor %r14, %rax\n   mov %rax, %rbx\n   and %r10, %rbx\n"
+    "imul $255, %rbx, %rbx\n   mov %rbx, 8(%r11)\n   mov %rax, %rbx\n"
+    "shr $1, %rbx\n   and %r10, %rbx\n   imul $255, %rbx, %rbx\n"
+    "mov %rbx, 24(%r11)\n   mov %rax, %rbx\n   shr $2, %rbx\n"
+    "and %r10, %rbx\n   imul $255, %rbx, %rbx\n   mov %rbx, 40(%r11)\n"
+    "mov %rax, %rbx\n   shr $3, %rbx\n   and %r10, %rbx\n"
+    "imul $255, %rbx, %rbx\n   mov %rbx, 56(%r11)\n   mov %rax, %rbx\n"
+    "shr $4, %rbx\n   and %r10, %rbx\n   imul $255, %rbx, %rbx\n"
+    "mov %rbx, 72(%r11)\n   mov %rax, %rbx\n   shr $5, %rbx\n"
+    "and %r10, %rbx\n   imul $255, %rbx, %rbx\n   mov %rbx, 88(%r11)\n"
+    "mov %rax, %rbx\n   shr $6, %rbx\n   and %r10, %rbx\n"
+    "imul $255, %rbx, %rbx\n   mov %rbx, 104(%r11)\n   mov %rax, %rbx\n"
+    "shr $7, %rbx\n   and %r10, %rbx\n   imul $255, %rbx, %rbx\n"
+    "mov %rbx, 120(%r11)\n   xor %r13d, %r13d\n   xor %r14d, %r14d\n"
+    "add $16, %rdi\n   add $128, %r11\n   dec %r12d\n"
+    "jnz .Laes_ctr_x64_floor_keys\n   mov 12(%rsi), %eax\n   bswap %eax\n"
+    "mov %rax, 400(%rsp)\n"
+    ".Laes_ctr_x64_floor_turn:\n"
+    "mov 400(%rsp), %r11d\n   xor %r12d, %r12d\n   xor %r13d, %r13d\n"
+    "xor %r14d, %r14d\n   xor %r15d, %r15d\n   lea 0(%r11), %eax\n"
+    "bswap %eax\n   movzbl %al, %ebx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   or %rbx, %r13\n   shr $16, %eax\n"
+    "movzbl %al, %ebx\n   or %rbx, %r14\n   movzbl %ah, %ebx\n"
+    "or %rbx, %r15\n   lea 1(%r11), %eax\n   bswap %eax\n"
+    "movzbl %al, %ebx\n   shl $8, %rbx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   shl $8, %rbx\n   or %rbx, %r13\n"
+    "shr $16, %eax\n   movzbl %al, %ebx\n   shl $8, %rbx\n"
+    "or %rbx, %r14\n   movzbl %ah, %ebx\n   shl $8, %rbx\n"
+    "or %rbx, %r15\n   lea 2(%r11), %eax\n   bswap %eax\n"
+    "movzbl %al, %ebx\n   shl $16, %rbx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   shl $16, %rbx\n   or %rbx, %r13\n"
+    "shr $16, %eax\n   movzbl %al, %ebx\n   shl $16, %rbx\n"
+    "or %rbx, %r14\n   movzbl %ah, %ebx\n   shl $16, %rbx\n"
+    "or %rbx, %r15\n   lea 3(%r11), %eax\n   bswap %eax\n"
+    "movzbl %al, %ebx\n   shl $24, %rbx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   shl $24, %rbx\n   or %rbx, %r13\n"
+    "shr $16, %eax\n   movzbl %al, %ebx\n   shl $24, %rbx\n"
+    "or %rbx, %r14\n   movzbl %ah, %ebx\n   shl $24, %rbx\n"
+    "or %rbx, %r15\n   lea 4(%r11), %eax\n   bswap %eax\n"
+    "movzbl %al, %ebx\n   shl $32, %rbx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   shl $32, %rbx\n   or %rbx, %r13\n"
+    "shr $16, %eax\n   movzbl %al, %ebx\n   shl $32, %rbx\n"
+    "or %rbx, %r14\n   movzbl %ah, %ebx\n   shl $32, %rbx\n"
+    "or %rbx, %r15\n   lea 5(%r11), %eax\n   bswap %eax\n"
+    "movzbl %al, %ebx\n   shl $40, %rbx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   shl $40, %rbx\n   or %rbx, %r13\n"
+    "shr $16, %eax\n   movzbl %al, %ebx\n   shl $40, %rbx\n"
+    "or %rbx, %r14\n   movzbl %ah, %ebx\n   shl $40, %rbx\n"
+    "or %rbx, %r15\n   lea 6(%r11), %eax\n   bswap %eax\n"
+    "movzbl %al, %ebx\n   shl $48, %rbx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   shl $48, %rbx\n   or %rbx, %r13\n"
+    "shr $16, %eax\n   movzbl %al, %ebx\n   shl $48, %rbx\n"
+    "or %rbx, %r14\n   movzbl %ah, %ebx\n   shl $48, %rbx\n"
+    "or %rbx, %r15\n   lea 7(%r11), %eax\n   bswap %eax\n"
+    "movzbl %al, %ebx\n   shl $56, %rbx\n   or %rbx, %r12\n"
+    "movzbl %ah, %ebx\n   shl $56, %rbx\n   or %rbx, %r13\n"
+    "shr $16, %eax\n   movzbl %al, %ebx\n   shl $56, %rbx\n"
+    "or %rbx, %r14\n   movzbl %ah, %ebx\n   shl $56, %rbx\n"
+    "or %rbx, %r15\n   movabs $0x0102040810204080, %r9\n   mov %r12, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   and %r10, %rdx\n"
+    "imul %r9, %rdx\n   shr $56, %rdx\n   shl $56, %rdx\n"
+    "xor %rdx, %rax\n   xor 424(%rsp), %rax\n   mov %rax, 0(%rsp)\n"
+    "mov %r14, %rax\n   and %r10, %rax\n   imul %r9, %rax\n"
+    "shr $56, %rax\n   shl $24, %rax\n   mov %r15, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 432(%rsp), %rax\n"
+    "mov %rax, 8(%rsp)\n   mov %r12, %rax\n   shr $1, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   shr $1, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 440(%rsp), %rax\n"
+    "mov %rax, 16(%rsp)\n   mov %r14, %rax\n   shr $1, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r15, %rdx\n   shr $1, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 448(%rsp), %rax\n"
+    "mov %rax, 24(%rsp)\n   mov %r12, %rax\n   shr $2, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   shr $2, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 456(%rsp), %rax\n"
+    "mov %rax, 32(%rsp)\n   mov %r14, %rax\n   shr $2, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r15, %rdx\n   shr $2, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 464(%rsp), %rax\n"
+    "mov %rax, 40(%rsp)\n   mov %r12, %rax\n   shr $3, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   shr $3, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 472(%rsp), %rax\n"
+    "mov %rax, 48(%rsp)\n   mov %r14, %rax\n   shr $3, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r15, %rdx\n   shr $3, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 480(%rsp), %rax\n"
+    "mov %rax, 56(%rsp)\n   mov %r12, %rax\n   shr $4, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   shr $4, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 488(%rsp), %rax\n"
+    "mov %rax, 64(%rsp)\n   mov %r14, %rax\n   shr $4, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r15, %rdx\n   shr $4, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 496(%rsp), %rax\n"
+    "mov %rax, 72(%rsp)\n   mov %r12, %rax\n   shr $5, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   shr $5, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 504(%rsp), %rax\n"
+    "mov %rax, 80(%rsp)\n   mov %r14, %rax\n   shr $5, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r15, %rdx\n   shr $5, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 512(%rsp), %rax\n"
+    "mov %rax, 88(%rsp)\n   mov %r12, %rax\n   shr $6, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   shr $6, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 520(%rsp), %rax\n"
+    "mov %rax, 96(%rsp)\n   mov %r14, %rax\n   shr $6, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r15, %rdx\n   shr $6, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 528(%rsp), %rax\n"
+    "mov %rax, 104(%rsp)\n   mov %r12, %rax\n   shr $7, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r13, %rdx\n   shr $7, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 536(%rsp), %rax\n"
+    "mov %rax, 112(%rsp)\n   mov %r14, %rax\n   shr $7, %rax\n"
+    "and %r10, %rax\n   imul %r9, %rax\n   shr $56, %rax\n"
+    "shl $24, %rax\n   mov %r15, %rdx\n   shr $7, %rdx\n"
+    "and %r10, %rdx\n   imul %r9, %rdx\n   shr $56, %rdx\n"
+    "shl $56, %rdx\n   xor %rdx, %rax\n   xor 544(%rsp), %rax\n"
+    "mov %rax, 120(%rsp)\n   lea 552(%rsp), %rax\n   mov %rax, 416(%rsp)\n"
+    "movq $1, 408(%rsp)\n"
+    ".Laes_ctr_x64_floor_round:\n"
+    "lea 0(%rsp), %rbp\n"
+    ".Laes_ctr_x64_floor_pass:\n"
+    "mov 112(%rbp), %rax\n   xor 64(%rbp), %rax\n   mov 112(%rbp), %rbx\n"
+    "xor 32(%rbp), %rbx\n   mov 112(%rbp), %rcx\n   xor 16(%rbp), %rcx\n"
+    "mov 64(%rbp), %rdx\n   xor 32(%rbp), %rdx\n   mov 48(%rbp), %rsi\n"
+    "xor 16(%rbp), %rsi\n   mov %rax, %rdi\n   xor %rsi, %rdi\n"
+    "mov 96(%rbp), %r8\n   xor 80(%rbp), %r8\n   mov 0(%rbp), %r9\n"
+    "xor %rdi, %r9\n   mov 0(%rbp), %r10\n   xor %r8, %r10\n"
+    "mov %rdi, %r11\n   xor %r8, %r11\n   mov 96(%rbp), %r12\n"
+    "xor 32(%rbp), %r12\n   mov 80(%rbp), %r13\n   xor 32(%rbp), %r13\n"
+    "mov %rcx, %r14\n   xor %rdx, %r14\n   mov %rdi, %r15\n"
+    "xor %r12, %r15\n   xor %rsi, %r12\n   xor %r13, %rsi\n"
+    "mov %rdx, 256(%rsp)\n   mov %r10, %rdx\n   xor %rsi, %rdx\n"
+    "mov %r12, 264(%rsp)\n   mov 64(%rbp), %r12\n   xor 0(%rbp), %r12\n"
+    "xor %r8, %r12\n   mov %r10, 272(%rsp)\n   mov %rax, %r10\n"
+    "xor %r12, %r10\n   mov %r12, 280(%rsp)\n   mov 16(%rbp), %r12\n"
+    "xor 0(%rbp), %r12\n   xor %r12, %r8\n   mov %rbx, %r12\n"
+    "xor %r8, %r12\n   mov %r8, 288(%rsp)\n   mov %rbx, %r8\n"
+    "xor %r11, %r8\n   mov %r8, 296(%rsp)\n   mov %r10, %r8\n"
+    "xor %rdx, %r8\n   mov %r8, 304(%rsp)\n   mov %rcx, %r8\n"
+    "xor %rsi, %r8\n   xor %rax, %r13\n   mov %rbx, 312(%rsp)\n"
+    "mov %r14, %rbx\n   and %rdi, %rbx\n   mov %r14, 320(%rsp)\n"
+    "mov %r12, %r14\n   and %r9, %r14\n   xor %rbx, %r15\n"
+    "mov %r12, 328(%rsp)\n   mov 280(%rsp), %r12\n   and 0(%rbp), %r12\n"
+    "xor %rbx, %r12\n   mov %rcx, %rbx\n   and %rsi, %rbx\n"
+    "mov %rcx, 336(%rsp)\n   mov 288(%rsp), %rcx\n   and 272(%rsp), %rcx\n"
+    "xor %rbx, %r8\n   mov %rsi, 344(%rsp)\n   mov %r10, %rsi\n"
+    "and %rdx, %rsi\n   xor %rbx, %rsi\n   mov %rax, %rbx\n"
+    "and 264(%rsp), %rbx\n   mov %rax, 352(%rsp)\n   mov 256(%rsp), %rax\n"
+    "and %r13, %rax\n   xor %rbx, %rax\n   mov %r10, 360(%rsp)\n"
+    "mov 312(%rsp), %r10\n   and %r11, %r10\n   xor %rbx, %r10\n"
+    "xor %r14, %r15\n   xor 296(%rsp), %r12\n   xor %rcx, %r8\n"
+    "xor %r10, %rsi\n   xor %rax, %r15\n   xor %r10, %r12\n"
+    "xor %rax, %r8\n   xor 304(%rsp), %rsi\n   mov %r8, %rbx\n"
+    "xor %rsi, %rbx\n   mov %r8, %r14\n   and %r15, %r14\n"
+    "mov %r12, %rcx\n   xor %r14, %rcx\n   mov %r15, %r10\n"
+    "xor %r12, %r10\n   mov %rsi, %rax\n   xor %r14, %rax\n"
+    "and %r10, %rax\n   and %rbx, %rcx\n   and %rsi, %r15\n"
+    "and %r10, %r15\n   xor %r14, %r10\n   and %r12, %r8\n"
+    "and %rbx, %r8\n   xor %r14, %rbx\n   xor %rax, %r12\n"
+    "xor %r10, %r15\n   xor %rcx, %rsi\n   xor %rbx, %r8\n"
+    "mov %r15, %r14\n   xor %r8, %r14\n   mov %r12, %rax\n"
+    "xor %rsi, %rax\n   mov %r12, %r10\n   xor %r15, %r10\n"
+    "mov %rsi, %rcx\n   xor %r8, %rcx\n   mov %rax, %rbx\n"
+    "xor %r14, %rbx\n   and %rcx, %rdi\n   and %r8, %r9\n"
+    "mov %r9, 304(%rsp)\n   mov %rsi, %r9\n   and 0(%rbp), %r9\n"
+    "mov %rdi, 296(%rsp)\n   mov %r10, %rdi\n   and 344(%rsp), %rdi\n"
+    "mov %rdi, 344(%rsp)\n   mov %r15, %rdi\n   and 272(%rsp), %rdi\n"
+    "and %r12, %rdx\n   mov %rdx, 272(%rsp)\n   mov %rax, %rdx\n"
+    "and 264(%rsp), %rdx\n   and %rbx, %r13\n   and %r14, %r11\n"
+    "and 320(%rsp), %rcx\n   and 328(%rsp), %r8\n   and 280(%rsp), %rsi\n"
+    "and 336(%rsp), %r10\n   and 288(%rsp), %r15\n   and 360(%rsp), %r12\n"
+    "and 352(%rsp), %rax\n   and 256(%rsp), %rbx\n   and 312(%rsp), %r14\n"
+    "mov %r14, 312(%rsp)\n   mov %rax, %r14\n   xor %rbx, %r14\n"
+    "mov %rsi, 256(%rsp)\n   mov %rdi, %rsi\n   xor %r8, %rsi\n"
+    "mov %r8, 352(%rsp)\n   mov 296(%rsp), %r8\n   xor %r9, %r8\n"
+    "mov %rsi, 360(%rsp)\n   mov 304(%rsp), %rsi\n   xor %rcx, %rsi\n"
+    "xor %r10, %r11\n   mov %r10, 304(%rsp)\n   mov 344(%rsp), %r10\n"
+    "xor %rax, %r10\n   xor %r10, %rbx\n   mov 296(%rsp), %r10\n"
+    "xor %rsi, %r10\n   xor 272(%rsp), %r15\n   mov %rbx, 296(%rsp)\n"
+    "mov %rdx, %rbx\n   xor %r13, %rbx\n   xor %r11, %r13\n"
+    "xor %r8, %r12\n   xor 272(%rsp), %r9\n   xor %r14, %rdi\n"
+    "xor %rax, %rdx\n   xor 360(%rsp), %rcx\n   mov 352(%rsp), %rax\n"
+    "xor %r14, %rax\n   mov %rdi, 352(%rsp)\n   mov 256(%rsp), %rdi\n"
+    "xor 360(%rsp), %rdi\n   mov %rax, 256(%rsp)\n   mov 304(%rsp), %rax\n"
+    "xor %r15, %rax\n   xor 312(%rsp), %r11\n   xor 360(%rsp), %r14\n"
+    "mov %r14, 312(%rsp)\n   mov 360(%rsp), %r14\n   xor %r10, %r14\n"
+    "xor %r9, %rsi\n   xor %r8, %rax\n   xor %rbx, %rcx\n"
+    "mov 296(%rsp), %r9\n   xor %r13, %r9\n   xor %rbx, %r10\n"
+    "xor %r13, %r15\n   xor %r12, %rdx\n   xor %rdi, %r12\n"
+    "xor 296(%rsp), %rcx\n   mov %rcx, 112(%rbp)\n   xor 256(%rsp), %r10\n"
+    "not %r10\n   mov %r10, 96(%rbp)\n   xor %rdx, %r11\n"
+    "not %r11\n   mov %r11, 80(%rbp)\n   xor 296(%rsp), %r14\n"
+    "mov %r14, 64(%rbp)\n   xor 312(%rsp), %rsi\n   mov %rsi, 48(%rbp)\n"
+    "xor %r12, %r9\n   mov %r9, 32(%rbp)\n   xor 352(%rsp), %r15\n"
+    "not %r15\n   mov %r15, 16(%rbp)\n   xor 296(%rsp), %rax\n"
+    "not %rax\n   mov %rax, 0(%rbp)\n   add $8, %rbp\n"
+    "lea 16(%rsp), %rax\n   cmp %rax, %rbp\n   jb .Laes_ctr_x64_floor_pass\n"
+    "mov 0(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 0(%rsp)\n   mov 8(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 8(%rsp)\n"
+    "mov 16(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 16(%rsp)\n   mov 24(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 24(%rsp)\n"
+    "mov 32(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 32(%rsp)\n   mov 40(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 40(%rsp)\n"
+    "mov 48(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 48(%rsp)\n   mov 56(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 56(%rsp)\n"
+    "mov 64(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 64(%rsp)\n   mov 72(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 72(%rsp)\n"
+    "mov 80(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 80(%rsp)\n   mov 88(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 88(%rsp)\n"
+    "mov 96(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 96(%rsp)\n   mov 104(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 104(%rsp)\n"
+    "mov 112(%rsp), %rax\n   mov %eax, %ebx\n   shr $32, %rax\n"
+    "ror $8, %eax\n   shl $32, %rax\n   or %rbx, %rax\n"
+    "mov %rax, 112(%rsp)\n   mov 120(%rsp), %rax\n   mov %eax, %ebx\n"
+    "rol $16, %ebx\n   shr $32, %rax\n   rol $8, %eax\n"
+    "shl $32, %rax\n   or %rbx, %rax\n   mov %rax, 120(%rsp)\n"
+    "mov 416(%rsp), %rsi\n   cmpq $10, 408(%rsp)\n   je .Laes_ctr_x64_floor_last\n"
+    "mov 0(%rsp), %rax\n   mov 8(%rsp), %rdx\n   mov %rax, %rbx\n"
+    "shrd $32, %rdx, %rbx\n   xor %rax, %rbx\n   mov %rdx, %rcx\n"
+    "shrd $32, %rax, %rcx\n   xor %rdx, %rcx\n   mov %rbx, 128(%rsp)\n"
+    "mov %rcx, 136(%rsp)\n   mov 16(%rsp), %rax\n   mov 24(%rsp), %rdx\n"
+    "mov %rax, %rbx\n   shrd $32, %rdx, %rbx\n   xor %rax, %rbx\n"
+    "mov %rdx, %rcx\n   shrd $32, %rax, %rcx\n   xor %rdx, %rcx\n"
+    "mov %rbx, 144(%rsp)\n   mov %rcx, 152(%rsp)\n   mov 32(%rsp), %rax\n"
+    "mov 40(%rsp), %rdx\n   mov %rax, %rbx\n   shrd $32, %rdx, %rbx\n"
+    "xor %rax, %rbx\n   mov %rdx, %rcx\n   shrd $32, %rax, %rcx\n"
+    "xor %rdx, %rcx\n   mov %rbx, 160(%rsp)\n   mov %rcx, 168(%rsp)\n"
+    "mov 48(%rsp), %rax\n   mov 56(%rsp), %rdx\n   mov %rax, %rbx\n"
+    "shrd $32, %rdx, %rbx\n   xor %rax, %rbx\n   mov %rdx, %rcx\n"
+    "shrd $32, %rax, %rcx\n   xor %rdx, %rcx\n   mov %rbx, 176(%rsp)\n"
+    "mov %rcx, 184(%rsp)\n   mov 64(%rsp), %rax\n   mov 72(%rsp), %rdx\n"
+    "mov %rax, %rbx\n   shrd $32, %rdx, %rbx\n   xor %rax, %rbx\n"
+    "mov %rdx, %rcx\n   shrd $32, %rax, %rcx\n   xor %rdx, %rcx\n"
+    "mov %rbx, 192(%rsp)\n   mov %rcx, 200(%rsp)\n   mov 80(%rsp), %rax\n"
+    "mov 88(%rsp), %rdx\n   mov %rax, %rbx\n   shrd $32, %rdx, %rbx\n"
+    "xor %rax, %rbx\n   mov %rdx, %rcx\n   shrd $32, %rax, %rcx\n"
+    "xor %rdx, %rcx\n   mov %rbx, 208(%rsp)\n   mov %rcx, 216(%rsp)\n"
+    "mov 96(%rsp), %rax\n   mov 104(%rsp), %rdx\n   mov %rax, %rbx\n"
+    "shrd $32, %rdx, %rbx\n   xor %rax, %rbx\n   mov %rdx, %rcx\n"
+    "shrd $32, %rax, %rcx\n   xor %rdx, %rcx\n   mov %rbx, 224(%rsp)\n"
+    "mov %rcx, 232(%rsp)\n   mov 112(%rsp), %rax\n   mov 120(%rsp), %rdx\n"
+    "mov %rax, %rbx\n   shrd $32, %rdx, %rbx\n   xor %rax, %rbx\n"
+    "mov %rdx, %rcx\n   shrd $32, %rax, %rcx\n   xor %rdx, %rcx\n"
+    "mov %rbx, 240(%rsp)\n   mov %rcx, 248(%rsp)\n   mov 128(%rsp), %rax\n"
+    "xor 136(%rsp), %rax\n   mov %rax, %rbx\n   xor 0(%rsp), %rbx\n"
+    "xor 0(%rsi), %rbx\n   xor 240(%rsp), %rbx\n   mov %rbx, 0(%rsp)\n"
+    "mov %rax, %rbx\n   xor 8(%rsp), %rbx\n   xor 8(%rsi), %rbx\n"
+    "xor 248(%rsp), %rbx\n   mov %rbx, 8(%rsp)\n   mov 144(%rsp), %rax\n"
+    "xor 152(%rsp), %rax\n   mov %rax, %rbx\n   xor 16(%rsp), %rbx\n"
+    "xor 16(%rsi), %rbx\n   xor 128(%rsp), %rbx\n   xor 240(%rsp), %rbx\n"
+    "mov %rbx, 16(%rsp)\n   mov %rax, %rbx\n   xor 24(%rsp), %rbx\n"
+    "xor 24(%rsi), %rbx\n   xor 136(%rsp), %rbx\n   xor 248(%rsp), %rbx\n"
+    "mov %rbx, 24(%rsp)\n   mov 160(%rsp), %rax\n   xor 168(%rsp), %rax\n"
+    "mov %rax, %rbx\n   xor 32(%rsp), %rbx\n   xor 32(%rsi), %rbx\n"
+    "xor 144(%rsp), %rbx\n   mov %rbx, 32(%rsp)\n   mov %rax, %rbx\n"
+    "xor 40(%rsp), %rbx\n   xor 40(%rsi), %rbx\n   xor 152(%rsp), %rbx\n"
+    "mov %rbx, 40(%rsp)\n   mov 176(%rsp), %rax\n   xor 184(%rsp), %rax\n"
+    "mov %rax, %rbx\n   xor 48(%rsp), %rbx\n   xor 48(%rsi), %rbx\n"
+    "xor 160(%rsp), %rbx\n   xor 240(%rsp), %rbx\n   mov %rbx, 48(%rsp)\n"
+    "mov %rax, %rbx\n   xor 56(%rsp), %rbx\n   xor 56(%rsi), %rbx\n"
+    "xor 168(%rsp), %rbx\n   xor 248(%rsp), %rbx\n   mov %rbx, 56(%rsp)\n"
+    "mov 192(%rsp), %rax\n   xor 200(%rsp), %rax\n   mov %rax, %rbx\n"
+    "xor 64(%rsp), %rbx\n   xor 64(%rsi), %rbx\n   xor 176(%rsp), %rbx\n"
+    "xor 240(%rsp), %rbx\n   mov %rbx, 64(%rsp)\n   mov %rax, %rbx\n"
+    "xor 72(%rsp), %rbx\n   xor 72(%rsi), %rbx\n   xor 184(%rsp), %rbx\n"
+    "xor 248(%rsp), %rbx\n   mov %rbx, 72(%rsp)\n   mov 208(%rsp), %rax\n"
+    "xor 216(%rsp), %rax\n   mov %rax, %rbx\n   xor 80(%rsp), %rbx\n"
+    "xor 80(%rsi), %rbx\n   xor 192(%rsp), %rbx\n   mov %rbx, 80(%rsp)\n"
+    "mov %rax, %rbx\n   xor 88(%rsp), %rbx\n   xor 88(%rsi), %rbx\n"
+    "xor 200(%rsp), %rbx\n   mov %rbx, 88(%rsp)\n   mov 224(%rsp), %rax\n"
+    "xor 232(%rsp), %rax\n   mov %rax, %rbx\n   xor 96(%rsp), %rbx\n"
+    "xor 96(%rsi), %rbx\n   xor 208(%rsp), %rbx\n   mov %rbx, 96(%rsp)\n"
+    "mov %rax, %rbx\n   xor 104(%rsp), %rbx\n   xor 104(%rsi), %rbx\n"
+    "xor 216(%rsp), %rbx\n   mov %rbx, 104(%rsp)\n   mov 240(%rsp), %rax\n"
+    "xor 248(%rsp), %rax\n   mov %rax, %rbx\n   xor 112(%rsp), %rbx\n"
+    "xor 112(%rsi), %rbx\n   xor 224(%rsp), %rbx\n   mov %rbx, 112(%rsp)\n"
+    "mov %rax, %rbx\n   xor 120(%rsp), %rbx\n   xor 120(%rsi), %rbx\n"
+    "xor 232(%rsp), %rbx\n   mov %rbx, 120(%rsp)\n   jmp .Laes_ctr_x64_floor_next\n"
+    ".Laes_ctr_x64_floor_last:\n"
+    "mov 0(%rsi), %rax\n   xor %rax, 0(%rsp)\n   mov 8(%rsi), %rax\n"
+    "xor %rax, 8(%rsp)\n   mov 16(%rsi), %rax\n   xor %rax, 16(%rsp)\n"
+    "mov 24(%rsi), %rax\n   xor %rax, 24(%rsp)\n   mov 32(%rsi), %rax\n"
+    "xor %rax, 32(%rsp)\n   mov 40(%rsi), %rax\n   xor %rax, 40(%rsp)\n"
+    "mov 48(%rsi), %rax\n   xor %rax, 48(%rsp)\n   mov 56(%rsi), %rax\n"
+    "xor %rax, 56(%rsp)\n   mov 64(%rsi), %rax\n   xor %rax, 64(%rsp)\n"
+    "mov 72(%rsi), %rax\n   xor %rax, 72(%rsp)\n   mov 80(%rsi), %rax\n"
+    "xor %rax, 80(%rsp)\n   mov 88(%rsi), %rax\n   xor %rax, 88(%rsp)\n"
+    "mov 96(%rsi), %rax\n   xor %rax, 96(%rsp)\n   mov 104(%rsi), %rax\n"
+    "xor %rax, 104(%rsp)\n   mov 112(%rsi), %rax\n   xor %rax, 112(%rsp)\n"
+    "mov 120(%rsi), %rax\n   xor %rax, 120(%rsp)\n"
+    ".Laes_ctr_x64_floor_next:\n"
+    "addq $128, 416(%rsp)\n   incq 408(%rsp)\n   cmpq $11, 408(%rsp)\n"
+    "jne .Laes_ctr_x64_floor_round\n   mov 376(%rsp), %rsi\n   mov 384(%rsp), %rdi\n"
+    "mov 392(%rsp), %r8\n   movabs $0x0101010101010101, %r10\n   xor %ecx, %ecx\n"
+    ".Laes_ctr_x64_floor_stream:\n"
+    "cmp %rcx, %r8\n   jbe .Laes_ctr_x64_floor_stream_done\n   xor %r11d, %r11d\n"
+    "xor %r12d, %r12d\n   mov 0(%rsp), %rax\n   shr %cl, %rax\n"
+    "and %r10, %rax\n   or %rax, %r11\n   mov 8(%rsp), %rax\n"
+    "shr %cl, %rax\n   and %r10, %rax\n   or %rax, %r12\n"
+    "mov 16(%rsp), %rax\n   shr %cl, %rax\n   and %r10, %rax\n"
+    "shl $1, %rax\n   or %rax, %r11\n   mov 24(%rsp), %rax\n"
+    "shr %cl, %rax\n   and %r10, %rax\n   shl $1, %rax\n"
+    "or %rax, %r12\n   mov 32(%rsp), %rax\n   shr %cl, %rax\n"
+    "and %r10, %rax\n   shl $2, %rax\n   or %rax, %r11\n"
+    "mov 40(%rsp), %rax\n   shr %cl, %rax\n   and %r10, %rax\n"
+    "shl $2, %rax\n   or %rax, %r12\n   mov 48(%rsp), %rax\n"
+    "shr %cl, %rax\n   and %r10, %rax\n   shl $3, %rax\n"
+    "or %rax, %r11\n   mov 56(%rsp), %rax\n   shr %cl, %rax\n"
+    "and %r10, %rax\n   shl $3, %rax\n   or %rax, %r12\n"
+    "mov 64(%rsp), %rax\n   shr %cl, %rax\n   and %r10, %rax\n"
+    "shl $4, %rax\n   or %rax, %r11\n   mov 72(%rsp), %rax\n"
+    "shr %cl, %rax\n   and %r10, %rax\n   shl $4, %rax\n"
+    "or %rax, %r12\n   mov 80(%rsp), %rax\n   shr %cl, %rax\n"
+    "and %r10, %rax\n   shl $5, %rax\n   or %rax, %r11\n"
+    "mov 88(%rsp), %rax\n   shr %cl, %rax\n   and %r10, %rax\n"
+    "shl $5, %rax\n   or %rax, %r12\n   mov 96(%rsp), %rax\n"
+    "shr %cl, %rax\n   and %r10, %rax\n   shl $6, %rax\n"
+    "or %rax, %r11\n   mov 104(%rsp), %rax\n   shr %cl, %rax\n"
+    "and %r10, %rax\n   shl $6, %rax\n   or %rax, %r12\n"
+    "mov 112(%rsp), %rax\n   shr %cl, %rax\n   and %r10, %rax\n"
+    "shl $7, %rax\n   or %rax, %r11\n   mov 120(%rsp), %rax\n"
+    "shr %cl, %rax\n   and %r10, %rax\n   shl $7, %rax\n"
+    "or %rax, %r12\n   xor %r13, %r13\n   shl $8, %r13\n"
+    "mov %r12, %rax\n   shr $40, %rax\n   movzbl %al, %eax\n"
+    "or %rax, %r13\n   shl $8, %r13\n   mov %r12, %rax\n"
+    "shr $8, %rax\n   movzbl %al, %eax\n   or %rax, %r13\n"
+    "shl $8, %r13\n   mov %r11, %rax\n   shr $40, %rax\n"
+    "movzbl %al, %eax\n   or %rax, %r13\n   shl $8, %r13\n"
+    "mov %r11, %rax\n   shr $8, %rax\n   movzbl %al, %eax\n"
+    "or %rax, %r13\n   shl $8, %r13\n   mov %r12, %rax\n"
+    "shr $32, %rax\n   movzbl %al, %eax\n   or %rax, %r13\n"
+    "shl $8, %r13\n   mov %r12, %rax\n   movzbl %al, %eax\n"
+    "or %rax, %r13\n   shl $8, %r13\n   mov %r11, %rax\n"
+    "shr $32, %rax\n   movzbl %al, %eax\n   or %rax, %r13\n"
+    "shl $8, %r13\n   mov %r11, %rax\n   movzbl %al, %eax\n"
+    "or %rax, %r13\n   xor %r14, %r14\n   shl $8, %r14\n"
+    "mov %r12, %rax\n   shr $56, %rax\n   movzbl %al, %eax\n"
+    "or %rax, %r14\n   shl $8, %r14\n   mov %r12, %rax\n"
+    "shr $24, %rax\n   movzbl %al, %eax\n   or %rax, %r14\n"
+    "shl $8, %r14\n   mov %r11, %rax\n   shr $56, %rax\n"
+    "movzbl %al, %eax\n   or %rax, %r14\n   shl $8, %r14\n"
+    "mov %r11, %rax\n   shr $24, %rax\n   movzbl %al, %eax\n"
+    "or %rax, %r14\n   shl $8, %r14\n   mov %r12, %rax\n"
+    "shr $48, %rax\n   movzbl %al, %eax\n   or %rax, %r14\n"
+    "shl $8, %r14\n   mov %r12, %rax\n   shr $16, %rax\n"
+    "movzbl %al, %eax\n   or %rax, %r14\n   shl $8, %r14\n"
+    "mov %r11, %rax\n   shr $48, %rax\n   movzbl %al, %eax\n"
+    "or %rax, %r14\n   shl $8, %r14\n   mov %r11, %rax\n"
+    "shr $16, %rax\n   movzbl %al, %eax\n   or %rax, %r14\n"
+    "xor (%rsi), %r13\n   mov %r13, (%rdi)\n   xor 8(%rsi), %r14\n"
+    "mov %r14, 8(%rdi)\n   add $16, %rsi\n   add $16, %rdi\n"
+    "inc %ecx\n   cmp $8, %ecx\n   jb .Laes_ctr_x64_floor_stream\n"
+    ".Laes_ctr_x64_floor_stream_done:\n"
+    "mov $8, %eax\n   cmp %rax, %r8\n   cmovb %r8, %rax\n"
+    "add %eax, 400(%rsp)\n   mov %rsi, 376(%rsp)\n   mov %rdi, 384(%rsp)\n"
+    "sub %rax, %r8\n   mov %r8, 392(%rsp)\n   jnz .Laes_ctr_x64_floor_turn\n"
+    "mov 368(%rsp), %rsi\n   mov 400(%rsp), %eax\n   bswap %eax\n"
+    "mov %eax, 12(%rsi)\n   mov %rsp, %rdi\n   mov $230, %ecx\n"
+    "xor %eax, %eax\n   rep stosq\n   xor %ebx, %ebx\n"
+    "xor %ecx, %ecx\n   xor %edx, %edx\n   xor %esi, %esi\n"
+    "xor %edi, %edi\n   xor %r8d, %r8d\n   xor %r9d, %r9d\n"
+    "xor %r10d, %r10d\n   xor %r11d, %r11d\n   add $1840, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n"
+    "pop %r12\n   pop %rbx\n   pop %rbp\n"
+    ASM_RET
+    ".Laes_ctr_x64_none:\n"
+    ASM_RET
+    ASM_USERSPACE_WIDE(
+    ".Laes_ctr_x64_zmm:\n"
+    "vbroadcasti64x2 .Laes_ctr_x64_bswap(%rip), %zmm31\n"
+    "vbroadcasti32x4 0(%rdi), %zmm20\n"
+    "vbroadcasti32x4 16(%rdi), %zmm21\n"
+    "vbroadcasti32x4 32(%rdi), %zmm22\n"
+    "vbroadcasti32x4 48(%rdi), %zmm23\n"
+    "vbroadcasti32x4 64(%rdi), %zmm24\n"
+    "vbroadcasti32x4 80(%rdi), %zmm25\n"
+    "vbroadcasti32x4 96(%rdi), %zmm26\n"
+    "vbroadcasti32x4 112(%rdi), %zmm27\n"
+    "vbroadcasti32x4 128(%rdi), %zmm28\n"
+    "vbroadcasti32x4 144(%rdi), %zmm29\n"
+    "vbroadcasti32x4 160(%rdi), %zmm30\n"
+    "vmovdqu64 (%rsi), %xmm16\n   vpshufb %xmm31, %xmm16, %xmm16\n"
+    "vshufi64x2 $0, %zmm16, %zmm16, %zmm16\n"
+    "vbroadcasti32x4 320+.Laes_ctr_x64_steps(%rip), %zmm17\n"
+    "cmp $16, %r8\n   jb .Laes_ctr_x64_zmm_four\n"
+    ".balign 16\n"
+    ".Laes_ctr_x64_zmm_turn:\n"
+    "vpaddd 0+.Laes_ctr_x64_steps(%rip), %zmm16, %zmm0\n   vpshufb %zmm31, %zmm0, %zmm0\n"
+    "vpxord %zmm20, %zmm0, %zmm0\n"
+    "vaesenc %zmm21, %zmm0, %zmm0\n"
+    "vaesenc %zmm22, %zmm0, %zmm0\n"
+    "vaesenc %zmm23, %zmm0, %zmm0\n"
+    "vaesenc %zmm24, %zmm0, %zmm0\n"
+    "vaesenc %zmm25, %zmm0, %zmm0\n"
+    "vaesenc %zmm26, %zmm0, %zmm0\n"
+    "vaesenc %zmm27, %zmm0, %zmm0\n"
+    "vaesenc %zmm28, %zmm0, %zmm0\n"
+    "vaesenc %zmm29, %zmm0, %zmm0\n"
+    "vpxord 0(%rdx), %zmm30, %zmm19\n   vaesenclast %zmm19, %zmm0, %zmm0\n"
+    "vmovdqu64 %zmm0, 0(%rcx)\n"
+    "vpaddd 64+.Laes_ctr_x64_steps(%rip), %zmm16, %zmm1\n   vpshufb %zmm31, %zmm1, %zmm1\n"
+    "vpxord %zmm20, %zmm1, %zmm1\n"
+    "vaesenc %zmm21, %zmm1, %zmm1\n"
+    "vaesenc %zmm22, %zmm1, %zmm1\n"
+    "vaesenc %zmm23, %zmm1, %zmm1\n"
+    "vaesenc %zmm24, %zmm1, %zmm1\n"
+    "vaesenc %zmm25, %zmm1, %zmm1\n"
+    "vaesenc %zmm26, %zmm1, %zmm1\n"
+    "vaesenc %zmm27, %zmm1, %zmm1\n"
+    "vaesenc %zmm28, %zmm1, %zmm1\n"
+    "vaesenc %zmm29, %zmm1, %zmm1\n"
+    "vpxord 64(%rdx), %zmm30, %zmm19\n   vaesenclast %zmm19, %zmm1, %zmm1\n"
+    "vmovdqu64 %zmm1, 64(%rcx)\n"
+    "vpaddd 128+.Laes_ctr_x64_steps(%rip), %zmm16, %zmm2\n   vpshufb %zmm31, %zmm2, %zmm2\n"
+    "vpxord %zmm20, %zmm2, %zmm2\n"
+    "vaesenc %zmm21, %zmm2, %zmm2\n"
+    "vaesenc %zmm22, %zmm2, %zmm2\n"
+    "vaesenc %zmm23, %zmm2, %zmm2\n"
+    "vaesenc %zmm24, %zmm2, %zmm2\n"
+    "vaesenc %zmm25, %zmm2, %zmm2\n"
+    "vaesenc %zmm26, %zmm2, %zmm2\n"
+    "vaesenc %zmm27, %zmm2, %zmm2\n"
+    "vaesenc %zmm28, %zmm2, %zmm2\n"
+    "vaesenc %zmm29, %zmm2, %zmm2\n"
+    "vpxord 128(%rdx), %zmm30, %zmm19\n   vaesenclast %zmm19, %zmm2, %zmm2\n"
+    "vmovdqu64 %zmm2, 128(%rcx)\n"
+    "vpaddd 192+.Laes_ctr_x64_steps(%rip), %zmm16, %zmm3\n   vpshufb %zmm31, %zmm3, %zmm3\n"
+    "vpxord %zmm20, %zmm3, %zmm3\n"
+    "vaesenc %zmm21, %zmm3, %zmm3\n"
+    "vaesenc %zmm22, %zmm3, %zmm3\n"
+    "vaesenc %zmm23, %zmm3, %zmm3\n"
+    "vaesenc %zmm24, %zmm3, %zmm3\n"
+    "vaesenc %zmm25, %zmm3, %zmm3\n"
+    "vaesenc %zmm26, %zmm3, %zmm3\n"
+    "vaesenc %zmm27, %zmm3, %zmm3\n"
+    "vaesenc %zmm28, %zmm3, %zmm3\n"
+    "vaesenc %zmm29, %zmm3, %zmm3\n"
+    "vpxord 192(%rdx), %zmm30, %zmm19\n   vaesenclast %zmm19, %zmm3, %zmm3\n"
+    "vmovdqu64 %zmm3, 192(%rcx)\n"
+    "vpaddd %zmm17, %zmm16, %zmm16\n"
+    "add $256, %rdx\n   add $256, %rcx\n   sub $16, %r8\n   cmp $16, %r8\n"
+    "jae .Laes_ctr_x64_zmm_turn\n"
+    ".Laes_ctr_x64_zmm_four:\n"
+    "cmp $4, %r8\n   jb .Laes_ctr_x64_zmm_last\n"
+    "vpaddd 0+.Laes_ctr_x64_steps(%rip), %zmm16, %zmm0\n   vpshufb %zmm31, %zmm0, %zmm0\n"
+    "vpxord %zmm20, %zmm0, %zmm0\n"
+    "vaesenc %zmm21, %zmm0, %zmm0\n"
+    "vaesenc %zmm22, %zmm0, %zmm0\n"
+    "vaesenc %zmm23, %zmm0, %zmm0\n"
+    "vaesenc %zmm24, %zmm0, %zmm0\n"
+    "vaesenc %zmm25, %zmm0, %zmm0\n"
+    "vaesenc %zmm26, %zmm0, %zmm0\n"
+    "vaesenc %zmm27, %zmm0, %zmm0\n"
+    "vaesenc %zmm28, %zmm0, %zmm0\n"
+    "vaesenc %zmm29, %zmm0, %zmm0\n"
+    "vpxord 0(%rdx), %zmm30, %zmm19\n   vaesenclast %zmm19, %zmm0, %zmm0\n"
+    "vmovdqu64 %zmm0, 0(%rcx)\n"
+    "vpaddd 256+.Laes_ctr_x64_steps(%rip), %zmm16, %zmm16\n"
+    "add $64, %rdx\n   add $64, %rcx\n   sub $4, %r8\n   jmp .Laes_ctr_x64_zmm_four\n"
+    ".Laes_ctr_x64_zmm_last:\n"
+    "test %r8, %r8\n   jz .Laes_ctr_x64_zmm_done\n"
+    "vpaddd .Laes_ctr_x64_steps(%rip), %zmm16, %zmm0\n   vpshufb %zmm31, %zmm0, %zmm0\n"
+    "vpxord %zmm20, %zmm0, %zmm0\n"
+    "vaesenc %zmm21, %zmm0, %zmm0\n"
+    "vaesenc %zmm22, %zmm0, %zmm0\n"
+    "vaesenc %zmm23, %zmm0, %zmm0\n"
+    "vaesenc %zmm24, %zmm0, %zmm0\n"
+    "vaesenc %zmm25, %zmm0, %zmm0\n"
+    "vaesenc %zmm26, %zmm0, %zmm0\n"
+    "vaesenc %zmm27, %zmm0, %zmm0\n"
+    "vaesenc %zmm28, %zmm0, %zmm0\n"
+    "vaesenc %zmm29, %zmm0, %zmm0\n"
+    "vaesenclast %zmm30, %zmm0, %zmm0\n"
+    "lea .Laes_ctr_x64_masks(%rip), %r9\n   kmovq (%r9,%r8,8), %k1\n"
+    "vmovdqu8 (%rdx), %zmm19{%k1}{z}\n   vpxord %zmm19, %zmm0, %zmm0\n"
+    "vmovdqu8 %zmm0, (%rcx){%k1}\n"
+    "vmovd %r8d, %xmm19\n   vpaddd %xmm19, %xmm16, %xmm16\n"
+    ".Laes_ctr_x64_zmm_done:\n"
+    "vpshufb %xmm31, %xmm16, %xmm16\n   vmovdqu64 %xmm16, (%rsi)\n"
+    "vzeroall\n   kxorq %k1, %k1, %k1\n"
+    "vpxord %zmm16, %zmm16, %zmm16\n"
+    "vpxord %zmm17, %zmm17, %zmm17\n"
+    "vpxord %zmm19, %zmm19, %zmm19\n"
+    "vpxord %zmm20, %zmm20, %zmm20\n"
+    "vpxord %zmm21, %zmm21, %zmm21\n"
+    "vpxord %zmm22, %zmm22, %zmm22\n"
+    "vpxord %zmm23, %zmm23, %zmm23\n"
+    "vpxord %zmm24, %zmm24, %zmm24\n"
+    "vpxord %zmm25, %zmm25, %zmm25\n"
+    "vpxord %zmm26, %zmm26, %zmm26\n"
+    "vpxord %zmm27, %zmm27, %zmm27\n"
+    "vpxord %zmm28, %zmm28, %zmm28\n"
+    "vpxord %zmm29, %zmm29, %zmm29\n"
+    "vpxord %zmm30, %zmm30, %zmm30\n"
+    ASM_RET
+    ".Laes_ctr_x64_xmm:\n"
+    "movdqa .Laes_ctr_x64_bswap(%rip), %xmm14\n"
+    "movdqu (%rsi), %xmm15\n   pshufb %xmm14, %xmm15\n"
+    "cmp $8, %r8\n   jb .Laes_ctr_x64_xmm_one\n"
+    ".balign 16\n"
+    ".Laes_ctr_x64_xmm_turn:\n"
+    "movdqu (%rdi), %xmm12\n"
+    "movdqa %xmm15, %xmm0\n"
+    "pshufb %xmm14, %xmm0\n   pxor %xmm12, %xmm0\n"
+    "movdqa %xmm15, %xmm1\n"
+    "paddd 16+.Laes_ctr_x64_steps(%rip), %xmm1\n"
+    "pshufb %xmm14, %xmm1\n   pxor %xmm12, %xmm1\n"
+    "movdqa %xmm15, %xmm2\n"
+    "paddd 32+.Laes_ctr_x64_steps(%rip), %xmm2\n"
+    "pshufb %xmm14, %xmm2\n   pxor %xmm12, %xmm2\n"
+    "movdqa %xmm15, %xmm3\n"
+    "paddd 48+.Laes_ctr_x64_steps(%rip), %xmm3\n"
+    "pshufb %xmm14, %xmm3\n   pxor %xmm12, %xmm3\n"
+    "movdqa %xmm15, %xmm4\n"
+    "paddd 64+.Laes_ctr_x64_steps(%rip), %xmm4\n"
+    "pshufb %xmm14, %xmm4\n   pxor %xmm12, %xmm4\n"
+    "movdqa %xmm15, %xmm5\n"
+    "paddd 80+.Laes_ctr_x64_steps(%rip), %xmm5\n"
+    "pshufb %xmm14, %xmm5\n   pxor %xmm12, %xmm5\n"
+    "movdqa %xmm15, %xmm6\n"
+    "paddd 96+.Laes_ctr_x64_steps(%rip), %xmm6\n"
+    "pshufb %xmm14, %xmm6\n   pxor %xmm12, %xmm6\n"
+    "movdqa %xmm15, %xmm7\n"
+    "paddd 112+.Laes_ctr_x64_steps(%rip), %xmm7\n"
+    "pshufb %xmm14, %xmm7\n   pxor %xmm12, %xmm7\n"
+    "movdqu 16(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 32(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 48(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 64(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 80(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 96(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 112(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 128(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 144(%rdi), %xmm13\n"
+    "aesenc %xmm13, %xmm0\n"
+    "aesenc %xmm13, %xmm1\n"
+    "aesenc %xmm13, %xmm2\n"
+    "aesenc %xmm13, %xmm3\n"
+    "aesenc %xmm13, %xmm4\n"
+    "aesenc %xmm13, %xmm5\n"
+    "aesenc %xmm13, %xmm6\n"
+    "aesenc %xmm13, %xmm7\n"
+    "movdqu 160(%rdi), %xmm13\n"
+    "aesenclast %xmm13, %xmm0\n"
+    "aesenclast %xmm13, %xmm1\n"
+    "aesenclast %xmm13, %xmm2\n"
+    "aesenclast %xmm13, %xmm3\n"
+    "aesenclast %xmm13, %xmm4\n"
+    "aesenclast %xmm13, %xmm5\n"
+    "aesenclast %xmm13, %xmm6\n"
+    "aesenclast %xmm13, %xmm7\n"
+    "movdqu 0(%rdx), %xmm13\n   pxor %xmm13, %xmm0\n   movdqu %xmm0, 0(%rcx)\n"
+    "movdqu 16(%rdx), %xmm13\n   pxor %xmm13, %xmm1\n   movdqu %xmm1, 16(%rcx)\n"
+    "movdqu 32(%rdx), %xmm13\n   pxor %xmm13, %xmm2\n   movdqu %xmm2, 32(%rcx)\n"
+    "movdqu 48(%rdx), %xmm13\n   pxor %xmm13, %xmm3\n   movdqu %xmm3, 48(%rcx)\n"
+    "movdqu 64(%rdx), %xmm13\n   pxor %xmm13, %xmm4\n   movdqu %xmm4, 64(%rcx)\n"
+    "movdqu 80(%rdx), %xmm13\n   pxor %xmm13, %xmm5\n   movdqu %xmm5, 80(%rcx)\n"
+    "movdqu 96(%rdx), %xmm13\n   pxor %xmm13, %xmm6\n   movdqu %xmm6, 96(%rcx)\n"
+    "movdqu 112(%rdx), %xmm13\n   pxor %xmm13, %xmm7\n   movdqu %xmm7, 112(%rcx)\n"
+    "paddd 128+.Laes_ctr_x64_steps(%rip), %xmm15\n"
+    "add $128, %rdx\n   add $128, %rcx\n   sub $8, %r8\n   cmp $8, %r8\n"
+    "jae .Laes_ctr_x64_xmm_turn\n"
+    ".Laes_ctr_x64_xmm_one:\n"
+    "test %r8, %r8\n   jz .Laes_ctr_x64_xmm_done\n"
+    ".Laes_ctr_x64_xmm_block:\n"
+    "movdqa %xmm15, %xmm0\n   pshufb %xmm14, %xmm0\n"
+    "movdqu (%rdi), %xmm13\n   pxor %xmm13, %xmm0\n"
+    "movdqu 16(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 32(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 48(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 64(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 80(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 96(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 112(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 128(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 144(%rdi), %xmm13\n   aesenc %xmm13, %xmm0\n"
+    "movdqu 160(%rdi), %xmm13\n   aesenclast %xmm13, %xmm0\n"
+    "movdqu (%rdx), %xmm13\n   pxor %xmm13, %xmm0\n   movdqu %xmm0, (%rcx)\n"
+    "paddd 16+.Laes_ctr_x64_steps(%rip), %xmm15\n"
+    "add $16, %rdx\n   add $16, %rcx\n   dec %r8\n   jnz .Laes_ctr_x64_xmm_block\n"
+    ".Laes_ctr_x64_xmm_done:\n"
+    "pshufb %xmm14, %xmm15\n   movdqu %xmm15, (%rsi)\n"
+    "pxor %xmm0, %xmm0\n"
+    "pxor %xmm1, %xmm1\n"
+    "pxor %xmm2, %xmm2\n"
+    "pxor %xmm3, %xmm3\n"
+    "pxor %xmm4, %xmm4\n"
+    "pxor %xmm5, %xmm5\n"
+    "pxor %xmm6, %xmm6\n"
+    "pxor %xmm7, %xmm7\n"
+    "pxor %xmm8, %xmm8\n"
+    "pxor %xmm9, %xmm9\n"
+    "pxor %xmm10, %xmm10\n"
+    "pxor %xmm11, %xmm11\n"
+    "pxor %xmm12, %xmm12\n"
+    "pxor %xmm13, %xmm13\n"
+    "pxor %xmm14, %xmm14\n"
+    "pxor %xmm15, %xmm15\n"
+    ASM_RET
+    ".section .rodata\n   .balign 64\n"
+    ".Laes_ctr_x64_bswap:\n"
+    ".byte 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\n"
+    ".balign 64\n"
+    ".Laes_ctr_x64_steps:\n"
+    ".long 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0\n"
+    ".long 4, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0\n"
+    ".long 8, 0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0\n"
+    ".long 12, 0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15, 0, 0, 0\n"
+    ".long 4, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0\n"
+    ".long 16, 0, 0, 0\n"
+    ".balign 8\n"
+    ".Laes_ctr_x64_masks:\n"
+    ".quad 0, 0xffff, 0xffffffff, 0xffffffffffff\n"
+    ASM_SECTION
+    )
+    ASM_END(aes128_ctr_blocks)
+
+    /* NIST P-256 and P-384 field arithmetic for TLS, in Montgomery form
+       (R = 2^256 or 2^384): d = a b / R, a a / R, a + b and a - b mod p,
+       for operands below p, with d free to alias either operand.
+
+       Both primes make the reduction cheap. P-256's p is -1 mod 2^64, so
+       the quotient digit q is the low limb itself, and
+       q p = q 2^256 - q 2^224 + q 2^192 + q 2^96 - q is shifts and
+       subtracts: q 2^96 is (q >> 32, q << 32) and q (2^64 - 2^32 + 1) is
+       (q - (q >> 32) - borrow, q - (q << 32)). That measured a little
+       ahead of one mulq for the same term. P-384's p is 2^32 - 1 mod 2^64,
+       so q = w0 (2^32 + 1) and q p = q 2^384 - q 2^128 - q 2^96 + q 2^32
+       - q needs no multiply at all: one carry chain adds the positive
+       terms and one borrow chain takes the negative ones. The multiplies
+       left are the product's: 16 or 36, and a square makes each cross
+       product once and doubles it (10 or 21).
+
+       P-256 multiplies in full and then reduces the low half as a four-limb
+       window: (W + q p) / 2^64 always fits in four limbs, so no carry leaves
+       it and the high half is added once at the end. P-384 has no
+       registers for twelve product limbs beside its operands, so its
+       multiply interleaves a row and a reduction step over an eight-limb
+       window; its square keeps the triangle in registers, spills the high
+       half to the stack and reduces like P-256. Each body ends with one
+       subtraction of p kept by cmov: nothing branches or indexes on a value.
+
+       On the 9950X, ns a call, best of 25: p256_multiply 6.9 (the C
+       Montgomery multiply under gcc -O2 27.0; OpenSSL's hand-written
+       ecp_nistz256_mul_mont 7.2 on mulq, 6.2 on MULX/ADX), p256_square 5.0
+       (OpenSSL 5.2), p384_multiply 18.9 (C 47.7; OpenSSL's generic
+       bn_mul_mont 32.6), p384_square 13.7, add and subtract 1.0 to 1.7 (C
+       5.2 to 8.1). A MULX/ADX body would buy a tenth on p256_multiply
+       alone, so there is none. */
+
+    ASM_FUNC(p256_multiply)
+    "push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n"
+    "mov %rdx, %rbx\n"
+    "mov (%rbx), %rcx\n"
+    "mov (%rsi), %rax\n mul %rcx\n mov %rax, %r8\n mov %rdx, %r9\n"
+    "mov 8(%rsi), %rax\n mul %rcx\n add %rax, %r9\n adc $0, %rdx\n mov %rdx, %r10\n"
+    "mov 16(%rsi), %rax\n mul %rcx\n add %rax, %r10\n adc $0, %rdx\n mov %rdx, %r11\n"
+    "mov 24(%rsi), %rax\n mul %rcx\n add %rax, %r11\n adc $0, %rdx\n mov %rdx, %r12\n"
+    FIELD_X64_P256_ROW("8", "%r9", "%r10", "%r11", "%r12", "%r13")
+    FIELD_X64_P256_ROW("16", "%r10", "%r11", "%r12", "%r13", "%r14")
+    FIELD_X64_P256_ROW("24", "%r11", "%r12", "%r13", "%r14", "%r15")
+    FIELD_X64_P256_TAIL
+    ASM_END(p256_multiply)
+
+    ASM_FUNC(p256_square)
+    "push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n"
+    "mov (%rsi), %rcx\n"
+    "mov 8(%rsi), %rax\n mul %rcx\n mov %rax, %r9\n mov %rdx, %r10\n"
+    "mov 16(%rsi), %rax\n mul %rcx\n add %rax, %r10\n adc $0, %rdx\n mov %rdx, %r11\n"
+    "mov 24(%rsi), %rax\n mul %rcx\n add %rax, %r11\n adc $0, %rdx\n mov %rdx, %r12\n"
+    "mov 8(%rsi), %rcx\n"
+    "mov 16(%rsi), %rax\n mul %rcx\n add %rax, %r11\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 24(%rsi), %rax\n mul %rcx\n add %rbp, %rax\n adc $0, %rdx\n add %rax, %r12\n adc $0, %rdx\n mov %rdx, %r13\n"
+    "mov 16(%rsi), %rcx\n"
+    "mov 24(%rsi), %rax\n mul %rcx\n add %rax, %r13\n adc $0, %rdx\n mov %rdx, %r14\n"
+    "xor %r15d, %r15d\n"
+    "add %r9, %r9\n adc %r10, %r10\n adc %r11, %r11\n adc %r12, %r12\n adc %r13, %r13\n adc %r14, %r14\n adc $0, %r15\n"
+    "mov (%rsi), %rax\n mul %rax\n mov %rax, %r8\n mov %rdx, %rbp\n"
+    "mov 8(%rsi), %rax\n mul %rax\n add %rbp, %r9\n adc %rax, %r10\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 16(%rsi), %rax\n mul %rax\n add %rbp, %r11\n adc %rax, %r12\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 24(%rsi), %rax\n mul %rax\n add %rbp, %r13\n adc %rax, %r14\n adc %rdx, %r15\n"
+    FIELD_X64_P256_TAIL
+    ASM_END(p256_square)
+
+    ASM_FUNC(p256_add)
+    "mov (%rsi), %r8\n mov 8(%rsi), %r9\n mov 16(%rsi), %r10\n mov 24(%rsi), %r11\n"
+    "xor %eax, %eax\n"
+    "add (%rdx), %r8\n adc 8(%rdx), %r9\n adc 16(%rdx), %r10\n adc 24(%rdx), %r11\n adc $0, %rax\n"
+    "mov $0xffffffff, %edx\n mov $0xffffffff00000001, %rcx\n"
+    "sub $-1, %r8\n sbb %rdx, %r9\n sbb $0, %r10\n sbb %rcx, %r11\n sbb $0, %rax\n"
+    "mov %eax, %edx\n mov %rax, %rcx\n shl $32, %rcx\n sub %rax, %rcx\n"
+    "add %rax, %r8\n adc %rdx, %r9\n adc $0, %r10\n adc %rcx, %r11\n"
+    "mov %r8, (%rdi)\n mov %r9, 8(%rdi)\n mov %r10, 16(%rdi)\n mov %r11, 24(%rdi)\n"
+    ASM_RET
+    ASM_END(p256_add)
+
+    ASM_FUNC(p256_subtract)
+    "mov (%rsi), %r8\n mov 8(%rsi), %r9\n mov 16(%rsi), %r10\n mov 24(%rsi), %r11\n"
+    "sub (%rdx), %r8\n sbb 8(%rdx), %r9\n sbb 16(%rdx), %r10\n sbb 24(%rdx), %r11\n"
+    "sbb %rax, %rax\n"
+    "mov %eax, %edx\n mov %rax, %rcx\n shl $32, %rcx\n sub %rax, %rcx\n"
+    "add %rax, %r8\n adc %rdx, %r9\n adc $0, %r10\n adc %rcx, %r11\n"
+    "mov %r8, (%rdi)\n mov %r9, 8(%rdi)\n mov %r10, 16(%rdi)\n mov %r11, 24(%rdi)\n"
+    ASM_RET
+    ASM_END(p256_subtract)
+
+    ASM_FUNC(p384_square)
+    "push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n push %rdi\n"
+    "sub $56, %rsp\n"
+    /* triangle: t1..t10 in r8 r9 r10 r11 r12 r13 r14 r15 rbx rdi, carry rbp */
+    "mov (%rsi), %rax\n mulq 8(%rsi)\n mov %rax, %r8\n mov %rdx, %r9\n"
+    "mov (%rsi), %rax\n mulq 16(%rsi)\n add %rax, %r9\n adc $0, %rdx\n mov %rdx, %r10\n"
+    "mov (%rsi), %rax\n mulq 24(%rsi)\n add %rax, %r10\n adc $0, %rdx\n mov %rdx, %r11\n"
+    "mov (%rsi), %rax\n mulq 32(%rsi)\n add %rax, %r11\n adc $0, %rdx\n mov %rdx, %r12\n"
+    "mov (%rsi), %rax\n mulq 40(%rsi)\n add %rax, %r12\n adc $0, %rdx\n mov %rdx, %r13\n"
+    "mov 8(%rsi), %rax\n mulq 16(%rsi)\n add %rax, %r10\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 8(%rsi), %rax\n mulq 24(%rsi)\n add %rbp, %rax\n adc $0, %rdx\n add %rax, %r11\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 8(%rsi), %rax\n mulq 32(%rsi)\n add %rbp, %rax\n adc $0, %rdx\n add %rax, %r12\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 8(%rsi), %rax\n mulq 40(%rsi)\n add %rbp, %rax\n adc $0, %rdx\n add %rax, %r13\n adc $0, %rdx\n mov %rdx, %r14\n"
+    "mov 16(%rsi), %rax\n mulq 24(%rsi)\n add %rax, %r12\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 16(%rsi), %rax\n mulq 32(%rsi)\n add %rbp, %rax\n adc $0, %rdx\n add %rax, %r13\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 16(%rsi), %rax\n mulq 40(%rsi)\n add %rbp, %rax\n adc $0, %rdx\n add %rax, %r14\n adc $0, %rdx\n mov %rdx, %r15\n"
+    "mov 24(%rsi), %rax\n mulq 32(%rsi)\n add %rax, %r14\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 24(%rsi), %rax\n mulq 40(%rsi)\n add %rbp, %rax\n adc $0, %rdx\n add %rax, %r15\n adc $0, %rdx\n mov %rdx, %rbx\n"
+    "mov 32(%rsi), %rax\n mulq 40(%rsi)\n add %rax, %rbx\n adc $0, %rdx\n mov %rdx, %rdi\n"
+    "xor %ecx, %ecx\n"
+    "add %r8, %r8\n adc %r9, %r9\n adc %r10, %r10\n adc %r11, %r11\n adc %r12, %r12\n adc %r13, %r13\n"
+    "adc %r14, %r14\n adc %r15, %r15\n adc %rbx, %rbx\n adc %rdi, %rdi\n adc $0, %rcx\n"
+    "mov (%rsi), %rax\n mul %rax\n mov %rax, (%rsp)\n mov %rdx, %rbp\n"
+    "mov 8(%rsi), %rax\n mul %rax\n add %rbp, %r8\n adc %rax, %r9\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 16(%rsi), %rax\n mul %rax\n add %rbp, %r10\n adc %rax, %r11\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 24(%rsi), %rax\n mul %rax\n add %rbp, %r12\n adc %rax, %r13\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 32(%rsi), %rax\n mul %rax\n add %rbp, %r14\n adc %rax, %r15\n adc $0, %rdx\n mov %rdx, %rbp\n"
+    "mov 40(%rsi), %rax\n mul %rax\n add %rbp, %rbx\n adc %rax, %rdi\n adc %rdx, %rcx\n"
+    /* t6..t11 to the stack; window t0..t5 = rsi r8 r9 r10 r11 r12, top r13 */
+    "mov %r13, 8(%rsp)\n mov %r14, 16(%rsp)\n mov %r15, 24(%rsp)\n mov %rbx, 32(%rsp)\n mov %rdi, 40(%rsp)\n mov %rcx, 48(%rsp)\n"
+    "mov (%rsp), %rsi\n"
+    FIELD_X64_P384_REDUCE("%rsi", "%r8", "%r9", "%r10", "%r11", "%r12", "%r13")
+    FIELD_X64_P384_REDUCE("%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%rsi")
+    FIELD_X64_P384_REDUCE("%r9", "%r10", "%r11", "%r12", "%r13", "%rsi", "%r8")
+    FIELD_X64_P384_REDUCE("%r10", "%r11", "%r12", "%r13", "%rsi", "%r8", "%r9")
+    FIELD_X64_P384_REDUCE("%r11", "%r12", "%r13", "%rsi", "%r8", "%r9", "%r10")
+    FIELD_X64_P384_REDUCE("%r12", "%r13", "%rsi", "%r8", "%r9", "%r10", "%r11")
+    /* window r13 rsi r8 r9 r10 r11; add the high half, carry in r12 (zero) */
+    "add 8(%rsp), %r13\n adc 16(%rsp), %rsi\n adc 24(%rsp), %r8\n adc 32(%rsp), %r9\n adc 40(%rsp), %r10\n adc 48(%rsp), %r11\n adc $0, %r12\n"
+    "mov %r13, %rax\n mov %rsi, %rdx\n mov %r8, %rcx\n mov %r9, %rbp\n mov %r10, %rbx\n mov %r11, %r14\n"
+    "mov $0xffffffff, %edi\n sub %rdi, %rax\n not %rdi\n sbb %rdi, %rdx\n"
+    "sbb $-2, %rcx\n sbb $-1, %rbp\n sbb $-1, %rbx\n sbb $-1, %r14\n sbb $0, %r12\n"
+    "cmovnc %rax, %r13\n cmovnc %rdx, %rsi\n cmovnc %rcx, %r8\n cmovnc %rbp, %r9\n cmovnc %rbx, %r10\n cmovnc %r14, %r11\n"
+    "add $56, %rsp\n pop %rdi\n"
+    "mov %r13, (%rdi)\n mov %rsi, 8(%rdi)\n mov %r8, 16(%rdi)\n mov %r9, 24(%rdi)\n mov %r10, 32(%rdi)\n mov %r11, 40(%rdi)\n"
+    "pop %r15\n pop %r14\n pop %r13\n pop %r12\n pop %rbp\n pop %rbx\n"
+    ASM_RET
+    ASM_END(p384_square)
+
+    ASM_FUNC(p384_multiply)
+    "push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n push %rdi\n"
+    "mov %rdx, %rbx\n"
+    "xor %r8d, %r8d\n xor %r9d, %r9d\n xor %r10d, %r10d\n xor %r11d, %r11d\n"
+    "xor %r12d, %r12d\n xor %r13d, %r13d\n xor %r14d, %r14d\n xor %r15d, %r15d\n"
+    FIELD_X64_P384_ROW("0", "%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15")
+    FIELD_X64_P384_ROW("8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15", "%r8")
+    FIELD_X64_P384_ROW("16", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15", "%r8", "%r9")
+    FIELD_X64_P384_ROW("24", "%r11", "%r12", "%r13", "%r14", "%r15", "%r8", "%r9", "%r10")
+    FIELD_X64_P384_ROW("32", "%r12", "%r13", "%r14", "%r15", "%r8", "%r9", "%r10", "%r11")
+    FIELD_X64_P384_ROW("40", "%r13", "%r14", "%r15", "%r8", "%r9", "%r10", "%r11", "%r12")
+    /* x0..x5 = r14 r15 r8 r9 r10 r11, x6 = r12 */
+    "mov %r14, %rax\n mov %r15, %rdx\n mov %r8, %rcx\n mov %r9, %rbp\n mov %r10, %rsi\n mov %r11, %rbx\n"
+    "mov $0xffffffff, %edi\n sub %rdi, %rax\n not %rdi\n sbb %rdi, %rdx\n"
+    "sbb $-2, %rcx\n sbb $-1, %rbp\n sbb $-1, %rsi\n sbb $-1, %rbx\n sbb $0, %r12\n"
+    "cmovnc %rax, %r14\n cmovnc %rdx, %r15\n cmovnc %rcx, %r8\n cmovnc %rbp, %r9\n cmovnc %rsi, %r10\n cmovnc %rbx, %r11\n"
+    "pop %rdi\n"
+    "mov %r14, (%rdi)\n mov %r15, 8(%rdi)\n mov %r8, 16(%rdi)\n mov %r9, 24(%rdi)\n mov %r10, 32(%rdi)\n mov %r11, 40(%rdi)\n"
+    "pop %r15\n pop %r14\n pop %r13\n pop %r12\n pop %rbp\n pop %rbx\n"
+    ASM_RET
+    ASM_END(p384_multiply)
+
+    ASM_FUNC(p384_add)
+    "push %rbx\n"
+    "mov (%rsi), %r8\n mov 8(%rsi), %r9\n mov 16(%rsi), %r10\n mov 24(%rsi), %r11\n mov 32(%rsi), %rcx\n mov 40(%rsi), %rsi\n"
+    "xor %eax, %eax\n"
+    "add (%rdx), %r8\n adc 8(%rdx), %r9\n adc 16(%rdx), %r10\n adc 24(%rdx), %r11\n adc 32(%rdx), %rcx\n adc 40(%rdx), %rsi\n adc $0, %rax\n"
+    "mov $0xffffffff, %edx\n sub %rdx, %r8\n not %rdx\n sbb %rdx, %r9\n sbb $-2, %r10\n sbb $-1, %r11\n sbb $-1, %rcx\n sbb $-1, %rsi\n sbb $0, %rax\n"
+    "mov %eax, %edx\n mov %rax, %rbx\n xor %rdx, %rbx\n"
+    "add %rdx, %r8\n adc %rbx, %r9\n lea (%rax,%rax), %rdx\n adc %rdx, %r10\n adc %rax, %r11\n adc %rax, %rcx\n adc %rax, %rsi\n"
+    "mov %r8, (%rdi)\n mov %r9, 8(%rdi)\n mov %r10, 16(%rdi)\n mov %r11, 24(%rdi)\n mov %rcx, 32(%rdi)\n mov %rsi, 40(%rdi)\n"
+    "pop %rbx\n"
+    ASM_RET
+    ASM_END(p384_add)
+
+    ASM_FUNC(p384_subtract)
+    "push %rbx\n"
+    "mov (%rsi), %r8\n mov 8(%rsi), %r9\n mov 16(%rsi), %r10\n mov 24(%rsi), %r11\n mov 32(%rsi), %rcx\n mov 40(%rsi), %rsi\n"
+    "sub (%rdx), %r8\n sbb 8(%rdx), %r9\n sbb 16(%rdx), %r10\n sbb 24(%rdx), %r11\n sbb 32(%rdx), %rcx\n sbb 40(%rdx), %rsi\n"
+    "sbb %rax, %rax\n"
+    "mov %eax, %edx\n mov %rax, %rbx\n xor %rdx, %rbx\n"
+    "add %rdx, %r8\n adc %rbx, %r9\n lea (%rax,%rax), %rdx\n adc %rdx, %r10\n adc %rax, %r11\n adc %rax, %rcx\n adc %rax, %rsi\n"
+    "mov %r8, (%rdi)\n mov %r9, 8(%rdi)\n mov %r10, 16(%rdi)\n mov %r11, 24(%rdi)\n mov %rcx, 32(%rdi)\n mov %rsi, 40(%rdi)\n"
+    "pop %rbx\n"
+    ASM_RET
+    ASM_END(p384_subtract)
 
     /* A NUL-terminated name normally needs both of these answers. Returning
        them together keeps the bytes in one hardware-floor pass: hash in rax,
@@ -9532,228 +11174,291 @@ __asm__(
 #undef ZSTD_HUF4_INIT
 #undef ZSTD_HUF4_TAIL
 
-    /* Refill the sequence bitstream in place. A call to a label inside this
-       STT_FUNC is an unannotated intra-function call and objtool refuses it,
-       so the fast load stays here and only the slow path calls a real
-       function. Remaining bits live in rbx/r14/r15; limit is rbp. Numeric
-       labels so every site can expand the same text. Slow path clobbers the
-       caller-saved registers, so r8-r11 and rsi are parked first.
-       Host refills the 64-bit window at the start of every sequence so
-       consumed stays 0-7 and the body does not branch on a 32-bit
-       threshold. A mid-sequence refill is only for fat extra-bit totals. */
-#define ZSTD_SEQ_RELOAD \
-    "cmp $64, %r14d\n   ja .Lzstd_seq_x64_fail\n" \
-    "cmp 168(%rsp), %r15\n   jae 80f\n" \
-    "mov %r8, (%rsp)\n   mov %r9, 8(%rsp)\n" \
-    "mov %rsi, 128(%rsp)\n" \
-    "mov %r10, 184(%rsp)\n   mov %r11, 192(%rsp)\n" \
-    "mov %rbx, 136(%rsp)\n   mov %r14, 144(%rsp)\n   mov %r15, 152(%rsp)\n" \
-    "lea 136(%rsp), %rdi\n   call zstd_bits_reload\n" \
-    "mov 136(%rsp), %rbx\n   mov 144(%rsp), %r14\n   mov 152(%rsp), %r15\n" \
-    "mov (%rsp), %r8\n   mov 8(%rsp), %r9\n" \
-    "mov 128(%rsp), %rsi\n" \
-    "mov 184(%rsp), %r10\n   mov 192(%rsp), %r11\n" \
-    "test %eax, %eax\n   jnz .Lzstd_seq_x64_fail\n" \
-    "jmp 81f\n" \
-    "80: mov %r14, %rcx\n   shr $3, %rcx\n   sub %rcx, %r15\n   and $7, %r14\n" \
-    "mov (%r15), %rbx\n" \
-    "81:\n"
-
-/* Isolate eax bits at r14 in rbx. The BMI2 form was SHLX/SHRX/BZHI; this
-   tree's x86-64 floor is Nehalem, so the same shift is %cl. nbits 0 is a
-   zero result, matching BZHI. */
-#define ZSTD_SEQ_GET \
-    "mov %rbx, %rdx\n   mov %r14d, %ecx\n   shl %cl, %rdx\n" \
-    "mov %eax, %ecx\n   neg %ecx\n   shr %cl, %rdx\n" \
-    "test %eax, %eax\n   jnz 1f\n   xor %edx, %edx\n1:\n   add %eax, %r14d\n"
-
-
     /* zstd sequence body. job is 104 bytes:
            0 window, 8 pos in/out, 16 window_size, 24 lits, 32 lit_len,
            40 seq, 48 seq_len, 56 ll, 64 of, 72 ml, 80 rep, 88 nseq,
            96 output_end.
        FSE cell[i] sits at table+8, eight bytes: next, extra, nbits, base.
        An RLE table has log 0 and that one cell at index 0, so the load
-       is the same as a compressed table. Each logical copy is checked
-       against output_end before this writes it.
-       Fused cells and a register bit reservoir keep the sequence walk
-       local. Bit extraction is inline and branch-free on all three
-       architectures; bounded reload and copy tails retain their checks. */
+       is the same as a compressed table.
+
+       Everything a sequence touches lives in a register: the bit
+       container in rbx kept shifted left by what is consumed (esi), the
+       stream pointer in rdi, and each FSE state as the address of its
+       cell (r8 literal length, r9 offset, r10 match length), so a field
+       is five instructions and a state update loads next from the cell
+       it already points at.  The baseline has no BMI2, so a read of n
+       bits is shl by n on the container and shr by ~n (63 - n mod 64)
+       on a copy shifted one right, which also makes n = 0 read zero
+       without a branch.  One refill a sequence covers the usual case;
+       the offset, both lengths and the three state updates total at
+       most 89 bits, so two guarded refills cover the rest.
+
+       Frame: 0 job, 8 window, 16 literal end, 24 output end, 32 largest
+       offset (window_size, or all ones for a frame without one), 40
+       sequences left, 48/56/64 ll/of/ml cells, 72 the 48-byte bitstream
+       state zstd_bits_reload takes, 120/124/128 rep, 136-176 spills.
+
+       Output bounds are checked once for the whole sequence and the
+       history bound once with cmov.  Copies go sixteen bytes at a time
+       when the sequence ends at least sixteen bytes before output_end;
+       the literal buffer carries 64 bytes of slack past its end.  An
+       offset under eight, a copy past 64 bytes, or a sequence too close
+       to output_end calls the exact library copies. */
+#define ZSTD_SEQ_X64_READ \
+    "mov %rbx, %rax\n   add %ecx, %esi\n   shl %cl, %rbx\n" \
+    "not %ecx\n   shr $1, %rax\n   shr %cl, %rax\n"
+#define ZSTD_SEQ_X64_RELOAD(tag) \
+    "cmp $64, %esi\n   ja .Lzstd_seq_x64_fail\n" \
+    "cmp 104(%rsp), %rdi\n   jb .Lzstd_seq_x64_slow" tag "\n" \
+    "mov %esi, %ecx\n   shr $3, %ecx\n   sub %rcx, %rdi\n   and $7, %esi\n" \
+    "mov (%rdi), %rbx\n   mov %rbx, 72(%rsp)\n" \
+    "mov %esi, %ecx\n   shl %cl, %rbx\n"
+#define ZSTD_SEQ_X64_SLOW(tag, back) \
+    ".Lzstd_seq_x64_slow" tag ":\n" \
+    "mov %rsi, 80(%rsp)\n   mov %rdi, 88(%rsp)\n" \
+    "mov %r8, 136(%rsp)\n   mov %r9, 144(%rsp)\n" \
+    "mov %r10, 152(%rsp)\n   mov %r11, 160(%rsp)\n" \
+    "lea 72(%rsp), %rdi\n   call zstd_bits_reload\n" \
+    "mov 136(%rsp), %r8\n   mov 144(%rsp), %r9\n" \
+    "mov 152(%rsp), %r10\n   mov 160(%rsp), %r11\n" \
+    "test %eax, %eax\n   jnz .Lzstd_seq_x64_fail\n" \
+    "mov 72(%rsp), %rbx\n   mov 80(%rsp), %rsi\n   mov 88(%rsp), %rdi\n" \
+    "mov %esi, %ecx\n   shl %cl, %rbx\n" \
+    "jmp " back "\n"
+#define ZSTD_SEQ_X64_SPILL \
+    "mov %rsi, 136(%rsp)\n   mov %rdi, 144(%rsp)\n   mov %r8, 152(%rsp)\n" \
+    "mov %r9, 160(%rsp)\n   mov %r10, 168(%rsp)\n   mov %r11, 176(%rsp)\n"
+#define ZSTD_SEQ_X64_UNSPILL \
+    "mov 136(%rsp), %rsi\n   mov 144(%rsp), %rdi\n   mov 152(%rsp), %r8\n" \
+    "mov 160(%rsp), %r9\n   mov 168(%rsp), %r10\n   mov 176(%rsp), %r11\n"
+
     ASM_FUNC(zstd_sequences_run)
     "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
-    "sub $216, %rsp\n   mov %rdi, 96(%rsp)\n"
-    "mov (%rdi), %rax\n   mov %rax, 16(%rsp)\n"
+    "sub $184, %rsp\n   mov %rdi, (%rsp)\n"
+    "mov (%rdi), %rax\n   mov %rax, 8(%rsp)\n"
     "mov 8(%rdi), %r12\n   add %rax, %r12\n"
-    "mov 16(%rdi), %rax\n   mov %rax, 24(%rsp)\n"
-    "mov 24(%rdi), %r13\n   mov 32(%rdi), %rax\n   add %r13, %rax\n"
+    "mov 16(%rdi), %rax\n   mov $-1, %rdx\n   test %rax, %rax\n   cmovz %rdx, %rax\n"
     "mov %rax, 32(%rsp)\n"
-    "mov 56(%rdi), %rax\n   mov %rax, 40(%rsp)\n"
-    "mov 64(%rdi), %rax\n   mov %rax, 48(%rsp)\n"
-    "mov 72(%rdi), %rax\n   mov %rax, 56(%rsp)\n"
-    "mov 80(%rdi), %rax\n   mov %rax, 64(%rsp)\n"
-    "mov 88(%rdi), %rax\n   mov %rax, 72(%rsp)\n"
-    "mov 96(%rdi), %rax\n   mov %rax, 200(%rsp)\n"
+    "mov 24(%rdi), %r13\n   mov 32(%rdi), %rax\n   add %r13, %rax\n   mov %rax, 16(%rsp)\n"
+    "mov 96(%rdi), %rax\n   mov %rax, 24(%rsp)\n"
+    "mov 88(%rdi), %rax\n   mov %rax, 40(%rsp)\n"
+    "mov 56(%rdi), %rax\n   add $8, %rax\n   mov %rax, 48(%rsp)\n"
+    "mov 64(%rdi), %rax\n   add $8, %rax\n   mov %rax, 56(%rsp)\n"
+    "mov 72(%rdi), %rax\n   add $8, %rax\n   mov %rax, 64(%rsp)\n"
+    "mov 80(%rdi), %rax\n"
+    "mov (%rax), %edx\n   mov %edx, 120(%rsp)\n"
+    "mov 4(%rax), %edx\n   mov %edx, 124(%rsp)\n"
+    "mov 8(%rax), %edx\n   mov %edx, 128(%rsp)\n"
     "mov 40(%rdi), %rsi\n   mov 48(%rdi), %rdx\n"
     "test %rdx, %rdx\n   jz .Lzstd_seq_x64_fail\n"
-    "lea 136(%rsp), %rdi\n   call zstd_bits_open\n"
+    "lea 72(%rsp), %rdi\n   call zstd_bits_open\n"
     "test %eax, %eax\n   jnz .Lzstd_seq_x64_fail\n"
-    "mov 136(%rsp), %rbx\n   mov 144(%rsp), %r14\n   mov 152(%rsp), %r15\n"
-    "mov 72(%rsp), %rbp\n"
-    ".Lzstd_seq_x64_init:\n"
-    "mov 40(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
-    ZSTD_SEQ_GET "mov %edx, 80(%rsp)\n"
-    "mov 48(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
-    ZSTD_SEQ_GET "mov %edx, 84(%rsp)\n"
-    "mov 56(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
-    ZSTD_SEQ_GET "mov %edx, 88(%rsp)\n"
-    "addq $8, 40(%rsp)\n   addq $8, 48(%rsp)\n   addq $8, 56(%rsp)\n"
+    "mov 72(%rsp), %rbx\n   mov 80(%rsp), %rsi\n   mov 88(%rsp), %rdi\n"
+    "mov %esi, %ecx\n   shl %cl, %rbx\n"
+    /* Initial states in stream order: literal length, offset, match. */
+    "mov 48(%rsp), %rdx\n   movzbl -8(%rdx), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "lea (%rdx,%rax,8), %r8\n"
+    "mov 56(%rsp), %rdx\n   movzbl -8(%rdx), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "lea (%rdx,%rax,8), %r9\n"
+    "mov 64(%rsp), %rdx\n   movzbl -8(%rdx), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "lea (%rdx,%rax,8), %r10\n"
     ".balign 64\n"
     ".Lzstd_seq_x64_loop:\n"
-    ZSTD_SEQ_RELOAD
-    "mov 48(%rsp), %rdi\n   mov 84(%rsp), %eax\n"
-    "mov (%rdi,%rax,8), %r10\n"
-    "mov 56(%rsp), %rdi\n   mov 88(%rsp), %eax\n"
-    "mov (%rdi,%rax,8), %r9\n"
-    "mov 40(%rsp), %rdi\n   mov 80(%rsp), %eax\n"
-    "mov (%rdi,%rax,8), %r8\n"
-    "mov %r10d, %eax\n   shr $16, %eax\n   movzbl %al, %eax\n"
-    ZSTD_SEQ_GET "mov %rdx, %r11\n"
-    "mov %r9d, %eax\n   shr $16, %eax\n   movzbl %al, %eax\n"
-    ZSTD_SEQ_GET "mov %rdx, %rsi\n"
-    "cmp $22, %r14d\n   jbe .Lzstd_seq_x64_llget\n"
-    ZSTD_SEQ_RELOAD
-    ".Lzstd_seq_x64_llget:\n"
-    "mov %r8d, %eax\n   shr $16, %eax\n   movzbl %al, %eax\n"
-    ZSTD_SEQ_GET
-    "mov %r8, %rcx\n   shr $32, %rcx\n   add %edx, %ecx\n"
-    "mov %r9, %rax\n   shr $32, %rax\n   add %esi, %eax\n"
-    "mov %rax, 112(%rsp)\n   mov %rcx, 120(%rsp)\n"
-    ".Lzstd_seq_x64_offgo:\n"
-    "mov %r10d, %eax\n   shr $16, %eax\n   movzbl %al, %eax\n"
-    "mov %r11, %rdx\n   mov 120(%rsp), %rsi\n"
-    "mov %r10, %r11\n   shr $32, %r11\n"
-    "mov 64(%rsp), %rdi\n"
-    "test %eax, %eax\n   jz .Lzstd_seq_x64_of0\n"
-    "cmp $1, %eax\n   je .Lzstd_seq_x64_of1\n"
-    "add %r11, %rdx\n   mov %rdx, %rax\n"
-    "test %rax, %rax\n   jz .Lzstd_seq_x64_fail\n"
-    "mov 4(%rdi), %ecx\n   mov %ecx, 8(%rdi)\n"
-    "mov (%rdi), %ecx\n   mov %ecx, 4(%rdi)\n"
-    "mov %eax, (%rdi)\n"
-    "jmp .Lzstd_seq_x64_offok\n"
-    ".Lzstd_seq_x64_of0:\n"
-    "test %esi, %esi\n   setz %cl\n   movzbl %cl, %ecx\n"
-    "mov (%rdi,%rcx,4), %eax\n   test %eax, %eax\n   jz .Lzstd_seq_x64_fail\n"
-    "test %esi, %esi\n   setnz %cl\n   movzbl %cl, %ecx\n"
-    "mov (%rdi,%rcx,4), %ecx\n   mov %ecx, 4(%rdi)\n"
-    "mov %eax, (%rdi)\n"
-    "jmp .Lzstd_seq_x64_offok\n"
-    ".Lzstd_seq_x64_of1:\n"
-    "xor %ecx, %ecx\n   test %esi, %esi\n   setz %cl\n"
-    "add $1, %ecx\n   add %edx, %ecx\n"
-    "cmp $3, %ecx\n   je .Lzstd_seq_x64_of1d\n"
-    "mov (%rdi,%rcx,4), %eax\n   jmp .Lzstd_seq_x64_of1s\n"
-    ".Lzstd_seq_x64_of1d:\n   mov (%rdi), %eax\n   dec %eax\n"
-    ".Lzstd_seq_x64_of1s:\n"
-    "test %eax, %eax\n   jz .Lzstd_seq_x64_fail\n"
-    "cmp $1, %ecx\n   je .Lzstd_seq_x64_of1n\n"
-    "mov 4(%rdi), %edx\n   mov %edx, 8(%rdi)\n"
-    ".Lzstd_seq_x64_of1n:\n"
-    "mov (%rdi), %edx\n   mov %edx, 4(%rdi)\n   mov %eax, (%rdi)\n"
-    ".Lzstd_seq_x64_offok:\n"
-    "mov %rax, 104(%rsp)\n"
-    "cmp $1, %rbp\n   je .Lzstd_seq_x64_lits\n"
-    "mov %r8d, %eax\n   shr $24, %eax\n"
-    ZSTD_SEQ_GET
-    "movzwl %r8w, %esi\n   add %edx, %esi\n   mov %esi, 80(%rsp)\n"
-    "mov %r9d, %eax\n   shr $24, %eax\n"
-    ZSTD_SEQ_GET
-    "movzwl %r9w, %esi\n   add %edx, %esi\n   mov %esi, 88(%rsp)\n"
-    "mov %r10d, %eax\n   shr $24, %eax\n"
-    ZSTD_SEQ_GET
-    "movzwl %r10w, %esi\n   add %edx, %esi\n   mov %esi, 84(%rsp)\n"
-    ".Lzstd_seq_x64_lits:\n"
-    "mov 120(%rsp), %r8\n"
-    "lea (%r13,%r8), %rdx\n   cmp 32(%rsp), %rdx\n   ja .Lzstd_seq_x64_fail\n"
-    "mov 200(%rsp), %rdx\n   cmp %rdx, %r12\n   ja .Lzstd_seq_x64_fail\n"
-    "sub %r12, %rdx\n   cmp %r8, %rdx\n   jb .Lzstd_seq_x64_fail\n"
-    "cmp $32, %r8\n   jae .Lzstd_seq_x64_litlong\n"
-    "cmp $32, %rdx\n   jb .Lzstd_seq_x64_litlong\n"
+    ZSTD_SEQ_X64_RELOAD("T")
+    ".Lzstd_seq_x64_ready:\n"
+    /* Offset extra bits, then match length, then literal length. */
+    "movzbl 2(%r9), %r15d\n   mov %r15d, %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "mov 4(%r9), %r11d\n   add %rax, %r11\n"
+    "movzbl 2(%r10), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "mov 4(%r10), %r14d\n   add %rax, %r14\n"
+    "cmp $48, %esi\n   ja .Lzstd_seq_x64_refillA\n"
+    ".Lzstd_seq_x64_litlen:\n"
+    "movzbl 2(%r8), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "mov 4(%r8), %ebp\n   add %rax, %rbp\n"
+    "cmp $1, %r15d\n   jbe .Lzstd_seq_x64_repeat\n"
+    "mov 124(%rsp), %eax\n   mov %eax, 128(%rsp)\n"
+    "mov 120(%rsp), %eax\n   mov %eax, 124(%rsp)\n"
+    "mov %r11d, 120(%rsp)\n"
+    ".Lzstd_seq_x64_offset:\n"
+    "decq 40(%rsp)\n   jz .Lzstd_seq_x64_exec\n"
+    "cmp $38, %esi\n   ja .Lzstd_seq_x64_refillB\n"
+    ".Lzstd_seq_x64_update:\n"
+    "movzbl 3(%r8), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "movzwl (%r8), %edx\n   add %rax, %rdx\n   mov 48(%rsp), %rax\n   lea (%rax,%rdx,8), %r8\n"
+    "movzbl 3(%r10), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "movzwl (%r10), %edx\n   add %rax, %rdx\n   mov 64(%rsp), %rax\n   lea (%rax,%rdx,8), %r10\n"
+    "movzbl 3(%r9), %ecx\n"
+    ZSTD_SEQ_X64_READ
+    "movzwl (%r9), %edx\n   add %rax, %rdx\n   mov 56(%rsp), %rax\n   lea (%rax,%rdx,8), %r9\n"
+    ".Lzstd_seq_x64_exec:\n"
+    /* rbp literal length, r14 match length, r11 offset. */
+    "lea (%r13,%rbp), %rax\n   cmp 16(%rsp), %rax\n   ja .Lzstd_seq_x64_fail\n"
+    "lea (%rbp,%r14), %rdx\n   add %r12, %rdx\n"
+    "cmp 24(%rsp), %rdx\n   ja .Lzstd_seq_x64_fail\n"
+    "lea (%r12,%rbp), %rcx\n   sub 8(%rsp), %rcx\n"
+    "cmp 32(%rsp), %rcx\n   cmova 32(%rsp), %rcx\n"
+    "cmp %r11, %rcx\n   jb .Lzstd_seq_x64_fail\n"
+    "add $16, %rdx\n   cmp 24(%rsp), %rdx\n   ja .Lzstd_seq_x64_exact\n"
     ASM_USERSPACE_WIDE(
-    "movdqu (%r13), %xmm0\n   movdqu 16(%r13), %xmm1\n"
-    "movdqu %xmm0, (%r12)\n   movdqu %xmm1, 16(%r12)\n"
+    "movdqu (%r13), %xmm0\n   movdqu %xmm0, (%r12)\n"
+    "jmp .Lzstd_seq_x64_lit16\n"
+    )
+    "mov (%r13), %rax\n   mov %rax, (%r12)\n"
+    "mov 8(%r13), %rax\n   mov %rax, 8(%r12)\n"
+    ".Lzstd_seq_x64_lit16:\n"
+    "cmp $16, %rbp\n   ja .Lzstd_seq_x64_litlong\n"
+    ".Lzstd_seq_x64_litdone:\n"
+    "add %rbp, %r12\n   add %rbp, %r13\n"
+    "mov %r12, %rdx\n   sub %r11, %rdx\n"
+    "cmp $16, %r11\n   jb .Lzstd_seq_x64_near\n"
+    ASM_USERSPACE_WIDE(
+    "movdqu (%rdx), %xmm0\n   movdqu %xmm0, (%r12)\n"
+    "jmp .Lzstd_seq_x64_match16\n"
+    )
+    "mov (%rdx), %rax\n   mov %rax, (%r12)\n"
+    "mov 8(%rdx), %rax\n   mov %rax, 8(%r12)\n"
+    ".Lzstd_seq_x64_match16:\n"
+    "cmp $16, %r14\n   ja .Lzstd_seq_x64_matchlong\n"
+    ".Lzstd_seq_x64_matchdone:\n"
+    "add %r14, %r12\n"
+    "cmpq $0, 40(%rsp)\n   jne .Lzstd_seq_x64_loop\n"
+    "jmp .Lzstd_seq_x64_rest\n"
+
+    ".Lzstd_seq_x64_litlong:\n"
+    "cmp $64, %rbp\n   ja .Lzstd_seq_x64_litbig\n"
+    "mov $16, %eax\n"
+    ".Lzstd_seq_x64_litloop:\n"
+    ASM_USERSPACE_WIDE(
+    "movdqu (%r13,%rax), %xmm0\n   movdqu %xmm0, (%r12,%rax)\n"
+    "add $16, %rax\n   cmp %rbp, %rax\n   jb .Lzstd_seq_x64_litloop\n"
     "jmp .Lzstd_seq_x64_litdone\n"
     )
-    "mov (%r13), %rax\n   mov 8(%r13), %rcx\n"
-    "mov 16(%r13), %rdi\n   mov 24(%r13), %rsi\n"
-    "mov %rax, (%r12)\n   mov %rcx, 8(%r12)\n"
-    "mov %rdi, 16(%r12)\n   mov %rsi, 24(%r12)\n"
-    ".Lzstd_seq_x64_litdone:\n"
-    "add %r8, %r12\n   add %r8, %r13\n"
-    "jmp .Lzstd_seq_x64_match\n"
-    ".Lzstd_seq_x64_litlong:\n"
-    "mov %r12, %rdi\n   mov %r13, %rsi\n   mov %r8, %rdx\n"
-    "add %r8, %r12\n   add %r8, %r13\n"
+    "mov (%r13,%rax), %rcx\n   mov %rcx, (%r12,%rax)\n"
+    "mov 8(%r13,%rax), %rcx\n   mov %rcx, 8(%r12,%rax)\n"
+    "add $16, %rax\n   cmp %rbp, %rax\n   jb .Lzstd_seq_x64_litloop\n"
+    "jmp .Lzstd_seq_x64_litdone\n"
+    ".Lzstd_seq_x64_litbig:\n"
+    ZSTD_SEQ_X64_SPILL
+    "mov %r12, %rdi\n   mov %r13, %rsi\n   mov %rbp, %rdx\n"
     "call memory_copy_apart\n"
-    ".Lzstd_seq_x64_match:\n"
-    "mov 104(%rsp), %rax\n"
-    "mov 16(%rsp), %rdx\n   mov %r12, %rcx\n   sub %rdx, %rcx\n"
-    "cmp %rax, %rcx\n   jb .Lzstd_seq_x64_fail\n"
-    "mov 24(%rsp), %rdx\n   test %rdx, %rdx\n   jz .Lzstd_seq_x64_copy\n"
-    "cmp %rdx, %rax\n   ja .Lzstd_seq_x64_fail\n"
-    ".Lzstd_seq_x64_copy:\n"
-    "mov 112(%rsp), %rdx\n   test %rdx, %rdx\n   jz .Lzstd_seq_x64_after\n"
-    "mov 200(%rsp), %rax\n   cmp %rax, %r12\n   ja .Lzstd_seq_x64_fail\n"
-    "sub %r12, %rax\n   cmp %rdx, %rax\n   jb .Lzstd_seq_x64_fail\n"
-    "mov 104(%rsp), %rsi\n"
-    "cmp %rsi, %rdx\n   ja .Lzstd_seq_x64_overlap\n"
-    "cmp $32, %rdx\n   jae .Lzstd_seq_x64_mlong\n"
-    "cmp $32, %rax\n   jb .Lzstd_seq_x64_mlong\n"
-    "mov %r12, %rdi\n   sub %rsi, %rdi\n"
+    ZSTD_SEQ_X64_UNSPILL
+    "jmp .Lzstd_seq_x64_litdone\n"
+
+    ".Lzstd_seq_x64_matchlong:\n"
+    "cmp $64, %r14\n   ja .Lzstd_seq_x64_callmatch\n"
+    "mov $16, %eax\n"
+    ".Lzstd_seq_x64_matchloop:\n"
     ASM_USERSPACE_WIDE(
-    "movdqu (%rdi), %xmm0\n   movdqu 16(%rdi), %xmm1\n"
-    "movdqu %xmm0, (%r12)\n   movdqu %xmm1, 16(%r12)\n"
-    "jmp .Lzstd_seq_x64_mdone\n"
+    "movdqu (%rdx,%rax), %xmm0\n   movdqu %xmm0, (%r12,%rax)\n"
+    "add $16, %rax\n   cmp %r14, %rax\n   jb .Lzstd_seq_x64_matchloop\n"
+    "jmp .Lzstd_seq_x64_matchdone\n"
     )
-    "mov (%rdi), %rax\n   mov 8(%rdi), %rcx\n"
-    "mov 16(%rdi), %r8\n   mov 24(%rdi), %r9\n"
-    "mov %rax, (%r12)\n   mov %rcx, 8(%r12)\n"
-    "mov %r8, 16(%r12)\n   mov %r9, 24(%r12)\n"
-    ".Lzstd_seq_x64_mdone:\n"
-    "add %rdx, %r12\n"
-    "jmp .Lzstd_seq_x64_after\n"
-    ".Lzstd_seq_x64_mlong:\n"
-    "mov %r12, %rdi\n   mov %r12, %rax\n   sub %rsi, %rax\n   mov %rax, %rsi\n"
-    "add %rdx, %r12\n"
-    "call memory_copy_apart\n"
-    "jmp .Lzstd_seq_x64_after\n"
-    ".Lzstd_seq_x64_overlap:\n"
-    "mov %r12, %rdi\n"
+    "mov (%rdx,%rax), %rcx\n   mov %rcx, (%r12,%rax)\n"
+    "mov 8(%rdx,%rax), %rcx\n   mov %rcx, 8(%r12,%rax)\n"
+    "add $16, %rax\n   cmp %r14, %rax\n   jb .Lzstd_seq_x64_matchloop\n"
+    "jmp .Lzstd_seq_x64_matchdone\n"
+
+    /* Offsets 8-15 still leave a whole word between source and copy. */
+    ".Lzstd_seq_x64_near:\n"
+    "cmp $8, %r11\n   jb .Lzstd_seq_x64_callmatch\n"
+    "xor %eax, %eax\n"
+    ".Lzstd_seq_x64_near8:\n"
+    "mov (%rdx,%rax), %rcx\n   mov %rcx, (%r12,%rax)\n"
+    "add $8, %rax\n   cmp %r14, %rax\n   jb .Lzstd_seq_x64_near8\n"
+    "jmp .Lzstd_seq_x64_matchdone\n"
+    ".Lzstd_seq_x64_callmatch:\n"
+    ZSTD_SEQ_X64_SPILL
+    "mov %r12, %rdi\n   mov %r11, %rsi\n   mov %r14, %rdx\n"
     "call memory_copy_match\n"
-    "add 112(%rsp), %r12\n"
-    ".Lzstd_seq_x64_after:\n"
-    "dec %rbp\n   jnz .Lzstd_seq_x64_loop\n"
+    ZSTD_SEQ_X64_UNSPILL
+    "jmp .Lzstd_seq_x64_matchdone\n"
+
+    /* Within sixteen bytes of output_end: exact copies only. */
+    ".Lzstd_seq_x64_exact:\n"
+    ZSTD_SEQ_X64_SPILL
+    "test %rbp, %rbp\n   jz .Lzstd_seq_x64_exactmatch\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n   mov %rbp, %rdx\n"
+    "call memory_copy_apart\n"
+    "add %rbp, %r12\n   add %rbp, %r13\n"
+    ".Lzstd_seq_x64_exactmatch:\n"
+    "mov %r12, %rdi\n   mov 176(%rsp), %rsi\n   mov %r14, %rdx\n"
+    "call memory_copy_match\n"
+    ZSTD_SEQ_X64_UNSPILL
+    "jmp .Lzstd_seq_x64_matchdone\n"
+
+    /* Offset codes 0 and 1 name a repeat offset; a zero literal length
+       shifts which one.  Code 0 has no extra bits, so r11 is 0 there and
+       1 + bit for code 1. */
+    ".Lzstd_seq_x64_repeat:\n"
+    "xor %eax, %eax\n   test %rbp, %rbp\n   sete %al\n"
+    "test %r15d, %r15d\n   jnz .Lzstd_seq_x64_rep1\n"
+    "mov 120(%rsp,%rax,4), %r11d\n   xor $1, %eax\n"
+    "mov 120(%rsp,%rax,4), %edx\n   mov %edx, 124(%rsp)\n"
+    "mov %r11d, 120(%rsp)\n"
+    "jmp .Lzstd_seq_x64_offset\n"
+    ".Lzstd_seq_x64_rep1:\n"
+    "add %eax, %r11d\n   cmp $3, %r11d\n   je .Lzstd_seq_x64_rep3\n"
+    "mov 120(%rsp,%r11,4), %edx\n"
+    "cmp $1, %r11d\n   je .Lzstd_seq_x64_rep1keep\n"
+    "mov 124(%rsp), %eax\n   mov %eax, 128(%rsp)\n"
+    ".Lzstd_seq_x64_rep1keep:\n"
+    "mov 120(%rsp), %eax\n   mov %eax, 124(%rsp)\n"
+    "mov %edx, 120(%rsp)\n   mov %edx, %r11d\n"
+    "jmp .Lzstd_seq_x64_offset\n"
+    ".Lzstd_seq_x64_rep3:\n"
+    "mov 120(%rsp), %edx\n   sub $1, %edx\n   jz .Lzstd_seq_x64_fail\n"
+    "mov 124(%rsp), %eax\n   mov %eax, 128(%rsp)\n"
+    "mov 120(%rsp), %eax\n   mov %eax, 124(%rsp)\n"
+    "mov %edx, 120(%rsp)\n   mov %edx, %r11d\n"
+    "jmp .Lzstd_seq_x64_offset\n"
+
+    ".Lzstd_seq_x64_refillA:\n"
+    ZSTD_SEQ_X64_RELOAD("A")
+    "jmp .Lzstd_seq_x64_litlen\n"
+    ".Lzstd_seq_x64_refillB:\n"
+    ZSTD_SEQ_X64_RELOAD("B")
+    "jmp .Lzstd_seq_x64_update\n"
+    ZSTD_SEQ_X64_SLOW("T", ".Lzstd_seq_x64_ready")
+    ZSTD_SEQ_X64_SLOW("A", ".Lzstd_seq_x64_litlen")
+    ZSTD_SEQ_X64_SLOW("B", ".Lzstd_seq_x64_update")
+
     ".Lzstd_seq_x64_rest:\n"
-    ZSTD_SEQ_RELOAD
-    "mov 32(%rsp), %rdx\n   sub %r13, %rdx\n"
+    "cmp $64, %esi\n   ja .Lzstd_seq_x64_fail\n"
+    "mov 16(%rsp), %rdx\n   sub %r13, %rdx\n"
     "jz .Lzstd_seq_x64_ok\n"
     "jb .Lzstd_seq_x64_fail\n"
-    "mov 200(%rsp), %rax\n   cmp %rax, %r12\n   ja .Lzstd_seq_x64_fail\n"
-    "sub %r12, %rax\n   cmp %rdx, %rax\n   jb .Lzstd_seq_x64_fail\n"
+    "lea (%r12,%rdx), %rax\n   cmp 24(%rsp), %rax\n   ja .Lzstd_seq_x64_fail\n"
     "mov %r12, %rdi\n   mov %r13, %rsi\n"
     "add %rdx, %r12\n"
     "call memory_copy_apart\n"
     ".Lzstd_seq_x64_ok:\n"
-    "mov 96(%rsp), %rdi\n   mov %r12, %rax\n   sub 16(%rsp), %rax\n"
+    "mov (%rsp), %rdi\n   mov %r12, %rax\n   sub 8(%rsp), %rax\n"
     "mov %rax, 8(%rdi)\n   xor %eax, %eax\n"
     ".Lzstd_seq_x64_done:\n"
-    "add $216, %rsp\n"
+    "mov (%rsp), %rdi\n   mov 80(%rdi), %rdx\n"
+    "mov 120(%rsp), %ecx\n   mov %ecx, (%rdx)\n"
+    "mov 124(%rsp), %ecx\n   mov %ecx, 4(%rdx)\n"
+    "mov 128(%rsp), %ecx\n   mov %ecx, 8(%rdx)\n"
+    "add $184, %rsp\n"
     "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
     ASM_RET
     ".Lzstd_seq_x64_fail:\n   mov $-1, %rax\n   jmp .Lzstd_seq_x64_done\n"
     ASM_END(zstd_sequences_run)
-#undef ZSTD_SEQ_RELOAD
-#undef ZSTD_SEQ_GET
+
+#undef ZSTD_SEQ_X64_READ
+#undef ZSTD_SEQ_X64_RELOAD
+#undef ZSTD_SEQ_X64_SLOW
+#undef ZSTD_SEQ_X64_SPILL
+#undef ZSTD_SEQ_X64_UNSPILL
     // Exact memmove semantics, followed by one terminator, with the end handed
     // back. The copy core stays single-sourced: keeping dst+n on the stack is
     // enough to survive its caller-saved register use. A real call is required
@@ -14279,7 +15984,7 @@ __asm__(
     // See the x86_64 body for the field, the lanes, the high half and why
     // there is no table. rbit is baseline here, so a reversal is one
     // instruction, and eor takes its shift, so the fold is one a term.
-    ASM_FUNC(ghash_blocks)
+    ASM_LOCAL_FUNC(ghash_integer)
     "cbz x3, .Lghash_arm64_none\n"
     "sub sp, sp, #256\n"
     "stp x19, x20, [sp, #192]\n   stp x21, x22, [sp, #208]\n"
@@ -14338,7 +16043,1035 @@ __asm__(
     "add sp, sp, #256\n"
     ".Lghash_arm64_none:\n"
     ASM_RET
+    ASM_LOCAL_END(ghash_integer)
+
+    // See the x86_64 body for the table.
+    ASM_FUNC(ghash_blocks)
+    "add x1, x1, #1536\n   b ghash_integer\n"
     ASM_END(ghash_blocks)
+
+    // See the x86_64 body. extr makes the shift of the reversed value one
+    // instruction; 0xc2 << 56 is not a logical immediate, so it is a movz.
+    ASM_FUNC(ghash_key)
+    "stp x29, x30, [sp, #-80]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n"
+    "ldp x2, x3, [x1]\n   add x6, x0, #1536\n   stp x2, x3, [x6]\n"
+    "stp x2, x3, [sp, #40]\n"
+    "stp xzr, xzr, [sp, #56]\n"
+    "mov x21, #752\n"
+    ".Lghash_key_arm64_power:\n"
+    "ldp x2, x3, [sp, #40]\n   rev x2, x2\n   rev x3, x3\n"
+    "lsr x4, x2, #63\n   extr x2, x2, x3, #63\n"
+    "lsl x3, x3, #1\n   eor x3, x3, x4\n"
+    "neg x4, x4\n   movz x5, #0xc200, lsl #48\n   and x4, x4, x5\n"
+    "eor x2, x2, x4\n"
+    "add x6, x19, x21\n   stp x3, x2, [x6]\n"
+    "eor x7, x2, x3\n   add x6, x6, #768\n   stp x7, xzr, [x6]\n"
+    "subs x21, x21, #16\n   b.lo .Lghash_key_arm64_done\n"
+    "add x0, sp, #40\n   mov x1, x20\n   add x2, sp, #56\n   mov x3, #1\n"
+    "bl ghash_integer\n"
+    "b .Lghash_key_arm64_power\n"
+    ".Lghash_key_arm64_done:\n"
+    "stp xzr, xzr, [sp, #40]\n"
+    "mov x2, xzr\n   mov x3, xzr\n   mov x4, xzr\n   mov x7, xzr\n"
+    "ldp x19, x20, [sp, #16]\n   ldr x21, [sp, #32]\n"
+    "ldp x29, x30, [sp], #80\n"
+    ASM_RET
+    ASM_END(ghash_key)
+
+    // See the x86_64 body for the counter and the bitsliced floor. Over
+    // NEON a plane is one q register, so ShiftRows is one tbl, MixColumns'
+    // rows are ext #4 and ext #8, and moving bits between planes and blocks
+    // is cmtst, and, orr a byte lane at a time. The S-box never runs out of
+    // registers; d8-d15 are kept. A kernel build may hold no vector
+    // instruction, so it takes the same algorithm on general registers:
+    // eon is the circuit's xnor and extr the row rotation.
+    ASM_FUNC(aes128_ctr_blocks)
+    "cbz x4, .Laes_ctr_arm64_none\n"
+#ifdef KERNEL_MODE
+    "sub sp, sp, #1696\n   str x19, [sp, #200]\n   str x20, [sp, #208]\n"
+    "str x21, [sp, #216]\n   str x22, [sp, #224]\n   str x23, [sp, #232]\n"
+    "str x24, [sp, #240]\n   str x25, [sp, #248]\n   str x26, [sp, #256]\n"
+    "str x27, [sp, #264]\n   str x28, [sp, #272]\n   str x1, [sp, #144]\n"
+    "str x2, [sp, #152]\n   str x3, [sp, #160]\n   str x4, [sp, #168]\n"
+    "mov x11, #0x0101010101010101\n   mov x12, #255\n   mov x19, xzr\n"
+    "lsl x19, x19, #8\n   lsl x19, x19, #8\n   ldrb w10, [x1, #9]\n"
+    "orr x19, x19, x10\n   lsl x19, x19, #8\n   ldrb w10, [x1, #5]\n"
+    "orr x19, x19, x10\n   lsl x19, x19, #8\n   ldrb w10, [x1, #1]\n"
+    "orr x19, x19, x10\n   lsl x19, x19, #8\n   lsl x19, x19, #8\n"
+    "ldrb w10, [x1, #8]\n   orr x19, x19, x10\n   lsl x19, x19, #8\n"
+    "ldrb w10, [x1, #4]\n   orr x19, x19, x10\n   lsl x19, x19, #8\n"
+    "ldrb w10, [x1, #0]\n   orr x19, x19, x10\n   mov x20, xzr\n"
+    "lsl x20, x20, #8\n   lsl x20, x20, #8\n   ldrb w10, [x1, #11]\n"
+    "orr x20, x20, x10\n   lsl x20, x20, #8\n   ldrb w10, [x1, #7]\n"
+    "orr x20, x20, x10\n   lsl x20, x20, #8\n   ldrb w10, [x1, #3]\n"
+    "orr x20, x20, x10\n   lsl x20, x20, #8\n   lsl x20, x20, #8\n"
+    "ldrb w10, [x1, #10]\n   orr x20, x20, x10\n   lsl x20, x20, #8\n"
+    "ldrb w10, [x1, #6]\n   orr x20, x20, x10\n   lsl x20, x20, #8\n"
+    "ldrb w10, [x1, #2]\n   orr x20, x20, x10\n   add x14, sp, #280\n"
+    "mov x15, #11\n   mov x16, x0\n"
+    ".Laes_ctr_arm64_words_keys:\n"
+    "ldrb w9, [x16, #13]\n   lsl x9, x9, #8\n   ldrb w10, [x16, #9]\n"
+    "orr x9, x9, x10\n   lsl x9, x9, #8\n   ldrb w10, [x16, #5]\n"
+    "orr x9, x9, x10\n   lsl x9, x9, #8\n   ldrb w10, [x16, #1]\n"
+    "orr x9, x9, x10\n   lsl x9, x9, #8\n   ldrb w10, [x16, #12]\n"
+    "orr x9, x9, x10\n   lsl x9, x9, #8\n   ldrb w10, [x16, #8]\n"
+    "orr x9, x9, x10\n   lsl x9, x9, #8\n   ldrb w10, [x16, #4]\n"
+    "orr x9, x9, x10\n   lsl x9, x9, #8\n   ldrb w10, [x16, #0]\n"
+    "orr x9, x9, x10\n   eor x9, x9, x19\n   mov x10, x9\n"
+    "and x10, x10, x11\n   mul x10, x10, x12\n   str x10, [x14, #0]\n"
+    "lsr x10, x9, #1\n   and x10, x10, x11\n   mul x10, x10, x12\n"
+    "str x10, [x14, #16]\n   lsr x10, x9, #2\n   and x10, x10, x11\n"
+    "mul x10, x10, x12\n   str x10, [x14, #32]\n   lsr x10, x9, #3\n"
+    "and x10, x10, x11\n   mul x10, x10, x12\n   str x10, [x14, #48]\n"
+    "lsr x10, x9, #4\n   and x10, x10, x11\n   mul x10, x10, x12\n"
+    "str x10, [x14, #64]\n   lsr x10, x9, #5\n   and x10, x10, x11\n"
+    "mul x10, x10, x12\n   str x10, [x14, #80]\n   lsr x10, x9, #6\n"
+    "and x10, x10, x11\n   mul x10, x10, x12\n   str x10, [x14, #96]\n"
+    "lsr x10, x9, #7\n   and x10, x10, x11\n   mul x10, x10, x12\n"
+    "str x10, [x14, #112]\n   ldrb w9, [x16, #15]\n   lsl x9, x9, #8\n"
+    "ldrb w10, [x16, #11]\n   orr x9, x9, x10\n   lsl x9, x9, #8\n"
+    "ldrb w10, [x16, #7]\n   orr x9, x9, x10\n   lsl x9, x9, #8\n"
+    "ldrb w10, [x16, #3]\n   orr x9, x9, x10\n   lsl x9, x9, #8\n"
+    "ldrb w10, [x16, #14]\n   orr x9, x9, x10\n   lsl x9, x9, #8\n"
+    "ldrb w10, [x16, #10]\n   orr x9, x9, x10\n   lsl x9, x9, #8\n"
+    "ldrb w10, [x16, #6]\n   orr x9, x9, x10\n   lsl x9, x9, #8\n"
+    "ldrb w10, [x16, #2]\n   orr x9, x9, x10\n   eor x9, x9, x20\n"
+    "mov x10, x9\n   and x10, x10, x11\n   mul x10, x10, x12\n"
+    "str x10, [x14, #8]\n   lsr x10, x9, #1\n   and x10, x10, x11\n"
+    "mul x10, x10, x12\n   str x10, [x14, #24]\n   lsr x10, x9, #2\n"
+    "and x10, x10, x11\n   mul x10, x10, x12\n   str x10, [x14, #40]\n"
+    "lsr x10, x9, #3\n   and x10, x10, x11\n   mul x10, x10, x12\n"
+    "str x10, [x14, #56]\n   lsr x10, x9, #4\n   and x10, x10, x11\n"
+    "mul x10, x10, x12\n   str x10, [x14, #72]\n   lsr x10, x9, #5\n"
+    "and x10, x10, x11\n   mul x10, x10, x12\n   str x10, [x14, #88]\n"
+    "lsr x10, x9, #6\n   and x10, x10, x11\n   mul x10, x10, x12\n"
+    "str x10, [x14, #104]\n   lsr x10, x9, #7\n   and x10, x10, x11\n"
+    "mul x10, x10, x12\n   str x10, [x14, #120]\n   mov x19, xzr\n"
+    "mov x20, xzr\n   add x16, x16, #16\n   add x14, x14, #128\n"
+    "subs x15, x15, #1\n   b.ne .Laes_ctr_arm64_words_keys\n   ldr w9, [x1, #12]\n"
+    "rev w9, w9\n   str x9, [sp, #176]\n"
+    ".Laes_ctr_arm64_words_turn:\n"
+    "ldr x15, [sp, #176]\n   mov x19, xzr\n   mov x20, xzr\n"
+    "mov x21, xzr\n   mov x22, xzr\n   add w9, w15, #0\n"
+    "rev w9, w9\n   mov x10, x9\n   and x10, x10, #0xff\n"
+    "orr x19, x19, x10\n   lsr x10, x9, #8\n   and x10, x10, #0xff\n"
+    "orr x20, x20, x10\n   lsr x10, x9, #16\n   and x10, x10, #0xff\n"
+    "orr x21, x21, x10\n   lsr x10, x9, #24\n   and x10, x10, #0xff\n"
+    "orr x22, x22, x10\n   add w9, w15, #1\n   rev w9, w9\n"
+    "mov x10, x9\n   and x10, x10, #0xff\n   orr x19, x19, x10, lsl #8\n"
+    "lsr x10, x9, #8\n   and x10, x10, #0xff\n   orr x20, x20, x10, lsl #8\n"
+    "lsr x10, x9, #16\n   and x10, x10, #0xff\n   orr x21, x21, x10, lsl #8\n"
+    "lsr x10, x9, #24\n   and x10, x10, #0xff\n   orr x22, x22, x10, lsl #8\n"
+    "add w9, w15, #2\n   rev w9, w9\n   mov x10, x9\n"
+    "and x10, x10, #0xff\n   orr x19, x19, x10, lsl #16\n   lsr x10, x9, #8\n"
+    "and x10, x10, #0xff\n   orr x20, x20, x10, lsl #16\n   lsr x10, x9, #16\n"
+    "and x10, x10, #0xff\n   orr x21, x21, x10, lsl #16\n   lsr x10, x9, #24\n"
+    "and x10, x10, #0xff\n   orr x22, x22, x10, lsl #16\n   add w9, w15, #3\n"
+    "rev w9, w9\n   mov x10, x9\n   and x10, x10, #0xff\n"
+    "orr x19, x19, x10, lsl #24\n   lsr x10, x9, #8\n   and x10, x10, #0xff\n"
+    "orr x20, x20, x10, lsl #24\n   lsr x10, x9, #16\n   and x10, x10, #0xff\n"
+    "orr x21, x21, x10, lsl #24\n   lsr x10, x9, #24\n   and x10, x10, #0xff\n"
+    "orr x22, x22, x10, lsl #24\n   add w9, w15, #4\n   rev w9, w9\n"
+    "mov x10, x9\n   and x10, x10, #0xff\n   orr x19, x19, x10, lsl #32\n"
+    "lsr x10, x9, #8\n   and x10, x10, #0xff\n   orr x20, x20, x10, lsl #32\n"
+    "lsr x10, x9, #16\n   and x10, x10, #0xff\n   orr x21, x21, x10, lsl #32\n"
+    "lsr x10, x9, #24\n   and x10, x10, #0xff\n   orr x22, x22, x10, lsl #32\n"
+    "add w9, w15, #5\n   rev w9, w9\n   mov x10, x9\n"
+    "and x10, x10, #0xff\n   orr x19, x19, x10, lsl #40\n   lsr x10, x9, #8\n"
+    "and x10, x10, #0xff\n   orr x20, x20, x10, lsl #40\n   lsr x10, x9, #16\n"
+    "and x10, x10, #0xff\n   orr x21, x21, x10, lsl #40\n   lsr x10, x9, #24\n"
+    "and x10, x10, #0xff\n   orr x22, x22, x10, lsl #40\n   add w9, w15, #6\n"
+    "rev w9, w9\n   mov x10, x9\n   and x10, x10, #0xff\n"
+    "orr x19, x19, x10, lsl #48\n   lsr x10, x9, #8\n   and x10, x10, #0xff\n"
+    "orr x20, x20, x10, lsl #48\n   lsr x10, x9, #16\n   and x10, x10, #0xff\n"
+    "orr x21, x21, x10, lsl #48\n   lsr x10, x9, #24\n   and x10, x10, #0xff\n"
+    "orr x22, x22, x10, lsl #48\n   add w9, w15, #7\n   rev w9, w9\n"
+    "mov x10, x9\n   and x10, x10, #0xff\n   orr x19, x19, x10, lsl #56\n"
+    "lsr x10, x9, #8\n   and x10, x10, #0xff\n   orr x20, x20, x10, lsl #56\n"
+    "lsr x10, x9, #16\n   and x10, x10, #0xff\n   orr x21, x21, x10, lsl #56\n"
+    "lsr x10, x9, #24\n   and x10, x10, #0xff\n   orr x22, x22, x10, lsl #56\n"
+    "mov x11, #0x0101010101010101\n   movz x13, #0x4080\n   movk x13, #0x1020, lsl #16\n"
+    "movk x13, #0x0408, lsl #32\n   movk x13, #0x0102, lsl #48\n   mov x9, x19\n"
+    "and x9, x9, x11\n   mul x9, x9, x13\n   lsr x9, x9, #56\n"
+    "lsl x9, x9, #24\n   mov x10, x20\n   and x10, x10, x11\n"
+    "mul x10, x10, x13\n   lsr x10, x10, #56\n   lsl x10, x10, #56\n"
+    "eor x9, x9, x10\n   ldr x10, [sp, #280]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #0]\n   mov x9, x21\n   and x9, x9, x11\n"
+    "mul x9, x9, x13\n   lsr x9, x9, #56\n   lsl x9, x9, #24\n"
+    "mov x10, x22\n   and x10, x10, x11\n   mul x10, x10, x13\n"
+    "lsr x10, x10, #56\n   lsl x10, x10, #56\n   eor x9, x9, x10\n"
+    "ldr x10, [sp, #288]\n   eor x9, x9, x10\n   str x9, [sp, #8]\n"
+    "lsr x9, x19, #1\n   and x9, x9, x11\n   mul x9, x9, x13\n"
+    "lsr x9, x9, #56\n   lsl x9, x9, #24\n   lsr x10, x20, #1\n"
+    "and x10, x10, x11\n   mul x10, x10, x13\n   lsr x10, x10, #56\n"
+    "lsl x10, x10, #56\n   eor x9, x9, x10\n   ldr x10, [sp, #296]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #16]\n   lsr x9, x21, #1\n"
+    "and x9, x9, x11\n   mul x9, x9, x13\n   lsr x9, x9, #56\n"
+    "lsl x9, x9, #24\n   lsr x10, x22, #1\n   and x10, x10, x11\n"
+    "mul x10, x10, x13\n   lsr x10, x10, #56\n   lsl x10, x10, #56\n"
+    "eor x9, x9, x10\n   ldr x10, [sp, #304]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #24]\n   lsr x9, x19, #2\n   and x9, x9, x11\n"
+    "mul x9, x9, x13\n   lsr x9, x9, #56\n   lsl x9, x9, #24\n"
+    "lsr x10, x20, #2\n   and x10, x10, x11\n   mul x10, x10, x13\n"
+    "lsr x10, x10, #56\n   lsl x10, x10, #56\n   eor x9, x9, x10\n"
+    "ldr x10, [sp, #312]\n   eor x9, x9, x10\n   str x9, [sp, #32]\n"
+    "lsr x9, x21, #2\n   and x9, x9, x11\n   mul x9, x9, x13\n"
+    "lsr x9, x9, #56\n   lsl x9, x9, #24\n   lsr x10, x22, #2\n"
+    "and x10, x10, x11\n   mul x10, x10, x13\n   lsr x10, x10, #56\n"
+    "lsl x10, x10, #56\n   eor x9, x9, x10\n   ldr x10, [sp, #320]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #40]\n   lsr x9, x19, #3\n"
+    "and x9, x9, x11\n   mul x9, x9, x13\n   lsr x9, x9, #56\n"
+    "lsl x9, x9, #24\n   lsr x10, x20, #3\n   and x10, x10, x11\n"
+    "mul x10, x10, x13\n   lsr x10, x10, #56\n   lsl x10, x10, #56\n"
+    "eor x9, x9, x10\n   ldr x10, [sp, #328]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #48]\n   lsr x9, x21, #3\n   and x9, x9, x11\n"
+    "mul x9, x9, x13\n   lsr x9, x9, #56\n   lsl x9, x9, #24\n"
+    "lsr x10, x22, #3\n   and x10, x10, x11\n   mul x10, x10, x13\n"
+    "lsr x10, x10, #56\n   lsl x10, x10, #56\n   eor x9, x9, x10\n"
+    "ldr x10, [sp, #336]\n   eor x9, x9, x10\n   str x9, [sp, #56]\n"
+    "lsr x9, x19, #4\n   and x9, x9, x11\n   mul x9, x9, x13\n"
+    "lsr x9, x9, #56\n   lsl x9, x9, #24\n   lsr x10, x20, #4\n"
+    "and x10, x10, x11\n   mul x10, x10, x13\n   lsr x10, x10, #56\n"
+    "lsl x10, x10, #56\n   eor x9, x9, x10\n   ldr x10, [sp, #344]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #64]\n   lsr x9, x21, #4\n"
+    "and x9, x9, x11\n   mul x9, x9, x13\n   lsr x9, x9, #56\n"
+    "lsl x9, x9, #24\n   lsr x10, x22, #4\n   and x10, x10, x11\n"
+    "mul x10, x10, x13\n   lsr x10, x10, #56\n   lsl x10, x10, #56\n"
+    "eor x9, x9, x10\n   ldr x10, [sp, #352]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #72]\n   lsr x9, x19, #5\n   and x9, x9, x11\n"
+    "mul x9, x9, x13\n   lsr x9, x9, #56\n   lsl x9, x9, #24\n"
+    "lsr x10, x20, #5\n   and x10, x10, x11\n   mul x10, x10, x13\n"
+    "lsr x10, x10, #56\n   lsl x10, x10, #56\n   eor x9, x9, x10\n"
+    "ldr x10, [sp, #360]\n   eor x9, x9, x10\n   str x9, [sp, #80]\n"
+    "lsr x9, x21, #5\n   and x9, x9, x11\n   mul x9, x9, x13\n"
+    "lsr x9, x9, #56\n   lsl x9, x9, #24\n   lsr x10, x22, #5\n"
+    "and x10, x10, x11\n   mul x10, x10, x13\n   lsr x10, x10, #56\n"
+    "lsl x10, x10, #56\n   eor x9, x9, x10\n   ldr x10, [sp, #368]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #88]\n   lsr x9, x19, #6\n"
+    "and x9, x9, x11\n   mul x9, x9, x13\n   lsr x9, x9, #56\n"
+    "lsl x9, x9, #24\n   lsr x10, x20, #6\n   and x10, x10, x11\n"
+    "mul x10, x10, x13\n   lsr x10, x10, #56\n   lsl x10, x10, #56\n"
+    "eor x9, x9, x10\n   ldr x10, [sp, #376]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #96]\n   lsr x9, x21, #6\n   and x9, x9, x11\n"
+    "mul x9, x9, x13\n   lsr x9, x9, #56\n   lsl x9, x9, #24\n"
+    "lsr x10, x22, #6\n   and x10, x10, x11\n   mul x10, x10, x13\n"
+    "lsr x10, x10, #56\n   lsl x10, x10, #56\n   eor x9, x9, x10\n"
+    "ldr x10, [sp, #384]\n   eor x9, x9, x10\n   str x9, [sp, #104]\n"
+    "lsr x9, x19, #7\n   and x9, x9, x11\n   mul x9, x9, x13\n"
+    "lsr x9, x9, #56\n   lsl x9, x9, #24\n   lsr x10, x20, #7\n"
+    "and x10, x10, x11\n   mul x10, x10, x13\n   lsr x10, x10, #56\n"
+    "lsl x10, x10, #56\n   eor x9, x9, x10\n   ldr x10, [sp, #392]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #112]\n   lsr x9, x21, #7\n"
+    "and x9, x9, x11\n   mul x9, x9, x13\n   lsr x9, x9, #56\n"
+    "lsl x9, x9, #24\n   lsr x10, x22, #7\n   and x10, x10, x11\n"
+    "mul x10, x10, x13\n   lsr x10, x10, #56\n   lsl x10, x10, #56\n"
+    "eor x9, x9, x10\n   ldr x10, [sp, #400]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #120]\n   add x9, sp, #408\n   str x9, [sp, #192]\n"
+    "mov x9, #1\n   str x9, [sp, #184]\n"
+    ".Laes_ctr_arm64_words_round:\n"
+    "mov x28, sp\n"
+    ".Laes_ctr_arm64_words_pass:\n"
+    "ldr x0, [x28, #112]\n   ldr x1, [x28, #64]\n   eor x2, x0, x1\n"
+    "ldr x3, [x28, #32]\n   eor x4, x0, x3\n   ldr x5, [x28, #16]\n"
+    "eor x6, x0, x5\n   eor x7, x1, x3\n   ldr x8, [x28, #48]\n"
+    "eor x9, x8, x5\n   eor x10, x2, x9\n   ldr x11, [x28, #96]\n"
+    "ldr x12, [x28, #80]\n   eor x13, x11, x12\n   ldr x14, [x28, #0]\n"
+    "eor x15, x14, x10\n   eor x16, x14, x13\n   eor x17, x10, x13\n"
+    "eor x19, x11, x3\n   eor x20, x12, x3\n   eor x21, x6, x7\n"
+    "eor x22, x10, x19\n   eor x23, x9, x19\n   eor x24, x9, x20\n"
+    "eor x25, x16, x24\n   eor x26, x1, x14\n   eor x27, x13, x26\n"
+    "eor x0, x2, x27\n   eor x8, x5, x14\n   eor x11, x13, x8\n"
+    "eor x12, x4, x11\n   eor x3, x4, x17\n   eor x19, x0, x25\n"
+    "eor x9, x6, x24\n   eor x1, x2, x20\n   and x26, x21, x10\n"
+    "and x5, x12, x15\n   eor x13, x22, x26\n   and x8, x27, x14\n"
+    "eor x20, x8, x26\n   and x22, x6, x24\n   and x8, x11, x16\n"
+    "eor x26, x9, x22\n   and x9, x0, x25\n   eor x9, x9, x22\n"
+    "and x22, x2, x23\n   str x2, [sp, #128]\n   and x2, x7, x1\n"
+    "eor x2, x2, x22\n   str x7, [sp, #136]\n   and x7, x4, x17\n"
+    "eor x7, x7, x22\n   eor x22, x13, x5\n   eor x13, x20, x3\n"
+    "eor x5, x26, x8\n   eor x20, x9, x7\n   eor x3, x22, x2\n"
+    "eor x26, x13, x7\n   eor x8, x5, x2\n   eor x9, x20, x19\n"
+    "eor x22, x8, x9\n   and x13, x8, x3\n   eor x7, x26, x13\n"
+    "eor x5, x3, x26\n   eor x2, x9, x13\n   and x20, x2, x5\n"
+    "and x19, x7, x22\n   and x2, x3, x9\n   and x7, x5, x2\n"
+    "eor x3, x5, x13\n   and x2, x26, x8\n   and x5, x22, x2\n"
+    "eor x8, x22, x13\n   eor x2, x26, x20\n   eor x22, x7, x3\n"
+    "eor x13, x9, x19\n   eor x26, x5, x8\n   eor x20, x22, x26\n"
+    "eor x7, x2, x13\n   eor x3, x2, x22\n   eor x9, x13, x26\n"
+    "eor x19, x7, x20\n   and x5, x9, x10\n   and x8, x26, x15\n"
+    "and x10, x13, x14\n   and x15, x3, x24\n   and x14, x22, x16\n"
+    "and x24, x2, x25\n   and x16, x7, x23\n   and x25, x19, x1\n"
+    "and x23, x20, x17\n   and x1, x9, x21\n   and x17, x26, x12\n"
+    "and x9, x13, x27\n   and x21, x3, x6\n   and x26, x22, x11\n"
+    "and x12, x2, x0\n   ldr x13, [sp, #128]\n   and x27, x7, x13\n"
+    "ldr x3, [sp, #136]\n   and x6, x19, x3\n   and x22, x20, x4\n"
+    "eor x11, x27, x6\n   eor x2, x14, x17\n   eor x0, x5, x10\n"
+    "eor x7, x8, x1\n   eor x13, x23, x21\n   eor x19, x15, x27\n"
+    "eor x3, x6, x19\n   eor x20, x5, x7\n   eor x4, x24, x26\n"
+    "eor x8, x16, x25\n   eor x23, x25, x13\n   eor x15, x12, x0\n"
+    "eor x6, x10, x24\n   eor x19, x14, x11\n   eor x5, x16, x27\n"
+    "eor x26, x1, x2\n   eor x25, x17, x11\n   eor x12, x9, x2\n"
+    "eor x10, x21, x4\n   eor x24, x22, x13\n   eor x14, x11, x2\n"
+    "eor x16, x2, x20\n   eor x27, x7, x6\n   eor x1, x10, x0\n"
+    "eor x17, x26, x8\n   eor x9, x3, x23\n   eor x21, x20, x8\n"
+    "eor x22, x4, x23\n   eor x13, x15, x5\n   eor x11, x15, x12\n"
+    "eor x2, x3, x17\n   str x2, [x28, #112]\n   eor x7, x25, x21\n"
+    "mvn x7, x7\n   str x7, [x28, #96]\n   eor x6, x24, x13\n"
+    "mvn x6, x6\n   str x6, [x28, #80]\n   eor x10, x3, x16\n"
+    "str x10, [x28, #64]\n   eor x0, x14, x27\n   str x0, [x28, #48]\n"
+    "eor x26, x9, x11\n   str x26, [x28, #32]\n   eor x20, x19, x22\n"
+    "mvn x20, x20\n   str x20, [x28, #16]\n   eor x8, x3, x1\n"
+    "mvn x8, x8\n   str x8, [x28, #0]\n   add x28, x28, #8\n"
+    "add x9, sp, #16\n   cmp x28, x9\n   b.lo .Laes_ctr_arm64_words_pass\n"
+    "ldr x9, [sp, #0]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #0]\n   ldr x9, [sp, #8]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #8]\n"
+    "ldr x9, [sp, #16]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #16]\n   ldr x9, [sp, #24]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #24]\n"
+    "ldr x9, [sp, #32]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #32]\n   ldr x9, [sp, #40]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #40]\n"
+    "ldr x9, [sp, #48]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #48]\n   ldr x9, [sp, #56]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #56]\n"
+    "ldr x9, [sp, #64]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #64]\n   ldr x9, [sp, #72]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #72]\n"
+    "ldr x9, [sp, #80]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #80]\n   ldr x9, [sp, #88]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #88]\n"
+    "ldr x9, [sp, #96]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #96]\n   ldr x9, [sp, #104]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #104]\n"
+    "ldr x9, [sp, #112]\n   lsr x10, x9, #32\n   ror w10, w10, #8\n"
+    "lsl x10, x10, #32\n   mov w11, w9\n   orr x10, x10, x11\n"
+    "str x10, [sp, #112]\n   ldr x9, [sp, #120]\n   mov w11, w9\n"
+    "ror w11, w11, #16\n   lsr x10, x9, #32\n   ror w10, w10, #24\n"
+    "lsl x10, x10, #32\n   orr x10, x10, x11\n   str x10, [sp, #120]\n"
+    "ldr x27, [sp, #192]\n   ldr x9, [sp, #184]\n   cmp x9, #10\n"
+    "b.eq .Laes_ctr_arm64_words_last\n   ldr x9, [sp, #0]\n   ldr x10, [sp, #8]\n"
+    "extr x11, x10, x9, #32\n   eor x0, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x19, x11, x10\n   ldr x9, [sp, #16]\n   ldr x10, [sp, #24]\n"
+    "extr x11, x10, x9, #32\n   eor x1, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x20, x11, x10\n   ldr x9, [sp, #32]\n   ldr x10, [sp, #40]\n"
+    "extr x11, x10, x9, #32\n   eor x2, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x21, x11, x10\n   ldr x9, [sp, #48]\n   ldr x10, [sp, #56]\n"
+    "extr x11, x10, x9, #32\n   eor x3, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x22, x11, x10\n   ldr x9, [sp, #64]\n   ldr x10, [sp, #72]\n"
+    "extr x11, x10, x9, #32\n   eor x4, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x23, x11, x10\n   ldr x9, [sp, #80]\n   ldr x10, [sp, #88]\n"
+    "extr x11, x10, x9, #32\n   eor x5, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x24, x11, x10\n   ldr x9, [sp, #96]\n   ldr x10, [sp, #104]\n"
+    "extr x11, x10, x9, #32\n   eor x6, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x25, x11, x10\n   ldr x9, [sp, #112]\n   ldr x10, [sp, #120]\n"
+    "extr x11, x10, x9, #32\n   eor x7, x11, x9\n   extr x11, x9, x10, #32\n"
+    "eor x26, x11, x10\n   eor x12, x0, x19\n   ldr x9, [sp, #0]\n"
+    "eor x9, x9, x12\n   ldr x10, [x27, #0]\n   eor x9, x9, x10\n"
+    "eor x9, x9, x7\n   str x9, [sp, #0]\n   ldr x9, [sp, #8]\n"
+    "eor x9, x9, x12\n   ldr x10, [x27, #8]\n   eor x9, x9, x10\n"
+    "eor x9, x9, x26\n   str x9, [sp, #8]\n   eor x12, x1, x20\n"
+    "ldr x9, [sp, #16]\n   eor x9, x9, x12\n   ldr x10, [x27, #16]\n"
+    "eor x9, x9, x10\n   eor x9, x9, x0\n   eor x9, x9, x7\n"
+    "str x9, [sp, #16]\n   ldr x9, [sp, #24]\n   eor x9, x9, x12\n"
+    "ldr x10, [x27, #24]\n   eor x9, x9, x10\n   eor x9, x9, x19\n"
+    "eor x9, x9, x26\n   str x9, [sp, #24]\n   eor x12, x2, x21\n"
+    "ldr x9, [sp, #32]\n   eor x9, x9, x12\n   ldr x10, [x27, #32]\n"
+    "eor x9, x9, x10\n   eor x9, x9, x1\n   str x9, [sp, #32]\n"
+    "ldr x9, [sp, #40]\n   eor x9, x9, x12\n   ldr x10, [x27, #40]\n"
+    "eor x9, x9, x10\n   eor x9, x9, x20\n   str x9, [sp, #40]\n"
+    "eor x12, x3, x22\n   ldr x9, [sp, #48]\n   eor x9, x9, x12\n"
+    "ldr x10, [x27, #48]\n   eor x9, x9, x10\n   eor x9, x9, x2\n"
+    "eor x9, x9, x7\n   str x9, [sp, #48]\n   ldr x9, [sp, #56]\n"
+    "eor x9, x9, x12\n   ldr x10, [x27, #56]\n   eor x9, x9, x10\n"
+    "eor x9, x9, x21\n   eor x9, x9, x26\n   str x9, [sp, #56]\n"
+    "eor x12, x4, x23\n   ldr x9, [sp, #64]\n   eor x9, x9, x12\n"
+    "ldr x10, [x27, #64]\n   eor x9, x9, x10\n   eor x9, x9, x3\n"
+    "eor x9, x9, x7\n   str x9, [sp, #64]\n   ldr x9, [sp, #72]\n"
+    "eor x9, x9, x12\n   ldr x10, [x27, #72]\n   eor x9, x9, x10\n"
+    "eor x9, x9, x22\n   eor x9, x9, x26\n   str x9, [sp, #72]\n"
+    "eor x12, x5, x24\n   ldr x9, [sp, #80]\n   eor x9, x9, x12\n"
+    "ldr x10, [x27, #80]\n   eor x9, x9, x10\n   eor x9, x9, x4\n"
+    "str x9, [sp, #80]\n   ldr x9, [sp, #88]\n   eor x9, x9, x12\n"
+    "ldr x10, [x27, #88]\n   eor x9, x9, x10\n   eor x9, x9, x23\n"
+    "str x9, [sp, #88]\n   eor x12, x6, x25\n   ldr x9, [sp, #96]\n"
+    "eor x9, x9, x12\n   ldr x10, [x27, #96]\n   eor x9, x9, x10\n"
+    "eor x9, x9, x5\n   str x9, [sp, #96]\n   ldr x9, [sp, #104]\n"
+    "eor x9, x9, x12\n   ldr x10, [x27, #104]\n   eor x9, x9, x10\n"
+    "eor x9, x9, x24\n   str x9, [sp, #104]\n   eor x12, x7, x26\n"
+    "ldr x9, [sp, #112]\n   eor x9, x9, x12\n   ldr x10, [x27, #112]\n"
+    "eor x9, x9, x10\n   eor x9, x9, x6\n   str x9, [sp, #112]\n"
+    "ldr x9, [sp, #120]\n   eor x9, x9, x12\n   ldr x10, [x27, #120]\n"
+    "eor x9, x9, x10\n   eor x9, x9, x25\n   str x9, [sp, #120]\n"
+    "b .Laes_ctr_arm64_words_next\n"
+    ".Laes_ctr_arm64_words_last:\n"
+    "ldr x9, [sp, #0]\n   ldr x10, [x27, #0]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #0]\n   ldr x9, [sp, #8]\n   ldr x10, [x27, #8]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #8]\n   ldr x9, [sp, #16]\n"
+    "ldr x10, [x27, #16]\n   eor x9, x9, x10\n   str x9, [sp, #16]\n"
+    "ldr x9, [sp, #24]\n   ldr x10, [x27, #24]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #24]\n   ldr x9, [sp, #32]\n   ldr x10, [x27, #32]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #32]\n   ldr x9, [sp, #40]\n"
+    "ldr x10, [x27, #40]\n   eor x9, x9, x10\n   str x9, [sp, #40]\n"
+    "ldr x9, [sp, #48]\n   ldr x10, [x27, #48]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #48]\n   ldr x9, [sp, #56]\n   ldr x10, [x27, #56]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #56]\n   ldr x9, [sp, #64]\n"
+    "ldr x10, [x27, #64]\n   eor x9, x9, x10\n   str x9, [sp, #64]\n"
+    "ldr x9, [sp, #72]\n   ldr x10, [x27, #72]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #72]\n   ldr x9, [sp, #80]\n   ldr x10, [x27, #80]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #80]\n   ldr x9, [sp, #88]\n"
+    "ldr x10, [x27, #88]\n   eor x9, x9, x10\n   str x9, [sp, #88]\n"
+    "ldr x9, [sp, #96]\n   ldr x10, [x27, #96]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #96]\n   ldr x9, [sp, #104]\n   ldr x10, [x27, #104]\n"
+    "eor x9, x9, x10\n   str x9, [sp, #104]\n   ldr x9, [sp, #112]\n"
+    "ldr x10, [x27, #112]\n   eor x9, x9, x10\n   str x9, [sp, #112]\n"
+    "ldr x9, [sp, #120]\n   ldr x10, [x27, #120]\n   eor x9, x9, x10\n"
+    "str x9, [sp, #120]\n"
+    ".Laes_ctr_arm64_words_next:\n"
+    "add x27, x27, #128\n   str x27, [sp, #192]\n   ldr x9, [sp, #184]\n"
+    "add x9, x9, #1\n   str x9, [sp, #184]\n   cmp x9, #11\n"
+    "b.ne .Laes_ctr_arm64_words_round\n   ldr x2, [sp, #152]\n   ldr x3, [sp, #160]\n"
+    "ldr x4, [sp, #168]\n   mov x0, #0x0101010101010101\n   ldr x19, [sp, #0]\n"
+    "ldr x5, [sp, #8]\n   ldr x20, [sp, #16]\n   ldr x6, [sp, #24]\n"
+    "ldr x21, [sp, #32]\n   ldr x7, [sp, #40]\n   ldr x22, [sp, #48]\n"
+    "ldr x8, [sp, #56]\n   ldr x23, [sp, #64]\n   ldr x13, [sp, #72]\n"
+    "ldr x24, [sp, #80]\n   ldr x14, [sp, #88]\n   ldr x25, [sp, #96]\n"
+    "ldr x15, [sp, #104]\n   ldr x26, [sp, #112]\n   ldr x16, [sp, #120]\n"
+    "mov x1, xzr\n"
+    ".Laes_ctr_arm64_words_stream:\n"
+    "cmp x1, x4\n   b.hs .Laes_ctr_arm64_words_stream_done\n   mov x9, xzr\n"
+    "mov x10, xzr\n   lsr x11, x19, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11\n   lsr x11, x5, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11\n   lsr x11, x20, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11, lsl #1\n   lsr x11, x6, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11, lsl #1\n   lsr x11, x21, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11, lsl #2\n   lsr x11, x7, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11, lsl #2\n   lsr x11, x22, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11, lsl #3\n   lsr x11, x8, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11, lsl #3\n   lsr x11, x23, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11, lsl #4\n   lsr x11, x13, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11, lsl #4\n   lsr x11, x24, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11, lsl #5\n   lsr x11, x14, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11, lsl #5\n   lsr x11, x25, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11, lsl #6\n   lsr x11, x15, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11, lsl #6\n   lsr x11, x26, x1\n   and x11, x11, x0\n"
+    "orr x9, x9, x11, lsl #7\n   lsr x11, x16, x1\n   and x11, x11, x0\n"
+    "orr x10, x10, x11, lsl #7\n   mov x12, xzr\n   ubfx x11, x9, #0, #8\n"
+    "orr x12, x12, x11\n   ubfx x11, x9, #32, #8\n   orr x12, x12, x11, lsl #8\n"
+    "ubfx x11, x10, #0, #8\n   orr x12, x12, x11, lsl #16\n   ubfx x11, x10, #32, #8\n"
+    "orr x12, x12, x11, lsl #24\n   ubfx x11, x9, #8, #8\n   orr x12, x12, x11, lsl #32\n"
+    "ubfx x11, x9, #40, #8\n   orr x12, x12, x11, lsl #40\n   ubfx x11, x10, #8, #8\n"
+    "orr x12, x12, x11, lsl #48\n   ubfx x11, x10, #40, #8\n   orr x12, x12, x11, lsl #56\n"
+    "ldr x11, [x2, #0]\n   eor x12, x12, x11\n   str x12, [x3, #0]\n"
+    "mov x12, xzr\n   ubfx x11, x9, #16, #8\n   orr x12, x12, x11\n"
+    "ubfx x11, x9, #48, #8\n   orr x12, x12, x11, lsl #8\n   ubfx x11, x10, #16, #8\n"
+    "orr x12, x12, x11, lsl #16\n   ubfx x11, x10, #48, #8\n   orr x12, x12, x11, lsl #24\n"
+    "ubfx x11, x9, #24, #8\n   orr x12, x12, x11, lsl #32\n   ubfx x11, x9, #56, #8\n"
+    "orr x12, x12, x11, lsl #40\n   ubfx x11, x10, #24, #8\n   orr x12, x12, x11, lsl #48\n"
+    "ubfx x11, x10, #56, #8\n   orr x12, x12, x11, lsl #56\n   ldr x11, [x2, #8]\n"
+    "eor x12, x12, x11\n   str x12, [x3, #8]\n   add x2, x2, #16\n"
+    "add x3, x3, #16\n   add x1, x1, #1\n   cmp x1, #8\n"
+    "b.lo .Laes_ctr_arm64_words_stream\n"
+    ".Laes_ctr_arm64_words_stream_done:\n"
+    "mov x9, #8\n   cmp x4, #8\n   csel x9, x4, x9, lo\n"
+    "ldr x10, [sp, #176]\n   add w10, w10, w9\n   str x10, [sp, #176]\n"
+    "subs x4, x4, x9\n   str x2, [sp, #152]\n   str x3, [sp, #160]\n"
+    "str x4, [sp, #168]\n   b.ne .Laes_ctr_arm64_words_turn\n   ldr x1, [sp, #144]\n"
+    "ldr x9, [sp, #176]\n   rev w9, w9\n   str w9, [x1, #12]\n"
+    "ldr x19, [sp, #200]\n   ldr x20, [sp, #208]\n   ldr x21, [sp, #216]\n"
+    "ldr x22, [sp, #224]\n   ldr x23, [sp, #232]\n   ldr x24, [sp, #240]\n"
+    "ldr x25, [sp, #248]\n   ldr x26, [sp, #256]\n   ldr x27, [sp, #264]\n"
+    "ldr x28, [sp, #272]\n   mov x9, sp\n   add x10, sp, #1696\n"
+    ".Laes_ctr_arm64_words_wipe:\n"
+    "stp xzr, xzr, [x9], #16\n   cmp x9, x10\n   b.lo .Laes_ctr_arm64_words_wipe\n"
+    "mov x0, xzr\n   mov x1, xzr\n   mov x2, xzr\n"
+    "mov x3, xzr\n   mov x4, xzr\n   mov x5, xzr\n"
+    "mov x6, xzr\n   mov x7, xzr\n   mov x8, xzr\n"
+    "mov x9, xzr\n   mov x10, xzr\n   mov x11, xzr\n"
+    "mov x12, xzr\n   mov x13, xzr\n   mov x14, xzr\n"
+    "mov x15, xzr\n   mov x16, xzr\n   mov x17, xzr\n"
+    "add sp, sp, #1696\n"
+    ASM_RET
+#else
+    "sub sp, sp, #1616\n   str d8, [sp, #1552]\n   str d9, [sp, #1560]\n"
+    "str d10, [sp, #1568]\n   str d11, [sp, #1576]\n   str d12, [sp, #1584]\n"
+    "str d13, [sp, #1592]\n   str d14, [sp, #1600]\n   str d15, [sp, #1608]\n"
+    "adrp x10, .Laes_ctr_arm64_floor_indices\n   add x10, x10, :lo12:.Laes_ctr_arm64_floor_indices\n   ldr q31, [x10]\n"
+    "ldr q30, [x10, #16]\n   ldr q1, [x1]\n   mov v1.s[3], wzr\n"
+    "tbl v1.16b, {v1.16b}, v30.16b\n   movi v18.16b, #1\n   movi v19.16b, #2\n"
+    "movi v20.16b, #4\n   movi v21.16b, #8\n   movi v22.16b, #16\n"
+    "movi v23.16b, #32\n   movi v24.16b, #64\n   movi v25.16b, #128\n"
+    "add x12, sp, #144\n   mov x13, x0\n   mov x14, #11\n"
+    ".Laes_ctr_arm64_floor_keys:\n"
+    "ldr q0, [x13], #16\n   tbl v0.16b, {v0.16b}, v30.16b\n   eor v0.16b, v0.16b, v1.16b\n"
+    "cmtst v3.16b, v0.16b, v18.16b\n   str q3, [x12, #0]\n   cmtst v3.16b, v0.16b, v19.16b\n"
+    "str q3, [x12, #16]\n   cmtst v3.16b, v0.16b, v20.16b\n   str q3, [x12, #32]\n"
+    "cmtst v3.16b, v0.16b, v21.16b\n   str q3, [x12, #48]\n   cmtst v3.16b, v0.16b, v22.16b\n"
+    "str q3, [x12, #64]\n   cmtst v3.16b, v0.16b, v23.16b\n   str q3, [x12, #80]\n"
+    "cmtst v3.16b, v0.16b, v24.16b\n   str q3, [x12, #96]\n   cmtst v3.16b, v0.16b, v25.16b\n"
+    "str q3, [x12, #112]\n   movi v1.16b, #0\n   add x12, x12, #128\n"
+    "subs x14, x14, #1\n   b.ne .Laes_ctr_arm64_floor_keys\n   ldr w11, [x1, #12]\n"
+    "rev w11, w11\n"
+    ".Laes_ctr_arm64_floor_turn:\n"
+    "adrp x10, .Laes_ctr_arm64_floor_indices\n   add x10, x10, :lo12:.Laes_ctr_arm64_floor_indices\n   ldr q28, [x10, #32]\n"
+    "ldr q29, [x10, #48]\n   ldr q27, [x10, #64]\n   dup v4.4s, w11\n"
+    "add v5.4s, v4.4s, v28.4s\n   add v6.4s, v4.4s, v29.4s\n   rev32 v5.16b, v5.16b\n"
+    "rev32 v6.16b, v6.16b\n   uzp1 v7.16b, v5.16b, v6.16b\n   uzp2 v8.16b, v5.16b, v6.16b\n"
+    "uzp1 v12.16b, v7.16b, v7.16b\n   uzp1 v13.16b, v8.16b, v8.16b\n   uzp2 v14.16b, v7.16b, v7.16b\n"
+    "uzp2 v15.16b, v8.16b, v8.16b\n   movi v18.16b, #1\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #144]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #0]\n   movi v18.16b, #2\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #160]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #16]\n   movi v18.16b, #4\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #176]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #32]\n   movi v18.16b, #8\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #192]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #48]\n   movi v18.16b, #16\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #208]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #64]\n   movi v18.16b, #32\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #224]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #80]\n   movi v18.16b, #64\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #240]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #96]\n   movi v18.16b, #128\n   movi v9.16b, #0\n"
+    "cmtst v10.16b, v12.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[3], v10.b[0]\n   cmtst v10.16b, v13.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n"
+    "addv b10, v10.16b\n   mov v9.b[7], v10.b[0]\n   cmtst v10.16b, v14.16b, v18.16b\n"
+    "and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n   mov v9.b[11], v10.b[0]\n"
+    "cmtst v10.16b, v15.16b, v18.16b\n   and v10.16b, v10.16b, v27.16b\n   addv b10, v10.16b\n"
+    "mov v9.b[15], v10.b[0]\n   ldr q10, [sp, #256]\n   eor v9.16b, v9.16b, v10.16b\n"
+    "str q9, [sp, #112]\n   add x12, sp, #272\n   mov x13, #1\n"
+    ".Laes_ctr_arm64_floor_round:\n"
+    "ldr q0, [sp, #112]\n   ldr q1, [sp, #64]\n   eor v2.16b, v0.16b, v1.16b\n"
+    "ldr q3, [sp, #32]\n   eor v4.16b, v0.16b, v3.16b\n   ldr q5, [sp, #16]\n"
+    "eor v6.16b, v0.16b, v5.16b\n   eor v7.16b, v1.16b, v3.16b\n   ldr q8, [sp, #48]\n"
+    "eor v9.16b, v8.16b, v5.16b\n   eor v10.16b, v2.16b, v9.16b\n   ldr q11, [sp, #96]\n"
+    "ldr q12, [sp, #80]\n   eor v13.16b, v11.16b, v12.16b\n   ldr q14, [sp, #0]\n"
+    "eor v15.16b, v14.16b, v10.16b\n   eor v16.16b, v14.16b, v13.16b\n   eor v17.16b, v10.16b, v13.16b\n"
+    "eor v18.16b, v11.16b, v3.16b\n   eor v19.16b, v12.16b, v3.16b\n   eor v20.16b, v6.16b, v7.16b\n"
+    "eor v21.16b, v10.16b, v18.16b\n   eor v22.16b, v9.16b, v18.16b\n   eor v23.16b, v9.16b, v19.16b\n"
+    "eor v24.16b, v16.16b, v23.16b\n   eor v25.16b, v1.16b, v14.16b\n   eor v26.16b, v13.16b, v25.16b\n"
+    "eor v27.16b, v2.16b, v26.16b\n   eor v28.16b, v5.16b, v14.16b\n   eor v29.16b, v13.16b, v28.16b\n"
+    "eor v0.16b, v4.16b, v29.16b\n   eor v8.16b, v4.16b, v17.16b\n   eor v11.16b, v27.16b, v24.16b\n"
+    "eor v12.16b, v6.16b, v23.16b\n   eor v3.16b, v2.16b, v19.16b\n   and v18.16b, v20.16b, v10.16b\n"
+    "and v9.16b, v0.16b, v15.16b\n   eor v1.16b, v21.16b, v18.16b\n   and v25.16b, v26.16b, v14.16b\n"
+    "eor v5.16b, v25.16b, v18.16b\n   and v13.16b, v6.16b, v23.16b\n   and v28.16b, v29.16b, v16.16b\n"
+    "eor v19.16b, v12.16b, v13.16b\n   and v21.16b, v27.16b, v24.16b\n   eor v25.16b, v21.16b, v13.16b\n"
+    "and v18.16b, v2.16b, v22.16b\n   and v12.16b, v7.16b, v3.16b\n   eor v21.16b, v12.16b, v18.16b\n"
+    "and v13.16b, v4.16b, v17.16b\n   eor v12.16b, v13.16b, v18.16b\n   eor v13.16b, v1.16b, v9.16b\n"
+    "eor v18.16b, v5.16b, v8.16b\n   eor v1.16b, v19.16b, v28.16b\n   eor v9.16b, v25.16b, v12.16b\n"
+    "eor v5.16b, v13.16b, v21.16b\n   eor v8.16b, v18.16b, v12.16b\n   eor v19.16b, v1.16b, v21.16b\n"
+    "eor v28.16b, v9.16b, v11.16b\n   eor v25.16b, v19.16b, v28.16b\n   and v13.16b, v19.16b, v5.16b\n"
+    "eor v18.16b, v8.16b, v13.16b\n   eor v12.16b, v5.16b, v8.16b\n   eor v1.16b, v28.16b, v13.16b\n"
+    "and v21.16b, v1.16b, v12.16b\n   and v9.16b, v18.16b, v25.16b\n   and v11.16b, v5.16b, v28.16b\n"
+    "and v1.16b, v12.16b, v11.16b\n   eor v18.16b, v12.16b, v13.16b\n   and v5.16b, v8.16b, v19.16b\n"
+    "and v11.16b, v25.16b, v5.16b\n   eor v12.16b, v25.16b, v13.16b\n   eor v19.16b, v8.16b, v21.16b\n"
+    "eor v5.16b, v1.16b, v18.16b\n   eor v25.16b, v28.16b, v9.16b\n   eor v13.16b, v11.16b, v12.16b\n"
+    "eor v8.16b, v5.16b, v13.16b\n   eor v21.16b, v19.16b, v25.16b\n   eor v1.16b, v19.16b, v5.16b\n"
+    "eor v18.16b, v25.16b, v13.16b\n   eor v28.16b, v21.16b, v8.16b\n   and v9.16b, v18.16b, v10.16b\n"
+    "and v11.16b, v13.16b, v15.16b\n   and v12.16b, v25.16b, v14.16b\n   and v10.16b, v1.16b, v23.16b\n"
+    "and v15.16b, v5.16b, v16.16b\n   and v14.16b, v19.16b, v24.16b\n   and v23.16b, v21.16b, v22.16b\n"
+    "and v16.16b, v28.16b, v3.16b\n   and v24.16b, v8.16b, v17.16b\n   and v22.16b, v18.16b, v20.16b\n"
+    "and v3.16b, v13.16b, v0.16b\n   and v17.16b, v25.16b, v26.16b\n   and v18.16b, v1.16b, v6.16b\n"
+    "and v20.16b, v5.16b, v29.16b\n   and v13.16b, v19.16b, v27.16b\n   and v0.16b, v21.16b, v2.16b\n"
+    "and v25.16b, v28.16b, v7.16b\n   and v26.16b, v8.16b, v4.16b\n   eor v1.16b, v0.16b, v25.16b\n"
+    "eor v6.16b, v15.16b, v3.16b\n   eor v5.16b, v9.16b, v12.16b\n   eor v29.16b, v11.16b, v22.16b\n"
+    "eor v19.16b, v24.16b, v18.16b\n   eor v27.16b, v10.16b, v0.16b\n   eor v21.16b, v25.16b, v27.16b\n"
+    "eor v2.16b, v9.16b, v29.16b\n   eor v28.16b, v14.16b, v20.16b\n   eor v7.16b, v23.16b, v16.16b\n"
+    "eor v8.16b, v16.16b, v19.16b\n   eor v4.16b, v13.16b, v5.16b\n   eor v11.16b, v12.16b, v14.16b\n"
+    "eor v24.16b, v15.16b, v1.16b\n   eor v10.16b, v23.16b, v0.16b\n   eor v25.16b, v22.16b, v6.16b\n"
+    "eor v27.16b, v3.16b, v1.16b\n   eor v9.16b, v17.16b, v6.16b\n   eor v20.16b, v18.16b, v28.16b\n"
+    "eor v16.16b, v26.16b, v19.16b\n   eor v13.16b, v1.16b, v6.16b\n   eor v12.16b, v6.16b, v2.16b\n"
+    "eor v14.16b, v29.16b, v11.16b\n   eor v15.16b, v20.16b, v5.16b\n   eor v23.16b, v25.16b, v7.16b\n"
+    "eor v0.16b, v21.16b, v8.16b\n   eor v22.16b, v2.16b, v7.16b\n   eor v3.16b, v28.16b, v8.16b\n"
+    "eor v17.16b, v4.16b, v10.16b\n   eor v18.16b, v4.16b, v9.16b\n   eor v26.16b, v21.16b, v23.16b\n"
+    "str q26, [sp, #112]\n   eor v19.16b, v27.16b, v22.16b\n   mvn v19.16b, v19.16b\n"
+    "str q19, [sp, #96]\n   eor v1.16b, v16.16b, v17.16b\n   mvn v1.16b, v1.16b\n"
+    "str q1, [sp, #80]\n   eor v6.16b, v21.16b, v12.16b\n   str q6, [sp, #64]\n"
+    "eor v29.16b, v13.16b, v14.16b\n   str q29, [sp, #48]\n   eor v11.16b, v0.16b, v18.16b\n"
+    "str q11, [sp, #32]\n   eor v20.16b, v24.16b, v3.16b\n   mvn v20.16b, v20.16b\n"
+    "str q20, [sp, #16]\n   eor v5.16b, v21.16b, v15.16b\n   mvn v5.16b, v5.16b\n"
+    "str q5, [sp, #0]\n   ldr q0, [sp, #0]\n   tbl v0.16b, {v0.16b}, v31.16b\n"
+    "ldr q1, [sp, #16]\n   tbl v1.16b, {v1.16b}, v31.16b\n   ldr q2, [sp, #32]\n"
+    "tbl v2.16b, {v2.16b}, v31.16b\n   ldr q3, [sp, #48]\n   tbl v3.16b, {v3.16b}, v31.16b\n"
+    "ldr q4, [sp, #64]\n   tbl v4.16b, {v4.16b}, v31.16b\n   ldr q5, [sp, #80]\n"
+    "tbl v5.16b, {v5.16b}, v31.16b\n   ldr q6, [sp, #96]\n   tbl v6.16b, {v6.16b}, v31.16b\n"
+    "ldr q7, [sp, #112]\n   tbl v7.16b, {v7.16b}, v31.16b\n   cmp x13, #10\n"
+    "b.eq .Laes_ctr_arm64_floor_last\n   ext v16.16b, v0.16b, v0.16b, #4\n   eor v16.16b, v16.16b, v0.16b\n"
+    "ext v17.16b, v1.16b, v1.16b, #4\n   eor v17.16b, v17.16b, v1.16b\n   ext v18.16b, v2.16b, v2.16b, #4\n"
+    "eor v18.16b, v18.16b, v2.16b\n   ext v19.16b, v3.16b, v3.16b, #4\n   eor v19.16b, v19.16b, v3.16b\n"
+    "ext v20.16b, v4.16b, v4.16b, #4\n   eor v20.16b, v20.16b, v4.16b\n   ext v21.16b, v5.16b, v5.16b, #4\n"
+    "eor v21.16b, v21.16b, v5.16b\n   ext v22.16b, v6.16b, v6.16b, #4\n   eor v22.16b, v22.16b, v6.16b\n"
+    "ext v23.16b, v7.16b, v7.16b, #4\n   eor v23.16b, v23.16b, v7.16b\n   ext v24.16b, v16.16b, v16.16b, #8\n"
+    "eor v24.16b, v24.16b, v16.16b\n   ldr q25, [x12, #0]\n   eor v0.16b, v0.16b, v24.16b\n"
+    "eor v0.16b, v0.16b, v25.16b\n   eor v0.16b, v0.16b, v23.16b\n   str q0, [sp, #0]\n"
+    "ext v24.16b, v17.16b, v17.16b, #8\n   eor v24.16b, v24.16b, v17.16b\n   ldr q25, [x12, #16]\n"
+    "eor v1.16b, v1.16b, v24.16b\n   eor v1.16b, v1.16b, v25.16b\n   eor v1.16b, v1.16b, v16.16b\n"
+    "eor v1.16b, v1.16b, v23.16b\n   str q1, [sp, #16]\n   ext v24.16b, v18.16b, v18.16b, #8\n"
+    "eor v24.16b, v24.16b, v18.16b\n   ldr q25, [x12, #32]\n   eor v2.16b, v2.16b, v24.16b\n"
+    "eor v2.16b, v2.16b, v25.16b\n   eor v2.16b, v2.16b, v17.16b\n   str q2, [sp, #32]\n"
+    "ext v24.16b, v19.16b, v19.16b, #8\n   eor v24.16b, v24.16b, v19.16b\n   ldr q25, [x12, #48]\n"
+    "eor v3.16b, v3.16b, v24.16b\n   eor v3.16b, v3.16b, v25.16b\n   eor v3.16b, v3.16b, v18.16b\n"
+    "eor v3.16b, v3.16b, v23.16b\n   str q3, [sp, #48]\n   ext v24.16b, v20.16b, v20.16b, #8\n"
+    "eor v24.16b, v24.16b, v20.16b\n   ldr q25, [x12, #64]\n   eor v4.16b, v4.16b, v24.16b\n"
+    "eor v4.16b, v4.16b, v25.16b\n   eor v4.16b, v4.16b, v19.16b\n   eor v4.16b, v4.16b, v23.16b\n"
+    "str q4, [sp, #64]\n   ext v24.16b, v21.16b, v21.16b, #8\n   eor v24.16b, v24.16b, v21.16b\n"
+    "ldr q25, [x12, #80]\n   eor v5.16b, v5.16b, v24.16b\n   eor v5.16b, v5.16b, v25.16b\n"
+    "eor v5.16b, v5.16b, v20.16b\n   str q5, [sp, #80]\n   ext v24.16b, v22.16b, v22.16b, #8\n"
+    "eor v24.16b, v24.16b, v22.16b\n   ldr q25, [x12, #96]\n   eor v6.16b, v6.16b, v24.16b\n"
+    "eor v6.16b, v6.16b, v25.16b\n   eor v6.16b, v6.16b, v21.16b\n   str q6, [sp, #96]\n"
+    "ext v24.16b, v23.16b, v23.16b, #8\n   eor v24.16b, v24.16b, v23.16b\n   ldr q25, [x12, #112]\n"
+    "eor v7.16b, v7.16b, v24.16b\n   eor v7.16b, v7.16b, v25.16b\n   eor v7.16b, v7.16b, v22.16b\n"
+    "str q7, [sp, #112]\n   b .Laes_ctr_arm64_floor_next\n"
+    ".Laes_ctr_arm64_floor_last:\n"
+    "ldr q25, [x12, #0]\n   eor v0.16b, v0.16b, v25.16b\n   str q0, [sp, #0]\n"
+    "ldr q25, [x12, #16]\n   eor v1.16b, v1.16b, v25.16b\n   str q1, [sp, #16]\n"
+    "ldr q25, [x12, #32]\n   eor v2.16b, v2.16b, v25.16b\n   str q2, [sp, #32]\n"
+    "ldr q25, [x12, #48]\n   eor v3.16b, v3.16b, v25.16b\n   str q3, [sp, #48]\n"
+    "ldr q25, [x12, #64]\n   eor v4.16b, v4.16b, v25.16b\n   str q4, [sp, #64]\n"
+    "ldr q25, [x12, #80]\n   eor v5.16b, v5.16b, v25.16b\n   str q5, [sp, #80]\n"
+    "ldr q25, [x12, #96]\n   eor v6.16b, v6.16b, v25.16b\n   str q6, [sp, #96]\n"
+    "ldr q25, [x12, #112]\n   eor v7.16b, v7.16b, v25.16b\n   str q7, [sp, #112]\n"
+    ".Laes_ctr_arm64_floor_next:\n"
+    "add x12, x12, #128\n   add x13, x13, #1\n   cmp x13, #11\n"
+    "b.ne .Laes_ctr_arm64_floor_round\n   movi v18.16b, #1\n   movi v19.16b, #2\n"
+    "movi v20.16b, #4\n   movi v21.16b, #8\n   movi v22.16b, #16\n"
+    "movi v23.16b, #32\n   movi v24.16b, #64\n   movi v25.16b, #128\n"
+    "movi v17.16b, #1\n   mov x14, xzr\n"
+    ".Laes_ctr_arm64_floor_stream:\n"
+    "cmp x4, x14\n   b.ls .Laes_ctr_arm64_floor_stream_done\n   movi v26.16b, #0\n"
+    "cmtst v27.16b, v0.16b, v17.16b\n   and v27.16b, v27.16b, v18.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "cmtst v27.16b, v1.16b, v17.16b\n   and v27.16b, v27.16b, v19.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "cmtst v27.16b, v2.16b, v17.16b\n   and v27.16b, v27.16b, v20.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "cmtst v27.16b, v3.16b, v17.16b\n   and v27.16b, v27.16b, v21.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "cmtst v27.16b, v4.16b, v17.16b\n   and v27.16b, v27.16b, v22.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "cmtst v27.16b, v5.16b, v17.16b\n   and v27.16b, v27.16b, v23.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "cmtst v27.16b, v6.16b, v17.16b\n   and v27.16b, v27.16b, v24.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "cmtst v27.16b, v7.16b, v17.16b\n   and v27.16b, v27.16b, v25.16b\n   orr v26.16b, v26.16b, v27.16b\n"
+    "tbl v26.16b, {v26.16b}, v30.16b\n   ldr q27, [x2], #16\n   eor v26.16b, v26.16b, v27.16b\n"
+    "str q26, [x3], #16\n   add v17.16b, v17.16b, v17.16b\n   add x14, x14, #1\n"
+    "cmp x14, #8\n   b.lo .Laes_ctr_arm64_floor_stream\n"
+    ".Laes_ctr_arm64_floor_stream_done:\n"
+    "mov x14, #8\n   cmp x4, #8\n   csel x14, x4, x14, lo\n"
+    "add w11, w11, w14\n   subs x4, x4, x14\n   b.ne .Laes_ctr_arm64_floor_turn\n"
+    "rev w9, w11\n   str w9, [x1, #12]\n   mov x9, sp\n"
+    "add x10, sp, #1552\n"
+    ".Laes_ctr_arm64_floor_wipe:\n"
+    "stp xzr, xzr, [x9], #16\n   cmp x9, x10\n   b.lo .Laes_ctr_arm64_floor_wipe\n"
+    "ldr d8, [sp, #1552]\n   ldr d9, [sp, #1560]\n   ldr d10, [sp, #1568]\n"
+    "ldr d11, [sp, #1576]\n   ldr d12, [sp, #1584]\n   ldr d13, [sp, #1592]\n"
+    "ldr d14, [sp, #1600]\n   ldr d15, [sp, #1608]\n   movi v0.16b, #0\n"
+    "movi v1.16b, #0\n   movi v2.16b, #0\n   movi v3.16b, #0\n"
+    "movi v4.16b, #0\n   movi v5.16b, #0\n   movi v6.16b, #0\n"
+    "movi v7.16b, #0\n   movi v16.16b, #0\n   movi v17.16b, #0\n"
+    "movi v18.16b, #0\n   movi v19.16b, #0\n   movi v20.16b, #0\n"
+    "movi v21.16b, #0\n   movi v22.16b, #0\n   movi v23.16b, #0\n"
+    "movi v24.16b, #0\n   movi v25.16b, #0\n   movi v26.16b, #0\n"
+    "movi v27.16b, #0\n   movi v28.16b, #0\n   movi v29.16b, #0\n"
+    "movi v30.16b, #0\n   movi v31.16b, #0\n   mov x9, xzr\n"
+    "mov x10, xzr\n   mov x11, xzr\n   mov x14, xzr\n"
+    "add sp, sp, #1616\n"
+    ASM_RET
+#endif
+    ".Laes_ctr_arm64_none:\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".section .rodata\n"
+    ".balign 16\n"
+    ".Laes_ctr_arm64_floor_indices:\n"
+    ".byte 0, 1, 2, 3, 5, 6, 7, 4, 10, 11, 8, 9, 15, 12, 13, 14\n"
+    ".byte 0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15\n"
+    ".long 0, 1, 2, 3\n"
+    ".long 4, 5, 6, 7\n"
+    ".byte 1, 2, 4, 8, 16, 32, 64, 128, 0, 0, 0, 0, 0, 0, 0, 0\n"
+    ASM_SECTION
+#endif
+    ASM_END(aes128_ctr_blocks)
+
+    // See the x86_64 bodies for the reductions. mul and umulh leave the
+    // flags alone, so a row feeds its low products into one adcs chain and
+    // its high products into the next through a single scratch register,
+    // and there are registers for every limb, so P-384's square reduces in
+    // place. On the M2 Pro, ns a call: p256_multiply 9.7 (OpenSSL armv8
+    // 10.8, the C under clang -O2 34.4), p256_square 7.2 (7.3),
+    // p384_multiply 26.5 (OpenSSL bn_mul_mont 42.4, C 60.2), p384_square
+    // 21.7, add and subtract 1.3 to 2.4. x18 is left alone.
+    ASM_FUNC(p256_multiply)
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    "mov x7, xzr\n"
+    "mov x8, xzr\n"
+    "mov x9, xzr\n"
+    "mov x10, xzr\n"
+    "mov x11, xzr\n"
+    FIELD_ARM64_P256_ROW("0", "x7", "x8", "x9", "x10", "x11", "x12")
+    FIELD_ARM64_P256_ROW("8", "x8", "x9", "x10", "x11", "x12", "x7")
+    FIELD_ARM64_P256_ROW("16", "x9", "x10", "x11", "x12", "x7", "x8")
+    FIELD_ARM64_P256_ROW("24", "x10", "x11", "x12", "x7", "x8", "x9")
+    FIELD_ARM64_P256_FINAL("x11", "x12", "x7", "x8", "x9")
+    // Square: the six cross products once, doubled, plus the four squares, then
+    // four separate reduction steps and the high half added back.
+    ASM_END(p256_multiply)
+    ASM_FUNC(p256_square)
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    // t1..t6 in x8..x13
+    "mul x8, x3, x4\n"
+    "mul x9, x3, x5\n"
+    "mul x10, x3, x6\n"
+    "umulh x14, x3, x4\n"
+    "umulh x15, x3, x5\n"
+    "umulh x11, x3, x6\n"
+    "adds x9, x9, x14\n"
+    "adcs x10, x10, x15\n"
+    "adc x11, x11, xzr\n"
+    "mul x14, x4, x5\n"
+    "mul x15, x4, x6\n"
+    "umulh x16, x4, x5\n"
+    "umulh x12, x4, x6\n"
+    "adds x15, x15, x16\n"
+    "adc x12, x12, xzr\n"
+    "adds x10, x10, x14\n"
+    "adcs x11, x11, x15\n"
+    "adc x12, x12, xzr\n"
+    "mul x14, x5, x6\n"
+    "umulh x13, x5, x6\n"
+    "adds x12, x12, x14\n"
+    "adc x13, x13, xzr\n"
+    // double into t1..t7 (x8..x13, x2)
+    "adds x8, x8, x8\n"
+    "adcs x9, x9, x9\n"
+    "adcs x10, x10, x10\n"
+    "adcs x11, x11, x11\n"
+    "adcs x12, x12, x12\n"
+    "adcs x13, x13, x13\n"
+    "adc x2, xzr, xzr\n"
+    // squares: t0 in x7
+    "mul x7, x3, x3\n"
+    "umulh x14, x3, x3\n"
+    "mul x15, x4, x4\n"
+    "umulh x16, x4, x4\n"
+    "adds x8, x8, x14\n"
+    "adcs x9, x9, x15\n"
+    "adcs x10, x10, x16\n"
+    "mul x14, x5, x5\n"
+    "umulh x15, x5, x5\n"
+    "mul x16, x6, x6\n"
+    "umulh x17, x6, x6\n"
+    "adcs x11, x11, x14\n"
+    "adcs x12, x12, x15\n"
+    "adcs x13, x13, x16\n"
+    "adc x2, x2, x17\n"
+    FIELD_ARM64_P256_REDUCE("x7", "x8", "x9", "x10")
+    FIELD_ARM64_P256_REDUCE("x8", "x9", "x10", "x7")
+    FIELD_ARM64_P256_REDUCE("x9", "x10", "x7", "x8")
+    FIELD_ARM64_P256_REDUCE("x10", "x7", "x8", "x9")
+    "adds x7, x7, x11\n"
+    "adcs x8, x8, x12\n"
+    "adcs x9, x9, x13\n"
+    "adcs x10, x10, x2\n"
+    "adc x11, xzr, xzr\n"
+    FIELD_ARM64_P256_FINAL("x7", "x8", "x9", "x10", "x11")
+    ASM_END(p256_square)
+    ASM_FUNC(p256_add)
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    "ldp x7, x8, [x2]\n"
+    "ldp x9, x10, [x2, #16]\n"
+    "adds x7, x3, x7\n"
+    "adcs x8, x4, x8\n"
+    "adcs x9, x5, x9\n"
+    "adcs x10, x6, x10\n"
+    "adc x11, xzr, xzr\n"
+    FIELD_ARM64_P256_FINAL("x7", "x8", "x9", "x10", "x11")
+    // a - b, then p added back under the borrow's mask: p0 & m = m,
+    // p1 & m = m >> 32, p3 & m = m ^ (p1 & m) with bit 0 from m.
+    ASM_END(p256_add)
+    ASM_FUNC(p256_subtract)
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    "ldp x7, x8, [x2]\n"
+    "ldp x9, x10, [x2, #16]\n"
+    "subs x3, x3, x7\n"
+    "sbcs x4, x4, x8\n"
+    "sbcs x5, x5, x9\n"
+    "sbcs x6, x6, x10\n"
+    "sbc x11, xzr, xzr\n"
+    "lsr x12, x11, #32\n"
+    "lsl x13, x11, #32\n"
+    "sub x13, x13, x11\n"
+    "adds x3, x3, x11\n"
+    "adcs x4, x4, x12\n"
+    "adcs x5, x5, xzr\n"
+    "adc x6, x6, x13\n"
+    "stp x3, x4, [x0]\n"
+    "stp x5, x6, [x0, #16]\n"
+    ASM_RET
+    // ---------------------------------------------------------------------------
+    // P-384, interleaved.  q = w0 (2^32 + 1).  T + q p adds q 2^32 (w0, w1) and
+    // q 2^384 (w6), then subtracts q, q 2^96 and q 2^128 (w0, w1, and q + q>>32
+    // with its carry at w2, w3).  w0 ends zero; the window moves up a register.
+    // Separate reduction step on a six-limb window, new top limb into tp.
+    // (r0..r5, top) - p, kept when it does not borrow.  Limbs of p that are all
+    // ones subtract as adcs of zero.  Uses x1 and x3..x8.
+    ASM_END(p256_subtract)
+    ASM_FUNC(p384_multiply)
+    "stp x19, x20, [sp, #-16]!\n"
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    "ldp x7, x8, [x1, #32]\n"
+    "mov x9, xzr\n"
+    "mov x10, xzr\n"
+    "mov x11, xzr\n"
+    "mov x12, xzr\n"
+    "mov x13, xzr\n"
+    "mov x14, xzr\n"
+    "mov x15, xzr\n"
+    "mov x16, xzr\n"
+    FIELD_ARM64_P384_ROW("0", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16")
+    FIELD_ARM64_P384_ROW("8", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x9")
+    FIELD_ARM64_P384_ROW("16", "x11", "x12", "x13", "x14", "x15", "x16", "x9", "x10")
+    FIELD_ARM64_P384_ROW("24", "x12", "x13", "x14", "x15", "x16", "x9", "x10", "x11")
+    FIELD_ARM64_P384_ROW("32", "x13", "x14", "x15", "x16", "x9", "x10", "x11", "x12")
+    FIELD_ARM64_P384_ROW("40", "x14", "x15", "x16", "x9", "x10", "x11", "x12", "x13")
+    FIELD_ARM64_P384_FINAL("x15", "x16", "x9", "x10", "x11", "x12", "x13")
+    "ldp x19, x20, [sp], #16\n"
+    ASM_RET
+    // Square: fifteen cross products, doubled, six squares, then six separate
+    // reduction steps and the high half added back.  t0..t11 in x7, x9..x16,
+    // x2, x21, x22.
+    ASM_END(p384_multiply)
+    ASM_FUNC(p384_square)
+    "stp x19, x20, [sp, #-32]!\n"
+    "stp x21, x22, [sp, #16]\n"
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    "ldp x7, x8, [x1, #32]\n"
+    // row a0: t1..t6 into x9..x14
+    "mul x9, x3, x4\n"
+    "mul x10, x3, x5\n"
+    "mul x11, x3, x6\n"
+    "mul x12, x3, x7\n"
+    "mul x13, x3, x8\n"
+    "umulh x1, x3, x4\n"
+    "adds x10, x10, x1\n"
+    "umulh x1, x3, x5\n"
+    "adcs x11, x11, x1\n"
+    "umulh x1, x3, x6\n"
+    "adcs x12, x12, x1\n"
+    "umulh x1, x3, x7\n"
+    "adcs x13, x13, x1\n"
+    "umulh x1, x3, x8\n"
+    "adc x14, x1, xzr\n"
+    // row a1: into t3..t7 (x11..x15)
+    "mul x1, x4, x5\n"
+    "adds x11, x11, x1\n"
+    "mul x1, x4, x6\n"
+    "adcs x12, x12, x1\n"
+    "mul x1, x4, x7\n"
+    "adcs x13, x13, x1\n"
+    "mul x1, x4, x8\n"
+    "adcs x14, x14, x1\n"
+    "adc x15, xzr, xzr\n"
+    "umulh x1, x4, x5\n"
+    "adds x12, x12, x1\n"
+    "umulh x1, x4, x6\n"
+    "adcs x13, x13, x1\n"
+    "umulh x1, x4, x7\n"
+    "adcs x14, x14, x1\n"
+    "umulh x1, x4, x8\n"
+    "adc x15, x15, x1\n"
+    // row a2: into t5..t8 (x13..x16)
+    "mul x1, x5, x6\n"
+    "adds x13, x13, x1\n"
+    "mul x1, x5, x7\n"
+    "adcs x14, x14, x1\n"
+    "mul x1, x5, x8\n"
+    "adcs x15, x15, x1\n"
+    "adc x16, xzr, xzr\n"
+    "umulh x1, x5, x6\n"
+    "adds x14, x14, x1\n"
+    "umulh x1, x5, x7\n"
+    "adcs x15, x15, x1\n"
+    "umulh x1, x5, x8\n"
+    "adc x16, x16, x1\n"
+    // row a3: into t7..t9 (x15, x16, x2)
+    "mul x1, x6, x7\n"
+    "adds x15, x15, x1\n"
+    "mul x1, x6, x8\n"
+    "adcs x16, x16, x1\n"
+    "adc x2, xzr, xzr\n"
+    "umulh x1, x6, x7\n"
+    "adds x16, x16, x1\n"
+    "umulh x1, x6, x8\n"
+    "adc x2, x2, x1\n"
+    // row a4: into t9, t10 (x2, x21)
+    "mul x1, x7, x8\n"
+    "umulh x21, x7, x8\n"
+    "adds x2, x2, x1\n"
+    "adc x21, x21, xzr\n"
+    // double t1..t10, t11 in x22
+    "adds x9, x9, x9\n"
+    "adcs x10, x10, x10\n"
+    "adcs x11, x11, x11\n"
+    "adcs x12, x12, x12\n"
+    "adcs x13, x13, x13\n"
+    "adcs x14, x14, x14\n"
+    "adcs x15, x15, x15\n"
+    "adcs x16, x16, x16\n"
+    "adcs x2, x2, x2\n"
+    "adcs x21, x21, x21\n"
+    "adc x22, xzr, xzr\n"
+    // squares; t0 into x17
+    "mul x17, x3, x3\n"
+    "umulh x1, x3, x3\n"
+    "adds x9, x9, x1\n"
+    "mul x1, x4, x4\n"
+    "adcs x10, x10, x1\n"
+    "umulh x1, x4, x4\n"
+    "adcs x11, x11, x1\n"
+    "mul x1, x5, x5\n"
+    "adcs x12, x12, x1\n"
+    "umulh x1, x5, x5\n"
+    "adcs x13, x13, x1\n"
+    "mul x1, x6, x6\n"
+    "adcs x14, x14, x1\n"
+    "umulh x1, x6, x6\n"
+    "adcs x15, x15, x1\n"
+    "mul x1, x7, x7\n"
+    "adcs x16, x16, x1\n"
+    "umulh x1, x7, x7\n"
+    "adcs x2, x2, x1\n"
+    "mul x1, x8, x8\n"
+    "adcs x21, x21, x1\n"
+    "umulh x1, x8, x8\n"
+    "adc x22, x22, x1\n"
+    // high half t6..t11 = x14 x15 x16 x2 x21 x22 into x3..x8
+    "mov x3, x14\n"
+    "mov x4, x15\n"
+    "mov x5, x16\n"
+    "mov x6, x2\n"
+    "mov x7, x21\n"
+    "mov x8, x22\n"
+    // window t0..t5 = x17? — reduction uses x1, x17, x19, x20 as temps,
+    // so move t0 to x14 first.
+    "mov x14, x17\n"
+    FIELD_ARM64_P384_REDUCE("x14", "x9", "x10", "x11", "x12", "x13", "x15")
+    FIELD_ARM64_P384_REDUCE("x9", "x10", "x11", "x12", "x13", "x15", "x14")
+    FIELD_ARM64_P384_REDUCE("x10", "x11", "x12", "x13", "x15", "x14", "x9")
+    FIELD_ARM64_P384_REDUCE("x11", "x12", "x13", "x15", "x14", "x9", "x10")
+    FIELD_ARM64_P384_REDUCE("x12", "x13", "x15", "x14", "x9", "x10", "x11")
+    FIELD_ARM64_P384_REDUCE("x13", "x15", "x14", "x9", "x10", "x11", "x12")
+    // window x15 x14 x9 x10 x11 x12, add high half, carry into x13
+    "adds x15, x15, x3\n"
+    "adcs x14, x14, x4\n"
+    "adcs x9, x9, x5\n"
+    "adcs x10, x10, x6\n"
+    "adcs x11, x11, x7\n"
+    "adcs x12, x12, x8\n"
+    "adc x13, xzr, xzr\n"
+    FIELD_ARM64_P384_FINAL("x15", "x14", "x9", "x10", "x11", "x12", "x13")
+    "ldp x21, x22, [sp, #16]\n"
+    "ldp x19, x20, [sp], #32\n"
+    ASM_RET
+    ASM_END(p384_square)
+    ASM_FUNC(p384_add)
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    "ldp x7, x8, [x1, #32]\n"
+    "ldp x9, x10, [x2]\n"
+    "ldp x11, x12, [x2, #16]\n"
+    "ldp x13, x14, [x2, #32]\n"
+    "adds x9, x3, x9\n"
+    "adcs x10, x4, x10\n"
+    "adcs x11, x5, x11\n"
+    "adcs x12, x6, x12\n"
+    "adcs x13, x7, x13\n"
+    "adcs x14, x8, x14\n"
+    "adc x15, xzr, xzr\n"
+    FIELD_ARM64_P384_FINAL("x9", "x10", "x11", "x12", "x13", "x14", "x15")
+    ASM_RET
+    // a - b, then p added back under the borrow's mask m:
+    // p0 & m = m >> 32, p1 & m = m ^ (m >> 32), p2 & m = m << 1, p3..p5 & m = m.
+    ASM_END(p384_add)
+    ASM_FUNC(p384_subtract)
+    "ldp x3, x4, [x1]\n"
+    "ldp x5, x6, [x1, #16]\n"
+    "ldp x7, x8, [x1, #32]\n"
+    "ldp x9, x10, [x2]\n"
+    "ldp x11, x12, [x2, #16]\n"
+    "ldp x13, x14, [x2, #32]\n"
+    "subs x3, x3, x9\n"
+    "sbcs x4, x4, x10\n"
+    "sbcs x5, x5, x11\n"
+    "sbcs x6, x6, x12\n"
+    "sbcs x7, x7, x13\n"
+    "sbcs x8, x8, x14\n"
+    "sbc x15, xzr, xzr\n"
+    "lsr x16, x15, #32\n"
+    "eor x17, x15, x16\n"
+    "lsl x1, x15, #1\n"
+    "adds x3, x3, x16\n"
+    "adcs x4, x4, x17\n"
+    "adcs x5, x5, x1\n"
+    "adcs x6, x6, x15\n"
+    "adcs x7, x7, x15\n"
+    "adc x8, x8, x15\n"
+    "stp x3, x4, [x0]\n"
+    "stp x5, x6, [x0, #16]\n"
+    "stp x7, x8, [x0, #32]\n"
+    ASM_RET
+    ASM_END(p384_subtract)
 
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
@@ -20309,7 +23042,7 @@ __asm__(
     // there is no table. Without Zbb there is no rev8, so the reversals are
     // six mask-and-shift swaps each, and the masks are built once into
     // s0 to s8: lanes in s0 to s3, swap masks in s4 to s8.
-    ASM_FUNC(ghash_blocks)
+    ASM_LOCAL_FUNC(ghash_integer)
     "bnez a3, 1f\n"
     ASM_RET
     "1:  addi sp, sp, -336\n"
@@ -20386,7 +23119,682 @@ __asm__(
     "ld s8, 296(sp)\n   ld s9, 304(sp)\n   ld s10, 312(sp)\n   ld s11, 320(sp)\n"
     "addi sp, sp, 336\n"
     ASM_RET
+    ASM_LOCAL_END(ghash_integer)
+
+    // See the x86_64 body for the table.
+    ASM_FUNC(ghash_blocks)
+    "addi a1, a1, 1536\n   j ghash_integer\n"
     ASM_END(ghash_blocks)
+
+    // See the x86_64 body. Without Zbb the reversal is the byte load.
+    ASM_FUNC(ghash_key)
+    "addi sp, sp, -64\n"
+    "sd ra, 32(sp)\n   sd s0, 40(sp)\n   sd s1, 48(sp)\n   sd s2, 56(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n"
+    "ld t0, 0(a1)\n   ld t1, 8(a1)\n"
+    "sd t0, 1536(a0)\n   sd t1, 1544(a0)\n"
+    "sd t0, 0(sp)\n   sd t1, 8(sp)\n   sd zero, 16(sp)\n   sd zero, 24(sp)\n"
+    "li s2, 752\n"
+    ".Lghash_key_rv_power:\n"
+    GHASH_RISCV_LOAD("sp", "a4", "0", "1", "2", "3", "4", "5", "6", "7")
+    GHASH_RISCV_LOAD("sp", "a5", "8", "9", "10", "11", "12", "13", "14", "15")
+    "srli a6, a4, 63\n"
+    "slli a4, a4, 1\n   srli a7, a5, 63\n   or a4, a4, a7\n"
+    "slli a5, a5, 1\n   xor a5, a5, a6\n"
+    "neg a6, a6\n   li a7, 0xc2\n   slli a7, a7, 56\n   and a6, a6, a7\n"
+    "xor a4, a4, a6\n"
+    "add t0, s0, s2\n   sd a5, 0(t0)\n   sd a4, 8(t0)\n"
+    "xor a6, a4, a5\n   sd a6, 768(t0)\n   sd zero, 776(t0)\n"
+    "beqz s2, .Lghash_key_rv_done\n"
+    "addi s2, s2, -16\n"
+    "mv a0, sp\n   mv a1, s1\n   addi a2, sp, 16\n   li a3, 1\n"
+    "call ghash_integer\n"
+    "j .Lghash_key_rv_power\n"
+    ".Lghash_key_rv_done:\n"
+    "sd zero, 0(sp)\n   sd zero, 8(sp)\n"
+    "li a4, 0\n   li a5, 0\n   li a6, 0\n   li t5, 0\n"
+    "ld ra, 32(sp)\n   ld s0, 40(sp)\n   ld s1, 48(sp)\n   ld s2, 56(sp)\n"
+    "addi sp, sp, 64\n"
+    ASM_RET
+    ASM_END(ghash_key)
+
+    // See the x86_64 body for the counter and the bitsliced floor. Three
+    // operand logic keeps the S-box in registers but for three spills; the
+    // data is read and written a byte at a time, which is what an unaligned
+    // pointer allows here.
+    ASM_FUNC(aes128_ctr_blocks)
+    "bnez a4, .Laes_ctr_rv_some\n"
+    ASM_RET
+    ".Laes_ctr_rv_some:\n"
+    "addi sp, sp, -1712\n   sd s0, 208(sp)\n   sd s1, 216(sp)\n"
+    "sd s2, 224(sp)\n   sd s3, 232(sp)\n   sd s4, 240(sp)\n"
+    "sd s5, 248(sp)\n   sd s6, 256(sp)\n   sd s7, 264(sp)\n"
+    "sd s8, 272(sp)\n   sd s9, 280(sp)\n   sd s10, 288(sp)\n"
+    "sd s11, 296(sp)\n   sd a1, 152(sp)\n   sd a2, 160(sp)\n"
+    "sd a3, 168(sp)\n   sd a4, 176(sp)\n   li t5, 0x0101010101010101\n"
+    "li s0, 0\n   slli s0, s0, 8\n   slli s0, s0, 8\n"
+    "lbu t1, 9(a1)\n   or s0, s0, t1\n   slli s0, s0, 8\n"
+    "lbu t1, 5(a1)\n   or s0, s0, t1\n   slli s0, s0, 8\n"
+    "lbu t1, 1(a1)\n   or s0, s0, t1\n   slli s0, s0, 8\n"
+    "slli s0, s0, 8\n   lbu t1, 8(a1)\n   or s0, s0, t1\n"
+    "slli s0, s0, 8\n   lbu t1, 4(a1)\n   or s0, s0, t1\n"
+    "slli s0, s0, 8\n   lbu t1, 0(a1)\n   or s0, s0, t1\n"
+    "li s1, 0\n   slli s1, s1, 8\n   slli s1, s1, 8\n"
+    "lbu t1, 11(a1)\n   or s1, s1, t1\n   slli s1, s1, 8\n"
+    "lbu t1, 7(a1)\n   or s1, s1, t1\n   slli s1, s1, 8\n"
+    "lbu t1, 3(a1)\n   or s1, s1, t1\n   slli s1, s1, 8\n"
+    "slli s1, s1, 8\n   lbu t1, 10(a1)\n   or s1, s1, t1\n"
+    "slli s1, s1, 8\n   lbu t1, 6(a1)\n   or s1, s1, t1\n"
+    "slli s1, s1, 8\n   lbu t1, 2(a1)\n   or s1, s1, t1\n"
+    "addi t6, sp, 304\n   li t4, 11\n"
+    ".Laes_ctr_rv_floor_keys:\n"
+    "lbu t0, 13(a0)\n   slli t0, t0, 8\n   lbu t1, 9(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 5(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 1(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 12(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 8(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 4(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 0(a0)\n"
+    "or t0, t0, t1\n   xor t0, t0, s0\n   mv t1, t0\n"
+    "and t1, t1, t5\n   slli t2, t1, 8\n   sub t1, t2, t1\n"
+    "sd t1, 0(t6)\n   srli t1, t0, 1\n   and t1, t1, t5\n"
+    "slli t2, t1, 8\n   sub t1, t2, t1\n   sd t1, 16(t6)\n"
+    "srli t1, t0, 2\n   and t1, t1, t5\n   slli t2, t1, 8\n"
+    "sub t1, t2, t1\n   sd t1, 32(t6)\n   srli t1, t0, 3\n"
+    "and t1, t1, t5\n   slli t2, t1, 8\n   sub t1, t2, t1\n"
+    "sd t1, 48(t6)\n   srli t1, t0, 4\n   and t1, t1, t5\n"
+    "slli t2, t1, 8\n   sub t1, t2, t1\n   sd t1, 64(t6)\n"
+    "srli t1, t0, 5\n   and t1, t1, t5\n   slli t2, t1, 8\n"
+    "sub t1, t2, t1\n   sd t1, 80(t6)\n   srli t1, t0, 6\n"
+    "and t1, t1, t5\n   slli t2, t1, 8\n   sub t1, t2, t1\n"
+    "sd t1, 96(t6)\n   srli t1, t0, 7\n   and t1, t1, t5\n"
+    "slli t2, t1, 8\n   sub t1, t2, t1\n   sd t1, 112(t6)\n"
+    "lbu t0, 15(a0)\n   slli t0, t0, 8\n   lbu t1, 11(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 7(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 3(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 14(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 10(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 6(a0)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 2(a0)\n"
+    "or t0, t0, t1\n   xor t0, t0, s1\n   mv t1, t0\n"
+    "and t1, t1, t5\n   slli t2, t1, 8\n   sub t1, t2, t1\n"
+    "sd t1, 8(t6)\n   srli t1, t0, 1\n   and t1, t1, t5\n"
+    "slli t2, t1, 8\n   sub t1, t2, t1\n   sd t1, 24(t6)\n"
+    "srli t1, t0, 2\n   and t1, t1, t5\n   slli t2, t1, 8\n"
+    "sub t1, t2, t1\n   sd t1, 40(t6)\n   srli t1, t0, 3\n"
+    "and t1, t1, t5\n   slli t2, t1, 8\n   sub t1, t2, t1\n"
+    "sd t1, 56(t6)\n   srli t1, t0, 4\n   and t1, t1, t5\n"
+    "slli t2, t1, 8\n   sub t1, t2, t1\n   sd t1, 72(t6)\n"
+    "srli t1, t0, 5\n   and t1, t1, t5\n   slli t2, t1, 8\n"
+    "sub t1, t2, t1\n   sd t1, 88(t6)\n   srli t1, t0, 6\n"
+    "and t1, t1, t5\n   slli t2, t1, 8\n   sub t1, t2, t1\n"
+    "sd t1, 104(t6)\n   srli t1, t0, 7\n   and t1, t1, t5\n"
+    "slli t2, t1, 8\n   sub t1, t2, t1\n   sd t1, 120(t6)\n"
+    "li s0, 0\n   li s1, 0\n   addi a0, a0, 16\n"
+    "addi t6, t6, 128\n   addi t4, t4, -1\n   bnez t4, .Laes_ctr_rv_floor_keys\n"
+    "lbu t0, 12(a1)\n   slli t0, t0, 8\n   lbu t1, 13(a1)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 14(a1)\n"
+    "or t0, t0, t1\n   slli t0, t0, 8\n   lbu t1, 15(a1)\n"
+    "or t0, t0, t1\n   sd t0, 184(sp)\n"
+    ".Laes_ctr_rv_floor_turn:\n"
+    "ld t6, 184(sp)\n   li s0, 0\n   li s1, 0\n"
+    "li s2, 0\n   li s3, 0\n   addiw t0, t6, 0\n"
+    "srli t1, t0, 24\n   andi t1, t1, 255\n   or s0, s0, t1\n"
+    "srli t1, t0, 16\n   andi t1, t1, 255\n   or s1, s1, t1\n"
+    "srli t1, t0, 8\n   andi t1, t1, 255\n   or s2, s2, t1\n"
+    "mv t1, t0\n   andi t1, t1, 255\n   or s3, s3, t1\n"
+    "addiw t0, t6, 1\n   srli t1, t0, 24\n   andi t1, t1, 255\n"
+    "slli t1, t1, 8\n   or s0, s0, t1\n   srli t1, t0, 16\n"
+    "andi t1, t1, 255\n   slli t1, t1, 8\n   or s1, s1, t1\n"
+    "srli t1, t0, 8\n   andi t1, t1, 255\n   slli t1, t1, 8\n"
+    "or s2, s2, t1\n   mv t1, t0\n   andi t1, t1, 255\n"
+    "slli t1, t1, 8\n   or s3, s3, t1\n   addiw t0, t6, 2\n"
+    "srli t1, t0, 24\n   andi t1, t1, 255\n   slli t1, t1, 16\n"
+    "or s0, s0, t1\n   srli t1, t0, 16\n   andi t1, t1, 255\n"
+    "slli t1, t1, 16\n   or s1, s1, t1\n   srli t1, t0, 8\n"
+    "andi t1, t1, 255\n   slli t1, t1, 16\n   or s2, s2, t1\n"
+    "mv t1, t0\n   andi t1, t1, 255\n   slli t1, t1, 16\n"
+    "or s3, s3, t1\n   addiw t0, t6, 3\n   srli t1, t0, 24\n"
+    "andi t1, t1, 255\n   slli t1, t1, 24\n   or s0, s0, t1\n"
+    "srli t1, t0, 16\n   andi t1, t1, 255\n   slli t1, t1, 24\n"
+    "or s1, s1, t1\n   srli t1, t0, 8\n   andi t1, t1, 255\n"
+    "slli t1, t1, 24\n   or s2, s2, t1\n   mv t1, t0\n"
+    "andi t1, t1, 255\n   slli t1, t1, 24\n   or s3, s3, t1\n"
+    "addiw t0, t6, 4\n   srli t1, t0, 24\n   andi t1, t1, 255\n"
+    "slli t1, t1, 32\n   or s0, s0, t1\n   srli t1, t0, 16\n"
+    "andi t1, t1, 255\n   slli t1, t1, 32\n   or s1, s1, t1\n"
+    "srli t1, t0, 8\n   andi t1, t1, 255\n   slli t1, t1, 32\n"
+    "or s2, s2, t1\n   mv t1, t0\n   andi t1, t1, 255\n"
+    "slli t1, t1, 32\n   or s3, s3, t1\n   addiw t0, t6, 5\n"
+    "srli t1, t0, 24\n   andi t1, t1, 255\n   slli t1, t1, 40\n"
+    "or s0, s0, t1\n   srli t1, t0, 16\n   andi t1, t1, 255\n"
+    "slli t1, t1, 40\n   or s1, s1, t1\n   srli t1, t0, 8\n"
+    "andi t1, t1, 255\n   slli t1, t1, 40\n   or s2, s2, t1\n"
+    "mv t1, t0\n   andi t1, t1, 255\n   slli t1, t1, 40\n"
+    "or s3, s3, t1\n   addiw t0, t6, 6\n   srli t1, t0, 24\n"
+    "andi t1, t1, 255\n   slli t1, t1, 48\n   or s0, s0, t1\n"
+    "srli t1, t0, 16\n   andi t1, t1, 255\n   slli t1, t1, 48\n"
+    "or s1, s1, t1\n   srli t1, t0, 8\n   andi t1, t1, 255\n"
+    "slli t1, t1, 48\n   or s2, s2, t1\n   mv t1, t0\n"
+    "andi t1, t1, 255\n   slli t1, t1, 48\n   or s3, s3, t1\n"
+    "addiw t0, t6, 7\n   srli t1, t0, 24\n   andi t1, t1, 255\n"
+    "slli t1, t1, 56\n   or s0, s0, t1\n   srli t1, t0, 16\n"
+    "andi t1, t1, 255\n   slli t1, t1, 56\n   or s1, s1, t1\n"
+    "srli t1, t0, 8\n   andi t1, t1, 255\n   slli t1, t1, 56\n"
+    "or s2, s2, t1\n   mv t1, t0\n   andi t1, t1, 255\n"
+    "slli t1, t1, 56\n   or s3, s3, t1\n   li t5, 0x0101010101010101\n"
+    "li t4, 0x0102040810204080\n   mv t1, s0\n   and t1, t1, t5\n"
+    "mul t1, t1, t4\n   srli t1, t1, 56\n   slli t1, t1, 24\n"
+    "mv t2, s1\n   and t2, t2, t5\n   mul t2, t2, t4\n"
+    "srli t2, t2, 56\n   slli t2, t2, 56\n   xor t1, t1, t2\n"
+    "ld t2, 304(sp)\n   xor t1, t1, t2\n   sd t1, 0(sp)\n"
+    "mv t1, s2\n   and t1, t1, t5\n   mul t1, t1, t4\n"
+    "srli t1, t1, 56\n   slli t1, t1, 24\n   mv t2, s3\n"
+    "and t2, t2, t5\n   mul t2, t2, t4\n   srli t2, t2, 56\n"
+    "slli t2, t2, 56\n   xor t1, t1, t2\n   ld t2, 312(sp)\n"
+    "xor t1, t1, t2\n   sd t1, 8(sp)\n   srli t1, s0, 1\n"
+    "and t1, t1, t5\n   mul t1, t1, t4\n   srli t1, t1, 56\n"
+    "slli t1, t1, 24\n   srli t2, s1, 1\n   and t2, t2, t5\n"
+    "mul t2, t2, t4\n   srli t2, t2, 56\n   slli t2, t2, 56\n"
+    "xor t1, t1, t2\n   ld t2, 320(sp)\n   xor t1, t1, t2\n"
+    "sd t1, 16(sp)\n   srli t1, s2, 1\n   and t1, t1, t5\n"
+    "mul t1, t1, t4\n   srli t1, t1, 56\n   slli t1, t1, 24\n"
+    "srli t2, s3, 1\n   and t2, t2, t5\n   mul t2, t2, t4\n"
+    "srli t2, t2, 56\n   slli t2, t2, 56\n   xor t1, t1, t2\n"
+    "ld t2, 328(sp)\n   xor t1, t1, t2\n   sd t1, 24(sp)\n"
+    "srli t1, s0, 2\n   and t1, t1, t5\n   mul t1, t1, t4\n"
+    "srli t1, t1, 56\n   slli t1, t1, 24\n   srli t2, s1, 2\n"
+    "and t2, t2, t5\n   mul t2, t2, t4\n   srli t2, t2, 56\n"
+    "slli t2, t2, 56\n   xor t1, t1, t2\n   ld t2, 336(sp)\n"
+    "xor t1, t1, t2\n   sd t1, 32(sp)\n   srli t1, s2, 2\n"
+    "and t1, t1, t5\n   mul t1, t1, t4\n   srli t1, t1, 56\n"
+    "slli t1, t1, 24\n   srli t2, s3, 2\n   and t2, t2, t5\n"
+    "mul t2, t2, t4\n   srli t2, t2, 56\n   slli t2, t2, 56\n"
+    "xor t1, t1, t2\n   ld t2, 344(sp)\n   xor t1, t1, t2\n"
+    "sd t1, 40(sp)\n   srli t1, s0, 3\n   and t1, t1, t5\n"
+    "mul t1, t1, t4\n   srli t1, t1, 56\n   slli t1, t1, 24\n"
+    "srli t2, s1, 3\n   and t2, t2, t5\n   mul t2, t2, t4\n"
+    "srli t2, t2, 56\n   slli t2, t2, 56\n   xor t1, t1, t2\n"
+    "ld t2, 352(sp)\n   xor t1, t1, t2\n   sd t1, 48(sp)\n"
+    "srli t1, s2, 3\n   and t1, t1, t5\n   mul t1, t1, t4\n"
+    "srli t1, t1, 56\n   slli t1, t1, 24\n   srli t2, s3, 3\n"
+    "and t2, t2, t5\n   mul t2, t2, t4\n   srli t2, t2, 56\n"
+    "slli t2, t2, 56\n   xor t1, t1, t2\n   ld t2, 360(sp)\n"
+    "xor t1, t1, t2\n   sd t1, 56(sp)\n   srli t1, s0, 4\n"
+    "and t1, t1, t5\n   mul t1, t1, t4\n   srli t1, t1, 56\n"
+    "slli t1, t1, 24\n   srli t2, s1, 4\n   and t2, t2, t5\n"
+    "mul t2, t2, t4\n   srli t2, t2, 56\n   slli t2, t2, 56\n"
+    "xor t1, t1, t2\n   ld t2, 368(sp)\n   xor t1, t1, t2\n"
+    "sd t1, 64(sp)\n   srli t1, s2, 4\n   and t1, t1, t5\n"
+    "mul t1, t1, t4\n   srli t1, t1, 56\n   slli t1, t1, 24\n"
+    "srli t2, s3, 4\n   and t2, t2, t5\n   mul t2, t2, t4\n"
+    "srli t2, t2, 56\n   slli t2, t2, 56\n   xor t1, t1, t2\n"
+    "ld t2, 376(sp)\n   xor t1, t1, t2\n   sd t1, 72(sp)\n"
+    "srli t1, s0, 5\n   and t1, t1, t5\n   mul t1, t1, t4\n"
+    "srli t1, t1, 56\n   slli t1, t1, 24\n   srli t2, s1, 5\n"
+    "and t2, t2, t5\n   mul t2, t2, t4\n   srli t2, t2, 56\n"
+    "slli t2, t2, 56\n   xor t1, t1, t2\n   ld t2, 384(sp)\n"
+    "xor t1, t1, t2\n   sd t1, 80(sp)\n   srli t1, s2, 5\n"
+    "and t1, t1, t5\n   mul t1, t1, t4\n   srli t1, t1, 56\n"
+    "slli t1, t1, 24\n   srli t2, s3, 5\n   and t2, t2, t5\n"
+    "mul t2, t2, t4\n   srli t2, t2, 56\n   slli t2, t2, 56\n"
+    "xor t1, t1, t2\n   ld t2, 392(sp)\n   xor t1, t1, t2\n"
+    "sd t1, 88(sp)\n   srli t1, s0, 6\n   and t1, t1, t5\n"
+    "mul t1, t1, t4\n   srli t1, t1, 56\n   slli t1, t1, 24\n"
+    "srli t2, s1, 6\n   and t2, t2, t5\n   mul t2, t2, t4\n"
+    "srli t2, t2, 56\n   slli t2, t2, 56\n   xor t1, t1, t2\n"
+    "ld t2, 400(sp)\n   xor t1, t1, t2\n   sd t1, 96(sp)\n"
+    "srli t1, s2, 6\n   and t1, t1, t5\n   mul t1, t1, t4\n"
+    "srli t1, t1, 56\n   slli t1, t1, 24\n   srli t2, s3, 6\n"
+    "and t2, t2, t5\n   mul t2, t2, t4\n   srli t2, t2, 56\n"
+    "slli t2, t2, 56\n   xor t1, t1, t2\n   ld t2, 408(sp)\n"
+    "xor t1, t1, t2\n   sd t1, 104(sp)\n   srli t1, s0, 7\n"
+    "and t1, t1, t5\n   mul t1, t1, t4\n   srli t1, t1, 56\n"
+    "slli t1, t1, 24\n   srli t2, s1, 7\n   and t2, t2, t5\n"
+    "mul t2, t2, t4\n   srli t2, t2, 56\n   slli t2, t2, 56\n"
+    "xor t1, t1, t2\n   ld t2, 416(sp)\n   xor t1, t1, t2\n"
+    "sd t1, 112(sp)\n   srli t1, s2, 7\n   and t1, t1, t5\n"
+    "mul t1, t1, t4\n   srli t1, t1, 56\n   slli t1, t1, 24\n"
+    "srli t2, s3, 7\n   and t2, t2, t5\n   mul t2, t2, t4\n"
+    "srli t2, t2, 56\n   slli t2, t2, 56\n   xor t1, t1, t2\n"
+    "ld t2, 424(sp)\n   xor t1, t1, t2\n   sd t1, 120(sp)\n"
+    "addi t0, sp, 432\n   sd t0, 200(sp)\n   li t0, 1\n"
+    "sd t0, 192(sp)\n"
+    ".Laes_ctr_rv_floor_round:\n"
+    "mv s11, sp\n"
+    ".Laes_ctr_rv_floor_pass:\n"
+    "ld t0, 112(s11)\n   ld t1, 64(s11)\n   xor t2, t0, t1\n"
+    "ld t3, 32(s11)\n   xor t4, t0, t3\n   ld t5, 16(s11)\n"
+    "xor t6, t0, t5\n   xor a0, t1, t3\n   ld a1, 48(s11)\n"
+    "xor a2, a1, t5\n   xor a3, t2, a2\n   ld a4, 96(s11)\n"
+    "ld a5, 80(s11)\n   xor a6, a4, a5\n   ld a7, 0(s11)\n"
+    "xor s0, a7, a3\n   xor s1, a7, a6\n   xor s2, a3, a6\n"
+    "xor s3, a4, t3\n   xor s4, a5, t3\n   xor s5, t6, a0\n"
+    "xor s6, a3, s3\n   xor s7, a2, s3\n   xor s8, a2, s4\n"
+    "xor s9, s1, s8\n   xor s10, t1, a7\n   xor t0, a6, s10\n"
+    "xor a1, t2, t0\n   xor a4, t5, a7\n   xor a5, a6, a4\n"
+    "xor t3, t4, a5\n   xor s3, t4, s2\n   xor a2, a1, s9\n"
+    "xor t1, t6, s8\n   xor s10, t2, s4\n   and t5, s5, a3\n"
+    "and a6, t3, s0\n   xor a4, s6, t5\n   and s4, t0, a7\n"
+    "xor s6, s4, t5\n   and s4, t6, s8\n   and t5, a5, s1\n"
+    "xor t1, t1, s4\n   sd a5, 128(sp)\n   and a5, a1, s9\n"
+    "xor a5, a5, s4\n   and s4, t2, s7\n   sd t2, 136(sp)\n"
+    "and t2, a0, s10\n   xor t2, t2, s4\n   sd a0, 144(sp)\n"
+    "and a0, t4, s2\n   xor a0, a0, s4\n   xor s4, a4, a6\n"
+    "xor a4, s6, s3\n   xor a6, t1, t5\n   xor s6, a5, a0\n"
+    "xor s3, s4, t2\n   xor t1, a4, a0\n   xor t5, a6, t2\n"
+    "xor a5, s6, a2\n   xor s4, t5, a5\n   and a4, t5, s3\n"
+    "xor a0, t1, a4\n   xor a6, s3, t1\n   xor t2, a5, a4\n"
+    "and s6, t2, a6\n   and a2, a0, s4\n   and t2, s3, a5\n"
+    "and a0, a6, t2\n   xor s3, a6, a4\n   and t2, t1, t5\n"
+    "and a6, s4, t2\n   xor t5, s4, a4\n   xor t2, t1, s6\n"
+    "xor s4, a0, s3\n   xor a4, a5, a2\n   xor t1, a6, t5\n"
+    "xor s6, s4, t1\n   xor a0, t2, a4\n   xor s3, t2, s4\n"
+    "xor a5, a4, t1\n   xor a2, a0, s6\n   and a6, a5, a3\n"
+    "and t5, t1, s0\n   and a3, a4, a7\n   and s0, s3, s8\n"
+    "and a7, s4, s1\n   and s8, t2, s9\n   and s1, a0, s7\n"
+    "and s9, a2, s10\n   and s7, s6, s2\n   and s10, a5, s5\n"
+    "and s2, t1, t3\n   and a5, a4, t0\n   and s5, s3, t6\n"
+    "ld t1, 128(sp)\n   and t3, s4, t1\n   and a4, t2, a1\n"
+    "ld t0, 136(sp)\n   and s3, a0, t0\n   ld t6, 144(sp)\n"
+    "and s4, a2, t6\n   and t1, s6, t4\n   xor t2, s3, s4\n"
+    "xor a1, a7, s2\n   xor a0, a6, a3\n   xor t0, t5, s10\n"
+    "xor a2, s7, s5\n   xor t6, s0, s3\n   xor s6, s4, t6\n"
+    "xor t4, a6, t0\n   xor t5, s8, t3\n   xor s7, s1, s9\n"
+    "xor s0, s9, a2\n   xor s4, a4, a0\n   xor t6, a3, s8\n"
+    "xor a6, a7, t2\n   xor t3, s1, s3\n   xor s9, s10, a1\n"
+    "xor a4, s2, t2\n   xor a3, a5, a1\n   xor s8, s5, t5\n"
+    "xor a7, t1, a2\n   xor s1, t2, a1\n   xor s3, a1, t4\n"
+    "xor s10, t0, t6\n   xor s2, s8, a0\n   xor a5, s9, s7\n"
+    "xor s5, s6, s0\n   xor t1, t4, s7\n   xor a2, t5, s0\n"
+    "xor t2, s4, t3\n   xor a1, s4, a3\n   xor t0, s6, a5\n"
+    "sd t0, 112(s11)\n   xor t6, a4, t1\n   not t6, t6\n"
+    "sd t6, 96(s11)\n   xor s8, a7, t2\n   not s8, s8\n"
+    "sd s8, 80(s11)\n   xor a0, s6, s3\n   sd a0, 64(s11)\n"
+    "xor s9, s1, s10\n   sd s9, 48(s11)\n   xor t4, s5, a1\n"
+    "sd t4, 32(s11)\n   xor s7, a6, a2\n   not s7, s7\n"
+    "sd s7, 16(s11)\n   xor t5, s6, s2\n   not t5, t5\n"
+    "sd t5, 0(s11)\n   addi s11, s11, 8\n   addi t0, sp, 16\n"
+    "bltu s11, t0, .Laes_ctr_rv_floor_pass\n   ld t0, 0(sp)\n   slli t1, t0, 32\n"
+    "srli t1, t1, 32\n   srli t2, t0, 40\n   slli t2, t2, 32\n"
+    "or t1, t1, t2\n   srli t2, t0, 32\n   slli t2, t2, 56\n"
+    "or t1, t1, t2\n   sd t1, 0(sp)\n   ld t0, 8(sp)\n"
+    "slli t1, t0, 48\n   srli t1, t1, 32\n   slli t2, t0, 32\n"
+    "srli t2, t2, 48\n   or t1, t1, t2\n   srli t2, t0, 32\n"
+    "slli t2, t2, 40\n   or t1, t1, t2\n   srli t2, t0, 56\n"
+    "slli t2, t2, 32\n   or t1, t1, t2\n   sd t1, 8(sp)\n"
+    "ld t0, 16(sp)\n   slli t1, t0, 32\n   srli t1, t1, 32\n"
+    "srli t2, t0, 40\n   slli t2, t2, 32\n   or t1, t1, t2\n"
+    "srli t2, t0, 32\n   slli t2, t2, 56\n   or t1, t1, t2\n"
+    "sd t1, 16(sp)\n   ld t0, 24(sp)\n   slli t1, t0, 48\n"
+    "srli t1, t1, 32\n   slli t2, t0, 32\n   srli t2, t2, 48\n"
+    "or t1, t1, t2\n   srli t2, t0, 32\n   slli t2, t2, 40\n"
+    "or t1, t1, t2\n   srli t2, t0, 56\n   slli t2, t2, 32\n"
+    "or t1, t1, t2\n   sd t1, 24(sp)\n   ld t0, 32(sp)\n"
+    "slli t1, t0, 32\n   srli t1, t1, 32\n   srli t2, t0, 40\n"
+    "slli t2, t2, 32\n   or t1, t1, t2\n   srli t2, t0, 32\n"
+    "slli t2, t2, 56\n   or t1, t1, t2\n   sd t1, 32(sp)\n"
+    "ld t0, 40(sp)\n   slli t1, t0, 48\n   srli t1, t1, 32\n"
+    "slli t2, t0, 32\n   srli t2, t2, 48\n   or t1, t1, t2\n"
+    "srli t2, t0, 32\n   slli t2, t2, 40\n   or t1, t1, t2\n"
+    "srli t2, t0, 56\n   slli t2, t2, 32\n   or t1, t1, t2\n"
+    "sd t1, 40(sp)\n   ld t0, 48(sp)\n   slli t1, t0, 32\n"
+    "srli t1, t1, 32\n   srli t2, t0, 40\n   slli t2, t2, 32\n"
+    "or t1, t1, t2\n   srli t2, t0, 32\n   slli t2, t2, 56\n"
+    "or t1, t1, t2\n   sd t1, 48(sp)\n   ld t0, 56(sp)\n"
+    "slli t1, t0, 48\n   srli t1, t1, 32\n   slli t2, t0, 32\n"
+    "srli t2, t2, 48\n   or t1, t1, t2\n   srli t2, t0, 32\n"
+    "slli t2, t2, 40\n   or t1, t1, t2\n   srli t2, t0, 56\n"
+    "slli t2, t2, 32\n   or t1, t1, t2\n   sd t1, 56(sp)\n"
+    "ld t0, 64(sp)\n   slli t1, t0, 32\n   srli t1, t1, 32\n"
+    "srli t2, t0, 40\n   slli t2, t2, 32\n   or t1, t1, t2\n"
+    "srli t2, t0, 32\n   slli t2, t2, 56\n   or t1, t1, t2\n"
+    "sd t1, 64(sp)\n   ld t0, 72(sp)\n   slli t1, t0, 48\n"
+    "srli t1, t1, 32\n   slli t2, t0, 32\n   srli t2, t2, 48\n"
+    "or t1, t1, t2\n   srli t2, t0, 32\n   slli t2, t2, 40\n"
+    "or t1, t1, t2\n   srli t2, t0, 56\n   slli t2, t2, 32\n"
+    "or t1, t1, t2\n   sd t1, 72(sp)\n   ld t0, 80(sp)\n"
+    "slli t1, t0, 32\n   srli t1, t1, 32\n   srli t2, t0, 40\n"
+    "slli t2, t2, 32\n   or t1, t1, t2\n   srli t2, t0, 32\n"
+    "slli t2, t2, 56\n   or t1, t1, t2\n   sd t1, 80(sp)\n"
+    "ld t0, 88(sp)\n   slli t1, t0, 48\n   srli t1, t1, 32\n"
+    "slli t2, t0, 32\n   srli t2, t2, 48\n   or t1, t1, t2\n"
+    "srli t2, t0, 32\n   slli t2, t2, 40\n   or t1, t1, t2\n"
+    "srli t2, t0, 56\n   slli t2, t2, 32\n   or t1, t1, t2\n"
+    "sd t1, 88(sp)\n   ld t0, 96(sp)\n   slli t1, t0, 32\n"
+    "srli t1, t1, 32\n   srli t2, t0, 40\n   slli t2, t2, 32\n"
+    "or t1, t1, t2\n   srli t2, t0, 32\n   slli t2, t2, 56\n"
+    "or t1, t1, t2\n   sd t1, 96(sp)\n   ld t0, 104(sp)\n"
+    "slli t1, t0, 48\n   srli t1, t1, 32\n   slli t2, t0, 32\n"
+    "srli t2, t2, 48\n   or t1, t1, t2\n   srli t2, t0, 32\n"
+    "slli t2, t2, 40\n   or t1, t1, t2\n   srli t2, t0, 56\n"
+    "slli t2, t2, 32\n   or t1, t1, t2\n   sd t1, 104(sp)\n"
+    "ld t0, 112(sp)\n   slli t1, t0, 32\n   srli t1, t1, 32\n"
+    "srli t2, t0, 40\n   slli t2, t2, 32\n   or t1, t1, t2\n"
+    "srli t2, t0, 32\n   slli t2, t2, 56\n   or t1, t1, t2\n"
+    "sd t1, 112(sp)\n   ld t0, 120(sp)\n   slli t1, t0, 48\n"
+    "srli t1, t1, 32\n   slli t2, t0, 32\n   srli t2, t2, 48\n"
+    "or t1, t1, t2\n   srli t2, t0, 32\n   slli t2, t2, 40\n"
+    "or t1, t1, t2\n   srli t2, t0, 56\n   slli t2, t2, 32\n"
+    "or t1, t1, t2\n   sd t1, 120(sp)\n   ld t6, 200(sp)\n"
+    "ld t0, 192(sp)\n   li t1, 10\n   beq t0, t1, .Laes_ctr_rv_floor_last\n"
+    "ld t0, 0(sp)\n   ld t1, 8(sp)\n   srli t2, t0, 32\n"
+    "slli t3, t1, 32\n   or t2, t2, t3\n   xor a0, t2, t0\n"
+    "srli t2, t1, 32\n   slli t3, t0, 32\n   or t2, t2, t3\n"
+    "xor s0, t2, t1\n   ld t0, 16(sp)\n   ld t1, 24(sp)\n"
+    "srli t2, t0, 32\n   slli t3, t1, 32\n   or t2, t2, t3\n"
+    "xor a1, t2, t0\n   srli t2, t1, 32\n   slli t3, t0, 32\n"
+    "or t2, t2, t3\n   xor s1, t2, t1\n   ld t0, 32(sp)\n"
+    "ld t1, 40(sp)\n   srli t2, t0, 32\n   slli t3, t1, 32\n"
+    "or t2, t2, t3\n   xor a2, t2, t0\n   srli t2, t1, 32\n"
+    "slli t3, t0, 32\n   or t2, t2, t3\n   xor s2, t2, t1\n"
+    "ld t0, 48(sp)\n   ld t1, 56(sp)\n   srli t2, t0, 32\n"
+    "slli t3, t1, 32\n   or t2, t2, t3\n   xor a3, t2, t0\n"
+    "srli t2, t1, 32\n   slli t3, t0, 32\n   or t2, t2, t3\n"
+    "xor s3, t2, t1\n   ld t0, 64(sp)\n   ld t1, 72(sp)\n"
+    "srli t2, t0, 32\n   slli t3, t1, 32\n   or t2, t2, t3\n"
+    "xor a4, t2, t0\n   srli t2, t1, 32\n   slli t3, t0, 32\n"
+    "or t2, t2, t3\n   xor s4, t2, t1\n   ld t0, 80(sp)\n"
+    "ld t1, 88(sp)\n   srli t2, t0, 32\n   slli t3, t1, 32\n"
+    "or t2, t2, t3\n   xor a5, t2, t0\n   srli t2, t1, 32\n"
+    "slli t3, t0, 32\n   or t2, t2, t3\n   xor s5, t2, t1\n"
+    "ld t0, 96(sp)\n   ld t1, 104(sp)\n   srli t2, t0, 32\n"
+    "slli t3, t1, 32\n   or t2, t2, t3\n   xor a6, t2, t0\n"
+    "srli t2, t1, 32\n   slli t3, t0, 32\n   or t2, t2, t3\n"
+    "xor s6, t2, t1\n   ld t0, 112(sp)\n   ld t1, 120(sp)\n"
+    "srli t2, t0, 32\n   slli t3, t1, 32\n   or t2, t2, t3\n"
+    "xor a7, t2, t0\n   srli t2, t1, 32\n   slli t3, t0, 32\n"
+    "or t2, t2, t3\n   xor s7, t2, t1\n   xor t4, a0, s0\n"
+    "ld t0, 0(sp)\n   xor t0, t0, t4\n   ld t1, 0(t6)\n"
+    "xor t0, t0, t1\n   xor t0, t0, a7\n   sd t0, 0(sp)\n"
+    "ld t0, 8(sp)\n   xor t0, t0, t4\n   ld t1, 8(t6)\n"
+    "xor t0, t0, t1\n   xor t0, t0, s7\n   sd t0, 8(sp)\n"
+    "xor t4, a1, s1\n   ld t0, 16(sp)\n   xor t0, t0, t4\n"
+    "ld t1, 16(t6)\n   xor t0, t0, t1\n   xor t0, t0, a0\n"
+    "xor t0, t0, a7\n   sd t0, 16(sp)\n   ld t0, 24(sp)\n"
+    "xor t0, t0, t4\n   ld t1, 24(t6)\n   xor t0, t0, t1\n"
+    "xor t0, t0, s0\n   xor t0, t0, s7\n   sd t0, 24(sp)\n"
+    "xor t4, a2, s2\n   ld t0, 32(sp)\n   xor t0, t0, t4\n"
+    "ld t1, 32(t6)\n   xor t0, t0, t1\n   xor t0, t0, a1\n"
+    "sd t0, 32(sp)\n   ld t0, 40(sp)\n   xor t0, t0, t4\n"
+    "ld t1, 40(t6)\n   xor t0, t0, t1\n   xor t0, t0, s1\n"
+    "sd t0, 40(sp)\n   xor t4, a3, s3\n   ld t0, 48(sp)\n"
+    "xor t0, t0, t4\n   ld t1, 48(t6)\n   xor t0, t0, t1\n"
+    "xor t0, t0, a2\n   xor t0, t0, a7\n   sd t0, 48(sp)\n"
+    "ld t0, 56(sp)\n   xor t0, t0, t4\n   ld t1, 56(t6)\n"
+    "xor t0, t0, t1\n   xor t0, t0, s2\n   xor t0, t0, s7\n"
+    "sd t0, 56(sp)\n   xor t4, a4, s4\n   ld t0, 64(sp)\n"
+    "xor t0, t0, t4\n   ld t1, 64(t6)\n   xor t0, t0, t1\n"
+    "xor t0, t0, a3\n   xor t0, t0, a7\n   sd t0, 64(sp)\n"
+    "ld t0, 72(sp)\n   xor t0, t0, t4\n   ld t1, 72(t6)\n"
+    "xor t0, t0, t1\n   xor t0, t0, s3\n   xor t0, t0, s7\n"
+    "sd t0, 72(sp)\n   xor t4, a5, s5\n   ld t0, 80(sp)\n"
+    "xor t0, t0, t4\n   ld t1, 80(t6)\n   xor t0, t0, t1\n"
+    "xor t0, t0, a4\n   sd t0, 80(sp)\n   ld t0, 88(sp)\n"
+    "xor t0, t0, t4\n   ld t1, 88(t6)\n   xor t0, t0, t1\n"
+    "xor t0, t0, s4\n   sd t0, 88(sp)\n   xor t4, a6, s6\n"
+    "ld t0, 96(sp)\n   xor t0, t0, t4\n   ld t1, 96(t6)\n"
+    "xor t0, t0, t1\n   xor t0, t0, a5\n   sd t0, 96(sp)\n"
+    "ld t0, 104(sp)\n   xor t0, t0, t4\n   ld t1, 104(t6)\n"
+    "xor t0, t0, t1\n   xor t0, t0, s5\n   sd t0, 104(sp)\n"
+    "xor t4, a7, s7\n   ld t0, 112(sp)\n   xor t0, t0, t4\n"
+    "ld t1, 112(t6)\n   xor t0, t0, t1\n   xor t0, t0, a6\n"
+    "sd t0, 112(sp)\n   ld t0, 120(sp)\n   xor t0, t0, t4\n"
+    "ld t1, 120(t6)\n   xor t0, t0, t1\n   xor t0, t0, s6\n"
+    "sd t0, 120(sp)\n   j .Laes_ctr_rv_floor_next\n"
+    ".Laes_ctr_rv_floor_last:\n"
+    "ld t0, 0(sp)\n   ld t1, 0(t6)\n   xor t0, t0, t1\n"
+    "sd t0, 0(sp)\n   ld t0, 8(sp)\n   ld t1, 8(t6)\n"
+    "xor t0, t0, t1\n   sd t0, 8(sp)\n   ld t0, 16(sp)\n"
+    "ld t1, 16(t6)\n   xor t0, t0, t1\n   sd t0, 16(sp)\n"
+    "ld t0, 24(sp)\n   ld t1, 24(t6)\n   xor t0, t0, t1\n"
+    "sd t0, 24(sp)\n   ld t0, 32(sp)\n   ld t1, 32(t6)\n"
+    "xor t0, t0, t1\n   sd t0, 32(sp)\n   ld t0, 40(sp)\n"
+    "ld t1, 40(t6)\n   xor t0, t0, t1\n   sd t0, 40(sp)\n"
+    "ld t0, 48(sp)\n   ld t1, 48(t6)\n   xor t0, t0, t1\n"
+    "sd t0, 48(sp)\n   ld t0, 56(sp)\n   ld t1, 56(t6)\n"
+    "xor t0, t0, t1\n   sd t0, 56(sp)\n   ld t0, 64(sp)\n"
+    "ld t1, 64(t6)\n   xor t0, t0, t1\n   sd t0, 64(sp)\n"
+    "ld t0, 72(sp)\n   ld t1, 72(t6)\n   xor t0, t0, t1\n"
+    "sd t0, 72(sp)\n   ld t0, 80(sp)\n   ld t1, 80(t6)\n"
+    "xor t0, t0, t1\n   sd t0, 80(sp)\n   ld t0, 88(sp)\n"
+    "ld t1, 88(t6)\n   xor t0, t0, t1\n   sd t0, 88(sp)\n"
+    "ld t0, 96(sp)\n   ld t1, 96(t6)\n   xor t0, t0, t1\n"
+    "sd t0, 96(sp)\n   ld t0, 104(sp)\n   ld t1, 104(t6)\n"
+    "xor t0, t0, t1\n   sd t0, 104(sp)\n   ld t0, 112(sp)\n"
+    "ld t1, 112(t6)\n   xor t0, t0, t1\n   sd t0, 112(sp)\n"
+    "ld t0, 120(sp)\n   ld t1, 120(t6)\n   xor t0, t0, t1\n"
+    "sd t0, 120(sp)\n"
+    ".Laes_ctr_rv_floor_next:\n"
+    "addi t6, t6, 128\n   sd t6, 200(sp)\n   ld t0, 192(sp)\n"
+    "addi t0, t0, 1\n   sd t0, 192(sp)\n   li t1, 11\n"
+    "bne t0, t1, .Laes_ctr_rv_floor_round\n   ld a2, 160(sp)\n   ld a3, 168(sp)\n"
+    "ld a4, 176(sp)\n   li t5, 0x0101010101010101\n   ld s0, 0(sp)\n"
+    "ld s8, 8(sp)\n   ld s1, 16(sp)\n   ld s9, 24(sp)\n"
+    "ld s2, 32(sp)\n   ld s10, 40(sp)\n   ld s3, 48(sp)\n"
+    "ld s11, 56(sp)\n   ld s4, 64(sp)\n   ld a0, 72(sp)\n"
+    "ld s5, 80(sp)\n   ld a1, 88(sp)\n   ld s6, 96(sp)\n"
+    "ld a5, 104(sp)\n   ld s7, 112(sp)\n   ld a6, 120(sp)\n"
+    "li t6, 0\n"
+    ".Laes_ctr_rv_floor_stream:\n"
+    "bgeu t6, a4, .Laes_ctr_rv_floor_stream_done\n   li t1, 0\n   li t2, 0\n"
+    "srl t3, s0, t6\n   and t3, t3, t5\n   or t1, t1, t3\n"
+    "srl t3, s8, t6\n   and t3, t3, t5\n   or t2, t2, t3\n"
+    "srl t3, s1, t6\n   and t3, t3, t5\n   slli t3, t3, 1\n"
+    "or t1, t1, t3\n   srl t3, s9, t6\n   and t3, t3, t5\n"
+    "slli t3, t3, 1\n   or t2, t2, t3\n   srl t3, s2, t6\n"
+    "and t3, t3, t5\n   slli t3, t3, 2\n   or t1, t1, t3\n"
+    "srl t3, s10, t6\n   and t3, t3, t5\n   slli t3, t3, 2\n"
+    "or t2, t2, t3\n   srl t3, s3, t6\n   and t3, t3, t5\n"
+    "slli t3, t3, 3\n   or t1, t1, t3\n   srl t3, s11, t6\n"
+    "and t3, t3, t5\n   slli t3, t3, 3\n   or t2, t2, t3\n"
+    "srl t3, s4, t6\n   and t3, t3, t5\n   slli t3, t3, 4\n"
+    "or t1, t1, t3\n   srl t3, a0, t6\n   and t3, t3, t5\n"
+    "slli t3, t3, 4\n   or t2, t2, t3\n   srl t3, s5, t6\n"
+    "and t3, t3, t5\n   slli t3, t3, 5\n   or t1, t1, t3\n"
+    "srl t3, a1, t6\n   and t3, t3, t5\n   slli t3, t3, 5\n"
+    "or t2, t2, t3\n   srl t3, s6, t6\n   and t3, t3, t5\n"
+    "slli t3, t3, 6\n   or t1, t1, t3\n   srl t3, a5, t6\n"
+    "and t3, t3, t5\n   slli t3, t3, 6\n   or t2, t2, t3\n"
+    "srl t3, s7, t6\n   and t3, t3, t5\n   slli t3, t3, 7\n"
+    "or t1, t1, t3\n   srl t3, a6, t6\n   and t3, t3, t5\n"
+    "slli t3, t3, 7\n   or t2, t2, t3\n   mv t3, t1\n"
+    "lbu t4, 0(a2)\n   xor t4, t4, t3\n   sb t4, 0(a3)\n"
+    "srli t3, t1, 32\n   lbu t4, 1(a2)\n   xor t4, t4, t3\n"
+    "sb t4, 1(a3)\n   mv t3, t2\n   lbu t4, 2(a2)\n"
+    "xor t4, t4, t3\n   sb t4, 2(a3)\n   srli t3, t2, 32\n"
+    "lbu t4, 3(a2)\n   xor t4, t4, t3\n   sb t4, 3(a3)\n"
+    "srli t3, t1, 8\n   lbu t4, 4(a2)\n   xor t4, t4, t3\n"
+    "sb t4, 4(a3)\n   srli t3, t1, 40\n   lbu t4, 5(a2)\n"
+    "xor t4, t4, t3\n   sb t4, 5(a3)\n   srli t3, t2, 8\n"
+    "lbu t4, 6(a2)\n   xor t4, t4, t3\n   sb t4, 6(a3)\n"
+    "srli t3, t2, 40\n   lbu t4, 7(a2)\n   xor t4, t4, t3\n"
+    "sb t4, 7(a3)\n   srli t3, t1, 16\n   lbu t4, 8(a2)\n"
+    "xor t4, t4, t3\n   sb t4, 8(a3)\n   srli t3, t1, 48\n"
+    "lbu t4, 9(a2)\n   xor t4, t4, t3\n   sb t4, 9(a3)\n"
+    "srli t3, t2, 16\n   lbu t4, 10(a2)\n   xor t4, t4, t3\n"
+    "sb t4, 10(a3)\n   srli t3, t2, 48\n   lbu t4, 11(a2)\n"
+    "xor t4, t4, t3\n   sb t4, 11(a3)\n   srli t3, t1, 24\n"
+    "lbu t4, 12(a2)\n   xor t4, t4, t3\n   sb t4, 12(a3)\n"
+    "srli t3, t1, 56\n   lbu t4, 13(a2)\n   xor t4, t4, t3\n"
+    "sb t4, 13(a3)\n   srli t3, t2, 24\n   lbu t4, 14(a2)\n"
+    "xor t4, t4, t3\n   sb t4, 14(a3)\n   srli t3, t2, 56\n"
+    "lbu t4, 15(a2)\n   xor t4, t4, t3\n   sb t4, 15(a3)\n"
+    "addi a2, a2, 16\n   addi a3, a3, 16\n   addi t6, t6, 1\n"
+    "li t0, 8\n   bltu t6, t0, .Laes_ctr_rv_floor_stream\n"
+    ".Laes_ctr_rv_floor_stream_done:\n"
+    "li t1, 8\n   bgeu a4, t1, .Laes_ctr_rv_floor_take\n   mv t1, a4\n"
+    ".Laes_ctr_rv_floor_take:\n"
+    "ld t6, 184(sp)\n   addw t6, t6, t1\n   slli t6, t6, 32\n"
+    "srli t6, t6, 32\n   sd t6, 184(sp)\n   sub a4, a4, t1\n"
+    "sd a2, 160(sp)\n   sd a3, 168(sp)\n   sd a4, 176(sp)\n"
+    "bnez a4, .Laes_ctr_rv_floor_turn\n   ld a1, 152(sp)\n   ld t0, 184(sp)\n"
+    "srli t1, t0, 24\n   sb t1, 12(a1)\n   srli t1, t0, 16\n"
+    "sb t1, 13(a1)\n   srli t1, t0, 8\n   sb t1, 14(a1)\n"
+    "sb t0, 15(a1)\n   ld s0, 208(sp)\n   ld s1, 216(sp)\n"
+    "ld s2, 224(sp)\n   ld s3, 232(sp)\n   ld s4, 240(sp)\n"
+    "ld s5, 248(sp)\n   ld s6, 256(sp)\n   ld s7, 264(sp)\n"
+    "ld s8, 272(sp)\n   ld s9, 280(sp)\n   ld s10, 288(sp)\n"
+    "ld s11, 296(sp)\n   mv t0, sp\n   addi t1, sp, 1696\n"
+    "addi t1, t1, 16\n"
+    ".Laes_ctr_rv_floor_wipe:\n"
+    "sd zero, 0(t0)\n   addi t0, t0, 8\n   bltu t0, t1, .Laes_ctr_rv_floor_wipe\n"
+    "li t0, 0\n   li t1, 0\n   li t2, 0\n"
+    "li t3, 0\n   li t4, 0\n   li t5, 0\n"
+    "li t6, 0\n   li a0, 0\n   li a1, 0\n"
+    "li a2, 0\n   li a3, 0\n   li a4, 0\n"
+    "li a5, 0\n   li a6, 0\n   li a7, 0\n"
+    "addi sp, sp, 1712\n"
+    ASM_RET
+    ASM_END(aes128_ctr_blocks)
+
+    // See the x86_64 bodies for the reductions. Without flags each carry is
+    // an sltu and a limb of carry chain is five instructions, so rows keep
+    // one carry register and add their low products and then their high
+    // ones. qemu is not a floor, so these are proved and not timed.
+    // p384_square is p384_multiply for now: a triangle here pays for its
+    // doubling in shifts.
+
+    ASM_FUNC(p256_multiply)
+    FIELD_RV_SAVE
+    "ld t0, 0(a1)\n ld t1, 8(a1)\n ld t2, 16(a1)\n ld t3, 24(a1)\n"
+    "mv a3, zero\n mv a4, zero\n mv a5, zero\n mv a6, zero\n mv a7, zero\n"
+    FIELD_RV_P256_ROW("0", "a3", "a4", "a5", "a6", "a7", "t5")
+    FIELD_RV_P256_ROW("8", "a4", "a5", "a6", "a7", "t5", "a3")
+    FIELD_RV_P256_ROW("16", "a5", "a6", "a7", "t5", "a3", "a4")
+    FIELD_RV_P256_ROW("24", "a6", "a7", "t5", "a3", "a4", "a5")
+    FIELD_RV_P256_FINAL("a7", "t5", "a3", "a4", "a5")
+    FIELD_RV_RESTORE
+
+    /* Square: the cross products once into t1..t6, doubled by shifts, the
+       squares added, then four reduction steps and the high half. */
+    ASM_END(p256_multiply)
+
+    ASM_FUNC(p256_square)
+    FIELD_RV_SAVE
+    "ld t0, 0(a1)\n ld t1, 8(a1)\n ld t2, 16(a1)\n ld t3, 24(a1)\n"
+    /* row a0: t1..t4 in a3 a4 a5 a6 */
+    "mul a3, t0, t1\n mul a4, t0, t2\n mul a5, t0, t3\n"
+    "mulhu t6, t0, t1\n add a4, a4, t6\n sltu a1, a4, t6\n"
+    "mulhu t6, t0, t2\n" FIELD_RV_ADC("a5", "t6", "a1")
+    "mulhu a6, t0, t3\n add a6, a6, a1\n"
+    /* row a1: a1a2 into t3, t4; a1a3 into t4, t5 (a7) */
+    "mul t6, t1, t2\n add a5, a5, t6\n sltu a1, a5, t6\n"
+    "mul t6, t1, t3\n" FIELD_RV_ADC("a6", "t6", "a1")
+    "mulhu a7, t1, t3\n add a7, a7, a1\n"
+    "mulhu t6, t1, t2\n add a6, a6, t6\n sltu a1, a6, t6\n add a7, a7, a1\n"
+    /* row a2: a2a3 into t5, t6 (t5 reg) */
+    "mul t6, t2, t3\n add a7, a7, t6\n sltu a1, a7, t6\n"
+    "mulhu t5, t2, t3\n add t5, t5, a1\n"
+    /* double t1..t6 (a3 a4 a5 a6 a7 t5) into t1..t7 (t4 top) */
+    "srli t4, t5, 63\n"
+    "slli t5, t5, 1\n srli t6, a7, 63\n or t5, t5, t6\n"
+    "slli a7, a7, 1\n srli t6, a6, 63\n or a7, a7, t6\n"
+    "slli a6, a6, 1\n srli t6, a5, 63\n or a6, a6, t6\n"
+    "slli a5, a5, 1\n srli t6, a4, 63\n or a5, a5, t6\n"
+    "slli a4, a4, 1\n srli t6, a3, 63\n or a4, a4, t6\n"
+    "slli a3, a3, 1\n"
+    /* squares: t0 into a2 */
+    "mul a2, t0, t0\n mulhu t6, t0, t0\n add a3, a3, t6\n sltu a1, a3, t6\n"
+    "mul t6, t1, t1\n" FIELD_RV_ADC("a4", "t6", "a1")
+    "mulhu t6, t1, t1\n" FIELD_RV_ADC("a5", "t6", "a1")
+    "mul t6, t2, t2\n" FIELD_RV_ADC("a6", "t6", "a1")
+    "mulhu t6, t2, t2\n" FIELD_RV_ADC("a7", "t6", "a1")
+    "mul t6, t3, t3\n" FIELD_RV_ADC("t5", "t6", "a1")
+    "mulhu t6, t3, t3\n add t4, t4, t6\n add t4, t4, a1\n"
+    FIELD_RV_P256_REDUCE("a2", "a3", "a4", "a5")
+    FIELD_RV_P256_REDUCE("a3", "a4", "a5", "a2")
+    FIELD_RV_P256_REDUCE("a4", "a5", "a2", "a3")
+    FIELD_RV_P256_REDUCE("a5", "a2", "a3", "a4")
+    /* window a2 a3 a4 a5; high half a6 a7 t5 t4 */
+    "add a2, a2, a6\n sltu a1, a2, a6\n"
+    FIELD_RV_ADC("a3", "a7", "a1") FIELD_RV_ADC("a4", "t5", "a1") FIELD_RV_ADC("a5", "t4", "a1")
+    FIELD_RV_P256_FINAL("a2", "a3", "a4", "a5", "a1")
+    FIELD_RV_RESTORE
+    ASM_END(p256_square)
+
+    ASM_FUNC(p256_add)
+    FIELD_RV_SAVE
+    "ld a3, 0(a1)\n ld a4, 8(a1)\n ld a5, 16(a1)\n ld a6, 24(a1)\n"
+    "ld t0, 0(a2)\n ld t1, 8(a2)\n ld t2, 16(a2)\n ld t3, 24(a2)\n"
+    "add a3, a3, t0\n sltu a1, a3, t0\n"
+    FIELD_RV_ADC("a4", "t1", "a1") FIELD_RV_ADC("a5", "t2", "a1") FIELD_RV_ADC("a6", "t3", "a1")
+    FIELD_RV_P256_FINAL("a3", "a4", "a5", "a6", "a1")
+    FIELD_RV_RESTORE
+
+    /* a - b, then p added back under the borrow mask m: p0&m = m,
+       p1&m = m>>32, p2 = 0, p3&m = (m<<32) - m. */
+    ASM_END(p256_add)
+
+    ASM_FUNC(p256_subtract)
+    "addi sp, sp, -16\n sd s10, 0(sp)\n sd s11, 8(sp)\n"
+    "ld a3, 0(a1)\n ld a4, 8(a1)\n ld a5, 16(a1)\n ld a6, 24(a1)\n"
+    "ld t0, 0(a2)\n ld t1, 8(a2)\n ld t2, 16(a2)\n ld t3, 24(a2)\n"
+    "sltu a1, a3, t0\n sub a3, a3, t0\n"
+    FIELD_RV_SBB("a4", "t1", "a1") FIELD_RV_SBB("a5", "t2", "a1") FIELD_RV_SBB("a6", "t3", "a1")
+    "sub a1, zero, a1\n srli t0, a1, 32\n slli t1, a1, 32\n sub t1, t1, a1\n"
+    "add a3, a3, a1\n sltu a2, a3, a1\n"
+    FIELD_RV_ADC("a4", "t0", "a2")
+    "add a5, a5, a2\n sltu a2, a5, a2\n"
+    "add a6, a6, t1\n add a6, a6, a2\n"
+    "sd a3, 0(a0)\n sd a4, 8(a0)\n sd a5, 16(a0)\n sd a6, 24(a0)\n"
+    "ld s10, 0(sp)\n ld s11, 8(sp)\n addi sp, sp, 16\n"
+    ASM_RET
+    ASM_END(p256_subtract)
+
+    ASM_FUNC(p384_multiply)
+    FIELD_RV_SAVE_WIDE
+    "ld t0, 0(a1)\n ld t1, 8(a1)\n ld t2, 16(a1)\n ld t3, 24(a1)\n ld t4, 32(a1)\n ld t5, 40(a1)\n"
+    "mv a3, zero\n mv a4, zero\n mv a5, zero\n mv a6, zero\n mv a7, zero\n mv s8, zero\n mv s9, zero\n mv s11, zero\n"
+    /* window registers a3 a4 a5 a6 a7 s8 s9 and one more: use s7 */
+    "mv s7, zero\n"
+    FIELD_RV_P384_ROW("0", "a3", "a4", "a5", "a6", "a7", "s8", "s9", "s7")
+    FIELD_RV_P384_ROW("8", "a4", "a5", "a6", "a7", "s8", "s9", "s7", "a3")
+    FIELD_RV_P384_ROW("16", "a5", "a6", "a7", "s8", "s9", "s7", "a3", "a4")
+    FIELD_RV_P384_ROW("24", "a6", "a7", "s8", "s9", "s7", "a3", "a4", "a5")
+    FIELD_RV_P384_ROW("32", "a7", "s8", "s9", "s7", "a3", "a4", "a5", "a6")
+    FIELD_RV_P384_ROW("40", "s8", "s9", "s7", "a3", "a4", "a5", "a6", "a7")
+    /* result s9 s7 a3 a4 a5 a6, top a7; the final needs s7 as scratch, so
+       move that limb to t0 (a limbs are no longer needed). */
+    "mv t0, s7\n"
+    FIELD_RV_P384_FINAL("s9", "t0", "a3", "a4", "a5", "a6", "a7")
+    FIELD_RV_RESTORE_WIDE
+    ASM_END(p384_multiply)
+
+    ASM_FUNC(p384_square)
+    "mv a2, a1\n   j p384_multiply\n"
+    ASM_END(p384_square)
+
+    ASM_FUNC(p384_add)
+    FIELD_RV_SAVE_WIDE
+    "ld a3, 0(a1)\n ld a4, 8(a1)\n ld a5, 16(a1)\n ld a6, 24(a1)\n ld a7, 32(a1)\n ld t5, 40(a1)\n"
+    "ld t0, 0(a2)\n ld t1, 8(a2)\n ld t2, 16(a2)\n ld t3, 24(a2)\n ld t4, 32(a2)\n ld t6, 40(a2)\n"
+    "add a3, a3, t0\n sltu a1, a3, t0\n"
+    FIELD_RV_ADC("a4", "t1", "a1") FIELD_RV_ADC("a5", "t2", "a1") FIELD_RV_ADC("a6", "t3", "a1")
+    FIELD_RV_ADC("a7", "t4", "a1") FIELD_RV_ADC("t5", "t6", "a1")
+    FIELD_RV_P384_FINAL("a3", "a4", "a5", "a6", "a7", "t5", "a1")
+    FIELD_RV_RESTORE_WIDE
+
+    /* a - b, then p added back under the borrow mask m: p0&m = m>>32,
+       p1&m = m ^ (m>>32), p2&m = m<<1, p3..p5&m = m. */
+    ASM_END(p384_add)
+
+    ASM_FUNC(p384_subtract)
+    "addi sp, sp, -16\n sd s10, 0(sp)\n sd s11, 8(sp)\n"
+    "ld a3, 0(a1)\n ld a4, 8(a1)\n ld a5, 16(a1)\n ld a6, 24(a1)\n ld a7, 32(a1)\n ld t5, 40(a1)\n"
+    "ld t0, 0(a2)\n ld t1, 8(a2)\n ld t2, 16(a2)\n ld t3, 24(a2)\n ld t4, 32(a2)\n ld t6, 40(a2)\n"
+    "sltu a1, a3, t0\n sub a3, a3, t0\n"
+    FIELD_RV_SBB("a4", "t1", "a1") FIELD_RV_SBB("a5", "t2", "a1") FIELD_RV_SBB("a6", "t3", "a1")
+    FIELD_RV_SBB("a7", "t4", "a1") FIELD_RV_SBB("t5", "t6", "a1")
+    "sub a1, zero, a1\n srli t0, a1, 32\n xor t1, a1, t0\n slli t2, a1, 1\n"
+    "add a3, a3, t0\n sltu a2, a3, t0\n"
+    FIELD_RV_ADC("a4", "t1", "a2") FIELD_RV_ADC("a5", "t2", "a2") FIELD_RV_ADC("a6", "a1", "a2")
+    FIELD_RV_ADC("a7", "a1", "a2")
+    "add t5, t5, a1\n add t5, t5, a2\n"
+    "sd a3, 0(a0)\n sd a4, 8(a0)\n sd a5, 16(a0)\n sd a6, 24(a0)\n sd a7, 32(a0)\n sd t5, 40(a0)\n"
+    "ld s10, 0(sp)\n ld s11, 8(sp)\n addi sp, sp, 16\n"
+    ASM_RET
+    ASM_END(p384_subtract)
 
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
@@ -26303,11 +29711,41 @@ PURE READS(1, 2) positive memory_hash_33(address_any block, positive size);
    rorx or SHA-NI, and RISC-V builds the same rotate from a shift pair. */
 fn sha256_compress(p32 address_to state, p8 address_to block);
 /* GHASH, the GCM authenticator, over whole 16-byte blocks: for each block
-   state = (state ^ block) * key in GF(2^128). state and key are 16 bytes in
-   GCM order. Nothing branches or indexes on key, state or data, so the
-   timing is the multiply's; zero blocks reads no data. */
-fn ghash_blocks(p8 address_to state, const p8 address_to key,
+   state = (state ^ block) * H in GF(2^128), state 16 bytes in GCM order.
+   table is GHASH_KEY_SIZE bytes that ghash_key filled from the 16-byte H,
+   and must be 16-byte aligned. It is key material: wipe it with the key.
+   Nothing branches or indexes on H, state or data, so the timing is the
+   multiply's; zero blocks reads no data. */
+#define GHASH_KEY_SIZE 1552
+fn ghash_key(p8 address_to table, const p8 address_to h);
+fn ghash_blocks(p8 address_to state, const p8 address_to table,
                 const p8 address_to data, positive blocks);
+/* AES-128 in counter mode over whole 16-byte blocks: each block of out is
+   the block of in xored with the encrypted counter, and the counter's last
+   four bytes are a big-endian number that wraps at 2^32, the way GCM
+   increments it. round is the 176-byte FIPS-197 key schedule. counter comes
+   back advanced by blocks; in may be out. Nothing branches or indexes on
+   the key, the counter or the data. */
+fn aes128_ctr_blocks(const p8 address_to round, p8 address_to counter,
+                     const p8 address_to in, p8 address_to out,
+                     positive blocks);
+
+/* NIST P-256 and P-384 field arithmetic in Montgomery form (R = 2^256,
+   2^384): d = a*b/R, a*a/R, a+b and a-b, all mod p, for operands below p.
+   Little-endian 64-bit limbs; d may alias an operand. Nothing branches or
+   indexes on the values. */
+fn p256_multiply(p64 address_to d, const p64 address_to a,
+                 const p64 address_to b);
+fn p256_square(p64 address_to d, const p64 address_to a);
+fn p256_add(p64 address_to d, const p64 address_to a, const p64 address_to b);
+fn p256_subtract(p64 address_to d, const p64 address_to a,
+                 const p64 address_to b);
+fn p384_multiply(p64 address_to d, const p64 address_to a,
+                 const p64 address_to b);
+fn p384_square(p64 address_to d, const p64 address_to a);
+fn p384_add(p64 address_to d, const p64 address_to a, const p64 address_to b);
+fn p384_subtract(p64 address_to d, const p64 address_to a,
+                 const p64 address_to b);
 PURE READS(1, 2) p32 memory_sum_bytes(address_any block, positive size);
 // Writes exactly 2*size lowercase hex bytes, without a terminator, and returns
 // that length. Source and destination must not overlap; size must fit when

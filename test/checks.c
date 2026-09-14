@@ -40477,6 +40477,120 @@ static fn tls_closure_boundaries(void)
                                 socket_close(pair[0]);
                 }
         }
+
+        //      The same records as an exact HTTP body copied to a file: the
+        //      writev path gathers whole records and must keep them in order.
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                bipolar file = (bipolar)system_call_2(syscall(memfd_create),
+                                                      (positive)"tls-batch", 0);
+
+                check("TLS batched-body socket pair and file open",
+                      opened == 0 && file >= 0);
+                if (!opened && file >= 0)
+                {
+                        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                        if (!child)
+                        {
+                                tls_conn sender = {0};
+                                p8 record[16384];
+                                p8 alert[] = {1, 0};
+                                bool sent = true;
+
+                                socket_close(pair[0]);
+                                sender.handle = pair[1];
+                                for (positive at = 0;
+                                     at < TLS_BATCH_RECORDS && sent; at++)
+                                {
+                                        positive length = TLS_BATCH_LENGTH(at);
+
+                                        for (positive byte = 0; byte < length;
+                                             byte++)
+                                                record[byte] =
+                                                    (p8)(at * 31 + byte);
+                                        sent = tls_send_enc(address_of sender,
+                                                            TLS_CT_APP, record,
+                                                            length) == TLS_OK;
+                                }
+                                sent = sent &&
+                                       tls_send_enc(address_of sender,
+                                                    TLS_CT_ALERT, alert,
+                                                    sizeof alert) == TLS_OK;
+                                system_call_1(syscall(exit_group), sent ? 0 : 1);
+                        }
+                        check("TLS batched-body writer starts", child > 0);
+                        socket_close(pair[1]);
+                        if (child > 0)
+                        {
+                                static p8 whole[TLS_BATCH_RECORDS * 16384];
+                                http_link link = {
+                                    .handle = pair[0],
+                                    .tls = true,
+                                    .session = {
+                                        .handle = pair[0],
+                                        .encrypted = true,
+                                        .application = true,
+                                    },
+                                };
+                                http_body body = {.link = address_of link};
+                                positive total = 0;
+                                positive filled = 0;
+                                positive place = 0;
+                                positive got = 99;
+                                positive raw = 0;
+                                p8 byte = 0;
+                                bipolar count;
+                                bool intact = true;
+
+                                for (positive at = 0; at < TLS_BATCH_RECORDS;
+                                     at++)
+                                        total += TLS_BATCH_LENGTH(at);
+                                check("an exact HTTP body over batched TLS records is written",
+                                      http_copy(address_of body, file, total,
+                                                true) == HTTP_OK);
+                                check("close_notify still ends the stream after the body",
+                                      tls_read(address_of link.session,
+                                               address_of byte, 1,
+                                               address_of got) == TLS_OK &&
+                                          got == 0);
+                                system_call_3(syscall(lseek), (positive)file, 0, 0);
+                                while ((count = system_read_retry(
+                                            (positive)file, whole + filled,
+                                            sizeof whole - filled)) > 0)
+                                        filled += (positive)count;
+                                for (positive at = 0; at < TLS_BATCH_RECORDS;
+                                     at++)
+                                        for (positive offset = 0;
+                                             offset < TLS_BATCH_LENGTH(at);
+                                             offset++, place++)
+                                                intact &= place < filled &&
+                                                          whole[place] ==
+                                                              (p8)(at * 31 +
+                                                                   offset);
+                                check("the written body holds every record in order",
+                                      intact && filled == total);
+                                http_link_close(address_of link);
+                                check("TLS batched-body writer finishes",
+                                      system_wait4_retry((b32)child,
+                                                         address_of raw, 0,
+                                                         null) == child &&
+                                          wait_status_code(raw) == 0);
+                        }
+                        else
+                                socket_close(pair[0]);
+                }
+                else if (!opened)
+                {
+                        socket_close(pair[0]);
+                        socket_close(pair[1]);
+                }
+                if (file >= 0)
+                        socket_close((b32)file);
+        }
         #undef TLS_BATCH_LENGTH
         #undef TLS_BATCH_RECORDS
 }
@@ -41509,6 +41623,35 @@ static fn crypto_private_scalar_probe(
         crypto_forget(address_of second, sizeof second);
 }
 
+/* AES-GCM from a raw key for the vectors below: prepare, seal or open, wipe. */
+static fn checks_aesgcm_encrypt(p8 address_to raw, p8 address_to iv,
+                                p8 address_to aad, positive aad_length,
+                                p8 address_to text, positive text_length,
+                                p8 address_to tag)
+{
+        static crypto_aesgcm_key key;
+
+        crypto_aesgcm_prepare(address_of key, raw);
+        crypto_aesgcm_seal(address_of key, iv, aad, aad_length, text,
+                           text_length, tag);
+        crypto_forget(address_of key, sizeof key);
+}
+
+static bool checks_aesgcm_decrypt(p8 address_to raw, p8 address_to iv,
+                                  p8 address_to aad, positive aad_length,
+                                  p8 address_to text, positive text_length,
+                                  p8 address_to tag)
+{
+        static crypto_aesgcm_key key;
+        bool valid;
+
+        crypto_aesgcm_prepare(address_of key, raw);
+        valid = crypto_aesgcm_open(address_of key, iv, aad, aad_length, text,
+                                   text_length, tag);
+        crypto_forget(address_of key, sizeof key);
+        return valid;
+}
+
 static fn crypto_floor(void)
 {
         p8 out[64];
@@ -41548,7 +41691,7 @@ static fn crypto_floor(void)
 
                 memory_fill(key, 0, 16);
                 memory_fill(iv, 0, 12);
-                crypto_aesgcm_encrypt(key, iv, null, 0, (p8 address_to) "", 0, tag);
+                checks_aesgcm_encrypt(key, iv, null, 0, (p8 address_to) "", 0, tag);
                 check("AES-GCM empty NIST",
                       crypto_bytes_are(tag, 16, "58e2fccefa7e3061367f1d57a4e7455a"));
         }
@@ -41559,12 +41702,18 @@ static fn crypto_floor(void)
 
         The oracle is the former crypto_ghash_times, one masked select a bit,
         with nothing in common with the assembly: no lanes, no reversal, no
-        Karatsuba. Single-bit keys walk every lane of the key and every bit a
-        reversal moves; single-bit states with zero data do the same for the
-        operand; all-ones and zero keys take the extremes. The rest is random
-        state, key and runs of zero to nine blocks, which is what the loop
-        and its carried state need. The key and the data must come back
-        untouched, and zero blocks must not read the data at all.
+        powers, no Karatsuba. Single-bit keys walk every lane of the key and
+        every bit a reversal moves; single-bit states with zero data do the
+        same for the operand; all-ones and zero keys take the extremes. The
+        rest is random state, key and runs of zero to 130 blocks: two 48-block
+        turns, every 8- and 4-block remainder and every tail.
+
+        Every round runs each body this machine has, widest first, by writing
+        the feature bytes down and putting them back: the VPCLMULQDQ turn, the
+        PCLMULQDQ turn and the integer floor, ghash_integer, on x86_64. The
+        table, H and the
+        data must come back untouched, and zero blocks must not read the data
+        at all.
 */
 static fn ghash_reference_times(p8 address_to x, const p8 address_to y)
 {
@@ -41602,34 +41751,42 @@ static p8 ghash_check_byte(void)
         return (p8)(ghash_check_seed >> 29);
 }
 
+#define GHASH_CHECK_BLOCKS 131
+
 static fn crypto_floor_ghash(void)
 {
+        static p8 table[GHASH_KEY_SIZE] __attribute__((aligned(64)));
+        static p8 table_kept[GHASH_KEY_SIZE];
+        static p8 data[16 * GHASH_CHECK_BLOCKS];
+        static p8 data_kept[16 * GHASH_CHECK_BLOCKS];
         p8 key[16];
         p8 key_kept[16];
         p8 state[16];
         p8 expect[16];
-        p8 data[16 * 9];
-        p8 data_kept[16 * 9];
+        p8 got[16];
+        p8 vpclmul = cpu_has_vpclmul;
+        p8 pclmul = cpu_has_pclmul;
         positive wrong = 0;
-        positive rounds = 3000;
+        positive key_wrong = 0;
+        positive rounds = 800;
 
         for (positive round = 0; round < rounds; round++)
         {
-                positive blocks = 1 + ghash_check_byte() % 9;
+                positive blocks = round % GHASH_CHECK_BLOCKS;
 
                 for (positive i = 0; i < 16; i++)
                 {
                         key[i] = ghash_check_byte();
                         state[i] = ghash_check_byte();
                 }
-                for (positive i = 0; i < sizeof data; i++)
+                for (positive i = 0; i < 16 * blocks + 16; i++)
                         data[i] = ghash_check_byte();
 
                 if (round < 128)
                 {
                         memory_fill(key, 0, 16);
                         key[round / 8] = (p8)(0x80 >> (round % 8));
-                        blocks = 1;
+                        blocks = round % 2 ? 1 : 53;
                 }
                 else if (round < 256)
                 {
@@ -41645,15 +41802,21 @@ static fn crypto_floor_ghash(void)
                         memory_fill(key, 0xff, 16);
                         memory_fill(state, 0xff, 16);
                         memory_fill(data, 0, sizeof data);
+                        blocks = 97;
                 }
                 else if (round == 258)
                         memory_fill(key, 0, 16);
-                else if (round % 10 == 0)
-                        blocks = 0;
+                else if (round < 400)
+                        blocks = round % 20;
 
                 memory_copy(key_kept, key, 16);
+                ghash_key(table, key);
+                memory_copy(table_kept, table, GHASH_KEY_SIZE);
                 memory_copy(data_kept, data, sizeof data);
                 memory_copy(expect, state, 16);
+                if (memory_compare(key, key_kept, 16) != 0 ||
+                    memory_compare(table + 1536, key, 16) != 0)
+                        key_wrong++;
 
                 for (positive b = 0; b < blocks; b++)
                 {
@@ -41662,15 +41825,308 @@ static fn crypto_floor_ghash(void)
                         ghash_reference_times(expect, key);
                 }
 
-                ghash_blocks(state, key, blocks ? data : null, blocks);
+                for (positive body = 0; body < 3; body++)
+                {
+                        cpu_has_vpclmul = body == 0 ? vpclmul : 0;
+                        cpu_has_pclmul = body == 2 ? 0 : pclmul;
+                        memory_copy(got, state, 16);
+                        ghash_blocks(got, table, blocks ? data : null, blocks);
 
-                if (memory_compare(state, expect, 16) != 0 ||
-                    memory_compare(key, key_kept, 16) != 0 ||
-                    memory_compare(data, data_kept, sizeof data) != 0)
-                        wrong++;
+                        if (memory_compare(got, expect, 16) != 0 ||
+                            memory_compare(table, table_kept, GHASH_KEY_SIZE) != 0 ||
+                            memory_compare(data, data_kept, sizeof data) != 0)
+                                wrong++;
+                }
+                cpu_has_vpclmul = vpclmul;
+                cpu_has_pclmul = pclmul;
         }
 
+        check("GHASH key table keeps H and leaves the key alone", key_wrong == 0);
         check("GHASH blocks agree with the bit-serial multiply", wrong == 0);
+}
+
+/*
+        aes128_ctr_blocks against a byte-oriented AES.
+
+        The reference is FIPS-197 read literally, with an S-box table built
+        from crypto_aes_substitute, ShiftRows by index and MixColumns by
+        xtime: it indexes on the data, which only a test may do. Each round
+        runs every body this machine has -- the VAES turn, the AES-NI turn and
+        the bitsliced floor on x86_64 -- by writing the feature bytes down and
+        putting them back, over counters that wrap inside a turn, zero to
+        forty blocks, in place and apart. The byte past the last block, the
+        key schedule and the counter's twelve fixed bytes come back untouched.
+*/
+static p8 aes_reference_sbox[256];
+
+static p8 aes_reference_xtime(p8 value)
+{
+        return (p8)((value << 1) ^ (0x1b & (p8)(0 - (value >> 7))));
+}
+
+static fn aes_reference_encrypt(const p8 address_to round,
+                                const p8 address_to in, p8 address_to out)
+{
+        static const p8 shift[16] = {0, 5, 10, 15, 4, 9, 14, 3,
+                                     8, 13, 2, 7, 12, 1, 6, 11};
+        p8 s[16];
+        p8 n[16];
+
+        for (positive i = 0; i < 16; i++)
+                s[i] = in[i] ^ round[i];
+        for (positive r = 1; r <= 10; r++)
+        {
+                for (positive i = 0; i < 16; i++)
+                        n[i] = aes_reference_sbox[s[shift[i]]];
+                if (r < 10)
+                        for (positive i = 0; i < 16; i += 4)
+                        {
+                                p8 a = n[i], b = n[i + 1], c = n[i + 2],
+                                   d = n[i + 3];
+                                n[i] = aes_reference_xtime(a) ^
+                                       aes_reference_xtime(b) ^ b ^ c ^ d;
+                                n[i + 1] = a ^ aes_reference_xtime(b) ^
+                                           aes_reference_xtime(c) ^ c ^ d;
+                                n[i + 2] = a ^ b ^ aes_reference_xtime(c) ^
+                                           aes_reference_xtime(d) ^ d;
+                                n[i + 3] = aes_reference_xtime(a) ^ a ^ b ^
+                                           c ^ aes_reference_xtime(d);
+                        }
+                for (positive i = 0; i < 16; i++)
+                        s[i] = n[i] ^ round[16 * r + i];
+        }
+        memory_copy(out, s, 16);
+}
+
+#define AES_CHECK_BLOCKS 41
+
+static fn crypto_floor_aes_ctr(void)
+{
+        static p8 text[16 * AES_CHECK_BLOCKS + 1];
+        static p8 expect[16 * AES_CHECK_BLOCKS + 1];
+        static p8 got[16 * AES_CHECK_BLOCKS + 1];
+        p8 key[16];
+        p8 round[176];
+        p8 round_kept[176];
+        p8 counter[16];
+        p8 expect_counter[16];
+        p8 got_counter[16];
+        p8 stream[16];
+        p8 vaes = cpu_has_vaes;
+        p8 aes = cpu_has_aes;
+        positive wrong = 0;
+        positive vector_wrong = 0;
+
+        for (positive v = 0; v < 256; v++)
+                aes_reference_sbox[v] = crypto_aes_substitute((p8)v);
+
+        for (positive round_at = 0; round_at < 246; round_at++)
+        {
+                positive blocks = round_at % AES_CHECK_BLOCKS;
+
+                for (positive i = 0; i < 16; i++)
+                {
+                        key[i] = ghash_check_byte();
+                        counter[i] = ghash_check_byte();
+                }
+                if (round_at % 5 == 0)
+                {
+                        counter[12] = 0xff;
+                        counter[13] = 0xff;
+                        counter[14] = 0xff;
+                        counter[15] = (p8)(0xf8 + round_at % 8);
+                }
+                for (positive i = 0; i < sizeof text; i++)
+                        text[i] = ghash_check_byte();
+
+                crypto_aes128_expand(key, round);
+                memory_copy(round_kept, round, 176);
+                memory_copy(expect_counter, counter, 16);
+                memory_copy(expect, text, sizeof expect);
+                for (positive b = 0; b < blocks; b++)
+                {
+                        aes_reference_encrypt(round, expect_counter, stream);
+                        for (positive i = 0; i < 16; i++)
+                                expect[16 * b + i] ^= stream[i];
+                        for (positive i = 15; i >= 12; i--)
+                                if (++expect_counter[i])
+                                        break;
+                }
+
+                for (positive body = 0; body < 3; body++)
+                {
+                        cpu_has_vaes = body == 0 ? vaes : 0;
+                        cpu_has_aes = body == 2 ? 0 : aes;
+                        memory_copy(got_counter, counter, 16);
+                        memory_copy(got, text, sizeof got);
+                        if (round_at % 2)
+                                aes128_ctr_blocks(round, got_counter, got, got,
+                                                  blocks);
+                        else
+                                aes128_ctr_blocks(round, got_counter, text, got,
+                                                  blocks);
+                        if (memory_compare(got, expect, sizeof got) != 0 ||
+                            memory_compare(got_counter, expect_counter, 16) != 0 ||
+                            memory_compare(round, round_kept, 176) != 0)
+                                wrong++;
+                }
+        }
+
+        for (positive body = 0; body < 3; body++)
+        {
+                //      NIST SP 800-38A F.5.1, the first block.
+                static const p8 f51_key[16] = {
+                    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+                    0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c};
+                static const p8 f51_plain[16] = {
+                    0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
+                    0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a};
+                p8 f51_counter[16] = {
+                    0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+                    0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff};
+
+                cpu_has_vaes = body == 0 ? vaes : 0;
+                cpu_has_aes = body == 2 ? 0 : aes;
+                crypto_aes128_expand((p8 address_to)f51_key, round);
+                aes128_ctr_blocks(round, f51_counter, f51_plain, stream, 1);
+                if (!crypto_bytes_are(stream, 16,
+                                      "874d6191b620e3261bef6864990db6ce"))
+                        vector_wrong++;
+        }
+        cpu_has_vaes = vaes;
+        cpu_has_aes = aes;
+
+        check("AES-128 CTR NIST SP 800-38A F.5.1 on every body",
+              vector_wrong == 0);
+        check("AES-128 CTR blocks agree with the byte-oriented reference",
+              wrong == 0);
+}
+
+/*
+        p256_multiply, p256_square, p256_add, p256_subtract, p384_multiply,
+        p384_square, p384_add and p384_subtract against the C Montgomery
+        arithmetic.
+
+        crypto_fe_mul, sqr, add and sub hand the two NIST field primes to
+        library.c; a copy of the same crypto_field at another address takes
+        the C path, which is the reference. Operands are the edges -- zero,
+        one, p - 1, p - 2 and R mod p -- then seeded values with limbs of all
+        ones and zeros sprinkled in, reduced below p; each routine also runs
+        with its output aliasing an operand. Two fixed answers pin the
+        reference itself: R^2 times plain 1 is R, and R times R is R.
+*/
+static p64 field_check_seed = 0x9e3779b97f4a7c15ull;
+
+static p64 field_check_next(void)
+{
+        field_check_seed ^= field_check_seed << 13;
+        field_check_seed ^= field_check_seed >> 7;
+        field_check_seed ^= field_check_seed << 17;
+        return field_check_seed;
+}
+
+static fn field_check_operand(p64 address_to x, const crypto_field address_to f,
+                              positive kind)
+{
+        p64 reduced[CRYPTO_FE_MAX];
+        positive n = f->n;
+
+        memory_fill(x, 0, n * 8);
+        switch (kind)
+        {
+        case 0:
+                return;
+        case 1:
+                x[0] = 1;
+                return;
+        case 2:
+        case 3:
+                memory_copy(x, f->m, n * 8);
+                x[0] -= kind - 1;
+                return;
+        case 4:
+                memory_copy(x, f->one, n * 8);
+                return;
+        }
+
+        for (positive i = 0; i < n; i++)
+        {
+                p64 pick = field_check_next() & 7;
+
+                x[i] = pick == 0 ? ~0ull : pick == 1 ? 0 : field_check_next();
+        }
+        while (!crypto_fe_subtract_raw(reduced, x, f->m, n))
+                memory_copy(x, reduced, n * 8);
+}
+
+static positive field_check_wrong(const crypto_field address_to f,
+                                  positive rounds)
+{
+        crypto_field reference = *f;
+        positive n = f->n;
+        positive wrong = 0;
+        p64 unit[CRYPTO_FE_MAX];
+        p64 x[CRYPTO_FE_MAX];
+        p64 y[CRYPTO_FE_MAX];
+
+        memory_fill(unit, 0, sizeof unit);
+        unit[0] = 1;
+        crypto_fe_mul(x, f->square, unit, f);
+        wrong += memory_compare(x, f->one, n * 8) != 0;
+        crypto_fe_mul(x, f->one, f->one, address_of reference);
+        wrong += memory_compare(x, f->one, n * 8) != 0;
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                p64 a[CRYPTO_FE_MAX];
+                p64 b[CRYPTO_FE_MAX];
+
+                field_check_operand(a, f, round < 40 ? round % 5 : 5);
+                field_check_operand(b, f, round < 40 ? round / 5 % 8 : 5);
+
+                crypto_fe_mul(x, a, b, f);
+                crypto_fe_mul(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                crypto_fe_sqr(x, a, f);
+                crypto_fe_sqr(y, a, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                crypto_fe_add(x, a, b, f);
+                crypto_fe_add(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                crypto_fe_sub(x, a, b, f);
+                crypto_fe_sub(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+
+                memory_copy(x, a, n * 8);
+                crypto_fe_mul(x, x, b, f);
+                crypto_fe_mul(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, b, n * 8);
+                crypto_fe_mul(x, a, x, f);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, a, n * 8);
+                crypto_fe_sqr(x, x, f);
+                crypto_fe_sqr(y, a, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, a, n * 8);
+                crypto_fe_add(x, x, b, f);
+                crypto_fe_add(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+                memory_copy(x, b, n * 8);
+                crypto_fe_sub(x, a, x, f);
+                crypto_fe_sub(y, a, b, address_of reference);
+                wrong += memory_compare(x, y, n * 8) != 0;
+        }
+
+        return wrong;
+}
+
+static fn crypto_floor_field(void)
+{
+        check("p256_ field routines agree with the C Montgomery arithmetic",
+              field_check_wrong(address_of crypto_p256_field, 3000) == 0);
+        check("p384_ field routines agree with the C Montgomery arithmetic",
+              field_check_wrong(address_of crypto_p384_field, 3000) == 0);
 }
 
 static fn crypto_floor_aes(void)
@@ -41696,25 +42152,12 @@ static fn crypto_floor_aes(void)
         p8 ba[32];
         p8 zero[32] = {0};
 
-        {
-                p8 portable_round[176];
-
-                memory_fill(key, 0, 16);
-                memory_fill(block, 0, 16);
-                crypto_aes128_expand(key, portable_round);
-                crypto_aes128_encrypt_portable(
-                    portable_round, block, block);
-                crypto_forget(portable_round, sizeof portable_round);
-                check("portable AES-128 fallback",
-                      crypto_bytes_are(
-                          block, 16,
-                          "66e94bd4ef8a2c3b884cfa59ca342b2e"));
-        }
+        crypto_floor_aes_ctr();
 
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
         memory_fill(block, 0, 16);
-        crypto_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
+        checks_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
         check("AES-GCM one block",
               crypto_bytes_are(block, 16, "0388dace60b6a392f328c2b971b2fe78") &&
                   crypto_bytes_are(tag, 16, "ab6e47d42cec13bdf53a67b21257bddf"));
@@ -41722,16 +42165,16 @@ static fn crypto_floor_aes(void)
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
         check("AES-GCM decrypt",
-              crypto_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
+              checks_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
                   crypto_bytes_are(block, 16, "00000000000000000000000000000000"));
 
         memory_fill(key, 0, 16);
         memory_fill(iv, 0, 12);
         memory_fill(block, 0xaa, 16);
-        crypto_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
+        checks_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
         tag[0] ^= 1;
         check("AES-GCM bad tag wipes",
-              !crypto_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
+              !checks_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
                   crypto_bytes_are(block, 16, "00000000000000000000000000000000"));
 
         {
@@ -41755,7 +42198,7 @@ static fn crypto_floor_aes(void)
                     0xb1, 0x6a, 0xed, 0xf5, 0xaa, 0x0d, 0xe6, 0x57,
                     0xba, 0x63, 0x7b, 0x39};
 
-                crypto_aesgcm_encrypt((p8 address_to)varied_key,
+                checks_aesgcm_encrypt((p8 address_to)varied_key,
                                       (p8 address_to)varied_iv,
                                       (p8 address_to)varied_aad,
                                       sizeof varied_aad, varied_text,
@@ -41768,7 +42211,7 @@ static fn crypto_floor_aes(void)
                               tag, sizeof tag,
                               "5bc94fbc3221a5db94fae95ae7121a47"));
                 check("AES-GCM partial block and AAD decrypt",
-                      crypto_aesgcm_decrypt(
+                      checks_aesgcm_decrypt(
                           (p8 address_to)varied_key,
                           (p8 address_to)varied_iv,
                           (p8 address_to)varied_aad, sizeof varied_aad,
@@ -42030,7 +42473,8 @@ static fn crypto_floor_aes(void)
         so wget dumped core on both hosts while an ECDSA chain worked. The
         Root YR certificate below is the served DER byte for byte, checked
         against the X1 anchor the way tls_verify_chain checks a last
-        certificate; the PSS vector is a fixed RSA-2048 signature over a
+        certificate, by the anchor its issuer Name finds; the PSS vector is
+        a fixed RSA-2048 signature over a
         short message, made once with openssl and salt length 32.
 */
 static positive crypto_hex_into(p8 address_to out, positive room,
@@ -42133,32 +42577,26 @@ static fn crypto_rsa_served_sizes(void)
         static p8 signature[256];
         static p8 message[] = "Moonwater bowl setup alpine";
         tls_cert child;
-        tls_cert anchor;
         positive length =
             crypto_hex_into(root_yr, sizeof root_yr, root_yr_hex);
 
         memory_fill(address_of child, 0, sizeof child);
-        memory_fill(address_of anchor, 0, sizeof anchor);
         check("the served Root YR certificate parses",
               length == sizeof root_yr &&
                   !tls_parse_cert(root_yr, length, address_of child, null) &&
                   child.sig_length == 512);
-        anchor.curve = 3;
-        memory_copy(anchor.modulus, tls_isrg_x1_n, 512);
-        anchor.modulus_length = 512;
-        anchor.exponent = TLS_ISRG_X1_EXPONENT;
         check("ISRG Root X1's 4096-bit PKCS#1 signature over Root YR verifies",
               child.sig_length == 512 &&
-                  tls_verify_one(address_of child, address_of anchor));
+                  tls_anchor_verifies(address_of child));
         if (child.sig_length == 512)
         {
                 child.sig[child.sig_length - 1] ^= 1;
                 check("the 4096-bit verify refuses one flipped signature bit",
-                      !tls_verify_one(address_of child, address_of anchor));
+                      !tls_anchor_verifies(address_of child));
                 child.sig[child.sig_length - 1] ^= 1;
                 child.tbs[child.tbs_length - 1] ^= 1;
                 check("the 4096-bit verify refuses one flipped TBS bit",
-                      !tls_verify_one(address_of child, address_of anchor));
+                      !tls_anchor_verifies(address_of child));
                 child.tbs[child.tbs_length - 1] ^= 1;
         }
 
@@ -42176,6 +42614,262 @@ static fn crypto_rsa_served_sizes(void)
                                      sizeof signature, message,
                                      sizeof message - 1));
         message[0] ^= 1;
+}
+
+/*
+        The anchor table against chains that failed before it existed.
+
+        www.kernel.org serves its leaf and GlobalSign Atlas R3 DV TLS CA 2025
+        Q3 but not that intermediate's issuer, GlobalSign Root CA - R3: the
+        last certificate has to find the anchor by Name. www.google.com
+        serves WR2 and a GTS Root R1 cross-signed by GlobalSign Root CA; GTS
+        Root R1's key is an anchor, so the chain ends there. www.sectigo.com's
+        OV R36 is signed with sha384WithRSAEncryption by the RSA-4096 Root
+        R46. Each certificate is the served DER byte for byte.
+*/
+static fn tls_trust_anchor_chains(void)
+{
+        static const char atlas_hex[] =
+            "3082049030820378a00302010202110083431c440db4d0f7867afe7c3a53cc2d"
+            "300d06092a864886f70d01010b0500304c3120301e060355040b1317476c6f62"
+            "616c5369676e20526f6f74204341202d20523331133011060355040a130a476c"
+            "6f62616c5369676e311330110603550403130a476c6f62616c5369676e301e17"
+            "0d3235303431363033313430365a170d3237303431363030303030305a305831"
+            "0b300906035504061302424531193017060355040a1310476c6f62616c536967"
+            "6e206e762d7361312e302c06035504031325476c6f62616c5369676e2041746c"
+            "617320523320445620544c53204341203230323520513330820122300d06092a"
+            "864886f70d01010105000382010f003082010a0282010100997e0d518e24000f"
+            "caf055dd63733b243d300e439194378bb6f3f24442e28d25b1cb169bc9d0368d"
+            "f7c2dee8d8870a706f4ba15dfd4cf037252a5cffe3d2985e5db524f7667c21e2"
+            "cadb8f0ebe5dbec0112443c8aff6fa26fefb61eeb1e9d5634a1fb32a16e11597"
+            "5068280390e32d272dd9ba1f251024d894cb6c5ceb3907017056d395843a5436"
+            "5dff9f64c941266b6499cfae80f5808e88635275da6ae1646b65da692042461a"
+            "b939e56906c507dbb8120d8746b16c6da5ce6bb5f046f6d55238f2958954a192"
+            "306004da770c78d7881029c8123ee06531e8c0a0a678531df75cf44719c1d6f3"
+            "73e6e9fbcc135542aa798b341b9f3a77a229c729c5e164930203010001a38201"
+            "5f3082015b300e0603551d0f0101ff040403020186301d0603551d2504163014"
+            "06082b0601050507030106082b0601050507030230120603551d130101ff0408"
+            "30060101ff020100301d0603551d0e04160414d3bce75782e6c06396b8bd4e6b"
+            "00b65fa3effedf301f0603551d230418301680148ff04b7fa82e4524ae4d50fa"
+            "639a8bdee2dd1bbc307b06082b06010505070101046f306d302e06082b060105"
+            "050730018622687474703a2f2f6f637370322e676c6f62616c7369676e2e636f"
+            "6d2f726f6f747233303b06082b06010505073002862f687474703a2f2f736563"
+            "7572652e676c6f62616c7369676e2e636f6d2f6361636572742f726f6f742d72"
+            "332e63727430360603551d1f042f302d302ba029a0278625687474703a2f2f63"
+            "726c2e676c6f62616c7369676e2e636f6d2f726f6f742d72332e63726c302106"
+            "03551d20041a30183008060667810c010201300c060a2b06010401a0320a0103"
+            "300d06092a864886f70d01010b05000382010100a15e6dde11b22d7cc3b79860"
+            "dd69ff72ef76a2240110ffbe58016bb0d1a67d8b0b794e5fd8460463b1461b8b"
+            "109a07a7642b9080aa6e62a2b996e2e311607526b5a9cdefa564ed25ac7aa18e"
+            "a7fbdc8ff6a7effe591e07f476f0e6f9248781607319e5bec8dbe60cbe082eb4"
+            "5beef71e9604720163353197ec05647d9ec73a7ac47962cfe9d760b44ef6c66d"
+            "662fe1c3f87032c6090a39191c9b942f717a979bdf5097efccd29f69bfdb0ec2"
+            "caecea61c44a689e0a101e15ba66838ffe1df5218e537cca80042c3809a86546"
+            "dc7c9d7ab11c5c4a723e18af9990771366292108b0e85ecb69262f680a46080c"
+            "08d74cc02b8a2b39eca6ac3cd07ceebb7f5ae805";
+        static const char wr2_hex[] =
+            "3082050b308202f3a00302010202107ff005a07c4cded100ad9d66a5107b9830"
+            "0d06092a864886f70d01010b05003047310b3009060355040613025553312230"
+            "20060355040a1319476f6f676c65205472757374205365727669636573204c4c"
+            "43311430120603550403130b47545320526f6f74205231301e170d3233313231"
+            "333039303030305a170d3239303232303134303030305a303b310b3009060355"
+            "040613025553311e301c060355040a1315476f6f676c65205472757374205365"
+            "727669636573310c300a0603550403130357523230820122300d06092a864886"
+            "f70d01010105000382010f003082010a0282010100a9ff9c7f451e70a8539fca"
+            "d9e50dde4657577dbc8f9a5aac46f1849abb91dbc9fb2f01fb920900165ea01c"
+            "f8c1abf9782f4accd885a2d8593c0ed318fbb1f5240d26eeb65b64767c14c72f"
+            "7acea84cb7f4d908fcdf87233520a8e269e28c4e3fb159fa60a21eb3c9205319"
+            "82ca36536d604de90091fc768d5c080f0ac2dcf1736bc5136e0a4f7ac2f2021c"
+            "2eb46383da31f62d7530b2fbabc26edba9c00eb9f967d4c3255774eb05b4e98e"
+            "b5de28cdcc7a14e47103cb4d612e6157c519a90b98841ae87929d9b28d2fff57"
+            "6a66e0ceab95a82996637012671e3ae1dbb02171d77c9efdaa176efe2bfb3817"
+            "14d166a7af9ab570ccc863813a8cc02aa97637cee30203010001a381fe3081fb"
+            "300e0603551d0f0101ff040403020186301d0603551d250416301406082b0601"
+            "050507030106082b0601050507030230120603551d130101ff040830060101ff"
+            "020100301d0603551d0e04160414de1b1eed7915d43e3724c321bbec34396d42"
+            "b230301f0603551d23041830168014e4af2b26711a2b4827852f52662ceff089"
+            "13713e303406082b0601050507010104283026302406082b0601050507300286"
+            "18687474703a2f2f692e706b692e676f6f672f72312e637274302b0603551d1f"
+            "042430223020a01ea01c861a687474703a2f2f632e706b692e676f6f672f722f"
+            "72312e63726c30130603551d20040c300a3008060667810c010201300d06092a"
+            "864886f70d01010b0500038202010045758be51f3b4413961aab58f135c96f3d"
+            "d2d0334a8633ba57514feec434da16124cbf139f0dd454e94879c0303c9425f2"
+            "1af4ba3294b633720b85ee0911253494e16f42db829b7b7f2a9aa9ff7fa9d2de"
+            "4a20cbb3fb0303b8f80705da59922f184698ceaf72be2426b11e004dbd08ad93"
+            "41440abbc7d50185bf9357e3df7412530e1125d39bdcdecb276eb3c2b9336239"
+            "c2e035e15ba7092e19cb912a765cf1dfca238440a56fff9a41e0b5ef32d185ae"
+            "af2509f062c56ec2c86e32fdb8dae2ce4a914af385554eb175d648332f6f84d9"
+            "125c9fd4719863258d695c0a6b7df241bde8bb8fe422d79d6545e84c0a87dae9"
+            "6066880e1fc7e14e56c576ffb47a5769f202220926411dda74a2e529f3c49ae5"
+            "5dd6aa7afde1b72b6638fbe82966baefa0132ff8737ef0da40111c5ddd8fa6fc"
+            "bedbbe56f8329c1f41416d7eb6c5ebc68b36b7178c9dcf197a349f2193c47e74"
+            "35d2aafd4c6d14f5c9b0795b493cf3bf1748e8ef9a26130c87f273d69cc5526b"
+            "63f7329078a96beb5ed693a1bfbc183d8b59f68ac6055e5218e266e0dac1dcad"
+            "5a25aaf445fcf10b78a4afb0f273a430a834c1537f4296e54841eb90460c06dc"
+            "cb92c65ef3444443462946a0a6fcb98e392739b15ae2b1adfc13ff8efc26e1d4"
+            "fe84f1505a8e976b2d2a79fb4064eaf33dbd5be1a004b097481c42f5ea5a1ccd"
+            "26c851ff14996789725f1decad5add";
+        static const char gts_r1_hex[] =
+            "308205623082044aa003020102021077bd0d6cdb36f91aea210fc4f058d30d30"
+            "0d06092a864886f70d01010b05003057310b3009060355040613024245311930"
+            "17060355040a1310476c6f62616c5369676e206e762d73613110300e06035504"
+            "0b1307526f6f74204341311b301906035504031312476c6f62616c5369676e20"
+            "526f6f74204341301e170d3230303631393030303034325a170d323830313238"
+            "3030303034325a3047310b300906035504061302555331223020060355040a13"
+            "19476f6f676c65205472757374205365727669636573204c4c43311430120603"
+            "550403130b47545320526f6f7420523130820222300d06092a864886f70d0101"
+            "0105000382020f003082020a0282020100b611028b1ee3a1779b3bdcbf943eb7"
+            "95a7403ca1fd82f97d32068271f6f68c7ffbe8dbbc6a2e9797a38c4bf92bf6b1"
+            "f9ce841db1f9c597deefb9f2a3e9bc12895ea7aa52abf82327cba4b19c63dbd7"
+            "997ef00a5eeb68a6f4c65a470d4d1033e34eb113a3c8186c4becfc0990df9d64"
+            "29252307a1b4d23d2e60e0cfd20987bbcd48f04dc2c27a888abbbacf5919d6af"
+            "8fb007b09e31f182c1c0df2ea66d6c190eb5d87e261a45033db079a49428ad0f"
+            "7f26e5a808fe96e83c689453ee833a882b159609b2e07a8c2e75d69ceba75664"
+            "8f964f68ae3d97c2848fc0bc40c00b5cbdf687b3356cac18507f84e04ccd92d3"
+            "20e933bc5299af32b529b3252ab448f972e1ca64f7e682108de89dc28a88fa38"
+            "668afc63f901f978fd7b5c77fa7687faecdfb10e799557b4bd26efd601d1eb16"
+            "0abb8e0bb5c5c58a55abd3acea914b29cc19a432254e2af16544d002ceaace49"
+            "b4ea9f7c83b0407be743aba76ca38f7d8981fa4ca5ffd58ec3ce4be0b5d8b38e"
+            "45cf76c0ed402bfd530fb0a7d53b0db18aa203de31adcc77ea6f7b3ed6df9122"
+            "12e6befad832fc1063145172de5dd61693bd296833ef3a66ec078a26df13d757"
+            "657827de5e491400a2007f9aa821b6a9b195b0a5b90d1611dac76c483c40e07e"
+            "0d5acd563cd19705b9cb4bed394b9cc43fd255136e24b0d671faf4c1bacced1b"
+            "f5fe8141d800983d3ac8ae7a98371805950203010001a382013830820134300e"
+            "0603551d0f0101ff040403020186300f0603551d130101ff040530030101ff30"
+            "1d0603551d0e04160414e4af2b26711a2b4827852f52662ceff08913713e301f"
+            "0603551d23041830168014607b661a450d97ca89502f7d04cd34a8fffcfd4b30"
+            "6006082b0601050507010104543052302506082b060105050730018619687474"
+            "703a2f2f6f6373702e706b692e676f6f672f67737231302906082b0601050507"
+            "3002861d687474703a2f2f706b692e676f6f672f677372312f677372312e6372"
+            "7430320603551d1f042b30293027a025a0238621687474703a2f2f63726c2e70"
+            "6b692e676f6f672f677372312f677372312e63726c303b0603551d2004343032"
+            "3008060667810c0102013008060667810c010202300d060b2b06010401d67902"
+            "050302300d060b2b06010401d67902050303300d06092a864886f70d01010b05"
+            "00038201010034a41eb128a3d0b47617a6317a21e9d1523ec8db74164188b83d"
+            "351dede4ff93e15c5fabbbea7ccfdbe40dd18b57f2266f5bbe17466894376f6b"
+            "7ac8c01837fa2551acec68bfb2c849fd5a9aca0123ac84802b028c9997eb496a"
+            "8c75d7c7deb2c9979f5848570e35a1e41ad6fd6f83816fef8ccf97afc0852af0"
+            "f54e6909912de168b8c12b73e9d4d9fc22c0371f0b661d49ed02558f67e132d7"
+            "d326bf70e33df4676d3d7ce53488e332faa76e066a6fbd8b91ee164be83ba9b3"
+            "37e7c344a47ed86cd7c746f5929be7d521be66921994556cd429b20dc1665be2"
+            "77494828ed9dd71a337253b38235cf628bc9248ba5b7390cbb7e2a41bf52cffc"
+            "a296b6c2823f";
+        static const char r36_hex[] =
+            "3082064c30820434a00302010202102c1a3c76e943ddddff191b31890aed7130"
+            "0d06092a864886f70d01010c0500305f310b3009060355040613024742311830"
+            "16060355040a130f5365637469676f204c696d69746564313630340603550403"
+            "132d5365637469676f205075626c6963205365727665722041757468656e7469"
+            "636174696f6e20526f6f7420523436301e170d3231303332323030303030305a"
+            "170d3336303332313233353935395a3060310b30090603550406130247423118"
+            "3016060355040a130f5365637469676f204c696d697465643137303506035504"
+            "03132e5365637469676f205075626c6963205365727665722041757468656e74"
+            "69636174696f6e204341204f5620523336308201a2300d06092a864886f70d01"
+            "010105000382018f003082018a0282018100a6432d277474ea3a347dc788d0ce"
+            "7607b2be4f231e19cbf6050e4055cde3958b7be93bc722efe735edb65bf4495d"
+            "7f6b5940ffd8613a185e71d15e1bb18ecadc8789f04efe2b31bf4c66e8c927c3"
+            "bbe179da3a9005b63ada87e162331e8806cb234dbe16ac0778cf2e22b52d717f"
+            "1bd910b1177e7c4c1d0d1d571c01765c1588199dd642797c63b9c6bba49276d0"
+            "b2d49d7b605dc8c0135bd8e16bdb45e5b45ba9a4799c8d19d9a94dc16ce58fac"
+            "cb2e8bb44e59a1c8e2f49f4d94d9d17a8c76456572117a40d42859e20a8df99a"
+            "554884341c1a2b5456c12b285d67211781980d48db41470c6ac08cc978f26161"
+            "de195213b5be4fbfb8fde7c03934a7de6afe3ee76973424af1129eb1cfca9681"
+            "5912b4eba9ca7cf44f8bd9bd9083a131d61f4bc8221514dc7602f6e18722963e"
+            "de7002bd4eb87455b8f0a2e278587fb16ede3bbbaf191420ff69ce792340cd1e"
+            "40a968faee8fa7bd466afb2b8eb06430185ee100a81eed186fe377a24003e1f6"
+            "3b8e0257df0d46c536d777f5912708667b4d0203010001a38201813082017d30"
+            "1f0603551d230418301680145673586495f9921ab0122a046279a14015882149"
+            "301d0603551d0e04160414e36674bb70688d2c5d4e0ea64a8f9b37229c829230"
+            "0e0603551d0f0101ff04040302018630120603551d130101ff040830060101ff"
+            "020100301d0603551d250416301406082b0601050507030106082b0601050507"
+            "0302301b0603551d200414301230060604551d20003008060667810c01020230"
+            "540603551d1f044d304b3049a047a0458643687474703a2f2f63726c2e736563"
+            "7469676f2e636f6d2f5365637469676f5075626c696353657276657241757468"
+            "656e7469636174696f6e526f6f745234362e63726c30818406082b0601050507"
+            "010104783076304f06082b060105050730028643687474703a2f2f6372742e73"
+            "65637469676f2e636f6d2f5365637469676f5075626c69635365727665724175"
+            "7468656e7469636174696f6e526f6f745234362e703763302306082b06010505"
+            "0730018617687474703a2f2f6f6373702e7365637469676f2e636f6d300d0609"
+            "2a864886f70d01010c050003820201000595d60c7582ddcb9b6ff7b52359338b"
+            "c94f1622bf654a07d3db9f9953ab73939b607fd72a45947b148fa919302852ab"
+            "eebf0eb86fa9ed5341f2b89f5faba8a6a28082cbd9b59b2aee2005c34e13a3ab"
+            "cd731781b7512eb21ddc4386fc9db4113102c2860100ab086e5e9f4fe3c4f840"
+            "405292c61abfbf9a1633724ac2d894fccda9533744dc2f05dbe9eaf803b46c1c"
+            "c65290655bae35521aa18ca5b3cb308710de4872a945dc516ae4cb67ea65fb01"
+            "afcb4a67acb109192cfd98e1267dba1d7bf5e8a51d8d1aa68727a6c88f2c4fbb"
+            "a52dc90188dba127ed4004a33002ac7cf4e8dc768d3018f44e8d781e97ba86c4"
+            "c0b2b4db96519af825714446d41ad5db8b461c74e0c427bc337a069695123132"
+            "90d9d92096365562dfa029d16d5842d932e45d8be5f75ecad1f0b173f9a2d488"
+            "345f42a866c374718c8c952afbeef543d86359ecbf162616751278cfb6ab5cff"
+            "88f52bcbec4363d302ebe22195e293d3de1529d155a7b2d71f8dbec2f53ed7b9"
+            "51a2543698ad8dfe704b541c1a22189b417c385582b007ce8173a792ea2aac73"
+            "de0a1200ff53856c8e681f84af97a7834cf956334d36b741e577a7cc4e334730"
+            "ab5a7ca19140f8e05ccf71585a90c87b98f43562a5c3d857b13c8f63f1de6545"
+            "79f5a92c9123924529837def302433d7e7cb81f7fee5b9dd06df1d29c5001c7d"
+            "f3f46b229abcdc034f0e147c9df8704c";
+        static p8 atlas[1172];
+        static p8 wr2[1295];
+        static p8 gts_r1[1382];
+        static p8 r36[1616];
+        tls_cert atlas_cert;
+        tls_cert wr2_cert;
+        tls_cert gts_cert;
+        tls_cert r36_cert;
+        positive bad_anchors = 0;
+        bool parsed;
+
+        memory_fill(address_of atlas_cert, 0, sizeof atlas_cert);
+        memory_fill(address_of wr2_cert, 0, sizeof wr2_cert);
+        memory_fill(address_of gts_cert, 0, sizeof gts_cert);
+        memory_fill(address_of r36_cert, 0, sizeof r36_cert);
+        parsed =
+            crypto_hex_into(atlas, sizeof atlas, atlas_hex) == sizeof atlas &&
+            crypto_hex_into(wr2, sizeof wr2, wr2_hex) == sizeof wr2 &&
+            crypto_hex_into(gts_r1, sizeof gts_r1, gts_r1_hex) ==
+                sizeof gts_r1 &&
+            crypto_hex_into(r36, sizeof r36, r36_hex) == sizeof r36 &&
+            !tls_parse_cert(atlas, sizeof atlas, address_of atlas_cert, null) &&
+            !tls_parse_cert(wr2, sizeof wr2, address_of wr2_cert, null) &&
+            !tls_parse_cert(gts_r1, sizeof gts_r1, address_of gts_cert, null) &&
+            !tls_parse_cert(r36, sizeof r36, address_of r36_cert, null);
+        check("the captured kernel.org, Google and Sectigo certificates parse",
+              parsed);
+        if (!parsed)
+                return;
+
+        check("kernel.org's Atlas intermediate finds GlobalSign Root CA - R3 by Name",
+              tls_anchor_verifies(address_of atlas_cert));
+        check("a served GTS Root R1 cross-certificate carries an anchor key",
+              tls_spki_is_anchor(address_of gts_cert) &&
+                  !tls_spki_is_anchor(address_of wr2_cert));
+        check("WR2 chains to the served GTS Root R1",
+              tls_certificate_names_chain(address_of wr2_cert,
+                                          address_of gts_cert) &&
+                  tls_verify_one(address_of wr2_cert, address_of gts_cert));
+        check("Sectigo OV R36 verifies under Root R46 with sha384WithRSAEncryption",
+              tls_anchor_verifies(address_of r36_cert));
+        r36_cert.sig[r36_cert.sig_length - 1] ^= 1;
+        check("the SHA-384 PKCS#1 verify refuses one flipped signature bit",
+              !tls_anchor_verifies(address_of r36_cert));
+        r36_cert.sig[r36_cert.sig_length - 1] ^= 1;
+        atlas_cert.issuer[atlas_cert.issuer_length - 1] ^= 1;
+        check("an issuer Name no anchor carries fails closed",
+              !tls_anchor_verifies(address_of atlas_cert));
+        atlas_cert.issuer[atlas_cert.issuer_length - 1] ^= 1;
+
+        for (positive i = 0; i < array_count(tls_anchors); i++)
+        {
+                tls_cert root;
+
+                if (!tls_anchor_key(tls_anchors + i, address_of root) ||
+                    !tls_spki_is_anchor(address_of root) ||
+                    (root.curve == 3 &&
+                     (root.modulus_length < 256 ||
+                      !(root.modulus[root.modulus_length - 1] & 1) ||
+                      root.exponent < 3 || !(root.exponent & 1))))
+                        bad_anchors++;
+        }
+        check("every anchor decodes to its length and finds itself by key",
+              bad_anchors == 0 && array_count(tls_anchors) == 120);
 }
 
 static fn redirect_urls(void)
@@ -43338,8 +44032,10 @@ b32 main(void)
         tls_certificate_framing();
         crypto_floor();
         crypto_floor_ghash();
+        crypto_floor_field();
         crypto_floor_aes();
         crypto_rsa_served_sizes();
+        tls_trust_anchor_chains();
         redirect_urls();
         fetching_for_real();
         leasing();

@@ -3,10 +3,12 @@
 
         One cipher: TLS_AES_128_GCM_SHA256. Groups: X25519, P-256 and
         P-384, each with a ClientHello key share so Chimera's secp384r1
-        servers do not HelloRetryRequest. Certificates
-        walk to ISRG Root X2, ISRG Root X1, or USERTrust ECC -- the three
-        roots the bowl bootstrap hosts actually present (Arch on X2, Alpine
-        and GitHub user content on X1, github.com on USERTrust/Sectigo).
+        servers do not HelloRetryRequest. Certificates walk to one of the
+        Mozilla TLS roots in anchors.inc: a served certificate carrying an
+        anchor's key ends the chain, or the last one served names an anchor
+        as its issuer and verifies under it. Chain signatures may be ECDSA
+        with SHA-256 or SHA-384 on P-256 or P-384, or RSA PKCS#1 v1.5 with
+        SHA-256 or SHA-384.
         Signature algorithms advertised are ecdsa_secp256r1_sha256,
         ecdsa_secp384r1_sha384 and rsa_pss_rsae_sha256. close_notify is a
         clean end of the body, not a handshake failure.
@@ -32,6 +34,7 @@
 #define TLS_OK 0
 #define TLS_FAIL (-1)
 #define TLS_EOF 1
+#define TLS_AGAIN 2
 
 #define TLS_CT_CCS 20
 #define TLS_CT_ALERT 21
@@ -46,73 +49,21 @@
 #define TLS_HS_CERT_VERIFY 15
 #define TLS_HS_FINISHED 20
 
-static const p8 tls_isrg_x2_x[48] = {
-    0xcd, 0x9b, 0xd5, 0x9f, 0x80, 0x83, 0x0a, 0xec, 0x09, 0x4a, 0xf3, 0x16,
-    0x4a, 0x3e, 0x5c, 0xcf, 0x77, 0xac, 0xde, 0x67, 0x05, 0x0d, 0x1d, 0x07,
-    0xb6, 0xdc, 0x16, 0xfb, 0x5a, 0x8b, 0x14, 0xdb, 0xe2, 0x71, 0x60, 0xc4,
-    0xba, 0x45, 0x95, 0x11, 0x89, 0x8e, 0xea, 0x06, 0xdf, 0xf7, 0x2a, 0x16};
-static const p8 tls_isrg_x2_y[48] = {
-    0x1c, 0xa4, 0xb9, 0xc5, 0xc5, 0x32, 0xe0, 0x03, 0xe0, 0x1e, 0x82, 0x18,
-    0x38, 0x8b, 0xd7, 0x45, 0xd8, 0x0a, 0x6a, 0x6e, 0xe6, 0x00, 0x77, 0xfb,
-    0x02, 0x51, 0x7d, 0x22, 0xd8, 0x0a, 0x6e, 0x9a, 0x5b, 0x77, 0xdf, 0xf0,
-    0xfa, 0x41, 0xec, 0x39, 0xdc, 0x75, 0xca, 0x68, 0x07, 0x0c, 0x1f, 0xea};
+/* One trust anchor from anchors.inc: hashes that find candidates, then the
+   key itself (curve 1 P-256, 2 P-384, 3 RSA). */
+typedef struct
+{
+        p8 name[8];
+        p8 key_hash[8];
+        p8 curve;
+        p32 exponent;
+        p16 key_length;
+        string_address key;
+} tls_anchor;
 
-static const p8 tls_isrg_x1_n[512] = {
-    0xad, 0xe8, 0x24, 0x73, 0xf4, 0x14, 0x37, 0xf3, 0x9b, 0x9e, 0x2b, 0x57,
-    0x28, 0x1c, 0x87, 0xbe, 0xdc, 0xb7, 0xdf, 0x38, 0x90, 0x8c, 0x6e, 0x3c,
-    0xe6, 0x57, 0xa0, 0x78, 0xf7, 0x75, 0xc2, 0xa2, 0xfe, 0xf5, 0x6a, 0x6e,
-    0xf6, 0x00, 0x4f, 0x28, 0xdb, 0xde, 0x68, 0x86, 0x6c, 0x44, 0x93, 0xb6,
-    0xb1, 0x63, 0xfd, 0x14, 0x12, 0x6b, 0xbf, 0x1f, 0xd2, 0xea, 0x31, 0x9b,
-    0x21, 0x7e, 0xd1, 0x33, 0x3c, 0xba, 0x48, 0xf5, 0xdd, 0x79, 0xdf, 0xb3,
-    0xb8, 0xff, 0x12, 0xf1, 0x21, 0x9a, 0x4b, 0xc1, 0x8a, 0x86, 0x71, 0x69,
-    0x4a, 0x66, 0x66, 0x6c, 0x8f, 0x7e, 0x3c, 0x70, 0xbf, 0xad, 0x29, 0x22,
-    0x06, 0xf3, 0xe4, 0xc0, 0xe6, 0x80, 0xae, 0xe2, 0x4b, 0x8f, 0xb7, 0x99,
-    0x7e, 0x94, 0x03, 0x9f, 0xd3, 0x47, 0x97, 0x7c, 0x99, 0x48, 0x23, 0x53,
-    0xe8, 0x38, 0xae, 0x4f, 0x0a, 0x6f, 0x83, 0x2e, 0xd1, 0x49, 0x57, 0x8c,
-    0x80, 0x74, 0xb6, 0xda, 0x2f, 0xd0, 0x38, 0x8d, 0x7b, 0x03, 0x70, 0x21,
-    0x1b, 0x75, 0xf2, 0x30, 0x3c, 0xfa, 0x8f, 0xae, 0xdd, 0xda, 0x63, 0xab,
-    0xeb, 0x16, 0x4f, 0xc2, 0x8e, 0x11, 0x4b, 0x7e, 0xcf, 0x0b, 0xe8, 0xff,
-    0xb5, 0x77, 0x2e, 0xf4, 0xb2, 0x7b, 0x4a, 0xe0, 0x4c, 0x12, 0x25, 0x0c,
-    0x70, 0x8d, 0x03, 0x29, 0xa0, 0xe1, 0x53, 0x24, 0xec, 0x13, 0xd9, 0xee,
-    0x19, 0xbf, 0x10, 0xb3, 0x4a, 0x8c, 0x3f, 0x89, 0xa3, 0x61, 0x51, 0xde,
-    0xac, 0x87, 0x07, 0x94, 0xf4, 0x63, 0x71, 0xec, 0x2e, 0xe2, 0x6f, 0x5b,
-    0x98, 0x81, 0xe1, 0x89, 0x5c, 0x34, 0x79, 0x6c, 0x76, 0xef, 0x3b, 0x90,
-    0x62, 0x79, 0xe6, 0xdb, 0xa4, 0x9a, 0x2f, 0x26, 0xc5, 0xd0, 0x10, 0xe1,
-    0x0e, 0xde, 0xd9, 0x10, 0x8e, 0x16, 0xfb, 0xb7, 0xf7, 0xa8, 0xf7, 0xc7,
-    0xe5, 0x02, 0x07, 0x98, 0x8f, 0x36, 0x08, 0x95, 0xe7, 0xe2, 0x37, 0x96,
-    0x0d, 0x36, 0x75, 0x9e, 0xfb, 0x0e, 0x72, 0xb1, 0x1d, 0x9b, 0xbc, 0x03,
-    0xf9, 0x49, 0x05, 0xd8, 0x81, 0xdd, 0x05, 0xb4, 0x2a, 0xd6, 0x41, 0xe9,
-    0xac, 0x01, 0x76, 0x95, 0x0a, 0x0f, 0xd8, 0xdf, 0xd5, 0xbd, 0x12, 0x1f,
-    0x35, 0x2f, 0x28, 0x17, 0x6c, 0xd2, 0x98, 0xc1, 0xa8, 0x09, 0x64, 0x77,
-    0x6e, 0x47, 0x37, 0xba, 0xce, 0xac, 0x59, 0x5e, 0x68, 0x9d, 0x7f, 0x72,
-    0xd6, 0x89, 0xc5, 0x06, 0x41, 0x29, 0x3e, 0x59, 0x3e, 0xdd, 0x26, 0xf5,
-    0x24, 0xc9, 0x11, 0xa7, 0x5a, 0xa3, 0x4c, 0x40, 0x1f, 0x46, 0xa1, 0x99,
-    0xb5, 0xa7, 0x3a, 0x51, 0x6e, 0x86, 0x3b, 0x9e, 0x7d, 0x72, 0xa7, 0x12,
-    0x05, 0x78, 0x59, 0xed, 0x3e, 0x51, 0x78, 0x15, 0x0b, 0x03, 0x8f, 0x8d,
-    0xd0, 0x2f, 0x05, 0xb2, 0x3e, 0x7b, 0x4a, 0x1c, 0x4b, 0x73, 0x05, 0x12,
-    0xfc, 0xc6, 0xea, 0xe0, 0x50, 0x13, 0x7c, 0x43, 0x93, 0x74, 0xb3, 0xca,
-    0x74, 0xe7, 0x8e, 0x1f, 0x01, 0x08, 0xd0, 0x30, 0xd4, 0x5b, 0x71, 0x36,
-    0xb4, 0x07, 0xba, 0xc1, 0x30, 0x30, 0x5c, 0x48, 0xb7, 0x82, 0x3b, 0x98,
-    0xa6, 0x7d, 0x60, 0x8a, 0xa2, 0xa3, 0x29, 0x82, 0xcc, 0xba, 0xbd, 0x83,
-    0x04, 0x1b, 0xa2, 0x83, 0x03, 0x41, 0xa1, 0xd6, 0x05, 0xf1, 0x1b, 0xc2,
-    0xb6, 0xf0, 0xa8, 0x7c, 0x86, 0x3b, 0x46, 0xa8, 0x48, 0x2a, 0x88, 0xdc,
-    0x76, 0x9a, 0x76, 0xbf, 0x1f, 0x6a, 0xa5, 0x3d, 0x19, 0x8f, 0xeb, 0x38,
-    0xf3, 0x64, 0xde, 0xc8, 0x2b, 0x0d, 0x0a, 0x28, 0xff, 0xf7, 0xdb, 0xe2,
-    0x15, 0x42, 0xd4, 0x22, 0xd0, 0x27, 0x5d, 0xe1, 0x79, 0xfe, 0x18, 0xe7,
-    0x70, 0x88, 0xad, 0x4e, 0xe6, 0xd9, 0x8b, 0x3a, 0xc6, 0xdd, 0x27, 0x51,
-    0x6e, 0xff, 0xbc, 0x64, 0xf5, 0x33, 0x43, 0x4f};
-#define TLS_ISRG_X1_EXPONENT 65537
-
-static const p8 tls_usertrust_ecc_x[48] = {
-    0x1a, 0xac, 0x54, 0x5a, 0xa9, 0xf9, 0x68, 0x23, 0xe7, 0x7a, 0xd5, 0x24,
-    0x6f, 0x53, 0xc6, 0x5a, 0xd8, 0x4b, 0xab, 0xc6, 0xd5, 0xb6, 0xd1, 0xe6,
-    0x73, 0x71, 0xae, 0xdd, 0x9c, 0xd6, 0x0c, 0x61, 0xfd, 0xdb, 0xa0, 0x89,
-    0x03, 0xb8, 0x05, 0x14, 0xec, 0x57, 0xce, 0xee, 0x5d, 0x3f, 0xe2, 0x21};
-static const p8 tls_usertrust_ecc_y[48] = {
-    0xb3, 0xce, 0xf7, 0xd4, 0x8a, 0x79, 0xe0, 0xa3, 0x83, 0x7e, 0x2d, 0x97,
-    0xd0, 0x61, 0xc4, 0xf1, 0x99, 0xdc, 0x25, 0x91, 0x63, 0xab, 0x7f, 0x30,
-    0xa3, 0xb4, 0x70, 0xe2, 0xc7, 0xa1, 0x33, 0x9c, 0xf3, 0xbf, 0x2e, 0x5c,
-    0x53, 0xb1, 0x5f, 0xb3, 0x7d, 0x32, 0x7f, 0x8a, 0x34, 0xe3, 0x79, 0x79};
+static const tls_anchor tls_anchors[] = {
+#include "anchors.inc"
+};
 
 static const p8 tls_oid_ec[7] = {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01};
 static const p8 tls_oid_p256[8] = {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
@@ -123,6 +74,8 @@ static const p8 tls_oid_ecdsa_sha384[8] = {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04,
                                            0x03, 0x03};
 static const p8 tls_oid_sha256_rsa[9] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
                                          0x01, 0x01, 0x0b};
+static const p8 tls_oid_sha384_rsa[9] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
+                                         0x01, 0x01, 0x0c};
 static const p8 tls_oid_rsa[9] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01,
                                   0x01, 0x01};
 static const p8 tls_oid_san[3] = {0x55, 0x1d, 0x11};
@@ -153,6 +106,8 @@ typedef struct
         p8 s_key[16];
         p8 c_iv[12];
         p8 s_iv[12];
+        crypto_aesgcm_key c_gcm;
+        crypto_aesgcm_key s_gcm;
         p64 seq_read;
         p64 seq_write;
         p8 leaf_qx[48];
@@ -161,6 +116,11 @@ typedef struct
         positive leaf_n_length;
         p64 leaf_e;
         p8 leaf_curve;
+        /* A post-handshake message may span records and reads; close_notify,
+           once read, answers every later read. */
+        bool closed;
+        positive post_handshake_used;
+        p8 post_handshake[TLS_HS_MAX];
         /* Socket bytes. Records not yet opened lie in
            [receive_start, receive_end); application data is decrypted where
            it lies, and plain_at and plain_used name the part of the last
@@ -301,7 +261,7 @@ static bipolar tls_send_enc(tls_conn address_to tls, p8 inner_type,
         memory_copy(aad, header, 5);
 
         tls_nonce(tls->c_iv, tls->seq_write, nonce);
-        crypto_aesgcm_encrypt(tls->c_key, nonce, aad, 5, inner, inner_length,
+        crypto_aesgcm_seal(address_of tls->c_gcm, nonce, aad, 5, inner, inner_length,
                               tag);
         tls->seq_write++;
 
@@ -337,7 +297,7 @@ static bipolar tls_decrypt_record(tls_conn address_to tls, p8 address_to payload
                 memory_copy(inner, payload, payload_length - 16);
         memory_copy(tag, payload + payload_length - 16, 16);
         tls_nonce(tls->s_iv, tls->seq_read, nonce);
-        if (!crypto_aesgcm_decrypt(tls->s_key, nonce, aad, 5, inner,
+        if (!crypto_aesgcm_open(address_of tls->s_gcm, nonce, aad, 5, inner,
                                    payload_length - 16, tag))
                 goto done;
 
@@ -665,7 +625,9 @@ static bool tls_signature_algorithm(p8 address_to der, positive size,
                 tls_oid_is(der + oid_at, oid_stop - oid_at,
                            tls_oid_ecdsa_sha384, sizeof tls_oid_ecdsa_sha384);
         rsa = tls_oid_is(der + oid_at, oid_stop - oid_at,
-                         tls_oid_sha256_rsa, sizeof tls_oid_sha256_rsa);
+                         tls_oid_sha256_rsa, sizeof tls_oid_sha256_rsa) ||
+              tls_oid_is(der + oid_at, oid_stop - oid_at,
+                         tls_oid_sha384_rsa, sizeof tls_oid_sha384_rsa);
         if (!ecdsa && !rsa)
                 return false;
         if (ecdsa && oid_stop != alg_stop)
@@ -1302,45 +1264,126 @@ static bipolar tls_parse_cert(p8 address_to der, positive length,
         return tls_parse_extensions(der, tbs_stop, spki_stop, cert, host);
 }
 
-static bool tls_spki_is_x2(tls_cert address_to cert)
+/* The standard base64 alphabet without line breaks; the byte count, or 0
+   for any other character or more than room bytes. */
+static positive tls_base64_decode(p8 address_to out, positive room,
+                                  string_address text)
 {
-        return cert->curve == 2 &&
-               !memory_compare(cert->qx, tls_isrg_x2_x, 48) &&
-               !memory_compare(cert->qy, tls_isrg_x2_y, 48);
+        p32 bits = 0;
+        positive have = 0;
+        positive count = 0;
+
+        for (; *text && *text != '='; text++)
+        {
+                p8 c = (p8)*text;
+                p32 value;
+
+                if (c >= 'A' && c <= 'Z')
+                        value = c - 'A';
+                else if (c >= 'a' && c <= 'z')
+                        value = c - 'a' + 26;
+                else if (c >= '0' && c <= '9')
+                        value = c - '0' + 52;
+                else if (c == '+')
+                        value = 62;
+                else if (c == '/')
+                        value = 63;
+                else
+                        return 0;
+                bits = (bits << 6) | value;
+                have += 6;
+                if (have >= 8)
+                {
+                        have -= 8;
+                        if (count == room)
+                                return 0;
+                        out[count++] = (p8)(bits >> have);
+                }
+        }
+
+        return count;
 }
 
-static bool tls_spki_is_x1(tls_cert address_to cert)
+/* An anchor's key laid out the way tls_parse_cert lays out a served one. */
+static bool tls_anchor_key(const tls_anchor address_to anchor,
+                           tls_cert address_to root)
 {
-        return cert->curve == 3 && cert->modulus_length == 512 &&
-               cert->exponent == TLS_ISRG_X1_EXPONENT &&
-               !memory_compare(cert->modulus, tls_isrg_x1_n, 512);
-}
+        p8 key[512];
+        positive length = tls_base64_decode(key, sizeof key, anchor->key);
+        positive coord = length / 2;
 
-static bool tls_spki_is_usertrust(tls_cert address_to cert)
-{
-        return cert->curve == 2 &&
-               !memory_compare(cert->qx, tls_usertrust_ecc_x, 48) &&
-               !memory_compare(cert->qy, tls_usertrust_ecc_y, 48);
+        memory_fill(root, 0, sizeof(*root));
+        if (!length || length != anchor->key_length)
+                return false;
+        root->curve = anchor->curve;
+        if (anchor->curve == 3)
+        {
+                memory_copy(root->modulus, key, length);
+                root->modulus_length = length;
+                root->exponent = anchor->exponent;
+                return true;
+        }
+        if ((anchor->curve != 1 || coord != 32) &&
+            (anchor->curve != 2 || coord != 48))
+                return false;
+        memory_copy(root->qx + 48 - coord, key, coord);
+        memory_copy(root->qy + 48 - coord, key + coord, coord);
+        return true;
 }
 
 /* TLS_BENCH_ANCHOR names a file holding tls_bench_anchor_x and _y, the
    P-384 root that test/differential.py --harness https_bench generates for a
    loopback server. Only that harness defines it; build.sh never does, so a
-   shipped binary trusts exactly the three roots above. */
+   shipped binary trusts exactly the anchors in anchors.inc. */
 #ifdef TLS_BENCH_ANCHOR
 #include TLS_BENCH_ANCHOR
 #endif
 
+/* A served certificate carrying an anchor's key ends the chain, whoever
+   signed it: the key hash finds candidates and the whole key decides. */
 static bool tls_spki_is_anchor(tls_cert address_to cert)
 {
-        return tls_spki_is_x2(cert) || tls_spki_is_x1(cert) ||
-               tls_spki_is_usertrust(cert)
+        p8 key[96];
+        p8 digest[32];
+        positive coord = cert->curve == 1 ? 32 : 48;
+
+        if (cert->curve == 3)
+                crypto_sha256_of(cert->modulus, cert->modulus_length, digest);
+        else if (cert->curve == 1 || cert->curve == 2)
+        {
+                memory_copy(key, cert->qx + 48 - coord, coord);
+                memory_copy(key + coord, cert->qy + 48 - coord, coord);
+                crypto_sha256_of(key, coord * 2, digest);
+        }
+        else
+                return false;
+
 #ifdef TLS_BENCH_ANCHOR
-               || (cert->curve == 2 &&
-                   !memory_compare(cert->qx, tls_bench_anchor_x, 48) &&
-                   !memory_compare(cert->qy, tls_bench_anchor_y, 48))
+        if (cert->curve == 2 &&
+            !memory_compare(cert->qx, tls_bench_anchor_x, 48) &&
+            !memory_compare(cert->qy, tls_bench_anchor_y, 48))
+                return true;
 #endif
-            ;
+
+        for (positive i = 0; i < array_count(tls_anchors); i++)
+        {
+                tls_cert root;
+
+                if (tls_anchors[i].curve != cert->curve ||
+                    memory_compare(tls_anchors[i].key_hash, digest, 8) ||
+                    !tls_anchor_key(tls_anchors + i, address_of root))
+                        continue;
+                if (cert->curve == 3
+                        ? root.modulus_length == cert->modulus_length &&
+                              root.exponent == cert->exponent &&
+                              !memory_compare(root.modulus, cert->modulus,
+                                              root.modulus_length)
+                        : !memory_compare(root.qx, cert->qx, 48) &&
+                              !memory_compare(root.qy, cert->qy, 48))
+                        return true;
+        }
+
+        return false;
 }
 
 static bool tls_certificate_names_chain(const tls_cert address_to child,
@@ -1412,6 +1455,40 @@ static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer
                 return crypto_rsa_pkcs1_sha256(issuer->modulus, issuer->modulus_length,
                                                issuer->exponent, child->sig,
                                                child->sig_length, hash);
+        }
+
+        if (tls_oid_is(child->sig_oid, child->sig_oid_length, tls_oid_sha384_rsa, 9))
+        {
+                if (issuer->curve != 3)
+                        return false;
+                crypto_sha384(child->tbs, child->tbs_length, hash);
+                return crypto_rsa_pkcs1_sha384(issuer->modulus, issuer->modulus_length,
+                                               issuer->exponent, child->sig,
+                                               child->sig_length, hash);
+        }
+
+        return false;
+}
+
+/* The last certificate served names its issuer.  Each anchor with that
+   subject Name is tried, and one signature that verifies ends the chain; a
+   Name no anchor carries fails without any signature check. */
+static bool tls_anchor_verifies(tls_cert address_to child)
+{
+        p8 digest[32];
+
+        if (!child->issuer || !child->issuer_length)
+                return false;
+        crypto_sha256_of(child->issuer, child->issuer_length, digest);
+        for (positive i = 0; i < array_count(tls_anchors); i++)
+        {
+                tls_cert root;
+
+                if (memory_compare(tls_anchors[i].name, digest, 8) ||
+                    !tls_anchor_key(tls_anchors + i, address_of root))
+                        continue;
+                if (tls_verify_one(child, address_of root))
+                        return true;
         }
 
         return false;
@@ -1570,41 +1647,7 @@ static bool tls_verify_chain(p8 address_to body, positive body_length,
                                 return false;
                 }
                 else
-                {
-                        tls_cert root;
-                        bool usertrust_first =
-                            certs[i].issuer &&
-                            memory_search(certs[i].issuer,
-                                          certs[i].issuer_length,
-                                          "USERTrust", 9) != null;
-
-                        /* Every anchor is still tried; the issuer Name
-                           only picks which P-384 verify runs first, so a
-                           Sectigo chain no longer pays for a failed ISRG
-                           X2 verify before the USERTrust one. */
-                        memory_fill(address_of root, 0, sizeof(root));
-                        root.curve = 2;
-                        for (positive turn = 0; turn < 2; turn++)
-                        {
-                                bool usertrust = (turn == 0) == usertrust_first;
-
-                                memory_copy(root.qx,
-                                            usertrust ? tls_usertrust_ecc_x
-                                                      : tls_isrg_x2_x,
-                                            48);
-                                memory_copy(root.qy,
-                                            usertrust ? tls_usertrust_ecc_y
-                                                      : tls_isrg_x2_y,
-                                            48);
-                                if (tls_verify_one(certs + i, address_of root))
-                                        return true;
-                        }
-                        root.curve = 3;
-                        memory_copy(root.modulus, tls_isrg_x1_n, 512);
-                        root.modulus_length = 512;
-                        root.exponent = TLS_ISRG_X1_EXPONENT;
-                        return tls_verify_one(certs + i, address_of root);
-                }
+                        return tls_anchor_verifies(certs + i);
         }
 
         return false;
@@ -1928,6 +1971,8 @@ static bipolar tls_install_handshake_keys(tls_conn address_to tls,
                           address_of tls->transcript, tls->s_hs_traffic);
         tls_traffic_keys(tls->c_hs_traffic, tls->c_key, tls->c_iv);
         tls_traffic_keys(tls->s_hs_traffic, tls->s_key, tls->s_iv);
+        crypto_aesgcm_prepare(address_of tls->c_gcm, tls->c_key);
+        crypto_aesgcm_prepare(address_of tls->s_gcm, tls->s_key);
         tls->seq_read = 0;
         tls->seq_write = 0;
         tls->encrypted = true;
@@ -1966,6 +2011,8 @@ static fn tls_use_app_keys(tls_conn address_to tls)
 {
         tls_traffic_keys(tls->c_ap_traffic, tls->c_key, tls->c_iv);
         tls_traffic_keys(tls->s_ap_traffic, tls->s_key, tls->s_iv);
+        crypto_aesgcm_prepare(address_of tls->c_gcm, tls->c_key);
+        crypto_aesgcm_prepare(address_of tls->s_gcm, tls->s_key);
         tls->seq_read = 0;
         tls->seq_write = 0;
         tls->application = true;
@@ -2297,6 +2344,8 @@ static bipolar tls_handshake(
         tls->receive_start = 0;
         tls->receive_end = 0;
         tls->plain_used = 0;
+        tls->closed = false;
+        tls->post_handshake_used = 0;
         tls->encrypted = false;
         tls->application = false;
 
@@ -2496,26 +2545,26 @@ static bipolar tls_write(tls_conn address_to tls, p8 address_to data,
 }
 
 /* Up to room bytes of the next application data, lent rather than copied:
-   *span points into the receive buffer and stays valid until the next read
-   on this connection; *got of zero is close_notify. Given a deadline, every
-   wait shares it. Given seconds or nanoseconds instead, a deadline that long
-   starts the first time a wait is needed, so records already whole in the
-   buffer are opened without asking the clock. Neither renews: tickets, empty
-   records and partial records all spend one budget. */
+   *span points into the receive buffer and stays valid until a later read on
+   this connection receives; *got of zero is close_notify, and stays so. Given
+   a deadline, every wait shares it. Given seconds or nanoseconds instead, a
+   deadline that long starts the first time a wait is needed, so records
+   already whole in the buffer are opened without asking the clock. Neither
+   renews: tickets, empty records and partial records all spend one budget.
+   hold never receives: when the next record is not yet whole it answers
+   TLS_AGAIN, so a writer can gather every record already here while the
+   spans it holds stay put. */
 static bipolar tls_take(tls_conn address_to tls, positive room,
                         p8 address_to address_to span, positive address_to got,
                         const network_deadline address_to deadline,
-                        positive seconds, positive nanoseconds)
+                        positive seconds, positive nanoseconds, bool hold)
 {
         network_deadline patience;
         bool waiting = !seconds && !nanoseconds;
         p8 type = 0;
         p8 address_to inner = null;
         positive length = 0;
-        p8 post_handshake[TLS_HS_MAX];
-        positive post_handshake_used = 0;
         bipolar status;
-        bipolar result = TLS_FAIL;
 
         if (tls->plain_used)
         {
@@ -2530,38 +2579,46 @@ static bipolar tls_take(tls_conn address_to tls, positive room,
 
         for (;;)
         {
-                if (!waiting && !tls_record_whole(tls))
+                if (tls->closed)
                 {
-                        if (!network_deadline_begin(address_of patience,
-                                                    seconds, nanoseconds))
-                                goto done;
-                        deadline = address_of patience;
-                        waiting = true;
+                        address_to got = 0;
+                        return tls->post_handshake_used ? TLS_FAIL : TLS_OK;
+                }
+                if (!tls_record_whole(tls))
+                {
+                        if (hold)
+                                return TLS_AGAIN;
+                        if (!waiting)
+                        {
+                                if (!network_deadline_begin(address_of patience,
+                                                            seconds,
+                                                            nanoseconds))
+                                        return TLS_FAIL;
+                                deadline = address_of patience;
+                                waiting = true;
+                        }
                 }
                 status = tls_next_record(tls, address_of type, address_of inner,
                                          address_of length, deadline);
                 if (status == TLS_EOF)
                 {
-                        if (post_handshake_used)
-                                goto done;
-                        address_to got = 0;
-                        result = TLS_OK;
-                        goto done;
+                        tls->closed = true;
+                        continue;
                 }
                 if (status || type == TLS_CT_CCS)
-                        goto done;
+                        return TLS_FAIL;
                 if (type == TLS_CT_HANDSHAKE)
                 {
                         if (tls_post_handshake_append(
-                                post_handshake,
-                                address_of post_handshake_used,
+                                tls->post_handshake,
+                                address_of tls->post_handshake_used,
                                 inner, length))
-                                goto done;
+                                return TLS_FAIL;
                         crypto_forget(inner, length);
                         continue;
                 }
-                if (type != TLS_CT_APP || post_handshake_used)
-                        goto done;
+                if (type != TLS_CT_APP || tls->post_handshake_used)
+                        return TLS_FAIL;
                 if (!length)
                         continue;
                 if (room > length)
@@ -2570,14 +2627,8 @@ static bipolar tls_take(tls_conn address_to tls, positive room,
                 address_to got = room;
                 tls->plain_at = (positive)(inner - tls->receive) + room;
                 tls->plain_used = length - room;
-                result = TLS_OK;
-                goto done;
+                return TLS_OK;
         }
-
-done:
-        if (post_handshake_used)
-                crypto_forget(post_handshake, post_handshake_used);
-        return result;
 }
 
 static bipolar tls_borrow(tls_conn address_to tls, positive room,
@@ -2585,7 +2636,16 @@ static bipolar tls_borrow(tls_conn address_to tls, positive room,
                           positive address_to got, positive seconds,
                           positive nanoseconds)
 {
-        return tls_take(tls, room, span, got, null, seconds, nanoseconds);
+        return tls_take(tls, room, span, got, null, seconds, nanoseconds,
+                        false);
+}
+
+/* The next application data already whole in the receive buffer, lent
+   without receiving; TLS_AGAIN when none is. */
+static bipolar tls_lend(tls_conn address_to tls, positive room,
+                        p8 address_to address_to span, positive address_to got)
+{
+        return tls_take(tls, room, span, got, null, 0, 0, true);
 }
 
 static bipolar tls_read_until(
@@ -2594,7 +2654,7 @@ static bipolar tls_read_until(
 {
         p8 address_to span = null;
         bipolar status = tls_take(tls, room, address_of span, got, deadline,
-                                  0, 0);
+                                  0, 0, false);
 
         if (!status && address_to got)
                 memory_copy(into, span, address_to got);

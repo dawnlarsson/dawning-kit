@@ -342,10 +342,18 @@ cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'deflate_deco
 cover('correctness_only', 'test/hardware_floor.c', 'sha256_compress',
       'one 64-byte compression; timed in the hardware-floor harness, not the '
       'test/run bench catalogue')
-cover('correctness_only', 'test/checks.c#CHECK_net', 'ghash_blocks',
-      'bit-serial differential on all three floors; timed against the same '
-      'carry-less multiply compiled from C in test/hardware_floor.c, which '
-      'test/run bench does not dispatch')
+cover('correctness_only', 'test/checks.c#CHECK_net', '''
+p256_multiply p256_square p256_add p256_subtract
+p384_multiply p384_square p384_add p384_subtract
+''', 'differential against the C Montgomery arithmetic on all three floors, '
+      'edges and aliasing included; timed against the same arithmetic '
+      'compiled from C in test/hardware_floor.c, which test/run bench does '
+      'not dispatch')
+cover('correctness_only', 'test/checks.c#CHECK_net', 'ghash_blocks ghash_key ghash_integer aes128_ctr_blocks',
+      'bit-serial differential over every body each machine has (feature '
+      'bytes toggled); ghash_blocks timed against the carry-less multiply '
+      'compiled from C in test/hardware_floor.c, which test/run bench does '
+      'not dispatch; ghash_key runs once a traffic key')
 
 cover('correctness_only', 'test/checks.c#CHECK_zstd', '''
 zstd_bits_open zstd_bits_reload zstd_bits_get

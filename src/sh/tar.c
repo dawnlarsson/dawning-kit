@@ -675,6 +675,15 @@ static file_facts tar_output_target_facts;
 static bool tar_output_target_known;
 static file_facts tar_output_stage_facts;
 static bool tar_output_stage_known;
+static p64 tar_archive_size;
+static bool tar_archive_sized;
+
+/* Extended headers carry ACLs and xattrs as well as names, so a body is
+   sized apart from TAR_PATH, up to a bound a hostile archive cannot turn
+   into unbounded memory. */
+#define TAR_PAX_LIMIT (1024 * 1024)
+static p8 address_to tar_pax_body;
+static positive tar_pax_body_room;
 
 /*
         Only files with nlink > 1 enter the table. Sixty-four names at
@@ -1474,7 +1483,11 @@ static bipolar tar_fill(bipolar handle)
         return got;
 }
 
-static p8 address_to tar_next_block(bipolar handle)
+/* header says the block is where a member header would start.  An archive
+   whose last block there is cut short ends quietly, as GNU tar drops an
+   incomplete trailing block; a compressed archive still meets the trailer
+   check on those bytes.  Any other block cut short is an error. */
+static p8 address_to tar_next_block(bipolar handle, bool header)
 {
         p8 address_to block;
 
@@ -1490,7 +1503,7 @@ static p8 address_to tar_next_block(bipolar handle)
 
         if (tar_at + TAR_BLOCK > tar_have)
         {
-                if (tar_at >= tar_have)
+                if (tar_at >= tar_have || header)
                         return null;
 
                 tar_refuse("unexpected EOF in archive");
@@ -1519,9 +1532,22 @@ static bool tar_skip(bipolar handle, p64 bytes, bool seekable)
         bytes -= have;
         tar_at = 0;
         tar_have = 0;
-        if (seekable && !tar_packed() &&
-            system_seek(handle, (bipolar)bytes, FILE_SEEK_CUR) >= 0)
-                return true;
+        if (seekable && !tar_packed())
+        {
+                bipolar reached = system_seek(handle, (bipolar)bytes,
+                                              FILE_SEEK_CUR);
+
+                /* A seek runs past the end of a file without complaint, so
+                   a member cut short inside its data would list as whole. */
+                if (reached >= 0 && tar_archive_sized &&
+                    (p64)reached > tar_archive_size)
+                {
+                        tar_refuse("unexpected EOF in archive");
+                        return false;
+                }
+                if (reached >= 0)
+                        return true;
+        }
 
         while (bytes)
         {
@@ -1714,7 +1740,7 @@ static bool tar_sparse_load(bipolar archive, p8 address_to header)
 
         while (extended)
         {
-                p8 address_to extra = tar_next_block(archive);
+                p8 address_to extra = tar_next_block(archive, false);
 
                 if (!extra)
                         return false;
@@ -2468,6 +2494,19 @@ static b32 tar_read_archive(struct tar_options address_to options)
         }
 
         seekable = system_seek(handle, 0, FILE_SEEK_CUR) >= 0;
+        tar_archive_sized = false;
+        tar_archive_size = 0;
+        if (seekable)
+        {
+                file_facts opened;
+
+                tar_archive_sized =
+                    file_look_code(handle, (string_address)"", AT_EMPTY_PATH,
+                                   address_of opened) >= 0 &&
+                    (opened.mode & MODE_FORMAT) == MODE_FILE;
+                if (tar_archive_sized)
+                        tar_archive_size = opened.size;
+        }
         tar_advise(handle);
         {
                 p8 magic[6];
@@ -2562,7 +2601,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 tar_stack_root = -1;
         }
 
-        while ((block = tar_next_block(handle)))
+        while ((block = tar_next_block(handle, true)))
         {
                 p8 type;
                 p64 size = 0;
@@ -2580,7 +2619,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
                 if (tar_header_zero(block))
                 {
-                        p8 address_to second = tar_next_block(handle);
+                        p8 address_to second = tar_next_block(handle, false);
 
                         if (!second)
                         {
@@ -2652,15 +2691,16 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
                 if (type == 'x' || type == 'g')
                 {
-                        p8 body[TAR_PATH];
-
-                        if (!tar_read_payload(handle, size, body, TAR_PATH,
-                                              seekable) ||
+                        if (size >= TAR_PAX_LIMIT ||
+                            !shell_array_room(tar_pax_body, tar_pax_body_room,
+                                              (positive)size + 1) ||
+                            !tar_read_payload(handle, size, tar_pax_body,
+                                              (positive)size + 1, seekable) ||
                             !tar_pax_apply(
                                 type == 'g'
                                     ? address_of tar_pax_global
                                     : address_of tar_pax_local,
-                                body, (positive)size))
+                                tar_pax_body, (positive)size))
                         {
                                 tar_refuse("invalid extended header");
                                 break;
@@ -2845,9 +2885,49 @@ static fn tar_header_ustar(p8 address_to block, string_address name,
         tar_header_put_checksum(block);
 }
 
+static bool tar_ustar_fits(string_address name)
+{
+        string_address slash;
+
+        if (string_length(name) < TAR_NAME)
+                return true;
+        slash = string_last_of(name, '/');
+        return slash && (positive)(slash - name) < TAR_PREFIX &&
+               string_length(slash + 1) < TAR_NAME;
+}
+
+/* A name or link target ustar cannot hold goes ahead of its header as a
+   GNU ././@LongLink member, 'L' for the name and 'K' for the target, the
+   way GNU tar writes them; the header then keeps the part that fits. */
+static bool tar_put_long(bipolar handle, p8 type, string_address text)
+{
+        positive length = string_length(text) + 1;
+
+        if (tar_at + TAR_BLOCK > TAR_RECORD && !tar_flush(handle))
+                return false;
+        tar_header_ustar(tar_record + tar_at, (string_address)"././@LongLink",
+                         type, length, 0644, 0, null);
+        tar_at += TAR_BLOCK;
+        return tar_put(handle, (p8 address_to)text, length) &&
+               tar_write_padding(handle, length);
+}
+
 static bool tar_put_header(bipolar handle, string_address name, p8 type,
                            p64 size, p64 mode, p64 mtime, string_address link)
 {
+        p8 kept[TAR_NAME];
+
+        if (link && string_length(link) >= TAR_NAME &&
+            !tar_put_long(handle, 'K', link))
+                return false;
+        if (!tar_ustar_fits(name))
+        {
+                if (!tar_put_long(handle, 'L', name))
+                        return false;
+                string_copy_max_end(kept, name, TAR_NAME - 1);
+                name = kept;
+        }
+
         if (tar_at + TAR_BLOCK > TAR_RECORD && !tar_flush(handle))
                 return false;
 
