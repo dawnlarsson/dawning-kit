@@ -1777,28 +1777,100 @@ static bool zstd_decode_end(void)
 #include "compression_huffman.c"
 
 static zstd_xxh zstd_enc_hash;
-#define ZSTD_ENC_WINDOW (2 * 1024 * 1024)
-static p8 zstd_enc_storage[2 * ZSTD_ENC_WINDOW + ZSTD_BLOCK_MAX];
-static positive zstd_enc_position;
-#define zstd_enc_block (zstd_enc_storage + zstd_enc_position)
-static positive zstd_enc_abs;
-static p32 zstd_enc_rep[3];
-static positive zstd_enc_fill;
+
+/*
+        Encoder.  A level names a strategy and its sizes the way libzstd's
+        table does: fast (one hash), dfast (a long and a short hash), and
+        greedy, lazy and lazy2 over a hash chain; the binary-tree levels run
+        lazy2 over the same chain for now.  A parser fills one block's
+        sequences and literals, and the entropy stage writes the block, or a
+        raw or RLE block when that is no larger.  Everything an encoder keeps
+        between blocks is one zstd_encoder.
+*/
+#define ZSTD_FAST 1
+#define ZSTD_DFAST 2
+#define ZSTD_GREEDY 3
+#define ZSTD_LAZY 4
+#define ZSTD_LAZY2 5
+#define ZSTD_BTLAZY2 6
+#define ZSTD_BTOPT 7
+#define ZSTD_BTULTRA 8
+#define ZSTD_BTULTRA2 9
+/* Every sequence takes at least three bytes of the block. */
+#define ZSTD_ENC_SEQ_MAX (ZSTD_BLOCK_MAX / 3 + 8)
 
 typedef struct
 {
-        p16 state[512];
-        p32 delta_nb[53];
-        bipolar delta_find[53];
-        p8 log;
-} zstd_ctable;
+        p8 window_log;
+        p8 chain_log;
+        p8 hash_log;
+        p8 search_log;
+        p8 min_match;
+        p8 strategy;
+        p16 target_length;
+} zstd_params;
+
+/* libzstd 1.5's levels for inputs past 256 KiB: window, chain, hash and
+   search logs, minimum match, strategy and target length.  Row 0 is the
+   base of --fast=N, whose N becomes the target length (the step). */
+static const zstd_params zstd_level_table[23] = {
+        {19, 12, 13, 1, 6, ZSTD_FAST, 1},      {19, 13, 14, 1, 7, ZSTD_FAST, 0},
+        {20, 15, 16, 1, 6, ZSTD_FAST, 0},      {21, 16, 17, 1, 5, ZSTD_DFAST, 0},
+        {21, 18, 18, 1, 5, ZSTD_DFAST, 0},     {21, 18, 19, 3, 5, ZSTD_GREEDY, 2},
+        {21, 18, 19, 3, 5, ZSTD_LAZY, 4},      {21, 19, 20, 4, 5, ZSTD_LAZY, 8},
+        {21, 19, 20, 4, 5, ZSTD_LAZY2, 16},    {22, 20, 21, 4, 5, ZSTD_LAZY2, 16},
+        {22, 21, 22, 5, 5, ZSTD_LAZY2, 16},    {22, 21, 22, 6, 5, ZSTD_LAZY2, 16},
+        {22, 22, 23, 6, 5, ZSTD_LAZY2, 32},    {22, 22, 22, 4, 5, ZSTD_BTLAZY2, 32},
+        {22, 22, 23, 5, 5, ZSTD_BTLAZY2, 32},  {22, 23, 23, 6, 5, ZSTD_BTLAZY2, 32},
+        {22, 22, 22, 5, 5, ZSTD_BTOPT, 48},    {23, 23, 22, 5, 4, ZSTD_BTOPT, 64},
+        {23, 23, 22, 6, 3, ZSTD_BTULTRA, 64},  {23, 24, 22, 7, 3, ZSTD_BTULTRA2, 256},
+        {25, 25, 23, 7, 3, ZSTD_BTULTRA2, 256}, {26, 26, 24, 7, 3, ZSTD_BTULTRA2, 512},
+        {27, 27, 25, 9, 3, ZSTD_BTULTRA2, 999},
+};
+
+/* Level 0 is the default, 3; a level below 0 is --fast.  A long window
+   replaces the level's.  A known input size shrinks the window to the
+   input and the tables to the window, as libzstd's adjustment does. */
+static fn zstd_level_params(b32 level, p8 long_log, p64 size,
+                            zstd_params address_to p)
+{
+        if (level < 0)
+        {
+                address_to p = zstd_level_table[0];
+                p->target_length = (p16)(-level > 65535 ? 65535 : -level);
+        }
+        else
+                address_to p = zstd_level_table[!level ? 3 : level > 22 ? 22 : level];
+        if (long_log)
+                p->window_log = long_log;
+        if (size && size < ((p64)1 << 30))
+        {
+                p8 source_log = size < 64 ? 6
+                                          : (p8)(zstd_highbit32((p32)(size - 1)) + 1);
+
+                if (p->window_log > source_log)
+                        p->window_log = source_log;
+        }
+        if (p->window_log < 10)
+                p->window_log = 10;
+        if (p->hash_log > p->window_log + 1)
+                p->hash_log = p->window_log + 1;
+        {
+                p8 cycle = (p8)(p->chain_log - (p->strategy >= ZSTD_BTLAZY2));
+
+                if (cycle > p->window_log)
+                        p->chain_log = (p8)(p->chain_log - (cycle - p->window_log));
+        }
+}
 
 typedef struct
 {
         p32 lit;
         p32 match;
         p32 off;
-        p8 ll_code, ml_code, of_code;
+        p8 ll_code;
+        p8 ml_code;
+        p8 of_code;
 } zstd_enc_seq;
 
 typedef struct
@@ -1811,15 +1883,65 @@ typedef struct
         bool full;
 } zstd_bout;
 
+typedef struct
+{
+        p16 state[512];
+        p32 delta_nb[53];
+        bipolar delta_find[53];
+        p8 log;
+} zstd_ctable;
+
+/* What a sequence stream's last block left for a repeat: its mode (0
+   predefined, 1 RLE, 2 its own table), the table and its counts, and the
+   RLE symbol. */
+typedef struct
+{
+        zstd_ctable table;
+        bipolar norm[53];
+        p8 mode;
+        p8 symbol;
+        bool valid;
+} zstd_fse_prior;
+
+typedef struct
+{
+        zstd_params p;
+        bool checksum;
+        /* History, then the block being filled.  Index i is base[i]. */
+        p8 address_to storage;
+        positive storage_room;
+        p32 storage_index;
+        p8 address_to base;
+        p32 start;      /* the frame's first index */
+        p32 block;      /* the first index not yet compressed */
+        p32 filled;     /* one past the last byte taken */
+        p32 next;       /* the first index the chain has not taken */
+        p32 address_to hash;
+        p32 address_to chain;
+        positive hash_bytes;
+        positive chain_bytes;
+        p32 rep[3];
+        positive nseq;
+        positive nlit;
+        /* The literal table the last compressed literals sent. */
+        p32 huf_table[256];
+        p8 huf_length[256];
+        bool huf_valid;
+        zstd_fse_prior prior[3];
+} zstd_encoder;
+
+static zstd_encoder zstd_enc;
 static zstd_ctable zstd_ct_ll;
 static zstd_ctable zstd_ct_of;
 static zstd_ctable zstd_ct_ml;
 static bool zstd_ct_ready;
-static zstd_enc_seq zstd_seqs[ZSTD_SEQ_MAX];
-static p8 zstd_enc_lits[ZSTD_BLOCK_MAX];
-static p8 zstd_enc_bits[ZSTD_BLOCK_MAX + 64];
-/* Both candidates share one naturally aligned load and one cache line. */
-static p64 zstd_enc_head[65536];
+static zstd_enc_seq zstd_seqs[ZSTD_ENC_SEQ_MAX];
+static p8 zstd_enc_lits[ZSTD_BLOCK_MAX + 64];
+static p8 zstd_enc_bits[ZSTD_BLOCK_MAX + 256];
+static p8 zstd_enc_block_out[ZSTD_BLOCK_MAX + 2048];
+static p8 zstd_packed_lits[ZSTD_BLOCK_MAX * 2 + 512];
+static p32 zstd_lit_table_new[256];
+static p8 zstd_lit_length_new[256];
 
 static __attribute__((always_inline)) inline fn zstd_bout_add(zstd_bout address_to b, p64 v, p8 nbits)
 {
@@ -1948,20 +2070,6 @@ static const p8 zstd_ml_codes[131] = {
         42, 42, 42,
 };
 
-static p8 zstd_seq_code(const p32 address_to base, p32 value)
-{
-        if (base == zstd_ll_base)
-                return value < 64 ? zstd_ll_codes[value]
-                                  : 19 + zstd_highbit32(value);
-        return value < 131 ? zstd_ml_codes[value]
-                           : 36 + zstd_highbit32(value - 3);
-}
-
-static p8 zstd_off_code(positive offset)
-{
-        return zstd_highbit32((p32)offset);
-}
-
 typedef struct
 {
         p32 value;
@@ -2003,11 +2111,6 @@ static fn zstd_cstate_flush(zstd_bout address_to b, zstd_cstate address_to st)
 {
         zstd_bout_add(b, st->value, st->ct->log);
 }
-
-/* RFC 8878 literals: a complete codebook, FSE-compressed weights when
-   the alphabet exceeds the direct nibble form, and four backward streams.
-   Sequence and weight FSE share the bounded state-table builder. */
-static p8 zstd_packed_lits[ZSTD_BLOCK_MAX * 2 + 512];
 
 static positive zstd_write_norm(p8 address_to dst, const bipolar address_to norm,
                                  positive max_sym, p8 log)
@@ -2051,8 +2154,6 @@ static positive zstd_write_norm(p8 address_to dst, const bipolar address_to norm
         return remaining == 1 && !b.full ? b.n : 0;
 }
 
-static zstd_ctable zstd_ct_dynamic[3];
-
 /* Fractional log estimate is used only to choose between legal tables.
    Both candidates use the exact FSE coder after the choice. */
 static positive zstd_log_cost(p32 n)
@@ -2091,33 +2192,6 @@ static bool zstd_normalize(const p32 address_to freq, positive count,
         }
         norm[largest] += (bipolar)(size - total);
         return true;
-}
-
-static zstd_ctable address_to zstd_sequence_model(p32 address_to freq,
-        positive n, positive max, p8 log, const bipolar address_to defaults,
-        zstd_ctable address_to base, zstd_ctable address_to dynamic,
-        p8 address_to header, positive address_to header_n)
-{
-        bipolar norm[53] = {0};
-        positive last_symbol;
-        if (n < 64 ||
-            !zstd_normalize(freq, max + 1, n, (positive)1 << log, norm,
-                            address_of last_symbol))
-                return base;
-        positive hn = zstd_write_norm(header, norm, last_symbol, log);
-        if (!hn) return base;
-        positive old_cost = 0, new_cost = hn * 8 * 256;
-        for (positive i = 0; i <= max; i++)
-                if (freq[i])
-                {
-                        positive old = defaults[i] < 0 ? 1 : defaults[i];
-                        old_cost += freq[i] * (base->log * 256 - zstd_log_cost((p32)old));
-                        new_cost += freq[i] * (log * 256 - zstd_log_cost((p32)norm[i]));
-                }
-        if (new_cost + 16 * 256 >= old_cost ||
-            !zstd_ctable_build(dynamic, norm, last_symbol, log)) return base;
-        address_to header_n += hn;
-        return dynamic;
 }
 
 static positive zstd_pack_weights(p8 address_to dst, p8 address_to weight,
@@ -2172,129 +2246,6 @@ static positive zstd_pack_weights(p8 address_to dst, p8 address_to weight,
         return 1 + head + b.n;
 }
 
-static positive zstd_pack_literals(p8 address_to src, positive n,
-                                    p8 address_to header, positive address_to hn)
-{
-        p32 freq[256] = {0}, f1[256] = {0}, f2[256] = {0}, f3[256] = {0};
-        p32 work[256];
-        p8 length[256];
-        p8 weight[256];
-        p32 table[256];
-        positive max_sym = 0;
-        positive symbols = 0;
-        positive max_bits = 0;
-        positive bit_cost = 0;
-        positive at;
-        positive head;
-        positive size;
-        positive start = 0;
-        positive segment = (n + 3) / 4;
-        positive position = 0;
-        p64 field;
-        positive header_n;
-
-        if (n < 64)
-                return 0;
-        for (at = 0; at + 4 <= n; at += 4)
-        {
-                freq[src[at]]++; f1[src[at + 1]]++;
-                f2[src[at + 2]]++; f3[src[at + 3]]++;
-        }
-        for (; at < n; at++) freq[src[at]]++;
-        for (at = 0; at < 256; at++) freq[at] += f1[at] + f2[at] + f3[at];
-        for (at = 0; at < 256; at++)
-                if (freq[at])
-                        symbols++, max_sym = at;
-        if (symbols < 2)
-                return 0;
-        memory_copy_apart(work, freq, sizeof(freq));
-        for (;;)
-        {
-                positive kraft = 0;
-                max_bits = 0;
-                compression_build_lengths(work, 256, length, 11);
-                for (at = 0; at < 256; at++)
-                        if (length[at])
-                        {
-                                kraft += (positive)1 << (11 - length[at]);
-                                if (length[at] > max_bits)
-                                        max_bits = length[at];
-                        }
-                if (kraft == 2048)
-                        break;
-                /* Flatten only when an unconstrained tree exceeds 11 bits.
-                   Every used symbol stays present, and the rebuilt tree is
-                   complete; truncating depths alone oversubscribes it. */
-                for (at = 0; at < 256; at++)
-                        if (work[at])
-                                work[at] = (work[at] + 1) >> 1;
-        }
-        for (at = 0; at <= max_sym; at++)
-        {
-                weight[at] = length[at] ? max_bits + 1 - length[at] : 0;
-                bit_cost += freq[at] * length[at];
-        }
-        if ((bit_cost + 7) / 8 + 12 >= n)
-                return 0;
-        for (positive w = 1; w <= max_bits; w++)
-                for (at = 0; at <= max_sym; at++)
-                        if (weight[at] == w)
-                        {
-                                table[at] = (p32)((length[at] << 16) |
-                                                (start >> (w - 1)));
-                                start += (positive)1 << (w - 1);
-                        }
-        if (max_sym <= 128)
-        {
-                zstd_packed_lits[0] = (p8)(127 + max_sym);
-                for (at = 0; at < max_sym; at += 2)
-                        zstd_packed_lits[1 + at / 2] = (p8)(weight[at] << 4) |
-                                (at + 1 < max_sym ? weight[at + 1] : 0);
-                head = 1 + (max_sym + 1) / 2;
-        }
-        else
-        {
-                head = zstd_pack_weights(zstd_packed_lits, weight, max_sym);
-                if (!head)
-                        return 0;
-        }
-        size = head + 6;
-        for (at = 0; at < 4; at++)
-        {
-                positive take = at == 3 ? n - position : segment;
-                positive packed = huffman_encode_back(zstd_packed_lits + size,
-                                                       src + position, take, table);
-                if (at < 3)
-                {
-                        zstd_packed_lits[head + 2 * at] = (p8)packed;
-                        zstd_packed_lits[head + 2 * at + 1] = (p8)(packed >> 8);
-                }
-                size += packed;
-                position += take;
-        }
-        if (n < 1024 && size < 1024)
-        {
-                field = 6 | (n << 4) | (size << 14);
-                header_n = 3;
-        }
-        else if (n < 16384 && size < 16384)
-        {
-                field = 10 | (n << 4) | ((p64)size << 18);
-                header_n = 4;
-        }
-        else
-        {
-                field = 14 | (n << 4) | ((p64)size << 22);
-                header_n = 5;
-        }
-        if (size + header_n >= n + (n < 32 ? 1 : n < 4096 ? 2 : 3))
-                return 0;
-        for (at = 0; at < header_n; at++)
-                header[at] = (p8)(field >> (at * 8));
-        address_to hn = header_n;
-        return size;
-}
-
 static bool zstd_enc_out(p8 address_to p, positive n)
 {
         if (zstd_output.bytes)
@@ -2320,417 +2271,1164 @@ static bool zstd_emit_raw_block(p8 address_to src, positive n, bool last)
         return zstd_enc_out(header, 3) && zstd_enc_out(src, n);
 }
 
-static p16 zstd_enc_hash4(p8 address_to p)
+/* A raw or RLE literals header: the type, then the size in 5, 12 or 20
+   bits.  Three bytes are always written; the answer is how many count. */
+static positive zstd_literals_header(p8 address_to out, p8 type, positive n)
 {
-        p32 h = (p32)p[0] | ((p32)p[1] << 8) | ((p32)p[2] << 16) |
-                ((p32)p[3] << 24);
+        p32 v = type | (p32)n << 3;
+        positive used = 1;
 
-        h *= 0x1e35a7bdu;
-        return (p16)(h >> 16);
+        if (n >= 32)
+        {
+                v = type | (n < 4096 ? 4u : 12u) | (p32)n << 4;
+                used = n < 4096 ? 2 : 3;
+        }
+        out[0] = (p8)v;
+        out[1] = (p8)(v >> 8);
+        out[2] = (p8)(v >> 16);
+        return used;
 }
 
-static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
+/*
+        Huffman literals into zstd_packed_lits: a new tree, or none when the
+        encoder's last table codes every symbol here for no more bytes than
+        a new tree and its description (treeless literals); one stream under
+        256 literals, four above.  Answers the payload's size and writes its
+        header, or 0 when raw literals are no larger.  *fresh says a new tree
+        went out, which the block commits once it wins.  With no encoder
+        there is no last table.
+*/
+static positive zstd_pack_literals(zstd_encoder address_to e,
+                                   p8 address_to src, positive n,
+                                   p8 address_to header, positive address_to hn,
+                                   bool address_to fresh)
 {
-        zstd_bout bits;
-        zstd_cstate ll_st;
-        zstd_cstate of_st;
-        zstd_cstate ml_st;
-        positive lit_n = 0;
-        positive lit_at = 0;
-        positive nseq = 0;
-        positive pos = 0;
-        positive used;
-        p8 header[4];
-        p8 lit_hdr[5];
-        p8 address_to lit_data = zstd_enc_lits;
-        positive lit_size;
-        p8 seq_hdr[4];
-        p8 model_header[768];
-        positive model_header_n = 0;
-        p32 ll_freq[36] = {0}, ml_freq[53] = {0}, of_freq[29] = {0};
-        zstd_ctable address_to ll_table = address_of zstd_ct_ll;
-        zstd_ctable address_to ml_table = address_of zstd_ct_ml;
-        zstd_ctable address_to of_table = address_of zstd_ct_of;
-        positive seq_hdr_n;
+        p32 freq[256] = {0}, f1[256] = {0}, f2[256] = {0}, f3[256] = {0};
+        p32 work[256];
+        p8 weight[256];
+        positive max_sym = 0;
+        positive symbols = 0;
+        positive max_bits = 0;
+        positive head = 0;
+        positive size;
         positive at;
-        p32 rep[3] = {zstd_enc_rep[0], zstd_enc_rep[1], zstd_enc_rep[2]};
+        positive start = 0;
+        positive header_n;
+        p64 new_bits = 0;
+        p64 old_bits = 0;
+        p64 field;
+        bool reuse = false;
+        bool const single = n < 256;
+        p32 address_to table = zstd_lit_table_new;
+        p8 type = 2;
 
-        zstd_ct_init();
-        if (!zstd_ct_ready)
-                return zstd_emit_raw_block(src, n, last);
-        memory_fill(address_of bits, 0, sizeof(bits));
-        bits.buf = zstd_enc_bits;
-        bits.cap = sizeof(zstd_enc_bits);
-        while (pos + 4 <= n && nseq < ZSTD_SEQ_MAX)
+        address_to fresh = false;
+        if (n < 64)
+                return 0;
+        for (at = 0; at + 4 <= n; at += 4)
         {
-                p16 h = zstd_enc_hash4(src + pos);
-                p64 candidates = zstd_enc_head[h];
-                positive match = 0;
-                positive dist = 0;
-
-                zstd_enc_head[h] = (candidates << 32) | (p32)(zstd_enc_abs + pos + 1);
-                /* Repeat offsets cost fewer bits than a new distance. Probe
-                   the first legal repeat before the hash candidates; skip
-                   this work after a long unsuccessful literal run. */
-                positive repeated = rep[pos == lit_at];
-                if (pos - lit_at < 64 && repeated &&
-                    repeated <= zstd_enc_abs + pos && repeated <= ZSTD_ENC_WINDOW &&
-                    memory_load_unaligned(p32, src + pos) == memory_load_unaligned(p32, src + pos - repeated))
-                {
-                        match = 4 + memory_common_prefix(src + pos + 4,
-                                      src + pos + 4 - repeated, n - pos - 4);
-                        dist = repeated;
-                }
-                if (!match)
-#pragma GCC unroll 2
-                for (positive c = 0; c < 2; c++)
-                {
-                        positive old = (p32)(candidates >> (c * 32));
-                        if (!old)
-                                continue;
-                        positive d = zstd_enc_abs + pos + 1 - old;
-                        if (!d || d > ZSTD_ENC_WINDOW || old > zstd_enc_abs + pos)
-                                continue;
-                        p8 address_to there = src + pos - d;
-                        if (memory_load_unaligned(p32, src + pos) != memory_load_unaligned(p32, there) ||
-                            (match && src[pos + match] != there[match]))
-                                continue;
-                        positive k = 4 + memory_common_prefix(src + pos + 4,
-                                                               there + 4, n - pos - 4);
-                        if (k > match)
+                freq[src[at]]++; f1[src[at + 1]]++;
+                f2[src[at + 2]]++; f3[src[at + 3]]++;
+        }
+        for (; at < n; at++) freq[src[at]]++;
+        for (at = 0; at < 256; at++) freq[at] += f1[at] + f2[at] + f3[at];
+        for (at = 0; at < 256; at++)
+                if (freq[at])
+                        symbols++, max_sym = at;
+        if (symbols < 2)
+                return 0;
+        if (e && e->huf_valid)
+        {
+                reuse = true;
+                for (at = 0; at <= max_sym && reuse; at++)
+                        if (freq[at])
                         {
-                                match = k;
-                                dist = d;
-                                if (k == n - pos)
-                                        break;
+                                reuse = e->huf_length[at] != 0;
+                                old_bits += (p64)freq[at] * e->huf_length[at];
                         }
-                }
-                /* One-step lazy parsing catches a much longer match after
-                   a literal without inserting the lookahead position twice. */
-                if (match && match < 16 && pos + 5 <= n)
-                {
-                        positive old = (p32)zstd_enc_head[zstd_enc_hash4(src + pos + 1)];
-                        positive d = zstd_enc_abs + pos + 2 - old;
-                        if (old && d && d <= ZSTD_ENC_WINDOW &&
-                            old <= zstd_enc_abs + pos + 1 &&
-                            memory_load_unaligned(p32, src + pos + 1) == memory_load_unaligned(p32, src + pos + 1 - d))
+        }
+        memory_copy_apart(work, freq, sizeof(freq));
+        for (;;)
+        {
+                positive kraft = 0;
+                max_bits = 0;
+                compression_build_lengths(work, 256, zstd_lit_length_new, 11);
+                for (at = 0; at < 256; at++)
+                        if (zstd_lit_length_new[at])
                         {
-                                positive k = 4 + memory_common_prefix(src + pos + 5,
-                                                        src + pos + 5 - d, n - pos - 5);
-                                if (k > match + 1)
-                                        match = 0;
+                                kraft += (positive)1 << (11 - zstd_lit_length_new[at]);
+                                if (zstd_lit_length_new[at] > max_bits)
+                                        max_bits = zstd_lit_length_new[at];
                         }
-                }
-                if (match)
-                {
-                        positive run = pos - lit_at;
-                        positive k;
-
-                        if (lit_n + run > n)
-                                return zstd_emit_raw_block(src, n, last);
-                        memory_copy(zstd_enc_lits + lit_n, src + lit_at, run);
-                        lit_n += run;
-                        zstd_seqs[nseq].lit = run;
-                        zstd_seqs[nseq].match = match;
-                        /* RFC repeat offsets depend on whether LL is zero.
-                           Keep the speculative history local until this block
-                           has won against raw output. */
-                        positive value = dist + 3;
-                        positive which = 3;
-                        if (run && dist == rep[0])
-                                value = 1, which = 0;
-                        else if (dist == rep[1])
-                                value = run ? 2 : 1, which = 1;
-                        else if (dist == rep[2])
-                                value = run ? 3 : 2, which = 2;
-                        else if (!run && rep[0] > 1 && dist == rep[0] - 1)
-                                value = 3;
-                        if (which)
-                        {
-                                if (which != 1)
-                                        rep[2] = rep[1];
-                                rep[1] = rep[0];
-                                rep[0] = (p32)dist;
-                        }
-                        zstd_seqs[nseq].off = value;
-                        p8 llc = zstd_seq_code(zstd_ll_base, run);
-                        p8 mlc = zstd_seq_code(zstd_ml_base, match);
-                        p8 ofc = zstd_off_code(value);
-                        zstd_seqs[nseq].ll_code = llc;
-                        zstd_seqs[nseq].ml_code = mlc;
-                        zstd_seqs[nseq].of_code = ofc;
-                        ll_freq[llc]++; ml_freq[mlc]++; of_freq[ofc]++;
-                        nseq++;
-                        /* Keep two complete periods plus the three hash bytes
-                           crossing the match boundary. Earlier equal hashes
-                           would be replaced by these same final positions. */
-                        k = dist <= 16 && match > 2 * dist + 3
-                                ? match - 2 * dist - 3 : 1;
-                        for (; k < match; k++)
-                                if (pos + k + 4 <= n)
+                if (kraft == 2048)
+                        break;
+                /* Flatten only when an unconstrained tree exceeds 11 bits.
+                   Every used symbol stays present, and the rebuilt tree is
+                   complete; truncating depths alone oversubscribes it. */
+                for (at = 0; at < 256; at++)
+                        if (work[at])
+                                work[at] = (work[at] + 1) >> 1;
+        }
+        for (at = 0; at <= max_sym; at++)
+        {
+                weight[at] = zstd_lit_length_new[at]
+                                 ? (p8)(max_bits + 1 - zstd_lit_length_new[at])
+                                 : 0;
+                new_bits += (p64)freq[at] * zstd_lit_length_new[at];
+        }
+        if (max_sym <= 128)
+        {
+                zstd_packed_lits[0] = (p8)(127 + max_sym);
+                for (at = 0; at < max_sym; at += 2)
+                        zstd_packed_lits[1 + at / 2] = (p8)(weight[at] << 4) |
+                                (at + 1 < max_sym ? weight[at + 1] : 0);
+                head = 1 + (max_sym + 1) / 2;
+        }
+        else
+                head = zstd_pack_weights(zstd_packed_lits, weight, max_sym);
+        if (reuse && (!head || (old_bits + 7) / 8 <= head + (new_bits + 7) / 8))
+        {
+                table = e->huf_table;
+                type = 3;
+                size = 0;
+        }
+        else
+        {
+                if (!head)
+                        return 0;
+                for (positive w = 1; w <= max_bits; w++)
+                        for (at = 0; at <= max_sym; at++)
+                                if (weight[at] == w)
                                 {
-                                        p16 hh = zstd_enc_hash4(src + pos + k);
-
-                                        zstd_enc_head[hh] = (zstd_enc_head[hh] << 32) |
-                                            (p32)(zstd_enc_abs + pos + k + 1);
+                                        zstd_lit_table_new[at] =
+                                            (p32)((zstd_lit_length_new[at] << 16) |
+                                                  (start >> (w - 1)));
+                                        start += (positive)1 << (w - 1);
                                 }
-                        pos += match;
-                        lit_at = pos;
+                size = head;
+                address_to fresh = true;
+        }
+        if (single)
+                size += huffman_encode_back(zstd_packed_lits + size, src, n, table);
+        else
+        {
+                positive const segment = (n + 3) / 4;
+                positive const jump = size;
+                positive position = 0;
+
+                size += 6;
+                for (at = 0; at < 4; at++)
+                {
+                        positive const take = at == 3 ? n - position : segment;
+                        positive const packed = huffman_encode_back(
+                            zstd_packed_lits + size, src + position, take, table);
+
+                        if (at < 3)
+                        {
+                                zstd_packed_lits[jump + 2 * at] = (p8)packed;
+                                zstd_packed_lits[jump + 2 * at + 1] = (p8)(packed >> 8);
+                        }
+                        size += packed;
+                        position += take;
+                }
+        }
+        if (single)
+        {
+                field = type | (p64)n << 4 | (p64)size << 14;
+                header_n = 3;
+        }
+        else if (n < 1024 && size < 1024)
+        {
+                field = type | 4 | (p64)n << 4 | (p64)size << 14;
+                header_n = 3;
+        }
+        else if (n < 16384 && size < 16384)
+        {
+                field = type | 8 | (p64)n << 4 | (p64)size << 18;
+                header_n = 4;
+        }
+        else
+        {
+                field = type | 12 | (p64)n << 4 | (p64)size << 22;
+                header_n = 5;
+        }
+        if (size + header_n >= n + (n < 32 ? 1 : n < 4096 ? 2 : 3))
+        {
+                address_to fresh = false;
+                return 0;
+        }
+        for (at = 0; at < header_n; at++)
+                header[at] = (p8)(field >> (at * 8));
+        address_to hn = header_n;
+        return size;
+}
+
+/* libzstd's table log for n sequences up to symbol last: fewer states for
+   fewer sequences, enough for every symbol, from 5 to max_log. */
+static p8 zstd_fse_log(positive n, positive last, p8 max_log)
+{
+        bipolar const source = (bipolar)zstd_highbit32((p32)(n > 1 ? n - 1 : 1)) - 2;
+        p8 minimum = (p8)(zstd_highbit32((p32)n) + 1);
+        p8 const symbols = (p8)(zstd_highbit32((p32)(last ? last : 1)) + 2);
+        p8 log = max_log;
+
+        if (symbols < minimum)
+                minimum = symbols;
+        if (source < (bipolar)log)
+                log = source < 0 ? 0 : (p8)source;
+        if (minimum > log)
+                log = minimum;
+        if (log < 5)
+                log = 5;
+        if (log > max_log)
+                log = max_log;
+        return log;
+}
+
+/*
+        One sequence stream's table for this block: predefined, RLE, a table
+        of its own, or the last block's again (repeat), whichever costs the
+        fewest bits with its description.  A new table's description or the
+        RLE symbol goes at header[*header_n].  *next is what the stream
+        leaves for the block after, committed when this block wins.  Answers
+        the mode, or 255 when no mode can code the stream.
+*/
+static p8 zstd_choose_table(const zstd_fse_prior address_to prior,
+                            zstd_fse_prior address_to next,
+                            const p32 address_to freq, positive nseq,
+                            positive max, p8 max_log,
+                            const bipolar address_to defaults,
+                            positive default_max,
+                            const zstd_ctable address_to predefined,
+                            p8 address_to header, positive address_to header_n)
+{
+        p64 const none = (p64)-1;
+        p64 basic = none;
+        p64 repeat = none;
+        p64 own = none;
+        bipolar norm[53];
+        positive last = 0;
+        positive distinct = 0;
+        positive norm_last = 0;
+        positive described = 0;
+        p8 log;
+
+        for (positive s = 0; s <= max; s++)
+                if (freq[s])
+                        distinct++, last = s;
+        if (distinct == 1 && nseq > 2)
+        {
+                if (prior->valid && prior->mode == 1 && prior->symbol == last)
+                {
+                        address_to next = address_to prior;
+                        return 3;
+                }
+                header[address_to header_n] = (p8)last;
+                address_to header_n += 1;
+                next->mode = 1;
+                next->symbol = (p8)last;
+                next->valid = true;
+                return 1;
+        }
+        if (last <= default_max)
+        {
+                basic = 0;
+                for (positive s = 0; s <= last; s++)
+                        if (freq[s])
+                                basic += (p64)freq[s] *
+                                         (predefined->log * 256 -
+                                          zstd_log_cost(defaults[s] < 0 ? 1 : (p32)defaults[s]));
+        }
+        if (prior->valid && prior->mode != 1)
+        {
+                repeat = 0;
+                for (positive s = 0; s <= last; s++)
+                        if (freq[s])
+                        {
+                                if (!prior->norm[s])
+                                {
+                                        repeat = none;
+                                        break;
+                                }
+                                repeat += (p64)freq[s] *
+                                          (prior->table.log * 256 -
+                                           zstd_log_cost(prior->norm[s] < 0 ? 1 : (p32)prior->norm[s]));
+                        }
+        }
+        log = zstd_fse_log(nseq, last, max_log);
+        memory_fill(norm, 0, sizeof(norm));
+        if (zstd_normalize(freq, last + 1, nseq, (positive)1 << log, norm,
+                           address_of norm_last) &&
+            (described = zstd_write_norm(header + address_to header_n, norm,
+                                         norm_last, log)))
+        {
+                own = (p64)described * 8 * 256;
+                for (positive s = 0; s <= last; s++)
+                        if (freq[s])
+                                own += (p64)freq[s] *
+                                       (log * 256 - zstd_log_cost((p32)norm[s]));
+        }
+        if (repeat != none && repeat <= basic && repeat <= own)
+        {
+                address_to next = address_to prior;
+                return 3;
+        }
+        if (basic != none && basic <= own)
+        {
+                next->mode = 0;
+                next->table = address_to predefined;
+                memory_fill(next->norm, 0, sizeof(next->norm));
+                memory_copy_apart(next->norm, defaults,
+                                  (default_max + 1) * sizeof(bipolar));
+                next->valid = true;
+                return 0;
+        }
+        if (own == none ||
+            !zstd_ctable_build(address_of next->table, norm, norm_last, log))
+                return 255;
+        next->mode = 2;
+        memory_copy_apart(next->norm, norm, sizeof(norm));
+        next->valid = true;
+        address_to header_n += described;
+        return 2;
+}
+
+/* One compressed block from the encoder's sequences and literals: 1 when
+   written, 0 when it would be no smaller than raw (nothing written and
+   nothing committed), -1 when the write failed. */
+static b32 zstd_entropy_block(zstd_encoder address_to e, positive n, bool last)
+{
+        p8 address_to const out = zstd_enc_block_out + 3;
+        p8 address_to at = out;
+        positive const nseq = e->nseq;
+        positive hn = 0;
+        positive packed = 0;
+        bool fresh = false;
+        zstd_fse_prior pending[3];
+        p8 head[4];
+
+        if (e->nlit)
+                packed = zstd_pack_literals(e, zstd_enc_lits, e->nlit, at,
+                                            address_of hn, address_of fresh);
+        if (packed)
+        {
+                memory_copy_apart(at + hn, zstd_packed_lits, packed);
+                at += hn + packed;
+        }
+        else if (e->nlit > 1 &&
+                 memory_span_byte(zstd_enc_lits, zstd_enc_lits[0], e->nlit) == e->nlit)
+        {
+                at += zstd_literals_header(at, 1, e->nlit);
+                *at++ = zstd_enc_lits[0];
+        }
+        else
+        {
+                at += zstd_literals_header(at, 0, e->nlit);
+                memory_copy_apart(at, zstd_enc_lits, e->nlit);
+                at += e->nlit;
+        }
+        if ((positive)(at - out) + 4 >= n)
+                return 0;
+        if (nseq < 128)
+                *at++ = (p8)nseq;
+        else if (nseq < 0x7f00)
+        {
+                *at++ = (p8)(128 + (nseq >> 8));
+                *at++ = (p8)nseq;
+        }
+        else
+        {
+                *at++ = 255;
+                *at++ = (p8)(nseq - 0x7f00);
+                *at++ = (p8)((nseq - 0x7f00) >> 8);
+        }
+        if (nseq)
+        {
+                p32 ll_freq[36] = {0}, of_freq[32] = {0}, ml_freq[53] = {0};
+                p8 address_to const modes = at++;
+                positive described = 0;
+                zstd_ctable address_to lt;
+                zstd_ctable address_to ot;
+                zstd_ctable address_to mt;
+                zstd_bout bits;
+                zstd_cstate ls = {0}, os = {0}, ms = {0};
+                zstd_enc_seq address_to s;
+                p8 ll_mode, of_mode, ml_mode;
+
+                for (positive i = 0; i < nseq; i++)
+                {
+                        ll_freq[zstd_seqs[i].ll_code]++;
+                        of_freq[zstd_seqs[i].of_code]++;
+                        ml_freq[zstd_seqs[i].ml_code]++;
+                }
+                ll_mode = zstd_choose_table(address_of e->prior[0], address_of pending[0],
+                                            ll_freq, nseq, 35, 9, zstd_ll_default, 35,
+                                            address_of zstd_ct_ll, at, address_of described);
+                of_mode = zstd_choose_table(address_of e->prior[1], address_of pending[1],
+                                            of_freq, nseq, 31, 8, zstd_of_default, 28,
+                                            address_of zstd_ct_of, at, address_of described);
+                ml_mode = zstd_choose_table(address_of e->prior[2], address_of pending[2],
+                                            ml_freq, nseq, 52, 9, zstd_ml_default, 52,
+                                            address_of zstd_ct_ml, at, address_of described);
+                if ((ll_mode | of_mode | ml_mode) > 3)
+                        return 0;
+                address_to modes = (p8)(ll_mode << 6 | of_mode << 4 | ml_mode << 2);
+                at += described;
+                lt = ll_mode == 1 ? null : address_of pending[0].table;
+                ot = of_mode == 1 ? null : address_of pending[1].table;
+                mt = ml_mode == 1 ? null : address_of pending[2].table;
+                memory_fill(address_of bits, 0, sizeof(bits));
+                bits.buf = zstd_enc_bits;
+                bits.cap = sizeof(zstd_enc_bits);
+                s = zstd_seqs + nseq - 1;
+                if ((lt && !zstd_cstate_init2(address_of ls, lt, s->ll_code)) ||
+                    (ot && !zstd_cstate_init2(address_of os, ot, s->of_code)) ||
+                    (mt && !zstd_cstate_init2(address_of ms, mt, s->ml_code)))
+                        return 0;
+                zstd_bout_add(address_of bits, s->lit - zstd_ll_base[s->ll_code],
+                              zstd_ll_extra[s->ll_code]);
+                zstd_bout_add(address_of bits, s->match - zstd_ml_base[s->ml_code],
+                              zstd_ml_extra[s->ml_code]);
+                zstd_bout_add(address_of bits, s->off - ((p32)1 << s->of_code),
+                              s->of_code);
+                for (positive i = nseq - 1; i--;)
+                {
+                        s = zstd_seqs + i;
+                        if (ot)
+                                zstd_cstate_encode(address_of bits, address_of os, s->of_code);
+                        if (mt)
+                                zstd_cstate_encode(address_of bits, address_of ms, s->ml_code);
+                        if (lt)
+                                zstd_cstate_encode(address_of bits, address_of ls, s->ll_code);
+                        zstd_bout_add(address_of bits, s->lit - zstd_ll_base[s->ll_code],
+                                      zstd_ll_extra[s->ll_code]);
+                        zstd_bout_add(address_of bits, s->match - zstd_ml_base[s->ml_code],
+                                      zstd_ml_extra[s->ml_code]);
+                        zstd_bout_add(address_of bits, s->off - ((p32)1 << s->of_code),
+                                      s->of_code);
+                }
+                if (mt)
+                        zstd_cstate_flush(address_of bits, address_of ms);
+                if (ot)
+                        zstd_cstate_flush(address_of bits, address_of os);
+                if (lt)
+                        zstd_cstate_flush(address_of bits, address_of ls);
+                if (!zstd_bout_close(address_of bits) ||
+                    (positive)(at - out) + bits.n >= n)
+                        return 0;
+                memory_copy_apart(at, zstd_enc_bits, bits.n);
+                at += bits.n;
+        }
+        zstd_block_header(head, last, 2, (positive)(at - out));
+        memory_copy_apart(zstd_enc_block_out, head, 3);
+        if (!zstd_enc_out(zstd_enc_block_out, (positive)(at - zstd_enc_block_out)))
+                return -1;
+        if (fresh)
+        {
+                memory_copy_apart(e->huf_table, zstd_lit_table_new, sizeof(e->huf_table));
+                memory_copy_apart(e->huf_length, zstd_lit_length_new, sizeof(e->huf_length));
+                e->huf_valid = true;
+        }
+        if (nseq)
+                memory_copy_apart(e->prior, pending, sizeof(pending));
+        return 1;
+}
+
+/* A hash of the first `bytes` (4 to 8) bytes at p, `log` bits wide.  Eight
+   bytes at p are always readable where a parser hashes. */
+static __attribute__((always_inline)) inline positive
+zstd_hash_bytes(p8 address_to p, p8 log, p8 bytes)
+{
+        return (positive)(((memory_load_unaligned(p64, p) << (64 - 8 * bytes)) *
+                           0x9E3779B185EBCA87ull) >> (64 - log));
+}
+
+/*
+        One sequence: the literals since the last match, then a match
+        `distance` back.  The offset value follows RFC 8878's repeat
+        offsets: with literals 1-3 name rep[0-2]; without, 1-2 name rep[1-2]
+        and 3 is rep[0] - 1.  Sixteen literal bytes always copy; the literal
+        buffer and the window both carry the slack.
+*/
+static __attribute__((always_inline)) inline fn
+zstd_store(zstd_encoder address_to e, p8 address_to literals, positive run,
+           positive distance, positive match)
+{
+        zstd_enc_seq address_to const s = zstd_seqs + e->nseq++;
+        p8 address_to const into = zstd_enc_lits + e->nlit;
+        p32 value = (p32)distance + 3;
+        positive which = 3;
+
+        memory_store_unaligned(p64, into, memory_load_unaligned(p64, literals));
+        memory_store_unaligned(p64, into + 8, memory_load_unaligned(p64, literals + 8));
+        if (run > 16)
+                memory_copy_apart(into + 16, literals + 16, run - 16);
+        e->nlit += run;
+        if (run && distance == e->rep[0])
+                value = 1, which = 0;
+        else if (distance == e->rep[1])
+                value = run ? 2 : 1, which = 1;
+        else if (distance == e->rep[2])
+                value = run ? 3 : 2, which = 2;
+        else if (!run && e->rep[0] > 1 && distance == e->rep[0] - 1)
+                value = 3;
+        if (which)
+        {
+                if (which != 1)
+                        e->rep[2] = e->rep[1];
+                e->rep[1] = e->rep[0];
+                e->rep[0] = (p32)distance;
+        }
+        s->lit = (p32)run;
+        s->match = (p32)match;
+        s->off = value;
+        s->ll_code = run < 64 ? zstd_ll_codes[run]
+                              : (p8)(19 + zstd_highbit32((p32)run));
+        s->ml_code = match < 131 ? zstd_ml_codes[match]
+                                 : (p8)(36 + zstd_highbit32((p32)match - 3));
+        s->of_code = zstd_highbit32(value);
+}
+
+/* Matches at the last repeat offset right where the last one ended, each a
+   sequence with no literals, as long as they keep coming.  Answers the new
+   position; hash, when present, takes each position a match starts at. */
+static __attribute__((always_inline)) inline p8 address_to
+zstd_repeat_run(zstd_encoder address_to e, p8 address_to ip,
+                p8 address_to ilimit, p8 address_to iend, p32 low,
+                p32 address_to hash, p8 hlog, p8 mls)
+{
+        while (ip < ilimit)
+        {
+                p32 const now = (p32)(ip - e->base);
+                p32 const other = e->rep[1];
+                positive match;
+
+                if (!other || other > now - low ||
+                    memory_load_unaligned(p32, ip - other) != memory_load_unaligned(p32, ip))
+                        break;
+                match = 4 + memory_common_prefix(ip + 4, ip + 4 - other,
+                                                 (positive)(iend - ip - 4));
+                if (hash)
+                        hash[zstd_hash_bytes(ip, hlog, mls)] = now;
+                zstd_store(e, ip, 0, other, match);
+                ip += match;
+        }
+        return ip;
+}
+
+/* fast: one hash of min_match bytes, a repeat check one byte ahead, and a
+   step that grows with the length of the literal run. */
+static p8 address_to zstd_parse_fast(zstd_encoder address_to e, p32 from,
+                                     p32 to, p32 low)
+{
+        p8 address_to const base = e->base;
+        p32 address_to const table = e->hash;
+        p8 const hlog = e->p.hash_log;
+        p8 const mls = e->p.min_match < 4 ? 4 : e->p.min_match > 8 ? 8 : e->p.min_match;
+        positive const step = (positive)e->p.target_length + !e->p.target_length;
+        p8 address_to const lowest = base + low;
+        p8 address_to const iend = base + to;
+        p8 address_to const ilimit = iend - 8;
+        p8 address_to ip = base + from;
+        p8 address_to anchor = ip;
+
+        ip += ip == lowest;
+        while (ip < ilimit)
+        {
+                p32 const cur = (p32)(ip - base);
+                positive const h = zstd_hash_bytes(ip, hlog, mls);
+                p32 const candidate = table[h];
+                p32 const rep = e->rep[0];
+                p8 address_to start;
+                positive distance;
+                positive match;
+
+                table[h] = cur;
+                if (rep && rep <= cur + 1 - low &&
+                    memory_load_unaligned(p32, ip + 1 - rep) == memory_load_unaligned(p32, ip + 1))
+                {
+                        start = ip + 1;
+                        distance = rep;
+                        match = 4 + memory_common_prefix(ip + 5, ip + 5 - rep,
+                                                         (positive)(iend - ip - 5));
+                }
+                else if (candidate >= low &&
+                         memory_load_unaligned(p32, base + candidate) == memory_load_unaligned(p32, ip))
+                {
+                        p8 address_to there = base + candidate;
+
+                        start = ip;
+                        distance = cur - candidate;
+                        match = 4 + memory_common_prefix(ip + 4, there + 4,
+                                                         (positive)(iend - ip - 4));
+                        while (start > anchor && there > lowest && start[-1] == there[-1])
+                                start--, there--, match++;
                 }
                 else
                 {
-                        /* Long literal runs make dense hash probes expensive
-                           without producing sequences. Resume dense probing
-                           immediately after a match. */
-                        positive step = 1 + ((pos - lit_at) >> 8);
-                        if (step > 16) step = 16;
-                        pos += step < n - pos ? step : n - pos;
+                        ip += ((positive)(ip - anchor) >> 8) + step;
+                        continue;
                 }
-        }
-        {
-                positive run = n - lit_at;
-
-                memory_copy(zstd_enc_lits + lit_n, src + lit_at, run);
-                lit_n += run;
-        }
-        if (lit_n < 32)
-        {
-                lit_hdr[0] = (p8)(lit_n << 3);
-                used = 1;
-        }
-        else if (lit_n < 4096)
-        {
-                p16 v = (p16)((lit_n << 4) | 4);
-
-                lit_hdr[0] = (p8)v;
-                lit_hdr[1] = (p8)(v >> 8);
-                used = 2;
-        }
-        else
-        {
-                p32 v = (lit_n << 4) | 12;
-
-                lit_hdr[0] = (p8)v;
-                lit_hdr[1] = (p8)(v >> 8);
-                lit_hdr[2] = (p8)(v >> 16);
-                used = 3;
-        }
-        lit_size = zstd_pack_literals(zstd_enc_lits, lit_n, lit_hdr,
-                                        address_of used);
-        if (lit_size)
-                lit_data = zstd_packed_lits;
-        else
-                lit_size = lit_n;
-        if (nseq < 128)
-        {
-                seq_hdr[0] = (p8)nseq;
-                seq_hdr_n = 1;
-        }
-        else if (nseq >= 0x7f00)
-        {
-                seq_hdr[0] = 255;
-                seq_hdr[1] = (p8)(nseq - 0x7f00);
-                seq_hdr[2] = (p8)((nseq - 0x7f00) >> 8);
-                seq_hdr_n = 3;
-        }
-        else
-        {
-                seq_hdr[0] = (p8)(128 + (nseq >> 8));
-                seq_hdr[1] = (p8)nseq;
-                seq_hdr_n = 2;
-        }
-        if (nseq)
-        {
-                ll_table = zstd_sequence_model(ll_freq, nseq, 35, 9, zstd_ll_default,
-                    ll_table, address_of zstd_ct_dynamic[0], model_header, address_of model_header_n);
-                of_table = zstd_sequence_model(of_freq, nseq, 28, 8, zstd_of_default,
-                    of_table, address_of zstd_ct_dynamic[1], model_header + model_header_n, address_of model_header_n);
-                ml_table = zstd_sequence_model(ml_freq, nseq, 52, 9, zstd_ml_default,
-                    ml_table, address_of zstd_ct_dynamic[2], model_header + model_header_n, address_of model_header_n);
-                seq_hdr[seq_hdr_n++] =
-                    (ll_table != address_of zstd_ct_ll ? 2u << 6 : 0) |
-                    (of_table != address_of zstd_ct_of ? 2u << 4 : 0) |
-                    (ml_table != address_of zstd_ct_ml ? 2u << 2 : 0);
-        }
-        if (nseq)
-        {
-                zstd_enc_seq last_seq = zstd_seqs[nseq - 1];
-                p8 llc = last_seq.ll_code;
-                p8 mlc = last_seq.ml_code;
-                p8 ofc = last_seq.of_code;
-                p32 ll_x = last_seq.lit - zstd_ll_base[llc];
-                p32 ml_x = last_seq.match - zstd_ml_base[mlc];
-                p32 of_x = last_seq.off - ((positive)1 << ofc);
-
-                if (!zstd_cstate_init2(address_of ll_st, ll_table,
-                                       llc) ||
-                    !zstd_cstate_init2(address_of of_st, of_table,
-                                       ofc) ||
-                    !zstd_cstate_init2(address_of ml_st, ml_table,
-                                       mlc))
-                        return zstd_emit_raw_block(src, n, last);
-                zstd_bout_add(address_of bits, ll_x, zstd_ll_extra[llc]);
-                zstd_bout_add(address_of bits, ml_x, zstd_ml_extra[mlc]);
-                zstd_bout_add(address_of bits, of_x, ofc);
-                at = nseq - 1;
-                while (at)
+                zstd_store(e, anchor, (positive)(start - anchor), distance, match);
+                ip = start + match;
+                if (ip < ilimit)
                 {
-                        zstd_enc_seq seq;
-
-                        at--;
-                        seq = zstd_seqs[at];
-                        llc = seq.ll_code;
-                        mlc = seq.ml_code;
-                        ofc = seq.of_code;
-                        ll_x = seq.lit - zstd_ll_base[llc];
-                        ml_x = seq.match - zstd_ml_base[mlc];
-                        of_x = seq.off - ((positive)1 << ofc);
-                        zstd_cstate_encode(address_of bits, address_of of_st,
-                                           ofc);
-                        zstd_cstate_encode(address_of bits, address_of ml_st,
-                                           mlc);
-                        zstd_cstate_encode(address_of bits, address_of ll_st,
-                                           llc);
-                        zstd_bout_add(address_of bits, ll_x, zstd_ll_extra[llc]);
-                        zstd_bout_add(address_of bits, ml_x, zstd_ml_extra[mlc]);
-                        zstd_bout_add(address_of bits, of_x, ofc);
+                        table[zstd_hash_bytes(base + cur + 2, hlog, mls)] = cur + 2;
+                        table[zstd_hash_bytes(ip - 2, hlog, mls)] = (p32)(ip - 2 - base);
+                        ip = zstd_repeat_run(e, ip, ilimit, iend, low, table, hlog, mls);
                 }
+                anchor = ip;
         }
-        if (nseq)
-        {
-                zstd_cstate_flush(address_of bits, address_of ml_st);
-                zstd_cstate_flush(address_of bits, address_of of_st);
-                zstd_cstate_flush(address_of bits, address_of ll_st);
-                if (!zstd_bout_close(address_of bits))
-                        return zstd_emit_raw_block(src, n, last);
-        }
-        {
-                positive csize = used + lit_size + seq_hdr_n + model_header_n + bits.n;
+        return anchor;
+}
 
-                if (csize >= n)
-                        return zstd_emit_raw_block(src, n, last);
-                zstd_block_header(header, last, 2, csize);
-                if (!zstd_enc_out(header, 3) || !zstd_enc_out(lit_hdr, used) ||
-                    !zstd_enc_out(lit_data, lit_size) ||
-                    !zstd_enc_out(seq_hdr, seq_hdr_n) ||
-                    !zstd_enc_out(model_header, model_header_n) ||
-                    !zstd_enc_out(bits.buf, bits.n))
-                        return false;
+/* dfast: an eight-byte hash and a min_match hash; a short hit also tries
+   the eight-byte hash one byte on. */
+static p8 address_to zstd_parse_dfast(zstd_encoder address_to e, p32 from,
+                                      p32 to, p32 low)
+{
+        p8 address_to const base = e->base;
+        p32 address_to const longer = e->hash;
+        p32 address_to const shorter = e->chain;
+        p8 const hlog = e->p.hash_log;
+        p8 const slog = e->p.chain_log;
+        p8 const mls = e->p.min_match < 4 ? 4 : e->p.min_match > 8 ? 8 : e->p.min_match;
+        p8 address_to const lowest = base + low;
+        p8 address_to const iend = base + to;
+        p8 address_to const ilimit = iend - 8;
+        p8 address_to ip = base + from;
+        p8 address_to anchor = ip;
+
+        ip += ip == lowest;
+        while (ip < ilimit)
+        {
+                p32 const cur = (p32)(ip - base);
+                positive const hl = zstd_hash_bytes(ip, hlog, 8);
+                positive const hs = zstd_hash_bytes(ip, slog, mls);
+                p32 const long_candidate = longer[hl];
+                p32 const short_candidate = shorter[hs];
+                p32 const rep = e->rep[0];
+                p8 address_to start;
+                p8 address_to there;
+                positive distance;
+                positive match;
+
+                longer[hl] = cur;
+                shorter[hs] = cur;
+                if (rep && rep <= cur + 1 - low &&
+                    memory_load_unaligned(p32, ip + 1 - rep) == memory_load_unaligned(p32, ip + 1))
+                {
+                        start = ip + 1;
+                        distance = rep;
+                        match = 4 + memory_common_prefix(ip + 5, ip + 5 - rep,
+                                                         (positive)(iend - ip - 5));
+                        there = start - rep;
+                }
+                else if (long_candidate >= low &&
+                         memory_load_unaligned(p64, base + long_candidate) == memory_load_unaligned(p64, ip))
+                {
+                        start = ip;
+                        there = base + long_candidate;
+                        distance = cur - long_candidate;
+                        match = 8 + memory_common_prefix(ip + 8, there + 8,
+                                                         (positive)(iend - ip - 8));
+                }
+                else if (short_candidate >= low &&
+                         memory_load_unaligned(p32, base + short_candidate) == memory_load_unaligned(p32, ip))
+                {
+                        positive const h1 = zstd_hash_bytes(ip + 1, hlog, 8);
+                        p32 const next_candidate = longer[h1];
+
+                        longer[h1] = cur + 1;
+                        if (next_candidate >= low &&
+                            memory_load_unaligned(p64, base + next_candidate) ==
+                                memory_load_unaligned(p64, ip + 1))
+                        {
+                                start = ip + 1;
+                                there = base + next_candidate;
+                                distance = cur + 1 - next_candidate;
+                                match = 8 + memory_common_prefix(ip + 9, there + 8,
+                                                                 (positive)(iend - ip - 9));
+                        }
+                        else
+                        {
+                                start = ip;
+                                there = base + short_candidate;
+                                distance = cur - short_candidate;
+                                match = 4 + memory_common_prefix(ip + 4, there + 4,
+                                                                 (positive)(iend - ip - 4));
+                        }
+                }
+                else
+                {
+                        ip += ((positive)(ip - anchor) >> 8) + 1;
+                        continue;
+                }
+                while (start > anchor && there > lowest && start[-1] == there[-1])
+                        start--, there--, match++;
+                zstd_store(e, anchor, (positive)(start - anchor), distance, match);
+                ip = start + match;
+                if (ip < ilimit)
+                {
+                        p32 const at = cur + 2;
+
+                        longer[zstd_hash_bytes(base + at, hlog, 8)] = at;
+                        shorter[zstd_hash_bytes(base + at, slog, mls)] = at;
+                        longer[zstd_hash_bytes(ip - 2, hlog, 8)] = (p32)(ip - 2 - base);
+                        shorter[zstd_hash_bytes(ip - 1, slog, mls)] = (p32)(ip - 1 - base);
+                        ip = zstd_repeat_run(e, ip, ilimit, iend, low, shorter, slog, mls);
+                }
+                anchor = ip;
         }
-        memory_copy_apart(zstd_enc_rep, rep, sizeof(rep));
+        return anchor;
+}
+
+/*
+        Hash chain: hash holds the latest index of each hash, chain the one
+        before each index.  Indices from e->next up to ip go in first; then
+        up to 2^search_log candidates, newest first, keep the longest match.
+        A candidate a chain cycle old has been overwritten, and ends the walk.
+*/
+static __attribute__((always_inline)) inline positive
+zstd_chain_find(zstd_encoder address_to e, p8 address_to ip, p8 address_to iend,
+                p32 low, positive address_to distance)
+{
+        p8 address_to const base = e->base;
+        p32 address_to const hash = e->hash;
+        p32 address_to const chain = e->chain;
+        p8 const hlog = e->p.hash_log;
+        p8 const mls = e->p.min_match < 4 ? 4 : e->p.min_match > 6 ? 6 : e->p.min_match;
+        p32 const mask = ((p32)1 << e->p.chain_log) - 1;
+        p32 const cur = (p32)(ip - base);
+        p32 const floor = cur > mask ? cur - mask : 0;
+        positive const room = (positive)(iend - ip);
+        positive attempts = (positive)1 << e->p.search_log;
+        positive best = 3;
+        p32 at = e->next < low ? low : e->next;
+        p32 candidate;
+
+        for (; at < cur; at++)
+        {
+                positive const h = zstd_hash_bytes(base + at, hlog, mls);
+
+                chain[at & mask] = hash[h];
+                hash[h] = at;
+        }
+        if (e->next < cur)
+                e->next = cur;
+        candidate = hash[zstd_hash_bytes(ip, hlog, mls)];
+        while (candidate >= low && candidate < cur && attempts--)
+        {
+                p8 address_to const there = base + candidate;
+
+                if (there[best] == ip[best])
+                {
+                        positive const length = memory_common_prefix(ip, there, room);
+
+                        if (length > best)
+                        {
+                                best = length;
+                                address_to distance = cur - candidate;
+                                if (length == room)
+                                        break;
+                        }
+                }
+                if (candidate <= floor)
+                        break;
+                candidate = chain[candidate & mask];
+        }
+        return best > 3 ? best : 0;
+}
+
+/* The bits an offset value costs, near enough to weigh one match against
+   another: none for the last offset repeated. */
+static __attribute__((always_inline)) inline bipolar
+zstd_offset_cost(zstd_encoder address_to e, positive distance)
+{
+        return distance == e->rep[0] ? 0
+                                     : (bipolar)zstd_highbit32((p32)distance + 3);
+}
+
+/*
+        greedy (depth 0), lazy (1) and lazy2 (2), libzstd's parse: a repeat
+        one byte ahead, the chain's best, then up to depth positions further
+        on, each taking over when its gain (length against offset bits)
+        beats the match in hand.  A match found at an offset extends back
+        into the literals before it.
+*/
+static p8 address_to zstd_parse_lazy(zstd_encoder address_to e, p32 from,
+                                     p32 to, p32 low, positive depth)
+{
+        p8 address_to const base = e->base;
+        p8 address_to const lowest = base + low;
+        p8 address_to const iend = base + to;
+        p8 address_to const ilimit = iend - 8;
+        p8 address_to ip = base + from;
+        p8 address_to anchor = ip;
+
+        ip += ip == lowest;
+        while (ip < ilimit)
+        {
+                p32 cur = (p32)(ip - base);
+                p32 rep = e->rep[0];
+                positive match = 0;
+                positive distance = 0;
+                positive found;
+                positive found_distance = 0;
+                p8 address_to start = ip + 1;
+
+                if (rep && rep <= cur + 1 - low &&
+                    memory_load_unaligned(p32, ip + 1) == memory_load_unaligned(p32, ip + 1 - rep))
+                {
+                        match = 4 + memory_common_prefix(ip + 5, ip + 5 - rep,
+                                                         (positive)(iend - ip - 5));
+                        distance = rep;
+                        if (!depth)
+                                goto store;
+                }
+                found = zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                if (found > match)
+                {
+                        match = found;
+                        distance = found_distance;
+                        start = ip;
+                }
+                if (match < 4)
+                {
+                        ip += ((positive)(ip - anchor) >> 8) + 1;
+                        continue;
+                }
+                while (depth && ip < ilimit)
+                {
+                        positive length;
+
+                        ip++;
+                        cur++;
+                        rep = e->rep[0];
+                        if (rep && rep <= cur - low &&
+                            memory_load_unaligned(p32, ip) == memory_load_unaligned(p32, ip - rep))
+                        {
+                                length = 4 + memory_common_prefix(ip + 4, ip + 4 - rep,
+                                                                  (positive)(iend - ip - 4));
+                                if ((bipolar)length * 3 >
+                                    (bipolar)match * 3 - zstd_offset_cost(e, distance) + 1)
+                                {
+                                        match = length;
+                                        distance = rep;
+                                        start = ip;
+                                }
+                        }
+                        found = zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                        if (found >= 4 &&
+                            (bipolar)found * 4 - (bipolar)zstd_highbit32((p32)found_distance + 3) >
+                                (bipolar)match * 4 - zstd_offset_cost(e, distance) + 4)
+                        {
+                                match = found;
+                                distance = found_distance;
+                                start = ip;
+                                continue;
+                        }
+                        if (depth == 2 && ip < ilimit)
+                        {
+                                ip++;
+                                cur++;
+                                rep = e->rep[0];
+                                if (rep && rep <= cur - low &&
+                                    memory_load_unaligned(p32, ip) == memory_load_unaligned(p32, ip - rep))
+                                {
+                                        length = 4 + memory_common_prefix(ip + 4, ip + 4 - rep,
+                                                                          (positive)(iend - ip - 4));
+                                        if ((bipolar)length * 4 >
+                                            (bipolar)match * 4 - zstd_offset_cost(e, distance) + 1)
+                                        {
+                                                match = length;
+                                                distance = rep;
+                                                start = ip;
+                                        }
+                                }
+                                found = zstd_chain_find(e, ip, iend, low, address_of found_distance);
+                                if (found >= 4 &&
+                                    (bipolar)found * 4 - (bipolar)zstd_highbit32((p32)found_distance + 3) >
+                                        (bipolar)match * 4 - zstd_offset_cost(e, distance) + 7)
+                                {
+                                        match = found;
+                                        distance = found_distance;
+                                        start = ip;
+                                        continue;
+                                }
+                        }
+                        break;
+                }
+                while (start > anchor && (positive)(start - lowest) > distance &&
+                       start[-1] == start[-1 - (bipolar)distance])
+                        start--, match++;
+        store:
+                zstd_store(e, anchor, (positive)(start - anchor), distance, match);
+                ip = zstd_repeat_run(e, start + match, ilimit, iend, low, null, 0, 0);
+                anchor = ip;
+        }
+        return anchor;
+}
+
+static fn zstd_encoder_close(zstd_encoder address_to e)
+{
+        if (e->storage)
+                memory_free(e->storage, e->storage_room);
+        if (e->hash)
+                memory_free(e->hash, e->hash_bytes);
+        if (e->chain)
+                memory_free(e->chain, e->chain_bytes);
+        e->storage = null;
+        e->hash = null;
+        e->chain = null;
+        e->storage_room = 0;
+        e->hash_bytes = 0;
+        e->chain_bytes = 0;
+        e->filled = 0;
+}
+
+static address_any zstd_encoder_map(positive bytes)
+{
+        address_any const at = memory(bytes);
+
+        return !at || system_failed(at) ? null : at;
+}
+
+/*
+        The window and tables for these parameters, kept from the last frame
+        when they are the same size.  A frame's indices start a window past
+        the last frame's end, so whatever the tables still hold from it is
+        below every window and never matched; near 2^30 they start over.
+*/
+static bool zstd_encoder_open(zstd_encoder address_to e,
+                              const zstd_params address_to p, bool checksum)
+{
+        positive const window = (positive)1 << p->window_log;
+        positive const room = 2 * window + 2 * ZSTD_BLOCK_MAX + 64;
+        positive const hash_bytes = (positive)4 << p->hash_log;
+        positive const chain_bytes =
+            p->strategy == ZSTD_FAST ? 0 : (positive)4 << p->chain_log;
+        p32 start;
+
+        if (e->storage_room < room || e->hash_bytes != hash_bytes ||
+            e->chain_bytes != chain_bytes)
+        {
+                zstd_encoder_close(e);
+                if (!(e->storage = zstd_encoder_map(room)))
+                        return zstd_fail("zstd cannot map its window");
+                e->storage_room = room;
+                if (!(e->hash = zstd_encoder_map(hash_bytes)))
+                        return zstd_encoder_close(e), zstd_fail("zstd cannot map its tables");
+                e->hash_bytes = hash_bytes;
+                if (chain_bytes && !(e->chain = zstd_encoder_map(chain_bytes)))
+                        return zstd_encoder_close(e), zstd_fail("zstd cannot map its tables");
+                e->chain_bytes = chain_bytes;
+        }
+        start = e->filled ? e->filled + (p32)window + 1 : 1;
+        if (start > 0x40000000u)
+        {
+                memory_fill(e->hash, 0, hash_bytes);
+                if (chain_bytes)
+                        memory_fill(e->chain, 0, chain_bytes);
+                start = 1;
+        }
+        e->p = address_to p;
+        e->checksum = checksum;
+        e->start = start;
+        e->block = start;
+        e->filled = start;
+        e->next = start;
+        e->storage_index = start;
+        e->base = e->storage - start;
+        e->rep[0] = 1;
+        e->rep[1] = 4;
+        e->rep[2] = 8;
+        e->nseq = 0;
+        e->nlit = 0;
+        e->huf_valid = false;
+        e->prior[0].valid = false;
+        e->prior[1].valid = false;
+        e->prior[2].valid = false;
         return true;
 }
 
-static bool zstd_emit_block(p8 address_to src, positive n, bool last)
+/* Keep one window of history before the block being filled. */
+static fn zstd_encoder_slide(zstd_encoder address_to e)
 {
+        p32 const window = (p32)1 << e->p.window_log;
+        p32 const keep = e->block - e->storage_index > window ? e->block - window
+                                                             : e->storage_index;
+
+        if (keep == e->storage_index)
+                return;
+        memory_copy(e->storage, e->base + keep, e->filled - keep);
+        e->storage_index = keep;
+        e->base = e->storage - keep;
+}
+
+/* Before indices reach 2^32, move every index down by a whole number of
+   chain cycles, so each chain slot stays its slot; what falls below the
+   history kept becomes 0, which no window reaches. */
+static fn zstd_encoder_reduce(zstd_encoder address_to e)
+{
+        p32 const unit = (p32)1 << e->p.chain_log;
+        p32 const shift = (e->storage_index - 1) & ~(unit - 1);
+
+        if (!shift)
+                return;
+        for (positive i = 0; i < e->hash_bytes / 4; i++)
+                e->hash[i] = e->hash[i] > shift ? e->hash[i] - shift : 0;
+        for (positive i = 0; i < e->chain_bytes / 4; i++)
+                e->chain[i] = e->chain[i] > shift ? e->chain[i] - shift : 0;
+        e->start = e->start > shift ? e->start - shift : 1;
+        e->block -= shift;
+        e->filled -= shift;
+        e->storage_index -= shift;
+        e->next = e->next > shift + e->storage_index ? e->next - shift : e->storage_index;
+        e->base = e->storage - e->storage_index;
+}
+
+/* Where the block being filled takes its next bytes, and how many. */
+static p8 address_to zstd_encode_room(zstd_encoder address_to e,
+                                      positive address_to room)
+{
+        if (e->filled > 0xC0000000u)
+                zstd_encoder_reduce(e);
+        if ((positive)(e->block - e->storage_index) + ZSTD_BLOCK_MAX + 64 >
+            e->storage_room)
+                zstd_encoder_slide(e);
+        address_to room = ZSTD_BLOCK_MAX - (e->filled - e->block);
+        return e->base + e->filled;
+}
+
+/* The next n bytes as a block: RLE when they are one byte, raw under 12,
+   otherwise parsed and entropy coded, or raw when that is no smaller. */
+static bool zstd_encode_block(zstd_encoder address_to e, positive n, bool last)
+{
+        p32 const from = e->block;
+        p8 address_to const src = e->base + from;
         bool ok;
+
         if (n && memory_span_byte(src, src[0], n) == n)
         {
-                p8 header[4];
+                p8 head[4];
 
-                zstd_block_header(header, last, 1, n);
-                header[3] = src[0];
-                ok = zstd_enc_out(header, sizeof(header));
-                if (n >= 5)
-                        zstd_enc_head[zstd_enc_hash4(src)] =
-                            ((p64)(p32)(zstd_enc_abs + n - 4) << 32) |
-                            (p32)(zstd_enc_abs + n - 3);
+                zstd_block_header(head, last, 1, n);
+                head[3] = src[0];
+                ok = zstd_enc_out(head, sizeof(head));
         }
+        else if (n < 12)
+                ok = zstd_emit_raw_block(src, n, last);
         else
-                ok = n >= 12 ? zstd_emit_comp_block(src, n, last)
-                             : zstd_emit_raw_block(src, n, last);
-        if (ok)
         {
-                zstd_enc_abs += n;
-                zstd_enc_position += n;
-                if (zstd_enc_position + ZSTD_BLOCK_MAX > sizeof(zstd_enc_storage))
+                p32 const to = from + (p32)n;
+                p32 const window = (p32)1 << e->p.window_log;
+                p32 const low = to - e->start > window ? to - window : e->start;
+                p32 const saved[3] = {e->rep[0], e->rep[1], e->rep[2]};
+                p8 address_to anchor;
+                b32 written;
+
+                e->nseq = 0;
+                e->nlit = 0;
+                switch (e->p.strategy)
                 {
-                        memory_copy_apart(zstd_enc_storage,
-                            zstd_enc_storage + zstd_enc_position - ZSTD_ENC_WINDOW,
-                            ZSTD_ENC_WINDOW);
-                        zstd_enc_position = ZSTD_ENC_WINDOW;
+                case ZSTD_FAST:
+                        anchor = zstd_parse_fast(e, from, to, low);
+                        break;
+                case ZSTD_DFAST:
+                        anchor = zstd_parse_dfast(e, from, to, low);
+                        break;
+                case ZSTD_GREEDY:
+                        anchor = zstd_parse_lazy(e, from, to, low, 0);
+                        break;
+                case ZSTD_LAZY:
+                        anchor = zstd_parse_lazy(e, from, to, low, 1);
+                        break;
+                default:
+                        anchor = zstd_parse_lazy(e, from, to, low, 2);
+                        break;
                 }
-                if (zstd_enc_abs >= 0x80000000u)
+                memory_copy_apart(zstd_enc_lits + e->nlit, anchor,
+                                  (positive)(src + n - anchor));
+                e->nlit += (positive)(src + n - anchor);
+                written = zstd_entropy_block(e, n, last);
+                ok = written > 0;
+                if (!written)
                 {
-                        positive shift = zstd_enc_abs - ZSTD_ENC_WINDOW;
-                        for (positive i = 0; i < 65536; i++)
-                        {
-                                p32 first = (p32)zstd_enc_head[i], second = (p32)(zstd_enc_head[i] >> 32);
-                                first = first > shift ? first - shift : 0;
-                                second = second > shift ? second - shift : 0;
-                                zstd_enc_head[i] = ((p64)second << 32) | first;
-                        }
-                        zstd_enc_abs -= shift;
+                        memory_copy_apart(e->rep, saved, sizeof(saved));
+                        ok = zstd_emit_raw_block(src, n, last);
                 }
         }
+        e->block += (p32)n;
         return ok;
 }
 
-static bool zstd_encode_header(void)
+static bool zstd_encode_start(const zstd_params address_to p, bool checksum)
 {
         p8 head[6];
 
-        zstd_enc_fill = 0;
-        zstd_enc_abs = 0;
-        zstd_enc_position = 0;
-        zstd_enc_rep[0] = 1;
-        zstd_enc_rep[1] = 4;
-        zstd_enc_rep[2] = 8;
-        memory_fill(zstd_enc_head, 0, sizeof(zstd_enc_head));
         zstd_why = null;
+        zstd_ct_init();
+        if (!zstd_ct_ready)
+                return zstd_fail("zstd cannot build its predefined tables");
+        if (!zstd_encoder_open(address_of zstd_enc, p, checksum))
+                return false;
         hash_xxh64_begin(address_of zstd_enc_hash, 0);
         head[0] = 0x28;
         head[1] = 0xb5;
         head[2] = 0x2f;
         head[3] = 0xfd;
-        head[4] = 0x04;
-        head[5] = 0x58; /* 2 MiB window */
+        head[4] = checksum ? 0x04 : 0x00;
+        head[5] = (p8)((p->window_log - 10) << 3);
         return (!zstd_output.bytes && zstd_out_fd < 0) ||
                zstd_enc_out(head, sizeof head);
 }
 
-/* level is the codec table's slot; this encoder has one strategy. */
+/* The codec table's entry: a level from 1 to 22 and no size to go by. */
 static bool zstd_encode_begin(bipolar out, p8 level)
 {
-        (void)level;
+        zstd_params params;
+
+        zstd_level_params(level, 0, 0, address_of params);
         zstd_out_fd = out;
         zstd_output.bytes = null;
-        return zstd_encode_header();
+        return zstd_encode_start(address_of params, true);
 }
 
 static bool zstd_encode_write(p8 address_to src, positive n)
 {
-        hash_xxh64_add(address_of zstd_enc_hash, src, n);
+        zstd_encoder address_to const e = address_of zstd_enc;
+
+        if (e->checksum)
+                hash_xxh64_add(address_of zstd_enc_hash, src, n);
         while (n)
         {
-                positive room = ZSTD_BLOCK_MAX - zstd_enc_fill;
-                positive take = n < room ? n : room;
+                positive room;
+                p8 address_to const into = zstd_encode_room(e, address_of room);
+                positive const take = n < room ? n : room;
 
-                memory_copy(zstd_enc_block + zstd_enc_fill, src, take);
-                zstd_enc_fill += take;
+                memory_copy_apart(into, src, take);
+                e->filled += (p32)take;
                 src += take;
                 n -= take;
-                if (zstd_enc_fill == ZSTD_BLOCK_MAX)
-                {
-                        if (!zstd_emit_block(zstd_enc_block, zstd_enc_fill,
-                                             false))
-                                return false;
-                        zstd_enc_fill = 0;
-                }
+                if (e->filled - e->block == ZSTD_BLOCK_MAX &&
+                    !zstd_encode_block(e, ZSTD_BLOCK_MAX, false))
+                        return false;
         }
         return true;
 }
 
 static bool zstd_encode_end(void)
 {
-        p32 sum;
+        zstd_encoder address_to const e = address_of zstd_enc;
         p8 tail[4];
 
-        if (!zstd_emit_block(zstd_enc_block, zstd_enc_fill, true))
+        if (!zstd_encode_block(e, e->filled - e->block, true))
                 return false;
-        zstd_enc_fill = 0;
-        sum = (p32)hash_xxh64_finish(address_of zstd_enc_hash);
-        memory_store_unaligned(p32, tail, sum);
+        if (!e->checksum)
+                return true;
+        memory_store_unaligned(p32, tail,
+                               (p32)hash_xxh64_finish(address_of zstd_enc_hash));
         return (!zstd_output.bytes && zstd_out_fd < 0) ||
                zstd_enc_out(tail, sizeof tail);
 }
@@ -2738,15 +3436,15 @@ static bool zstd_encode_end(void)
 static bipolar zstd_deflate_mem(p8 address_to src, positive src_len,
                                 p8 address_to dst, positive dst_cap)
 {
+        zstd_params params;
+
         zstd_output.bytes = dst;
         zstd_output.room = dst_cap;
         zstd_output.used = 0;
         zstd_out_fd = -1;
-        if (!zstd_encode_header())
-                return -1;
-        if (!zstd_encode_write(src, src_len))
-                return -1;
-        if (!zstd_encode_end())
+        zstd_level_params(3, 0, 0, address_of params);
+        if (!zstd_encode_start(address_of params, true) ||
+            !zstd_encode_write(src, src_len) || !zstd_encode_end())
                 return -1;
         zstd_output.bytes = null;
         return (bipolar)zstd_output.used;
@@ -2755,6 +3453,14 @@ static bipolar zstd_deflate_mem(p8 address_to src, positive src_len,
 #ifndef ZSTD_CORE_ONLY
 
 static b32 zstd_status;
+static bool zstd_cli_ultra;
+static bool zstd_cli_single;
+static bool zstd_cli_no_check;
+static bool zstd_cli_warned;
+static bool zstd_cli_quiet;
+static positive zstd_cli_fast;
+static positive zstd_cli_threads = 1;
+static p8 zstd_cli_long;
 
 static fn zstd_refuse(string_address message)
 {
@@ -2765,17 +3471,143 @@ static fn zstd_refuse(string_address message)
 static const file_codec_suffix zstd_suffixes[] = {
     {".zst", ""}, {".tzst", ".tar"}};
 
-/* Read straight into the block the encoder owns, as xz reads into its
-   pending window; zstd_encode_write is the copy for callers with a span. */
+/* A decimal number at `at`, saturating; answers how many digits. */
+static positive zstd_cli_number(string_address at, positive address_to value)
+{
+        positive taken = 0;
+
+        address_to value = 0;
+        while (at[taken] >= '0' && at[taken] <= '9')
+        {
+                if (address_to value < 1000000)
+                        address_to value = address_to value * 10 + (positive)(at[taken] - '0');
+                taken++;
+        }
+        return taken;
+}
+
+/*
+        zstd's own options, ahead of the shared ones.  -# is a whole number:
+        a level, 0 the default; above 19 it needs --ultra.  -T# and
+        --threads=# are workers (0, or -T alone, every CPU); --single-thread
+        is one job for the whole input.  --fast[=#] is a negative level and
+        --long[=#] a window of 2^# bytes (27 alone).  --no-check leaves out
+        the content checksum; -C and --check put it back.
+*/
+static bipolar zstd_cli_option(file_codec_cli address_to codec,
+                               string_address at, bool word)
+{
+        positive value = 0;
+        positive taken;
+
+        if (!word)
+        {
+                if (*at >= '0' && *at <= '9')
+                {
+                        taken = zstd_cli_number(at, address_of value);
+                        codec->level = value > 255 ? 255 : (p8)value;
+                        zstd_cli_fast = 0;
+                        return (bipolar)taken;
+                }
+                if (*at == 'T')
+                {
+                        taken = zstd_cli_number(at + 1, address_of zstd_cli_threads);
+                        zstd_cli_single = false;
+                        return (bipolar)taken + 1;
+                }
+                if (*at == 'C')
+                        zstd_cli_no_check = false;
+                else if (*at == 'q')
+                        zstd_cli_quiet = true;
+                else
+                        return 0;
+                return 1;
+        }
+        if (string_equals(at, "--ultra"))
+                zstd_cli_ultra = true;
+        else if (string_equals(at, "--single-thread"))
+        {
+                zstd_cli_single = true;
+                zstd_cli_threads = 1;
+        }
+        else if (string_equals(at, "--no-check"))
+                zstd_cli_no_check = true;
+        else if (string_equals(at, "--check"))
+                zstd_cli_no_check = false;
+        else if (string_equals(at, "--quiet"))
+                zstd_cli_quiet = true;
+        else if (string_equals(at, "--fast"))
+                zstd_cli_fast = 1;
+        else if (string_equals(at, "--long"))
+                zstd_cli_long = 27;
+        else if (string_has_prefix(at, "--fast=") ||
+                 string_has_prefix(at, "--long=") ||
+                 string_has_prefix(at, "--threads="))
+        {
+                string_address const number = at + (at[2] == 't' ? 10 : 7);
+
+                taken = zstd_cli_number(number, address_of value);
+                if (!taken || number[taken] || (at[2] == 'f' && !value))
+                {
+                        string_format(log_error, "zstd: incorrect parameter: %s\n", at);
+                        return -1;
+                }
+                if (at[2] == 'l' && (value < 10 || value > 27))
+                {
+                        string_format(log_error,
+                                      "zstd: %s: the window log is 10 to 27\n", at);
+                        return -1;
+                }
+                if (at[2] == 'f')
+                        zstd_cli_fast = value;
+                else if (at[2] == 'l')
+                        zstd_cli_long = (p8)value;
+                else
+                {
+                        zstd_cli_threads = value;
+                        zstd_cli_single = false;
+                }
+        }
+        else
+                return 0;
+        return 1;
+}
+
+/* Read straight into the block the encoder fills, as xz reads into its
+   pending window; zstd_encode_write is the copy for callers with a span.
+   A regular input's size shrinks the window to fit, as zstd does. */
 static b32 zstd_encode_fd(bipolar in, bipolar out, p8 level)
 {
-        if (!zstd_encode_begin(out, level))
+        zstd_encoder address_to const e = address_of zstd_enc;
+        zstd_params params;
+        file_facts facts;
+        p64 size = 0;
+        b32 wanted = zstd_cli_fast
+                         ? -(b32)(zstd_cli_fast > 65535 ? 65535 : zstd_cli_fast)
+                         : (b32)level;
+
+        if (wanted > 19 && !zstd_cli_ultra)
+        {
+                if (!zstd_cli_warned && !zstd_cli_quiet)
+                        string_format(log_error,
+                                      "Warning : compression level higher than max, reduced to 19\n");
+                zstd_cli_warned = true;
+                wanted = 19;
+        }
+        if (file_look_code(in, (string_address)"", AT_EMPTY_PATH,
+                           address_of facts) == 0 &&
+            (facts.mode & MODE_FORMAT) == MODE_FILE)
+                size = facts.size;
+        zstd_level_params(wanted, zstd_cli_long, size, address_of params);
+        zstd_out_fd = out;
+        zstd_output.bytes = null;
+        if (!zstd_encode_start(address_of params, !zstd_cli_no_check))
                 goto refused;
         for (;;)
         {
-                p8 address_to into = zstd_enc_block + zstd_enc_fill;
-                bipolar got = system_read_retry((positive)in, into,
-                                                ZSTD_BLOCK_MAX - zstd_enc_fill);
+                positive room;
+                p8 address_to const into = zstd_encode_room(e, address_of room);
+                bipolar const got = system_read_retry((positive)in, into, room);
 
                 if (got < 0)
                 {
@@ -2784,14 +3616,12 @@ static b32 zstd_encode_fd(bipolar in, bipolar out, p8 level)
                 }
                 if (!got)
                         break;
-                hash_xxh64_add(address_of zstd_enc_hash, into, (positive)got);
-                zstd_enc_fill += (positive)got;
-                if (zstd_enc_fill == ZSTD_BLOCK_MAX)
-                {
-                        if (!zstd_emit_block(zstd_enc_block, zstd_enc_fill, false))
-                                goto refused;
-                        zstd_enc_fill = 0;
-                }
+                if (e->checksum)
+                        hash_xxh64_add(address_of zstd_enc_hash, into, (positive)got);
+                e->filled += (p32)got;
+                if (e->filled - e->block == ZSTD_BLOCK_MAX &&
+                    !zstd_encode_block(e, ZSTD_BLOCK_MAX, false))
+                        goto refused;
         }
         if (zstd_encode_end())
                 return 0;
@@ -2835,7 +3665,8 @@ static b32 file_zstd(void)
         file_codec_cli codec = {
             .name = "zstd", .decode_name = "unzstd", .cat_name = "zstdcat",
             .usage =
-                "Usage: zstd [-cdfkqz123456789] [-o FILE] [--rm] [FILE...]",
+                "Usage: zstd [-cdfkqzC#] [-T#] [--ultra] [--fast[=#]] [--long[=#]]\n"
+                "            [--single-thread] [--no-check] [-o FILE] [--rm] [FILE...]",
             .version = "zstd from dawning-kit",
             .status = address_of zstd_status, .suffixes = zstd_suffixes,
             .suffix_count = array_count(zstd_suffixes),
@@ -2845,7 +3676,8 @@ static b32 file_zstd(void)
                         FILE_CODEC_OUTPUT_OPTION | FILE_CODEC_REMOVE_OPTION |
                         FILE_CODEC_LONG_QUIET | FILE_CODEC_SHORT_VERSION,
             .level = 3,
-            .run = zstd_cli_stream};
+            .run = zstd_cli_stream,
+            .option = zstd_cli_option};
         return file_codec_main(address_of codec);
 }
 

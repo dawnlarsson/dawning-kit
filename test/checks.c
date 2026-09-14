@@ -45538,7 +45538,9 @@ static fn huffman_exact_end(void)
                                       : (p8)(random >> 16);
         }
         positive hn = 0;
-        positive cn = zstd_pack_literals(src, sizeof(src), header, address_of hn);
+        bool fresh = false;
+        positive cn = zstd_pack_literals(null, src, sizeof(src), header,
+                                         address_of hn, address_of fresh);
         positive tree = 0;
         zstd_huff huff;
         check("the exactness section packs and its tree reads",
@@ -45649,7 +45651,9 @@ static fn literal_codebooks(void)
                         }
                         src[n - 1] = (p8)alphabets[a];
                         positive hn = 0;
-                        positive cn = zstd_pack_literals(src, n, packed, address_of hn);
+                        bool fresh = false;
+                        positive cn = zstd_pack_literals(null, src, n, packed,
+                                                         address_of hn, address_of fresh);
                         if (!cn)
                         {
                                 /* A short alphabet header may cost more than

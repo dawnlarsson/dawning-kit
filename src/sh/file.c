@@ -772,7 +772,7 @@ typedef struct
         string_address decoded;
 } file_codec_suffix;
 
-typedef struct
+typedef struct file_codec_cli
 {
         string_address name;
         string_address decode_name;
@@ -793,6 +793,12 @@ typedef struct
         p8 level;
         string_address output_path;
         b32 (*run)(bipolar, bipolar, bool, p8);
+        /* A codec's own options, asked before the shared ones: a whole
+           --word, or the rest of a short cluster from one letter.  It
+           answers how many characters it took (0: not its option), or a
+           negative exit status once it has said what it refused. */
+        bipolar (*option)(struct file_codec_cli address_to codec,
+                          string_address at, bool word);
 } file_codec_cli;
 
 /* One regular-file output transaction shared by utilities that must never
@@ -880,6 +886,17 @@ static bool file_codec_parse(file_codec_cli address_to codec,
                         break;
                 if (word[1] == '-')
                 {
+                        bipolar taken = codec->option
+                                            ? codec->option(codec, word, true)
+                                            : 0;
+
+                        if (taken < 0)
+                        {
+                                *result = (b32)-taken;
+                                return false;
+                        }
+                        if (taken)
+                                continue;
                         if (string_equals(word, "--decompress") ||
                             string_equals(word, "--uncompress"))
                                 codec->decompress = true;
@@ -960,6 +977,20 @@ static bool file_codec_parse(file_codec_cli address_to codec,
 
                 for (string_address letter = word + 1; *letter; letter++)
                 {
+                        bipolar taken = codec->option
+                                            ? codec->option(codec, letter, false)
+                                            : 0;
+
+                        if (taken < 0)
+                        {
+                                *result = (b32)-taken;
+                                return false;
+                        }
+                        if (taken)
+                        {
+                                letter += taken - 1;
+                                continue;
+                        }
                         if ((*letter >= '1' ||
                              (*letter == '0' &&
                               (codec->features & FILE_CODEC_LEVEL_ZERO))) &&

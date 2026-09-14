@@ -24048,6 +24048,48 @@ def harness_compression(argv):
                     for kind in kinds:
                         check(label + '/zstd/corrupt-level-' + level + '/' + kind,
                               kind not in missed, missed.get(kind, ''))
+
+            # zstd levels and their options: every level from 1 to 19, 20-22
+            # under --ultra, --fast, --long, --no-check, -T and --single-thread
+            # write frames the reference and ours both decode to the input;
+            # the worker count never changes the bytes; a level past 19
+            # without --ultra warns and is 19; windows outside 10-27 and a
+            # --fast of 0 are refused; and at -1, -3 and -9 ours comes within
+            # RATIO_SLACK of the reference's size.
+            RATIO_SLACK = {'1': 1.03, '3': 1.03, '9': 1.03}
+            level_cases = ([['-%d' % l] for l in range(0, 20)] +
+                           [['--ultra', '-%d' % l] for l in (20, 21, 22)] +
+                           [['--fast'], ['--fast=5'], ['--long=24', '-3'], ['--no-check', '-3'],
+                            ['-T0', '-5'], ['-T3', '-12'], ['--single-thread', '-9'], ['-c19']])
+            for label, _ in binaries:
+                ours_zstd = runner + [str(farms[label] / 'zstd')]
+                sizes = {}
+                for argv in level_cases:
+                    name = ' '.join(argv)
+                    made = call(ours_zstd + argv + ['-c'], text)
+                    back = call([refs['zstd'], '-dc'], made.stdout)
+                    own = call(ours_zstd + ['-dc'], made.stdout)
+                    check(label + '/zstd/level/' + name,
+                          made.returncode == back.returncode == own.returncode == 0 and
+                          back.stdout == text and own.stdout == text,
+                          (made.stderr + back.stderr + own.stderr).decode(errors='replace'))
+                    sizes[name] = len(made.stdout)
+                for workers in ('-T1', '-T8', '-T0'):
+                    check(label + '/zstd/level/' + workers + ' -9 is the bytes of -9',
+                          call(ours_zstd + [workers, '-9', '-c'], text).stdout ==
+                          call(ours_zstd + ['-9', '-c'], text).stdout)
+                warned = call(ours_zstd + ['-20', '-c'], text[:4096])
+                check(label + '/zstd/level/-20 without --ultra warns and is -19',
+                      warned.returncode == 0 and b'reduced to 19' in warned.stderr and
+                      warned.stdout == call(ours_zstd + ['-19', '-c'], text[:4096]).stdout)
+                for refused in (['--long=9'], ['--long=28'], ['--fast=0'], ['--fast=x'], ['--threads=']):
+                    answer = call(ours_zstd + refused + ['-c'], b'x')
+                    check(label + '/zstd/level/refuses ' + refused[0], answer.returncode != 0)
+                for level, slack in sorted(RATIO_SLACK.items()):
+                    reference_size = len(call([refs['zstd'], '-T1', '-' + level, '-c'], text).stdout)
+                    check(label + '/zstd/ratio/-' + level,
+                          sizes['-' + level] <= reference_size * slack,
+                          '%d bytes against the reference %d' % (sizes['-' + level], reference_size))
         print('compression: %d checks, %d failures' % (report['checks'], len(report['failures'])), flush=True)
     if opts.output:
         opts.output.parent.mkdir(parents=True, exist_ok=True)
