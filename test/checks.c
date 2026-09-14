@@ -45841,14 +45841,12 @@ b32 main(void)
         static const struct {positive bytes; string_address text;} sizes[] = {
             {0, "0 B"}, {1, "1 B"}, {1024, "1 KiB"}, {8192, "8 KiB"},
             {1536, "1.5 KiB"}, {1048576, "1 MiB"}, {1073741824, "1 GiB"},
+            {13107200, "12.5 MiB"}, {1023, "1023 B"},
         };
+        utility_arena.used = 0;
         for (positive i = 0; i < array_count(sizes); i++)
-        {
-                p8 guarded[50]; memory_fill(guarded, 0xa5, sizeof(guarded));
-                ul_human_size(guarded + 1, sizes[i].bytes);
-                check("shared human trim bytes and guard", string_equals(guarded + 1, sizes[i].text) &&
-                      guarded[0] == 0xa5 && guarded[49] == 0xa5);
-        }
+                check("util-linux human size spelling",
+                      string_equals(ul_lscpu_cache_size(sizes[i].bytes, false, true), sizes[i].text));
         return test_report(null);
 }
 #endif /* CHECK_audit_builtin_regressions */
@@ -47119,7 +47117,8 @@ static fn storage_test_replay(void)
                                     system_seek(handle, 0, FILE_SEEK_SET) == 0;
                                 check("replay fixture prepared", prepared);
                                 if (!prepared) continue;
-                                process_replay_reader reader = {.handle = handle};
+                                process_replay_reader reader = {.failed = false};
+                                byte_input_open_fd(address_of reader.from, handle, reader.bytes, sizeof(reader.bytes));
                                 bool accepted = process_replay_skip_header(address_of reader);
                                 check("replay header bound",
                                       accepted == (header < REPLAY_HEADER_MAX));

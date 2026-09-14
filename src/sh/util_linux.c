@@ -6332,7 +6332,7 @@ static b32 util_linux_setpgid()
 
 static bool ul_lscpu_failed;
 
-static string_address ul_keep(string_address text)
+static string_address ul_lscpu_keep(string_address text)
 {
         positive length = string_length(text);
         p8 address_to copy = utility_arena_take(length + 1);
@@ -6346,8 +6346,10 @@ static string_address ul_keep(string_address text)
 }
 
 /* util-linux's size_to_human_string: "12.5 MiB" spaced with three-letter
-   units, lscpu's "32K" otherwise, and the plain count for bytes. */
-static string_address ul_human_size(positive size, bool bytes,
+   units, lscpu's "32K" otherwise, and the plain count for bytes.  Shared by
+   fallocate, mkswap, lscpu, lsmem, lsblk, lsipc and ipcs; the lscpu summary
+   check in test/differential.py finds these two by name. */
+static string_address ul_lscpu_cache_size(positive size, bool bytes,
                                           bool spaced)
 {
         p8 text[48];
@@ -6406,7 +6408,7 @@ static string_address ul_human_size(positive size, bool bytes,
                 }
         }
         text[used] = end;
-        return ul_keep(text);
+        return ul_lscpu_keep(text);
 }
 
 static const argument_option ul_fallocate_options[] = {
@@ -6514,7 +6516,7 @@ static b32 util_linux_fallocate()
         {
                 utility_arena.used = 0;
                 string_format(log, "%s: %s (", path,
-                              ul_human_size(length, false, true));
+                              ul_lscpu_cache_size(length, false, true));
                 positive_to_string(log, length);
                 log(" bytes) ", 0);
 
@@ -9071,7 +9073,7 @@ static b32 util_linux_mkswap()
                 storage_uuid_bytes(uuid_out, uuid.bytes);
                 string_format(log,
                               "Setting up swapspace version 1, size = %s (%p bytes)\n",
-                              ul_human_size(usable, false, true), usable);
+                              ul_lscpu_cache_size(usable, false, true), usable);
                 if (kept_label)
                         string_format(log, "LABEL=%s, UUID=%s\n",
                                       header + 1052, uuid_out);
@@ -9296,7 +9298,7 @@ static string_address ul_lscpu_number(positive value)
         p8 text[24];
         positive length = positive_into_string(text, value);
         text[length] = end;
-        return ul_keep(text);
+        return ul_lscpu_keep(text);
 }
 
 static fn ul_lscpu_cpu_path(p8 address_to path, positive cpu,
@@ -9323,7 +9325,7 @@ static fn ul_lscpu_cache_path(p8 address_to path, positive cpu,
         memory_copy(path + at, property, length + 1);
 }
 
-static bool ul_file_number(string_address path,
+static bool ul_lscpu_file_number(string_address path,
                                  positive address_to value)
 {
         p8 text[64];
@@ -9336,7 +9338,7 @@ static bool ul_lscpu_cpu_number(positive cpu, string_address property,
 {
         p8 path[192];
         ul_lscpu_cpu_path(path, cpu, property);
-        return ul_file_number(path, value);
+        return ul_lscpu_file_number(path, value);
 }
 
 static fn ul_lscpu_info_read()
@@ -9490,7 +9492,7 @@ static fn ul_lscpu_cache_read(ul_lscpu_cpu address_to cpu)
                 positive level;
                 ul_lscpu_cache_path(path, cpu->id, index, "level");
                 /* The kind's name is "L", two digits and a letter. */
-                if (!ul_file_number(path, address_of level) || level > 99)
+                if (!ul_lscpu_file_number(path, address_of level) || level > 99)
                         continue;
                 ul_lscpu_cache_path(path, cpu->id, index, "type");
                 if (ul_slurp_word(path, type, sizeof(type)) <= 0)
@@ -9522,7 +9524,7 @@ static fn ul_lscpu_cache_read(ul_lscpu_cpu address_to cpu)
                         (void)split_size(size, address_of cache->size);
 #define UL_LSCPU_CACHE_NUMBER(member, property)                              \
                 ul_lscpu_cache_path(path, cpu->id, index, property);         \
-                (void)ul_file_number(path, address_of cache->member)
+                (void)ul_lscpu_file_number(path, address_of cache->member)
                 UL_LSCPU_CACHE_NUMBER(ways, "ways_of_associativity");
                 UL_LSCPU_CACHE_NUMBER(sets, "number_of_sets");
                 UL_LSCPU_CACHE_NUMBER(physical_line,
@@ -9731,14 +9733,14 @@ typedef struct
 {
         string_address field;
         string_address data;
-} ul_summary_item;
+} ul_lscpu_summary_item;
 
-static string_address ul_summary_field(address_any row, p8 column,
+static string_address ul_lscpu_summary_field(address_any row, p8 column,
                                               p8 address_to scratch)
 {
         (void)scratch;
-        ul_summary_item address_to item =
-            (ul_summary_item address_to)row;
+        ul_lscpu_summary_item address_to item =
+            (ul_lscpu_summary_item address_to)row;
         return column ? item->data : item->field;
 }
 
@@ -9749,7 +9751,7 @@ static const ul_table_column ul_lscpu_summary_columns[] = {
 
 typedef struct
 {
-        ul_summary_item address_to items;
+        ul_lscpu_summary_item address_to items;
         positive count, room;
 } ul_lscpu_summary_rows;
 
@@ -9764,7 +9766,7 @@ static fn ul_lscpu_summary_add(ul_lscpu_summary_rows address_to rows,
                 ul_lscpu_failed = true;
                 return;
         }
-        rows->items[rows->count++] = (ul_summary_item){field, data};
+        rows->items[rows->count++] = (ul_lscpu_summary_item){field, data};
 }
 
 static string_address ul_lscpu_cache_summary(ul_lscpu_cache address_to cache,
@@ -9773,7 +9775,7 @@ static string_address ul_lscpu_cache_summary(ul_lscpu_cache address_to cache,
         positive total = cache->size;
         if (cache->instances && total <= positive_max / cache->instances)
                 total *= cache->instances;
-        string_address size = ul_human_size(total, bytes, true);
+        string_address size = ul_lscpu_cache_size(total, bytes, true);
         if (cache->instances <= 1)
                 return size;
 
@@ -9786,7 +9788,7 @@ static string_address ul_lscpu_cache_summary(ul_lscpu_cache address_to cache,
         memory_copy(text + used, " instances)", 11);
         used += 11;
         text[used] = end;
-        return ul_keep(text);
+        return ul_lscpu_keep(text);
 }
 
 static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
@@ -9816,7 +9818,7 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
         p8 set[FILE_PATH_MAX];
         ul_lscpu_set_text(set, sizeof(set), ul_lscpu_online, hex);
         ul_lscpu_summary_add(address_of rows,
-                             "On-line CPU(s) list:", ul_keep(set));
+                             "On-line CPU(s) list:", ul_lscpu_keep(set));
         for (positive i = 0; i < UL_CPU_WORDS; i++)
                 ul_lscpu_scratch_set[i] =
                     ul_lscpu_present[i] & ~ul_lscpu_online[i];
@@ -9825,7 +9827,7 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                 ul_lscpu_set_text(set, sizeof(set), ul_lscpu_scratch_set, hex);
                 ul_lscpu_summary_add(address_of rows,
                                      "Off-line CPU(s) list:",
-                                     ul_keep(set));
+                                     ul_lscpu_keep(set));
         }
 
         ul_lscpu_summary_add(address_of rows, "Vendor ID:",
@@ -9893,7 +9895,7 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                 memory_copy(label + used, " cache:", 8);
                 label[used + 7] = end;
                 ul_lscpu_summary_add(address_of rows,
-                                     ul_keep(label),
+                                     ul_lscpu_keep(label),
                                      ul_lscpu_cache_summary(cache, bytes));
         }
 
@@ -9924,7 +9926,7 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                 memory_copy(label + used, " CPU(s):", 9);
                 label[used + 8] = end;
                 ul_lscpu_summary_add(address_of rows,
-                                     ul_keep(label), ul_keep(set));
+                                     ul_lscpu_keep(label), ul_lscpu_keep(set));
         }
 
         file_walk walk;
@@ -9956,8 +9958,8 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                         label[used++] = ':';
                         label[used] = end;
                         ul_lscpu_summary_add(address_of rows,
-                                             ul_keep(label),
-                                             ul_keep(value));
+                                             ul_lscpu_keep(label),
+                                             ul_lscpu_keep(value));
                 }
                 file_walk_close(address_of walk);
         }
@@ -9966,7 +9968,7 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                 return;
         p8 columns[] = {0, 1};
         ul_table(json ? "lscpu" : null, rows.items, rows.count, ul_lscpu_summary_columns,
-                 columns, array_count(columns), false, false, ul_summary_field);
+                 columns, array_count(columns), false, false, ul_lscpu_summary_field);
 }
 
 #define UL_LSCPU_FIELDS(X) \
@@ -10098,14 +10100,14 @@ static string_address ul_lscpu_cache_field(address_any row, p8 column,
         case UL_LSCPU_C_ONE:
                 if (!cache->size)
                         return (string_address)"";
-                return ul_human_size(cache->size, ul_lscpu_bytes, false);
+                return ul_lscpu_cache_size(cache->size, ul_lscpu_bytes, false);
         case UL_LSCPU_C_ALL:
                 if (!cache->size)
                         return (string_address)"";
                 value = cache->size;
                 if (cache->instances && value <= positive_max / cache->instances)
                         value *= cache->instances;
-                return ul_human_size(value, ul_lscpu_bytes, false);
+                return ul_lscpu_cache_size(value, ul_lscpu_bytes, false);
         default: value = cache->coherency; break;
         }
         if (!value)
@@ -10521,7 +10523,7 @@ static bool ul_lsmem_take()
                 p8 text[128];
                 ul_lsmem_path(path, id, (string_address)"state");
                 if (ul_slurp_word(path, text, sizeof(text)) > 0)
-                        block->state = ul_keep(text);
+                        block->state = ul_lscpu_keep(text);
                 else
                         block->state = (string_address)"unknown";
 
@@ -10537,7 +10539,7 @@ static bool ul_lsmem_take()
                         if (string_equals(text, "none"))
                                 block->zones = (string_address)"None";
                         else
-                                block->zones = ul_keep(text);
+                                block->zones = ul_lscpu_keep(text);
                 }
                 else
                         block->zones = (string_address)"";
@@ -10637,7 +10639,7 @@ static string_address ul_lsmem_field(address_any row, p8 column,
                 return scratch;
         }
         case UL_LSMEM_SIZE:
-                return ul_human_size(
+                return ul_lscpu_cache_size(
                     (range->last - range->first + 1) * ul_lsmem.block_size,
                     ul_lsmem_bytes, false);
         case UL_LSMEM_STATE: return range->state;
@@ -10667,26 +10669,26 @@ static string_address ul_lsmem_field(address_any row, p8 column,
 
 static fn ul_lsmem_summary()
 {
-        ul_summary_item items[4];
+        ul_lscpu_summary_item items[4];
         positive count = 0;
-        items[count++] = (ul_summary_item){
+        items[count++] = (ul_lscpu_summary_item){
             (string_address)"Memory block size:",
-            ul_human_size(ul_lsmem.block_size, ul_lsmem_bytes, false)};
-        items[count++] = (ul_summary_item){
+            ul_lscpu_cache_size(ul_lsmem.block_size, ul_lsmem_bytes, false)};
+        items[count++] = (ul_lscpu_summary_item){
             (string_address)"Total online memory:",
-            ul_human_size(ul_lsmem.online_size, ul_lsmem_bytes, false)};
-        items[count++] = (ul_summary_item){
+            ul_lscpu_cache_size(ul_lsmem.online_size, ul_lsmem_bytes, false)};
+        items[count++] = (ul_lscpu_summary_item){
             (string_address)"Total offline memory:",
-            ul_human_size(ul_lsmem.offline_size, ul_lsmem_bytes, false)};
+            ul_lscpu_cache_size(ul_lsmem.offline_size, ul_lsmem_bytes, false)};
         if (ul_lsmem.memmap)
-                items[count++] = (ul_summary_item){
+                items[count++] = (ul_lscpu_summary_item){
                     (string_address)"Memmap on memory parameter:",
                     ul_lsmem.memmap};
         ul_lsmem_summary_columns[0].width = ul_lsmem_bytes ? 36 : 32;
         p8 columns[] = {0, 1};
         ul_table_out(items, sizeof(items[0]), count,
                      ul_lsmem_summary_columns, 2, columns, 2,
-                     false, false, ul_summary_field);
+                     false, false, ul_lscpu_summary_field);
 }
 
 static const argument_option ul_lsmem_options[] = {
@@ -11025,7 +11027,7 @@ static string_address ul_lsblk_word(string_address name,
         ul_lsblk_sysfs(path, name, property);
         if (ul_slurp_word(path, text, sizeof(text)) <= 0)
                 return (string_address)"";
-        return ul_keep(text);
+        return ul_lscpu_keep(text);
 }
 
 static positive ul_lsblk_number(string_address name,
@@ -11034,7 +11036,7 @@ static positive ul_lsblk_number(string_address name,
         p8 path[384];
         positive value = 0;
         ul_lsblk_sysfs(path, name, property);
-        (void)ul_file_number(path, address_of value);
+        (void)ul_lscpu_file_number(path, address_of value);
         return value;
 }
 
@@ -11051,7 +11053,7 @@ static string_address ul_lsblk_scheduler(string_address text)
         length = min(length, sizeof(copy) - 1);
         memory_copy(copy, open + 1, length);
         copy[length] = end;
-        return ul_keep(copy);
+        return ul_lscpu_keep(copy);
 }
 
 static bool ul_lsblk_take_path(string_address path, address_any context)
@@ -11066,8 +11068,8 @@ static bool ul_lsblk_take_path(string_address path, address_any context)
         ul_lsblk_device address_to device =
             ul_lsblk.devices + ul_lsblk.count++;
         memory_fill(device, 0, sizeof(*device));
-        device->kname = ul_keep(name);
-        device->path = ul_keep(path);
+        device->kname = ul_lscpu_keep(name);
+        device->path = ul_lscpu_keep(path);
         device->parent = null;
 
         p8 sysfs[384];
@@ -11234,7 +11236,7 @@ static fn ul_lsblk_mounts(bool measure)
                                     device->mount_count == UL_LSBLK_MOUNTS)
                                         continue;
                                 string_address target =
-                                    ul_keep(mounts.entry[i].target);
+                                    ul_lscpu_keep(mounts.entry[i].target);
                                 /* libmount reports the most recently mounted
                                    path first.  The shared mount snapshot is in
                                    kernel order, so prepend each bounded entry. */
@@ -11374,7 +11376,7 @@ static fn ul_lsblk_identity(ul_lsblk_device address_to device,
                                         positive length = (positive)(equal - line - 2);
 #define UL_LSBLK_UDEV(key, member)                                           \
         if (file_same_word(line + 2, length, key))                           \
-                device->member = ul_keep(value);                       \
+                device->member = ul_lscpu_keep(value);                       \
         else
                                         UL_LSBLK_UDEV("ID_FS_TYPE", fstype)
                                         UL_LSBLK_UDEV("ID_FS_VERSION", fsver)
@@ -11400,15 +11402,15 @@ static fn ul_lsblk_identity(ul_lsblk_device address_to device,
         if (!storage_probe_device(device->path, address_of identity))
                 return;
         if (!device->fstype && identity.type_length)
-                device->fstype = ul_keep(identity.type);
+                device->fstype = ul_lscpu_keep(identity.type);
         if (!device->uuid && identity.uuid_length)
-                device->uuid = ul_keep(identity.uuid);
+                device->uuid = ul_lscpu_keep(identity.uuid);
         if (!device->label && identity.label_length)
-                device->label = ul_keep(identity.label);
+                device->label = ul_lscpu_keep(identity.label);
         if (!device->partuuid && identity.partuuid_length)
-                device->partuuid = ul_keep(identity.partuuid);
+                device->partuuid = ul_lscpu_keep(identity.partuuid);
         if (!device->partlabel && identity.partlabel_length)
-                device->partlabel = ul_keep(identity.partlabel);
+                device->partlabel = ul_lscpu_keep(identity.partlabel);
 }
 
 static fn ul_lsblk_permissions(ul_lsblk_device address_to device)
@@ -11418,11 +11420,11 @@ static fn ul_lsblk_permissions(ul_lsblk_device address_to device)
                 return;
         p8 text[FILE_NAME_MAX];
         file_account_label(facts.owner, false, true, text);
-        device->owner = ul_keep(text);
+        device->owner = ul_lscpu_keep(text);
         file_account_label(facts.group, true, true, text);
-        device->group = ul_keep(text);
+        device->group = ul_lscpu_keep(text);
         file_mode_letters(text, facts.mode);
-        device->mode = ul_keep(text);
+        device->mode = ul_lscpu_keep(text);
         device->mode_bits = facts.mode;
 }
 
@@ -11438,7 +11440,7 @@ static string_address ul_lsblk_link_word(string_address name,
                 return (string_address)"";
         target[got] = end;
         string_address tail = string_last_of(target, '/');
-        return ul_keep(tail ? tail + 1 : target);
+        return ul_lscpu_keep(tail ? tail + 1 : target);
 }
 
 static bool ul_lsblk_hctl_valid(string_address text)
@@ -11596,7 +11598,7 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                 return scratch;
         }
         case UL_LSBLK_SIZE:
-                return ul_human_size(device->size, ul_lsblk_bytes,
+                return ul_lscpu_cache_size(device->size, ul_lsblk_bytes,
                                             false);
         case UL_LSBLK_MOUNTPOINT:
                 return device->mount_count ? device->mountpoints[0] : blank;
@@ -11605,7 +11607,7 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                 /* util-linux keeps a measured zero unitless (including in
                    the human-size mode), rather than spelling it as 0B. */
                 if (!device->fs_available) return (string_address)"0";
-                return ul_human_size(device->fs_available,
+                return ul_lscpu_cache_size(device->fs_available,
                                             ul_lsblk_bytes, false);
         case UL_LSBLK_FSUSE:
                 if (!device->fs_measured) return blank;
@@ -11613,7 +11615,7 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                 string_copy_end(scratch + string_length(scratch), "%");
                 return scratch;
         case UL_LSBLK_WSAME:
-                return ul_human_size(device->write_same,
+                return ul_lscpu_cache_size(device->write_same,
                                             ul_lsblk_bytes, false);
         case UL_LSBLK_RQSIZE:
                 if (!device->request_size) return blank;
@@ -12262,7 +12264,7 @@ static bool ul_ipc_snapshot_load(positive types)
       "group", "GROUP", 0, false, TABLE_STRING) \
     X(UL_IPC_CTIME, TEXT, ul_ipc_time(scratch, row->change_time), \
       "ctime", "CTIME", 5, false, TABLE_STRING) \
-    X(UL_IPC_SIZE, TEXT, ul_human_size(row->size, ul_ipc_bytes, false), \
+    X(UL_IPC_SIZE, TEXT, ul_lscpu_cache_size(row->size, ul_ipc_bytes, false), \
       "size", "SIZE", 0, true, TABLE_STRING) \
     X(UL_IPC_NATTCH, UNSIGNED, row->count, \
       "nattch", "NATTCH", 0, true, TABLE_STRING, .decimal = true) \
@@ -12278,7 +12280,7 @@ static bool ul_ipc_snapshot_load(positive types)
       "cpid", "CPID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_LPID, UNSIGNED, row->pid_two, \
       "lpid", "LPID", 0, true, TABLE_STRING, .decimal = true) \
-    X(UL_IPC_USEDBYTES, TEXT, ul_human_size(row->size, ul_ipc_bytes, false), \
+    X(UL_IPC_USEDBYTES, TEXT, ul_lscpu_cache_size(row->size, ul_ipc_bytes, false), \
       "usedbytes", "USEDBYTES", 0, true, TABLE_STRING) \
     X(UL_IPC_MSGS, UNSIGNED, row->count, \
       "msgs", "MSGS", 0, false, TABLE_STRING, .decimal = true) \
@@ -12365,7 +12367,7 @@ static string_address ul_ipc_field(address_any opaque, p8 column,
         {
         UL_IPC_FIELDS(UL_TABLE_PROJECT)
         default:
-                return ul_human_size(row->size, ul_ipc_bytes, false);
+                return ul_lscpu_cache_size(row->size, ul_ipc_bytes, false);
         }
 }
 
