@@ -19192,7 +19192,7 @@ static void judge_case_at_edge(const p8 address_to want, positive length,
                      "a different answer against the map edge");
         checks++;
         if (memory_search_ascii_case_prepared((address_any)hay, size, want,
-                                              length, anchors.x) != expected)
+                                              length, anchors.x, anchors.y) != expected)
                 fail((const p8 address_to)"prepared folded against edge",
                      length, size,
                      "a different answer against the map edge");
@@ -19270,7 +19270,7 @@ static void judge_case_at_edge(const p8 address_to want, positive length,
                                 judge((const p8 address_to)"prepared folded", \
                                       memory_search_ascii_case_prepared(     \
                                               (address_any)FIELD, size, want, \
-                                              (K), anchors.x),               \
+                                              (K), anchors.x, anchors.y),    \
                                       reference_search_ascii_case(           \
                                               FIELD, size, want, (K)),       \
                                       (K), size);                            \
@@ -58918,7 +58918,7 @@ NOT_INLINED static p8 address_to prepared_find(
         return search->icase
                    ? memory_search_ascii_case_prepared(
                          text, length, search->needle, search->size,
-                         search->anchor)
+                         search->anchor, search->second_anchor)
                    : memory_search_prepared(text, length, search->needle,
                                             search->size, search->anchor,
                                             search->second_anchor);

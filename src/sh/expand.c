@@ -4893,7 +4893,7 @@ static fn expand_replace_literal(p8 address_to source, positive length,
         {
                 p8 address_to hit = (p8 address_to)(fold
                     ? memory_search_ascii_case_prepared(source + copied,
-                        length - copied, pattern, need, anchors.x)
+                        length - copied, pattern, need, anchors.x, anchors.y)
                     : memory_search_prepared(source + copied,
                         length - copied, pattern, need, anchors.x, anchors.y));
 

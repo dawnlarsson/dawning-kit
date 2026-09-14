@@ -698,7 +698,7 @@ static string_address text_literal_find(string_address text, positive length,
 
         return icase ? memory_search_ascii_case_prepared(
                                text + from, length - from, want, size,
-                               anchors.x)
+                               anchors.x, anchors.y)
                      : memory_search_prepared(text + from, length - from,
                                               want, size, anchors.x,
                                               anchors.y);

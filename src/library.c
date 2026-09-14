@@ -4761,12 +4761,12 @@ __asm__(
     "sub $40, %rsp\n   mov %rdi, 0(%rsp)\n   mov %rsi, 8(%rsp)\n"
     "mov %rdx, 16(%rsp)\n   mov %rcx, 24(%rsp)\n"
     "mov %rdx, %rdi\n   mov %rcx, %rsi\n   mov $1, %edx\n"
-    "call memory_search_prepare\n   mov %rax, %r8\n"
+    "call memory_search_prepare\n   mov %rax, %r8\n   mov %rdx, %r9\n"
     "mov 0(%rsp), %rdi\n   mov 8(%rsp), %rsi\n"
     "mov 16(%rsp), %rdx\n   mov 24(%rsp), %rcx\n   add $40, %rsp\n"
     "jmp memory_search_ascii_case_prepared_core\n"
     ".Lmemory_search_icase_x64_short_general:\n   xor %r8d, %r8d\n"
-    "jmp memory_search_ascii_case_prepared_core\n"
+    "lea -1(%rcx), %r9\n   jmp memory_search_ascii_case_prepared_core\n"
     ".Lmemory_search_icase_x64_one_general:\n   movzbl (%rdx), %ecx\n"
     "mov %rsi, %rdx\n   mov %rcx, %rsi\n   jmp memory_first_of_ascii_case\n"
     ".Lmemory_search_icase_x64_empty_general:\n   mov %rdi, %rax\n" ASM_RET
@@ -4780,22 +4780,93 @@ __asm__(
     ".Lmemory_search_icase_x64_absent:\n   xor %eax, %eax\n" ASM_RET
     ASM_END(memory_search_ascii_case_prepared)
     ASM_LOCAL_FUNC(memory_search_ascii_case_prepared_core)
-    "push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
-    "mov %rdx, %rbp\n   mov %rcx, %r12\n   lea (%rdi,%rsi), %r13\n"
-    "sub %rcx, %r13\n   mov %rdi, %r14\n   mov %r8, %r15\n"
-    ".Lmemory_search_icase_x64_hunt:\n   mov %r13, %rdx\n   sub %r14, %rdx\n"
-    "inc %rdx\n   lea (%r14,%r15), %rdi\n   movzbl 0(%rbp,%r15), %esi\n"
-    "call memory_first_of_ascii_case\n   test %rax, %rax\n"
-    "jz .Lmemory_search_icase_x64_not_found\n   sub %r15, %rax\n   mov %rax, %r14\n"
-    "mov %rax, %rdi\n   mov %rbp, %rsi\n   mov %r12, %rdx\n"
-    "call memory_compare_ascii_case\n   test %eax, %eax\n"
-    "jz .Lmemory_search_icase_x64_found\n   inc %r14\n"
-    "cmp %r13, %r14\n   jbe .Lmemory_search_icase_x64_hunt\n"
-    ".Lmemory_search_icase_x64_not_found:\n   xor %eax, %eax\n"
-    "jmp .Lmemory_search_icase_x64_return\n"
-    ".Lmemory_search_icase_x64_found:\n   mov %r14, %rax\n"
-    ".Lmemory_search_icase_x64_return:\n   pop %r15\n   pop %r14\n   pop %r13\n"
-    "pop %r12\n   pop %rbp\n" ASM_RET
+    //
+    //       The folded search with both prepared anchors, the shape the exact
+    //       search has had all along. It hunted one anchor through
+    //       memory_first_of_ascii_case and called the folded compare at every
+    //       place that one byte appeared, setting the hunt up again after each
+    //       -- over kernel source the rarest byte of export_symbol_gpl under
+    //       folding still turns up every few hundred bytes, and the search ran
+    //       at a third of the exact one's speed.
+    //
+    //       A letter has two spellings that differ only in 0x20, and no byte
+    //       that is not a letter becomes one when 0x20 is or-ed in, so each
+    //       anchor is one or and one compare a byte: or 0x20 and compare with
+    //       the lower case for a letter, or nothing and compare with the byte
+    //       itself for anything else. The two answers are and-ed over thirty
+    //       two starts, and only a start both anchors agree on is proved in
+    //       full.
+    //
+    //       Seven bytes on the stack at 24 hold each anchor's byte and its or
+    //       mask, because the proving call writes every vector register and
+    //       the four broadcasts have to be made again after it.
+    //
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $56, %rsp\n   mov %rdi, %rbx  # the haystack\n   mov %rdx, %rbp  # the needle\n"
+    "mov %rcx, %r12  # its length\n   mov %rsi, %r13  # the haystack's\n"
+    "mov %r8, 0(%rsp)\n   mov %r9, 8(%rsp)\n"
+    ASM_USERSPACE_WIDE(
+    ASM_NARROW("cpu_has_avx2", "60f")
+    "mov %r13, %rax\n   sub %r12, %rax\n   cmp $31, %rax\n   jb 60f\n"
+    "sub $31, %rax\n   mov %rax, 16(%rsp)  # where the last block of thirty two starts\n"
+    "movzbl (%rbp,%r8), %eax\n   mov %eax, %ecx\n   or $32, %ecx\n   lea -97(%rcx), %edx\n"
+    "mov $0, %esi\n   cmp $25, %edx\n   ja 11f\n   mov %ecx, %eax\n   mov $32, %esi\n"
+    "11:  mov %al, 24(%rsp)\n   mov %sil, 25(%rsp)\n"
+    "movzbl (%rbp,%r9), %eax\n   mov %eax, %ecx\n   or $32, %ecx\n   lea -97(%rcx), %edx\n"
+    "mov $0, %esi\n   cmp $25, %edx\n   ja 12f\n   mov %ecx, %eax\n   mov $32, %esi\n"
+    "12:  mov %al, 26(%rsp)\n   mov %sil, 27(%rsp)\n"
+    "xor %r14d, %r14d\n   xor %r15d, %r15d\n"
+    "movzbl 24(%rsp), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "movzbl 25(%rsp), %eax\n   vmovd %eax, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
+    "movzbl 26(%rsp), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "movzbl 27(%rsp), %eax\n   vmovd %eax, %xmm4\n   vpbroadcastb %xmm4, %ymm4\n"
+    "mov 0(%rsp), %r10\n   add %rbx, %r10\n   mov 8(%rsp), %r11\n   add %rbx, %r11\n"
+    "1:  vpor (%r10,%r14), %ymm3, %ymm0\n   vpcmpeqb %ymm1, %ymm0, %ymm0\n"
+    "vpor (%r11,%r14), %ymm4, %ymm5\n   vpcmpeqb %ymm2, %ymm5, %ymm5\n"
+    "vpand %ymm5, %ymm0, %ymm0\n   vpmovmskb %ymm0, %eax\n   test %eax, %eax\n   jnz 3f\n"
+    //
+    //       Past the last whole block, one block back from the last start
+    //       rather than a byte loop, as the exact search does: every start
+    //       before it was rejected, so the first match in it is still first.
+    //
+    "4:  add $32, %r14\n   cmp 16(%rsp), %r14\n   jbe 1b\n"
+    "test %r15d, %r15d\n   jnz 80f\n   mov 16(%rsp), %r14\n   mov $1, %r15d\n   jmp 1b\n"
+    "3:  mov %eax, 32(%rsp)\n"
+    "31:  mov 32(%rsp), %eax\n   bsf %eax, %ecx\n   lea -1(%rax), %edx\n   and %edx, %eax\n"
+    "mov %eax, 32(%rsp)\n   lea (%rbx,%r14), %rdi\n   add %rcx, %rdi\n   mov %rdi, 40(%rsp)\n"
+    "mov %rbp, %rsi\n   mov %r12, %rdx\n   call memory_compare_ascii_case\n"
+    "test %eax, %eax\n   jz 70f\n   cmpl $0, 32(%rsp)\n   jne 31b\n"
+    "movzbl 24(%rsp), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "movzbl 25(%rsp), %eax\n   vmovd %eax, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
+    "movzbl 26(%rsp), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "movzbl 27(%rsp), %eax\n   vmovd %eax, %xmm4\n   vpbroadcastb %xmm4, %ymm4\n"
+    "mov 0(%rsp), %r10\n   add %rbx, %r10\n   mov 8(%rsp), %r11\n   add %rbx, %r11\n"
+    "jmp 4b\n"
+    "70:  mov 40(%rsp), %rax\n   vzeroupper\n   jmp 9f\n"
+    "80:  vzeroupper\n   jmp 8f\n"
+    )
+    //
+    //       The narrow path, and the whole routine in a kernel build: the
+    //       rarest anchor is hunted, and the second is looked at by hand
+    //       before a call is spent proving the start.
+    //
+    "60:  lea (%rbx,%r13), %r14\n   sub %r12, %r14  # the last position a match could start at\n"
+    "mov %rbx, %r15\n"
+    "61:  mov %r14, %rdx\n   sub %r15, %rdx\n   inc %rdx  # positions still to try\n"
+    "mov 0(%rsp), %rax\n   lea (%r15,%rax), %rdi\n   movzbl (%rbp,%rax), %esi\n"
+    "call memory_first_of_ascii_case\n   test %rax, %rax\n   jz 8f\n"
+    "sub 0(%rsp), %rax\n   mov %rax, %r15\n"
+    "mov 8(%rsp), %rcx\n   movzbl (%r15,%rcx), %eax\n   lea -65(%rax), %edx\n"
+    "cmp $25, %edx\n   ja 63f\n   or $32, %eax\n"
+    "63:  movzbl (%rbp,%rcx), %edx\n   lea -65(%rdx), %esi\n   cmp $25, %esi\n   ja 64f\n   or $32, %edx\n"
+    "64:  cmp %edx, %eax\n   jne 62f\n"
+    "mov %r15, %rdi\n   mov %rbp, %rsi\n   mov %r12, %rdx\n   call memory_compare_ascii_case\n"
+    "test %eax, %eax\n   jz 7f\n"
+    "62:  inc %r15\n   cmp %r14, %r15\n   jbe 61b\n"
+    "8:  xor %eax, %eax\n   jmp 9f\n"
+    "7:  mov %r15, %rax\n"
+    "9:  add $56, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    ASM_RET
     ASM_LOCAL_END(memory_search_ascii_case_prepared_core)
     ASM_FUNC(memory_search)
     "test %rcx, %rcx\n   jz .Lmemory_search_x64_empty_general\n"
@@ -14708,11 +14779,11 @@ __asm__(
     "cmp x1, #64\n   b.lo .Lmemory_search_icase_arm64_short_general\n"
     "stp x0, x1, [sp, #-48]!\n   stp x2, x3, [sp, #16]\n"
     "str x30, [sp, #32]\n   mov x0, x2\n   mov x1, x3\n   mov x2, #1\n"
-    "bl memory_search_prepare\n   mov x4, x0\n   ldp x0, x1, [sp]\n"
+    "bl memory_search_prepare\n   mov x4, x0\n   mov x5, x1\n   ldp x0, x1, [sp]\n"
     "ldp x2, x3, [sp, #16]\n   ldr x30, [sp, #32]\n   add sp, sp, #48\n"
     "b memory_search_ascii_case_prepared_core\n"
     ".Lmemory_search_icase_arm64_short_general:\n   mov x4, #0\n"
-    "b memory_search_ascii_case_prepared_core\n"
+    "sub x5, x3, #1\n   b memory_search_ascii_case_prepared_core\n"
     ".Lmemory_search_icase_arm64_one_general:\n   ldrb w4, [x2]\n"
     "mov x2, x1\n   mov x1, x4\n   b memory_first_of_ascii_case\n"
     ".Lmemory_search_icase_arm64_empty_general:\n" ASM_RET
@@ -14726,20 +14797,58 @@ __asm__(
     ".Lmemory_search_icase_arm64_absent:\n   mov x0, #0\n" ASM_RET
     ASM_END(memory_search_ascii_case_prepared)
     ASM_LOCAL_FUNC(memory_search_ascii_case_prepared_core)
-    "stp x19, x20, [sp, #-48]!\n   stp x21, x22, [sp, #16]\n"
-    "stp x23, x30, [sp, #32]\n   mov x19, x2\n   mov x20, x3\n"
-    "add x21, x0, x1\n   sub x21, x21, x3\n   mov x22, x0\n   mov x23, x4\n"
-    ".Lmemory_search_icase_arm64_hunt:\n   sub x2, x21, x22\n   add x2, x2, #1\n"
-    "add x0, x22, x23\n   ldrb w1, [x19, x23]\n   bl memory_first_of_ascii_case\n"
-    "cbz x0, .Lmemory_search_icase_arm64_not_found\n   sub x22, x0, x23\n"
-    "mov x0, x22\n   mov x1, x19\n   mov x2, x20\n   bl memory_compare_ascii_case\n"
-    "cbz w0, .Lmemory_search_icase_arm64_found\n   add x22, x22, #1\n"
-    "cmp x22, x21\n   b.ls .Lmemory_search_icase_arm64_hunt\n"
+    //
+    //      Both anchors, or-ed with their case bit and compared, sixteen
+    //      starts a block; see the x86_64 body for why. x19 is the next start
+    //      and x22 the last, x25 what is left of a block's survivors.
+    //
+    "stp x29, x30, [sp, #-80]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "mov x19, x0\n   mov x20, x2\n   mov x21, x3\n"
+    "add x22, x0, x1\n   sub x22, x22, x3\n   mov x23, x4\n   mov x24, x5\n"
+#ifndef KERNEL_MODE
+    ".Lmemory_search_icase_arm64_rebuild:\n"
+    "ldrb w8, [x20, x23]\n   orr w9, w8, #32\n   sub w10, w9, #'a'\n   cmp w10, #25\n"
+    "csel w8, w9, w8, ls\n   mov w9, #32\n   csel w9, w9, wzr, ls\n"
+    "dup v1.16b, w8\n   dup v3.16b, w9\n"
+    "ldrb w8, [x20, x24]\n   orr w9, w8, #32\n   sub w10, w9, #'a'\n   cmp w10, #25\n"
+    "csel w8, w9, w8, ls\n   mov w9, #32\n   csel w9, w9, wzr, ls\n"
+    "dup v2.16b, w8\n   dup v4.16b, w9\n"
+    ".Lmemory_search_icase_arm64_block:\n   add x8, x19, #15\n   cmp x8, x22\n"
+    "b.hi .Lmemory_search_icase_arm64_narrow\n"
+    "ldr q0, [x19, x23]\n   orr v0.16b, v0.16b, v3.16b\n   cmeq v0.16b, v0.16b, v1.16b\n"
+    "ldr q5, [x19, x24]\n   orr v5.16b, v5.16b, v4.16b\n   cmeq v5.16b, v5.16b, v2.16b\n"
+    "and v0.16b, v0.16b, v5.16b\n   shrn v0.8b, v0.8h, #4\n   fmov x25, d0\n"
+    "cbnz x25, .Lmemory_search_icase_arm64_survivor\n"
+    "add x19, x19, #16\n   b .Lmemory_search_icase_arm64_block\n"
+    ".Lmemory_search_icase_arm64_survivor:\n   rbit x8, x25\n   clz x8, x8\n"
+    "mov x9, #15\n   lsl x9, x9, x8\n   bic x25, x25, x9\n   lsr x8, x8, #2\n"
+    "add x26, x19, x8\n   mov x0, x26\n   mov x1, x20\n   mov x2, x21\n"
+    "bl memory_compare_ascii_case\n   cbz w0, .Lmemory_search_icase_arm64_found_block\n"
+    "cbnz x25, .Lmemory_search_icase_arm64_survivor\n"
+    "add x19, x19, #16\n   b .Lmemory_search_icase_arm64_rebuild\n"
+    ".Lmemory_search_icase_arm64_found_block:\n   mov x0, x26\n"
+    "b .Lmemory_search_icase_arm64_return\n"
+#endif
+    ".Lmemory_search_icase_arm64_narrow:\n   cmp x19, x22\n"
+    "b.hi .Lmemory_search_icase_arm64_not_found\n"
+    "sub x2, x22, x19\n   add x2, x2, #1\n   add x0, x19, x23\n   ldrb w1, [x20, x23]\n"
+    "bl memory_first_of_ascii_case\n   cbz x0, .Lmemory_search_icase_arm64_not_found\n"
+    "sub x19, x0, x23\n"
+    "ldrb w8, [x19, x24]\n   sub w9, w8, #'A'\n   cmp w9, #25\n   orr w9, w8, #32\n"
+    "csel w8, w9, w8, ls\n"
+    "ldrb w10, [x20, x24]\n   sub w11, w10, #'A'\n   cmp w11, #25\n   orr w11, w10, #32\n"
+    "csel w10, w11, w10, ls\n   cmp w8, w10\n   b.ne .Lmemory_search_icase_arm64_next\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x21\n   bl memory_compare_ascii_case\n"
+    "cbz w0, .Lmemory_search_icase_arm64_found\n"
+    ".Lmemory_search_icase_arm64_next:\n   add x19, x19, #1\n"
+    "b .Lmemory_search_icase_arm64_narrow\n"
     ".Lmemory_search_icase_arm64_not_found:\n   mov x0, #0\n"
     "b .Lmemory_search_icase_arm64_return\n"
-    ".Lmemory_search_icase_arm64_found:\n   mov x0, x22\n"
-    ".Lmemory_search_icase_arm64_return:\n   ldp x21, x22, [sp, #16]\n"
-    "ldp x23, x30, [sp, #32]\n   ldp x19, x20, [sp], #48\n" ASM_RET
+    ".Lmemory_search_icase_arm64_found:\n   mov x0, x19\n"
+    ".Lmemory_search_icase_arm64_return:\n   ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x25, x26, [sp, #64]\n   ldp x29, x30, [sp], #80\n" ASM_RET
     ASM_LOCAL_END(memory_search_ascii_case_prepared_core)
     ASM_FUNC(memory_search)
     "cbz x3, .Lmemory_search_arm64_empty_general\n   cmp x1, x3\n"
@@ -22456,11 +22565,11 @@ __asm__(
     "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd a0, 32(sp)\n"
     "sd a1, 24(sp)\n   sd a2, 16(sp)\n   sd a3, 8(sp)\n"
     "mv a0, a2\n   mv a1, a3\n   li a2, 1\n   call memory_search_prepare\n"
-    "mv a4, a0\n   ld a3, 8(sp)\n   ld a2, 16(sp)\n"
+    "mv a4, a0\n   mv a5, a1\n   ld a3, 8(sp)\n   ld a2, 16(sp)\n"
     "ld a1, 24(sp)\n   ld a0, 32(sp)\n   ld ra, 40(sp)\n"
     "addi sp, sp, 48\n   j memory_search_ascii_case_prepared_core\n"
     ".Lmemory_search_icase_rv_short_general:\n   li a4, 0\n"
-    "j memory_search_ascii_case_prepared_core\n"
+    "addi a5, a3, -1\n   j memory_search_ascii_case_prepared_core\n"
     ".Lmemory_search_icase_rv_one_general:\n   lbu t1, 0(a2)\n"
     "mv a2, a1\n   mv a1, t1\n   j memory_first_of_ascii_case\n"
     ".Lmemory_search_icase_rv_empty_general:\n" ASM_RET
@@ -22473,23 +22582,32 @@ __asm__(
     ".Lmemory_search_icase_rv_absent:\n   li a0, 0\n" ASM_RET
     ASM_END(memory_search_ascii_case_prepared)
     ASM_LOCAL_FUNC(memory_search_ascii_case_prepared_core)
-    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
-    "sd s1, 24(sp)\n   sd s2, 16(sp)\n   sd s3, 8(sp)\n   sd s4, 0(sp)\n"
+    //
+    //      No vectors here: the rarest anchor is hunted and the second is
+    //      folded and looked at by hand before a call proves the start.
+    //
+    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
+    "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   sd s5, 8(sp)\n"
     "mv s0, a2\n   mv s1, a3\n   add s2, a0, a1\n   sub s2, s2, a3\n"
-    "mv s3, a0\n   mv s4, a4\n"
-    ".Lmemory_search_icase_rv_hunt:\n   sub a2, s2, s3\n   addi a2, a2, 1\n"
+    "mv s3, a0\n   mv s4, a4\n   mv s5, a5\n"
+    ".Lmemory_search_icase_rv_hunt:\n   bltu s2, s3, .Lmemory_search_icase_rv_not_found\n"
+    "sub a2, s2, s3\n   addi a2, a2, 1\n"
     "add a0, s3, s4\n   add t0, s0, s4\n   lbu a1, 0(t0)\n"
     "call memory_first_of_ascii_case\n   beqz a0, .Lmemory_search_icase_rv_not_found\n"
     "sub s3, a0, s4\n"
+    "add t0, s3, s5\n   lbu t0, 0(t0)\n   addi t1, t0, -65\n   li t2, 25\n"
+    "bgtu t1, t2, .Lmemory_search_icase_rv_hay_folded\n   ori t0, t0, 32\n"
+    ".Lmemory_search_icase_rv_hay_folded:\n   add t1, s0, s5\n   lbu t1, 0(t1)\n"
+    "addi t3, t1, -65\n   bgtu t3, t2, .Lmemory_search_icase_rv_needle_folded\n   ori t1, t1, 32\n"
+    ".Lmemory_search_icase_rv_needle_folded:\n   bne t0, t1, .Lmemory_search_icase_rv_next\n"
     "mv a0, s3\n   mv a1, s0\n   mv a2, s1\n   call memory_compare_ascii_case\n"
-    "beqz a0, .Lmemory_search_icase_rv_found\n   addi s3, s3, 1\n"
-    "bgeu s2, s3, .Lmemory_search_icase_rv_hunt\n"
-    ".Lmemory_search_icase_rv_not_found:\n   li a0, 0\n"
-    "j .Lmemory_search_icase_rv_return\n"
+    "beqz a0, .Lmemory_search_icase_rv_found\n"
+    ".Lmemory_search_icase_rv_next:\n   addi s3, s3, 1\n   j .Lmemory_search_icase_rv_hunt\n"
+    ".Lmemory_search_icase_rv_not_found:\n   li a0, 0\n   j .Lmemory_search_icase_rv_return\n"
     ".Lmemory_search_icase_rv_found:\n   mv a0, s3\n"
-    ".Lmemory_search_icase_rv_return:\n   ld s4, 0(sp)\n   ld s3, 8(sp)\n"
-    "ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n   ld ra, 40(sp)\n"
-    "addi sp, sp, 48\n" ASM_RET
+    ".Lmemory_search_icase_rv_return:\n   ld s5, 8(sp)\n   ld s4, 16(sp)\n   ld s3, 24(sp)\n"
+    "ld s2, 32(sp)\n   ld s1, 40(sp)\n   ld s0, 48(sp)\n   ld ra, 56(sp)\n"
+    "addi sp, sp, 64\n" ASM_RET
     ASM_LOCAL_END(memory_search_ascii_case_prepared_core)
     ASM_FUNC(memory_search)
     "beqz a3, .Lmemory_search_rv_empty_general\n"
@@ -30473,7 +30591,8 @@ PURE address_any memory_search_prepared(address_any block, positive size,
 PURE address_any memory_search_ascii_case_prepared(address_any block, positive size,
                                                    address_any needle,
                                                    positive needle_size,
-                                                   positive anchor);
+                                                   positive anchor,
+                                                   positive second_anchor);
 PURE address_any memory_search_ascii_case(address_any block, positive size,
                                           address_any needle, positive needle_size);
 PURE READS(1, 3) address_any memory_last_of(address_any block, b8 value, positive size);
