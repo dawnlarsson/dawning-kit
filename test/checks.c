@@ -44115,13 +44115,12 @@ static fn roundtrip(void)
         bipolar m;
         positive at;
 
-        n = zstd_deflate_mem((p8 address_to) "", 0, packed, sizeof(packed), 3);
+        n = zstd_deflate_mem((p8 address_to) "", 0, packed, sizeof(packed));
         check("encode empty", n > 0);
         m = zstd_inflate(packed, (positive)n, back, sizeof(back));
         check("decode empty encode", m == 0);
 
-        n = zstd_deflate_mem((p8 address_to) "hello\n", 6, packed, sizeof(packed),
-                             3);
+        n = zstd_deflate_mem((p8 address_to) "hello\n", 6, packed, sizeof(packed));
         check("encode hello", n > 0);
         m = zstd_inflate(packed, (positive)n, back, sizeof(back));
         check("hello roundtrip",
@@ -44129,14 +44128,14 @@ static fn roundtrip(void)
 
         for (at = 0; at < sizeof(src); at++)
                 src[at] = (p8)(at * 3 + 7);
-        n = zstd_deflate_mem(src, sizeof(src), packed, sizeof(packed), 3);
+        n = zstd_deflate_mem(src, sizeof(src), packed, sizeof(packed));
         check("encode 4k", n > 0 && n < (bipolar)sizeof(packed));
         m = zstd_inflate(packed, (positive)n, back, sizeof(back));
         check("4k roundtrip",
               m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
 
         memory_fill(src, 'a', sizeof(src));
-        n = zstd_deflate_mem(src, sizeof(src), packed, sizeof(packed), 3);
+        n = zstd_deflate_mem(src, sizeof(src), packed, sizeof(packed));
         check("encode repeated", n > 0 && n < 128);
         m = zstd_inflate(packed, (positive)n, back, sizeof(back));
         check("repeated roundtrip",
@@ -44243,7 +44242,7 @@ static fn pull_block_shapes(void)
         p8 compressed[1024];
         p8 data[512];
         memory_fill(data, 'x', sizeof(data));
-        bipolar n = zstd_deflate_mem(data, sizeof(data), compressed, sizeof(compressed), 3);
+        bipolar n = zstd_deflate_mem(data, sizeof(data), compressed, sizeof(compressed));
         if (n > 4)
         {
                 zstd_decode_begin(-1);
@@ -61286,7 +61285,7 @@ static fn floor_lzma_span(void)
                 xz_probs_reset();
                 memory_copy_apart(address_of model, address_of xz_models, sizeof(model));
                 xz_why = null; xz_pull = true; xz_paused = false;
-                xz_check = XZ_CHECK_NONE; xz_lz2_match_left = 0;
+                xz_check = XZ_CHECK_NONE;
                 xz_out_fill = xz_out_taken = xz_out_hashed = 0;
                 check("LZMA differential range init", xz_rc_init());
                 xz_decode_job job = {xz_range, xz_code, bytes + 5, bytes + packed,

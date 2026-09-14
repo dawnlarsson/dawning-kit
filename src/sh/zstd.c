@@ -318,21 +318,6 @@ static p8 zstd_wt_reload(zstd_bits address_to b)
         }
 }
 
-static fn zstd_xxh_start(zstd_xxh address_to h, p64 seed)
-{
-        hash_xxh64_begin(h, seed);
-}
-
-static fn zstd_xxh_add(zstd_xxh address_to h, p8 address_to p, positive n)
-{
-        hash_xxh64_add(h, p, n);
-}
-
-static p64 zstd_xxh_end(zstd_xxh address_to h)
-{
-        return hash_xxh64_finish(h);
-}
-
 static bool zstd_fail(string_address why)
 {
         zstd_why = why;
@@ -946,7 +931,7 @@ static bool zstd_emit(p8 address_to p, positive n)
                     n > zstd_output.room - zstd_output.used)
                         return zstd_fail("zstd output larger than the destination");
                 if (zstd_hashing)
-                        zstd_xxh_add(address_of zstd_hash, p, n);
+                        hash_xxh64_add(address_of zstd_hash, p, n);
                 zstd_decoded += n;
                 byte_store_append_exact(address_of zstd_output, p, n);
                 return true;
@@ -955,7 +940,7 @@ static bool zstd_emit(p8 address_to p, positive n)
         if (zstd_out_fd < 0 && !zstd_pull)
         {
                 if (zstd_hashing)
-                        zstd_xxh_add(address_of zstd_hash, p, n);
+                        hash_xxh64_add(address_of zstd_hash, p, n);
                 zstd_decoded += n;
                 return true;
         }
@@ -975,7 +960,7 @@ static bool zstd_emit(p8 address_to p, positive n)
 
                 chunk = n < room ? n : room;
                 if (zstd_hashing)
-                        zstd_xxh_add(address_of zstd_hash, p, chunk);
+                        hash_xxh64_add(address_of zstd_hash, p, chunk);
                 zstd_decoded += chunk;
                 memory_copy(zstd_out_buf + zstd_out_fill, p, chunk);
                 zstd_out_fill += chunk;
@@ -1480,7 +1465,7 @@ static bool zstd_frame(void)
         if (checksum)
         {
                 zstd_hashing = true;
-                zstd_xxh_start(address_of zstd_hash, 0);
+                hash_xxh64_begin(address_of zstd_hash, 0);
         }
         else
                 zstd_hashing = false;
@@ -1597,7 +1582,7 @@ zstd_frame_trailer:
                 if (!zstd_in_take(scratch, 4))
                         return false;
                 want = zstd_get32(scratch);
-                got = (p32)zstd_xxh_end(address_of zstd_hash);
+                got = (p32)hash_xxh64_finish(address_of zstd_hash);
                 if (got != want)
                         return zstd_fail("zstd content checksum mismatch");
         }
@@ -1608,12 +1593,11 @@ zstd_frame_trailer:
         return true;
 }
 
-static bool zstd_skippable(p32 magic)
+static bool zstd_skippable(void)
 {
         p8 sizeb[4];
         p32 size;
 
-        (void)magic;
         if (!zstd_in_take(sizeb, 4))
                 return false;
         size = zstd_get32(sizeb);
@@ -1686,7 +1670,7 @@ static bool zstd_stream(void)
                 if ((magic & ZSTD_SKIP_MASK) == ZSTD_SKIP_MAGIC)
                 {
                         zstd_in_skip(4);
-                        if (!zstd_skippable(magic))
+                        if (!zstd_skippable())
                                 return false;
                         continue;
                 }
@@ -1822,7 +1806,6 @@ static positive zstd_enc_position;
 static positive zstd_enc_abs;
 static p32 zstd_enc_rep[3];
 static positive zstd_enc_fill;
-static p8 zstd_cli_level;
 
 typedef struct
 {
@@ -2012,9 +1995,8 @@ static const p8 zstd_ml_codes[131] = {
         42, 42, 42,
 };
 
-static p8 zstd_seq_code(const p32 address_to base, p8 max, p32 value)
+static p8 zstd_seq_code(const p32 address_to base, p32 value)
 {
-        (void)max;
         if (base == zstd_ll_base)
                 return value < 64 ? zstd_ll_codes[value]
                                   : 19 + zstd_highbit32(value);
@@ -2540,8 +2522,8 @@ static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
                                 rep[0] = (p32)dist;
                         }
                         zstd_seqs[nseq].off = value;
-                        p8 llc = zstd_seq_code(zstd_ll_base, 35, run);
-                        p8 mlc = zstd_seq_code(zstd_ml_base, 52, match);
+                        p8 llc = zstd_seq_code(zstd_ll_base, run);
+                        p8 mlc = zstd_seq_code(zstd_ml_base, match);
                         p8 ofc = zstd_off_code(value);
                         zstd_seqs[nseq].ll_code = llc;
                         zstd_seqs[nseq].ml_code = mlc;
@@ -2754,11 +2736,10 @@ static bool zstd_emit_block(p8 address_to src, positive n, bool last)
         return ok;
 }
 
-static bool zstd_encode_header(p8 level)
+static bool zstd_encode_header(void)
 {
         p8 head[6];
 
-        (void)level;
         zstd_enc_fill = 0;
         zstd_enc_abs = 0;
         zstd_enc_position = 0;
@@ -2767,7 +2748,7 @@ static bool zstd_encode_header(p8 level)
         zstd_enc_rep[2] = 8;
         memory_fill(zstd_enc_head, 0, sizeof(zstd_enc_head));
         zstd_why = null;
-        zstd_xxh_start(address_of zstd_enc_hash, 0);
+        hash_xxh64_begin(address_of zstd_enc_hash, 0);
         head[0] = 0x28;
         head[1] = 0xb5;
         head[2] = 0x2f;
@@ -2778,16 +2759,18 @@ static bool zstd_encode_header(p8 level)
                zstd_enc_out(head, sizeof head);
 }
 
+/* level is the codec table's slot; this encoder has one strategy. */
 static bool zstd_encode_begin(bipolar out, p8 level)
 {
+        (void)level;
         zstd_out_fd = out;
         zstd_output.bytes = null;
-        return zstd_encode_header(level);
+        return zstd_encode_header();
 }
 
 static bool zstd_encode_write(p8 address_to src, positive n)
 {
-        zstd_xxh_add(address_of zstd_enc_hash, src, n);
+        hash_xxh64_add(address_of zstd_enc_hash, src, n);
         while (n)
         {
                 positive room = ZSTD_BLOCK_MAX - zstd_enc_fill;
@@ -2816,7 +2799,7 @@ static bool zstd_encode_end(void)
         if (!zstd_emit_block(zstd_enc_block, zstd_enc_fill, true))
                 return false;
         zstd_enc_fill = 0;
-        sum = (p32)zstd_xxh_end(address_of zstd_enc_hash);
+        sum = (p32)hash_xxh64_finish(address_of zstd_enc_hash);
         tail[0] = (p8)sum;
         tail[1] = (p8)(sum >> 8);
         tail[2] = (p8)(sum >> 16);
@@ -2826,13 +2809,13 @@ static bool zstd_encode_end(void)
 }
 
 static bipolar zstd_deflate_mem(p8 address_to src, positive src_len,
-                                p8 address_to dst, positive dst_cap, p8 level)
+                                p8 address_to dst, positive dst_cap)
 {
         zstd_output.bytes = dst;
         zstd_output.room = dst_cap;
         zstd_output.used = 0;
         zstd_out_fd = -1;
-        if (!zstd_encode_header(level))
+        if (!zstd_encode_header())
                 return -1;
         if (!zstd_encode_write(src, src_len))
                 return -1;
@@ -2855,12 +2838,12 @@ static fn zstd_refuse(string_address message)
 static const file_codec_suffix zstd_suffixes[] = {
     {".zst", ""}, {".tzst", ".tar"}};
 
-static b32 zstd_encode_fd(bipolar in, bipolar out)
+static b32 zstd_encode_fd(bipolar in, bipolar out, p8 level)
 {
         p8 buf[ZSTD_OUT];
         bipolar got;
 
-        if (!zstd_encode_begin(out, zstd_cli_level))
+        if (!zstd_encode_begin(out, level))
         {
                 zstd_refuse(zstd_why ? zstd_why : (string_address) "encode failed");
                 return 1;
@@ -2917,8 +2900,7 @@ static b32 zstd_one(bipolar in, bipolar out)
 
 static b32 zstd_cli_stream(bipolar in, bipolar out, bool decompress, p8 level)
 {
-        zstd_cli_level = level;
-        return decompress ? zstd_one(in, out) : zstd_encode_fd(in, out);
+        return decompress ? zstd_one(in, out) : zstd_encode_fd(in, out, level);
 }
 
 static b32 file_zstd(void)

@@ -59,7 +59,6 @@ static p64 xz_lz2_want;
 static p64 xz_lz2_pack_from;
 static p64 xz_lz2_pack_want;
 static p64 xz_lz2_chunk_from;
-static positive xz_lz2_match_left;
 static p64 xz_in_abs;
 static p64 xz_block_body_abs;
 static positive xz_block_hdr_size;
@@ -168,11 +167,6 @@ static p32 xz_crc32_byte(p32 crc, p8 byte)
         return hash_crc32_tab[(crc ^ byte) & 255] ^ (crc >> 8);
 }
 
-static p32 xz_crc32_bytes(p32 crc, p8 address_to bytes, positive n)
-{
-        return hash_crc32(crc, bytes, n);
-}
-
 static bool xz_fail(string_address why)
 {
         xz_why = why;
@@ -188,8 +182,6 @@ static bool xz_in_need(void)
 static bipolar xz_in_byte(void)
 {
         if (xz_input.at >= xz_input.have && !xz_in_need())
-                return -1;
-        if (xz_input.at >= xz_input.have)
                 return -1;
         xz_in_abs++;
         return xz_in_buf[xz_input.at++];
@@ -301,7 +293,6 @@ static bool xz_emit_match(positive dist, positive length)
                 xz_dict_full = xz_dict_size;
         xz_unpacked += length;
         xz_out_fill += length;
-        xz_lz2_match_left = 0;
         if (!xz_pull && xz_out_fill >= XZ_OUT)
                 return xz_out_flush();
         return true;
@@ -642,8 +633,6 @@ static bool xz_lzma_packet(void)
         bipolar len;
         positive dist;
 
-        if (xz_lz2_match_left)
-                return xz_emit_match(0, 0);
         if (xz_pull && xz_out_fill >= XZ_OUT)
         {
                 xz_paused = true;
@@ -879,7 +868,7 @@ static bool xz_lzma2_lzma(void)
 {
         while (xz_unpacked - xz_lz2_chunk_from < xz_lz2_want)
         {
-                if (xz_pull && xz_out_fill >= XZ_OUT && !xz_lz2_match_left)
+                if (xz_pull && xz_out_fill >= XZ_OUT)
                 {
                         xz_paused = true;
                         return true;
@@ -1137,7 +1126,7 @@ static bool xz_block(void)
                 dict = xz_dict_from_prop(prop);
                 if (!dict || !xz_dict_open(dict))
                         return false;
-                expect = ~xz_crc32_bytes(0xffffffffu, header, header_size - 4);
+                expect = ~hash_crc32(0xffffffffu, header, header_size - 4);
                 got = 0;
                 for (at = 0; at < 4; at++)
                         got |= (p32)header[header_size - 4 + at] << (8 * at);
@@ -1150,7 +1139,6 @@ static bool xz_block(void)
                 xz_crc64 = 0xffffffffffffffffull;
                 xz_probs_reset();
                 xz_lz2_kind = 0;
-                xz_lz2_match_left = 0;
                 xz_block_live = true;
         }
         if (!xz_lzma2())
@@ -1284,7 +1272,7 @@ static bool xz_index_and_footer(void)
                 body[3] = (p8)(back >> 24);
                 body[4] = flags[0];
                 body[5] = flags[1];
-                if (got != ~xz_crc32_bytes(0xffffffffu, body, 6))
+                if (got != ~hash_crc32(0xffffffffu, body, 6))
                         return xz_fail("xz footer CRC");
         }
         return true;
@@ -1319,7 +1307,7 @@ static bool xz_stream(void)
                 if (xz_check != XZ_CHECK_NONE && xz_check != XZ_CHECK_CRC32 &&
                     xz_check != XZ_CHECK_CRC64)
                         return xz_fail("xz check type");
-                crc = ~xz_crc32_bytes(0xffffffffu, flags, 2);
+                crc = ~hash_crc32(0xffffffffu, flags, 2);
                 got = 0;
                 for (at = 0; at < 4; at++)
                 {
@@ -1381,7 +1369,6 @@ static bool xz_stream_decode(void)
         xz_hdr_done = false;
         xz_block_live = false;
         xz_lz2_kind = 0;
-        xz_lz2_match_left = 0;
         xz_in_abs = 0;
         xz_unpacked = 0;
 
@@ -1467,7 +1454,7 @@ static bool xz_write_header(p8 check)
         if (!xz_put(0xfd) || !xz_put(0x37) || !xz_put(0x7a) ||
             !xz_put(0x58) || !xz_put(0x5a) || !xz_put(0) ||
             !xz_put(flags[0]) || !xz_put(flags[1]) ||
-            !xz_put32(~xz_crc32_bytes(0xffffffffu, flags, 2)))
+            !xz_put32(~hash_crc32(0xffffffffu, flags, 2)))
                 return false;
         xz_check = check;
         xz_index_n = 0;
@@ -1504,7 +1491,7 @@ static bool xz_write_block_header(p8 dict_prop)
         header[5] = 0;
         header[6] = 0;
         header[7] = 0;
-        crc = ~xz_crc32_bytes(0xffffffffu, header, 8);
+        crc = ~hash_crc32(0xffffffffu, header, 8);
         header[8] = (p8)crc;
         header[9] = (p8)(crc >> 8);
         header[10] = (p8)(crc >> 16);
@@ -1573,7 +1560,7 @@ static bool xz_write_index_footer(void)
         }
         while (n & 3)
                 index[n++] = 0;
-        crc = ~xz_crc32_bytes(0xffffffffu, index, n);
+        crc = ~hash_crc32(0xffffffffu, index, n);
         for (at = 0; at < n; at++)
                 if (!xz_put(index[at]))
                         return false;
@@ -1590,7 +1577,7 @@ static bool xz_write_index_footer(void)
         body[3] = (p8)(back >> 24);
         body[4] = flags[0];
         body[5] = flags[1];
-        if (!xz_put32(~xz_crc32_bytes(0xffffffffu, body, 6)) ||
+        if (!xz_put32(~hash_crc32(0xffffffffu, body, 6)) ||
             !xz_put32(back) || !xz_put(flags[0]) || !xz_put(flags[1]) ||
             !xz_put('Y') || !xz_put('Z'))
                 return false;
@@ -2166,7 +2153,6 @@ static bool xz_decode_begin(bipolar in)
         xz_hdr_done = false;
         xz_block_live = false;
         xz_lz2_kind = 0;
-        xz_lz2_match_left = 0;
         xz_in_abs = 0;
         xz_unpacked = 0;
         return true;

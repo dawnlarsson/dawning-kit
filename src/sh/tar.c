@@ -1203,7 +1203,7 @@ static bool tar_sparse_add(p64 offset, p64 bytes)
         if (!bytes)
                 return true;
 
-        if (bytes && offset > (p64)-1 - bytes)
+        if (offset > (p64)-1 - bytes)
                 return false;
 
         if (tar_sparse_used >= TAR_SPARSE_MAX)
@@ -1286,7 +1286,7 @@ static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
         p64 cursor = 0;
         positive at;
 
-        if (!tar_sparse_active || tar_sparse_payload() != size)
+        if (tar_sparse_payload() != size)
         {
                 tar_refuse("invalid sparse archive");
                 return false;
@@ -1294,8 +1294,7 @@ static bool tar_deliver_sparse(bipolar archive, bipolar out, p64 size,
 
         for (at = 0; at < tar_sparse_used; at++)
         {
-                if (tar_sparse[at].offset < cursor ||
-                    !tar_write_zeros(out, tar_sparse[at].offset - cursor) ||
+                if (!tar_write_zeros(out, tar_sparse[at].offset - cursor) ||
                     !tar_copy_n(archive, out, tar_sparse[at].bytes, seekable))
                         return false;
 

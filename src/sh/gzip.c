@@ -115,8 +115,6 @@ static bipolar gzip_in_byte(void)
 {
         if (gzip_input.at >= gzip_input.have && !gzip_in_need())
                 return -1;
-        if (gzip_input.at >= gzip_input.have)
-                return -1;
         return gzip_in_buf[gzip_input.at++];
 }
 
@@ -896,11 +894,6 @@ static __attribute__((always_inline)) inline bool gzip_put(p32 value, p8 n)
         return true;
 }
 
-static bool gzip_put_code(p16 code, p8 len)
-{
-        return gzip_put(code, len);
-}
-
 static bool gzip_put_flush(void)
 {
         while (gzip_bitn)
@@ -1244,12 +1237,12 @@ static bool gzip_write_fixed(p8 address_to src, positive length,
                         positive lcode = gzip_length_code(mlen[pair]);
                         positive dcode = gzip_distance_code(mdist[pair]);
 
-                        if (!gzip_put_code(gzip_fixed_lit_code[257 + lcode],
+                        if (!gzip_put(gzip_fixed_lit_code[257 + lcode],
                                            gzip_fixed_lit_len[257 + lcode]) ||
                             (gzip_len_extra[lcode] &&
                              !gzip_put(mlen[pair] - gzip_len_base[lcode],
                                        gzip_len_extra[lcode])) ||
-                            !gzip_put_code(gzip_fixed_dist_code[dcode],
+                            !gzip_put(gzip_fixed_dist_code[dcode],
                                            gzip_fixed_dist_len[dcode]) ||
                             (gzip_dist_extra[dcode] &&
                              !gzip_put(mdist[pair] - gzip_dist_base[dcode],
@@ -1260,13 +1253,13 @@ static bool gzip_write_fixed(p8 address_to src, positive length,
                 }
                 else
                 {
-                        if (!gzip_put_code(gzip_fixed_lit_code[src[at]],
+                        if (!gzip_put(gzip_fixed_lit_code[src[at]],
                                            gzip_fixed_lit_len[src[at]]))
                                 return false;
                         at++;
                 }
         }
-        return gzip_put_code(gzip_fixed_lit_code[256],
+        return gzip_put(gzip_fixed_lit_code[256],
                              gzip_fixed_lit_len[256]);
 }
 
@@ -1444,41 +1437,41 @@ static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
                         }
                         if (here)
                         {
-                                if (!gzip_put_code(ccode[here], clen[here]))
+                                if (!gzip_put(ccode[here], clen[here]))
                                         return false;
                                 run--;
                                 while (run >= 3)
                                 {
                                         positive take = run > 6 ? 6 : run;
 
-                                        if (!gzip_put_code(ccode[16], clen[16]) ||
+                                        if (!gzip_put(ccode[16], clen[16]) ||
                                             !gzip_put(take - 3, 2))
                                                 return false;
                                         run -= take;
                                 }
                                 while (run)
                                 {
-                                        if (!gzip_put_code(ccode[here], clen[here]))
+                                        if (!gzip_put(ccode[here], clen[here]))
                                                 return false;
                                         run--;
                                 }
                         }
                         else if (run >= 11)
                         {
-                                if (!gzip_put_code(ccode[18], clen[18]) ||
+                                if (!gzip_put(ccode[18], clen[18]) ||
                                     !gzip_put(run - 11, 7))
                                         return false;
                         }
                         else if (run >= 3)
                         {
-                                if (!gzip_put_code(ccode[17], clen[17]) ||
+                                if (!gzip_put(ccode[17], clen[17]) ||
                                     !gzip_put(run - 3, 3))
                                         return false;
                         }
                         else
                                 while (run)
                                 {
-                                        if (!gzip_put_code(ccode[0], clen[0]))
+                                        if (!gzip_put(ccode[0], clen[0]))
                                                 return false;
                                         run--;
                                 }
@@ -1494,12 +1487,12 @@ static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
                         positive lcode = gzip_length_code(mlen[pair]);
                         positive dcode = gzip_distance_code(mdist[pair]);
 
-                        if (!gzip_put_code(lit_code[257 + lcode],
+                        if (!gzip_put(lit_code[257 + lcode],
                                            lit_len[257 + lcode]) ||
                             (gzip_len_extra[lcode] &&
                              !gzip_put(mlen[pair] - gzip_len_base[lcode],
                                        gzip_len_extra[lcode])) ||
-                            !gzip_put_code(dist_code[dcode], dist_len[dcode]) ||
+                            !gzip_put(dist_code[dcode], dist_len[dcode]) ||
                             (gzip_dist_extra[dcode] &&
                              !gzip_put(mdist[pair] - gzip_dist_base[dcode],
                                        gzip_dist_extra[dcode])))
@@ -1509,12 +1502,12 @@ static bool gzip_block_emit_dynamic(p8 address_to src, positive length,
                 }
                 else
                 {
-                        if (!gzip_put_code(lit_code[src[at]], lit_len[src[at]]))
+                        if (!gzip_put(lit_code[src[at]], lit_len[src[at]]))
                                 return false;
                         at++;
                 }
         }
-        return gzip_put_code(lit_code[256], lit_len[256]);
+        return gzip_put(lit_code[256], lit_len[256]);
 }
 
 static bool gzip_block_emit(p8 address_to src, positive length,
