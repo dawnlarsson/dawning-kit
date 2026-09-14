@@ -4760,39 +4760,40 @@ static b32 util_linux_lslocks()
 
 // lsfd ------------------------------------------------------------
 
+enum { UL_LSFD_NEED_NAMES = 1, UL_LSFD_NEED_IDS = 2, UL_LSFD_NEED_LINKS = 4, UL_LSFD_NEED_INFO = 8 };
 #define UL_LSFD_FIELDS(X) \
     X(UL_LSFD_COMMAND, TEXT, descriptor->process->command, \
       "command", "COMMAND", 0, false, TABLE_STRING) \
     X(UL_LSFD_PID, UNSIGNED, descriptor->process->pid, \
       "pid", "PID", 5, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_USER, TEXT, descriptor->user, \
-      "user", "USER", 0, false, TABLE_STRING) \
+      "user", "USER", 0, false, TABLE_STRING, .requires = UL_LSFD_NEED_NAMES | UL_LSFD_NEED_IDS) \
     X(UL_LSFD_FD, UNSIGNED, descriptor->fd, \
       "fd", "FD", 2, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_MODE, CUSTOM, 0, \
-      "mode", "MODE", 4, false, TABLE_STRING) \
+      "mode", "MODE", 4, false, TABLE_STRING, .requires = UL_LSFD_NEED_INFO) \
     X(UL_LSFD_XMODE, CUSTOM, 0, \
-      "xmode", "XMODE", 6, false, TABLE_STRING) \
+      "xmode", "XMODE", 6, false, TABLE_STRING, .requires = UL_LSFD_NEED_INFO) \
     X(UL_LSFD_TYPE, TEXT, descriptor->type, \
-      "type", "TYPE", 5, false, TABLE_STRING) \
+      "type", "TYPE", 5, false, TABLE_STRING, .requires = UL_LSFD_NEED_LINKS) \
     X(UL_LSFD_NAME, TEXT, descriptor->name, \
-      "name", "NAME", 0, false, TABLE_STRING) \
+      "name", "NAME", 0, false, TABLE_STRING, .requires = UL_LSFD_NEED_LINKS) \
     X(UL_LSFD_KNAME, TEXT, descriptor->name, \
-      "kname", "KNAME", 0, false, TABLE_STRING) \
+      "kname", "KNAME", 0, false, TABLE_STRING, .requires = UL_LSFD_NEED_LINKS) \
     X(UL_LSFD_INODE, UNSIGNED, descriptor->inode, \
       "inode", "INODE", 5, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_DEVICE, CUSTOM, 0, \
       "maj:min", "MAJ:MIN", 7, false, TABLE_STRING) \
     X(UL_LSFD_MNTID, CUSTOM, 0, \
-      "mntid", "MNTID", 5, true, TABLE_NULL_NUMBER) \
+      "mntid", "MNTID", 5, true, TABLE_NULL_NUMBER, .requires = UL_LSFD_NEED_INFO) \
     X(UL_LSFD_SIZE, UNSIGNED, descriptor->size, \
       "size", "SIZE", 4, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_POS, CUSTOM, 0, \
-      "pos", "POS", 3, true, TABLE_NULL_NUMBER) \
+      "pos", "POS", 3, true, TABLE_NULL_NUMBER, .requires = UL_LSFD_NEED_INFO) \
     X(UL_LSFD_UID, UNSIGNED, descriptor->process->uid, \
-      "uid", "UID", 3, true, TABLE_NUMBER, .decimal = true) \
+      "uid", "UID", 3, true, TABLE_NUMBER, .decimal = true, .requires = UL_LSFD_NEED_IDS) \
     X(UL_LSFD_DELETED, BOOLEAN, descriptor->deleted, \
-      "deleted", "DELETED", 7, false, TABLE_BOOLEAN, .decimal = true)
+      "deleted", "DELETED", 7, false, TABLE_BOOLEAN, .decimal = true, .requires = UL_LSFD_NEED_LINKS)
 
 enum
 {
@@ -4955,20 +4956,11 @@ static bipolar ul_lsfd_copy_name(ul_lsfd_entry address_to descriptor,
         return 1;
 }
 
-static bool ul_lsfd_process(struct snapshot_process address_to process, positive fields)
+static bool ul_lsfd_process(struct snapshot_process address_to process, p8 requires)
 {
         p8 directory[64];
         file_walk walk;
         string_address user = null;
-        bool names = (fields & ((positive)1 << UL_LSFD_USER)) != 0;
-        bool links = (fields & (((positive)1 << UL_LSFD_NAME) |
-                               ((positive)1 << UL_LSFD_KNAME) |
-                               ((positive)1 << UL_LSFD_TYPE) |
-                               ((positive)1 << UL_LSFD_DELETED))) != 0;
-        bool info = (fields & (((positive)1 << UL_LSFD_MODE) |
-                              ((positive)1 << UL_LSFD_XMODE) |
-                              ((positive)1 << UL_LSFD_POS) |
-                              ((positive)1 << UL_LSFD_MNTID))) != 0;
 
         system_process_path(directory, process->pid, null, "fd");
         if (!file_walk_open(address_of walk, AT_FDCWD, directory))
@@ -5009,7 +5001,7 @@ static bool ul_lsfd_process(struct snapshot_process address_to process, positive
                                            : facts.device_minor;
                 descriptor->fd = (p32)fd;
 
-                bipolar named = links ? ul_lsfd_copy_name(descriptor, walk.handle,
+                bipolar named = requires & UL_LSFD_NEED_LINKS ? ul_lsfd_copy_name(descriptor, walk.handle,
                                                            dirent->d_name) : 1;
                 if (named <= 0)
                 {
@@ -5023,10 +5015,10 @@ static bool ul_lsfd_process(struct snapshot_process address_to process, positive
 
                 descriptor->type = ul_lsfd_type(facts.mode,
                                                  descriptor->name);
-                if (info)
+                if (requires & UL_LSFD_NEED_INFO)
                         ul_lsfd_fdinfo(descriptor);
                 if (!user)
-                        user = names ? ps_name_of(process->uid) : (string_address)"";
+                        user = requires & UL_LSFD_NEED_NAMES ? ps_name_of(process->uid) : (string_address)"";
                 if (!user)
                 {
                         file_walk_close(address_of walk);
@@ -5139,9 +5131,9 @@ static b32 util_linux_lsfd()
             array_count(defaults), columns, address_of column_count, unknown);
         if (fault)
                 return ul_columns_refused("lsfd", fault, unknown);
-        positive fields = 0;
+        p8 requires = 0;
         for (positive at = 0; at < column_count; at++)
-                fields |= (positive)1 << columns[at];
+                requires |= ul_lsfd_columns[columns[at]].requires;
 
         text_begin("lsfd");
         utility_arena.used = 0;
@@ -5159,8 +5151,7 @@ static b32 util_linux_lsfd()
 
         if (!system_snapshot_take_selected(address_of ul_lsfd_snapshot,
                                            SPARK_SNAPSHOT_PROCESS,
-                                           (fields & (((positive)1 << UL_LSFD_USER) |
-                                                      ((positive)1 << UL_LSFD_UID))) != 0,
+                                           (requires & UL_LSFD_NEED_IDS) != 0,
                                            pids.values, pids.count))
         {
                 ul_lsfd_release();
@@ -5173,7 +5164,7 @@ static b32 util_linux_lsfd()
                 struct snapshot_process address_to process =
                     ul_lsfd_snapshot.processes + i;
 
-                if (!ul_lsfd_process(process, fields))
+                if (!ul_lsfd_process(process, requires))
                 {
                         failed = true;
                         break;

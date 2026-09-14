@@ -2635,9 +2635,7 @@ close_logs:
 
 typedef struct
 {
-        bipolar handle;
-        positive at;
-        positive have;
+        byte_input from;
         bool failed;
         p8 bytes[PROCESS_REPLAY_BLOCK];
 } process_replay_reader;
@@ -2645,29 +2643,18 @@ typedef struct
 static bipolar process_replay_open(process_replay_reader address_to reader,
                                    string_address path)
 {
-        memory_fill(reader, 0, sizeof(*reader));
-        reader->handle = system_open_at(AT_FDCWD, path,
-                                        FILE_READ | O_CLOEXEC);
-        return reader->handle;
+        reader->failed = false;
+        byte_input_open_fd(address_of reader->from,
+                           system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC),
+                           reader->bytes, sizeof(reader->bytes));
+        return reader->from.fd;
 }
 
 static bipolar process_replay_fill(process_replay_reader address_to reader)
 {
-        if (reader->at == reader->have)
-        {
-                bipolar got = system_read_retry((positive)reader->handle,
-                                                reader->bytes,
-                                                sizeof(reader->bytes));
-                if (got <= 0)
-                {
-                        if (got < 0)
-                                reader->failed = true;
-                        return got;
-                }
-                reader->at = 0;
-                reader->have = (positive)got;
-        }
-        return (bipolar)(reader->have - reader->at);
+        bipolar got = byte_input_need(address_of reader->from, 1);
+        reader->failed |= got < 0;
+        return got;
 }
 
 static bipolar process_replay_line(process_replay_reader address_to reader,
@@ -2685,18 +2672,18 @@ static bipolar process_replay_line(process_replay_reader address_to reader,
                                 return -1;
                         break;
                 }
-                p8 address_to start = reader->bytes + reader->at;
+                p8 address_to start = reader->from.buf + reader->from.at;
                 p8 address_to newline = memory_first_of(start, '\n', (positive)got);
                 positive take = newline ? (positive)(newline - start) : (positive)got;
                 if (take >= room - used)
                 {
-                        reader->at += room - used;
+                        reader->from.at += room - used;
                         reader->failed = true;
                         return -1;
                 }
                 memory_copy(line + used, start, take);
                 used += take;
-                reader->at += take + (newline != null);
+                reader->from.at += take + (newline != null);
                 if (newline)
                         break;
         }
@@ -2720,14 +2707,14 @@ static bool process_replay_skip_header(
                 bipolar got = process_replay_fill(reader);
                 if (got <= 0)
                         return got == 0;
-                p8 address_to start = reader->bytes + reader->at;
+                p8 address_to start = reader->from.buf + reader->from.at;
                 positive room = (positive)got;
                 positive take = memory_span_without_byte(start, '\n', room);
-                reader->at += take;
+                reader->from.at += take;
                 used += take;
                 if (take < room)
                 {
-                        reader->at++;
+                        reader->from.at++;
                         return true;
                 }
         }
@@ -2841,18 +2828,18 @@ static bool process_replay_payload(process_replay_reader address_to reader,
                         reader->failed = true;
                         return false;
                 }
-                positive chunk = min(length, reader->have - reader->at);
+                positive chunk = min(length, reader->from.have - reader->from.at);
                 if (emit)
                 {
                         if (carriage)
                                 for (positive at = 0; at < chunk; at++)
-                                        if (reader->bytes[reader->at + at] == '\r')
-                                                reader->bytes[reader->at + at] = '\n';
-                        if (system_write_all(1, reader->bytes + reader->at,
+                                        if (reader->from.buf[reader->from.at + at] == '\r')
+                                                reader->from.buf[reader->from.at + at] = '\n';
+                        if (system_write_all(1, reader->from.buf + reader->from.at,
                                              chunk) != chunk)
                                 return false;
                 }
-                reader->at += chunk;
+                reader->from.at += chunk;
                 length -= chunk;
         }
         return true;
@@ -3064,7 +3051,7 @@ static b32 process_scriptreplay()
         if (opened < 0)
                 return string_report(log_error, 1, "scriptreplay: %s: %s\n",
                               timing_path, file_reason(opened));
-        output.handle = input.handle = -1;
+        output.from.fd = input.from.fd = -1;
         if (out_path)
         {
                 opened = process_replay_open(address_of output, out_path);
@@ -3137,7 +3124,7 @@ static b32 process_scriptreplay()
                 process_replay_reader address_to source =
                     shared || which == 'O' ? address_of output
                                            : address_of input;
-                if (source->handle < 0)
+                if (source->from.fd < 0)
                         continue;
                 //      A log with less left in it than the row asks for ends
                 //      the replay where it runs out, and that is a success:
@@ -3149,11 +3136,11 @@ static b32 process_scriptreplay()
         }
         if (got < 0 || timing.failed)
                 failed = true;
-        system_close((positive)timing.handle);
-        if (output.handle >= 0)
-                system_close((positive)output.handle);
-        if (input.handle >= 0 && input.handle != output.handle)
-                system_close((positive)input.handle);
+        system_close((positive)timing.from.fd);
+        if (output.from.fd >= 0)
+                system_close((positive)output.from.fd);
+        if (input.from.fd >= 0 && input.from.fd != output.from.fd)
+                system_close((positive)input.from.fd);
         if (failed)
                 return string_report(log_error, 1, "scriptreplay: malformed or truncated timing/log file\n");
         system_write_all(1, "\n", 1);
@@ -3163,11 +3150,11 @@ replay_open_failed:
         string_format(log_error, "scriptreplay: cannot read transcript: %s\n",
                       opened < 0 ? file_reason(opened)
                                  : (string_address)"invalid header");
-        system_close((positive)timing.handle);
-        if (output.handle >= 0)
-                system_close((positive)output.handle);
-        if (input.handle >= 0 && input.handle != output.handle)
-                system_close((positive)input.handle);
+        system_close((positive)timing.from.fd);
+        if (output.from.fd >= 0)
+                system_close((positive)output.from.fd);
+        if (input.from.fd >= 0 && input.from.fd != output.from.fd)
+                system_close((positive)input.from.fd);
         return 1;
 }
 
