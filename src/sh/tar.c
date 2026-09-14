@@ -492,6 +492,9 @@ static const tar_codec tar_codecs[] = {
 };
 
 static p8 tar_block[TAR_BLOCK];
+/* Extended headers carry more than names: GNU stores xattrs and ACLs there. */
+#define TAR_PAX_BODY (1024 * 1024)
+static p8 tar_pax_body[TAR_PAX_BODY];
 static p8 tar_name[TAR_PATH];
 static p8 tar_link[TAR_PATH];
 static b32 tar_status;
@@ -556,6 +559,7 @@ static p8 tar_record[TAR_RECORD];
 static positive tar_have;
 static positive tar_at;
 static p8 tar_pack;
+static p64 tar_archive_end;
 static const tar_codec address_to tar_decoder;
 static const tar_codec address_to tar_encoder;
 static file_facts tar_output_facts;
@@ -1053,9 +1057,16 @@ static bool tar_skip(bipolar handle, p64 bytes, bool seekable)
         bytes -= have;
         tar_at = 0;
         tar_have = 0;
-        if (seekable && !tar_packed() &&
-            system_seek(handle, (bipolar)bytes, FILE_SEEK_CUR) >= 0)
-                return true;
+        bipolar reached = seekable && !tar_packed()
+                              ? system_seek(handle, (bipolar)bytes, FILE_SEEK_CUR)
+                              : -1;
+        if (reached >= 0)
+        {
+                if ((p64)reached <= tar_archive_end)
+                        return true;
+                tar_refuse("unexpected EOF in archive");
+                return false;
+        }
 
         while (bytes)
         {
@@ -1923,6 +1934,18 @@ static b32 tar_read_archive(struct tar_options address_to options)
         }
 
         seekable = system_seek(handle, 0, FILE_SEEK_CUR) >= 0;
+        {
+                /* A seek skips member data without reading it, so only the
+                   size of a regular archive can say the data is not there. */
+                file_facts archive;
+
+                tar_archive_end =
+                    file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                              address_of archive) &&
+                            (archive.mode & MODE_FORMAT) == MODE_FILE
+                        ? archive.size
+                        : (p64)-1;
+        }
         tar_advise(handle);
         {
                 p8 magic[6];
@@ -2063,15 +2086,13 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
                 if (type == 'x' || type == 'g')
                 {
-                        p8 body[TAR_PATH];
-
-                        if (!tar_read_payload(handle, size, body, TAR_PATH,
-                                              seekable) ||
+                        if (!tar_read_payload(handle, size, tar_pax_body,
+                                              TAR_PAX_BODY, seekable) ||
                             !tar_pax_apply(
                                 type == 'g'
                                     ? address_of tar_pax_global
                                     : address_of tar_pax_local,
-                                body, (positive)size))
+                                tar_pax_body, (positive)size))
                         {
                                 tar_refuse("invalid extended header");
                                 break;
@@ -2233,6 +2254,17 @@ static fn tar_header_ustar(p8 address_to block, string_address name,
 static bool tar_put_header(bipolar handle, string_address name, p8 type,
                            p64 size, p64 mode, p64 mtime, string_address link)
 {
+        positive link_length = link ? string_length(link) : 0;
+
+        /* A target the ustar field cannot hold travels whole in a GNU K
+           member ahead of its header, as GNU tar writes it. */
+        if (link_length >= TAR_NAME &&
+            (!tar_put_header(handle, "././@LongLink", 'K', link_length + 1,
+                             0644, 0, null) ||
+             !tar_put(handle, (p8 address_to)link, link_length + 1) ||
+             !tar_write_padding(handle, link_length + 1)))
+                return false;
+
         if (tar_at + TAR_BLOCK > TAR_RECORD && !tar_flush(handle))
                 return false;
 

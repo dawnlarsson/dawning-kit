@@ -1286,6 +1286,26 @@ static bool xz_stream(void)
         p32 got;
         p8 at;
 
+        /* Stream Padding: after a stream, NUL bytes in fours may precede the
+           next one or the end of the file. */
+        if (!xz_hdr_done && xz_in_abs)
+        {
+                p64 from = xz_in_abs;
+
+                while ((xz_input.at < xz_input.have || xz_in_need()) &&
+                       !xz_in_buf[xz_input.at])
+                {
+                        xz_input.at++;
+                        xz_in_abs++;
+                }
+                if (xz_why)
+                        return false;
+                if ((xz_in_abs - from) & 3)
+                        return xz_fail("xz stream padding");
+                if (xz_input.at >= xz_input.have)
+                        return true;
+        }
+
         if (!xz_hdr_done)
         {
                 for (at = 0; at < 6; at++)
