@@ -2352,20 +2352,15 @@ static bool join_output_add(string_address word)
 
                         output.file = word[at] - '0';
                         at += 2;
-                        positive start = at;
+                        string_address digits = word + at;
                         positive field = 0;
 
-                        while (byte_is_digit(word[at]))
-                        {
-                                positive digit = word[at++] - '0';
-
-                                if (field > (positive_max - digit) / 10)
-                                        return false;
-                                field = field * 10 + digit;
-                        }
-
-                        if (at == start || !field)
+                        if (!string_digits_checked(address_of digits, 10,
+                                                   address_of field) ||
+                            !field)
                                 return false;
+
+                        at = (positive)(digits - word);
 
                         output.field = field - 1;
                 }
@@ -4408,7 +4403,7 @@ static fn text_stream_count(positive left)
         while (left && text_fill())
         {
                 positive have = text_input.filled - text_input.position;
-                positive take = have < left ? have : left;
+                positive take = min(have, left);
 
                 text_put(text_input.buffer + text_input.position, take);
                 text_input.position += take;
@@ -4435,7 +4430,7 @@ static fn text_stream_from(positive start)
 static fn text_stream_span(positive start, positive stop)
 {
         text_stream_seek(start);
-        text_stream_count(stop > start ? stop - start : 0);
+        text_stream_count(difference_or_zero(stop, start));
 }
 
 static const argument_option head_options[] = {
@@ -4488,7 +4483,7 @@ static fn text_head_short(positive count, bool by_bytes)
         if (!text_lines_gather())
                 return;
 
-        positive stop = text_lines_count > count ? text_lines_count - count : 0;
+        positive stop = difference_or_zero(text_lines_count, count);
 
         for (positive c = 0; c < stop; c++)
                 text_put_slice(text_lines + c);
@@ -4750,7 +4745,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         }
                         else
                         {
-                                positive take = count < have ? count : have;
+                                positive take = min(count, have);
 
                                 text_put(held + have - take, take);
                         }
@@ -4772,7 +4767,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         if (!text_lines_gather())
                                 return text_done(1);
 
-                        positive first = text_lines_count > count ? text_lines_count - count : 0;
+                        positive first = difference_or_zero(text_lines_count, count);
 
                         for (positive c = first; c < text_lines_count; c++)
                                 text_put_slice(text_lines + c);
@@ -7673,8 +7668,7 @@ static positive ptx_default_sentence(ptx_file address_to file, positive from,
                 address_to match = at;
 
                 while (after < length &&
-                       (bytes[after] == ' ' || bytes[after] == '\t' ||
-                        bytes[after] == '\n'))
+                       (byte_is_blank(bytes[after]) || bytes[after] == '\n'))
                         after++;
 
                 return after;
@@ -8011,19 +8005,13 @@ static fn ptx_put_span(ptx_file address_to file, ptx_span span)
         }
 }
 
-static positive ptx_decimal_length(positive number)
-{
-        p8 digits[64];
-        return positive_into(digits, number);
-}
-
 static positive ptx_reference_length(ptx_occurrence address_to occurrence)
 {
         if (ptx_auto_reference)
         {
                 string_address name = ptx_files[occurrence->file].name;
                 return (name ? string_length(name) : 0) + 1 +
-                       ptx_decimal_length(occurrence->line);
+                       positive_digits(occurrence->line);
         }
 
         return occurrence->reference_length;
@@ -8574,7 +8562,7 @@ static b32 text_ptx()
                             (ptx_files[file_index].name
                                  ? string_length(ptx_files[file_index].name)
                                  : 0) +
-                            1 + ptx_decimal_length(
+                            1 + positive_digits(
                                     ptx_files[file_index].lines + 1);
 
                         if (width > ptx_reference_width)
@@ -8664,7 +8652,7 @@ static string_address column_input_separator;
 static bool column_is_separator(p8 character)
 {
         if (!column_custom_separator)
-                return character == ' ' || character == '\t';
+                return byte_is_blank(character);
 
         return string_first_of(column_input_separator, character) != null;
 }
@@ -17268,7 +17256,7 @@ static PURE bipolar sort_compare_parsed(sort_number address_to a,
 
         if (!answer)
         {
-                positive places = a->places < b->places ? a->places : b->places;
+                positive places = min(a->places, b->places);
 
                 if (places)
                         answer = memory_compare(a->fraction, b->fraction, places);
@@ -17393,15 +17381,10 @@ static bipolar sort_human_order(p8 address_to at, positive length)
                 scan++;
         }
 
-        // The increment is its own statement. Written into the test it stops
-        // happening the moment nonzero is true, and the loop never ends.
-        while (scan < length && byte_is_digit(at[scan]))
-        {
-                if (at[scan] != '0')
-                        nonzero = true;
+        positive run = string_span_max(at + scan, length - scan, string_set_digits);
 
-                scan++;
-        }
+        nonzero = memory_span_byte(at + scan, '0', run) < run;
+        scan += run;
 
         // The point is stepped over whether or not digits follow it, so 25.G
         // is twenty-five giga and not twenty-five: measured, and the reason
@@ -17409,14 +17392,9 @@ static bipolar sort_human_order(p8 address_to at, positive length)
         if (scan < length && at[scan] == '.')
         {
                 scan++;
-
-                while (scan < length && byte_is_digit(at[scan]))
-                {
-                        if (at[scan] != '0')
-                                nonzero = true;
-
-                        scan++;
-                }
+                run = string_span_max(at + scan, length - scan, string_set_digits);
+                nonzero |= memory_span_byte(at + scan, '0', run) < run;
+                scan += run;
         }
 
         if (!nonzero)
@@ -18846,7 +18824,7 @@ static b32 text_cmp()
         {
                 positive one = cmp_length(address_of cmp_left);
                 positive two = cmp_length(address_of cmp_right);
-                positive smaller = one < two ? one : two;
+                positive smaller = min(one, two);
 
                 if (limit != TEXT_UNSET && limit < smaller)
                         smaller = limit;
