@@ -1567,9 +1567,8 @@ def main(argv=None):
         #       tallied, and the floor writes the one row it is owed.
         floored_here = whole_run and key.split("/")[0] in DOMAIN_FLOOR
 
-        if os.environ.get("TEST_TALLY") and total[key] and not floored_here:
-            with open(os.environ["TEST_TALLY"], "a") as tally:
-                tally.write(f"{key.replace('/', '-')} {passed[key]} {total[key]}\n")
+        if total[key] and not floored_here:
+            write_tally(key.replace('/', '-'), passed[key], total[key])
     all_passed = sum(passed.values())
     all_total = sum(total.values())
 
@@ -1590,9 +1589,7 @@ def main(argv=None):
 
             #       The one row the floor is owed, in place of the programs
             #       it stands for: it holds, or it does not.
-            if os.environ.get("TEST_TALLY"):
-                with open(os.environ["TEST_TALLY"], "a") as tally:
-                    tally.write(f"{domain}-floor {1 if agreed >= want else 0} 1\n")
+            write_tally(f"{domain}-floor", 1 if agreed >= want else 0, 1)
 
             if agreed < want:
                 floored = False
@@ -2063,10 +2060,8 @@ def self_test():
 
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(Oracle)
     result = unittest.TextTestRunner(verbosity=1).run(suite)
-    if os.environ.get("TEST_TALLY"):
-        with open(os.environ["TEST_TALLY"], "a") as tally:
-            passed = result.testsRun - len(result.failures) - len(result.errors)
-            tally.write(f"differential-oracle {passed} {result.testsRun}\n")
+    write_tally("differential-oracle",
+                result.testsRun - len(result.failures) - len(result.errors), result.testsRun)
     return 0 if result.wasSuccessful() else 1
 
 
@@ -15921,6 +15916,69 @@ from unittest.mock import patch
 
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 
+
+def write_tally(label, passed, total):
+    """One row of the verdict test/run adds up, when test/run is the one asking."""
+    if os.environ.get("TEST_TALLY"):
+        with open(os.environ["TEST_TALLY"], "a") as tally:
+            tally.write(f"{label} {passed} {total}\n")
+
+
+class Checks:
+    """A harness's questions: how many were asked, how many disagreed, and which."""
+
+    def __init__(self):
+        self.checks = self.failures = 0
+
+    def __call__(self, ok, what):
+        self.checks += 1
+        if not ok:
+            self.failures += 1
+            print('  FAIL ' + what)
+
+    def verdict(self, printed, label):
+        print('%s %d/%d' % (printed, self.checks - self.failures, self.checks))
+        write_tally(label, self.checks - self.failures, self.checks)
+        return 1 if self.failures else 0
+
+
+def build_c(unit, source, flags, sanitize=True):
+    """source written to unit and compiled beside it by $CC: the binary and the command."""
+    unit.write_text(source)
+    binary = unit.with_suffix('')
+    command = shlex.split(os.environ.get('CC', 'cc')) + list(flags)
+    if sanitize:
+        command.append('-fsanitize=address,undefined')
+    command += [str(unit), '-o', str(binary)]
+    subprocess.run(command, check=True)
+    return binary, command
+
+
+def run_sanitized(name, source, output, report=None):
+    """One hosted C program that prints "<name> passed/total", built warning-clean
+    under the sanitizers, run, and tallied. With --output its build, and result.json
+    when there is a report to put in it, stay in that directory."""
+    def run(out):
+        out.mkdir(parents=True, exist_ok=True)
+        binary, command = build_c(out / (name + '.c'), source, (
+            '-std=gnu11', '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function'))
+        result = subprocess.run([str(binary)], text=True, capture_output=True)
+        if report is not None:
+            (out / 'result.json').write_text(json.dumps(dict(
+                report, command=command, returncode=result.returncode,
+                stdout=result.stdout, stderr=result.stderr), indent=2) + '\n')
+        tally = re.search(name + r' (\d+)/(\d+)', result.stdout)
+        if tally:
+            write_tally(name, *tally.groups())
+        print(result.stdout, end='')
+        print(result.stderr, end='', file=sys.stderr)
+        return result.returncode
+
+    if output:
+        return run(output.resolve())
+    with tempfile.TemporaryDirectory(prefix=name + '-') as work:
+        return run(Path(work))
+
 #       GNU coreutils 9.11's installed program list: the denominator the
 #       shell's dispatch tables are measured against.
 HARNESS_COREUTILS_9_11 = {
@@ -17345,13 +17403,10 @@ line_add_padded() { line_add "$@"; }
                                    capture_output=True, check=True)
                     assert header.read_bytes() == before
         print("  kernel-glue 8 of 8", flush=True)
-        if os.environ.get("TEST_TALLY"):
-            with open(os.environ["TEST_TALLY"], "a") as tally:
-                tally.write("kernel-glue 8 8\n")
-        executable = str(Path(work) / "core-state")
-        subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-O2", "-Wall", "-Wextra",
-                        "-x", "c", "-", "-o", executable], input=source, text=True, check=True)
-        subprocess.run([executable], check=True)
+        write_tally("kernel-glue", 8, 8)
+        binary, _ = build_c(Path(work) / "core-state.c", source,
+                            ("-std=c11", "-O2", "-Wall", "-Wextra"), sanitize=False)
+        subprocess.run([str(binary)], check=True)
         # The existing kit lane now also checks real pixel stores without a GPU,
         # DRM device, module load, or writable prepared kernel tree.
         if os.uname().sysname == "Linux":
@@ -17426,10 +17481,11 @@ int main(void) {
         kernel.write_text(source)
         compiler = os.environ.get("CC", "gcc")
         subprocess.run([compiler, "-O2", str(kernel), "-o", str(work / "kernel")], check=True)
-        subprocess.run([str(work / "kernel")], check=True)
-        if os.environ.get("TEST_TALLY"):
-            with open(os.environ["TEST_TALLY"], "a") as tally:
-                tally.write("spark-kernel-features 1048576 1048576\n")
+        features = subprocess.run([str(work / "kernel")], text=True, stdout=subprocess.PIPE)
+        print(features.stdout, end="", flush=True)
+        if features.returncode:
+            return 1
+        write_tally("spark-kernel-features", *re.search(r"(\d+) of (\d+)", features.stdout).groups())
         if platform.system() == "Linux" and platform.machine() in ("x86_64", "amd64"):
             binary = work / "entry"
             subprocess.run([compiler, "-O2", "-static", "-nostdlib", "-nostartfiles",
@@ -17438,14 +17494,12 @@ int main(void) {
                             "-Wl,--build-id=none", "-Wl,--no-warn-rwx-segments",
                             "-DCHECK_spark_entry", str(root / "test/checks.c"),
                             "-o", str(binary)], check=True)
-            for mode in range(10):
-                subprocess.run([str(binary), str(mode)], check=True)
-            print("spark old/new/fallback entry: 10 of 10")
-            if os.environ.get("TEST_TALLY"):
-                with open(os.environ["TEST_TALLY"], "a") as tally:
-                    tally.write("spark-entry 10 10\n")
-        else:
-            print("spark x86 entry: not run (requires native Linux x86-64)")
+            passed = sum(subprocess.run([str(binary), str(mode)]).returncode == 0
+                         for mode in range(10))
+            print(f"spark old/new/fallback entry: {passed} of 10")
+            write_tally("spark-entry", passed, 10)
+            return 0 if passed == 10 else 1
+        print("spark x86 entry: not run (requires native Linux x86-64)")
     return 0
 
 
@@ -17841,34 +17895,21 @@ ASM_END(probe)
         return path
 
 
-    def body_mutation(directory, label, source, expected):
-        path = fresh(directory, label + '.c')
-        path.write_text(path.read_text(encoding='utf-8') + '\n' + source,
-                        encoding='utf-8')
-        result = invoke(path, '--check', '--target', 'direct')
-        expect(result.returncode != 0 and
-               ('forbidden C body %s ' % expected) in result.stderr,
-               '%s body evaded the lexical scan' % label, result)
+    def mutation(refusal, noun):
+        """A clean inventory with source appended must be refused as refusal."""
+        def mutate(directory, label, source, expected):
+            path = fresh(directory, label + '.c')
+            path.write_text(path.read_text(encoding='utf-8') + '\n' + source,
+                            encoding='utf-8')
+            result = invoke(path, '--check', '--target', 'direct')
+            expect(result.returncode != 0 and
+                   ('%s %s ' % (refusal, expected)) in result.stderr,
+                   '%s %s evaded the lexical scan' % (label, noun), result)
+        return mutate
 
-
-    def object_mutation(directory, label, source, expected):
-        path = fresh(directory, label + '.c')
-        path.write_text(path.read_text(encoding='utf-8') + '\n' + source,
-                        encoding='utf-8')
-        result = invoke(path, '--check', '--target', 'direct')
-        expect(result.returncode != 0 and
-               ('forbidden C object %s ' % expected) in result.stderr,
-               '%s object evaded the lexical scan' % label, result)
-
-
-    def object_macro_mutation(directory, label, source, expected):
-        path = fresh(directory, label + '.c')
-        path.write_text(path.read_text(encoding='utf-8') + '\n' + source,
-                        encoding='utf-8')
-        result = invoke(path, '--check', '--target', 'direct')
-        expect(result.returncode != 0 and
-               ('object-generating macro %s ' % expected) in result.stderr,
-               '%s object macro evaded the lexical scan' % label, result)
+    body_mutation = mutation('forbidden C body', 'body')
+    object_mutation = mutation('forbidden C object', 'object')
+    object_macro_mutation = mutation('object-generating macro', 'object macro')
 
 
     with tempfile.TemporaryDirectory(prefix='inventory-test-') as temporary:
@@ -19125,9 +19166,7 @@ printf '%s\\n' "$i"; /bin/bash -c f''',
         pathlib.Path(args.out).write_text(json.dumps(report, indent=2) + '\n')
     passed = sum(row['passed'] for row in results)
     print(f'function-storage {passed} of {len(results)}')
-    if os.environ.get('TEST_TALLY'):
-        with open(os.environ['TEST_TALLY'], 'a') as tally:
-            tally.write(f'function-storage {passed} {len(results)}\n')
+    write_tally('function-storage', passed, len(results))
     if not args.observe:
         assert passed == len(results)
     return 0
@@ -19318,9 +19357,7 @@ call-frame lifetime are covered separately by harness shell_functions.
                     'and function-call reference routing are validated separately with real shells.')
     (out / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(f"function-storage-sanitizer {result['checks']} of {result['checks']}")
-    if os.environ.get('TEST_TALLY'):
-        with open(os.environ['TEST_TALLY'], 'a') as tally:
-            tally.write(f"function-storage-sanitizer {result['checks']} {result['checks']}\n")
+    write_tally('function-storage-sanitizer', result['checks'], result['checks'])
     return 0
 
 
@@ -19587,31 +19624,8 @@ int main(void) {
 }
 '''
 
-    def run(out):
-        out.mkdir(parents=True, exist_ok=True)
-        unit = out / "canvas-lifetime.c"
-        unit.write_text(prefix + bodies + runner)
-        binary = out / "canvas-lifetime"
-        command = shlex.split(os.environ.get("CC", "cc")) + [
-            "-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
-            "-Wno-unused-function", "-fsanitize=address,undefined", str(unit), "-o", str(binary)]
-        subprocess.run(command, check=True)
-        result = subprocess.run([str(binary)], text=True, capture_output=True)
-        (out / "result.json").write_text(json.dumps(dict(source_root=str(args.source_root),
-            spans=spans, command=command, returncode=result.returncode,
-            stdout=result.stdout, stderr=result.stderr), indent=2) + "\n")
-        tally = re.search(r"canvas-lifetime (\d+)/(\d+)", result.stdout)
-        if tally and os.environ.get("TEST_TALLY"):
-            with open(os.environ["TEST_TALLY"], "a") as stream:
-                stream.write("canvas-lifetime " + " ".join(tally.groups()) + "\n")
-        print(result.stdout, end="")
-        print(result.stderr, end="", file=sys.stderr)
-        return result.returncode
-
-    if args.output:
-        return run(args.output.resolve())
-    with tempfile.TemporaryDirectory(prefix="canvas-lifetime-") as work:
-        return run(Path(work))
+    return run_sanitized("canvas-lifetime", prefix + bodies + runner, args.output,
+                         dict(source_root=str(args.source_root), spans=spans))
 
 
 def harness_canvas_view(argv):
@@ -19851,29 +19865,7 @@ int main(void)
 }
 '''
 
-    def run(out):
-        out.mkdir(parents=True, exist_ok=True)
-        unit = out / "canvas-view.c"
-        unit.write_text(prefix + section + runner)
-        binary = out / "canvas-view"
-        command = shlex.split(os.environ.get("CC", "cc")) + [
-            "-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
-            "-Wno-unused-function", "-fsanitize=address,undefined",
-            str(unit), "-o", str(binary)]
-        subprocess.run(command, check=True)
-        result = subprocess.run([str(binary)], text=True, capture_output=True)
-        tally = re.search(r"canvas-view (\d+)/(\d+)", result.stdout)
-        if tally and os.environ.get("TEST_TALLY"):
-            with open(os.environ["TEST_TALLY"], "a") as stream:
-                stream.write("canvas-view " + " ".join(tally.groups()) + "\n")
-        print(result.stdout, end="")
-        print(result.stderr, end="", file=sys.stderr)
-        return result.returncode
-
-    if args.output:
-        return run(args.output.resolve())
-    with tempfile.TemporaryDirectory(prefix="canvas-view-") as work:
-        return run(Path(work))
+    return run_sanitized("canvas-view", prefix + section + runner, args.output)
 
 
 
@@ -19900,14 +19892,7 @@ def harness_floodlight(argv):
 
     FILE = ROOT / 'src' / 'floodlight.c'
     IDENTIFIER = re.compile(r'^[A-Za-z_]\w*$')
-    checks = failures = 0
-
-    def check(ok, what):
-        nonlocal checks, failures
-        checks += 1
-        if not ok:
-            failures += 1
-            print('  FAIL ' + what)
+    check = Checks()
 
     def bodies(path):
         """Top-level function bodies, and every name inside each."""
@@ -22664,21 +22649,17 @@ static b32 reader_tool_launch(char **arguments, bool final)
         (work_path / 'toggle').symlink_to('allowed')
         for executable in ('tool', 'allowed'):
             (work_path / executable).chmod(0o755)
-        unit = Path(work) / 'run.c'
-        unit.write_text(mock + runnable + bridge + reader_mock + descriptor +
-                        reader + decision + round_trip + driver)
-        binary = Path(work) / 'run'
-        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
-                       ['-std=gnu11', '-O1', '-g', '-w',
-                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
-                       check=True)
+        binary, _ = build_c(Path(work) / 'run.c',
+                            mock + runnable + bridge + reader_mock + descriptor +
+                            reader + decision + round_trip + driver,
+                            ('-std=gnu11', '-O1', '-g', '-w'))
         ran = subprocess.run([str(binary)], cwd=work, text=True,
                              capture_output=True)
         tally = re.search(r'(\d+)/(\d+)\s*$', ran.stdout.strip())
         passed = tally and tally.group(1) == tally.group(2)
-        checks += int(tally.group(2)) - 1 if tally else 0
+        check.checks += int(tally.group(2)) - 1 if tally else 0
         if not passed:
-            failures += int(tally.group(2)) - int(tally.group(1)) if tally else 1
+            check.failures += int(tally.group(2)) - int(tally.group(1)) if tally else 1
             for line in ran.stdout.splitlines():
                 if line.strip().startswith('FAIL'):
                     print('  ' + line.strip())
@@ -22720,13 +22701,8 @@ int main(void)
 }
 '''
     with tempfile.TemporaryDirectory(prefix='floodlight-seal-') as work:
-        unit = Path(work) / 'seal.c'
-        unit.write_text(seal_program)
-        binary = Path(work) / 'seal'
-        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
-                       ['-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
-                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
-                       check=True)
+        binary, _ = build_c(Path(work) / 'seal.c', seal_program,
+                            ('-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror'))
         ran = subprocess.run([str(binary)], text=True, capture_output=True)
         check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
               'the seal notices every single-bit change to a row: ' +
@@ -22779,22 +22755,13 @@ int main(void)
 '''
 
     with tempfile.TemporaryDirectory(prefix='floodlight-') as work:
-        unit = Path(work) / 'plain.c'
-        unit.write_text(program)
-        binary = Path(work) / 'plain'
-        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
-                       ['-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
-                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
-                       check=True)
+        binary, _ = build_c(Path(work) / 'plain.c', program,
+                            ('-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror'))
         ran = subprocess.run([str(binary)], text=True, capture_output=True)
         check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
               'plain() accepts exactly the safe bytes: ' + ran.stdout.strip().replace(chr(10), '; '))
 
-    print('floodlight %d/%d' % (checks - failures, checks))
-    if os.environ.get("TEST_TALLY"):
-        with open(os.environ["TEST_TALLY"], "a") as tally:
-            tally.write("floodlight %d %d\n" % (checks - failures, checks))
-    return 1 if failures else 0
+    return check.verdict('floodlight', 'floodlight')
 
 
 def harness_image_nodes(argv):
@@ -22818,14 +22785,7 @@ def harness_image_nodes(argv):
     free, and this is the bill.
     """
     ROOT = HARNESS_ROOT
-    checks = failures = 0
-
-    def check(ok, what):
-        nonlocal checks, failures
-        checks += 1
-        if not ok:
-            failures += 1
-            print('  FAIL ' + what)
+    check = Checks()
 
     build = (ROOT / 'src/build/build.c').read_text()
     spark = (ROOT / 'src/spark.c').read_text()
@@ -22963,11 +22923,7 @@ def harness_image_nodes(argv):
               '%s spells a bowl root out for itself instead of asking bowl'
               % path.relative_to(ROOT))
 
-    print('image nodes %d/%d' % (checks - failures, checks))
-    if os.environ.get("TEST_TALLY"):
-        with open(os.environ["TEST_TALLY"], "a") as tally:
-            tally.write("image_nodes %d %d\n" % (checks - failures, checks))
-    return 1 if failures else 0
+    return check.verdict('image nodes', 'image_nodes')
 
 
 def harness_compression(argv):
