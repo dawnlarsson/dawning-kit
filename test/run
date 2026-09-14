@@ -3705,6 +3705,46 @@ lane_misc()
                 misc_failed=1
         fi
 
+        #       stdbuf, read from inside the program it starts. The misc
+        #       grammar compares the variables stdbuf publishes; this reads
+        #       glibc's own stream state once libstdbuf has run, which is the
+        #       change those variables only promise. GNU runs a static target
+        #       its preload cannot reach; ours refuses one rather than claim a
+        #       mode it never applied.
+        if $compiler -O2 -o "$work/stdio-buffer" -DCHECK_stdio_buffer \
+                test/checks.c > "$work/stdio-buffer.err" 2>&1 &&
+                $compiler -O2 -static -o "$work/stdio-buffer-static" \
+                        -DCHECK_stdio_buffer test/checks.c \
+                        >> "$work/stdio-buffer.err" 2>&1
+        then
+                stdbuf -i0 -oL -e4K "$work/stdio-buffer" > "$work/stdbuf.want" 2>&1
+                "$farm/stdbuf" -i0 -oL -e4K "$work/stdio-buffer" \
+                        > "$work/stdbuf.got" 2>&1
+                if cmp -s "$work/stdbuf.want" "$work/stdbuf.got"; then
+                        tally stdbuf-changes-streams 1 1
+                else
+                        tally stdbuf-changes-streams 0 1
+                        note "stdbuf left the streams at $(cat "$work/stdbuf.got"), GNU at $(cat "$work/stdbuf.want")"
+                        misc_failed=1
+                fi
+
+                "$farm/stdbuf" -o0 "$work/stdio-buffer-static" \
+                        > "$work/stdbuf.static" 2> "$work/stdbuf.static.err"
+                static_status=$?
+                if [ "$static_status" = 125 ] && [ ! -s "$work/stdbuf.static" ] &&
+                        grep -q 'statically linked' "$work/stdbuf.static.err"; then
+                        tally stdbuf-static-refused 1 1
+                else
+                        tally stdbuf-static-refused 0 1
+                        note "stdbuf did not refuse a static target: status $static_status"
+                        misc_failed=1
+                fi
+        else
+                note "stdbuf: the glibc stream probe did not build"
+                sed 's/^/    /' "$work/stdio-buffer.err" | head -10
+                misc_failed=1
+        fi
+
         differential_domain misc "$policy_farm" || misc_failed=1
         return "$misc_failed"
 }
