@@ -23612,15 +23612,19 @@ def harness_compression(argv):
             return wraps[codec](data)
 
         def tree_state(path):
+            # Mode, link count and modification time are restored by an
+            # extraction as much as bytes are, so they are compared too.
             state = {}
             for item in sorted(path.rglob('*')):
                 rel = str(item.relative_to(path))
+                facts = item.lstat()
+                kept = (stat.S_IMODE(facts.st_mode), facts.st_mtime_ns)
                 if item.is_symlink():
-                    state[rel] = ('L', os.readlink(item))
+                    state[rel] = ('L', os.readlink(item), facts.st_mtime_ns)
                 elif item.is_dir():
-                    state[rel] = ('D',)
+                    state[rel] = ('D',) + kept
                 elif item.is_file():
-                    state[rel] = ('F', item.read_bytes())
+                    state[rel] = ('F', item.read_bytes(), facts.st_nlink) + kept
             return state
 
         def extract_pair(label, raw, codec, cell, scratch):
@@ -23655,6 +23659,9 @@ def harness_compression(argv):
              (b'', bytes([1, 0, 0, 2]), b'cap')),
             ('path', (b'from-g.txt', b'a.txt')),
             ('linkpath', (b'target', b'a.txt')),
+            ('mtime', (b'1.5', b'1234567890.123456789', b'-1.25')),
+            ('uid', (b'0', b'4242')),
+            ('gid', (b'0', b'4242')),
         )
         codecs = ('', 'gz', 'xz', 'zst', 'bz2')
         refuse = {
