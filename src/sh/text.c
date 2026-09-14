@@ -13968,6 +13968,33 @@ static b32 text_uniq()
                                 count++;
 
                                 /*
+                                        -D with -u keeps what GNU's loop keeps:
+                                        each line of a group is written when
+                                        the next one proves it repeats, and -u
+                                        takes away the one that closes the
+                                        group. So the line before this one goes
+                                        out now and this one becomes the line
+                                        before, and the last of a group never
+                                        does. Equal compared parts are equal to
+                                        each other, so comparing with the line
+                                        just read groups exactly as comparing
+                                        with the first of the group did.
+                                */
+                                if (all_repeated && unique_only)
+                                {
+                                        if (count == 2 &&
+                                            (gap == UNIQ_GROUP_PREPEND ||
+                                             (gap == UNIQ_GROUP_SEPARATE && shown_group)))
+                                                text_put_character(text_delimiter);
+
+                                        shown_group = true;
+                                        text_put(previous, previous_length + 1);
+                                        previous = line;
+                                        previous_length = line_length;
+                                        continue;
+                                }
+
+                                /*
                                         -D and --group both print every line
                                         of a group rather than one of them, so
                                         the rest of a group goes out as it
