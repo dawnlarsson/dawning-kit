@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import subprocess
 root=Path('artifacts/codec-floor-native');root.mkdir(parents=True,exist_ok=True)
 head=r'''
@@ -51,7 +52,19 @@ int main(void){
 }
 '''
 asm=subprocess.check_output(['python3','test/differential.py','--harness','native_extract','src/library.c','zstd_bits_open','zstd_bits_reload','zstd_sequences_run','memory_copy_match'],text=True)
-macro=next(line for line in Path('src/library.c').read_text().splitlines() if line.startswith('#define ZSTD_SEQ_GET_ARM64'))
+source=Path('src/library.c').read_text().splitlines()
+blocks=[];at=0
+while at<len(source):
+    if source[at].startswith('#define ZSTD_SEQ_ARM64_'):
+        block=[source[at]]
+        while block[-1].endswith('\\'):
+            at+=1;block.append(source[at])
+        blocks.append('\n'.join(block))
+    at+=1
+macro='\n'.join(blocks)
+# The lifted body gets Darwin spellings from native_extract; the macros it
+# uses need the same ones: assembler-local L labels and underscored calls.
+macro=re.sub(r'\b(bl|b) ([a-z_][a-z0-9_]*)\b', r'\1 _\2', macro.replace('.L', 'L'))
 (root/'native-zstd.c').write_text(macro+'\n'+head+asm)
 subprocess.run(['clang','-O2',str(root/'native-zstd.c'),'-o',str(root/'native-zstd')],check=True)
 subprocess.run([str(root/'native-zstd')],check=True)

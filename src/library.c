@@ -11396,8 +11396,8 @@ __asm__(
     "jmp .Lzstd_seq_x64_matchdone\n"
 
     /* Offset codes 0 and 1 name a repeat offset; a zero literal length
-       shifts which one.  Code 0 has no extra bits, so r11 is 0 there and
-       1 + bit for code 1. */
+       shifts which one.  The extra bit of code 1 is the offset value less
+       its cell's base, so a table that fuses 0 or 1 there decodes alike. */
     ".Lzstd_seq_x64_repeat:\n"
     "xor %eax, %eax\n   test %rbp, %rbp\n   sete %al\n"
     "test %r15d, %r15d\n   jnz .Lzstd_seq_x64_rep1\n"
@@ -11406,7 +11406,8 @@ __asm__(
     "mov %r11d, 120(%rsp)\n"
     "jmp .Lzstd_seq_x64_offset\n"
     ".Lzstd_seq_x64_rep1:\n"
-    "add %eax, %r11d\n   cmp $3, %r11d\n   je .Lzstd_seq_x64_rep3\n"
+    "sub 4(%r9), %r11d\n   lea 1(%r11,%rax), %r11d\n"
+    "cmp $3, %r11d\n   je .Lzstd_seq_x64_rep3\n"
     "mov 120(%rsp,%r11,4), %edx\n"
     "cmp $1, %r11d\n   je .Lzstd_seq_x64_rep1keep\n"
     "mov 124(%rsp), %eax\n   mov %eax, 128(%rsp)\n"
@@ -19344,167 +19345,240 @@ __asm__(
     ASM_RET
     ASM_END(zstd_huffman_4x)
 
-    /* See the x86_64 body. last/limit stay in callee-saved registers. */
-#define ZSTD_SEQ_GET_ARM64 "mov w3, w0\n   lsl x1, x23, x21\n   neg w2, w0\n   lsr x1, x1, x2\n   cmp w21, #64\n   csel x1, x1, xzr, lo\n   add w21, w21, w3\n   cmp w3, #0\n   csel x0, x1, xzr, ne\n"
+    /* See the x86_64 body for the design.  Here everything is a register:
+       x19 the bit container shifted left by what is consumed (w20), x21
+       the stream pointer, x22/x23/x24 the literal-length/offset/match
+       cells, x25 output, x26 literals, x27 job, x28 sequences left, x3
+       window, x4 literal end, x5 output end, x6 largest offset, x7/x8/x9
+       the three cell tables, w10-w12 rep, x13/x14/x15 literal length,
+       match length and offset, x16 offset extra bits.  LSLV and LSRV take
+       the count mod 64, so a read of n bits is lsl by n and lsr by ~n on a
+       copy shifted one right.  Sixteen bytes are one ldp/stp pair.  The
+       frame holds the callee-saved pairs, the 48-byte bitstream state at
+       96 and x3-x16 while a library copy or refill is called. */
+#define ZSTD_SEQ_ARM64_READ \
+    "mov x0, x19\n   add w20, w20, w1\n   lsl x19, x19, x1\n" \
+    "mvn w1, w1\n   lsr x0, x0, #1\n   lsr x0, x0, x1\n"
+#define ZSTD_SEQ_ARM64_SPILL \
+    "stp x3, x4, [sp, #144]\n   stp x5, x6, [sp, #160]\n" \
+    "stp x7, x8, [sp, #176]\n   stp x9, x10, [sp, #192]\n" \
+    "stp x11, x12, [sp, #208]\n   stp x13, x14, [sp, #224]\n" \
+    "stp x15, x16, [sp, #240]\n"
+#define ZSTD_SEQ_ARM64_UNSPILL \
+    "ldp x3, x4, [sp, #144]\n   ldp x5, x6, [sp, #160]\n" \
+    "ldp x7, x8, [sp, #176]\n   ldp x9, x10, [sp, #192]\n" \
+    "ldp x11, x12, [sp, #208]\n   ldp x13, x14, [sp, #224]\n" \
+    "ldp x15, x16, [sp, #240]\n"
+#define ZSTD_SEQ_ARM64_RELOAD(tag) \
+    "cmp w20, #64\n   b.hi .Lzstd_seq_arm64_fail\n" \
+    "ldr x0, [sp, #128]\n   cmp x21, x0\n   b.lo .Lzstd_seq_arm64_slow" tag "\n" \
+    "lsr w0, w20, #3\n   sub x21, x21, x0\n   and w20, w20, #7\n" \
+    "ldr x19, [x21]\n   str x19, [sp, #96]\n   lsl x19, x19, x20\n"
+#define ZSTD_SEQ_ARM64_SLOW(tag, back) \
+    ".Lzstd_seq_arm64_slow" tag ":\n" \
+    "str x20, [sp, #104]\n   str x21, [sp, #112]\n" \
+    ZSTD_SEQ_ARM64_SPILL \
+    "add x0, sp, #96\n   bl zstd_bits_reload\n" \
+    ZSTD_SEQ_ARM64_UNSPILL \
+    "cbnz x0, .Lzstd_seq_arm64_fail\n" \
+    "ldr x19, [sp, #96]\n   ldr x20, [sp, #104]\n   ldr x21, [sp, #112]\n" \
+    "lsl x19, x19, x20\n" \
+    "b " back "\n"
+
     ASM_FUNC(zstd_sequences_run)
-    "stp x19, x20, [sp, #-272]!\n   stp x21, x22, [sp, #16]\n"
-    "stp x23, x24, [sp, #32]\n   stp x25, x26, [sp, #48]\n"
-    "stp x27, x28, [sp, #64]\n   str x30, [sp, #80]\n"
+    "stp x29, x30, [sp, #-256]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "stp x27, x28, [sp, #80]\n"
     "mov x27, x0\n"
-    "ldr x19, [x0]\n   str x19, [sp, #88]\n"
-    "ldr x2, [x0, #8]\n   add x19, x19, x2\n"
-    "ldr x2, [x0, #16]\n   str x2, [sp, #96]\n"
-    "ldr x20, [x0, #24]\n   ldr x2, [x0, #32]\n   add x2, x20, x2\n"
-    "str x2, [sp, #104]\n"
-    "ldr x2, [x0, #56]\n   str x2, [sp, #112]\n"
-    "ldr x2, [x0, #64]\n   str x2, [sp, #120]\n"
-    "ldr x2, [x0, #72]\n   str x2, [sp, #128]\n"
-    "ldr x2, [x0, #80]\n   str x2, [sp, #136]\n"
-    "ldr x2, [x0, #88]\n   str x2, [sp, #144]\n"
-    "ldr x2, [x0, #96]\n   str x2, [sp, #208]\n"
-    "ldr x1, [x0, #40]\n   ldr x2, [x0, #48]\n"
+    "ldr x0, [x27, #80]\n   ldp w10, w11, [x0]\n   ldr w12, [x0, #8]\n"
+    "ldr x1, [x27, #40]\n   ldr x2, [x27, #48]\n"
     "cbz x2, .Lzstd_seq_arm64_fail\n"
-    "add x0, sp, #224\n   bl zstd_bits_open\n"
+    "add x0, sp, #96\n   bl zstd_bits_open\n"
     "cbnz x0, .Lzstd_seq_arm64_fail\n"
-    "ldr x23, [sp, #224]\n   ldr x21, [sp, #232]\n   ldr x22, [sp, #240]\n"
-    "ldr x28, [sp, #256]\n"
-    ".Lzstd_seq_arm64_init:\n"
-    "ldr x0, [sp, #112]\n   ldrb w0, [x0]\n   " ZSTD_SEQ_GET_ARM64 ""
-    "str w0, [sp, #152]\n"
-    "ldr x0, [sp, #120]\n   ldrb w0, [x0]\n   " ZSTD_SEQ_GET_ARM64 ""
-    "str w0, [sp, #156]\n"
-    "ldr x0, [sp, #128]\n   ldrb w0, [x0]\n   " ZSTD_SEQ_GET_ARM64 ""
-    "str w0, [sp, #160]\n"
-    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
+    "ldr x0, [x27, #80]\n   ldp w10, w11, [x0]\n   ldr w12, [x0, #8]\n"
+    "ldr x3, [x27]\n   ldr x25, [x27, #8]\n   add x25, x25, x3\n"
+    "ldr x6, [x27, #16]\n   mov x0, #-1\n   cmp x6, #0\n   csel x6, x6, x0, ne\n"
+    "ldr x26, [x27, #24]\n   ldr x4, [x27, #32]\n   add x4, x4, x26\n"
+    "ldr x5, [x27, #96]\n   ldr x28, [x27, #88]\n"
+    "ldr x7, [x27, #56]\n   add x7, x7, #8\n"
+    "ldr x8, [x27, #64]\n   add x8, x8, #8\n"
+    "ldr x9, [x27, #72]\n   add x9, x9, #8\n"
+    "ldr x19, [sp, #96]\n   ldr x20, [sp, #104]\n   ldr x21, [sp, #112]\n"
+    "lsl x19, x19, x20\n"
+    /* Initial states in stream order: literal length, offset, match. */
+    "ldrb w1, [x7, #-8]\n"
+    ZSTD_SEQ_ARM64_READ
+    "add x22, x7, x0, lsl #3\n"
+    "ldrb w1, [x8, #-8]\n"
+    ZSTD_SEQ_ARM64_READ
+    "add x23, x8, x0, lsl #3\n"
+    "ldrb w1, [x9, #-8]\n"
+    ZSTD_SEQ_ARM64_READ
+    "add x24, x9, x0, lsl #3\n"
+    ".balign 32\n"
     ".Lzstd_seq_arm64_loop:\n"
-    "ldr x0, [sp, #120]\n   ldr w1, [sp, #156]\n   add x0, x0, x1, lsl #3\n"
-    "ldrb w10, [x0, #10]\n   ldr w4, [x0, #12]\n   str w4, [sp, #188]\n"
-    "mov w0, w10\n   " ZSTD_SEQ_GET_ARM64 "   mov x11, x0\n"
-    "cmp w21, #32\n   b.ls .Lzstd_seq_arm64_more\n"
-    "stp x10, x11, [sp, #168]\n"
-    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
-    "ldp x10, x11, [sp, #168]\n"
-    ".Lzstd_seq_arm64_more:\n"
-    "ldr x0, [sp, #128]\n   ldr w1, [sp, #160]\n   add x0, x0, x1, lsl #3\n"
-    "ldrb w9, [x0, #10]\n   ldr w4, [x0, #12]\n   str w4, [sp, #192]\n"
-    "mov w0, w9\n   " ZSTD_SEQ_GET_ARM64 "   mov x12, x0\n"
-    "ldr x0, [sp, #112]\n   ldr w1, [sp, #152]\n   add x0, x0, x1, lsl #3\n"
-    "ldrb w1, [x0, #10]\n   ldr w8, [x0, #12]\n"
-    "str w8, [sp, #196]\n   mov w0, w1\n   " ZSTD_SEQ_GET_ARM64 ""
-    "ldr w8, [sp, #196]\n   add w8, w8, w0\n"
-    "ldr w9, [sp, #192]\n   add w9, w9, w12\n"
-    "cmp w21, #32\n   b.ls .Lzstd_seq_arm64_offgo\n"
-    "stp x8, x9, [sp, #168]\n   stp x10, x11, [sp, #184]\n"
-    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
-    "ldp x8, x9, [sp, #168]\n   ldp x10, x11, [sp, #184]\n"
-    ".Lzstd_seq_arm64_offgo:\n"
-    "mov w0, w10\n   mov x1, x11\n   mov w2, w8\n"
-    "ldr x3, [sp, #136]\n   bl .Lzstd_seq_arm64_offset\n"
-    "cbz x0, .Lzstd_seq_arm64_fail\n"
-    "str x0, [sp, #168]\n   str x9, [sp, #176]\n"
-    "add x1, x20, x8\n   ldr x2, [sp, #104]\n   cmp x1, x2\n"
-    "b.hi .Lzstd_seq_arm64_fail\n"
-    "ldr x2, [sp, #208]\n   cmp x19, x2\n   b.hi .Lzstd_seq_arm64_fail\n"
-    "sub x2, x2, x19\n   cmp x8, x2\n   b.hi .Lzstd_seq_arm64_fail\n"
-    "cbz x8, .Lzstd_seq_arm64_match\n"
-    "mov x0, x19\n   mov x1, x20\n   mov x2, x8\n"
-    "add x19, x19, x8\n   add x20, x20, x8\n"
+    ZSTD_SEQ_ARM64_RELOAD("T")
+    ".Lzstd_seq_arm64_ready:\n"
+    "ldrb w16, [x23, #2]\n   mov w1, w16\n"
+    ZSTD_SEQ_ARM64_READ
+    "ldr w15, [x23, #4]\n   add x15, x15, x0\n"
+    "ldrb w1, [x24, #2]\n"
+    ZSTD_SEQ_ARM64_READ
+    "ldr w14, [x24, #4]\n   add x14, x14, x0\n"
+    "cmp w20, #48\n   b.hi .Lzstd_seq_arm64_refillA\n"
+    ".Lzstd_seq_arm64_litlen:\n"
+    "ldrb w1, [x22, #2]\n"
+    ZSTD_SEQ_ARM64_READ
+    "ldr w13, [x22, #4]\n   add x13, x13, x0\n"
+    "cmp w16, #1\n   b.ls .Lzstd_seq_arm64_repeat\n"
+    "mov w12, w11\n   mov w11, w10\n   mov w10, w15\n"
+    ".Lzstd_seq_arm64_offset:\n"
+    "subs x28, x28, #1\n   b.eq .Lzstd_seq_arm64_exec\n"
+    "cmp w20, #38\n   b.hi .Lzstd_seq_arm64_refillB\n"
+    ".Lzstd_seq_arm64_update:\n"
+    "ldrb w1, [x22, #3]\n"
+    ZSTD_SEQ_ARM64_READ
+    "ldrh w2, [x22]\n   add x2, x2, x0\n   add x22, x7, x2, lsl #3\n"
+    "ldrb w1, [x24, #3]\n"
+    ZSTD_SEQ_ARM64_READ
+    "ldrh w2, [x24]\n   add x2, x2, x0\n   add x24, x9, x2, lsl #3\n"
+    "ldrb w1, [x23, #3]\n"
+    ZSTD_SEQ_ARM64_READ
+    "ldrh w2, [x23]\n   add x2, x2, x0\n   add x23, x8, x2, lsl #3\n"
+    ".Lzstd_seq_arm64_exec:\n"
+    "add x0, x26, x13\n   cmp x0, x4\n   b.hi .Lzstd_seq_arm64_fail\n"
+    "add x1, x13, x14\n   add x1, x1, x25\n"
+    "cmp x1, x5\n   b.hi .Lzstd_seq_arm64_fail\n"
+    "add x2, x25, x13\n   sub x2, x2, x3\n"
+    "cmp x2, x6\n   csel x2, x2, x6, ls\n"
+    "cmp x2, x15\n   b.lo .Lzstd_seq_arm64_fail\n"
+    "add x1, x1, #16\n   cmp x1, x5\n   b.hi .Lzstd_seq_arm64_exact\n"
+    "ldp x0, x1, [x26]\n   stp x0, x1, [x25]\n"
+    "cmp x13, #16\n   b.hi .Lzstd_seq_arm64_litlong\n"
+    ".Lzstd_seq_arm64_litdone:\n"
+    "add x25, x25, x13\n   add x26, x26, x13\n"
+    "sub x2, x25, x15\n"
+    "cmp x15, #16\n   b.lo .Lzstd_seq_arm64_near\n"
+    "ldp x0, x1, [x2]\n   stp x0, x1, [x25]\n"
+    "cmp x14, #16\n   b.hi .Lzstd_seq_arm64_matchlong\n"
+    ".Lzstd_seq_arm64_matchdone:\n"
+    "add x25, x25, x14\n"
+    "cbnz x28, .Lzstd_seq_arm64_loop\n"
+    "b .Lzstd_seq_arm64_rest\n"
+
+    ".Lzstd_seq_arm64_litlong:\n"
+    "cmp x13, #64\n   b.hi .Lzstd_seq_arm64_litbig\n"
+    "add x1, x26, #16\n   add x2, x25, #16\n   add x0, x25, x13\n"
+    ".Lzstd_seq_arm64_litloop:\n"
+    "ldp x16, x17, [x1], #16\n   stp x16, x17, [x2], #16\n"
+    "cmp x2, x0\n   b.lo .Lzstd_seq_arm64_litloop\n"
+    "b .Lzstd_seq_arm64_litdone\n"
+    ".Lzstd_seq_arm64_litbig:\n"
+    ZSTD_SEQ_ARM64_SPILL
+    "mov x0, x25\n   mov x1, x26\n   mov x2, x13\n"
     "bl memory_copy_apart\n"
-    ".Lzstd_seq_arm64_match:\n"
-    "ldr x0, [sp, #168]\n"
-    "ldr x2, [sp, #88]\n   sub x3, x19, x2\n   cmp x0, x3\n"
-    "b.hi .Lzstd_seq_arm64_fail\n"
-    "ldr x2, [sp, #96]\n   cbz x2, .Lzstd_seq_arm64_copy\n"
-    "cmp x0, x2\n   b.hi .Lzstd_seq_arm64_fail\n"
-    ".Lzstd_seq_arm64_copy:\n"
-    "ldr x2, [sp, #176]\n   cbz x2, .Lzstd_seq_arm64_after\n"
-    "ldr x3, [sp, #208]\n   cmp x19, x3\n   b.hi .Lzstd_seq_arm64_fail\n"
-    "sub x3, x3, x19\n   cmp x2, x3\n   b.hi .Lzstd_seq_arm64_fail\n"
-    "ldr x1, [sp, #168]\n   mov x0, x19\n"
-    "sub x3, x19, x1\n   prfm pldl1keep, [x3]\n"
+    ZSTD_SEQ_ARM64_UNSPILL
+    "b .Lzstd_seq_arm64_litdone\n"
+
+    ".Lzstd_seq_arm64_matchlong:\n"
+    "cmp x14, #64\n   b.hi .Lzstd_seq_arm64_callmatch\n"
+    "add x1, x2, #16\n   add x2, x25, #16\n   add x0, x25, x14\n"
+    ".Lzstd_seq_arm64_matchloop:\n"
+    "ldp x16, x17, [x1], #16\n   stp x16, x17, [x2], #16\n"
+    "cmp x2, x0\n   b.lo .Lzstd_seq_arm64_matchloop\n"
+    "b .Lzstd_seq_arm64_matchdone\n"
+
+    /* Offsets 8-15 still leave a whole word between source and copy. */
+    ".Lzstd_seq_arm64_near:\n"
+    "cmp x15, #8\n   b.lo .Lzstd_seq_arm64_callmatch\n"
+    "mov x1, x2\n   mov x2, x25\n   add x0, x25, x14\n"
+    ".Lzstd_seq_arm64_near8:\n"
+    "ldr x16, [x1], #8\n   str x16, [x2], #8\n"
+    "cmp x2, x0\n   b.lo .Lzstd_seq_arm64_near8\n"
+    "b .Lzstd_seq_arm64_matchdone\n"
+    ".Lzstd_seq_arm64_callmatch:\n"
+    ZSTD_SEQ_ARM64_SPILL
+    "mov x0, x25\n   mov x1, x15\n   mov x2, x14\n"
     "bl memory_copy_match\n"
-    "ldr x2, [sp, #176]\n   add x19, x19, x2\n"
-    ".Lzstd_seq_arm64_after:\n"
-    "ldr x0, [sp, #144]\n   sub x0, x0, #1\n   str x0, [sp, #144]\n"
-    "cbz x0, .Lzstd_seq_arm64_rest\n"
-    "ldr x2, [sp, #112]\n"
-    "ldr w1, [sp, #152]\n   add x3, x2, x1, lsl #3\n"
-    "ldrb w0, [x3, #11]\n   " ZSTD_SEQ_GET_ARM64 ""
-    "ldr x2, [sp, #112]\n   ldr w1, [sp, #152]\n   add x3, x2, x1, lsl #3\n"
-    "ldrh w1, [x3, #8]\n   add w0, w1, w0\n   str w0, [sp, #152]\n"
-    "ldr x2, [sp, #128]\n"
-    "ldr w1, [sp, #160]\n   add x3, x2, x1, lsl #3\n"
-    "ldrb w0, [x3, #11]\n   " ZSTD_SEQ_GET_ARM64 ""
-    "ldr x2, [sp, #128]\n   ldr w1, [sp, #160]\n   add x3, x2, x1, lsl #3\n"
-    "ldrh w1, [x3, #8]\n   add w0, w1, w0\n   str w0, [sp, #160]\n"
-    "ldr x2, [sp, #120]\n"
-    "ldr w1, [sp, #156]\n   add x3, x2, x1, lsl #3\n"
-    "ldrb w0, [x3, #11]\n   " ZSTD_SEQ_GET_ARM64 ""
-    "ldr x2, [sp, #120]\n   ldr w1, [sp, #156]\n   add x3, x2, x1, lsl #3\n"
-    "ldrh w1, [x3, #8]\n   add w0, w1, w0\n   str w0, [sp, #156]\n"
-    "cmp w21, #32\n   b.ls .Lzstd_seq_arm64_loop\n"
-    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
-    "b .Lzstd_seq_arm64_loop\n"
+    ZSTD_SEQ_ARM64_UNSPILL
+    "b .Lzstd_seq_arm64_matchdone\n"
+
+    /* Within sixteen bytes of output_end: exact copies only. */
+    ".Lzstd_seq_arm64_exact:\n"
+    ZSTD_SEQ_ARM64_SPILL
+    "cbz x13, .Lzstd_seq_arm64_exactmatch\n"
+    "mov x0, x25\n   mov x1, x26\n   mov x2, x13\n"
+    "bl memory_copy_apart\n"
+    "ldr x13, [sp, #224]\n"
+    "add x25, x25, x13\n   add x26, x26, x13\n"
+    ".Lzstd_seq_arm64_exactmatch:\n"
+    "mov x0, x25\n   ldr x1, [sp, #240]\n   ldr x2, [sp, #232]\n"
+    "bl memory_copy_match\n"
+    ZSTD_SEQ_ARM64_UNSPILL
+    "b .Lzstd_seq_arm64_matchdone\n"
+
+    /* Offset codes 0 and 1 name a repeat offset and a zero literal
+       length shifts which one.  The extra bit of code 1 is the offset
+       value less its cell's base, whether the table fused 0 or 1 there. */
+    ".Lzstd_seq_arm64_repeat:\n"
+    "cbnz w16, .Lzstd_seq_arm64_rep1\n"
+    "cbnz x13, .Lzstd_seq_arm64_rep0\n"
+    "mov w15, w11\n   mov w11, w10\n   mov w10, w15\n"
+    "b .Lzstd_seq_arm64_offset\n"
+    ".Lzstd_seq_arm64_rep0:\n"
+    "mov w15, w10\n   b .Lzstd_seq_arm64_offset\n"
+    ".Lzstd_seq_arm64_rep1:\n"
+    "ldr w0, [x23, #4]\n   sub w15, w15, w0\n   add w15, w15, #1\n"
+    "cmp x13, #0\n   cinc w15, w15, eq\n"
+    "cmp w15, #2\n   b.eq .Lzstd_seq_arm64_rep2\n   b.hi .Lzstd_seq_arm64_rep3\n"
+    "mov w15, w11\n   mov w11, w10\n   mov w10, w15\n"
+    "b .Lzstd_seq_arm64_offset\n"
+    ".Lzstd_seq_arm64_rep2:\n"
+    "mov w15, w12\n   mov w12, w11\n   mov w11, w10\n   mov w10, w15\n"
+    "b .Lzstd_seq_arm64_offset\n"
+    ".Lzstd_seq_arm64_rep3:\n"
+    "subs w15, w10, #1\n   b.eq .Lzstd_seq_arm64_fail\n"
+    "mov w12, w11\n   mov w11, w10\n   mov w10, w15\n"
+    "b .Lzstd_seq_arm64_offset\n"
+
+    ".Lzstd_seq_arm64_refillA:\n"
+    ZSTD_SEQ_ARM64_RELOAD("A")
+    "b .Lzstd_seq_arm64_litlen\n"
+    ".Lzstd_seq_arm64_refillB:\n"
+    ZSTD_SEQ_ARM64_RELOAD("B")
+    "b .Lzstd_seq_arm64_update\n"
+    ZSTD_SEQ_ARM64_SLOW("T", ".Lzstd_seq_arm64_ready")
+    ZSTD_SEQ_ARM64_SLOW("A", ".Lzstd_seq_arm64_litlen")
+    ZSTD_SEQ_ARM64_SLOW("B", ".Lzstd_seq_arm64_update")
+
     ".Lzstd_seq_arm64_rest:\n"
-    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
-    "ldr x2, [sp, #104]\n   subs x2, x2, x20\n"
-    "b.eq .Lzstd_seq_arm64_ok\n   b.lo .Lzstd_seq_arm64_fail\n"
-    "ldr x3, [sp, #208]\n   cmp x19, x3\n   b.hi .Lzstd_seq_arm64_fail\n"
-    "sub x3, x3, x19\n   cmp x2, x3\n   b.hi .Lzstd_seq_arm64_fail\n"
-    "mov x0, x19\n   mov x1, x20\n   add x19, x19, x2\n"
+    "cmp w20, #64\n   b.hi .Lzstd_seq_arm64_fail\n"
+    "ldr x0, [x27, #80]\n   stp w10, w11, [x0]\n   str w12, [x0, #8]\n"
+    "subs x2, x4, x26\n   b.eq .Lzstd_seq_arm64_ok\n"
+    "b.lo .Lzstd_seq_arm64_fail\n"
+    "add x0, x25, x2\n   cmp x0, x5\n   b.hi .Lzstd_seq_arm64_fail\n"
+    "mov x0, x25\n   mov x1, x26\n   add x25, x25, x2\n"
     "bl memory_copy_apart\n"
     ".Lzstd_seq_arm64_ok:\n"
-    "ldr x0, [sp, #88]\n   sub x0, x19, x0\n   str x0, [x27, #8]\n"
+    "ldr x1, [x27]\n   sub x0, x25, x1\n   str x0, [x27, #8]\n"
     "mov x0, xzr\n"
     ".Lzstd_seq_arm64_done:\n"
-    "ldr x30, [sp, #80]\n"
-    "ldp x27, x28, [sp, #64]\n   ldp x25, x26, [sp, #48]\n"
-    "ldp x23, x24, [sp, #32]\n   ldp x21, x22, [sp, #16]\n"
-    "ldp x19, x20, [sp], #272\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x25, x26, [sp, #64]\n"
+    "ldp x27, x28, [sp, #80]\n"
+    "ldp x29, x30, [sp], #256\n"
     ASM_RET
-    ".Lzstd_seq_arm64_fail:\n   mov x0, #-1\n   b .Lzstd_seq_arm64_done\n"
-    ".Lzstd_seq_arm64_reload:\n"
-    "cmp x21, #64\n   b.hi .Lzstd_seq_arm64_rbad\n"
-    "cmp x22, x28\n   b.lo .Lzstd_seq_arm64_rslow\n"
-    "lsr x0, x21, #3\n   sub x22, x22, x0\n   and x21, x21, #7\n"
-    "ldr x23, [x22]\n   mov x0, xzr\n"
-    ASM_RET
-    ".Lzstd_seq_arm64_rslow:\n"
-    "str x23, [sp, #224]\n   str x21, [sp, #232]\n   str x22, [sp, #240]\n"
-    "str x30, [sp, #216]\n"
-    "add x0, sp, #224\n   bl zstd_bits_reload\n"
-    "ldr x30, [sp, #216]\n"
-    "ldr x23, [sp, #224]\n   ldr x21, [sp, #232]\n   ldr x22, [sp, #240]\n"
-    ASM_RET
-    ".Lzstd_seq_arm64_rbad:\n   mov x0, #-1\n"
-    ASM_RET
-    ".Lzstd_seq_arm64_offset:\n"
-    "cbz w0, 1f\n   cmp w0, #1\n   b.eq 2f\n"
-    "mov w4, w0\n   mov x0, #1\n   lsl x0, x0, x4\n"
-    "add x0, x0, x1\n   sub x0, x0, #3\n"
-    "cbz x0, 9f\n"
-    "ldr w4, [x3, #4]\n   str w4, [x3, #8]\n"
-    "ldr w4, [x3]\n   str w4, [x3, #4]\n"
-    "str w0, [x3]\n"
-    ASM_RET
-    "1: cmp w2, #0\n   cset w4, eq\n"
-    "ldr w0, [x3, x4, lsl #2]\n   cbz w0, 9f\n"
-    "cmp w2, #0\n   cset w4, ne\n"
-    "ldr w4, [x3, x4, lsl #2]\n   str w4, [x3, #4]\n"
-    "str w0, [x3]\n"
-    ASM_RET
-    "2: cmp w2, #0\n   cset w4, eq\n   add w4, w4, #1\n   add w4, w4, w1\n"
-    "cmp w4, #3\n   b.eq 3f\n"
-    "ldr w0, [x3, x4, lsl #2]\n   b 4f\n"
-    "3: ldr w0, [x3]\n   sub w0, w0, #1\n"
-    "4: cbz w0, 9f\n   cmp w4, #1\n   b.eq 5f\n"
-    "ldr w1, [x3, #4]\n   str w1, [x3, #8]\n"
-    "5: ldr w1, [x3]\n   str w1, [x3, #4]\n   str w0, [x3]\n"
-    ASM_RET
-    "9: mov x0, xzr\n"
-    ASM_RET
+    ".Lzstd_seq_arm64_fail:\n"
+    "ldr x1, [x27, #80]\n   stp w10, w11, [x1]\n   str w12, [x1, #8]\n"
+    "mov x0, #-1\n   b .Lzstd_seq_arm64_done\n"
     ASM_END(zstd_sequences_run)
-#undef ZSTD_SEQ_GET_ARM64
+
+#undef ZSTD_SEQ_ARM64_READ
+#undef ZSTD_SEQ_ARM64_SPILL
+#undef ZSTD_SEQ_ARM64_UNSPILL
+#undef ZSTD_SEQ_ARM64_RELOAD
+#undef ZSTD_SEQ_ARM64_SLOW
     ASM_FUNC(memory_copy_end)
     "add x3, x0, x2\n   stp x3, x30, [sp,  #-16]!\n"
     "bl memory_copy\n   ldp x0, x30, [sp], #16\n"
@@ -26911,162 +26985,213 @@ __asm__(
     ASM_RET
     ASM_END(zstd_huffman_4x)
 
-    /* See the x86_64 body. */
-#define ZSTD_SEQ_GET_RV "sll t1, s4, s2\n   neg t2, a0\n   srl t1, t1, t2\n   sltiu t2, s2, 64\n   snez t0, a0\n   and t0, t0, t2\n   neg t0, t0\n   add s2, s2, a0\n   and a0, t1, t0\n"
+    /* See the x86_64 body for the design.  Registers: s0 the bit
+       container shifted left by what is consumed (s1), s2 the stream
+       pointer, s3/s4/s5 the literal-length/offset/match cells, s6 output,
+       s7 literals, s8 job, s9 sequences left, s10 offset extra bits, s11
+       the refill limit, a3 literal end, a4 output end, a5 largest offset,
+       a6/a7/t3 the three cell tables, t4-t6 rep, a0/a1/a2 literal length,
+       match length and offset.  SLL and SRL take the count mod 64, so a
+       read of n bits is sll by n and srl by ~n on a copy shifted one
+       right.  RV64I promises no unaligned word access, so a refill shifts
+       the consumed whole bytes into the raw container (kept at 104, the
+       bitstream state zstd_bits_reload takes) one byte load at a time,
+       and copies up to 32 bytes are byte loops, which need no slack and
+       are right for any overlap; longer ones call the library copies. */
+#define ZSTD_SEQ_RV_READ \
+    "mv t0, s0\n   add s1, s1, t1\n   sll s0, s0, t1\n" \
+    "not t1, t1\n   srli t0, t0, 1\n   srl t0, t0, t1\n"
+#define ZSTD_SEQ_RV_SPILL \
+    "sd a0, 160(sp)\n   sd a1, 168(sp)\n   sd a2, 176(sp)\n   sd a3, 184(sp)\n" \
+    "sd a4, 192(sp)\n   sd a5, 200(sp)\n   sd a6, 208(sp)\n   sd a7, 216(sp)\n" \
+    "sd t3, 224(sp)\n   sd t4, 232(sp)\n   sd t5, 240(sp)\n   sd t6, 248(sp)\n"
+#define ZSTD_SEQ_RV_UNSPILL \
+    "ld a0, 160(sp)\n   ld a1, 168(sp)\n   ld a2, 176(sp)\n   ld a3, 184(sp)\n" \
+    "ld a4, 192(sp)\n   ld a5, 200(sp)\n   ld a6, 208(sp)\n   ld a7, 216(sp)\n" \
+    "ld t3, 224(sp)\n   ld t4, 232(sp)\n   ld t5, 240(sp)\n   ld t6, 248(sp)\n"
+#define ZSTD_SEQ_RV_RELOAD(tag) \
+    "li t0, 64\n   bltu t0, s1, .Lzstd_seq_rv_fail\n" \
+    "srli t0, s1, 3\n   beqz t0, .Lzstd_seq_rv_have" tag "\n" \
+    "bltu s2, s11, .Lzstd_seq_rv_slow" tag "\n" \
+    "ld t2, 104(sp)\n   mv t1, s2\n   sub s2, s2, t0\n   andi s1, s1, 7\n" \
+    ".Lzstd_seq_rv_byte" tag ":\n" \
+    "addi t1, t1, -1\n   lbu t0, 0(t1)\n   slli t2, t2, 8\n   or t2, t2, t0\n" \
+    "bltu s2, t1, .Lzstd_seq_rv_byte" tag "\n" \
+    "sd t2, 104(sp)\n   sll s0, t2, s1\n" \
+    ".Lzstd_seq_rv_have" tag ":\n"
+#define ZSTD_SEQ_RV_SLOW(tag, back) \
+    ".Lzstd_seq_rv_slow" tag ":\n" \
+    "sd s1, 112(sp)\n   sd s2, 120(sp)\n" \
+    ZSTD_SEQ_RV_SPILL \
+    "addi a0, sp, 104\n   jal zstd_bits_reload\n   mv t0, a0\n" \
+    ZSTD_SEQ_RV_UNSPILL \
+    "bnez t0, .Lzstd_seq_rv_fail\n" \
+    "ld s0, 104(sp)\n   ld s1, 112(sp)\n   ld s2, 120(sp)\n" \
+    "sll s0, s0, s1\n" \
+    "j " back "\n"
+
     ASM_FUNC(zstd_sequences_run)
-    "addi sp, sp, -304\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
+    "addi sp, sp, -256\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
     "sd s2, 24(sp)\n   sd s3, 32(sp)\n   sd s4, 40(sp)\n   sd s5, 48(sp)\n"
     "sd s6, 56(sp)\n   sd s7, 64(sp)\n   sd s8, 72(sp)\n   sd s9, 80(sp)\n"
     "sd s10, 88(sp)\n   sd s11, 96(sp)\n"
     "mv s8, a0\n"
-    "ld s9, 0(a0)\n   sd s9, 112(sp)\n"
-    "ld t0, 8(a0)\n   add s0, s9, t0\n"
-    "ld t0, 16(a0)\n   sd t0, 120(sp)\n"
-    "ld s1, 24(a0)\n   ld t0, 32(a0)\n   add t0, s1, t0\n   sd t0, 128(sp)\n"
-    "ld t0, 56(a0)\n   sd t0, 136(sp)\n"
-    "ld t0, 64(a0)\n   sd t0, 144(sp)\n"
-    "ld t0, 72(a0)\n   sd t0, 152(sp)\n"
-    "ld t0, 80(a0)\n   sd t0, 160(sp)\n"
-    "ld t0, 88(a0)\n   sd t0, 168(sp)\n"
-    "ld t0, 96(a0)\n   sd t0, 232(sp)\n"
-    "ld t0, 40(a0)\n   ld t1, 48(a0)\n"
-    "beqz t1, .Lzstd_seq_rv_fail\n"
-    "addi a0, sp, 256\n   mv a1, t0\n   mv a2, t1\n"
-    "jal zstd_bits_open\n   bnez a0, .Lzstd_seq_rv_fail\n"
-    "ld s4, 256(sp)\n   ld s2, 264(sp)\n   ld s3, 272(sp)\n"
-    "ld s5, 288(sp)\n"
-    ".Lzstd_seq_rv_init:\n"
-    "ld t0, 136(sp)\n   lbu a0, 0(t0)\n   " ZSTD_SEQ_GET_RV "   sw a0, 176(sp)\n"
-    "ld t0, 144(sp)\n   lbu a0, 0(t0)\n   " ZSTD_SEQ_GET_RV "   sw a0, 180(sp)\n"
-    "ld t0, 152(sp)\n   lbu a0, 0(t0)\n   " ZSTD_SEQ_GET_RV "   sw a0, 184(sp)\n"
-    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    "ld t0, 80(s8)\n   lwu t4, 0(t0)\n   lwu t5, 4(t0)\n   lwu t6, 8(t0)\n"
+    "ld a1, 40(s8)\n   ld a2, 48(s8)\n"
+    "beqz a2, .Lzstd_seq_rv_fail\n"
+    "addi a0, sp, 104\n   jal zstd_bits_open\n"
+    "bnez a0, .Lzstd_seq_rv_fail\n"
+    "ld t0, 80(s8)\n   lwu t4, 0(t0)\n   lwu t5, 4(t0)\n   lwu t6, 8(t0)\n"
+    "ld t0, 0(s8)\n   sd t0, 152(sp)\n   ld s6, 8(s8)\n   add s6, s6, t0\n"
+    "ld a5, 16(s8)\n   bnez a5, .Lzstd_seq_rv_sized\n   li a5, -1\n"
+    ".Lzstd_seq_rv_sized:\n"
+    "ld s7, 24(s8)\n   ld a3, 32(s8)\n   add a3, a3, s7\n"
+    "ld a4, 96(s8)\n   ld s9, 88(s8)\n"
+    "ld a6, 56(s8)\n   addi a6, a6, 8\n"
+    "ld a7, 64(s8)\n   addi a7, a7, 8\n"
+    "ld t3, 72(s8)\n   addi t3, t3, 8\n"
+    "ld s0, 104(sp)\n   ld s1, 112(sp)\n   ld s2, 120(sp)\n   ld s11, 136(sp)\n"
+    "sll s0, s0, s1\n"
+    /* Initial states in stream order: literal length, offset, match. */
+    "lbu t1, -8(a6)\n"
+    ZSTD_SEQ_RV_READ
+    "slli t0, t0, 3\n   add s3, a6, t0\n"
+    "lbu t1, -8(a7)\n"
+    ZSTD_SEQ_RV_READ
+    "slli t0, t0, 3\n   add s4, a7, t0\n"
+    "lbu t1, -8(t3)\n"
+    ZSTD_SEQ_RV_READ
+    "slli t0, t0, 3\n   add s5, t3, t0\n"
+    ".balign 16\n"
     ".Lzstd_seq_rv_loop:\n"
-    "ld t0, 144(sp)\n   lwu t1, 180(sp)\n   slli t1, t1, 3\n   add t0, t0, t1\n"
-    "lbu t6, 10(t0)\n   lwu t1, 12(t0)\n   sw t1, 224(sp)\n"
-    "mv a0, t6\n   " ZSTD_SEQ_GET_RV "   mv t5, a0\n"
-    "li t0, 32\n   bgeu t0, s2, .Lzstd_seq_rv_more\n"
-    "sd t6, 192(sp)\n   sd t5, 216(sp)\n   jal .Lzstd_seq_rv_reload\n"
-    "ld t6, 192(sp)\n   ld t5, 216(sp)\n   bnez a0, .Lzstd_seq_rv_fail\n"
-    ".Lzstd_seq_rv_more:\n"
-    "ld t0, 152(sp)\n   lwu t1, 184(sp)\n   slli t1, t1, 3\n   add t0, t0, t1\n"
-    "lbu s11, 10(t0)\n   lwu t1, 12(t0)\n   sw t1, 228(sp)\n"
-    "mv a0, s11\n   " ZSTD_SEQ_GET_RV "   mv t4, a0\n"
-    "ld t0, 136(sp)\n   lwu t1, 176(sp)\n   slli t1, t1, 3\n   add t0, t0, t1\n"
-    "lbu a0, 10(t0)\n   lwu s10, 12(t0)\n"
-    "" ZSTD_SEQ_GET_RV "   add s10, s10, a0\n"
-    "lwu t1, 228(sp)\n   add s11, t1, t4\n"
-    "li t0, 32\n   bgeu t0, s2, .Lzstd_seq_rv_offgo\n"
-    "sd s10, 192(sp)\n   sd s11, 200(sp)\n   sd t6, 208(sp)\n   sd t5, 216(sp)\n"
-    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
-    "ld s10, 192(sp)\n   ld s11, 200(sp)\n   ld t6, 208(sp)\n   ld t5, 216(sp)\n"
-    ".Lzstd_seq_rv_offgo:\n"
-    "mv a0, t6\n   mv a1, t5\n   mv a2, s10\n   ld a3, 160(sp)\n"
-    "jal .Lzstd_seq_rv_offset\n   beqz a0, .Lzstd_seq_rv_fail\n"
-    "sd a0, 192(sp)\n   sd s11, 200(sp)\n"
-    "add t1, s1, s10\n   ld t2, 128(sp)\n   bltu t2, t1, .Lzstd_seq_rv_fail\n"
-    "ld t2, 232(sp)\n   bltu t2, s0, .Lzstd_seq_rv_fail\n"
-    "sub t2, t2, s0\n   bltu t2, s10, .Lzstd_seq_rv_fail\n"
-    "beqz s10, .Lzstd_seq_rv_match\n"
-    "mv a0, s0\n   mv a1, s1\n   mv a2, s10\n"
-    "add s0, s0, s10\n   add s1, s1, s10\n"
+    ZSTD_SEQ_RV_RELOAD("T")
+    ".Lzstd_seq_rv_ready:\n"
+    "lbu s10, 2(s4)\n   mv t1, s10\n"
+    ZSTD_SEQ_RV_READ
+    "lwu a2, 4(s4)\n   add a2, a2, t0\n"
+    "lbu t1, 2(s5)\n"
+    ZSTD_SEQ_RV_READ
+    "lwu a1, 4(s5)\n   add a1, a1, t0\n"
+    "li t0, 48\n   bltu t0, s1, .Lzstd_seq_rv_refillA\n"
+    ".Lzstd_seq_rv_litlen:\n"
+    "lbu t1, 2(s3)\n"
+    ZSTD_SEQ_RV_READ
+    "lwu a0, 4(s3)\n   add a0, a0, t0\n"
+    "li t0, 1\n   bgeu t0, s10, .Lzstd_seq_rv_repeat\n"
+    "mv t6, t5\n   mv t5, t4\n   mv t4, a2\n"
+    ".Lzstd_seq_rv_offset:\n"
+    "addi s9, s9, -1\n   beqz s9, .Lzstd_seq_rv_exec\n"
+    "li t0, 38\n   bltu t0, s1, .Lzstd_seq_rv_refillB\n"
+    ".Lzstd_seq_rv_update:\n"
+    "lbu t1, 3(s3)\n"
+    ZSTD_SEQ_RV_READ
+    "lhu t1, 0(s3)\n   add t1, t1, t0\n   slli t1, t1, 3\n   add s3, a6, t1\n"
+    "lbu t1, 3(s5)\n"
+    ZSTD_SEQ_RV_READ
+    "lhu t1, 0(s5)\n   add t1, t1, t0\n   slli t1, t1, 3\n   add s5, t3, t1\n"
+    "lbu t1, 3(s4)\n"
+    ZSTD_SEQ_RV_READ
+    "lhu t1, 0(s4)\n   add t1, t1, t0\n   slli t1, t1, 3\n   add s4, a7, t1\n"
+    ".Lzstd_seq_rv_exec:\n"
+    "add t0, s7, a0\n   bltu a3, t0, .Lzstd_seq_rv_fail\n"
+    "add t1, a0, a1\n   add t1, t1, s6\n   bltu a4, t1, .Lzstd_seq_rv_fail\n"
+    "add t2, s6, a0\n   ld t0, 152(sp)\n   sub t2, t2, t0\n"
+    "bgeu a5, t2, .Lzstd_seq_rv_history\n   mv t2, a5\n"
+    ".Lzstd_seq_rv_history:\n"
+    "bltu t2, a2, .Lzstd_seq_rv_fail\n"
+    "beqz a0, .Lzstd_seq_rv_litdone\n"
+    "li t0, 32\n   bltu t0, a0, .Lzstd_seq_rv_litbig\n"
+    "mv t1, a0\n"
+    ".Lzstd_seq_rv_litloop:\n"
+    "lbu t0, 0(s7)\n   sb t0, 0(s6)\n   addi s7, s7, 1\n   addi s6, s6, 1\n"
+    "addi t1, t1, -1\n   bnez t1, .Lzstd_seq_rv_litloop\n"
+    ".Lzstd_seq_rv_litdone:\n"
+    "li t0, 32\n   bltu t0, a1, .Lzstd_seq_rv_callmatch\n"
+    "sub t2, s6, a2\n   mv t1, a1\n"
+    ".Lzstd_seq_rv_matchloop:\n"
+    "lbu t0, 0(t2)\n   sb t0, 0(s6)\n   addi t2, t2, 1\n   addi s6, s6, 1\n"
+    "addi t1, t1, -1\n   bnez t1, .Lzstd_seq_rv_matchloop\n"
+    ".Lzstd_seq_rv_matchdone:\n"
+    "bnez s9, .Lzstd_seq_rv_loop\n"
+    "j .Lzstd_seq_rv_rest\n"
+
+    ".Lzstd_seq_rv_litbig:\n"
+    ZSTD_SEQ_RV_SPILL
+    "mv a2, a0\n   mv a0, s6\n   mv a1, s7\n"
     "jal memory_copy_apart\n"
-    ".Lzstd_seq_rv_match:\n"
-    "ld a0, 192(sp)\n"
-    "ld t2, 112(sp)\n   sub t3, s0, t2\n   bltu t3, a0, .Lzstd_seq_rv_fail\n"
-    "ld t2, 120(sp)\n   beqz t2, .Lzstd_seq_rv_copy\n"
-    "bltu t2, a0, .Lzstd_seq_rv_fail\n"
-    ".Lzstd_seq_rv_copy:\n"
-    "ld a2, 200(sp)\n   beqz a2, .Lzstd_seq_rv_after\n"
-    "ld t0, 232(sp)\n   bltu t0, s0, .Lzstd_seq_rv_fail\n"
-    "sub t0, t0, s0\n   bltu t0, a2, .Lzstd_seq_rv_fail\n"
-    "ld a1, 192(sp)\n   mv a0, s0\n"
+    ZSTD_SEQ_RV_UNSPILL
+    "add s6, s6, a0\n   add s7, s7, a0\n"
+    "j .Lzstd_seq_rv_litdone\n"
+    ".Lzstd_seq_rv_callmatch:\n"
+    ZSTD_SEQ_RV_SPILL
+    "mv t0, a2\n   mv a2, a1\n   mv a1, t0\n   mv a0, s6\n"
     "jal memory_copy_match\n"
-    "ld t0, 200(sp)\n   add s0, s0, t0\n"
-    ".Lzstd_seq_rv_after:\n"
-    "ld t0, 168(sp)\n   addi t0, t0, -1\n   sd t0, 168(sp)\n"
-    "beqz t0, .Lzstd_seq_rv_rest\n"
-    "ld t2, 136(sp)\n"
-    "lwu t1, 176(sp)\n   slli t1, t1, 3\n   add t3, t2, t1\n"
-    "lbu a0, 11(t3)\n   " ZSTD_SEQ_GET_RV ""
-    "ld t2, 136(sp)\n   lwu t1, 176(sp)\n   slli t1, t1, 3\n   add t3, t2, t1\n"
-    "lhu t1, 8(t3)\n   add t0, t1, a0\n   sw t0, 176(sp)\n"
-    "ld t2, 152(sp)\n"
-    "lwu t1, 184(sp)\n   slli t1, t1, 3\n   add t3, t2, t1\n"
-    "lbu a0, 11(t3)\n   " ZSTD_SEQ_GET_RV ""
-    "ld t2, 152(sp)\n   lwu t1, 184(sp)\n   slli t1, t1, 3\n   add t3, t2, t1\n"
-    "lhu t1, 8(t3)\n   add t0, t1, a0\n   sw t0, 184(sp)\n"
-    "ld t2, 144(sp)\n"
-    "lwu t1, 180(sp)\n   slli t1, t1, 3\n   add t3, t2, t1\n"
-    "lbu a0, 11(t3)\n   " ZSTD_SEQ_GET_RV ""
-    "ld t2, 144(sp)\n   lwu t1, 180(sp)\n   slli t1, t1, 3\n   add t3, t2, t1\n"
-    "lhu t1, 8(t3)\n   add t0, t1, a0\n   sw t0, 180(sp)\n"
-    "li t0, 32\n   bgeu t0, s2, .Lzstd_seq_rv_loop\n"
-    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
-    "j .Lzstd_seq_rv_loop\n"
+    ZSTD_SEQ_RV_UNSPILL
+    "add s6, s6, a1\n"
+    "j .Lzstd_seq_rv_matchdone\n"
+
+    /* Offset codes 0 and 1 name a repeat offset and a zero literal
+       length shifts which one.  The extra bit of code 1 is the offset
+       value less its cell's base, whether the table fused 0 or 1 there. */
+    ".Lzstd_seq_rv_repeat:\n"
+    "bnez s10, .Lzstd_seq_rv_rep1\n"
+    "bnez a0, .Lzstd_seq_rv_rep0\n"
+    "mv a2, t5\n   mv t5, t4\n   mv t4, a2\n"
+    "j .Lzstd_seq_rv_offset\n"
+    ".Lzstd_seq_rv_rep0:\n"
+    "mv a2, t4\n   j .Lzstd_seq_rv_offset\n"
+    ".Lzstd_seq_rv_rep1:\n"
+    "lwu t0, 4(s4)\n   sub a2, a2, t0\n   addi a2, a2, 1\n"
+    "seqz t0, a0\n   add a2, a2, t0\n"
+    "li t0, 2\n   beq a2, t0, .Lzstd_seq_rv_rep2\n"
+    "bltu t0, a2, .Lzstd_seq_rv_rep3\n"
+    "mv a2, t5\n   mv t5, t4\n   mv t4, a2\n"
+    "j .Lzstd_seq_rv_offset\n"
+    ".Lzstd_seq_rv_rep2:\n"
+    "mv a2, t6\n   mv t6, t5\n   mv t5, t4\n   mv t4, a2\n"
+    "j .Lzstd_seq_rv_offset\n"
+    ".Lzstd_seq_rv_rep3:\n"
+    "addi a2, t4, -1\n   beqz a2, .Lzstd_seq_rv_fail\n"
+    "mv t6, t5\n   mv t5, t4\n   mv t4, a2\n"
+    "j .Lzstd_seq_rv_offset\n"
+
+    ".Lzstd_seq_rv_refillA:\n"
+    ZSTD_SEQ_RV_RELOAD("A")
+    "j .Lzstd_seq_rv_litlen\n"
+    ".Lzstd_seq_rv_refillB:\n"
+    ZSTD_SEQ_RV_RELOAD("B")
+    "j .Lzstd_seq_rv_update\n"
+    ZSTD_SEQ_RV_SLOW("T", ".Lzstd_seq_rv_ready")
+    ZSTD_SEQ_RV_SLOW("A", ".Lzstd_seq_rv_litlen")
+    ZSTD_SEQ_RV_SLOW("B", ".Lzstd_seq_rv_update")
+
     ".Lzstd_seq_rv_rest:\n"
-    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
-    "ld t2, 128(sp)\n   sub t2, t2, s1\n"
-    "beqz t2, .Lzstd_seq_rv_ok\n   bltz t2, .Lzstd_seq_rv_fail\n"
-    "ld t0, 232(sp)\n   bltu t0, s0, .Lzstd_seq_rv_fail\n"
-    "sub t0, t0, s0\n   bltu t0, t2, .Lzstd_seq_rv_fail\n"
-    "mv a0, s0\n   mv a1, s1\n   mv a2, t2\n   add s0, s0, t2\n"
+    "li t0, 64\n   bltu t0, s1, .Lzstd_seq_rv_fail\n"
+    "ld t0, 80(s8)\n   sw t4, 0(t0)\n   sw t5, 4(t0)\n   sw t6, 8(t0)\n"
+    "sub t2, a3, s7\n   beqz t2, .Lzstd_seq_rv_ok\n"
+    "bltu a3, s7, .Lzstd_seq_rv_fail\n"
+    "add t0, s6, t2\n   bltu a4, t0, .Lzstd_seq_rv_fail\n"
+    "mv a0, s6\n   mv a1, s7\n   mv a2, t2\n   add s6, s6, t2\n"
     "jal memory_copy_apart\n"
     ".Lzstd_seq_rv_ok:\n"
-    "ld t0, 112(sp)\n   sub t0, s0, t0\n   sd t0, 8(s8)\n"
+    "ld t0, 0(s8)\n   sub t0, s6, t0\n   sd t0, 8(s8)\n"
     "li a0, 0\n"
     ".Lzstd_seq_rv_done:\n"
     "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
     "ld s3, 32(sp)\n   ld s4, 40(sp)\n   ld s5, 48(sp)\n   ld s6, 56(sp)\n"
     "ld s7, 64(sp)\n   ld s8, 72(sp)\n   ld s9, 80(sp)\n   ld s10, 88(sp)\n"
-    "ld s11, 96(sp)\n   addi sp, sp, 304\n"
+    "ld s11, 96(sp)\n   addi sp, sp, 256\n"
     ASM_RET
-    ".Lzstd_seq_rv_fail:\n   li a0, -1\n   j .Lzstd_seq_rv_done\n"
-    ".Lzstd_seq_rv_reload:\n"
-    "li t0, 64\n   bltu t0, s2, .Lzstd_seq_rv_rbad\n"
-    "bltu s3, s5, .Lzstd_seq_rv_rslow\n"
-    "srli t0, s2, 3\n   sub s3, s3, t0\n   andi s2, s2, 7\n"
-    "andi t0, s3, 7\n   bnez t0, .Lzstd_seq_rv_rget\n"
-    "ld s4, 0(s3)\n   li a0, 0\n"
-    ASM_RET
-    ".Lzstd_seq_rv_rget:\n"
-    "addi sp, sp, -16\n   sd ra, 0(sp)\n   mv a0, s3\n"
-    "jal memory_get64\n   mv s4, a0\n"
-    "ld ra, 0(sp)\n   addi sp, sp, 16\n   li a0, 0\n"
-    ASM_RET
-    ".Lzstd_seq_rv_rslow:\n"
-    "sd s4, 256(sp)\n   sd s2, 264(sp)\n   sd s3, 272(sp)\n"
-    "addi sp, sp, -16\n   sd ra, 0(sp)\n"
-    "addi a0, sp, 272\n   jal zstd_bits_reload\n"
-    "ld ra, 0(sp)\n   addi sp, sp, 16\n"
-    "ld s4, 256(sp)\n   ld s2, 264(sp)\n   ld s3, 272(sp)\n"
-    ASM_RET
-    ".Lzstd_seq_rv_rbad:\n   li a0, -1\n"
-    ASM_RET
-    ".Lzstd_seq_rv_offset:\n"
-    "beqz a0, 1f\n   li t0, 1\n   beq a0, t0, 2f\n"
-    "sll t0, t0, a0\n   add t0, t0, a1\n   addi a0, t0, -3\n"
-    "beqz a0, 9f\n"
-    "lwu t0, 4(a3)\n   sw t0, 8(a3)\n"
-    "lwu t0, 0(a3)\n   sw t0, 4(a3)\n"
-    "sw a0, 0(a3)\n"
-    ASM_RET
-    "1: seqz t0, a2\n   slli t0, t0, 2\n   add t0, a3, t0\n   lwu a0, 0(t0)\n"
-    "beqz a0, 9f\n"
-    "snez t0, a2\n   slli t0, t0, 2\n   add t0, a3, t0\n   lwu t0, 0(t0)\n"
-    "sw t0, 4(a3)\n   sw a0, 0(a3)\n"
-    ASM_RET
-    "2: seqz t0, a2\n   addi t0, t0, 1\n   add t0, t0, a1\n"
-    "li t1, 3\n   beq t0, t1, 3f\n"
-    "slli t1, t0, 2\n   add t1, a3, t1\n   lwu a0, 0(t1)\n   j 4f\n"
-    "3: lwu a0, 0(a3)\n   addi a0, a0, -1\n"
-    "4: beqz a0, 9f\n   li t1, 1\n   beq t0, t1, 5f\n"
-    "lwu t1, 4(a3)\n   sw t1, 8(a3)\n"
-    "5: lwu t1, 0(a3)\n   sw t1, 4(a3)\n   sw a0, 0(a3)\n"
-    ASM_RET
-    "9: li a0, 0\n"
-    ASM_RET
+    ".Lzstd_seq_rv_fail:\n"
+    "ld t0, 80(s8)\n   sw t4, 0(t0)\n   sw t5, 4(t0)\n   sw t6, 8(t0)\n"
+    "li a0, -1\n   j .Lzstd_seq_rv_done\n"
     ASM_END(zstd_sequences_run)
-#undef ZSTD_SEQ_GET_RV
+
+#undef ZSTD_SEQ_RV_READ
+#undef ZSTD_SEQ_RV_SPILL
+#undef ZSTD_SEQ_RV_UNSPILL
+#undef ZSTD_SEQ_RV_RELOAD
+#undef ZSTD_SEQ_RV_SLOW
     // memory_copy_end: exact overlap-aware copy, one terminator, and dst+n.
     // The x86_64 block carries the contract; the only state across the shared
     // core is the end pointer and the caller's return address.
