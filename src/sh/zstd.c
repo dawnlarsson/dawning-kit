@@ -164,43 +164,14 @@ static p32 zstd_get32(p8 address_to p)
                ((p32)p[3] << 24);
 }
 
+/* The highest set bit's index; zero for zero, which FSE's empty weights use.
+   Once per sequence: the compiler's inline count where the ISA has one. */
 static p8 zstd_highbit32(p32 value)
 {
-        p32 bit = 0;
-
-        if (!value)
-                return 0;
-#if X64
-        __asm__("bsr %1, %0" : "=r"(bit) : "r"(value));
-        return (p8)bit;
-#elif ARM64
-        __asm__("clz %w0, %w1" : "=r"(bit) : "r"(value));
-        return (p8)(31 - bit);
+#if X64 || ARM64
+        return value ? (p8)(31 - __builtin_clz(value)) : 0;
 #else
-        if (value >= 0x10000u)
-        {
-                bit += 16;
-                value >>= 16;
-        }
-        if (value >= 0x100u)
-        {
-                bit += 8;
-                value >>= 8;
-        }
-        if (value >= 0x10u)
-        {
-                bit += 4;
-                value >>= 4;
-        }
-        if (value >= 4u)
-        {
-                bit += 2;
-                value >>= 2;
-        }
-        if (value >= 2u)
-                bit += 1;
-
-        return (p8)bit;
+        return value ? (p8)(63 - bits_leading_zeros(value)) : 0;
 #endif
 }
 

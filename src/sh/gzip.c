@@ -977,16 +977,7 @@ static positive gzip_distance_code(positive dist)
         if (dist <= 4)
                 return dist - 1;
         positive v = dist - 1;
-#if X64 || ARM64
-        positive hb = 63 - __builtin_clzll(v);
-#else
-        positive t = v;
-        positive hb = 0;
-        if (t >= 256) hb += 8, t >>= 8;
-        if (t >= 16) hb += 4, t >>= 4;
-        if (t >= 4) hb += 2, t >>= 2;
-        if (t >= 2) hb++;
-#endif
+        positive hb = 63 - bits_leading_zeros(v);
         return (hb << 1) + ((v >> (hb - 1)) & 1);
 }
 
