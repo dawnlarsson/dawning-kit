@@ -653,7 +653,7 @@ static COLD bipolar system_open_parent_walk(
                         system_close(held);
                         return -22;
                 }
-                positive length = string_span_without_set(path, "/");
+                positive length = string_span_without_set(path, (string_address)"/");
                 if (length >= component_room)
                 {
                         system_close(held);
@@ -1964,7 +1964,7 @@ static fn writer_fill_bulk(writer output, positive count, p8 byte)
 static fn writer_field_bulk(writer output, address_any data, positive length,
                              positive width, p8 pad, bool left)
 {
-        positive padding = width > length ? width - length : 0;
+        positive padding = difference_or_zero(width, length);
         if (!left)
                 writer_fill_bulk(output, padding, pad);
         if (length)
@@ -2029,7 +2029,7 @@ static inline fixed_decimal fixed_decimal_prepare(
                 field.zeroes = precision - scale;
         }
         positive length = field.length + field.zeroes;
-        field.padding = width > length ? width - length : 0;
+        field.padding = difference_or_zero(width, length);
         return field;
 }
 
@@ -2135,26 +2135,29 @@ enum {
 };
 
 /* Long ordinary spans stay zero-copy; replacements cross the writer in bounded
-   batches, not one callback per escaped byte. Policy 64 is JSON's spelling. */
+   batches, not one callback per escaped byte. Policy 64 is JSON's spelling.
+   limit clips the emitted bytes, a partial final escape included. */
 static fn writer_escaped_bulk(writer output, address_any data, positive length,
-                             p8 policy)
+                             p8 policy, positive limit)
 {
         p8 address_to bytes = data;
-        while (length)
+        while (length && limit)
         {
-                positive plain = memory_escape_index(bytes, length, policy);
-                if (plain)
-                        output(bytes, plain);
-                bytes += plain;
-                length -= plain;
-                if (!length)
-                        break;
                 p8 escaped[256];
-                positive2 chunk = memory_into_escaped(escaped, bytes, length,
-                                                       sizeof(escaped), policy | 128);
-                output(escaped, chunk.y);
+                address_any from = bytes;
+                positive plain = memory_escape_index(bytes, length, policy);
+                positive2 chunk = {.x = plain, .y = plain};
+                if (!plain)
+                {
+                        chunk = memory_into_escaped(escaped, bytes, length,
+                                                    sizeof(escaped), policy | 128);
+                        from = escaped;
+                }
+                positive kept = min(chunk.y, limit);
+                output(from, kept);
                 bytes += chunk.x;
                 length -= chunk.x;
+                limit -= kept;
         }
 }
 
@@ -2190,7 +2193,7 @@ static inline INLINE fn writer_hex_escaped(writer output, address_any data,
                 output(escaped, chunk.y);
                 return;
         }
-        writer_escaped_bulk(output, data, length, policy);
+        writer_escaped_bulk(output, data, length, policy, positive_max);
 }
 
 #ifndef KERNEL_MODE // pathname diagnostics are for utilities
@@ -2377,15 +2380,7 @@ static inline INLINE fn writer_hex_span(writer output, byte_span text, p8 policy
         }
         if (limit == positive_max)
                 return writer_hex_escaped(output, text.bytes, text.length, policy);
-        while (text.length && limit)
-        {
-                p8 escaped[256];
-                positive2 made = memory_into_escaped(escaped, text.bytes, text.length,
-                                                      sizeof(escaped), policy);
-                positive kept = min(made.y, limit);
-                if (kept) output(escaped, kept);
-                text.bytes += made.x; text.length -= made.x; limit -= kept;
-        }
+        writer_escaped_bulk(output, text.bytes, text.length, policy, limit);
 }
 
 static inline INLINE byte_span table_part(table_cell cell, positive width, positive part)
@@ -2499,11 +2494,11 @@ static inline INLINE fn table_row(const table_view address_to view, positive row
                             (cell.flags & TABLE_CLIP_OUTPUT) && !last
                             ? width : positive_max;
                         length = min(length, limit);
-                        positive pad = width > length ? width - length : 0;
+                        positive pad = difference_or_zero(width, length);
                         if (last && !view->pad_last &&
                             (!(cell.flags & TABLE_RIGHT) || (!length && !view->pad_empty))) pad = 0;
                         if (last && view->pad_last && row != TABLE_HEADING)
-                                pad = width + view->pad_extra > length ? width + view->pad_extra - length : 0;
+                                pad = difference_or_zero(width + view->pad_extra, length);
                         if (view->pairs)
                         {
                                 table_cell name = view->cell(view->context, TABLE_HEADING, col, name_scratch);
@@ -3847,7 +3842,7 @@ pub PURE positive memory_usable_size(address_any block)
                 positive lead = (positive)block - inner;
                 positive whole = memory_usable_size((address_any)inner);
 
-                return whole > lead ? whole - lead : 0;
+                return difference_or_zero(whole, lead);
         }
 
         if (tag == ALLOCATOR_MAPPED)

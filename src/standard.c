@@ -2862,14 +2862,6 @@ static p8 numbers_not_a_number_text[] = "nan";
 #define NUMBERS_POINT_CLAMP 1000000000
 #define NUMBERS_EXPONENT_CLAMP 100000000
 
-static b32 numbers_hex_value(b32 byte)
-{
-        if (byte_is_digit(byte))
-                return byte - '0';
-
-        return byte_to_lower(byte) - 'a' + 10;
-}
-
 static inline INLINE fn numbers_read_exponent(string_address address_to scan,
                                                b32 address_to exponent)
 {
@@ -2927,7 +2919,7 @@ static fn numbers_read_hexadecimal(numbers_scan address_to number, string_addres
                 if (!byte_is_hexadecimal(byte))
                         break;
 
-                value = numbers_hex_value(byte);
+                value = digit_known(byte, 16);
                 seen = true;
 
                 if (significand < ((p128)1 << 124))
@@ -6386,7 +6378,7 @@ static positive clock_number_field(p8 address_to into, bipolar value,
 {
         p8 body[32];
         positive length = bipolar_into(body, value);
-        positive at = width > length ? width - length : 0;
+        positive at = difference_or_zero(width, length);
 
         memory_fill(into, ' ', at);
         memory_copy_apart(into + at, body, length);
@@ -6587,9 +6579,7 @@ p8 address_to ctime(const time_t address_to stamp)
 */
 typedef struct clock_format_state
 {
-        p8 address_to into;
-        positive max;
-        positive used;
+        byte_store out;
         bool failed;
         bipolar width;
         p8 pad;
@@ -6601,32 +6591,15 @@ typedef struct clock_format_state
 
 /*
         The floor under all three appends: these bytes, as they are, with no
-        width and no fold. It is the only place that decides there is no room,
-        so every other writer here is bounded by having gone through it.
+        width and no fold. A refusal is sticky, so nothing written after the
+        buffer ran out can make the answer look complete.
 */
-static inline INLINE bool clock_format_room(clock_format_state address_to state,
-                                            positive length)
-{
-        if (state->failed)
-                return false;
-
-        if (length > state->max || state->used > state->max - length)
-        {
-                state->failed = true;
-                return false;
-        }
-
-        state->used += length;
-        return true;
-}
-
 static fn clock_format_raw(clock_format_state address_to state,
                            address_any bytes, positive length)
 {
-        positive where = state->used;
-
-        if (clock_format_room(state, length) && length)
-                memory_copy_apart(state->into + where, bytes, length);
+        if (!state->failed &&
+            !byte_store_append_exact(address_of state->out, bytes, length))
+                state->failed = true;
 }
 
 /*
@@ -6638,10 +6611,15 @@ static fn clock_format_raw(clock_format_state address_to state,
 static fn clock_format_run(clock_format_state address_to state, p8 byte,
                            positive count)
 {
-        positive where = state->used;
+        byte_store address_to out = address_of state->out;
 
-        if (clock_format_room(state, count) && count)
-                memory_fill(state->into + where, (b8)byte, count);
+        if (state->failed || count > out->room - out->used)
+        {
+                state->failed = true;
+                return;
+        }
+        memory_fill(out->bytes + out->used, (b8)byte, count);
+        out->used += count;
 }
 
 /*
@@ -6679,21 +6657,20 @@ static fn clock_format_byte(clock_format_state address_to state, p8 byte)
                 -- paid a call into the general routine to move one byte. The
                 bounds test below is exactly raw's, written out because after
                 folding the length to one there is nothing else left of it:
-                `1 > max || used > max - 1` is `used >= max` for every max,
+                `1 > room || used > room - 1` is `used >= room` for every room,
                 including zero. Measured on a pure-literal format, 158 cycles
                 to 122.
         */
         if (state->failed)
                 return;
 
-        if (state->used >= state->max)
+        if (state->out.used >= state->out.room)
         {
                 state->failed = true;
                 return;
         }
 
-        state->into[state->used] = byte;
-        state->used++;
+        state->out.bytes[state->out.used++] = byte;
 }
 
 /*
@@ -6717,7 +6694,7 @@ static fn clock_format_append(clock_format_state address_to state,
 
         clock_format_widen(state, length);
 
-        where = state->used;
+        where = state->out.used;
 
         clock_format_raw(state, bytes, length);
 
@@ -6725,9 +6702,9 @@ static fn clock_format_append(clock_format_state address_to state,
                 return;
 
         if (state->to_lower)
-                memory_to_lower_ascii(state->into + where, length);
+                memory_to_lower_ascii(state->out.bytes + where, length);
         else if (state->to_upper)
-                memory_to_upper_ascii(state->into + where, length);
+                memory_to_upper_ascii(state->out.bytes + where, length);
 }
 
 /*
@@ -6922,9 +6899,7 @@ static fn clock_format_nested(clock_format_state address_to state,
         if (state->failed)
                 return;
 
-        inner.into = body;
-        inner.max = sizeof(body);
-        inner.used = 0;
+        inner.out = (byte_store){body, sizeof(body), 0};
         inner.failed = false;
         inner.width = -1;
         inner.pad = 0;
@@ -6941,7 +6916,7 @@ static fn clock_format_nested(clock_format_state address_to state,
                 return;
         }
 
-        clock_format_append(state, body, inner.used);
+        clock_format_append(state, body, inner.out.used);
 }
 
 /*
@@ -7393,20 +7368,18 @@ static positive clock_format(p8 address_to into, positive max,
                 }
         }
 
-        state.into = into;
-        state.max = max;
-        state.used = 0;
+        state.out = (byte_store){into, max, 0};
         state.failed = false;
         state.extensions = extensions;
 
         clock_format_core(address_of state, format, broken);
 
-        if (state.failed || state.used + 1 > max)
+        if (state.failed || state.out.used + 1 > max)
                 return 0;
 
-        into[state.used] = end;
+        into[state.out.used] = end;
 
-        return state.used;
+        return state.out.used;
 }
 
 positive strftime(p8 address_to into, positive max,
@@ -14157,7 +14130,7 @@ static inline INLINE positive format_number_begin(
     format_sink address_to sink, format_spec address_to spec, positive body,
     p8 sign, address_any prefix, positive prefix_length)
 {
-        positive spaces = spec->width > body ? spec->width - body : 0;
+        positive spaces = difference_or_zero(spec->width, body);
 
         if (!(spec->flags & FORMAT_FLAG_LEFT) &&
             !(spec->flags & FORMAT_FLAG_ZERO))
@@ -14300,7 +14273,7 @@ static fn format_integer(format_sink address_to sink, positive value,
 static fn format_text_field(format_sink address_to sink, address_any data,
                             positive length, format_spec address_to spec)
 {
-        positive spaces = spec->width > length ? spec->width - length : 0;
+        positive spaces = difference_or_zero(spec->width, length);
 
         if (!(spec->flags & FORMAT_FLAG_LEFT))
                 format_fill(sink, ' ', spaces);
@@ -14598,7 +14571,7 @@ static fn format_expand(decimal value, format_number address_to number)
 
                 //      The fraction is exactly shift places wide. Whatever the
                 //      big integer is short by is its leading zero run.
-                pad = shift > fraction_length ? shift - fraction_length : 0;
+                pad = difference_or_zero(shift, fraction_length);
 
                 //      Three runs, each clipped to what is left of the digit
                 //      array exactly as the byte loops that were here clipped
@@ -14607,17 +14580,17 @@ static fn format_expand(decimal value, format_number address_to number)
                 //      thousand places on a subnormal, which is a thousand
                 //      loop iterations where memory_fill is one call.
                 room = FORMAT_DIGITS - count;
-                take = whole_length < room ? whole_length : room;
+                take = min(whole_length, room);
                 memory_copy(number->digit + count, whole, take);
                 count += take;
 
                 room = FORMAT_DIGITS - count;
-                take = pad < room ? pad : room;
+                take = min(pad, room);
                 memory_fill(number->digit + count, '0', take);
                 count += take;
 
                 room = FORMAT_DIGITS - count;
-                take = fraction_length < room ? fraction_length : room;
+                take = min(fraction_length, room);
                 memory_copy(number->digit + count, fraction, take);
                 count += take;
 
@@ -14809,7 +14782,7 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
                         word = (string_address)(upper ? "INF" : "inf");
 
                 length = 3 + (sign != 0);
-                spaces = spec->width > length ? spec->width - length : 0;
+                spaces = difference_or_zero(spec->width, length);
 
                 if (!(spec->flags & FORMAT_FLAG_LEFT))
                         format_fill(sink, ' ', spaces);
@@ -14946,7 +14919,7 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
                 {
                         positive whole = (positive)number.exponent;
 
-                        run = number.count < whole ? number.count : whole;
+                        run = min(number.count, whole);
 
                         format_emit(sink, number.digit, run);
                         format_fill(sink, '0', whole - run);
@@ -14968,13 +14941,11 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
                 {
                         bipolar reach = number.exponent + (bipolar)fraction_length;
                         bipolar begin = number.exponent < 0 ? 0 : number.exponent;
-                        bipolar stop = reach > (bipolar)number.count
-                                               ? (bipolar)number.count
-                                               : reach;
-                        bipolar cut = begin > reach ? reach : begin;
+                        bipolar stop = min(reach, (bipolar)number.count);
+                        bipolar cut = min(begin, reach);
                         positive lead_zeros = (positive)(cut - number.exponent);
 
-                        run = stop > begin ? (positive)(stop - begin) : 0;
+                        run = (positive)difference_or_zero(stop, begin);
 
                         format_fill(sink, '0', lead_zeros);
                         format_emit(sink, number.digit + begin, run);
@@ -16174,107 +16145,33 @@ static fn scan_stage_digit(scan_stage address_to stage, b32 byte)
 }
 
 /*
-        Is this byte a digit in this base?
-
-        Four bases, because %i can read a base out of its own input and one
-        of the four it can find is two. %o is eight, %x and %p are sixteen,
-        %i is whichever of two, eight, ten and sixteen its prefix said, and
-        everything else is ten. The two that a classifier covers are the
-        library's branchless ones rather than comparisons written here; octal
-        is the decimal classifier with its top two values removed, which is
-        the shape the classifier already has, and binary is two values and
-        has nothing worth borrowing.
-*/
-static bool scan_digit_of_base(b32 byte, positive base)
-{
-        if (base == 16)
-                return byte_is_hexadecimal(byte) != 0;
-
-        if (base == 8)
-                return byte_is_digit(byte) != 0 && byte <= '7';
-
-        if (base == 2)
-                return byte == '0' || byte == '1';
-
-        return byte_is_digit(byte) != 0;
-}
-
-/*
         THE MAGNITUDE, AND WHETHER IT FIT
 
-        string_digits_base_max is the library's bounded digit run and it is
-        the whole of the arithmetic here: a slice of digits, a bound, a base,
-        and the number they spell. It wraps silently, which is the right
-        contract for the thirty three parsers it was written for and the wrong
-        one for scanf, because glibc converts through strtoul and saturates.
-
-        So overflow is decided before the routine is called, by counting
-        rather than by arithmetic. The largest value the machine holds has a
-        fixed number of digits in any base -- twenty in ten, sixteen in
-        sixteen, twenty two in eight -- and a run of significant digits that
-        is shorter than that cannot overflow, a run that is longer always
-        does, and a run of exactly that length is decided by comparing the two
-        strings. That comparison is a plain memcmp because the digits of every
-        base up to thirty six rise through ASCII in the same order as their
-        values once the letters are folded down: '0' through '9' at 0x30, then
-        'a' through 'z' at 0x61, with nothing out of order in between. The
-        fold is memory_to_lower_ascii over the slice, which is assembly, and
-        the largest value's own digits come from positive_into_base, which is
-        the same assembly the formatter uses.
+        glibc converts through strtoul and saturates, so the value comes from
+        string_digits_checked, which refuses an overflow rather than wrapping.
+        Two answers are settled before it runs: no significant digit is zero
+        and not an overflow, and a run longer than the thousand bytes the
+        stage kept always overflows, since the largest value has at most sixty
+        four digits in any base.
 
         A leading zero is not a significant digit and never reaches this,
         because the scan above declined to store it: "0000000000000000000005"
-        is twenty two digits and one significant one, and a count that took
-        the leading zeros in would call every one of those an overflow. That
-        is why the staging buffer keeps two counts rather than a length.
-
-        Nothing here looks at a digit one at a time. The comparison is
-        memory_compare, the fold is memory_to_lower_ascii, the limit's digits
-        are positive_into_base and the value is string_digits_base_max, and
-        each of those four is assembly at three-architecture parity.
+        is twenty two digits and one significant one. That is why the staging
+        buffer keeps two counts rather than a length.
 */
 static positive scan_magnitude(scan_stage address_to stage, positive base,
                                bool address_to overflowed)
 {
-        p8 largest[72];
-        positive largest_length;
+        string_address at = stage->bytes;
+        positive value = 0;
 
-        address_to overflowed = false;
+        stage->bytes[stage->staged] = end;
+        address_to overflowed =
+            stage->significant > stage->staged ||
+            (stage->significant &&
+             !string_digits_checked(address_of at, base, address_of value));
 
-        if (stage->significant == 0)
-                return 0;
-
-        if (stage->significant > stage->staged)
-        {
-                //      More digits than the buffer kept, and the buffer holds
-                //      a thousand. Nothing that long is representable.
-                address_to overflowed = true;
-
-                return 0;
-        }
-
-        largest_length = positive_into_base(largest, ~(positive)0, base, false);
-
-        if (stage->significant > largest_length)
-        {
-                address_to overflowed = true;
-
-                return 0;
-        }
-
-        if (stage->significant == largest_length)
-        {
-                memory_to_lower_ascii(stage->bytes, stage->staged);
-
-                if (memory_compare(stage->bytes, largest, largest_length) > 0)
-                {
-                        address_to overflowed = true;
-
-                        return 0;
-                }
-        }
-
-        return string_digits_base_max(stage->bytes, stage->staged, base, null);
+        return address_to overflowed ? 0 : value;
 }
 
 /*
@@ -16400,7 +16297,7 @@ static bool scan_integer(scan_source address_to source, scan_stage address_to st
                 if (byte == EOF)
                         break;
 
-                if (!scan_digit_of_base(byte, base))
+                if (digit_known(byte, base) >= base)
                 {
                         scan_unget(source, byte);
                         break;
@@ -16635,8 +16532,8 @@ static bool scan_decimal_shape(scan_source address_to source,
 
                         if (!exponent)
                         {
-                                if (scan_digit_of_base(byte,
-                                                       hexadecimal ? 16 : 10))
+                                if (digit_known(byte, 16) <
+                                    (hexadecimal ? 16u : 10u))
                                 {
                                         significand++;
                                 }
@@ -17865,11 +17762,8 @@ static positive spool_name_counter = 0;
 static fn spool_random_bytes(p8 address_to into, positive size)
 {
         positive when[2] = {0, 0};
-        positive mixed;
-        positive index = 0;
 
-        if ((positive)system_call_3(syscall(getrandom), (positive)into, size,
-                                    SPOOL_RANDOM_NONBLOCK) == size)
+        if (!system_random_fill(into, size, SPOOL_RANDOM_NONBLOCK))
                 return;
 
         system_call_2(syscall(clock_gettime), SPOOL_CLOCK_MONOTONIC,
@@ -17877,19 +17771,12 @@ static fn spool_random_bytes(p8 address_to into, positive size)
 
         spool_name_counter++;
 
-        mixed = when[1] ^ (when[0] << 20) ^
-                ((positive)system_call(syscall(gettid)) << 40) ^
-                (spool_name_counter * 0x9e3779b97f4a7c15ULL);
+        positive mixed = when[1] ^ (when[0] << 20) ^
+                         ((positive)system_call(syscall(gettid)) << 40) ^
+                         (spool_name_counter * 0x9e3779b97f4a7c15ULL);
 
-        while (index < size)
-        {
-                mixed ^= mixed >> 33;
-                mixed *= 0xff51afd7ed558ccdULL;
-                mixed ^= mixed >> 29;
-
-                into[index] = (p8)mixed;
-                index++;
-        }
+        for (positive index = 0; index < size; index++)
+                into[index] = (p8)(mixed = system_nonce_stir(mixed));
 }
 
 //      Six random letters into the six bytes a template's X's occupy. One
