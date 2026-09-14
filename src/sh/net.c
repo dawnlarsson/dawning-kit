@@ -1143,6 +1143,8 @@ static bipolar net_lease_rollback(
 
         if (route_changed)
         {
+                bool same = false;
+
                 if (net_owns_route(previous))
                 {
                         bipolar status = netlink_route_add(
@@ -1150,16 +1152,13 @@ static bipolar net_lease_rollback(
                             previous->index);
                         if (status < 0 && !failed)
                                 failed = status;
-
-                        if (lease->router &&
-                            (lease->router != previous->lease.router ||
-                             index != previous->index))
-                                net_rollback_record(
-                                    netlink_route_delete(handle, 0, 0,
-                                                         lease->router, index),
-                                    address_of failed);
+                        same = lease->router == previous->lease.router &&
+                               index == previous->index;
                 }
-                else if (lease->router)
+
+                //      The new route goes unless restoring the old one
+                //      already put back that very route.
+                if (lease->router && !same)
                         net_rollback_record(
                             netlink_route_delete(handle, 0, 0,
                                                  lease->router, index),

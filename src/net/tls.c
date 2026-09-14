@@ -507,35 +507,27 @@ static bipolar tls_asn1_length(p8 address_to bytes, positive size,
 static bipolar tls_asn1_enter(p8 address_to bytes, positive size, p8 tag,
                               positive address_to at, positive address_to stop)
 {
-        positive i = address_to at;
         positive length = 0;
 
-        if (i >= size || bytes[i] != tag)
+        if (address_to at >= size || bytes[address_to at] != tag)
                 return TLS_FAIL;
-        i++;
-        address_to at = i;
-        if (tls_asn1_length(bytes, size, at, address_of length))
-                return TLS_FAIL;
-        if (address_to at + length > size)
+        address_to at += 1;
+        if (tls_asn1_length(bytes, size, at, address_of length) ||
+            address_to at + length > size)
                 return TLS_FAIL;
         address_to stop = address_to at + length;
         return TLS_OK;
 }
 
+//      Any one element, whatever its tag, stepped over.
 static bipolar tls_asn1_skip(p8 address_to bytes, positive size, positive address_to at)
 {
-        positive length = 0;
-        positive i = address_to at;
+        positive stop = 0;
 
-        if (i >= size)
+        if (address_to at >= size ||
+            tls_asn1_enter(bytes, size, bytes[address_to at], at, address_of stop))
                 return TLS_FAIL;
-        i++;
-        address_to at = i;
-        if (tls_asn1_length(bytes, size, at, address_of length))
-                return TLS_FAIL;
-        if (address_to at + length > size)
-                return TLS_FAIL;
-        address_to at += length;
+        address_to at = stop;
         return TLS_OK;
 }
 
@@ -1272,46 +1264,43 @@ static bool tls_certificate_names_chain(const tls_cert address_to child,
                                child->issuer_length);
 }
 
-static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer)
+/* A DER ECDSA signature over a digest, checked against a P-256 (curve 1, its
+   coordinates right-aligned in the 48-byte fields) or P-384 (curve 2) key. */
+static bool tls_ecdsa_verify(p8 address_to hash, positive hash_length,
+                             p8 address_to sig, positive sig_length, p8 curve,
+                             p8 address_to qx, p8 address_to qy)
 {
-        p8 hash[48];
         p8 r[48];
         p8 s[48];
         positive r_length = 0;
         positive s_length = 0;
-        p8 address_to qx = issuer->qx + (issuer->curve == 1 ? 16 : 0);
-        p8 address_to qy = issuer->qy + (issuer->curve == 1 ? 16 : 0);
 
-        if (tls_oid_is(child->sig_oid, child->sig_oid_length, tls_oid_ecdsa_sha384,
-                       8))
-        {
-                crypto_sha384(child->tbs, child->tbs_length, hash);
-                if (tls_parse_ecdsa_sig(child->sig, child->sig_length, r,
-                                        address_of r_length, s, address_of s_length))
-                        return false;
-                if (issuer->curve == 2)
-                        return crypto_ecdsa_p384(hash, 48, r, r_length, s, s_length,
-                                                 qx, qy);
-                if (issuer->curve == 1)
-                        return crypto_ecdsa_p256(hash, 48, r, r_length, s, s_length,
-                                                 qx, qy);
+        if (tls_parse_ecdsa_sig(sig, sig_length, r, address_of r_length, s,
+                                address_of s_length))
                 return false;
-        }
+        if (curve == 1)
+                return crypto_ecdsa_p256(hash, hash_length, r, r_length, s,
+                                         s_length, qx + 16, qy + 16);
+        return curve == 2 && crypto_ecdsa_p384(hash, hash_length, r, r_length,
+                                               s, s_length, qx, qy);
+}
 
-        if (tls_oid_is(child->sig_oid, child->sig_oid_length, tls_oid_ecdsa_sha256,
-                       8))
+static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer)
+{
+        p8 hash[48];
+        bool sha384 = tls_oid_is(child->sig_oid, child->sig_oid_length,
+                                 tls_oid_ecdsa_sha384, 8);
+
+        if (sha384 || tls_oid_is(child->sig_oid, child->sig_oid_length,
+                                 tls_oid_ecdsa_sha256, 8))
         {
-                crypto_sha256_of(child->tbs, child->tbs_length, hash);
-                if (tls_parse_ecdsa_sig(child->sig, child->sig_length, r,
-                                        address_of r_length, s, address_of s_length))
-                        return false;
-                if (issuer->curve == 1)
-                        return crypto_ecdsa_p256(hash, 32, r, r_length, s, s_length,
-                                                 qx, qy);
-                if (issuer->curve == 2)
-                        return crypto_ecdsa_p384(hash, 32, r, r_length, s, s_length,
-                                                 qx, qy);
-                return false;
+                if (sha384)
+                        crypto_sha384(child->tbs, child->tbs_length, hash);
+                else
+                        crypto_sha256_of(child->tbs, child->tbs_length, hash);
+                return tls_ecdsa_verify(hash, sha384 ? 48 : 32, child->sig,
+                                        child->sig_length, issuer->curve,
+                                        issuer->qx, issuer->qy);
         }
 
         if (tls_oid_is(child->sig_oid, child->sig_oid_length, tls_oid_sha256_rsa, 9))
@@ -1853,58 +1842,48 @@ static fn tls_use_app_keys(tls_conn address_to tls)
         crypto_forget(address_of tls->transcript, sizeof tls->transcript);
 }
 
+/* Finished verify_data: an HMAC over the transcript so far, keyed from one
+   side's handshake traffic secret. */
+static fn tls_finished_mac(tls_conn address_to tls, p8 address_to secret,
+                           p8 address_to into)
+{
+        p8 finished_key[32];
+        crypto_sha256 copy = tls->transcript;
+        p8 hash[32];
+
+        tls_expand_label(secret, "finished", null, 0, finished_key, 32);
+        crypto_sha256_close(address_of copy, hash);
+        crypto_hmac_sha256(finished_key, 32, hash, 32, into);
+        crypto_forget(finished_key, sizeof finished_key);
+        crypto_forget(address_of copy, sizeof copy);
+        crypto_forget(hash, sizeof hash);
+}
+
 static bipolar tls_check_finished(tls_conn address_to tls, p8 address_to verify,
                                   positive length)
 {
-        p8 finished_key[32];
         p8 expect[32];
-        crypto_sha256 copy = tls->transcript;
-        p8 hash[32];
-        bipolar status = TLS_FAIL;
+        bipolar status;
 
-        if (length != 32)
-                goto done;
-        tls_expand_label(tls->s_hs_traffic, "finished", null, 0, finished_key, 32);
-        crypto_sha256_close(address_of copy, hash);
-        crypto_hmac_sha256(finished_key, 32, hash, 32, expect);
-        status = memory_compare(expect, verify, 32) ? TLS_FAIL : TLS_OK;
-
-done:
-        crypto_forget(finished_key, sizeof finished_key);
+        tls_finished_mac(tls, tls->s_hs_traffic, expect);
+        status = length == 32 && !memory_compare(expect, verify, 32)
+                     ? TLS_OK : TLS_FAIL;
         crypto_forget(expect, sizeof expect);
-        crypto_forget(address_of copy, sizeof copy);
-        crypto_forget(hash, sizeof hash);
         return status;
 }
 
 static bipolar tls_send_finished(tls_conn address_to tls)
 {
-        p8 finished_key[32];
-        p8 verify[32];
-        p8 msg[36];
-        crypto_sha256 copy = tls->transcript;
-        p8 hash[32];
+        p8 msg[36] = {TLS_HS_FINISHED, 0, 0, 32};
         bipolar status = TLS_FAIL;
 
-        tls_expand_label(tls->c_hs_traffic, "finished", null, 0, finished_key, 32);
-        crypto_sha256_close(address_of copy, hash);
-        crypto_hmac_sha256(finished_key, 32, hash, 32, verify);
-        msg[0] = TLS_HS_FINISHED;
-        msg[1] = 0;
-        msg[2] = 0;
-        msg[3] = 32;
-        memory_copy(msg + 4, verify, 32);
-        if (tls_send_enc(tls, TLS_CT_HANDSHAKE, msg, 36))
-                goto done;
-        tls_transcript_add(tls, msg, 36);
-        status = TLS_OK;
-
-done:
-        crypto_forget(finished_key, sizeof finished_key);
-        crypto_forget(verify, sizeof verify);
+        tls_finished_mac(tls, tls->c_hs_traffic, msg + 4);
+        if (!tls_send_enc(tls, TLS_CT_HANDSHAKE, msg, 36))
+        {
+                tls_transcript_add(tls, msg, 36);
+                status = TLS_OK;
+        }
         crypto_forget(msg, sizeof msg);
-        crypto_forget(address_of copy, sizeof copy);
-        crypto_forget(hash, sizeof hash);
         return status;
 }
 
@@ -1912,11 +1891,7 @@ static bipolar tls_check_cert_verify(tls_conn address_to tls, p8 address_to msg,
                                      positive length)
 {
         p8 signed_bytes[130];
-        p8 hash[32];
-        p8 r[48];
-        p8 s[48];
-        positive r_length = 0;
-        positive s_length = 0;
+        p8 hash[48];
         positive at;
         positive sig_length;
         p16 scheme;
@@ -1939,32 +1914,18 @@ static bipolar tls_check_cert_verify(tls_conn address_to tls, p8 address_to msg,
         crypto_sha256_close(address_of copy, hash);
         memory_copy(signed_bytes + 98, hash, 32);
 
-        if (scheme == 0x0403)
+        if (scheme == 0x0403 || scheme == 0x0503)
         {
-                crypto_sha256_of(signed_bytes, sizeof(signed_bytes), hash);
-                if (tls_parse_ecdsa_sig(msg + at, sig_length, r, address_of r_length,
-                                        s, address_of s_length))
-                        return TLS_FAIL;
-                if (tls->leaf_curve != 1)
-                        return TLS_FAIL;
-                return crypto_ecdsa_p256(hash, 32, r, r_length, s, s_length,
-                                         tls->leaf_qx + 16, tls->leaf_qy + 16)
-                           ? TLS_OK
-                           : TLS_FAIL;
-        }
+                p8 curve = scheme == 0x0503 ? 2 : 1;
 
-        if (scheme == 0x0503)
-        {
-                p8 hash384[48];
-
-                crypto_sha384(signed_bytes, sizeof(signed_bytes), hash384);
-                if (tls_parse_ecdsa_sig(msg + at, sig_length, r, address_of r_length,
-                                        s, address_of s_length))
-                        return TLS_FAIL;
-                if (tls->leaf_curve != 2)
-                        return TLS_FAIL;
-                return crypto_ecdsa_p384(hash384, 48, r, r_length, s, s_length,
-                                         tls->leaf_qx, tls->leaf_qy)
+                if (curve == 2)
+                        crypto_sha384(signed_bytes, sizeof(signed_bytes), hash);
+                else
+                        crypto_sha256_of(signed_bytes, sizeof(signed_bytes), hash);
+                return tls->leaf_curve == curve &&
+                               tls_ecdsa_verify(hash, curve == 2 ? 48 : 32,
+                                                msg + at, sig_length, curve,
+                                                tls->leaf_qx, tls->leaf_qy)
                            ? TLS_OK
                            : TLS_FAIL;
         }
@@ -2210,31 +2171,15 @@ static bipolar tls_handshake(
                 goto done;
         hs_used = 0;
 
-        if (group == 0x001d)
-        {
-                if (share_length != 32 ||
-                    !crypto_x25519(shared, tls->x25519_scalar, peer))
-                        goto done;
-                if (tls_install_handshake_keys(tls, shared, 32))
-                        goto done;
-        }
-        else if (group == 0x0017)
-        {
-                if (share_length != 65 ||
-                    !crypto_ecdh_p256_shared(shared, tls->p256_scalar, peer))
-                        goto done;
-                if (tls_install_handshake_keys(tls, shared, 32))
-                        goto done;
-        }
-        else if (group == 0x0018)
-        {
-                if (share_length != 97 ||
-                    !crypto_ecdh_p384_shared(shared, tls->p384_scalar, peer))
-                        goto done;
-                if (tls_install_handshake_keys(tls, shared, 48))
-                        goto done;
-        }
-        else
+        if (!(group == 0x001d
+                  ? share_length == 32 &&
+                        crypto_x25519(shared, tls->x25519_scalar, peer)
+              : group == 0x0017
+                  ? share_length == 65 &&
+                        crypto_ecdh_p256_shared(shared, tls->p256_scalar, peer)
+                  : group == 0x0018 && share_length == 97 &&
+                        crypto_ecdh_p384_shared(shared, tls->p384_scalar, peer)) ||
+            tls_install_handshake_keys(tls, shared, group == 0x0018 ? 48 : 32))
                 goto done;
         crypto_forget(tls->x25519_scalar, sizeof tls->x25519_scalar);
         crypto_forget(tls->p256_scalar, sizeof tls->p256_scalar);
