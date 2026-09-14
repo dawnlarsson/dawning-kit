@@ -2847,6 +2847,7 @@ fn shell_kill(writer write, string_address input)
         bipolar number = 15;
         positive at = 1;
         b32 answer = 0;
+        bool signalled = false;
 
         (void)write;
         (void)input;
@@ -2927,7 +2928,8 @@ fn shell_kill(writer write, string_address input)
                                             log_error, 2,
                                             "kill: Illegal number: %s\n",
                                             word + (string_get(word) == '-')));
-                                answer = string_report(log_error, 1,
+                                answer = string_report(log_error,
+                                    shell_posix_on() ? answer : 1,
                                     "kill: `%s': not a pid or valid job spec\n",
                                     word);
                                 continue;
@@ -2940,6 +2942,8 @@ fn shell_kill(writer write, string_address input)
                                               word);
                                 answer = 1;
                         }
+                        else
+                                signalled = true;
 
                         continue;
                 }
@@ -3005,9 +3009,16 @@ fn shell_kill(writer write, string_address input)
                                       "kill: %s: no such job\n", word);
                         answer = 1;
                 }
+                else
+                        signalled = true;
         }
 
-        shell_answer(answer);
+        //      Bash answers for the whole list: nought when anybody was
+        //      signalled, whatever the other operands said. Its posix mode
+        //      fails only on a signal that could not be sent, so a word that
+        //      is no pid does not count against it there.
+        shell_answer(shell_bash_compat && !shell_posix_on() && signalled
+                         ? 0 : answer);
 }
 
 // A job whose children the wait table no longer owes an answer for is not a
