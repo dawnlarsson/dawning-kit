@@ -7,8 +7,8 @@
         tree and the price-driven parser at -4 to -9, in blocks of three
         dictionaries that each start fresh (see the encoder below).
         Checksums are hash_crc32/hash_crc64. Concatenated streams are
-        accepted the way xz -d accepts them. There is no SHA-256 check and
-        no BCJ.
+        accepted the way xz -d accepts them. Decode also takes SHA-256
+        checks; there is no BCJ.
 */
 
 #include "compression_huffman.c"
@@ -31,6 +31,7 @@
 #define XZ_CHECK_NONE 0
 #define XZ_CHECK_CRC32 1
 #define XZ_CHECK_CRC64 4
+#define XZ_CHECK_SHA256 10
 
 static p8 xz_in_buf[XZ_IN];
 static byte_input xz_input = {.buf = xz_in_buf, .room = XZ_IN};
@@ -189,13 +190,21 @@ typedef struct
         p64 block_body_abs;
         positive block_hdr_size;
         p8 check;
-        p8 check_bytes[8];
+        p8 check_bytes[32];
         p32 crc32;
         p64 crc64;
+        digest_state sha256;
         string_address why;
         p8 scratch[1 + XZ_COPY_SLACK + 8];
         p8 in_buf[XZ_DEC_IN + XZ_IN_PAD];
 } xz_decoder;
+
+/* The check field's size, or -1 for a type the decoder refuses. */
+static bipolar xz_check_size(p8 type)
+{
+        return type == XZ_CHECK_NONE ? 0 : type == XZ_CHECK_CRC32 ? 4
+             : type == XZ_CHECK_CRC64 ? 8 : type == XZ_CHECK_SHA256 ? 32 : -1;
+}
 
 static bool xz_dec_fail(xz_decoder address_to d, string_address why)
 {
@@ -248,6 +257,8 @@ static fn xz_dec_hash(xz_decoder address_to d)
                 d->crc32 = hash_crc32(d->crc32, d->hashed, n);
         else if (d->check == XZ_CHECK_CRC64)
                 d->crc64 = hash_crc64(d->crc64, d->hashed, n);
+        else if (d->check == XZ_CHECK_SHA256)
+                digest_write(address_of d->sha256, d->hashed, n);
         d->hashed = d->job.out;
 }
 
@@ -703,17 +714,35 @@ static bool xz_dec_pad4(xz_decoder address_to d, positive n)
 
 static bool xz_dec_check(xz_decoder address_to d)
 {
-        if (d->check == XZ_CHECK_NONE)
-                return true;
+        positive size = (positive)xz_check_size(d->check);
 
-        bool wide = d->check == XZ_CHECK_CRC64;
-        p64 got;
+        memory_fill(d->check_bytes, 0, sizeof(d->check_bytes));
+        for (positive at = 0; at < size; at++)
+        {
+                bipolar byte = xz_dec_byte(d);
 
-        if (!xz_dec_le(d, address_of got, wide ? 8 : 4))
-                return xz_dec_fail(d, "xz truncated check");
-        memory_store_unaligned(p64, d->check_bytes, got);
-        if (got != (wide ? ~d->crc64 : (p32)~d->crc32))
-                return xz_dec_fail(d, wide ? "xz CRC64 mismatch" : "xz CRC32 mismatch");
+                if (byte < 0)
+                        return xz_dec_fail(d, "xz truncated check");
+                d->check_bytes[at] = (p8)byte;
+        }
+        if (d->check == XZ_CHECK_CRC32)
+        {
+                if (memory_load_unaligned(p32, d->check_bytes) != ~d->crc32)
+                        return xz_dec_fail(d, "xz CRC32 mismatch");
+        }
+        else if (d->check == XZ_CHECK_CRC64)
+        {
+                if (memory_load_unaligned(p64, d->check_bytes) != ~d->crc64)
+                        return xz_dec_fail(d, "xz CRC64 mismatch");
+        }
+        else if (d->check == XZ_CHECK_SHA256)
+        {
+                p8 sum[32];
+
+                digest_close(address_of d->sha256, sum);
+                if (memory_compare(sum, d->check_bytes, 32))
+                        return xz_dec_fail(d, "xz SHA-256 mismatch");
+        }
         return true;
 }
 
@@ -786,6 +815,8 @@ static bool xz_dec_block(xz_decoder address_to d)
                 d->block_body_abs = d->in_abs;
                 d->crc32 = 0xffffffffu;
                 d->crc64 = 0xffffffffffffffffull;
+                if (d->check == XZ_CHECK_SHA256)
+                        digest_open(address_of d->sha256, DIGEST_SHA256, 32);
                 d->hashed = d->job.out;
                 d->need_reset = true;
                 d->need_props = true;
@@ -925,8 +956,7 @@ static bool xz_dec_stream(xz_decoder address_to d)
                 if (flags[0] || (flags[1] & 0xf0))
                         return xz_dec_fail(d, "xz reserved stream flags");
                 d->check = flags[1] & 0xf;
-                if (d->check != XZ_CHECK_NONE && d->check != XZ_CHECK_CRC32 &&
-                    d->check != XZ_CHECK_CRC64)
+                if (xz_check_size(d->check) < 0)
                         return xz_dec_fail(d, "xz check type");
                 if (!xz_dec_le(d, address_of got, 4))
                         return xz_dec_fail(d, "xz truncated header CRC");
@@ -1042,8 +1072,8 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
         through its check, exactly block_len bytes at block, decoding to
         exactly uncompressed_len bytes at out, which is written only there
         (matches in its last 32 bytes copy exactly). check_type is the
-        stream's, and check, when not null, receives the stored check (8
-        bytes, little-endian, zero-extended). Decoders from
+        stream's (none, CRC32, CRC64 or SHA-256), and check, when not null,
+        receives the stored check field zero-extended to 32 bytes. Decoders from
         xz_block_decoder on different threads may each run blocks at the
         same time; xz_pull_error names a failure and xz_pull_close frees
         one.
@@ -1058,8 +1088,7 @@ static bool xz_block_decode(address_any state, p8 address_to block,
         xz_dec_open(d);
         if (d->dict)
                 xz_dec_dict_close(d);
-        if (check_type != XZ_CHECK_NONE && check_type != XZ_CHECK_CRC32 &&
-            check_type != XZ_CHECK_CRC64)
+        if (xz_check_size(check_type) < 0)
                 return xz_dec_fail(d, "xz check type");
         byte_input_open_memory(address_of d->input, block, block_len, d->in_buf,
                                XZ_DEC_IN);
@@ -3432,8 +3461,6 @@ static bool xz_encode_begin(bipolar out, p8 level)
         overlapping it; the pool fix needs no change here.
 */
 
-/* SHA-256 streams stay serial until the decoder verifies that check. */
-#define XZ_CHECK_SHA256 0x100
 #define XZ_PAR_BLOCKS_MAX 256
 #define XZ_PAR_HEADER_MAX 1024
 

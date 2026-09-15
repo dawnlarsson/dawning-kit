@@ -108,6 +108,15 @@ for name in ('gzip_len_extra','gzip_len_base','gzip_dist_extra','gzip_dist_base'
  head+=re.search(r'static const p(?:8|16) '+name+r'\[.*?};',gz,re.S).group(0)+'\n'
 head+=re.search(r'static bipolar gzip_code_space\(.*?\n}\n',gz,re.S).group(0)
 a=gz.index('#define GZIP_CELL_LITERAL');b=gz.index('/* End of the span kernel contract. */',a);head+=gz[a:b]+'\n'
+# xz.c verifies SHA-256 checks through library.common.c's digest, whose cores
+# the floor does not lift; no floor check decodes a SHA-256 stream, so these
+# stand-ins only let xz.c compile and abort if one is ever reached.
+head+='''#define DIGEST_SHA256 3
+typedef struct { p8 unused; } digest_state;
+static inline void digest_open(digest_state *d, positive algorithm, positive size) { (void)d; (void)algorithm; (void)size; abort(); }
+static inline void digest_write(digest_state *d, void *bytes, positive n) { (void)d; (void)bytes; (void)n; abort(); }
+static inline void digest_close(digest_state *d, p8 *out) { (void)d; (void)out; abort(); }
+'''
 head+='#define XZ_CORE_ONLY\n'+xz+'\n'
 a=lib.index('#define ASM_CRC_BASIS(bit)');b=lib.index('__asm__(',a);head+=lib[a:b]
 for name in ('hash_crc32_tab','hash_crc64_tab'):
