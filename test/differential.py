@@ -14057,6 +14057,8 @@ _TEXT_SED_EXTRA = (
     ("1r b.txt", "a.txt"), ("1{r b.txt\na APPENDED\n}", "a.txt"), ("1{a one\nr b.txt\na two\n}", "a.txt"),
     ("-n", "/needle/p", "big"), ("-n", "4999p", "big"), ("s/a*/X/", "wide"), ("s/a/b/g", "wide"),
     ("-e", "s/a/X/w out", "-n", "-e", "s/b/Y/"), ("-n", "s/alpha/X/w /dev/stdout"),
+    # R appends a line of any length; wide is one line of 65,537 bytes.
+    ("-e", "R wide", "a.txt"), ("-e", "2R wide", "a.txt"),
 )
 
 
