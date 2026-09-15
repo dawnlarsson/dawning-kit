@@ -283,6 +283,33 @@ static fn row_blank(unsigned int r)
         only then is what leaves the top kept. A narrower region is a copy and
         what leaves it is gone, which is what a region means.
 */
+/*
+        A region scrolled count rows up or down. The rows that stay are copied
+        along -- a region is the screen not moving as one, so the ring cannot
+        move for it -- and the rows given out are blank.
+*/
+static fn region_scroll(unsigned int count, b32 up)
+{
+        unsigned int height = region_bottom - region_top;
+        unsigned int top = row_slot(0);
+
+        if (count > height)
+                count = height;
+
+        for (unsigned int n = 0; n + count < height; n++)
+        {
+                unsigned int to = up ? region_top + n : region_bottom - 1 - n;
+
+                slot_copy(slot_after(top, to),
+                          slot_after(top, up ? to + count : to - count));
+        }
+
+        for (unsigned int n = 0; n < count; n++)
+                row_blank(up ? region_bottom - 1 - n : region_top + n);
+
+        touch_all();
+}
+
 static fn scroll_up(unsigned int count)
 {
         if (region_top == 0 && region_bottom == ROWS)
@@ -303,34 +330,7 @@ static fn scroll_up(unsigned int count)
                 return;
         }
 
-        if (count > region_bottom - region_top)
-                count = region_bottom - region_top;
-
-        unsigned int top = row_slot(0);
-
-        for (unsigned int r = region_top; r + count < region_bottom; r++)
-                slot_copy(slot_after(top, r), slot_after(top, r + count));
-
-        for (unsigned int r = region_bottom - count; r < region_bottom; r++)
-                row_blank(r);
-
-        touch_all();
-}
-
-static fn scroll_down(unsigned int count)
-{
-        if (count > region_bottom - region_top)
-                count = region_bottom - region_top;
-
-        unsigned int top = row_slot(0);
-
-        for (unsigned int r = region_bottom; r-- > region_top + count;)
-                slot_copy(slot_after(top, r), slot_after(top, r - count));
-
-        for (unsigned int r = region_top; r < region_top + count; r++)
-                row_blank(r);
-
-        touch_all();
+        region_scroll(count, true);
 }
 
 // One line down, and the bottom of the region is where that scrolls.
@@ -1572,7 +1572,7 @@ static fn csi_final(unsigned int final)
                         region_top = row;
 
                         if (final == 'L')
-                                scroll_down(a);
+                                region_scroll(a, false);
                         else
                                 scroll_up(a);
 
@@ -1625,7 +1625,7 @@ static fn csi_final(unsigned int final)
                 scroll_up(a);
                 break;
         case 'T':
-                scroll_down(a);
+                region_scroll(a, false);
                 break;
         case 'g':
                 if (terminal_csi.count && terminal_csi.value[0] == 3)
@@ -1802,6 +1802,27 @@ static fn utf8_flush()
 
         terminal_utf8.left = 0;
         put(0xfffd);
+}
+
+/*
+        DECALN fills the screen with E, the letter a VT100 was lined up by and
+        what vttest draws its frames against, with the margins gone and the
+        cursor home.
+*/
+static fn screen_align()
+{
+        region_top = 0;
+        region_bottom = ROWS;
+        row = 0;
+        column = 0;
+
+        for (unsigned int r = 0; r < ROWS; r++)
+        {
+                memory_fill_u64_aligned(row_cells(r), COLUMNS,
+                                        (positive)'E' | (positive)7 << 32);
+                address_to row_length(r) = COLUMNS;
+                touch(r);
+        }
 }
 
 static fn consume(unsigned int c)
@@ -1985,6 +2006,8 @@ static fn consume(unsigned int c)
                                 charset_g0 = c == '0' ? CHARSET_ACS : CHARSET_ASCII;
                         else if (escape_kind == ')')
                                 charset_g1 = c == '0' ? CHARSET_ACS : CHARSET_ASCII;
+                        else if (escape_kind == '#' && c == '8')
+                                screen_align();
                         escape_intermediate = false;
                         return;
                 }
@@ -2006,7 +2029,7 @@ static fn consume(unsigned int c)
                         break;
                 case 'M':
                         if (row == region_top)
-                                scroll_down(1);
+                                region_scroll(1, false);
                         else if (row)
                                 row--;
                         break;

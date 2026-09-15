@@ -6122,8 +6122,8 @@ same 'newline and tab symbols' '[<2424><240b>]'  8 2 in '\e(0hi\e(B' row 0
 same 'arrows and a block' '[<2192><2190><2191><2193><2588>]' 8 2 in '\e(0+,-.0\e(B' row 0
 same 'shift in'       '[<2500>x]'                8 2 in '\e)0\x0eq\x0fx' row 0
 same 'repeat'         '[aaaa]'                   8 2 in 'a\e[3b' row 0
-same 'screen alignment' '[XY]'                   20 3 in '\e#8XY' row 0
-same 'not a restore'  '[abXY]'                   20 3 in 'ab\e#8XY' row 0
+same 'screen alignment' '[XYEEEEEEEEEEEEEEEEEE]|[EEEEEEEEEEEEEEEEEEEE]|0,2' 20 3 in '\e[2;3r\e#8XY' row 0 row 2 cursor
+same 'not a restore'  '[XYEEEEEEEEEEEEEEEEEE]'   20 3 in 'ab\e#8XY' row 0
 same 'nothing at all' '[Y]'                      20 3 in '\e\x7fxY' row 0
 #       A control is done where it arrives, inside a sequence as well.
 same 'backspace in a sequence' '[abx]'           20 3 in 'ab\e[\bCx' row 0
