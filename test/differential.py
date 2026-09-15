@@ -14283,6 +14283,14 @@ _TEXT_WRITE_SOURCES = {
     "zero": "run {words} /dev/zero {target}",
     "small": "run {words} small {target}",
     "twice": "run {words} source source {target}",
+    "smallin": "run {words} < small {target}",
+    "zeroin": "run {words} < /dev/zero {target}",
+    "yes": "env yes | run {words} {target}",
+    "seq": "env seq inf | run {words} {target}",
+    "zerolines": "env tr '\\0' '\\n' < /dev/zero | run {words} {target}",
+    "zerobound": "env head -c 1M /dev/zero | env tr '\\0' '\\n' | run {words} {target}",
+    "numbers": "env seq 1 400000 > big\nrun {words} big {target}",
+    "numbersin": "env seq 1 400000 > big\nrun {words} < big {target}",
 }
 _TEXT_WRITE_TARGETS = {
     "tmpfs": ("", "> m/f", 'echo "wrote $(env wc -c < m/f)"\n'),
@@ -14294,6 +14302,7 @@ _TEXT_WRITE_TARGETS = {
     "limit": ("env prlimit --pid $$ --fsize=20000:20000\ntrap '' XFSZ\n", "> out",
               'echo "wrote $(env wc -c < out)"\n'),
     "gone": ("trap '' PIPE\nenv mkfifo p\nenv head -c 1 p > /dev/null &\n", "> p", "wait\n"),
+    "copyfull": ("", "> /dev/full", 'echo "copy $(env wc -c < copy)"\n'),
 }
 _TEXT_WRITE_CASES = (
     ("cat", "file", "tmpfs"), ("cat", "pipe", "tmpfs"), ("cat", "zero", "tmpfs"),
@@ -14312,11 +14321,44 @@ _TEXT_WRITE_CASES = (
     ("tail", "zero", "tmpfs", "-n", "+1"), ("tail", "pipe", "tmpfs", "-n", "+1"),
     ("tail", "file", "tmpfs", "-n", "20000"), ("tail", "file", "filled", "-n", "2"),
     ("tail", "file", "full", "-c", "200000"), ("tail", "file", "closed", "-n", "2"),
+    #       A closed standard output that no input reopened: glibc's buffer
+    #       is BUFSIZ there, so 5000 bytes still wait for the flush at exit.
+    ("head", "numbersin", "closed", "-c", "5000"), ("head", "numbersin", "closed", "-c", "9000"),
+    ("tail", "numbersin", "closed", "-c", "5000"),
+    #       The other tools on the shared writer, each fed what makes GNU
+    #       write without end: /dev/zero itself, /dev/zero cut into lines,
+    #       yes, seq inf, or a bounded input where the tool reads it all first.
+    ("tr", "zeroin", "full", "a", "b"), ("tr", "zeroin", "closed", "a", "b"),
+    ("tr", "smallin", "filled", "a", "b"), ("tr", "zeroin", "tmpfs", "-d", "x"),
+    ("cut", "zerolines", "full", "-c1"), ("cut", "yes", "tmpfs", "-c1"),
+    ("cut", "small", "closed", "-c1"), ("cut", "small", "filled", "-c1"),
+    ("sed", "zerolines", "full", "p"), ("sed", "seq", "full", "p"), ("sed", "yes", "full", ""),
+    ("sed", "small", "filled", "p"), ("sed", "small", "closed", "p"),
+    ("sed", "numbersin", "closed", "p"), ("sed", "numbers", "closed", "p"),
+    ("sed", "numbers", "full", "-n", "="),
+    ("sort", "zerobound", "full"), ("sort", "numbers", "full"), ("sort", "small", "filled"),
+    ("sort", "smallin", "closed"), ("sort", "numbersin", "closed"),
+    ("base64", "zero", "full"), ("base64", "zero", "closed"), ("base64", "small", "filled"),
+    ("base32", "zero", "full"), ("basenc", "zero", "full", "--base16"),
+    ("grep", "yes", "full", "y"), ("grep", "small", "closed", "l"), ("grep", "small", "filled", "l"),
+    ("paste", "yes", "full", "-", "-"), ("nl", "yes", "full"), ("expand", "yes", "full"),
+    ("unexpand", "yes", "full", "-a"), ("fold", "yes", "full", "-w", "5"),
+    ("od", "zero", "full", "-v", "-An", "-tx1"), ("uniq", "seq", "full"),
+    ("comm", "yes", "full", "-", "/dev/null"), ("join", "yes", "full", "-v1", "-", "/dev/null"),
+    ("tac", "numbers", "full"), ("tac", "small", "closed"),
+    ("wc", "small", "filled"), ("wc", "small", "closed"),
+    ("rev", "small", "filled"), ("rev", "small", "closed"), ("rev", "smallin", "closed"),
+    ("tee", "numbersin", "copyfull", "copy"),
 )
 
 
+_TEXT_WRITE_TOOLS = ("cat", "head", "tail", "tr", "cut", "sed", "sort", "base64", "base32", "basenc",
+                     "grep", "paste", "nl", "expand", "unexpand", "fold", "od", "uniq", "comm",
+                     "join", "tac", "wc", "rev", "tee")
+
+
 def _text_write_valid(argv):
-    return (len(argv) >= 3 and argv[0] in ("cat", "head", "tail") and
+    return (len(argv) >= 3 and argv[0] in _TEXT_WRITE_TOOLS and
             argv[1] in _TEXT_WRITE_SOURCES and argv[2] in _TEXT_WRITE_TARGETS)
 
 

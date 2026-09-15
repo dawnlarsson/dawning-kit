@@ -68,18 +68,38 @@ static bool cat_output_known;
         goes straight out -- so the kernel is asked for the same writes as
         before. Inline, the common span also made nl on 256 MiB 116 ms to 92.
 
-        head and tail word the failure by where GNU notices it: a write made
-        while copying is an error writing standard output, and output small
-        enough to wait in stdio's page-sized buffer for the flush at exit is a
-        write error. Measured: head -c 100 and tail -n 2 into a full tmpfs are
-        write errors; head -c 5000 there, or to a closed descriptor, is an
-        error writing.
+        GNU's tools word a failure by where stdio noticed it -- a write made
+        while copying, or the flush at exit of output small enough to have
+        waited in the buffer -- and glibc sizes that buffer from the
+        descriptor: a page for every output measured here, and BUFSIZ when
+        the descriptor cannot be looked at, as a closed standard output that
+        no input has reopened cannot. Measured: head -c 100 and tail -n 2 into
+        a full tmpfs are write errors and head -c 5000 there is an error
+        writing; head -c 5000 big to a closed descriptor, which big reopened,
+        is an error writing, and head -c 5000 < big to one is a write error.
 */
-#define TEXT_STDIO_BUFFER 4096
+#define TEXT_STDIO_PAGE 4096
+#define TEXT_STDIO_UNSIZED 8192
 
 static bipolar text_out_error;
 static positive text_out_offered;
 static positive text_out_error_offered;
+static positive text_out_error_handle;
+static positive text_out_error_buffer;
+// The buffer glibc would give standard output, sized at the first write --
+// which a tool makes after opening its first input, so it is looked at then:
+// a closed descriptor that input reopened is a page, one still closed BUFSIZ.
+static positive text_out_stdio_size;
+
+static bool text_handle_facts(positive handle, file_facts address_to facts);
+
+static positive text_stdio_buffer(positive handle)
+{
+        file_facts facts;
+
+        return text_handle_facts(handle, address_of facts) ? TEXT_STDIO_PAGE
+                                                          : TEXT_STDIO_UNSIZED;
+}
 
 static bool text_write_out(address_any data, positive length)
 {
@@ -95,6 +115,10 @@ static bool text_write_out(address_any data, positive length)
         {
                 text_out_error = wrote.error ? wrote.error : -ERROR_INPUT_OUTPUT;
                 text_out_error_offered = text_out_offered;
+                text_out_error_handle = text_out_handle;
+                text_out_error_buffer = text_out_stdio_size
+                                            ? text_out_stdio_size
+                                            : text_stdio_buffer(text_out_handle);
         }
 
         text_out_failed = true;
@@ -290,25 +314,95 @@ static b32 text_argmatch(string_address option, string_address value,
                       text_name);
 }
 
+static fn sed_write_diagnostic(bipolar reason, positive buffer);
+
+// The tools this file stands for that say "write error" and the reason
+// whichever stdio call it was, checked against GNU one by one.
+static bool text_write_error_worded()
+{
+        static const char address_to const names[] = {
+            "tr", "cut", "paste", "nl", "fold", "expand", "unexpand", "od",
+            "base64", "base32", "basenc", "uniq", "comm", "join", "tac", "wc",
+        };
+
+        for (positive i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+                if (string_equals(text_name, (string_address)names[i]))
+                        return true;
+
+        return false;
+}
+
 static b32 text_done(b32 code)
 {
         text_flush();
 
         if (text_out_failed)
         {
-                if (string_equals(text_name, "grep") ||
-                    string_equals(text_name, "sort"))
-                        return 2;
-
-                if (string_equals(text_name, "sed"))
-                        return 4;
-
                 bipolar reason = text_out_error ? text_out_error
                                                 : -ERROR_INPUT_OUTPUT;
+                // Only standard output's refusals were measured; a file a
+                // tool opened for its answer keeps the plain status.
+                bool standard = !text_out_error || text_out_error_handle == 1;
+                positive buffer = text_out_error_buffer ? text_out_error_buffer
+                                                        : TEXT_STDIO_PAGE;
+                bool buffered = text_out_error_offered < buffer;
+
+                if (string_equals(text_name, "grep"))
+                {
+                        if (standard)
+                                string_diagnostic(&text_diagnostic, 0,
+                                                  (string_address) "write error",
+                                                  file_reason(reason));
+                        return 2;
+                }
+
+                // sort names the stdio call that failed, then gnulib's close
+                // at exit says so again -- with the reason only when there
+                // was no descriptor for it to close.
+                if (string_equals(text_name, "sort"))
+                {
+                        if (standard)
+                        {
+                                string_diagnostic(&text_diagnostic, 0,
+                                                  buffered ? (string_address) "fflush failed: 'standard output'"
+                                                           : (string_address) "write failed: 'standard output'",
+                                                  file_reason(reason));
+                                if (buffer == TEXT_STDIO_UNSIZED)
+                                        string_diagnostic(&text_diagnostic, 0,
+                                                          (string_address) "write error",
+                                                          file_reason(reason));
+                                else
+                                        string_diagnostic(&text_diagnostic, 0, null,
+                                                          "write error");
+                        }
+                        return 2;
+                }
+
+                if (string_equals(text_name, "sed"))
+                {
+                        if (standard)
+                                sed_write_diagnostic(reason, buffer);
+                        return 4;
+                }
+
+                // util-linux rev says nothing of a standard output it could
+                // not write at all, closed or reopened for reading, and exits
+                // as though it had (measured both ways).
+                if (string_equals(text_name, "rev"))
+                {
+                        if (reason == -ERROR_BAD_DESCRIPTOR)
+                                return code;
+
+                        if (standard)
+                                string_diagnostic(&text_diagnostic, 0,
+                                                  (string_address) "write error",
+                                                  file_reason(reason));
+                        return 1;
+                }
 
                 // GNU cat looks at standard output before it reads and names
                 // it when it cannot; after that a refused write is a write
-                // error. head and tail are worded at TEXT_STDIO_BUFFER.
+                // error. head and tail are worded by the buffer stdio had.
                 if (string_equals(text_name, "cat"))
                         string_diagnostic(&text_diagnostic, 0,
                                           cat_output_known
@@ -318,9 +412,13 @@ static b32 text_done(b32 code)
                 else if (string_equals(text_name, "head") ||
                          string_equals(text_name, "tail"))
                         string_diagnostic(&text_diagnostic, 0,
-                                          text_out_error_offered < TEXT_STDIO_BUFFER
+                                          buffered
                                               ? (string_address) "write error"
                                               : (string_address) "error writing 'standard output'",
+                                          file_reason(reason));
+                else if (standard && text_write_error_worded())
+                        string_diagnostic(&text_diagnostic, 0,
+                                          (string_address) "write error",
                                           file_reason(reason));
 
                 return 1;
@@ -465,14 +563,20 @@ static bool text_reader_open_at(text_reader address_to reader,
 
 static bool text_reader_open(text_reader address_to reader, string_address path)
 {
+        bool opened = true;
+
         if (!path || (path[0] == '-' && path[1] == '\0'))
         {
                 text_reader_reset(reader, path);
                 reader->handle = 0;
-                return true;
         }
+        else
+                opened = text_reader_open_at(reader, AT_FDCWD, path, path);
 
-        return text_reader_open_at(reader, AT_FDCWD, path, path);
+        if (opened && !text_out_stdio_size)
+                text_out_stdio_size = text_stdio_buffer(text_out_handle);
+
+        return opened;
 }
 
 static inline INLINE fn text_close_handle(bool address_to opened,
@@ -497,6 +601,13 @@ static bool text_reader_fill_amount(text_reader address_to reader,
                 return true;
 
         if (reader->finished)
+                return false;
+
+        // Nothing read after a refused write would ever be written, and an
+        // input without an end would be read for ever, so every tool here
+        // stops at the first refusal as GNU's do. tee, which goes on copying
+        // to its files, keeps its own note of a refused standard output.
+        if (text_out_failed)
                 return false;
 
         bipolar got = system_read_retry(reader->handle, reader->buffer,
@@ -778,6 +889,9 @@ static fn text_begin(string_address name)
         text_out_error = 0;
         text_out_offered = 0;
         text_out_error_offered = 0;
+        text_out_error_handle = 0;
+        text_out_error_buffer = 0;
+        text_out_stdio_size = 0;
         text_status = 0;
         text_name = name;
         text_argument_count = program_argument_count();
@@ -5890,13 +6004,30 @@ static b32 text_tee()
                 return text_done(1);
         }
 
+        // GNU tee names a standard output that refuses once and goes on
+        // copying to the files, so the refusal is kept here: text_out_failed
+        // would end the reading.
+        bipolar stdout_error = 0;
+
         while (text_fill())
         {
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
 
-                if (system_write_all(1, at, left) != left)
-                        text_out_failed = true;
+                if (!stdout_error)
+                {
+                        system_write_result wrote = system_write_all_checked(1, at, left);
+
+                        if (wrote.bytes != left)
+                        {
+                                stdout_error = wrote.error ? wrote.error
+                                                           : -ERROR_INPUT_OUTPUT;
+                                string_diagnostic(&text_diagnostic, 0,
+                                                  (string_address) "'standard output'",
+                                                  file_reason(stdout_error));
+                                text_status = 1;
+                        }
+                }
 
                 for (positive i = 0; i < handle_count; i++)
                         if (system_write_all(handles[i], at, left) != left)
@@ -19122,7 +19253,6 @@ static p8 address_to sed_work = sed_buffers[1];
 static positive sed_number;
 static bool sed_quiet;
 static bool sed_last;
-static bool sed_output_unterminated;
 
 #define sed_script_put(character)                                            \
         fixed_store_byte(sed_script, sed_script_length, sed_broken, character)
@@ -19200,6 +19330,146 @@ static b32 sed_file_count;
 */
 static fn sed_output_start();
 
+/*
+        GNU sed's stdio, followed for the diagnostic it prints when standard
+        output refuses. Its checked writes panic naming the size of the first
+        one that overflowed the buffer -- couldn't write 4 items -- while =
+        prints through an unchecked printf, whose failure only shows at the
+        flush. Every write is taken as refused, as into a full disk, /dev/full
+        or a bad descriptor, and the fill is kept for both sizes glibc picks,
+        since which one applied is known only once a write has failed.
+        Checked against GNU: sed p and sed '' over seq say 3 and 4 items into
+        /dev/full, sed p says 4 with seq piped to a closed descriptor, and
+        36-byte lines say 36.
+*/
+static positive sed_stdio_fill[2];
+static positive sed_stdio_items[2];
+
+/*
+        What sed tests before every line it writes: whether the last output
+        lacked its delimiter, and whether the model above is still followed
+        -- until both sizes have met their first overflow, after at most
+        BUFSIZ bytes, or for good once output goes anywhere but standard
+        output. Pending is the model waiting on nothing but the next checked
+        write, once every size still open has filled through unchecked ones:
+        the unchecked = then tests nothing, so sed -n = settles as sed p does.
+        One byte, as the delimiter flag alone was, so the line path costs what
+        it did.
+*/
+#define SED_OUTPUT_UNTERMINATED 1
+#define SED_OUTPUT_MODELLING 2
+#define SED_OUTPUT_PENDING 4
+static p8 sed_output_state;
+
+static COLD fn sed_stdio_follow(positive length, bool checked)
+{
+        static const positive sizes[2] = {TEXT_STDIO_PAGE, TEXT_STDIO_UNSIZED};
+
+        if (text_out_handle != 1)
+        {
+                sed_output_state &= (p8)~(SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING);
+                return;
+        }
+
+        if (!length)
+                return;
+
+        for (positive i = 0; i < 2; i++)
+        {
+                if (sed_stdio_items[i])
+                        continue;
+
+                if (length > sizes[i] - sed_stdio_fill[i])
+                {
+                        if (checked)
+                                sed_stdio_items[i] = length;
+                        else
+                                sed_stdio_fill[i] = sizes[i];
+                        continue;
+                }
+
+                sed_stdio_fill[i] += length;
+        }
+
+        bool settled = true;
+        bool waiting = true;
+
+        for (positive i = 0; i < 2; i++)
+        {
+                settled = settled && sed_stdio_items[i];
+                waiting = waiting && (sed_stdio_items[i] || sed_stdio_fill[i] == sizes[i]);
+        }
+
+        sed_output_state &= (p8)~(SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING);
+
+        if (!settled)
+                sed_output_state |= waiting ? SED_OUTPUT_PENDING : SED_OUTPUT_MODELLING;
+}
+
+static inline INLINE fn sed_stdio(positive length, bool checked)
+{
+        p8 wanted = checked ? (p8)(SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING)
+                            : (p8)SED_OUTPUT_MODELLING;
+
+        if (unlikely(sed_output_state & wanted))
+                sed_stdio_follow(length, checked);
+}
+
+// = prints its number and delimiter through one unchecked printf.
+static COLD fn sed_stdio_number(positive number)
+{
+        positive digits = 1;
+
+        for (; number >= 10; number /= 10)
+                digits++;
+
+        sed_stdio_follow(digits + 1, false);
+}
+
+// A checked write of a whole string and its delimiter, whose length is only
+// worth taking while the model is followed.
+static COLD fn sed_stdio_line(string_address line)
+{
+        sed_stdio_follow(string_length(line) + 1, true);
+}
+
+static fn sed_write_diagnostic(bipolar reason, positive buffer)
+{
+        p8 said[64];
+        positive at = 0;
+        positive items = sed_stdio_items[buffer == TEXT_STDIO_UNSIZED];
+
+        if (!items)
+        {
+                string_diagnostic(&text_diagnostic, 0,
+                                  reason == -ERROR_BAD_DESCRIPTOR
+                                      ? (string_address) "couldn't close stdout"
+                                      : (string_address) "couldn't flush stdout",
+                                  file_reason(reason));
+                return;
+        }
+
+        p8 digits[24];
+        positive width = 0;
+
+        for (positive n = items; n; n /= 10)
+                digits[width++] = (p8)('0' + n % 10);
+
+        for (string_address s = (string_address) "couldn't write "; *s; s++)
+                said[at++] = (p8)*s;
+
+        while (width)
+                said[at++] = digits[--width];
+
+        for (string_address s = items == 1 ? (string_address) " item to stdout"
+                                           : (string_address) " items to stdout";
+             *s; s++)
+                said[at++] = (p8)*s;
+
+        said[at] = 0;
+        string_diagnostic(&text_diagnostic, 0, (string_address)said, file_reason(reason));
+}
+
 static text_reader sed_readers[SED_FILES_MAX];
 static b32 sed_reader_names[SED_FILES_MAX];
 static bool sed_reader_open[SED_FILES_MAX];
@@ -19272,6 +19542,7 @@ static fn sed_put_reader_line(b32 which)
                 return;
 
         sed_output_start();
+        sed_stdio(length + 1, true);
         text_put(sed_reader_line, length);
         text_put_character('\n');
 }
@@ -20259,21 +20530,39 @@ static bool sed_selects(sed_command address_to command)
         return command->negate ? !answer : answer;
 }
 
-static fn sed_output_start()
+static COLD fn sed_output_start_slow()
 {
-        if (sed_output_unterminated)
+        if (sed_output_state & SED_OUTPUT_UNTERMINATED)
+        {
+                sed_stdio(1, true);
                 text_put_character(text_delimiter);
-        sed_output_unterminated = false;
+                sed_output_state &= (p8)~SED_OUTPUT_UNTERMINATED;
+        }
 }
 
-static fn sed_output(p8 address_to bytes, positive length, bool ended)
+static inline INLINE fn sed_output_start()
 {
-        sed_output_start();
+        if (unlikely(sed_output_state & SED_OUTPUT_UNTERMINATED))
+                sed_output_start_slow();
+}
+
+static COLD fn sed_output_follow(positive length, bool ended)
+{
+        sed_output_start_slow();
+        sed_stdio(length, true);
+        if (ended)
+                sed_stdio(1, true);
+}
+
+static inline INLINE fn sed_output(p8 address_to bytes, positive length, bool ended)
+{
+        if (unlikely(sed_output_state))
+                sed_output_follow(length, ended);
         text_put(bytes, length);
         if (ended)
                 text_put_character(text_delimiter);
-        else
-                sed_output_unterminated = length != 0;
+        else if (length)
+                sed_output_state |= SED_OUTPUT_UNTERMINATED;
 }
 
 static fn sed_put_space()
@@ -20359,6 +20648,7 @@ static fn sed_put_listing(positive wrap)
 
                 if (at == sed_pattern.length)
                 {
+                        sed_stdio(2, true);
                         text_put_character('$');
                         text_put_character('\n');
                         return;
@@ -20399,11 +20689,13 @@ static fn sed_put_listing(positive wrap)
                 // that marks it takes the last column of the line.
                 if (wrap && column + width > wrap - 1)
                 {
+                        sed_stdio(2, true);
                         text_put_character('\\');
                         text_put_character('\n');
                         column = 0;
                 }
 
+                sed_stdio(width, true);
                 text_put(shown, width);
                 column += width;
         }
@@ -20430,8 +20722,12 @@ static fn sed_put_file(string_address name)
 
                 if (first)
                         sed_output_start();
+                sed_stdio((positive)got, true);
                 text_put(window, (positive)got);
-                sed_output_unterminated = window[got - 1] != text_delimiter;
+                if (window[got - 1] != text_delimiter)
+                        sed_output_state |= SED_OUTPUT_UNTERMINATED;
+                else
+                        sed_output_state &= (p8)~SED_OUTPUT_UNTERMINATED;
                 first = false;
         }
 
@@ -20815,6 +21111,8 @@ static b32 text_sed()
         };
 
         text_begin("sed");
+        sed_stdio_fill[0] = sed_stdio_fill[1] = 0;
+        sed_stdio_items[0] = sed_stdio_items[1] = 0;
 
         // The script, its compiled programs, the names it writes and reads,
         // and the three spaces x swaps: all of them belong to this run.
@@ -20840,7 +21138,7 @@ static b32 text_sed()
         sed_recent = -1;
         sed_in_place = null;
         sed_number = 0;
-        sed_output_unterminated = false;
+        sed_output_state = SED_OUTPUT_MODELLING;
         sed_pattern = (sed_buffer){sed_buffers[0], 0, true};
         sed_holding = (sed_buffer){sed_buffers[2], 0, true};
         sed_work = sed_buffers[1];
@@ -21065,7 +21363,7 @@ static b32 text_sed()
                         }
 
                         text_out_to((positive)written);
-                        sed_output_unterminated = false;
+                        sed_output_state &= (p8)~SED_OUTPUT_UNTERMINATED;
                 }
                 else if (!text_open(name))
                 {
@@ -21201,6 +21499,8 @@ static b32 text_sed()
                                 }
                                 case '=':
                                         sed_output_start();
+                                        if (unlikely(sed_output_state & SED_OUTPUT_MODELLING))
+                                                sed_stdio_number(sed_number);
                                         positive_to_string(text_put, sed_number);
                                         text_put_character(text_delimiter);
                                         break;
@@ -21211,6 +21511,11 @@ static b32 text_sed()
                                         goto cycle_done;
                                 case 'F':
                                         sed_output_start();
+                                        if (unlikely(sed_output_state & (SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING)))
+                                        {
+                                                sed_stdio_follow(string_length(called ? called : (string_address) "-"), false);
+                                                sed_stdio_follow(1, true);
+                                        }
                                         text_put_string(called ? called : (string_address) "-");
                                         text_put_character('\n');
                                         break;
@@ -21265,6 +21570,8 @@ static b32 text_sed()
                                             !command->active)
                                         {
                                                 sed_output_start();
+                                                if (unlikely(sed_output_state & (SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING)))
+                                                        sed_stdio_line(sed_text + command->text);
                                                 text_put_string(sed_text + command->text);
                                                 text_put_character(text_delimiter);
                                         }
@@ -21303,6 +21610,8 @@ cycle_done:
                                 }
 
                                 sed_output_start();
+                                if (unlikely(sed_output_state & (SED_OUTPUT_MODELLING | SED_OUTPUT_PENDING)))
+                                        sed_stdio_line(sed_text + append_which[c]);
                                 text_put_string(sed_text + append_which[c]);
                                 text_put_character('\n');
                         }
@@ -23122,8 +23431,12 @@ typedef struct
 {
         positive handle;
         bool failed;
-        // The first failed write's error, for the diagnostic.
+        // The first failed write's error, for the diagnostic, with what had
+        // been handed to the writer by then and the buffer stdio would have.
         bipolar error;
+        positive offered;
+        positive error_offered;
+        positive buffer;
 } sort_writer;
 
 // Where the newest temporary was made: a run or a merge is written right
@@ -23134,6 +23447,8 @@ static bool sort_write_all(sort_writer address_to out, address_any data,
                            positive length)
 {
         p8 address_to at = data;
+
+        out->offered += length;
 
         while (length)
         {
@@ -23148,7 +23463,13 @@ static bool sort_write_all(sort_writer address_to out, address_any data,
                         out->failed = true;
 
                         if (!out->error)
+                        {
                                 out->error = wrote ? wrote : -28;
+                                out->error_offered = out->offered;
+                                out->buffer = text_out_stdio_size
+                                                  ? text_out_stdio_size
+                                                  : text_stdio_buffer(out->handle);
+                        }
 
                         return false;
                 }
@@ -23169,6 +23490,9 @@ static bool sort_writer_ready(sort_writer address_to out, positive handle)
         out->handle = handle;
         out->failed = false;
         out->error = 0;
+        out->offered = 0;
+        out->error_offered = 0;
+        out->buffer = 0;
         sort_out_used = 0;
 
         if (sort_out || array_store_reserve(sort_out, sort_out_room, 0,
@@ -25428,7 +25752,17 @@ static fn sort_output_close(sort_writer address_to out)
         sort_writer_flush(out);
 
         if (out->failed)
+        {
                 text_out_failed = true;
+
+                if (!text_out_error)
+                {
+                        text_out_error = out->error;
+                        text_out_error_offered = out->error_offered;
+                        text_out_error_handle = out->handle;
+                        text_out_error_buffer = out->buffer;
+                }
+        }
 }
 
 // Every input into chunks and runs, then the answer: straight from memory
