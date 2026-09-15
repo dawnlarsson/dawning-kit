@@ -5709,9 +5709,9 @@ b32 main()
                         unsigned int wrong = 0;
 
                         // Every character, as unicode_width answers it for
-                        // the terminal and as term.c's two range tables alone
-                        // said, so no shortcut in front of the table lookup
-                        // can disagree with them.
+                        // the terminal and as the reference's two range tables
+                        // alone say, so no shortcut in front of the table
+                        // lookup can disagree with them.
                         for (unsigned int c = 0; c <= 0x10ffff; c++)
                                 wrong += unicode_width(c, UNICODE_WIDTH_TERMINAL) !=
                                          unicode_width_reference_tables(c);
@@ -6343,9 +6343,15 @@ same 'pinned at the edge' '[ab<6f22>]|0,4'       4 2 in '\e[?7l' in 'abc\xe6\xbc
 #       so what is written over the pair afterwards stands whole.
 same 'erasing the left half' '[ab]'              8 2 in '\xe6\xbc\xa2\e[1;1H\e[Xab' row 0
 same 'erasing the right half' '[ ]'              8 2 in '\xe6\xbc\xa2\e[1;2H\e[X' row 0
+#       Where glibc prints what Unicode 16 does not, the width is glibc's, which
+#       is what a program sizing its text with wcwidth counts, and tmux too: an
+#       Arabic number sign, a mark written before its number, takes a column,
+#       and U+1FA8A, wide in glibc's newer data, takes two.
+same 'number sign takes one' '[<0600>x]|0,2'     8 2 in '\xd8\x80x' row 0 cursor
+same 'newer emoji is wide' '[<1fa8a>x]|0,3'      8 2 in '\xf0\x9f\xaa\x8ax' row 0 cursor
 #       The ideographs and the Hangul syllables are answered before the table
-#       searches; every character from U+0000 to U+10FFFF has to get the width
-#       the tables alone give it.
+#       lookup; every character from U+0000 to U+10FFFF has to get the width
+#       the reference's range tables alone give it.
 same 'shortcuts agree with the tables' '0'        8 2 widths
 
 group runs
