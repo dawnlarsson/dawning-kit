@@ -7,9 +7,6 @@
         github.com/dawnlarsson/dawning-kit
 
         www.dawning.dev
-
-        use the accompanying build shell script to compile
-        $ sh build <source_file.c> <output_file_name>
 */
 
 /*

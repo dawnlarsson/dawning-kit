@@ -7,6 +7,28 @@ foundational parts of the common userspace is moved into the moonwater kernel mo
 
 Moonwater is also supposed to be super small, sub 15 mb for the entire system.
 
+## Bowl
+
+Bowl runs Debian, Arch, or another Linux package directly on the Moonwater
+kernel. The default fast profile binds only that package's loader and libc,
+leaves Moonwater's applets in place, and does not use a VM or supervisor fork;
+`--isolated` supplies the complete namespace and root view needed by package
+managers. Selected package executables can be exposed on Moonwater's global
+path with `bowl expose`.
+
+on a fresh install of moonwater:
+```sh
+bowl setup <alpine | arch | debian | fedora>
+```
+then just use the package manger from the distro like normal:
+```sh
+pacman -Syu package_name
+```
+
+in other words, your software can be installed from multiple places on one system 
+accelerated by Moonwaters native and very fast coreutils, 
+util-linux, and Moonwater Shell (supports all of bash, dash)
+
 ## The build tool
 
 The whole build path is one C program, `src/build/build.c`, built on this
@@ -44,27 +66,6 @@ on anything else -- a Mac, most obviously -- point `--host` at a machine that
 has them, or set `MOONWATER_BUILD_HOST` once and forget about it. Everything
 after the build is local either way: QEMU runs on this machine so the window,
 the mouse and the keyboard are real.
-
-## Building a desktop or server image
-
-The default build starts the in-kernel Canvas desktop. Two profiles provide
-console-first images without changing the shell, utilities, Spark loader or
-automatic network setup:
-
-```sh
-# Keep Canvas in the image, but start the shell directly on the kernel console.
-sh build.sh arch/x64 debug_none limbo desktop serial terminal
-
-# Do not compile or link Canvas or its architecture-specific renderer assembly.
-sh build.sh arch/x64 debug_none limbo desktop serial server
-```
-
-The same split is available in Kconfig. `CONFIG_MOONWATER_CANVAS_AUTOSTART=n`
-keeps Canvas compiled but leaves the display to the framebuffer, virtual or
-serial console. `CONFIG_MOONWATER_CANVAS=n` removes Canvas completely. A
-console-first configuration must not use the `drm_client_lib.active=` kernel
-argument because that argument deliberately suppresses the framebuffer
-console used in place of Canvas.
 
 ## Selecting the bundled userspace
 
@@ -127,18 +128,6 @@ fails if the difference ever disappears. Where a case has no determined answer
 -- a terminal transcript interleaved by timing, a namespace the kernel fills
 as it pleases -- it is recorded by name and counted in neither column, so it
 cannot move a result either way.
-
-## Bowl
-
-Bowl runs Debian, Arch, or another Linux package directly on the Moonwater
-kernel. The default fast profile binds only that package's loader and libc,
-leaves Moonwater's applets in place, and does not use a VM or supervisor fork;
-`--isolated` supplies the complete namespace and root view needed by package
-managers. Selected package executables can be exposed on Moonwater's global
-path with `bowl expose`.
-
-See [the Bowl runtime notes](src/bowl/README.md) for the current commands and
-installation flow.
 
 ## "Moonwater"?
 Some believe that if you leave a bowl of water outside under a full moon, it absorbs celestial energy.
