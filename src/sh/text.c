@@ -14315,6 +14315,8 @@ static positive grep_hold_count;
 static positive grep_hold_used;
 static positive grep_hold_write;
 static p8 address_to grep_hold_color;
+// Whether the locale is UTF-8, where a printed line has to be characters.
+static bool grep_utf8;
 static bool grep_coloring;
 static bool grep_color_ne;
 static bool grep_color_reverse;
@@ -14339,12 +14341,15 @@ static bool grep_hold_make(positive lines)
         grep_hold_at = (positive address_to)utility_arena_take(lines * sizeof(positive));
         grep_hold_size = (positive address_to)utility_arena_take(lines * sizeof(positive));
         grep_hold_number = (positive address_to)utility_arena_take(lines * sizeof(positive));
-        grep_hold_color = grep_coloring
+        // Colour paints a held line whole, and a UTF-8 locale asks whether it
+        // is characters whole: either joins it across the ring's wrap here.
+        grep_hold_color = grep_coloring || grep_utf8
                               ? (p8 address_to)utility_arena_take(GREP_HOLD_BYTES)
                               : null;
 
         return grep_hold_pool && grep_hold_at && grep_hold_size &&
-               grep_hold_number && (!grep_coloring || grep_hold_color);
+               grep_hold_number &&
+               (!(grep_coloring || grep_utf8) || grep_hold_color);
 }
 
 /*
@@ -14761,6 +14766,21 @@ static grep_glob address_to grep_file_globs;
 static grep_glob address_to grep_exclude_dir;
 // Whichever of -l and -L came later, for when both did.
 static p8 grep_list_last;
+// The last of -r, -R and -d, which are one setting in GNU: 'r' recurse, 's'
+// skip, 'd' read, or nought when none was said.
+static p8 grep_directories_last;
+
+// What a file holding a NUL is: found out and quieted, read as text (-a,
+// --binary-files=text) or taken for one without a match (-I,
+// --binary-files=without-match). The last of them said is the one.
+enum
+{
+        GREP_BINARY_DETECT = 0,
+        GREP_BINARY_TEXT = 1,
+        GREP_BINARY_WITHOUT = 2,
+};
+
+static p8 grep_binary_files;
 
 /*
         All three option families are the same list operation. Values from an
@@ -15373,6 +15393,20 @@ static bool grep_option_seen(p8 letter, string_address value)
         }
         else if (letter == 'l' || letter == 'L')
                 grep_list_last = letter;
+        else if (letter == 'r' || letter == 'R')
+                grep_directories_last = 'r';
+        else if (letter == 'd')
+                grep_directories_last = string_equals(value, "recurse") ? 'r'
+                                        : string_equals(value, "skip")  ? 's'
+                                                                        : 'd';
+        else if (letter == 'a')
+                grep_binary_files = GREP_BINARY_TEXT;
+        else if (letter == 'I')
+                grep_binary_files = GREP_BINARY_WITHOUT;
+        else if (letter == 'N')
+                grep_binary_files = value[0] == 't'   ? GREP_BINARY_TEXT
+                                    : value[0] == 'w' ? GREP_BINARY_WITHOUT
+                                                      : GREP_BINARY_DETECT;
         else if (letter == 'Q')
         {
                 if (!grep_glob_add(address_of grep_file_globs, value,
@@ -15547,6 +15581,222 @@ static bool grep_set_gather(const regex_program address_to program, p16 node,
         return true;
 }
 
+/*
+        GNU's binary rule, byte for byte where it can be. GNU reads 98304
+        bytes at a time and looks for a NUL in each read before searching the
+        lines in it. From the first read holding one the file is binary:
+        nothing more of it is printed, the first line it then selects ends it
+        with "binary file matches", -I finds nothing in it, and every NUL ends
+        a line as a newline does for the matching and counting that go on. A
+        file with a hole is binary from its first byte, which GNU asks
+        SEEK_HOLE about.
+
+        The reader here takes 65536 bytes a read, which is not where GNU's
+        reads end. What the reader holds is looked at for a NUL as it comes;
+        a line ending in a region only partly seen is asked first whether it
+        is selected at all, and only one about to be printed has the rest of
+        its region read with pread, to learn what GNU would have known. GNU's
+        later reads move with where its carried partial line lands in its
+        buffer, so past the first the regions are 98304 bytes apart, as a
+        carried line shorter than a page leaves them; a pipe, which cannot be
+        read ahead, takes its regions a read at a time.
+*/
+#define GREP_BINARY_REGION 98304
+
+typedef struct
+{
+        // Where, from the first byte read, the first region holding a NUL
+        // starts, or positive_max.
+        positive from;
+        // No byte before this is a NUL.
+        positive clean_to;
+        // The input's own offset where reading began, and its size from there.
+        positive origin;
+        positive size;
+        bool seekable;
+} grep_binary;
+
+static p8 grep_binary_ahead[GREP_BINARY_REGION];
+
+// Where, from the first byte read, the first NUL in [from, past) is, reading
+// the input itself with pread; positive_max for none, or for an end of input.
+static positive grep_binary_read_nul(const grep_binary address_to binary,
+                                     positive from, positive past)
+{
+        while (from < past)
+        {
+                positive want = min(past - from, (positive)GREP_BINARY_REGION);
+                bipolar got = system_call_4(syscall(pread64), text_input.handle,
+                                            (positive)grep_binary_ahead, want,
+                                            binary->origin + from);
+
+                if (got <= 0)
+                        return positive_max;
+
+                p8 address_to nul = memory_first_of(grep_binary_ahead, 0, (positive)got);
+
+                if (nul)
+                        return from + (positive)(nul - grep_binary_ahead);
+
+                from += (positive)got;
+        }
+
+        return positive_max;
+}
+
+/*
+        Looks for the first NUL in what the reader holds, and on a seekable
+        input in any bytes before it nobody looked at -- lines a skip or a
+        long line's spill went past -- `next` being where the reader's
+        position is from the first byte read. Nothing past the reader is read
+        here: see grep_binary_settle.
+*/
+static fn grep_binary_scan(grep_binary address_to binary, positive next)
+{
+        positive base = next - text_input.position;
+        positive past = base + text_input.filled;
+
+        if (binary->from != positive_max || binary->clean_to >= past)
+                return;
+
+        if (binary->clean_to < base)
+        {
+                positive at = binary->seekable
+                                  ? grep_binary_read_nul(binary, binary->clean_to, base)
+                                  : positive_max;
+
+                if (at != positive_max)
+                {
+                        binary->from = at - at % GREP_BINARY_REGION;
+                        return;
+                }
+
+                binary->clean_to = base;
+        }
+
+        p8 address_to nul = memory_first_of(
+            text_input.buffer + (binary->clean_to - base), 0, past - binary->clean_to);
+
+        if (nul)
+        {
+                positive at = base + (positive)(nul - text_input.buffer);
+
+                binary->from = binary->seekable ? at - at % GREP_BINARY_REGION : base;
+                return;
+        }
+
+        binary->clean_to = past;
+}
+
+// Where the region holding a line that ends at `end` itself ends.
+static positive grep_binary_region_past(const grep_binary address_to binary,
+                                        positive line_end)
+{
+        positive past = line_end - line_end % GREP_BINARY_REGION + GREP_BINARY_REGION;
+
+        return line_end < binary->size && past > binary->size ? binary->size : past;
+}
+
+// Whether a line ending at `end` is known to end before any region with a NUL.
+static bool grep_binary_clean(const grep_binary address_to binary, positive line_end)
+{
+        if (binary->from != positive_max)
+                return line_end < binary->from;
+
+        if (!binary->seekable)
+                return line_end < binary->clean_to;
+
+        return grep_binary_region_past(binary, line_end) <= binary->clean_to;
+}
+
+// Every line ending before this is known clean.
+static positive grep_binary_certain(const grep_binary address_to binary)
+{
+        if (binary->from != positive_max)
+                return binary->from;
+
+        if (!binary->seekable || binary->clean_to >= binary->size)
+                return binary->clean_to;
+
+        return binary->clean_to - binary->clean_to % GREP_BINARY_REGION;
+}
+
+/*
+        Reads on past the reader to the end of the region holding `end`, for a
+        line ending there that is about to be printed while whether its region
+        holds a NUL is not known. A pipe has nothing to read ahead, and what
+        it has shown of the region is all there is to go by.
+*/
+static fn grep_binary_settle(grep_binary address_to binary, positive line_end)
+{
+        if (!binary->seekable || grep_binary_clean(binary, line_end))
+                return;
+
+        positive past = grep_binary_region_past(binary, line_end);
+        positive at = grep_binary_read_nul(binary, binary->clean_to, past);
+
+        if (at != positive_max)
+                binary->from = at - at % GREP_BINARY_REGION;
+        else
+                binary->clean_to = past;
+}
+
+/*
+        NULs made ends of line, as GNU makes them in a file it has found
+        binary. Text has none, and one search says so; past the first, a
+        binary file usually holds many, so the rest goes a word at a time with
+        every zero byte of a word found at once and no branch per byte: a
+        byte's high bit survives (b & 7f) + 7f, b and 7f or-ed together only
+        where b is zero, and a word is written back only when it held one.
+*/
+static fn grep_binary_zap(p8 address_to at, positive size)
+{
+        p64 delimiter = text_delimiter;
+        p8 address_to first = memory_first_of(at, 0, size);
+
+        if (!first)
+                return;
+
+        positive i = (positive)(first - at);
+
+        for (; i + 8 <= size; i += 8)
+        {
+                p64 word;
+
+                __builtin_memcpy(address_of word, at + i, 8);
+
+                p64 zero = ~(((word & 0x7f7f7f7f7f7f7f7full) + 0x7f7f7f7f7f7f7f7full) |
+                             word | 0x7f7f7f7f7f7f7f7full);
+
+                if (!zero)
+                        continue;
+
+                word |= (zero >> 7) * delimiter;
+                __builtin_memcpy(at + i, address_of word, 8);
+        }
+
+        for (; i < size; i++)
+                at[i] = at[i] ? at[i] : (p8)delimiter;
+}
+
+// Whether a regular file has a hole anywhere past where reading begins.
+static bool grep_binary_holes(const grep_binary address_to binary,
+                              const file_facts address_to facts)
+{
+        // Blocks enough for every byte leave no room for one, and asking
+        // costs two seeks.
+        if (facts->blocks * 512 >= facts->size)
+                return false;
+
+        // SEEK_HOLE, then back with SEEK_SET.
+        bipolar hole = system_call_3(syscall(lseek), text_input.handle,
+                                     binary->origin, 4);
+
+        system_call_3(syscall(lseek), text_input.handle, binary->origin, 0);
+
+        return hole >= 0 && (positive)hole < facts->size;
+}
+
 typedef struct
 {
         const regex_program address_to program;
@@ -15557,9 +15807,20 @@ typedef struct
         // The deterministic machine, when a record needs the whole question
         // asked and the question has no backreference in it; null otherwise.
         rx_dfa_cache address_to dfa;
+        // The file's binary state, for a record read past the reader; null
+        // when NULs are only bytes.
+        grep_binary address_to binary;
         positive limit;
         p8 mode, boundary;
         bool literal_proves, icase, invert, plain, numbered;
+        // In a UTF-8 locale, a line holding a byte that is no character is
+        // kept from the output, as GNU keeps it.
+        bool check_encoding;
+        // A count of a string in a file nobody looks at for NULs first:
+        // since no string holds a NUL, the ends a NUL makes move the count
+        // only in a span that counted a line, so that span alone is looked
+        // at, and counted again with its NULs ending lines if it holds one.
+        bool zap_hits;
 } grep_plan;
 
 typedef struct
@@ -15572,6 +15833,8 @@ typedef struct
         // Lines the machine gave up on; the caller says so for each.
         positive complex;
         bool done;
+        // A line selected to be printed and kept from the output.
+        bool unprintable;
         // Each string's next occurrence in the span: null before it has been
         // looked for, the end of the span when there is none.
         string_address next[GREP_SET_MAX];
@@ -15613,6 +15876,50 @@ static bool grep_literal_bounded(const grep_plan address_to plan,
 
                 from = at + 1;
         }
+}
+
+/*
+        Whether bytes are all characters in UTF-8, which is what GNU asks of a
+        line in a UTF-8 locale before printing it: a byte that begins no
+        character, a sequence cut short, an overlong form or a surrogate keeps
+        the line from the output.
+*/
+static PURE bool grep_text_valid(string_address bytes, positive length)
+{
+        const p8 address_to at = (const p8 address_to)bytes;
+        positive i = 0;
+
+        while (i < length)
+        {
+                while (i + 8 <= length)
+                {
+                        p64 word;
+
+                        memory_copy_apart(address_of word, at + i, 8);
+
+                        if (word & 0x8080808080808080ull)
+                                break;
+
+                        i += 8;
+                }
+
+                while (i < length && at[i] < 0x80)
+                        i++;
+
+                if (i == length)
+                        break;
+
+                p32 code;
+                positive size;
+
+                if (wc_utf8_decode(at + i, length - i, address_of code,
+                                   address_of size) != WC_VALID)
+                        return false;
+
+                i += size;
+        }
+
+        return true;
 }
 
 static bool grep_line_matches(const grep_plan address_to plan,
@@ -15696,6 +16003,12 @@ static fn grep_line_selected(const grep_plan address_to plan,
                                               (positive)(line - state->counted),
                                               text_delimiter);
                 state->counted = line;
+        }
+
+        if (plan->check_encoding && !grep_text_valid(line, length))
+        {
+                state->unprintable = true;
+                return;
         }
 
         grep_head(state->name, ':', state->number + 1,
@@ -15831,6 +16144,27 @@ static fn grep_record_stream(const grep_plan address_to plan,
         {
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
+
+                /*
+                        A read may find the file binary, and from then every
+                        NUL in what the reader holds ends a line as a newline
+                        does -- all of them at once, so the reads after this
+                        record find their lines' ends as they find newlines,
+                        and a run of NULs is not a record at a time. A count
+                        of a string skips a read the string is nowhere in:
+                        however its NULs cut it, none of its lines is counted,
+                        and one the string crosses into from the read before
+                        is found by the edge whole either way.
+                */
+                if (plan->binary)
+                {
+                        grep_binary_scan(plan->binary, state->offset);
+
+                        if (plan->binary->from != positive_max &&
+                            (!plan->zap_hits || grep_bytes_hold(plan, at, left)))
+                                grep_binary_zap(at, left);
+                }
+
                 p8 address_to stop = memory_first_of(at, text_delimiter, left);
                 positive size = stop ? (positive)(stop - at) : left;
                 positive head = size < window ? size : window;
@@ -15846,11 +16180,13 @@ static fn grep_record_stream(const grep_plan address_to plan,
                 if (stop)
                 {
                         text_input.position += size + 1;
+                        state->offset += size + 1;
                         ended = true;
                         break;
                 }
 
                 text_input.position = text_input.filled;
+                state->offset += left;
 
                 if (size >= window)
                 {
@@ -15872,15 +16208,27 @@ static fn grep_record_stream(const grep_plan address_to plan,
         {
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
+
+                if (plan->binary)
+                {
+                        grep_binary_scan(plan->binary, state->offset);
+
+                        if (plan->binary->from != positive_max &&
+                            (!plan->zap_hits || grep_bytes_hold(plan, at, left)))
+                                grep_binary_zap(at, left);
+                }
+
                 p8 address_to stop = memory_first_of(at, text_delimiter, left);
 
                 if (stop)
                 {
                         text_input.position += (positive)(stop - at) + 1;
+                        state->offset += (positive)(stop - at) + 1;
                         break;
                 }
 
                 text_input.position = text_input.filled;
+                state->offset += left;
         }
 
         if (found != plan->invert)
@@ -15913,6 +16261,15 @@ static fn grep_span(const grep_plan address_to plan, grep_state address_to state
                     span, size, (address_any)literal->literal,
                     literal->literal_length, literal->literal_anchors.x,
                     literal->literal_anchors.y, text_delimiter);
+
+                if (plan->zap_hits && got && memory_first_of(span, 0, size))
+                {
+                        grep_binary_zap((p8 address_to)span, size);
+                        got = memory_count_records_with_prepared(
+                            span, size, (address_any)literal->literal,
+                            literal->literal_length, literal->literal_anchors.x,
+                            literal->literal_anchors.y, text_delimiter);
+                }
 
                 state->matches += plan->invert
                                       ? memory_count(span, size, text_delimiter) - got
@@ -16008,14 +16365,172 @@ static fn grep_span(const grep_plan address_to plan, grep_state address_to state
         state->offset += size;
 }
 
+/*
+        Lines of a region nothing has yet shown to be text or binary, asked
+        first whether any of them is selected, with nothing printed. When none
+        is, the state has taken them as a print would have and the answer is
+        false; when one is, the state is as it was, so the caller can read the
+        region to its end and take the lines again the way that decides.
+*/
+static bool grep_span_probe(grep_plan address_to plan, grep_state address_to state,
+                            string_address span, positive size)
+{
+        grep_state saved = address_to state;
+        p8 mode = plan->mode;
+
+        plan->mode = GREP_SPAN_FIRST;
+        grep_span(plan, state, span, size);
+        plan->mode = mode;
+
+        if (state->matches == saved.matches)
+        {
+                state->done = saved.done;
+                return false;
+        }
+
+        address_to state = saved;
+        return true;
+}
+
+/*
+        A record that runs past the reader, read on a fill at a time as the
+        line reader's spill does, except that each fill is checked for GNU's
+        binary rule first and, once the file is binary, has its NULs made ends
+        of line before the end of the record is looked for. `next` is where
+        the reader's position is from the first byte read.
+*/
+static bool grep_binary_line(grep_binary address_to binary, positive next,
+                             p8 address_to address_to line,
+                             positive address_to length)
+{
+        positive used = 0;
+
+        for (;;)
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                p8 address_to found = memory_first_of(at, text_delimiter, left);
+                positive take = found ? (positive)(found - at) : left;
+
+                if (take > TEXT_LINE_MAX - used)
+                {
+                        text_input.position = text_input.filled;
+                        text_input.finished = true;
+                        text_input.failed = true;
+                        text_status = text_status ? text_status : 1;
+                        address_to length = 0;
+                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                 "line too long");
+                }
+
+                memory_copy(text_line + used, at, take);
+                used += take;
+                text_input.position += take;
+                next += take;
+
+                if (found || !text_fill_amount(TEXT_READ_MAX))
+                {
+                        if (found)
+                                text_input.position++;
+
+                        text_line[used] = text_delimiter;
+                        text_line_ended = found != null;
+                        text_line_length = used;
+                        address_to line = text_line;
+                        address_to length = used;
+                        return found || used;
+                }
+
+                grep_binary_scan(binary, next);
+
+                if (binary->from != positive_max)
+                        grep_binary_zap(text_input.buffer, text_input.filled);
+        }
+}
+
+/*
+        The rest of a file GNU has found binary, in a print mode: whether one
+        more line of it is selected, with its NULs ending lines and nothing
+        printed. `first` is the record the rest begins with, already made of
+        such lines when `zap` asks for them, and `next` is where the reader's
+        position is from the first byte read. A string with nothing around it
+        is in some line of the rest however NULs cut it, since no string holds
+        one, so for that question `zap` is false and the NULs stay bytes.
+*/
+static bool grep_binary_rest(grep_plan address_to plan,
+                             grep_binary address_to binary, p8 address_to first,
+                             positive first_size, positive next, bool zap,
+                             positive address_to complex)
+{
+        grep_state state = {.match = address_of regex_match,
+                            .name = (string_address) ""};
+
+        plan->mode = GREP_SPAN_FIRST;
+        grep_span(plan, address_of state, first, first_size);
+        state.offset = next;
+
+        while (!state.done && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+
+                if (zap)
+                        grep_binary_zap(at, left);
+
+                p8 address_to last = memory_last_of(at, text_delimiter, left);
+                p8 address_to line = at;
+                positive size;
+
+                if (last)
+                {
+                        size = (positive)(last - at) + 1;
+                        text_input.position += size;
+                }
+                else if (!zap)
+                {
+                        grep_record_stream(plan, address_of state);
+                        continue;
+                }
+                else
+                {
+                        positive length;
+
+                        if (!grep_binary_line(binary, state.offset, address_of line,
+                                              address_of length))
+                                break;
+
+                        size = length + 1;
+                }
+
+                grep_span(plan, address_of state, line, size);
+        }
+
+        address_to complex += state.complex;
+        return state.matches != 0;
+}
+
+// Whether a held line is characters, joined across the ring's wrap first.
+static bool grep_hold_valid(positive slot)
+{
+        positive at = grep_hold_at[slot];
+        positive length = grep_hold_size[slot];
+        positive head = GREP_HOLD_BYTES - at;
+
+        if (head >= length)
+                return grep_text_valid((string_address)(grep_hold_pool + at), length);
+
+        memory_copy(grep_hold_color, grep_hold_pool + at, head);
+        memory_copy(grep_hold_color + head, grep_hold_pool, length - head);
+        return grep_text_valid((string_address)grep_hold_color, length);
+}
+
 static b32 text_grep()
 {
         file_taking taking = {
             .program = (string_address) "grep",
-            // -y is -i said the old way. Everything here is bytes already:
-            // -a says read a binary file as text, -I and -U say what to do
-            // about the ones that are not, and neither describes anything
-            // this does.
+            // -y is -i said the old way. -a and -I say what a file holding a
+            // NUL is, as --binary-files does; -U is DOS's and changes nothing
+            // here, as it changes nothing in GNU's grep on Linux.
             .options = grep_options,
             .operand = grep_operand,
             .seen = grep_option_seen,
@@ -16041,6 +16556,9 @@ static b32 text_grep()
         grep_file_globs = null;
         grep_exclude_dir = null;
         grep_list_last = 0;
+        grep_directories_last = 0;
+        grep_binary_files = GREP_BINARY_DETECT;
+        grep_utf8 = text_locale_utf8();
         grep_walk_halted = false;
         grep_path_count = 0;
         grep_expanded = false;
@@ -16109,7 +16627,11 @@ static b32 text_grep()
         grep_offsets = (flags & FILE_FLAG('b')) != 0;
         grep_tabbed = (flags & FILE_FLAG('T')) != 0;
         grep_null_name = (flags & FILE_FLAG('Z')) != 0;
-        grep_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
+        // -r, -R and -d are one setting and the last of them is the one, so
+        // -r -d skip skips and -d skip -r recurses; what -R says about links
+        // stays whatever came after it.
+        grep_recursive = grep_directories_last == 'r';
+        grep_skip_directories = grep_directories_last == 's';
         grep_dereference = (flags & FILE_FLAG('R')) != 0;
 
         /*
@@ -16123,16 +16645,6 @@ static b32 text_grep()
                 The three exit statuses below are not a pattern. They are what
                 grep 3.11 did.
         */
-        said = file_option_value(address_of taking, 'd');
-
-        if (said)
-        {
-                if (string_equals(said, "recurse"))
-                        grep_recursive = true;
-                else if (string_equals(said, "skip"))
-                        grep_skip_directories = true;
-        }
-
         said = file_option_value(address_of taking, 'W');
 
         if (flags & FILE_FLAG('W'))
@@ -16383,6 +16895,7 @@ static b32 text_grep()
                 positive pending = 0;
                 positive shown = 0;
                 bool split = shown_any;
+                bool found_before = found_any;
 
                 if (!text_open(name))
                 {
@@ -16462,27 +16975,102 @@ static b32 text_grep()
                 bool discard_file = discarded && text_input.opened && input_known &&
                                     (input_facts.mode & MODE_FORMAT) == MODE_FILE;
 
+                /*
+                        A NUL makes the file binary as GNU reads it (see
+                        grep_binary), in every mode: a count counts the lines
+                        its NULs end. -a reads it as text, and -z makes the NUL
+                        the end of a line and so no sign of anything. Apart
+                        from NULs, in a UTF-8 locale a line holding a byte that
+                        is no character is kept from the output, and the file
+                        says so the same way.
+                */
+                bool printing = !counting && !listing && !listing_without &&
+                                !quiet && !discard_file;
+                /*
+                        What no NUL can change is not looked at for one. No
+                        string holds a NUL, so whether a file holds a string
+                        with nothing around it is the same question with NULs
+                        ending lines or not, and a count of one moves only
+                        where a counted line holds a NUL (plan.zap_hits). A
+                        print mode, -v, -x, -w, an expression and -I all look.
+                */
+                bool first_mode = quiet || listing || listing_without || discard_file;
+                bool literal_only = (literal_proves || literal_set) && !invert &&
+                                    regex_boundary == REGEX_BOUNDARY_NONE;
+                bool zap_hits = counting && !first_mode && literal_only &&
+                                literal_proves && literal->literal_length && !icase &&
+                                limit == TEXT_UNSET &&
+                                grep_binary_files == GREP_BINARY_DETECT &&
+                                !null_data && !directory;
+                bool binary_watch = grep_binary_files != GREP_BINARY_TEXT &&
+                                    !null_data && !directory &&
+                                    (printing || grep_binary_files == GREP_BINARY_WITHOUT ||
+                                     !((first_mode && literal_only) || zap_hits));
+                /*
+                        Where a line is printed, or -I may find nothing, which
+                        lines come before the region holding the first NUL
+                        decides the answer, so regions are checked ahead of the
+                        lines in them. A count or a listing that looks reads
+                        every NUL as an end of line from the first byte, which
+                        is the same answer, since no NUL comes before the first.
+                */
+                bool binary_regions = binary_watch &&
+                                      (printing || grep_binary_files == GREP_BINARY_WITHOUT);
+                grep_binary binary = {.from = positive_max, .size = positive_max};
+                // Binary from the first byte, for a file read that way.
+                grep_binary zap_all = {.from = 0, .size = positive_max};
+                bool binary_zapping = binary_watch && !binary_regions;
+                bool binary_tail = false;
+                bool binary_matched = false;
+                positive binary_before = 0;
+                bool unprintable = false;
+                bool check_encoding = grep_utf8 && printing &&
+                                      grep_binary_files != GREP_BINARY_TEXT;
+
+                if (binary_regions && input_known &&
+                    (input_facts.mode & MODE_FORMAT) == MODE_FILE)
+                {
+                        bipolar begun = text_input.opened
+                                            ? 0
+                                            : system_call_3(syscall(lseek),
+                                                            text_input.handle, 0, 1);
+
+                        binary.seekable = begun >= 0;
+                        binary.origin = begun > 0 ? (positive)begun : 0;
+                        binary.size = input_facts.size > binary.origin
+                                          ? input_facts.size - binary.origin
+                                          : 0;
+
+                        if (binary.seekable &&
+                            grep_binary_holes(address_of binary, address_of input_facts))
+                                binary.from = 0;
+                }
+
                 // -v wants the lines that do not match and the context flags
                 // want the ones around them, so neither can have any line go
                 // by unread.
                 bool skipping = literal && literal->literal_length && !invert && !before && !after;
                 bool direct_counting = counting && skipping && literal_proves && !whole_line &&
                                        !whole_word && !listing &&
-                                       !listing_without && !quiet && !discard_file;
+                                       !listing_without && !quiet && !discard_file &&
+                                       !binary_watch;
                 bool fused_counting = direct_counting && !icase &&
                                       limit == TEXT_UNSET;
                 bool plain_output = !grouped && !grep_names &&
                                     !grep_numbered && !grep_offsets &&
-                                    !grep_coloring;
+                                    !grep_coloring && !check_encoding;
 
                 /*
                         Everything without context, -o or colour is a span at a
                         time: the whole lines in the reader, then the one line
                         that runs past its end, carried across the refill by
-                        the line reader as before.
+                        the line reader as before. A count, a listing and a
+                        question are spans whatever those flags say, since none
+                        of the three changes what they answer -- measured
+                        against GNU, colour paints only a listed name.
                 */
-                bool spanning = !grouped && !only && !grep_coloring && !never &&
-                                !directory;
+                bool spanning = ((!grouped && !only && !grep_coloring) || !printing) &&
+                                !never && !directory;
 
                 if (spanning)
                 {
@@ -16502,14 +17090,79 @@ static b32 text_grep()
                             .invert = invert,
                             .plain = plain_output,
                             .numbered = grep_numbered,
+                            .check_encoding = check_encoding,
+                            .binary = binary_regions &&
+                                              grep_binary_files != GREP_BINARY_WITHOUT
+                                          ? address_of binary
+                                      : binary_zapping || zap_hits ? address_of zap_all
+                                                                   : null,
+                            .zap_hits = zap_hits,
                         };
                         grep_state state = {.match = address_of regex_match,
                                             .name = shown_name};
+                        // Where a selected line's region has to be known before
+                        // the line is taken: it is printed, or under -I a
+                        // listing or a question stops at it.
+                        bool settles = printing ||
+                                       (grep_binary_files == GREP_BINARY_WITHOUT && first_mode);
 
                         while (!state.done && text_fill())
                         {
                                 p8 address_to at = text_input.buffer + text_input.position;
                                 positive left = text_input.filled - text_input.position;
+                                bool probing = false;
+                                bool spanned = false;
+
+                                /*
+                                        The lines ending before the region that
+                                        holds the first NUL are read as text, so
+                                        where it matters the span stops at the
+                                        last line known to. Lines of a region
+                                        not yet seen whole are probed. From the
+                                        first line of a region with a NUL, -I
+                                        has found nothing in the file and a
+                                        print mode asks only whether one more
+                                        line is selected.
+                                */
+                                if (binary_regions && !binary_tail)
+                                {
+                                        grep_binary_scan(address_of binary, state.offset);
+
+                                        positive certain = grep_binary_certain(address_of binary);
+
+                                        if (certain < state.offset + left &&
+                                            (binary.from != positive_max || settles))
+                                        {
+                                                positive clean = certain > state.offset
+                                                                     ? certain - state.offset
+                                                                     : 0;
+                                                p8 address_to edge =
+                                                    clean ? memory_last_of(at, text_delimiter, clean)
+                                                          : null;
+
+                                                if (edge)
+                                                        left = (positive)(edge - at) + 1;
+                                                else if (binary.from == positive_max)
+                                                        probing = true;
+                                                else if (grep_binary_files == GREP_BINARY_WITHOUT)
+                                                {
+                                                        state.matches = 0;
+                                                        break;
+                                                }
+                                                else
+                                                {
+                                                        binary_tail = true;
+                                                        binary_before = state.matches;
+                                                        plan.mode = GREP_SPAN_FIRST;
+                                                        binary_zapping = !literal_only;
+                                                        plan.binary = literal_only ? null : plan.binary;
+                                                }
+                                        }
+                                }
+
+                                if (binary_zapping)
+                                        grep_binary_zap(at, left);
+
                                 p8 address_to last = memory_last_of(at, text_delimiter, left);
                                 p8 address_to line = at;
                                 positive size;
@@ -16517,15 +17170,78 @@ static b32 text_grep()
                                 if (last)
                                 {
                                         size = (positive)(last - at) + 1;
+
+                                        if (probing)
+                                        {
+                                                if (grep_span_probe(address_of plan, address_of state,
+                                                                    line, size))
+                                                {
+                                                        grep_binary_settle(
+                                                            address_of binary,
+                                                            grep_binary_certain(address_of binary));
+                                                        continue;
+                                                }
+
+                                                spanned = true;
+                                        }
+
                                         text_input.position += size;
                                 }
                                 else if (plan.mode != GREP_SPAN_PRINT &&
+                                         grep_binary_files != GREP_BINARY_WITHOUT &&
                                          (plan.literal_proves || plan.set) &&
                                          plan.boundary == REGEX_BOUNDARY_NONE)
                                 {
                                         grep_record_stream(address_of plan,
                                                            address_of state);
                                         continue;
+                                }
+                                else if (binary_watch)
+                                {
+                                        positive length;
+
+                                        if (!grep_binary_line(binary_regions ? address_of binary
+                                                                             : address_of zap_all,
+                                                              state.offset,
+                                                              address_of line, address_of length))
+                                                break;
+
+                                        size = length + 1;
+
+                                        // A line the reads it ran into decide, as
+                                        // the lines of one read are decided above.
+                                        if (binary_regions && !binary_tail)
+                                        {
+                                                positive line_end = state.offset + length;
+
+                                                if (settles && !grep_binary_clean(address_of binary, line_end))
+                                                {
+                                                        if (grep_span_probe(address_of plan,
+                                                                            address_of state, line, size))
+                                                                grep_binary_settle(address_of binary, line_end);
+                                                        else
+                                                                spanned = true;
+                                                }
+
+                                                if (!spanned && binary.from != positive_max &&
+                                                    line_end >= binary.from)
+                                                {
+                                                        if (grep_binary_files == GREP_BINARY_WITHOUT)
+                                                        {
+                                                                state.matches = 0;
+                                                                break;
+                                                        }
+
+                                                        binary_tail = true;
+                                                        binary_before = state.matches;
+                                                        plan.mode = GREP_SPAN_FIRST;
+                                                        binary_zapping = !literal_only;
+                                                        plan.binary = literal_only ? null : plan.binary;
+
+                                                        if (binary_zapping)
+                                                                grep_binary_zap(line, length);
+                                                }
+                                        }
                                 }
                                 else
                                 {
@@ -16537,7 +17253,8 @@ static b32 text_grep()
                                         size = text_line_length + 1;
                                 }
 
-                                grep_span(address_of plan, address_of state, line, size);
+                                if (!spanned)
+                                        grep_span(address_of plan, address_of state, line, size);
 
                                 for (; state.complex; state.complex--)
                                 {
@@ -16548,6 +17265,8 @@ static b32 text_grep()
                         }
 
                         matches = state.matches;
+                        binary_matched = binary_tail && matches > binary_before;
+                        unprintable = state.unprintable;
                         found_any = found_any || matches;
 
                         if (quiet && matches)
@@ -16624,11 +17343,59 @@ static b32 text_grep()
                                 offset += jumped;
                         }
 
-                        p8 address_to line;
+                        p8 address_to line = text_input.buffer + text_input.position;
+                        // The rest of a binary file begins where the next line
+                        // would, and no line is taken from it here.
+                        bool unread = false;
 
-                        if (!text_line_view(address_of line,
-                                            address_of text_line_length,
-                                            null, 0, null))
+                        /*
+                                In a file looked at for NULs, what the reader
+                                holds is looked at before a line is taken from
+                                it, as GNU looks at a buffer before its lines.
+                                From the region with the first NUL on, the rest
+                                is asked about from here without a line read;
+                                before it, a line ends at a NUL once one is
+                                known, so no binary record is taken whole past
+                                the ceiling of a line.
+                        */
+                        if (binary_watch)
+                        {
+                                grep_binary_scan(address_of binary, offset);
+
+                                if (binary.from != positive_max && binary.from <= offset)
+                                {
+                                        unread = true;
+                                        text_line_length = 0;
+                                        text_line_ended = false;
+                                }
+                                else
+                                {
+                                        positive left = text_input.filled - text_input.position;
+
+                                        if (binary.from != positive_max)
+                                                grep_binary_zap(line, left);
+
+                                        p8 address_to stop = memory_first_of(line, text_delimiter, left);
+
+                                        if (stop)
+                                        {
+                                                text_line_length = (positive)(stop - line);
+                                                text_line_ended = true;
+                                                text_input.position += text_line_length + 1;
+                                        }
+                                        else
+                                        {
+                                                positive length;
+
+                                                if (!grep_binary_line(address_of binary, offset,
+                                                                      address_of line, address_of length))
+                                                        break;
+                                        }
+                                }
+                        }
+                        else if (!text_line_view(address_of line,
+                                                 address_of text_line_length,
+                                                 null, 0, null))
                                 break;
 
                         number++;
@@ -16641,6 +17408,78 @@ static b32 text_grep()
                                    ((sure && text_line_length < TEXT_LINE_MAX) ||
                                     regex_find(REGEX_FIRST, line, text_line_length, 0));
 
+                        /*
+                                As the spans do: from the line ending in or
+                                past the region holding the first NUL, -I has
+                                found nothing in the file, and otherwise only
+                                whether a line of the rest is selected is left
+                                to learn, with its NULs ending lines. Only a
+                                line that would be printed -- selected, or
+                                context owed -- has its region read to its end
+                                when that is not yet known; one held for -B is
+                                decided with the line that prints it.
+                        */
+                        if (binary_watch)
+                        {
+                                positive line_end = at + text_line_length;
+
+                                grep_binary_scan(address_of binary, offset);
+
+                                if ((hit != invert || pending) &&
+                                    !grep_binary_clean(address_of binary, line_end))
+                                        grep_binary_settle(address_of binary, line_end);
+
+                                if (binary.from != positive_max && line_end >= binary.from)
+                                {
+                                        if (grep_binary_files == GREP_BINARY_WITHOUT)
+                                        {
+                                                matches = 0;
+                                                found_any = found_before;
+                                                break;
+                                        }
+
+                                        grep_plan rest = {
+                                            .program = address_of regex_current,
+                                            .literal = literal->literal_length ? literal : null,
+                                            .set = literal_set ? address_of grep_literals : null,
+                                            .dfa = machine ? address_of grep_dfa_cache : null,
+                                            .limit = TEXT_UNSET,
+                                            .mode = GREP_SPAN_FIRST,
+                                            .boundary = regex_boundary,
+                                            .literal_proves = literal_proves,
+                                            .icase = icase,
+                                            .invert = invert,
+                                        };
+                                        positive complex = 0;
+
+                                        if (!literal_only)
+                                                grep_binary_zap(line, text_line_length);
+
+                                        binary_matched =
+                                            never ? invert
+                                                  : grep_binary_rest(address_of rest,
+                                                                     address_of binary, line,
+                                                                     unread ? 0 : text_line_length + 1,
+                                                                     offset, !literal_only,
+                                                                     address_of complex);
+
+                                        for (; complex; complex--)
+                                        {
+                                                string_diagnostic(&text_diagnostic, 0, null,
+                                                                  "regular expression too complex");
+                                                text_status = 2;
+                                        }
+
+                                        if (binary_matched)
+                                        {
+                                                matches++;
+                                                found_any = true;
+                                        }
+
+                                        break;
+                                }
+                        }
+
                         if (hit == invert)
                         {
                                 if (pending)
@@ -16648,10 +17487,17 @@ static b32 text_grep()
                                         grep_group_gap(grouped, separator,
                                                        address_of split, shown,
                                                        number);
-                                        grep_head(shown_name, '-', number, at);
-                                        grep_color_line(line, text_line_length,
-                                                        true, invert);
-                                        text_put_character(text_delimiter);
+
+                                        if (check_encoding &&
+                                            !grep_text_valid(line, text_line_length))
+                                                unprintable = true;
+                                        else
+                                        {
+                                                grep_head(shown_name, '-', number, at);
+                                                grep_color_line(line, text_line_length,
+                                                                true, invert);
+                                                text_put_character(text_delimiter);
+                                        }
 
                                         shown = number;
                                         shown_any = true;
@@ -16708,9 +17554,16 @@ static b32 text_grep()
                                         grep_group_gap(grouped, separator,
                                                        address_of split, shown,
                                                        n);
-                                        grep_head(shown_name, '-', n, 0);
-                                        grep_hold_say(slot, invert);
-                                        text_put_character(text_delimiter);
+
+                                        if (check_encoding && !grep_hold_valid(slot))
+                                                unprintable = true;
+                                        else
+                                        {
+                                                grep_head(shown_name, '-', n, 0);
+                                                grep_hold_say(slot, invert);
+                                                text_put_character(text_delimiter);
+                                        }
+
                                         shown = n;
                                         shown_any = true;
                                 }
@@ -16741,7 +17594,10 @@ static b32 text_grep()
                                                 continue;
                                         }
 
-                                        if (!invert)
+                                        if (!invert && check_encoding &&
+                                            !grep_text_valid(line + begin, stop - begin))
+                                                unprintable = true;
+                                        else if (!invert)
                                         {
                                                 grep_head(shown_name, ':', number, at + begin);
                                                 grep_color_field(
@@ -16770,10 +17626,17 @@ static b32 text_grep()
                         {
                                 grep_group_gap(grouped, separator, address_of split,
                                                shown, number);
-                                grep_head(shown_name, ':', number, at);
-                                grep_color_line(line, text_line_length, false,
-                                                !invert);
-                                text_put_character(text_delimiter);
+
+                                if (check_encoding &&
+                                    !grep_text_valid(line, text_line_length))
+                                        unprintable = true;
+                                else
+                                {
+                                        grep_head(shown_name, ':', number, at);
+                                        grep_color_line(line, text_line_length, false,
+                                                        !invert);
+                                        text_put_character(text_delimiter);
+                                }
                         }
 
                         shown = number;
@@ -16785,6 +17648,13 @@ static b32 text_grep()
                 }
 
                 text_close();
+
+                // Said whatever -s asks, as GNU says it; -I keeps a line of
+                // no characters from the output without a word.
+                if (binary_matched ||
+                    (unprintable && grep_binary_files == GREP_BINARY_DETECT))
+                        string_diagnostic(&text_diagnostic, 0, shown_name,
+                                          "binary file matches");
 
                 if (listing || listing_without)
                 {
