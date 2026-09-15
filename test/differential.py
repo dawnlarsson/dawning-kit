@@ -18942,6 +18942,7 @@ def harness_native_extract(argv):
         # and Mach-O name the read-only section differently, and ASM_SECTION is a
         # C macro that does not come along with the literal lines being lifted.
         line = line.replace('.section .rodata', '.section __TEXT,__const')
+        line = line.replace('.pushsection .rodata', '.pushsection __TEXT,__const')
         if line.strip() == 'ASM_SECTION':
             return '    ".text\\n"'
 

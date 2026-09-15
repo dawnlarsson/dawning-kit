@@ -1628,13 +1628,36 @@ typedef union matrix4
 #define ASM_SECTION ".text\n"
 #endif
 
+/*
+        Every routine in its own section, so --gc-sections drops the ones a
+        program never reaches. The asm is written once for every program, and
+        in one shared .text a routine nothing calls was linked into all of
+        them anyway -- measured: the image shell kept 152 routines no path
+        reached, 6.7 KB of x86_64 text and 18.6 KB of riscv64.
+
+        The kernel keeps the single .noinstr.text its linker script and
+        objtool expect, and Mach-O has no ELF section names. A routine that
+        parks constants in .rodata mid-body does it with .pushsection and
+        .popsection, so it comes back to its own section and .size still
+        measures one section.
+*/
+#if defined(KERNEL_MODE) || defined(MACOS) || defined(IOS)
+#define ASM_ROUTINE_SECTION(name) ""
+#define ASM_ROUTINE_SECTION_END ""
+#else
+#define ASM_ROUTINE_SECTION(name) \
+    ".pushsection .text." #name ", \"ax\", %progbits\n"
+#define ASM_ROUTINE_SECTION_END ".popsection\n"
+#endif
+
 #define ASM_FUNC(name)                  \
+    ASM_ROUTINE_SECTION(name)           \
     ".balign 16\n"                      \
     ".globl " #name "\n"                \
     ".type " #name ", " ASM_TYPE "\n"   \
     #name ":\n" ASM_ENDBR
 
-#define ASM_END(name) ".size " #name ", .-" #name "\n"
+#define ASM_END(name) ".size " #name ", .-" #name "\n" ASM_ROUTINE_SECTION_END
 
 #define ASM_ALIAS(name, target)         \
     ".globl " #name "\n"                \
@@ -1648,12 +1671,13 @@ typedef union matrix4
 // the symbol table says is one indivisible function. Keep these symbols local,
 // but give every independently callable body truthful ELF boundaries.
 #define ASM_LOCAL_FUNC(name)            \
+    ASM_ROUTINE_SECTION(name)           \
     ".balign 16\n"                      \
     ".local " #name "\n"                \
     ".type " #name ", " ASM_TYPE "\n"   \
     #name ":\n"
 
-#define ASM_LOCAL_END(name) ".size " #name ", .-" #name "\n"
+#define ASM_LOCAL_END(name) ".size " #name ", .-" #name "\n" ASM_ROUTINE_SECTION_END
 
 /*
         Storage has the same assembly-only contract as the routines.
@@ -6016,12 +6040,12 @@ __asm__(
     "mov %cl, (%rdx)\n   inc %rdi\n   sub $2, %rsi\n   cmp $2, %rsi\n"
     "jae 1b\n"
     "9:  " ASM_RET
-    ".section .rodata\n   .balign 32\n"
+    ".pushsection .rodata\n   .balign 32\n"
     // AVX2's lane shuffle uses only each byte's low nibble; the same
     // indices also reverse all 64 bytes in the VBMI body.
     ".Lmemory_reverse_x86_mask:\n   .byte 63,62,61,60,59,58,57,56,55,54,53,52,51,50,49,48,47,46,45,44,43,42,41,40,39,38,37,36,35,34,33,32\n"
     "   .byte 31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(memory_reverse)
 
     // XOR exactly size bytes with 42 and return the original address.
@@ -7213,10 +7237,10 @@ __asm__(
     "add $64, %rsi\n   cmp %rdx, %rsi\n   jb .Lsha1_x64_ni_block\n"
     "pshufd $0x1b, %xmm1, %xmm1\n   movdqu %xmm1, (%rdi)\n   pextrd $3, %xmm2, 16(%rdi)\n"
     ASM_RET
-    "\n   .section .rodata\n   .balign 16\n"
+    "\n   .pushsection .rodata\n   .balign 16\n"
     ".Lsha1_ni_mask_x64:\n"
     ".byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
-    ASM_SECTION
+    ".popsection\n"
 #endif
     ASM_END(sha1_blocks)
     ASM_FUNC(sha256_blocks)
@@ -7765,7 +7789,7 @@ __asm__(
     "pshufd $0x1b, %xmm1, %xmm7\n   pshufd $0xb1, %xmm2, %xmm2\n   movdqa %xmm7, %xmm1\n   pblendw $0xf0, %xmm2, %xmm1\n   palignr $8, %xmm7, %xmm2\n"
     "movdqu %xmm1, (%rdi)\n   movdqu %xmm2, 16(%rdi)\n"
     ASM_RET
-    "\n   .section .rodata\n   .balign 16\n"
+    "\n   .pushsection .rodata\n   .balign 16\n"
     ".Lsha256_ni_mask_x64:\n"
     ".byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n"
     ".Lsha256_ni_k_x64:\n"
@@ -7785,7 +7809,7 @@ __asm__(
     ".long 0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3\n"
     ".long 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208\n"
     ".long 0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n"
-    ASM_SECTION
+    ".popsection\n"
 #endif
     ASM_END(sha256_blocks)
     ASM_FUNC(sha256_compress)
@@ -8621,13 +8645,13 @@ __asm__(
     "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n   pop %rbp\n"
     ".Lghash_x64_none:\n"
     ASM_RET
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lghash_x64_k:\n"
     ".quad 0x1111111111111111, 0x2222222222222222\n"
     ".quad 0x4444444444444444, 0x8888888888888888\n"
     ".quad 0x5555555555555555, 0x3333333333333333\n"
     ".quad 0x0f0f0f0f0f0f0f0f\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_LOCAL_END(ghash_integer)
 
     /* ghash_blocks over the table ghash_key made, and the two bodies above
@@ -8831,12 +8855,12 @@ __asm__(
     "pxor %xmm0, %xmm0\n   pxor %xmm1, %xmm1\n   pxor %xmm8, %xmm8\n"
     "pxor %xmm9, %xmm9\n   pxor %xmm10, %xmm10\n   pxor %xmm11, %xmm11\n"
     ASM_RET
-    ".section .rodata\n   .balign 64\n"
+    ".pushsection .rodata\n   .balign 64\n"
     ".Lghash_blocks_x64_bswap:\n"
     ".byte 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\n"
     ".balign 16\n"
     ".Lghash_blocks_x64_poly:\n   .quad 0xc200000000000000, 0\n"
-    ASM_SECTION
+    ".popsection\n"
     )
     ASM_END(ghash_blocks)
 
@@ -9669,7 +9693,7 @@ __asm__(
     "pxor %xmm14, %xmm14\n"
     "pxor %xmm15, %xmm15\n"
     ASM_RET
-    ".section .rodata\n   .balign 64\n"
+    ".pushsection .rodata\n   .balign 64\n"
     ".Laes_ctr_x64_bswap:\n"
     ".byte 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\n"
     ".balign 64\n"
@@ -9683,7 +9707,7 @@ __asm__(
     ".balign 8\n"
     ".Laes_ctr_x64_masks:\n"
     ".quad 0, 0xffff, 0xffffffff, 0xffffffffffff\n"
-    ASM_SECTION
+    ".popsection\n"
     )
     ASM_END(aes128_ctr_blocks)
 
@@ -14102,10 +14126,10 @@ ASM_FUNC(positive_to_string)
     //       bytes at most, followed by the terminator this API always writes.
     //
     ASM_FUNC(positive_into_human_1024_string)
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "positive_human_units:\n"
     "   .ascii \"BKMGTPE\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "cmp $1024, %rsi\n   jb .Lpositive_human_x86_plain\n   cmp $1048576, %rsi\n   jae .Lpositive_human_x86_find_unit\n"
     "mov $1, %edx\n   mov $10, %ecx\n   jmp .Lpositive_human_x86_ready\n"
     ".Lpositive_human_x86_find_unit:\n   bsr %rsi, %rdx\n   imul $205, %rdx, %rdx\n   shr $11, %rdx\n"
@@ -14154,10 +14178,10 @@ ASM_FUNC(positive_to_string)
     //       bytes ("1023 KiB") followed by NUL: the destination needs nine.
     //
     ASM_FUNC(positive_into_human_nearest_string)
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "positive_human_nearest_units:\n   .byte 0\n"
     "   .ascii \"KMGTPEZYRQ\"\n"
-    ASM_SECTION
+    ".popsection\n"
     // The unscaled path is common for short copies and needs neither a saved
     // register nor any rounding state.  Emit its bounded zero-through-1023
     // decimal directly, then the invariant space/B/NUL tail.
@@ -14368,13 +14392,13 @@ ASM_FUNC(positive_to_string)
     "dec %rax\n   jmp 3b\n"
     "4:  mov %r9, %rax\n"
     ASM_RET
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "digit_words:\n   .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
     ".quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
     ".quad 0x3333333333333333  # what eight digits answer\n"
     ".quad 0x3030303030303030  # ASCII zero, eight times\n"
     ".quad 0x00FF00FF00FF00FF\n   .quad 0x0000FFFF0000FFFF\n   .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(string_to_positive)
     //
     //
@@ -14870,7 +14894,7 @@ ASM_FUNC(positive_to_string)
     //       routine name, and a table in front of ASM_FUNC belongs to whatever
     //       was there before rather than to this.
     //
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "format_words:\n   .quad 0x0101010101010101\n   .quad 0x8080808080808080\n   .quad 0x2525252525252525  # the percent, in all eight positions\n"
     //
     //       Which bytes end a run of plain text. A byte per entry and not a
@@ -14879,7 +14903,7 @@ ASM_FUNC(positive_to_string)
     //
     "format_stops:\n   .byte 1\n   .zero 36\n   .byte 1  # the percent\n"
     ".zero 218\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(string_format)
     //
     //       string_format is the name every caller uses and it cannot be a
@@ -14913,10 +14937,10 @@ ASM_FUNC(positive_to_string)
     "9:  mov $-1, %eax\n"
     "8:  " ASM_RET
     // Packed little-endian spellings, shared by the bounded comparisons above.
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     ".Lbyte_class_words:\n   .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n   .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
     ".quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n   .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(byte_class_index)
     // Whether one byte belongs to one of those classes. A balanced dispatch
     // keeps the longest route to four branches and the predicates themselves
@@ -15316,12 +15340,12 @@ ASM_FUNC(positive_to_string)
     //       sixty-four bytes covers every valid base.
     //
     ASM_FUNC(positive_into_base)
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     "positive_base_lower:\n"
     "   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
     "positive_base_upper:\n"
     "   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "lea -2(%rdx), %rax\n   cmp $34, %rax\n   ja .Lpositive_base_x86_invalid\n   cmp $10, %rdx\n"
     "je .Lpositive_base_x86_decimal\n   test %rsi, %rsi\n   jz .Lpositive_base_x86_zero\n"
     // A generic call now pays one power test rather than five base compares.
@@ -17796,7 +17820,7 @@ __asm__(
     "stp w3, w4, [x0]\n   stp w5, w6, [x0, #8]\n"
     ".Lmd5_blocks_arm64_none:\n"
     ASM_RET
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lmd5_blocks_arm64_k:\n"
     ".long 0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee\n"
     ".long 0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501\n"
@@ -17814,7 +17838,7 @@ __asm__(
     ".long 0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1\n"
     ".long 0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1\n"
     ".long 0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(md5_blocks)
     //
     // sha1_blocks -- a..e in w3-w7, the circular schedule in sixteen
@@ -18418,7 +18442,7 @@ __asm__(
     ".arch_extension nocrypto\n"
     ASM_RET
 #endif
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lsha256_blocks_arm64_k:\n"
     ".long 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5\n"
     ".long 0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5\n"
@@ -18436,7 +18460,7 @@ __asm__(
     ".long 0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3\n"
     ".long 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208\n"
     ".long 0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(sha256_blocks)
     ASM_FUNC(sha256_compress)
     "mov x2, #1\n   b sha256_blocks\n"
@@ -19089,7 +19113,7 @@ __asm__(
     ".arch_extension nosha3\n.arch_extension nocrypto\n"
     ASM_RET
 #endif
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lsha512_blocks_arm64_k:\n"
     ".quad 0x428a2f98d728ae22,0x7137449123ef65cd,0xb5c0fbcfec4d3b2f,0xe9b5dba58189dbbc\n"
     ".quad 0x3956c25bf348b538,0x59f111f1b605d019,0x923f82a4af194f9b,0xab1c5ed5da6d8118\n"
@@ -19111,7 +19135,7 @@ __asm__(
     ".quad 0x06f067aa72176fba,0x0a637dc5a2c898a6,0x113f9804bef90dae,0x1b710b35131c471b\n"
     ".quad 0x28db77f523047d84,0x32caab7b40c72493,0x3c9ebe0a15c9bebc,0x431d67c49c100d4c\n"
     ".quad 0x4cc5d4becb3e42b6,0x597f299cfc657e2a,0x5fcb6fab3ad6faec,0x6c44198c4a475817\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(sha512_blocks)
     //
     // blake2b_blocks -- v0..v15 in x5-x17 and x19-x21, message words read
@@ -19333,11 +19357,11 @@ __asm__(
     "ldr x21, [sp, #16]\n   ldp x19, x20, [sp], #32\n"
     ".Lblake2b_blocks_arm64_none:\n"
     ASM_RET
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lblake2b_blocks_arm64_iv:\n"
     ".quad 0x6a09e667f3bcc908,0xbb67ae8584caa73b,0x3c6ef372fe94f82b,0xa54ff53a5f1d36f1\n"
     ".quad 0x510e527fade682d1,0x9b05688c2b3e6c1f,0x1f83d9abfb41bd6b,0x5be0cd19137e2179\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(blake2b_blocks)
 
     // See the x86_64 body for the field, the lanes, the high half and why
@@ -20247,7 +20271,7 @@ __asm__(
     ".Laes_ctr_arm64_none:\n"
     ASM_RET
 #ifndef KERNEL_MODE
-    ".section .rodata\n"
+    ".pushsection .rodata\n"
     ".balign 16\n"
     ".Laes_ctr_arm64_floor_indices:\n"
     ".byte 0, 1, 2, 3, 5, 6, 7, 4, 10, 11, 8, 9, 15, 12, 13, 14\n"
@@ -20255,7 +20279,7 @@ __asm__(
     ".long 0, 1, 2, 3\n"
     ".long 4, 5, 6, 7\n"
     ".byte 1, 2, 4, 8, 16, 32, 64, 128, 0, 0, 0, 0, 0, 0, 0, 0\n"
-    ASM_SECTION
+    ".popsection\n"
 #endif
     ASM_END(aes128_ctr_blocks)
 
@@ -23920,10 +23944,10 @@ ASM_FUNC(positive_to_string)
     //       Armv8 clz gives the bit position directly; the reciprocal divide
     //       by ten is exact over that zero-through-sixty-three input.
     ASM_FUNC(positive_into_human_1024_string)
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "positive_human_units:\n"
     "   .ascii \"BKMGTPE\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "cmp x1, #1024\n"
     "b.lo .Lpositive_human_arm_plain\n   cmp x1, #256, lsl #12\n"
     "b.hs .Lpositive_human_arm_find_unit\n   mov x2, #1\n"
@@ -23980,10 +24004,10 @@ ASM_FUNC(positive_to_string)
     //       registers only; udiv/msub keep quotient and remainder exact on
     //       the Armv8.0 floor.
     ASM_FUNC(positive_into_human_nearest_string)
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "positive_human_nearest_units:\n   .byte 0\n"
     "   .ascii \"KMGTPEZYRQ\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "cmp w2, #0\n"
     "mov x2, x0\n   mov x3, #1000\n"
     "mov x8, #1024\n"
@@ -24512,10 +24536,10 @@ ASM_FUNC(positive_to_string)
     "b.lo 2b\n"
     "9:  mov w0,  #-1\n"
     "8:  " ASM_RET
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     ".Lbyte_class_words:\n   .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n   .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
     ".quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n   .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(byte_class_index)
     ASM_FUNC(byte_class_holds)
     "and w1, w1, #0xff\n"
@@ -24858,12 +24882,12 @@ ASM_FUNC(positive_to_string)
     // generic lane uses one udiv and its quotient in msub, rather than
     // dividing twice.
     ASM_FUNC(positive_into_base)
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     "positive_base_lower:\n"
     "   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
     "positive_base_upper:\n"
     "   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "sub x4, x2, #2\n"
     "cmp x4, #34\n"
     "b.hi .Lpositive_base_arm_invalid\n   cmp x2, #10\n"
@@ -26989,7 +27013,7 @@ __asm__(
     "addi sp, sp, 80\n"
     ".Lmd5_blocks_rv_none:\n"
     ASM_RET
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lmd5_blocks_rv_k:\n"
     ".long 0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee\n"
     ".long 0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501\n"
@@ -27007,7 +27031,7 @@ __asm__(
     ".long 0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1\n"
     ".long 0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1\n"
     ".long 0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(md5_blocks)
     // sha1_blocks: the sixteen-word schedule is a ring of registers xored
     // in place, the five chaining values rename each round, and the round
@@ -28706,7 +28730,7 @@ __asm__(
     ASM_RET
     ".option pop\n"
 #endif
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lsha256_blocks_rv_k:\n"
     ".long 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5\n"
     ".long 0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5\n"
@@ -28724,7 +28748,7 @@ __asm__(
     ".long 0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3\n"
     ".long 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208\n"
     ".long 0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(sha256_blocks)
     ASM_FUNC(sha256_compress)
     "li a2, 1\n   j sha256_blocks\n"
@@ -30550,7 +30574,7 @@ __asm__(
     ASM_RET
     ".option pop\n"
 #endif
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lsha512_blocks_rv_k:\n"
     ".quad 0x428a2f98d728ae22,0x7137449123ef65cd\n"
     ".quad 0xb5c0fbcfec4d3b2f,0xe9b5dba58189dbbc\n"
@@ -30592,7 +30616,7 @@ __asm__(
     ".quad 0x3c9ebe0a15c9bebc,0x431d67c49c100d4c\n"
     ".quad 0x4cc5d4becb3e42b6,0x597f299cfc657e2a\n"
     ".quad 0x5fcb6fab3ad6faec,0x6c44198c4a475817\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(sha512_blocks)
     // blake2b_blocks: the sixteen working words are sixteen registers and
     // ten of the message words ten more, so a G step loads at most one word;
@@ -31275,13 +31299,13 @@ __asm__(
     "ld s9, 80(sp)\n   ld s10, 88(sp)\n   ld s11, 96(sp)\n   addi sp, sp, 192\n"
     ".Lblake2b_blocks_rv_none:\n"
     ASM_RET
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     ".Lblake2b_blocks_rv_iv:\n"
     ".quad 0x6a09e667f3bcc908,0xbb67ae8584caa73b\n"
     ".quad 0x3c6ef372fe94f82b,0xa54ff53a5f1d36f1\n"
     ".quad 0x510e527fade682d1,0x9b05688c2b3e6c1f\n"
     ".quad 0x1f83d9abfb41bd6b,0x5be0cd19137e2179\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(blake2b_blocks)
 
     // See the x86_64 body for the field, the lanes, the high half and why
@@ -35891,10 +35915,10 @@ ASM_FUNC(positive_to_string)
     //       RV64's floor has no clz, so three shift tests form an exact power-
     //       of-1024 decision tree without division or a non-floor extension.
     ASM_FUNC(positive_into_human_1024_string)
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "positive_human_units:\n"
     "   .ascii \"BKMGTPE\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "li t0, 1024\n   bltu a1, t0, .Lpositive_human_rv_plain\n   srli t0, a1, 20\n   beqz t0, .Lpositive_human_rv_unit1\n"
     "srli t0, a1, 40\n   beqz t0, .Lpositive_human_rv_low\n   srli t0, a1, 60\n   bnez t0, .Lpositive_human_rv_unit6\n"
     "srli t0, a1, 50\n   bnez t0, .Lpositive_human_rv_unit5\n   li a2, 4\n   li a3, 40\n"
@@ -35937,10 +35961,10 @@ ASM_FUNC(positive_to_string)
     //       remainders use only the baseline M extension, and every output
     //       access is a byte so the destination has no alignment precondition.
     ASM_FUNC(positive_into_human_nearest_string)
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "positive_human_nearest_units:\n   .byte 0\n"
     "   .ascii \"KMGTPEZYRQ\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "mv a3, a0\n   li a4, 1000\n   beqz a2, 0f\n   li a4, 1024\n"
     "0:  li a5, 0\n   li a6, 0\n   li a7, 0\n   li t0, -1\n"
     "bltu a1, a4, .Lpositive_human_nearest_rv_scaled\n"
@@ -36095,7 +36119,7 @@ ASM_FUNC(positive_to_string)
     "j 2b\n"
     "3:  mv a0, a1\n"
     ASM_RET
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     "digit_words:\n   .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
     ".quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
     ".quad 0x3333333333333333  # what eight digits answer\n"
@@ -36103,7 +36127,7 @@ ASM_FUNC(positive_to_string)
     ".quad 2561\n   .quad 0x00FF00FF00FF00FF\n   .quad 6553601\n   .quad 0x0000FFFF0000FFFF\n"
     ".quad 0x0000271000000001  # ten thousand and one, in two halves\n"
     ".quad 100000000\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(string_to_positive)
     //       string_to_bipolar: the x86_64 block carries the reasoning.
     ASM_FUNC(string_to_bipolar)
@@ -36303,10 +36327,10 @@ ASM_FUNC(positive_to_string)
     "ld t3, 88(t2)\n   li a0, 11\n   beq t0, t3, 8f\n"
     "9:  li a0, -1\n"
     "8:  " ASM_RET
-    ".section .rodata\n   .balign 8\n"
+    ".pushsection .rodata\n   .balign 8\n"
     ".Lbyte_class_words:\n   .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n   .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
     ".quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n   .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
-    ASM_SECTION
+    ".popsection\n"
     ASM_END(byte_class_index)
     ASM_FUNC(byte_class_holds)
     "andi a1, a1, 255\n   li t0, 11\n   bltu t0, a0, .Lbyte_holds_false\n   li t0, 5\n"
@@ -36577,12 +36601,12 @@ ASM_FUNC(positive_to_string)
     // bit length for every power-of-two base through thirty two. The generic
     // lane uses divu once and reconstructs the remainder with mul/sub.
     ASM_FUNC(positive_into_base)
-    ".section .rodata\n   .balign 16\n"
+    ".pushsection .rodata\n   .balign 16\n"
     "positive_base_lower:\n"
     "   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
     "positive_base_upper:\n"
     "   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
-    ASM_SECTION
+    ".popsection\n"
     "addi t0, a2, -2\n   li t1, 34\n   bltu t1, t0, .Lpositive_base_rv_invalid\n   li t0, 10\n"
     "beq a2, t0, .Lpositive_base_rv_decimal\n   beqz a1, .Lpositive_base_rv_zero\n   addi t0, a2, -1\n   and t0, t0, a2\n"
     "bnez t0, .Lpositive_base_rv_generic\n   li t0, 16\n   beq a2, t0, .Lpositive_base_rv_hex\n   li t0, 8\n"
