@@ -5302,7 +5302,7 @@ static const struct
 } named_keys[] = {
     {"left", KEY_LEFT}, {"right", KEY_RIGHT}, {"up", KEY_UP}, {"down", KEY_DOWN},
     {"home", KEY_HOME}, {"end", KEY_END}, {"del", KEY_DELETE},
-    {"pgup", 104}, {"f1", 59},
+    {"pgup", 104}, {"f1", 59}, {"enter", 28}, {"kpenter", 96},
 };
 
 static fn feed_keys(string_address text)
@@ -6427,6 +6427,15 @@ same 'home and end'  '[\e[H\e[F]'                20 3 edit off keys '<home><end>
 same 'delete'        '[\e[3~]'                   20 3 edit off keys '<del>' sent
 same 'control'       '[\x01\x03\x1a]'            20 3 edit off keys '^A^C^Z' sent
 same 'alt character' '[\eb]'                     20 3 edit off keys '<a-b>' sent
+#       Return is CR, as a VT100's and xterm's is, and a line feed is Ctrl+J.
+#       Canvas hands Enter over as a line feed with its key code, and nano,
+#       which turns ICRNL off, read every one as ^J Justify: typing one,
+#       Enter, two, Enter joined both onto the first line.
+same 'return'        '[\x0d]'                    20 3 edit off keys '<enter>' sent
+same 'keypad return' '[\x0d]'                    20 3 edit off keys '<kpenter>' sent
+same 'alt return'    '[\e\x0d]'                  20 3 edit off keys '<a-enter>' sent
+same 'control j'     '[\x0a]'                    20 3 edit off keys '^J' sent
+same 'nano typing lines' '[one\x0dtwo\x0d]'      20 3 edit off keys 'one<enter>two<enter>' sent
 #       DECCKM sends the arrows as SS3 instead, which is what an application
 #       that asked for it is reading for.
 same 'application arrows' '[\eOA\eOD]'           20 3 edit off in '\e[?1h' keys '<up><left>' sent
@@ -6458,6 +6467,7 @@ same 'echoed here'   '[ $ echo hi]'              20 3 edit on in ' $ ' keys 'ech
 same 'nothing sent yet' '[]'                     20 3 edit on in ' $ ' keys 'echo hi' sent
 same 'sent on enter' '[echo hi\x0a]'             20 3 edit on in ' $ ' keys 'echo hi\r' sent
 same 'and moves on'  '1,0'                       20 3 edit on in ' $ ' keys 'echo hi\r' cursor
+same 'return key sends the line' '[ $ echo hi]|1,0|[echo hi\x0a]' 20 3 edit on in ' $ ' keys 'echo hi<enter>' row 0 cursor sent
 same 'the prompt is left alone' '[ $ echo hi]'   20 3 edit on in ' $ ' keys 'echo hi\r' row 0
 
 group moving

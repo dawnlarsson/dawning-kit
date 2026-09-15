@@ -3036,6 +3036,8 @@ static fn line_accept()
 #define KEY_END 107
 #define KEY_DOWN 108
 #define KEY_DELETE 111
+#define KEY_ENTER 28
+#define KEY_KPENTER 96
 
 static b32 line_key(unsigned int character, unsigned int code)
 {
@@ -3273,6 +3275,20 @@ static fn SPARE term_key_modified(unsigned int character, unsigned int code,
         string_address sequence;
         unsigned int held = modifiers &
             (WINDOW_KEY_SHIFT | WINDOW_KEY_ALT | WINDOW_KEY_CONTROL);
+
+        /*
+                Return is a carriage return.
+
+                The compositor's keymap names Enter a line feed, which every
+                window reads, but a VT100's Return key sends CR and so does
+                xterm's, and a program that turned ICRNL off reads the two
+                apart: nano took each Enter as ^J, Justify, and joined the
+                lines just typed onto the first. A line feed is still Ctrl+J,
+                which arrives as its own key, and the line editor and a
+                cooked tty take CR as the end of a line as they take LF.
+        */
+        if (code == KEY_ENTER || code == KEY_KPENTER)
+                character = '\r';
 
         if (line_editing && line_key(character, code))
         {
