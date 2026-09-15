@@ -106,6 +106,12 @@ string_search_folded string_split_next string_token string_token_next
 ''', 'the standard names, compiled twice from two files sharing nothing and '
      'diffed against the host headers; no caller in this tree, so no timing')
 
+cover('correctness_only', 'test/checks.c#CHECK_strings', '''
+jump_mark jump_to_mark
+''', 'the callee-saved register lists, held by a longjmp across three frames '
+     'that scrambled every saved register, on three machines; a jump has no '
+     'C twin to time against')
+
 cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',
       'the short-decimal reader is held to the general path by name on '
       '131,072 generated inputs a machine in CHECK_number, and reached '

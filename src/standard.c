@@ -11783,12 +11783,10 @@ static decimal modf(decimal, decimal address_to)
         a module that pulled a second struct sigaction in beside the one
         <linux/signal.h> already has would not compile.
 
-        setjmp.inc holds jump_mark, jump_to_mark and the thirty two slot
-        jump_state that sigsetjmp extends, and guards itself.
+        library.c holds jump_mark, jump_to_mark and the thirty two slot
+        jump_state that sigsetjmp extends, under the same guard as this.
 */
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
-
-#include "platform/setjmp.inc"
 
 /*
         The numbers, which are the same on all three machines and are checked
@@ -12039,7 +12037,7 @@ typedef fn(address_to signal_restorer)(void);
         It is read here, before anything that uses it, because
         signal_action_change fills in the restorer address on x86_64 and
         cannot do that with a name it has not seen. Everything the .inc needs
-        is already in scope: jump_state and DEAD_END from setjmp.inc above,
+        is already in scope: jump_state and DEAD_END from library.c,
         the syscall table and MOONWATER_NUMBER from library.c.
 */
 #include "platform/signal.inc"

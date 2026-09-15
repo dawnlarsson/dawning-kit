@@ -54,7 +54,7 @@
         So sigsetjmp is a stub that saves the mask and then TAIL jumps to
         jump_mark with the stack exactly as it was on entry. jump_mark then
         records sigsetjmp's own caller, which is what it must record, and the
-        register lists in setjmp.inc are not copied here or anywhere else.
+        register lists in library.c's jump_mark are not copied here or anywhere else.
         There is one save-the-registers routine in this library and this file
         does not become a second one.
 */
@@ -62,7 +62,7 @@
 /*
         Where the mask goes, and why it goes in the same array.
 
-        setjmp.inc reserves thirty two slots for a jump_state and its comment
+        library.c's jump_state reserves thirty two slots for a jump_state and its comment
         says why: riscv64 is the widest at twenty six slots, and the spare six
         are for "a later addition, a signal mask among them". This is that
         addition. Slot 26 records whether a mask was asked for at all and slot
@@ -113,7 +113,7 @@ fn signal_jump_to_mark(jump_state state, b32 value) DEAD_END;
         ASM_FUNC puts an endbr64 at the top. The kernel reaches this with a
         return rather than an indirect jump, so indirect branch tracking does
         not require the marker, but a build with a shadow stack would need
-        more than a marker here and setjmp.inc's closing note already says
+        more than a marker here and the closing note on jump_mark in library.c already says
         that the indirect jump at the end of jump_to_mark is the other place
         such a build has to be revisited.
 */
