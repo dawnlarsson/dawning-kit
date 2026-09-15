@@ -118,17 +118,10 @@ fn trap_signal_caught(b32 number);
         kernel jumps to sa_restorer, and what is there has to call
         rt_sigreturn. arm64 and riscv64 have one and are given none, which is
         the whole of the difference and the reason the flag below is set on
-        one architecture and not the other two.
+        one architecture and not the other two. The trampoline is the
+        platform's, the one sigaction hands the kernel too.
 */
-asm(".text\n"
-    ".globl shell_signal_return\n"
-    "shell_signal_return:\n"
-    "        movl $" MOONWATER_NUMBER(syscall(rt_sigreturn)) ", %eax\n"
-    "        syscall\n");
-
-fn shell_signal_return();
-
-#define SIGNAL_CATCH_RESTORER ((positive)shell_signal_return)
+#define SIGNAL_CATCH_RESTORER ((positive)signal_return_trampoline)
 #define SIGNAL_CATCH_FLAGS (SIGNAL_RESTART | SIGNAL_RESTORER)
 
 #else
