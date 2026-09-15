@@ -370,12 +370,17 @@ fn file_mode_letters(p8 address_to into, positive mode)
         the mask was before the command, so "u=rw,g+u" gives the group all
         three bits there, and the caller says which it wants.
 */
-static bool file_mode_adjust(string_address specification, positive current,
-                             bool directory, positive unnamed,
-                             bool copies_original, positive address_to result)
+//      touched, when asked for, is every bit a clause set, cleared or
+//      assigned -- GNU's mode_bits, which mkdir -m reads to decide what to
+//      bring back after the kernel made the directory.
+static bool file_mode_clauses(string_address specification, positive current,
+                              bool directory, positive unnamed,
+                              bool copies_original, positive address_to result,
+                              positive address_to touched)
 {
         positive mode = current & 07777;
         positive kept = directory ? 06000 : 0;
+        positive changed = 0;
 
         if (string_get(specification) >= '0' && string_get(specification) <= '7')
         {
@@ -390,6 +395,8 @@ static bool file_mode_adjust(string_address specification, positive current,
                 positive mentioned = step - specification < 5 ? value & 06000 : 06000;
 
                 address_to result = value | (mode & kept & ~mentioned);
+                if (touched)
+                        address_to touched = 07777 & ~(kept & ~mentioned);
                 return true;
         }
 
@@ -470,6 +477,9 @@ static bool file_mode_adjust(string_address specification, positive current,
                         positive omit = kept & ~mentioned;
 
                         bits &= who & ~omit;
+                        changed |= action == '='
+                                       ? (named ? who : 07777) & ~omit
+                                       : bits;
 
                         if (action == '+')
                                 mode |= bits;
@@ -488,8 +498,18 @@ static bool file_mode_adjust(string_address specification, positive current,
         }
 
         address_to result = mode & 07777;
+        if (touched)
+                address_to touched = changed & 07777;
 
         return true;
+}
+
+static bool file_mode_adjust(string_address specification, positive current,
+                             bool directory, positive unnamed,
+                             bool copies_original, positive address_to result)
+{
+        return file_mode_clauses(specification, current, directory, unnamed,
+                                 copies_original, result, null);
 }
 
 bool file_mode_of(string_address specification, positive current, bool directory,
@@ -518,10 +538,12 @@ static positive file_umask()
 // umask: chmod, and mkdir, mkfifo and mknod when -m names a mode.
 static bool file_mode_masked(string_address specification, positive current,
                              bool directory, positive mask,
-                             positive address_to result)
+                             positive address_to result,
+                             positive address_to touched)
 {
-        return file_mode_adjust(specification, current, directory,
-                                07000 | (0777 & ~mask), false, result);
+        return file_mode_clauses(specification, current, directory,
+                                 07000 | (0777 & ~mask), false, result,
+                                 touched);
 }
 
 // Looking at files ------------------------------------------
@@ -4861,9 +4883,13 @@ static bipolar file_created_open_at(bipolar directory, string_address name,
 /* Linux applies the permission bits passed to mkdirat but may discard
    requested set-ID bits.  Complete those bits through a real descriptor and
    preserve setgid inherited from the parent, matching mkdir's directory
-   inheritance contract without returning to the public pathname. */
+   inheritance contract without returning to the public pathname.  With
+   touched, mkdir -m's reading: only the bits the mode names are brought back
+   in line over what the kernel made, so a leaf made without group and other
+   write for o+t stays that way, as GNU's does. */
 static bipolar file_created_directory_mode_at(
-    bipolar directory, string_address name, bipolar exact, positive mode)
+    bipolar directory, string_address name, bipolar exact, positive mode,
+    positive touched)
 {
         file_facts facts;
         bipolar looked = file_look_code(
@@ -4872,9 +4898,13 @@ static bipolar file_created_directory_mode_at(
             (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
                 return looked < 0 ? looked : -ERROR_INPUT_OUTPUT;
 
-        positive wanted = (mode & 07777) |
-                          (facts.mode & MODE_SET_GROUP);
-        if ((facts.mode & 07777) == wanted)
+        positive actual = facts.mode & 07777;
+        positive wanted = !touched
+                              ? (mode & 07777) | (facts.mode & MODE_SET_GROUP)
+                          : touched & (actual ^ mode) & 07777
+                              ? (mode | (actual & ~touched)) & 07777
+                              : actual;
+        if (actual == wanted)
                 return 0;
 
         bool prepared;
@@ -4915,7 +4945,8 @@ static bipolar file_make_directories_open(
     bool leaf_exact, bool parents,
     fn(address_to told)(string_address),
     p8 address_to failed, bool address_to created,
-    bipolar address_to leaf_parent, p8 address_to leaf_name)
+    bipolar address_to leaf_parent, p8 address_to leaf_name,
+    positive leaf_touched)
 {
         p8 work[FILE_PATH_MAX];
         p8 component[SYSTEM_PATH_LEAF_ROOM];
@@ -5034,6 +5065,15 @@ static bipolar file_make_directories_open(
                                 positive wanted = last ? leaf_mode
                                                        : parent_mode;
                                 bool exact = !last || leaf_exact;
+
+                                /* mkdir -m asking for a special bit makes
+                                   the leaf without group and other write
+                                   first, the way GNU's does, and the bits
+                                   the mode names are restored after. */
+                                if (last && exact && leaf_touched &&
+                                    ((leaf_touched & 06000) ||
+                                     (leaf_mode & 01000)))
+                                        wanted &= ~(positive)0022;
                                 bipolar made = exact
                                                    ? system_make_directory_exact_at(
                                                          held, component,
@@ -5056,7 +5096,7 @@ static bipolar file_make_directories_open(
                                                 bipolar completed =
                                                     file_created_directory_mode_at(
                                                         held, component, next,
-                                                        wanted);
+                                                        leaf_mode, leaf_touched);
                                                 if (completed < 0)
                                                 {
                                                         (void)system_path_remove_opened_at(
@@ -12601,7 +12641,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
 
         if (!chmod_referenced &&
             (!file_mode_masked(chmod_specification, facts.mode, directory_mode,
-                               chmod_umask, address_of wanted) ||
+                               chmod_umask, address_of wanted, null) ||
              !file_mode_of(chmod_specification, facts.mode, directory_mode,
                            address_of naive)))
         {
@@ -15391,6 +15431,7 @@ static b32 file_mkdir()
         positive index = taking.first;
         positive mask = file_umask();
         positive mode = 0777;
+        positive touched = 0;
         positive parent_mode = (0777 & ~mask) | 0300;
         bool parents = (taking.flags & FILE_FLAG('p')) != 0;
         bool given_mode = (taking.flags & FILE_FLAG('m')) != 0;
@@ -15411,7 +15452,7 @@ static b32 file_mkdir()
             (!string_get(file_option_value(address_of taking, 'm')) ||
              !file_mode_masked(file_option_value(address_of taking, 'm'),
                                0777, true, mask,
-                               address_of mode)))
+                               address_of mode, address_of touched)))
         {
                 return string_report(log_error, 1, "mkdir: invalid mode '%s'\n",
                               file_option_value(address_of taking, 'm'));
@@ -15426,7 +15467,7 @@ static b32 file_mkdir()
                 bipolar made = file_make_directories_open(
                     path, parent_mode, mode, given_mode, parents,
                     loud ? mkdir_told : null, parents ? failed : null, null,
-                    null, null);
+                    null, null, given_mode ? touched : 0);
 
                 if (made < 0)
                 {
@@ -15465,7 +15506,7 @@ static const argument_option file_node_arguments[] = {
 static bool file_node_mode(string_address specification,
                            positive address_to mode)
 {
-        return file_mode_masked(specification, 0666, false, file_umask(), mode);
+        return file_mode_masked(specification, 0666, false, file_umask(), mode, null);
 }
 
 static b32 file_make_node(string_address program, string_address path,
@@ -22270,7 +22311,7 @@ static bipolar install_leading(string_address destination,
         path_tail_copy(leaf, FILE_PATH_MAX, destination);
         bipolar directory = file_make_directories_open(
             parent, 0755, 0755, true, true,
-            null, null, null, null, null);
+            null, null, null, null, null, 0);
         if (directory >= 0)
                 return directory;
 
@@ -22588,7 +22629,7 @@ static b32 file_install()
                         bipolar exact = file_make_directories_open(
                             path, 0755, 0700, true, true,
                             install_loud ? install_directory_told : null,
-                            null, null, address_of parent, leaf);
+                            null, null, address_of parent, leaf, 0);
                         bool bootstrapped = false;
                         positive old_mode = 0;
                         bipolar handle = exact < 0
