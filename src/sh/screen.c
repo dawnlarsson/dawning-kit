@@ -274,8 +274,7 @@ static b32 screen_term()
                                 if (!changed)
                                         cursor_hide();
 
-                                for (bipolar i = 0; i < got; i++)
-                                        consume(from_shell[i]);
+                                term_bytes(from_shell, (positive)got);
 
                                 changed = true;
                                 continue;

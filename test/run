@@ -122,7 +122,7 @@ describe()
         checksum) echo "the cksum CRC against a bitwise model, in every mode, on three machines" ;;
         storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
         storage_format) echo "GPT, FAT32 and ext4 as an install writes them, checked by sfdisk and e2fsck" ;;
-        term)     echo "the emulator driven a byte at a time, and the line being edited" ;;
+        term)     echo "the emulator driven a byte and a read at a time, and the line being edited" ;;
         edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
         kit)      echo "build, source-inventory, remote-host and firmware tooling" ;;
         boot)     echo "the image boots, init starts, and the shell answers" ;;
@@ -5289,6 +5289,9 @@ static bipolar shell_exec_file(string_address path,
 #include "test/checks.c"
 #undef SHARED_terminal_fixture
 
+// Whether in hands its bytes over one at a time or as one read.
+static b32 feed_reads;
+
 static const struct
 {
         const char *name;
@@ -5397,14 +5400,41 @@ b32 main()
 
                 if (string_compare(verb, (string_address) "in") == 0)
                 {
+                        static p8 feed[4096];
                         positive at = 0;
+                        positive n = 0;
                         bipolar c;
 
-                        while ((c = next_byte(argument, &at)) >= 0)
-                                consume((unsigned int)c);
+                        // A byte at a time, or the whole of it in one call as
+                        // a read from the pty is handed over.
+                        for (;;)
+                        {
+                                c = next_byte(argument, &at);
+
+                                if (c >= 0 && n < sizeof(feed))
+                                {
+                                        feed[n++] = (p8)c;
+                                        continue;
+                                }
+
+                                if (feed_reads)
+                                        term_bytes(feed, n);
+                                else
+                                        for (positive k = 0; k < n; k++)
+                                                consume(feed[k]);
+
+                                n = 0;
+
+                                if (c < 0)
+                                        break;
+
+                                feed[n++] = (p8)c;
+                        }
 
                         i++;
                 }
+                else if (string_compare(verb, (string_address) "reads") == 0)
+                        feed_reads = true;
                 else if (string_compare(verb, (string_address) "click") == 0 ||
                          string_compare(verb, (string_address) "release") == 0)
                 {
@@ -5727,12 +5757,24 @@ same()
 
         got=$(term "$@")
 
-        if [ "$want" = "$got" ]; then
+        #       And again with each in handed over whole, as a read from the
+        #       pty is: runs of text take a path of their own, and it has to
+        #       leave exactly what a byte at a time leaves.
+        columns=$1
+        rows=$2
+        shift 2
+        whole=$(term "$columns" "$rows" reads "$@")
+
+        if [ "$want" = "$got" ] && [ "$want" = "$whole" ]; then
                 won
                 return 0
         fi
 
-        lost "$name" "want [$want] got [$got]"
+        if [ "$want" != "$got" ]; then
+                lost "$name" "want [$want] got [$got]"
+        else
+                lost "$name" "read whole: want [$want] got [$whole]"
+        fi
 }
 
 #       Ours and the standard disagree, and this is exactly what ours says
@@ -6109,6 +6151,29 @@ same 'wraps whole'    '[abc]|[<6f22>]|1,2'       4 2 in 'abc\xe6\xbc\xa2' dump c
 same 'right half hit' '[ x]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;2Hx' row 0
 same 'left half hit'  '[x ]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;1Hx' row 0
 same 'pinned at the edge' '[ab<6f22>]|0,4'       4 2 in '\e[?7l' in 'abc\xe6\xbc\xa2' row 0 cursor
+
+group runs
+#       A read is handed over whole, and the text in it goes into cells a run
+#       at a time rather than a byte at a time. Every case in this lane runs
+#       both ways; these are where a run has to stop or take care: the end of
+#       a row, a column DECAWM pins, half of a wide character inside the run,
+#       insert mode and the line-drawing set, a character cut between two
+#       reads, and the bytes that are not text at all.
+same 'run wraps rows' '[abcd]|[efgh]|[ij]|2,2'    4 3 in 'abcdefghij' dump cursor
+same 'run pinned'    '[abcg]|0,4'                 4 2 in '\e[?7l' in 'abcdefg' row 0 cursor
+same 'run over a pair' '[ xy]|0,3'                8 2 in '\xe6\xbc\xa2' in '\e[1;2Hxy' row 0 cursor
+#       An erase over the left half leaves the right half standing alone, so
+#       the next character written over that right half blanks the character
+#       before it. A terminal erases both halves; a run has to match what a
+#       byte at a time does here, and this pins it.
+differs 'run over an erased half' '[ b]'          8 2 in '\xe6\xbc\xa2' in '\e[1;1H\e[X' in 'ab' row 0
+same 'run inserting' '[xyabc]'                    8 2 in 'abc\r\e[4hxy' row 0
+same 'run in line drawing' '[<2500><2500><2500>q]' 8 2 in '\e(0qqq\e(Bq' row 0
+same 'cut between reads' '[<6f22>x]|0,3'          8 2 in '\xe6\xbc' in '\xa2x' row 0 cursor
+same 'bad bytes end a run' '[a<fffd>b<fffd>c]'    8 2 in 'a\xffb\xe6\xbcc' row 0
+same 'marks inside a run' '[aexy]|0,4'            8 2 in 'ae\xcc\x81x\xe2\x80\x8by' row 0 cursor
+same 'wide at a run end' '[abcde]|[<6f22>f]|1,3'  6 2 in 'abcde\xe6\xbc\xa2f' dump cursor
+same 'colours in a run' '1,0|0,1'                 6 2 in '\e[31mab\e[7mcd\e[m' attr 0,1 attr 0,3
 
 group malformed
 #       Unicode 3.9, and the substitution of maximal subparts: a sequence
