@@ -18075,25 +18075,35 @@ int main(void) {
         # tree or elevated sudo. A stock fresh tree must not acquire our fold, and
         # link repair must leave an unexpected directory/file in place.
         patch = root / "kernel/patch/apply"
-        for stock in (False, True):
-            for kind in ("absent", "symlink", "directory", "file"):
-                tree = Path(work) / f"patch-{stock}-{kind}"
-                for directory in ("src/build", "kernel", "linux/kernel", "linux/arch/x86/include/asm",
-                                  "linux/arch/x86/lib", "kernel/patch"):
-                    (tree / directory).mkdir(parents=True, exist_ok=True)
-                (tree / "src/build/host.sh").write_text(r'''
+        # The lines the real arch/x86/lib/Makefile names the three objects on.
+        displaced = ("memcpy_$(BITS).o", "memmove_64.o", "memset_64.o")
+        makefile_lines = ("lib-y += memcpy_$(BITS).o\n"
+                          "ifeq ($(CONFIG_X86_32),y)\n        lib-y += memmove_32.o\n"
+                          "else\n        lib-y += memmove_64.o memset_64.o\nendif\n")
+
+        def patch_tree(tree, makefile):
+            for directory in ("src/build", "kernel", "linux/kernel", "linux/arch/x86/include/asm",
+                              "linux/arch/x86/lib", "kernel/patch"):
+                (tree / directory).mkdir(parents=True, exist_ok=True)
+            (tree / "src/build/host.sh").write_text(r'''
 key_one() { printf '%s\n' x86_64; }
 die() { printf '%s\n' "$*" >&2; exit 1; }
 sudo() { "$@"; }
 line_add() { grep -qxF "$2" "$1" || printf '%s\n' "$2" >> "$1"; }
 line_add_padded() { line_add "$@"; }
 ''')
+            (tree / "linux/arch/x86/include/asm/string_64.h").write_text(
+                "#ifdef __KERNEL__\n#endif /* __KERNEL__ */\n")
+            (tree / "linux/arch/x86/lib/Makefile").write_text(makefile)
+            for target in ("linux/Kconfig", "linux/kernel/Makefile"):
+                (tree / target).write_text("")
+            shutil.copy(root / "kernel/patch/fold-x86.h", tree / "kernel/patch/fold-x86.h")
+
+        for stock in (False, True):
+            for kind in ("absent", "symlink", "directory", "file"):
+                tree = Path(work) / f"patch-{stock}-{kind}"
+                patch_tree(tree, makefile_lines)
                 header = tree / "linux/arch/x86/include/asm/string_64.h"
-                header.write_text("#ifdef __KERNEL__\n#endif /* __KERNEL__ */\n")
-                (tree / "linux/arch/x86/lib/Makefile").write_text("obj-y += memcpy_$(BITS).o\n")
-                for target in ("linux/Kconfig", "linux/kernel/Makefile"):
-                    (tree / target).write_text("")
-                shutil.copy(root / "kernel/patch/fold-x86.h", tree / "kernel/patch/fold-x86.h")
                 link = tree / "linux/kernel/moonwater"
                 if kind == "symlink":
                     link.symlink_to(tree / "missing-source")
@@ -18107,6 +18117,9 @@ line_add_padded() { line_add "$@"; }
                                         text=True, capture_output=True)
                 assert (result.returncode == 0) == (kind in ("absent", "symlink")), result.stderr
                 assert ("MOONWATER_FOLD_X86" in header.read_text()) != stock
+                makefile = (tree / "linux/arch/x86/lib/Makefile").read_text()
+                assert all(("# moonwater took " + name in makefile) != stock
+                           for name in displaced), makefile
                 if kind in ("directory", "file"):
                     preserved = link / "precious" if kind == "directory" else link
                     assert preserved.read_text() == "preserve me\n"
@@ -18118,8 +18131,17 @@ line_add_padded() { line_add "$@"; }
                     subprocess.run(["sh", str(patch)], cwd=tree, env=env,
                                    capture_output=True, check=True)
                     assert header.read_bytes() == before
-        print("  kernel-glue 8 of 8", flush=True)
-        write_tally("kernel-glue", 8, 8)
+        # A makefile that no longer names an object stops the build, and says
+        # which: apply had no die of its own, and every edit it could not make
+        # used to go by without a word.
+        tree = Path(work) / "patch-moved"
+        patch_tree(tree, makefile_lines.replace(" memset_64.o", ""))
+        result = subprocess.run(["sh", str(patch)], cwd=tree,
+                                env={**os.environ, "MOONWATER_STOCK": ""},
+                                text=True, capture_output=True)
+        assert result.returncode != 0 and "memset_64.o" in result.stderr, result.stderr
+        print("  kernel-glue 9 of 9", flush=True)
+        write_tally("kernel-glue", 9, 9)
         binary, _ = build_c(Path(work) / "core-state.c", source,
                             ("-std=c11", "-O2", "-Wall", "-Wextra"), sanitize=False)
         subprocess.run([str(binary)], check=True)

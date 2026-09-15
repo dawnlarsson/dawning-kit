@@ -41,6 +41,23 @@ set -u
 . src/build/host.sh
 
 #
+#       Stopping, which this file needs a word of its own for.
+#
+#       build.sh has a die, but the build runs this as a program of its own,
+#       so nothing build.sh defines is defined here -- and without one every
+#       `|| die` below was a command not found that let the script carry on
+#       and exit 0 with the edit it guarded never made. An edit whose line has
+#       moved in a new kernel must stop the build: an image built without it
+#       is a kernel nobody chose, and it looks exactly like the one they did.
+#
+die() {
+        echo "kernel/patch/apply: $*" >&2
+        exit 1
+}
+
+arch=$(key_one arch) && [ -n "$arch" ] || die "no '#> arch' in artifacts/.config"
+
+#
 #       Handing a symbol over to src/*.asm means telling the
 #       architecture's own string.h that it owns it, or
 #       lib/string.c defines it as well and vmlinux does not
@@ -63,7 +80,7 @@ set -u
 #       a profile is free to say arm64 or aarch64 and mean the
 #       same machine here as it does there.
 #
-case "$(key_one arch)" in
+case "$arch" in
 x86_64 | amd64 | x64)
         header=linux/arch/x86/include/asm/string_64.h
         fold_header=$header
@@ -312,12 +329,19 @@ if [ -n "${MOONWATER_STOCK:-}" ]; then
         echo "  MOONWATER_STOCK: the kernel keeps its own"
 fi
 
+#       Loops read here-documents rather than a pipe: the far end of a pipe is
+#       a subshell, and a die there would stop only the loop.
 if [ -n "$header" ]; then
-        echo "$claims" | while IFS=: read -r name signature; do
+        [ -f "$header" ] || die "no $header to claim symbols in"
+
+        while IFS=: read -r name signature; do
                 [ -n "$name" ] || continue
-                line_add "$header" "#define __HAVE_ARCH_$name"
-                line_add "$header" "extern $signature;"
-        done
+                line_add "$header" "#define __HAVE_ARCH_$name" &&
+                        line_add "$header" "extern $signature;" ||
+                        die "claiming $name in $header"
+        done <<EOF
+$claims
+EOF
 fi
 
 #
@@ -339,19 +363,41 @@ fi
 #
 #       Each entry is a makefile, then the object to displace.
 #
+#       Every line naming the object is commented out under a line saying so.
+#       The name is matched as written rather than as a pattern -- a
+#       memcpy_$(BITS).o is full of what a pattern means -- and a makefile that
+#       names it nowhere is a kernel that would link two of it, or none of
+#       ours, so that stops the build. awk and a copy rather than sed -i, which
+#       GNU and BSD spell differently: the core_state harness runs this file on
+#       macOS, where sed -i took the edit for a backup suffix and made none.
 if [ -n "${displaces:-}" ]; then
-        echo "$displaces" | while IFS=: read -r makefile object; do
-                [ -n "$makefile" ] || continue
-                [ -f "$makefile" ] || continue
+        displace_work=$(mktemp) || die "no temporary file to displace objects with"
 
-                if grep -q "^# moonwater took $object" "$makefile"; then
+        while IFS=: read -r makefile object; do
+                [ -n "$makefile" ] || continue
+                [ -f "$makefile" ] || die "no $makefile to displace $object from"
+
+                if grep -q -F "# moonwater took $object" "$makefile"; then
                         continue
                 fi
 
-                sudo sed -i "s|^\\(.*[^#].*$object.*\\)$|# moonwater took $object\\n#\\1|" \
-                        "$makefile" || die "displacing $object"
+                awk -v object="$object" '
+                        index($0, object) && index($0, "# moonwater took ") != 1 {
+                                print "# moonwater took " object
+                                print "#" $0
+                                taken++
+                                next
+                        }
+                        { print }
+                        END { if (!taken) exit 3 }
+                ' "$makefile" > "$displace_work" ||
+                        die "$makefile no longer builds $object, so nothing was displaced"
+                sudo cp "$displace_work" "$makefile" || die "displacing $object"
                 echo "  took $object from $(basename "$(dirname "$makefile")")"
-        done
+        done <<EOF
+$displaces
+EOF
+        rm -f "$displace_work"
 fi
 
 #
@@ -379,15 +425,18 @@ then
                         placed = 1
                 }
                 { print }
+                END { if (!placed) exit 3 }
         ' "$fold_header" > "$fold_work" &&
         sudo cp "$fold_work" "$fold_header" ||
-                die "folding constant sizes into $fold_header"
+                die "folding constant sizes into $fold_header, which has no #endif /* __KERNEL__ */ to place them before"
         rm -f "$fold_work"
         echo "  folded constant memcpy and memset into $(basename "$fold_header")"
 fi
 
-line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
-line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/"
+line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\"" ||
+        die "grafting kernel/moonwater/Kconfig into linux/Kconfig"
+line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/" ||
+        die "grafting kernel/moonwater into linux/kernel/Makefile"
 
 #
 #       The module source is this tree's src/, and the check
