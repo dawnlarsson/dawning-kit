@@ -6475,7 +6475,7 @@ FILES_UTILITIES = (
                     ("-Lx", "."), ("-a", "--time", "."), ("-sh", "."), ("-sb", "."), ("-c", "dir", "dup"), ("-s", "-a", "dir"),
                     ("-d", "1", "-s", "dir"), ("-b", "-m", "a.txt"), ("-m", "-b", "a.txt"), ("-k", "-m", "a.txt"),
                    ("--inodes", "-a", "."), ("--apparent-size", "-a", "dir"), ("-l", "dup"), ("--files0-from=-",))),
-    Utility("df", options=(Option("-a"), Option("-h"), Option("-H"), Option("-i"), Option("-k"), Option("-l"),
+    Utility("df", options=(Option("-a"), Option("-h"), Option("-H"), Option("-i"), Option("-k"), Option("-l"), Option("-m"),
                            Option("-P"), Option("-T"), Option("-v"), Option("--all"), Option("--human-readable"), Option("--si"),
                            Option("--inodes"), Option("--local"), Option("--portability"), Option("--print-type"),
                            Option("--total"), Option("--sync"), Option("--no-sync"), Option("--output"),
@@ -6488,7 +6488,13 @@ FILES_UTILITIES = (
             operands=((), ("/",), (".",), ("a.txt",), ("missing",), ("/", "."), ("/dev/null",), ("a.txt", "missing"),
                       ("/proc",), ("dir", "a.txt"), ("dangling",), ("link",), ("shut/inside",), ("/dev",), ("/tmp",),
                       ("/", "/", ".")),
-            stdin=("empty",), fixture="files", stderr="exact", normalize=files_normal(files_hide_digits)),
+            stdin=("empty",), fixture="files", stderr="exact", normalize=files_normal(files_hide_digits),
+            #   -h, -k and -m: the last one given counts, -P spells -m's unit
+            #   in bytes in either order, and -i leaves inodes as counts.
+            extra=(("-m", "/"), ("-m", "-h", "/"), ("-h", "-m", "/"), ("-mh", "/"), ("-hm", "/"),
+                   ("-k", "-m", "/"), ("-m", "-k", "/"), ("-P", "-m", "/"), ("-m", "-P", "."),
+                   ("-Pm", "/", "."), ("-i", "-m", "/"), ("-m", "-i", "/"), ("-Tm", "/"),
+                   ("-m", "--human-readable", "/"), ("--portability", "-m", "/"), ("-am",), ("-m",))),
     Utility("env", options=(Option("-i"), Option("-0"), Option("-v"), Option("--ignore-environment"), Option("--null"),
                             Option("--debug"), Option("--list-signal-handling"),
                             Option("-u", ("HOME", "PATH", "NOPE", "A", ""), None), Option("--unset", ("HOME", "A"), True),

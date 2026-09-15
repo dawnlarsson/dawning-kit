@@ -13356,7 +13356,7 @@ static b32 file_du()
 
 // df ------------------------------------------------------------
 /*
-        df [-h] [-i] [-T] [-a] [-P] [PATH...]
+        df [-h|-k|-m] [-i] [-T] [-a] [-P] [PATH...]
 
         The mounted filesystems come from the shared mountinfo table, because
         the kernel is the only thing that knows what this namespace can see.
@@ -13373,6 +13373,10 @@ static bool df_inodes;
 static bool df_types;
 static bool df_all;
 static bool df_posix;
+// -h, -k and -m each say what an amount is counted in, and the last one said
+// is the one that holds, so df -h -m counts megabytes and df -m -h does not.
+static p8 df_unit_option;
+static p64 df_unit;
 
 static positive df_device_width;
 static positive df_type_width;
@@ -13419,8 +13423,8 @@ static fn df_measure(storage_mount address_to mount, df_sample address_to sample
 }
 
 // The kernel counts in whatever unit the filesystem uses; df has always
-// reported in 1024 byte ones, and rounds a part of one up to a whole. An
-// inode is not a byte and is reported as the number it is.
+// reported in 1024 byte ones, or 1048576 under -m, and rounds a part of one up
+// to a whole. An inode is not a byte and is reported as the number it is.
 static positive df_amount(p8 address_to into, p64 blocks, p64 size)
 {
         p64 bytes = blocks * size;
@@ -13428,7 +13432,7 @@ static positive df_amount(p8 address_to into, p64 blocks, p64 size)
         if (!df_human)
                 return df_inodes ? positive_into_string(into, blocks)
                                  : positive_into_string(
-                                       into, bytes / 1024 + (bytes % 1024 != 0));
+                                       into, bytes / df_unit + (bytes % df_unit != 0));
 
         return positive_into_human_1024_string(into, bytes);
 }
@@ -13507,11 +13511,12 @@ static fn df_row(string_address device, string_address type, string_address wher
 
 static const argument_option df_options[] = {
     {"all", 'a'},
-    {"human-readable", 'h'},
+    {"human-readable", 'h', 0, 1},
     {"inodes", 'i'},
     {"portability", 'P'},
     {"print-type", 'T'},
-    {"kv", 0},
+    {"km", 0, 0, 1},
+    {"v", 0},
     {null},
 };
 
@@ -13526,14 +13531,18 @@ static b32 file_df()
             //      -v is accepted and does nothing, which is all the
             //      reference does with it too.
             .options = df_options,
+            .selection = address_of df_unit_option,
         };
+
+        df_unit_option = 0;
 
         if (!file_take(address_of taking))
                 return 1;
 
         positive first = taking.first;
 
-        df_human = (taking.flags & FILE_FLAG('h')) != 0;
+        df_human = df_unit_option == 'h';
+        df_unit = df_unit_option == 'm' ? (p64)1048576 : (p64)1024;
         df_inodes = (taking.flags & FILE_FLAG('i')) != 0;
         df_types = (taking.flags & FILE_FLAG('T')) != 0;
         df_all = (taking.flags & FILE_FLAG('a')) != 0;
@@ -13544,11 +13553,14 @@ static b32 file_df()
         if (!storage_mount_table_load(address_of mounts, null))
                 return string_report(log_error, 1, "df: cannot read mount table\n");
 
+        // POSIX spells the unit out in bytes, and GNU does even when -m chose it.
         df_amount_column columns[] = {
             {df_inodes ? (string_address) "Inodes"
              : df_human ? (string_address) "Size"
-             : df_posix ? (string_address) "1024-blocks"
-                        : (string_address) "1K-blocks", 5},
+             : df_posix ? df_unit_option == 'm' ? (string_address) "1048576-blocks"
+                                                : (string_address) "1024-blocks"
+             : df_unit_option == 'm' ? (string_address) "1M-blocks"
+                                     : (string_address) "1K-blocks", 5},
             {df_inodes ? (string_address) "IUsed" : (string_address) "Used", 5},
             {df_inodes ? (string_address) "IFree"
              : df_human ? (string_address) "Avail"
