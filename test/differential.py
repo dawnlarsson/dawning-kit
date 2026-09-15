@@ -17073,20 +17073,40 @@ static unsigned long int_sqrt(unsigned long value) {
     }
     return root;
 }
-// The console keyboard Canvas turns off while it has the keys: four consoles,
-// each with the mode vt_do_kdskbmode last gave it, and a count of the sets.
+// The console keyboards Canvas turns off while it has the keys: four
+// consoles, each with the mode vt_do_kdskbmode last gave it, a count of the
+// sets, and the one notifier the VT would call.
 #define CONFIG_VT 1
+#define MAX_NR_CONSOLES 4
 #define K_XLATE 0x01
 #define K_UNICODE 0x03
 #define K_OFF 0x04
-#ifndef READ_ONCE
-#define READ_ONCE(x) (x)
-#endif
-static int fg_console,vt_modes[4];
-static unsigned vt_sets;
-static int vt_do_kdgkbmode(unsigned int console) { assert(console<4);return vt_modes[console]; }
+#define VT_ALLOCATE 0x0001
+#define VT_WRITE 0x0003
+#define VT_UPDATE 0x0004
+#define NOTIFY_DONE 0
+#define DEFINE_SPINLOCK(name) int name
+struct notifier_block { int (*notifier_call)(struct notifier_block *,unsigned long,void *); };
+struct vc_data { unsigned int vc_num; };
+struct vt_notifier_param { struct vc_data *vc; unsigned int c; };
+static int vt_modes[MAX_NR_CONSOLES];
+static unsigned vt_sets,vt_watchers;
+static struct notifier_block *vt_watcher;
+static int vt_do_kdgkbmode(unsigned int console) { assert(console<MAX_NR_CONSOLES);return vt_modes[console]; }
 static int vt_do_kdskbmode(unsigned int console,unsigned int mode) {
-    assert(console<4);vt_modes[console]=(int)mode;vt_sets++;return 0;
+    assert(console<MAX_NR_CONSOLES);vt_modes[console]=(int)mode;vt_sets++;return 0;
+}
+static int register_vt_notifier(struct notifier_block *block) {
+    assert(!vt_watcher);vt_watcher=block;vt_watchers++;return 0;
+}
+static int unregister_vt_notifier(struct notifier_block *block) {
+    assert(vt_watcher==block);vt_watcher=0;return 0;
+}
+// What the VT says after it has done something to a console.
+static void vt_event(unsigned long event,unsigned console) {
+    struct vc_data vc={console};
+    struct vt_notifier_param param={&vc,0};
+    if (vt_watcher) vt_watcher->notifier_call(vt_watcher,event,&param);
 }
 '''
     source += section(keys, "#define KEY_TABLE", "// Under desktop.lock")
@@ -17295,29 +17315,41 @@ static void check_keyboard_state(void) {
 // Every key reached the console's tty as well as Canvas, and init's shell
 // reads that tty on a machine booted without console=.
 static void check_console_keyboard(void) {
-    fg_console=0;vt_modes[0]=vt_modes[1]=K_UNICODE;vt_sets=0;canvas_vt_muted=-1;
+    vt_modes[0]=vt_modes[1]=vt_modes[2]=K_UNICODE;vt_modes[3]=K_OFF;
+    vt_sets=vt_watchers=0;
     canvas_keyboard_take();
-    check(vt_modes[0]==K_OFF && vt_modes[1]==K_UNICODE,
-          "taking the keys turns only the foreground console's keyboard off");
+    check(vt_watcher && vt_modes[0]==K_OFF && vt_modes[1]==K_OFF &&
+          vt_modes[2]==K_OFF && vt_sets==3,
+          "taking the keys turns every console's keyboard off and watches the VT");
     canvas_keyboard_take();
-    check(vt_sets==1,"taking the keys twice turns the keyboard off once");
-    fg_console=1;
+    check(vt_watchers==1 && vt_sets==3,
+          "taking the keys twice watches once and turns nothing off twice");
+    vt_modes[2]=K_UNICODE;vt_event(VT_ALLOCATE,2);
+    check(vt_modes[2]==K_OFF,
+          "a console allocated while Canvas has the keys, which resets it, is off again");
+    vt_modes[1]=K_XLATE;vt_event(VT_UPDATE,1);
+    check(vt_modes[1]==K_OFF,
+          "a console reset on its way to the front is off again when it is redrawn");
+    unsigned sets=vt_sets;vt_modes[0]=K_UNICODE;vt_event(VT_WRITE,0);
+    check(vt_modes[0]==K_UNICODE && vt_sets==sets,
+          "a character written to a console is not a reason to touch its keyboard");
+    vt_modes[0]=K_OFF;vt_modes[2]=K_XLATE;
     canvas_keyboard_give();
-    check(vt_modes[0]==K_UNICODE && vt_modes[1]==K_UNICODE && vt_sets==2,
-          "the console muted is given back, whichever console is in front");
-    canvas_keyboard_give();
-    check(vt_sets==2,"giving the keys back twice restores once");
-    fg_console=0;vt_modes[0]=K_XLATE;
-    canvas_keyboard_take();canvas_keyboard_give();
-    check(vt_modes[0]==K_XLATE,"the mode the console had is the mode it gets back");
-    canvas_keyboard_take();vt_modes[0]=K_UNICODE;vt_sets=0;canvas_keyboard_give();
-    check(vt_modes[0]==K_UNICODE && !vt_sets,
+    check(!vt_watcher,"giving the keys back stops watching the VT");
+    check(vt_modes[0]==K_UNICODE && vt_modes[1]==K_UNICODE,
+          "each console gets back the mode it had when Canvas first turned it off");
+    check(vt_modes[2]==K_XLATE,
           "a mode set by somebody else while Canvas had the keys is left alone");
-    vt_modes[0]=K_OFF;vt_sets=0;
-    canvas_keyboard_take();canvas_keyboard_give();
-    check(vt_modes[0]==K_OFF && !vt_sets,
-          "a console that was already off is not Canvas's to turn on");
-    vt_modes[0]=K_UNICODE;canvas_vt_muted=-1;
+    check(vt_modes[3]==K_OFF,"a console that was already off is not Canvas's to turn on");
+    sets=vt_sets;canvas_keyboard_give();
+    {
+        struct vc_data vc={0};
+        struct vt_notifier_param param={&vc,0};
+        canvas_keyboard_watch.notifier_call(&canvas_keyboard_watch,VT_ALLOCATE,&param);
+    }
+    check(vt_sets==sets && vt_modes[0]==K_UNICODE,
+          "giving the keys back twice restores once, and a late VT event mutes nothing");
+    vt_modes[0]=vt_modes[1]=vt_modes[2]=vt_modes[3]=K_UNICODE;
 }
 static int reference_int(s64 value) {
     return value<INT_MIN?INT_MIN:value>INT_MAX?INT_MAX:(int)value;

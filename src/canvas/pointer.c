@@ -673,40 +673,115 @@ static COLD void pointer_disconnect(struct input_handle *handle)
         go. Switching consoles from the keyboard is off with it, as it is under
         any display server that sets K_OFF.
 
-        The console muted is remembered with the mode it had, and that one is
-        given back, whichever console is in front by then. A mode somebody
-        else set in the meantime is theirs and is left alone, and so is a
-        console that was already off when Canvas arrived.
+        Every console, not only the one in front. Muting just that one left a
+        console switch as the way round it: a program calling VT_ACTIVATE puts
+        another console in front with its keyboard still on, and the keys go
+        to whatever reads that tty. And a console is not muted once for good:
+        allocating one runs vc_init, whose reset_vc puts its keyboard back to
+        unicode, and a switch away from a VT_PROCESS owner that has died does
+        the same. So the VT's own notifier is watched while Canvas has the
+        keys, and a console it says was allocated or redrawn -- a switch is a
+        redraw of the console coming to the front -- is muted again.
+
+        Each console muted is remembered with the mode it had when it was
+        first muted, and that is what it gets back. A mode somebody else set
+        in the meantime is theirs and is left alone, and so is a console that
+        was already off when Canvas arrived.
+
+        The notifier runs with the console lock held and nothing may sleep, so
+        what it and the two ends share is under a spinlock, taken outside the
+        keyboard's own lock and never inside it.
 */
 #ifdef CONFIG_VT
-static int canvas_vt_muted = -1;
-static int canvas_vt_mode;
+static DEFINE_SPINLOCK(canvas_vt_lock);
+static _Bool canvas_vt_owned;
+static _Bool canvas_vt_watching;
+static signed char canvas_vt_mode[MAX_NR_CONSOLES] = {
+        [0 ... MAX_NR_CONSOLES - 1] = -1,
+};
 
-static void canvas_keyboard_take(void)
+// Under canvas_vt_lock.
+static void canvas_keyboard_mute(unsigned int console)
 {
-        int console = READ_ONCE(fg_console);
         int mode;
 
-        if (canvas_vt_muted >= 0)
+        if (console >= MAX_NR_CONSOLES)
                 return;
 
         mode = vt_do_kdgkbmode(console);
         if (mode == K_OFF || vt_do_kdskbmode(console, K_OFF))
                 return;
 
-        canvas_vt_mode = mode;
-        canvas_vt_muted = console;
+        if (canvas_vt_mode[console] < 0)
+                canvas_vt_mode[console] = (signed char)mode;
+}
+
+static int canvas_keyboard_follow(struct notifier_block *block,
+                                  unsigned long event, void *data)
+{
+        struct vt_notifier_param *param = data;
+        unsigned long flags;
+
+        (void)block;
+
+        if ((event != VT_ALLOCATE && event != VT_UPDATE) || !param || !param->vc)
+                return NOTIFY_DONE;
+
+        spin_lock_irqsave(&canvas_vt_lock, flags);
+        if (canvas_vt_owned)
+                canvas_keyboard_mute(param->vc->vc_num);
+        spin_unlock_irqrestore(&canvas_vt_lock, flags);
+
+        return NOTIFY_DONE;
+}
+
+static struct notifier_block canvas_keyboard_watch = {
+        .notifier_call = canvas_keyboard_follow,
+};
+
+static void canvas_keyboard_take(void)
+{
+        unsigned long flags;
+        unsigned int console;
+
+        // Watching first: a console allocated between the loop below and
+        // the watch starting would come up unmuted and never be told of.
+        if (!canvas_vt_watching && !register_vt_notifier(&canvas_keyboard_watch))
+                canvas_vt_watching = true;
+
+        spin_lock_irqsave(&canvas_vt_lock, flags);
+        canvas_vt_owned = true;
+        for (console = 0; console < MAX_NR_CONSOLES; console++)
+                canvas_keyboard_mute(console);
+        spin_unlock_irqrestore(&canvas_vt_lock, flags);
 }
 
 static void canvas_keyboard_give(void)
 {
-        if (canvas_vt_muted < 0)
-                return;
+        unsigned long flags;
+        unsigned int console;
 
-        if (vt_do_kdgkbmode(canvas_vt_muted) == K_OFF)
-                vt_do_kdskbmode(canvas_vt_muted, canvas_vt_mode);
+        // Unregistering waits out a notifier already running, so nothing
+        // mutes a console again behind the loop below.
+        if (canvas_vt_watching)
+        {
+                unregister_vt_notifier(&canvas_keyboard_watch);
+                canvas_vt_watching = false;
+        }
 
-        canvas_vt_muted = -1;
+        spin_lock_irqsave(&canvas_vt_lock, flags);
+        canvas_vt_owned = false;
+        for (console = 0; console < MAX_NR_CONSOLES; console++)
+        {
+                if (canvas_vt_mode[console] < 0)
+                        continue;
+
+                if (vt_do_kdgkbmode(console) == K_OFF)
+                        vt_do_kdskbmode(console, (unsigned int)canvas_vt_mode[console]);
+
+                canvas_vt_mode[console] = -1;
+        }
+        spin_unlock_irqrestore(&canvas_vt_lock, flags);
 }
 #else
 #define canvas_keyboard_take() ((void)0)

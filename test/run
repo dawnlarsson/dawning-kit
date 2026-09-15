@@ -11167,12 +11167,44 @@ except Exception:
 #       ran twice, once as root where nobody could see. A line typed into the
 #       boot terminal must reach one shell, so it arrives on the serial port
 #       once; the port is still there with no console on it.
+#
+#       And a console switch is not a way round it. A program calling
+#       VT_ACTIVATE -- chvt, from any distribution in a bowl -- puts another
+#       console in front, and a console muted only while it was in front let
+#       every key through to whatever read the one that replaced it. The
+#       image has no such program, so a tiny one rides in on a stick.
+stick = work + "/stick"
+os.makedirs(stick, exist_ok=True)
+open(work + "/vtswitch.c", "w").write(r'''
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <linux/vt.h>
+int main(int argc, char **argv)
+{
+        int n = argc > 1 ? atoi(argv[1]) : 2;
+        int fd = open("/dev/tty0", O_RDWR | O_NOCTTY);
+        struct vt_stat st;
+        if (fd < 0 || ioctl(fd, VT_ACTIVATE, n) || ioctl(fd, VT_WAITACTIVE, n) ||
+            ioctl(fd, VT_GETSTATE, &st))
+                return 1;
+        printf("VTSWITCH active %u\n", st.v_active);
+        return 0;
+}
+''')
+switcher = subprocess.run(["cc", "-O2", "-static", "-o", stick + "/vtswitch",
+                           work + "/vtswitch.c"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
 leak_qmp = work + "/leak-qmp"
 leak_mon = work + "/leak-mon"
 leak_guest = subprocess.Popen([
     "qemu-system-x86_64", "-m", "2G", "-smp", "2"] + processor + [
     "-kernel", image, "-vga", "none", "-device", "virtio-gpu-pci,xres=3658,yres=1543",
     "-device", "qemu-xhci", "-device", "usb-tablet", "-device", "usb-kbd",
+    "-drive", "if=none,id=stick,format=raw,file=fat:ro:" + stick + ",readonly=on",
+    "-device", "usb-storage,drive=stick,removable=on",
     "-no-reboot", "-display", "none", "-serial", "file:" + work + "/leak-serial",
     "-qmp", "unix:" + leak_qmp + ",server,nowait",
     "-monitor", "unix:" + leak_mon + ",server,nowait",
@@ -11208,6 +11240,52 @@ time.sleep(3)
 leak_serial = open(work + "/leak-serial", "rb").read()
 leaks = re.findall(rb"leak-(\d+)", leak_serial)
 out.append(("a typed line runs in one shell", str(len(leaks)), "1"))
+
+#       The same line once a program has put tty2 in front, with a shell
+#       reading tty2 the way init's reads tty1. Opening tty2 allocates it,
+#       which resets its keyboard, and the switch brings it forward: either
+#       one left on would hand that shell every key typed into the window.
+if switcher:
+    type_text("mkdir -p /mnt\n")
+    time.sleep(1)
+    type_text("mount -r -t vfat /dev/sda1 /mnt\n")
+    time.sleep(2)
+    type_text("setsid /shell ")
+    chord("shift", "comma")
+    type_text(" /dev/tty2 ")
+    chord("shift", "dot")
+    type_text(" /dev/tty2 2")
+    chord("shift", "dot")
+    chord("shift", "7")
+    type_text("1 ")
+    chord("shift", "7")
+    type_text("\n")
+    time.sleep(2)
+    type_text("/mnt/vtswitch 2 ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0\n")
+    time.sleep(2)
+    type_text("echo leak2-")
+    chord("shift", "4")
+    chord("shift", "4")
+    type_text(" ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0\n")
+    time.sleep(3)
+    leak_serial = open(work + "/leak-serial", "rb").read()
+    out.append(("a program brings tty2 to the front",
+                "yes" if b"VTSWITCH active 2" in leak_serial else "no", "yes"))
+    out.append(("and a typed line still runs in one shell",
+                str(len(re.findall(rb"leak2-(\d+)", leak_serial))), "1"))
+else:
+    out.append(("a program brings tty2 to the front",
+                "not run: no static cc for the switcher", "yes"))
+    out.append(("and a typed line still runs in one shell",
+                "not run: no static cc for the switcher", "1"))
 
 hf.write(b"quit\n")
 hf.flush()
