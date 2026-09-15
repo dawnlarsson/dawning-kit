@@ -8566,33 +8566,26 @@ static p8 dump_od_number(string_address text, positive address_to out)
         }
 
         p8 suffix = string_get(at);
+        positive power = size_suffix_power(suffix, false);
+        /* b, or the shared exponent letters through Y with only k and m in
+           lower case. */
+        bool letter = suffix == 'b' ||
+                      (power && power <= 8 && (suffix < 'a' || power <= 2));
 
         /* A word that is only a suffix counts as one of that unit. */
         if (!digits)
         {
-                if (!suffix || !string_first_of("bEGKkMmPTYZ0", suffix))
+                if (!letter)
                         return DUMP_OD_NUMBER_INVALID;
                 value = 1;
         }
 
         if (suffix)
         {
-                positive multiple = 0;
-                positive power = 0;
+                positive multiple = 512;
 
-                switch (suffix)
-                {
-                case 'b': multiple = 512; break;
-                case 'K': case 'k': power = 1; break;
-                case 'M': case 'm': power = 2; break;
-                case 'G': power = 3; break;
-                case 'T': power = 4; break;
-                case 'P': power = 5; break;
-                case 'E': power = 6; break;
-                case 'Z': power = 7; break;
-                case 'Y': power = 8; break;
-                default: return DUMP_OD_NUMBER_SUFFIX;
-                }
+                if (!letter)
+                        return DUMP_OD_NUMBER_SUFFIX;
 
                 at++;
 
