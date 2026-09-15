@@ -2345,11 +2345,141 @@ static positive text_run(const p8 address_to bytes, positive count)
 }
 
 /*
+        A control sequence the read holds all of.
+
+        A byte at a time, every byte of ESC [ 3 8 ; 5 ; 1 9 6 m went through
+        consume()'s tests and stored its digit before the next byte could be
+        looked at, and a dashboard is mostly such sequences. When the read has
+        the whole of one it is taken here in one pass, through the same
+        parameter machine -- the colon mask, the slots running out, digits
+        saturating at ~0u, the marker kept apart, the last intermediate in
+        csi_intermediate -- and csi_final() is its dispatch as it is
+        consume()'s.
+
+        What a sequence can be interrupted by is consume()'s to do: a control
+        is done where it arrives, CAN and SUB abandon the sequence and ESC
+        starts another. With one of those in it, or a final the read does not
+        reach, nothing here has happened but parameter slots written as
+        scratch, which the sequence's own [ resets, and consume() takes it
+        from its ESC.
+*/
+static positive csi_parse(const p8 address_to bytes, positive count)
+{
+        unsigned int slots = 0, colon = 0, value = 0;
+        p8 marker = 0, full = 0, intermediate = 0;
+        positive at;
+
+        if (count < 3 || bytes[1] != '[')
+                return 0;
+
+        /*
+                terminal_parameters_take's transitions, with the count, the
+                colon mask, the marker and the number being read in registers
+                rather than stored and loaded again for every byte. A slot is
+                written as it is left and the last one at the final, which
+                leaves the array as a byte at a time leaves it.
+        */
+        for (at = 2; at < count; at++)
+        {
+                unsigned int c = bytes[at];
+
+                // Below 429496729 another digit cannot pass ~0u, so the
+                // saturating test is taken only past that.
+                if (c - '0' < 10)
+                {
+                        if (full)
+                                continue;
+
+                        if (!slots)
+                                slots = 1;
+
+                        for (;;)
+                        {
+                                unsigned int digit = bytes[at] - '0';
+
+                                if (value < 429496729)
+                                        value = value * 10 + digit;
+                                else if (value > (~0u - digit) / 10)
+                                        value = ~0u;
+                                else
+                                        value = value * 10 + digit;
+
+                                if (at + 1 == count ||
+                                    (unsigned int)bytes[at + 1] - '0' >= 10)
+                                        break;
+
+                                at++;
+                        }
+
+                        continue;
+                }
+
+                if (c == ';' || c == ':')
+                {
+                        if (!slots)
+                                slots = 1;
+
+                        if (slots == TERMINAL_PARAMETERS)
+                                full = 1;
+                        else if (!full)
+                        {
+                                terminal_csi.value[slots - 1] = value;
+
+                                if (c == ':')
+                                        colon |= 1u << slots;
+
+                                slots++;
+                                value = 0;
+                        }
+
+                        continue;
+                }
+
+                if (c >= '@' && c <= '~')
+                        break;
+
+                if (c < ' ')
+                        return 0;
+
+                // DEL and bytes past ASCII are nothing inside a sequence, as
+                // they are to consume().
+                if (c <= '/')
+                        intermediate = (p8)c;
+                else if (c >= '<' && c <= '?')
+                        marker = (p8)c;
+        }
+
+        if (at == count)
+                return 0;
+
+        // With no parameter at all, value[0] is still 0, as a reset leaves it.
+        terminal_csi.value[slots ? slots - 1 : 0] = value;
+        terminal_csi.count = slots;
+        terminal_csi.colon = colon;
+        terminal_csi.marker = marker;
+        terminal_csi.full = full;
+
+        // What the ESC and the [ did, and the state the final runs in.
+        line_forget();
+        utf8_flush();
+        escape_intermediate = false;
+        in_escape = in_csi = true;
+        csi_intermediate = intermediate;
+
+        csi_final(bytes[at]);
+
+        in_csi = in_escape = false;
+        csi_intermediate = 0;
+
+        return at + 1;
+}
+
+/*
         A read's worth of what the far end sent.
 
         The pty loop and the kernel console hand over what they have in one
-        call, so a run of text can be taken whole; everything else is still
-        consume()'s one byte at a time.
+        call, so a run of text and a whole control sequence can each be taken
+        in one step; everything else is still consume()'s a byte at a time.
 */
 static fn term_bytes(const p8 address_to bytes, positive count)
 {
@@ -2362,6 +2492,16 @@ static fn term_bytes(const p8 address_to bytes, positive count)
                 if (c >= ' ' && c != 127 && text_ground())
                 {
                         positive used = text_run(bytes + at, count - at);
+
+                        if (used)
+                        {
+                                at += used;
+                                continue;
+                        }
+                }
+                else if (c == 27 && !in_string)
+                {
+                        positive used = csi_parse(bytes + at, count - at);
 
                         if (used)
                         {
