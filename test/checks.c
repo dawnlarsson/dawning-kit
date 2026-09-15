@@ -42167,6 +42167,7 @@ static volatile positive pool_outstanding = 0;
 static volatile positive pool_outstanding_most = 0;
 static volatile positive pool_jobs_run = 0;
 static volatile positive pool_stop_index = positive_max;
+static volatile b32 pool_stopped_word = 0;
 
 static fn pool_note_slot(void)
 {
@@ -42191,7 +42192,19 @@ static fn pool_count_job(address_any context, positive index)
         pool_note_slot();
 
         if (index == atomic_load(address_of pool_stop_index))
+        {
                 parallel_stop();
+                atomic_exchange(address_of pool_stopped_word, 1);
+                thread_wake(address_of pool_stopped_word, 1 << 30);
+        }
+        //      A job past the stop waits for it, so how many run is not a race
+        //      with whether the stopping thread was descheduled (under qemu the
+        //      others once ran all 4096 before it got back).
+        else if (index > atomic_load(address_of pool_stop_index))
+        {
+                while (!atomic_load(address_of pool_stopped_word))
+                        thread_wait(address_of pool_stopped_word, 0);
+        }
 }
 
 static positive pool_length(positive index)
@@ -42461,11 +42474,12 @@ static fn lock_pool(bool emulated)
         //      Stopping, at width 8.
         parallel_reset(8);
         pool_stop_index = 300;
+        pool_stopped_word = 0;
         pool_jobs_run = 0;
         check("a job's stop makes parallel_for answer false",
               !parallel_for(pool_count_job, null, POOL_JOBS, PARALLEL_SPREAD));
-        check("a stopped parallel_for did not run everything",
-              pool_jobs_run < POOL_JOBS);
+        check("a stopped parallel_for started at most one job a thread past the stop",
+              pool_jobs_run <= 301 + 8);
 
         pool_fresh_stream(address_of stream);
         pool_stop_index = 300;
