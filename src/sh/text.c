@@ -21066,6 +21066,22 @@ static sort_scratch address_to sort_scratches;
 static positive sort_scratches_room;
 static positive sort_scratches_count;
 
+// A scratch for every slot the pool can run a job on, the caller's
+// included, each written only by the thread in that slot.
+static bool sort_slots_ready()
+{
+        positive slots = parallel_width() + 1;
+
+        if (!array_store_reserve(sort_scratches, sort_scratches_room,
+                                 sort_scratches_count, slots, 64))
+                return false;
+
+        for (; sort_scratches_count < slots; sort_scratches_count++)
+                sort_scratches[sort_scratches_count] = (sort_scratch){0};
+
+        return true;
+}
+
 static fn sort_emit_job(address_any context, positive index,
                         parallel_output address_to output)
 {
@@ -21143,19 +21159,11 @@ static fn sort_emit(sort_writer address_to out)
                 return;
         }
 
-        // A scratch for every slot the pool can run a job on, the caller's
-        // included, each written only by the thread in that slot.
-        positive slots = parallel_width() + 1;
-
-        if (!array_store_reserve(sort_scratches, sort_scratches_room,
-                                 sort_scratches_count, slots, 64))
+        if (!sort_slots_ready())
         {
                 sort_emit_serial(out);
                 return;
         }
-
-        for (; sort_scratches_count < slots; sort_scratches_count++)
-                sort_scratches[sort_scratches_count] = (sort_scratch){0};
 
         sort_writer_flush(out);
 
@@ -21304,6 +21312,13 @@ typedef struct
         string_address name;
         sort_view head;
         sort_item key;
+        // A run read in part stops at this byte and the chunk at this item.
+        positive limit;
+        positive stop;
+        // A job's source keeps its failure here for the caller to report:
+        // a diagnostic belongs to the main thread.
+        bipolar error;
+        bool quiet;
 } sort_source;
 
 static sort_entry address_to sort_entries;
@@ -21336,7 +21351,7 @@ static bool sort_source_next(sort_source address_to source)
 {
         if (source->handle == SORT_ENTRY_MEMORY)
         {
-                if (source->next >= sort_lines_count)
+                if (source->next >= source->stop)
                         return source->have = false;
 
                 source->head = sort_view_of(sort_items[source->next++].line);
@@ -21392,13 +21407,25 @@ static bool sort_source_next(sort_source address_to source)
                                                      SORT_SLACK,
                                                  SORT_SOURCE_BUFFER + SORT_SLACK))
                         {
-                                sort_failed = true;
-                                string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+                                if (source->quiet)
+                                        source->error = -12;
+                                else
+                                {
+                                        sort_failed = true;
+                                        string_diagnostic(&text_diagnostic, 0, null,
+                                                          "out of memory");
+                                }
+
                                 return source->have = false;
                         }
 
                         positive room = source->room - SORT_SLACK - source->filled;
-                        bipolar got = source->positional
+
+                        if (source->positional && source->limit - source->offset < room)
+                                room = source->limit - source->offset;
+
+                        bipolar got = !room ? 0
+                                      : source->positional
                                           ? system_call_4(syscall(pread64),
                                                           (positive)source->handle,
                                                           (positive)(source->buffer +
@@ -21413,7 +21440,9 @@ static bool sort_source_next(sort_source address_to source)
                         {
                                 source->finished = true;
 
-                                if (got < 0)
+                                if (got < 0 && source->quiet)
+                                        source->error = got;
+                                else if (got < 0)
                                 {
                                         string_diagnostic(&text_diagnostic, 0,
                                                           source->name, "Read error");
@@ -21439,6 +21468,8 @@ static bool sort_source_open(sort_source address_to source, sort_entry address_t
         address_to source = (sort_source){
             .handle = entry->handle,
             .name = entry->name,
+            .limit = positive_max,
+            .stop = sort_lines_count,
         };
 
         if (entry->handle >= 0)
@@ -21537,22 +21568,22 @@ static inline INLINE bool sort_source_before(sort_source address_to sources,
         return answer < 0 || (!answer && one < two);
 }
 
-static p32 sort_tree_build(sort_source address_to sources, positive count,
-                           positive node)
+static p32 sort_tree_build(sort_source address_to sources, p32 address_to tree,
+                           positive count, positive node)
 {
         if (node >= count)
                 return (p32)(node - count);
 
-        p32 left = sort_tree_build(sources, count, node * 2);
-        p32 right = sort_tree_build(sources, count, node * 2 + 1);
+        p32 left = sort_tree_build(sources, tree, count, node * 2);
+        p32 right = sort_tree_build(sources, tree, count, node * 2 + 1);
 
         if (sort_source_before(sources, right, left))
         {
-                sort_tree[node] = left;
+                tree[node] = left;
                 return right;
         }
 
-        sort_tree[node] = right;
+        tree[node] = right;
         return left;
 }
 
@@ -21562,7 +21593,7 @@ static bool sort_merge(positive count, sort_writer address_to out)
         sort_view last;
         bool have_last = false;
 
-        sort_tree[0] = sort_tree_build(sources, count, 1);
+        sort_tree[0] = sort_tree_build(sources, sort_tree, count, 1);
 
         for (;;)
         {
@@ -21606,6 +21637,637 @@ static bool sort_merge(positive count, sort_writer address_to out)
         }
 
         return true;
+}
+
+/*
+        The merge on the pool.
+
+        Runs are sorted and can be read anywhere, so the merge can be cut by
+        key. A line every SORT_FENCE_BYTES into every run and every
+        SORT_FENCE_ITEMS lines into the chunk in memory are sampled and
+        sorted, and every SORT_SPLIT_EVERY one is kept as a splitter. A piece
+        is everything ordering from one splitter to the next, found in each
+        source as the first line that does not order before the splitter, so
+        lines with equal keys never fall into two pieces: each piece merged on
+        its own is exactly that stretch of the whole merge, -s and -u
+        included, and the pieces written in order are its bytes. A piece holds
+        about SORT_FENCE_BYTES * SORT_SPLIT_EVERY of input, which bounds what
+        the pool keeps while the writer catches up. -m inputs stay on the
+        serial merge: they need not be in order, or seekable.
+*/
+enum
+{
+        SORT_FENCE_BYTES = 1 << 18,
+        SORT_FENCE_ITEMS = 1 << 13,
+        SORT_SPLIT_EVERY = 16,
+        SORT_POOL_MERGE_BYTES = 64 << 20,
+};
+
+typedef struct
+{
+        positive source;
+        // A run's byte offset or the chunk's item index.
+        positive position;
+        positive at;
+        positive length;
+} sort_sample;
+
+static sort_sample address_to sort_samples;
+static positive sort_samples_room;
+static positive sort_samples_count;
+static p8 address_to sort_samples_text;
+static positive sort_samples_text_room;
+static positive sort_samples_text_used;
+static p32 address_to sort_order;
+static positive sort_order_room;
+static p32 address_to sort_order_spare;
+static positive sort_order_spare_room;
+static p32 address_to sort_splitters;
+static positive sort_splitters_room;
+static positive sort_splitters_count;
+static positive address_to sort_fences_at;
+static positive sort_fences_at_room;
+static positive address_to sort_bounds;
+static positive sort_bounds_room;
+static bipolar address_to sort_piece_errors;
+static positive sort_piece_errors_room;
+static positive address_to sort_sizes;
+static positive sort_sizes_room;
+static p8 address_to sort_scan;
+static positive sort_scan_room;
+
+// A piece's sources, tree and -u line, and a boundary search's read of a
+// run, one set for each slot the pool can run a job on.
+typedef struct
+{
+        sort_source address_to sources;
+        positive sources_room;
+        positive sources_count;
+        p32 address_to tree;
+        positive tree_room;
+        p8 address_to held;
+        positive held_room;
+        p8 address_to scan;
+        positive scan_room;
+} sort_merge_slot;
+
+static sort_merge_slot address_to sort_merge_slots;
+static positive sort_merge_slots_room;
+static positive sort_merge_slots_count;
+
+static bool sort_merge_slots_ready()
+{
+        positive slots = parallel_width() + 1;
+
+        if (!sort_slots_ready() ||
+            !array_store_reserve(sort_merge_slots, sort_merge_slots_room,
+                                 sort_merge_slots_count, slots, 64))
+                return false;
+
+        for (; sort_merge_slots_count < slots; sort_merge_slots_count++)
+                sort_merge_slots[sort_merge_slots_count] = (sort_merge_slot){0};
+
+        return true;
+}
+
+static sort_view sort_sample_view(sort_sample address_to sample)
+{
+        if (sort_entries[sample->source].handle == SORT_ENTRY_MEMORY)
+                return sort_view_of(sort_items[sample->position].line);
+
+        sort_view view = {sort_samples_text + sample->at, sample->length, 0, 0};
+
+        sort_view_ready(address_of view);
+        return view;
+}
+
+static bipolar sort_sample_order(p32 one, p32 two)
+{
+        sort_view a = sort_sample_view(sort_samples + one);
+        sort_view b = sort_sample_view(sort_samples + two);
+
+        return sort_compare_views(address_of a, address_of b, 0);
+}
+
+// Bytes [from, to) of a run into a buffer that grows to hold them.
+static bipolar sort_run_read(bipolar handle, positive from, positive to,
+                             p8 address_to address_to buffer,
+                             positive address_to room)
+{
+        positive have = 0;
+
+        if (to - from + SORT_SLACK > address_to room &&
+            !memory_reserve((address_any address_to)buffer, room, 0,
+                            to - from + SORT_SLACK, 1, SORT_FENCE_BYTES))
+                return -12;
+
+        while (from + have < to)
+        {
+                bipolar got = system_call_4(syscall(pread64), (positive)handle,
+                                            (positive)(address_to buffer + have),
+                                            to - from - have, from + have);
+
+                if (got <= 0)
+                        return got ? got : -5;
+
+                have += (positive)got;
+        }
+
+        return 0;
+}
+
+// The first line of a run starting at or after `from`, and its length.
+static bipolar sort_run_line_at(bipolar handle, positive size, positive from,
+                                positive address_to start,
+                                positive address_to length)
+{
+        positive at = from ? from - 1 : 0;
+
+        address_to start = from ? size : 0;
+
+        for (; from && at < size; at += SORT_FENCE_BYTES)
+        {
+                positive stop = min(at + SORT_FENCE_BYTES, size);
+                bipolar failed = sort_run_read(handle, at, stop, address_of sort_scan,
+                                               address_of sort_scan_room);
+
+                if (failed)
+                        return failed;
+
+                p8 address_to found = memory_first_of(sort_scan, text_delimiter, stop - at);
+
+                if (found)
+                {
+                        address_to start = at + (positive)(found - sort_scan) + 1;
+                        break;
+                }
+        }
+
+        address_to length = 0;
+
+        for (at = address_to start; at < size; at += SORT_FENCE_BYTES)
+        {
+                positive stop = min(at + SORT_FENCE_BYTES, size);
+                bipolar failed = sort_run_read(handle, address_to start, stop,
+                                               address_of sort_scan,
+                                               address_of sort_scan_room);
+
+                if (failed)
+                        return failed;
+
+                p8 address_to found = memory_first_of(sort_scan + (at - address_to start),
+                                                      text_delimiter, stop - at);
+
+                if (found)
+                {
+                        address_to length = (positive)(found - sort_scan);
+                        return 0;
+                }
+
+                address_to length = stop - address_to start;
+        }
+
+        return 0;
+}
+
+static bool sort_sample_add(positive source, positive position, p8 address_to line,
+                            positive length)
+{
+        if (!array_store_reserve(sort_samples, sort_samples_room, sort_samples_count,
+                                 sort_samples_count + 1, 1024) ||
+            !array_store_reserve(sort_samples_text, sort_samples_text_room,
+                                 sort_samples_text_used,
+                                 sort_samples_text_used + length + SORT_SLACK, 1 << 16))
+                return false;
+
+        sort_samples[sort_samples_count++] = (sort_sample){
+            .source = source,
+            .position = position,
+            .at = sort_samples_text_used,
+            .length = length,
+        };
+
+        if (line)
+        {
+                memory_copy_apart(sort_samples_text + sort_samples_text_used, line, length);
+                sort_samples_text_used += length;
+        }
+
+        return true;
+}
+
+static fn sort_bound_job(address_any context, positive index)
+{
+        sort_merge_slot address_to slot = sort_merge_slots + parallel_slot();
+        positive count = sort_entries_count;
+        positive address_to row = sort_bounds + (index + 1) * count;
+        sort_view splitter = sort_sample_view(sort_samples + sort_splitters[index]);
+
+        (void)context;
+
+        for (positive source = 0; source < count; source++)
+        {
+                positive first = sort_fences_at[source];
+                positive fences = sort_fences_at[source + 1] - first;
+                positive low = 0;
+                positive high = fences;
+
+                while (low < high)
+                {
+                        positive middle = low + (high - low) / 2;
+                        sort_view fence = sort_sample_view(sort_samples + first + middle);
+
+                        if (sort_compare_views(address_of fence, address_of splitter, 0) < 0)
+                                low = middle + 1;
+                        else
+                                high = middle;
+                }
+
+                bool memory = sort_entries[source].handle == SORT_ENTRY_MEMORY;
+                positive from = low ? sort_samples[first + low - 1].position : 0;
+                positive to = low < fences ? sort_samples[first + low].position
+                              : memory ? sort_lines_count
+                                       : sort_sizes[source];
+
+                if (memory)
+                {
+                        while (from < to)
+                        {
+                                positive middle = from + (to - from) / 2;
+                                sort_view line = sort_view_of(sort_items[middle].line);
+
+                                if (sort_compare_views(address_of line, address_of splitter, 0) < 0)
+                                        from = middle + 1;
+                                else
+                                        to = middle;
+                        }
+
+                        row[source] = from;
+                        continue;
+                }
+
+                // A fence is a line start, so every line starting in the gap
+                // ends inside it.
+                bipolar failed = sort_run_read(sort_entries[source].handle, from, to,
+                                               address_of slot->scan,
+                                               address_of slot->scan_room);
+
+                if (failed)
+                {
+                        sort_piece_errors[index] = failed;
+                        parallel_stop();
+                        return;
+                }
+
+                positive at = from;
+
+                while (at < to)
+                {
+                        p8 address_to begin = slot->scan + (at - from);
+                        p8 address_to found = memory_first_of(begin, text_delimiter, to - at);
+                        sort_view line = {begin, found ? (positive)(found - begin) : to - at,
+                                          0, 0};
+
+                        sort_view_ready(address_of line);
+
+                        if (sort_compare_views(address_of line, address_of splitter, 0) >= 0)
+                                break;
+
+                        at += line.length + 1;
+                }
+
+                row[source] = at < to ? at : to;
+        }
+}
+
+static fn sort_piece_line(sort_scratch address_to slot, positive address_to used,
+                          parallel_output address_to output, sort_view address_to line)
+{
+        positive wanted = address_to used + line->length + 1 + SORT_SLACK;
+
+        if (address_to used >= SORT_WRITE_BUFFER)
+        {
+                parallel_write(output, slot->bytes, address_to used);
+                address_to used = 0;
+                wanted = line->length + 1 + SORT_SLACK;
+        }
+
+        if (wanted > slot->room &&
+            !array_store_reserve(slot->bytes, slot->room, address_to used, wanted,
+                                 SORT_WRITE_BUFFER + SORT_SLACK))
+        {
+                parallel_stop();
+                return;
+        }
+
+        p8 address_to into = slot->bytes + address_to used;
+
+        if (line->length <= 64)
+                for (positive copied = 0; copied < line->length; copied += 16)
+                        __builtin_memcpy(into + copied, line->at + copied, 16);
+        else
+                memory_copy_apart(into, line->at, line->length);
+
+        into[line->length] = text_delimiter;
+        address_to used += line->length + 1;
+}
+
+static fn sort_piece_job(address_any context, positive index,
+                         parallel_output address_to output)
+{
+        sort_merge_slot address_to slot = sort_merge_slots + parallel_slot();
+        sort_scratch address_to scratch = sort_scratches + parallel_slot();
+        positive count = sort_entries_count;
+        positive address_to from = sort_bounds + index * count;
+        positive address_to to = sort_bounds + (index + 1) * count;
+        positive used = 0;
+        sort_view last = {0};
+        bool have_last = false;
+
+        (void)context;
+
+        if (!array_store_reserve(slot->sources, slot->sources_room, slot->sources_count,
+                                 count, 64) ||
+            !array_store_reserve(slot->tree, slot->tree_room, 0, count + 1, 64))
+        {
+                sort_piece_errors[index] = -12;
+                parallel_stop();
+                return;
+        }
+
+        for (; slot->sources_count < count; slot->sources_count++)
+                slot->sources[slot->sources_count] = (sort_source){0};
+
+        for (positive at = 0; at < count; at++)
+        {
+                sort_source address_to source = slot->sources + at;
+                sort_entry address_to entry = sort_entries + at;
+                p8 address_to buffer = source->buffer;
+                positive room = source->room;
+
+                address_to source = (sort_source){
+                    .handle = entry->handle,
+                    .buffer = buffer,
+                    .room = room,
+                    .quiet = true,
+                    .positional = entry->handle >= 0,
+                    .offset = from[at],
+                    .limit = to[at],
+                    .next = from[at],
+                    .stop = to[at],
+                };
+
+                sort_source_next(source);
+
+                if (source->error)
+                {
+                        sort_piece_errors[index] = source->error;
+                        parallel_stop();
+                        return;
+                }
+        }
+
+        slot->tree[0] = sort_tree_build(slot->sources, slot->tree, count, 1);
+
+        for (;;)
+        {
+                p32 winner = slot->tree[0];
+                sort_source address_to source = slot->sources + winner;
+
+                if (!source->have)
+                        break;
+
+                if (!sort_unique)
+                        sort_piece_line(scratch, address_of used, output, address_of source->head);
+                else if (!have_last ||
+                         sort_compare_views_keys(address_of last, address_of source->head, 0))
+                {
+                        sort_piece_line(scratch, address_of used, output, address_of source->head);
+
+                        if (!array_store_reserve(slot->held, slot->held_room, 0,
+                                                 source->head.length + SORT_SLACK, 4096))
+                        {
+                                sort_piece_errors[index] = -12;
+                                parallel_stop();
+                                return;
+                        }
+
+                        memory_copy_apart(slot->held, source->head.at, source->head.length);
+                        last = source->head;
+                        last.at = slot->held;
+                        have_last = true;
+                }
+
+                sort_source_next(source);
+
+                if (source->error)
+                {
+                        sort_piece_errors[index] = source->error;
+                        parallel_stop();
+                        return;
+                }
+
+                for (positive node = (winner + count) / 2; node; node /= 2)
+                {
+                        if (sort_source_before(slot->sources, slot->tree[node], winner))
+                        {
+                                p32 loser = slot->tree[node];
+
+                                slot->tree[node] = winner;
+                                winner = loser;
+                        }
+                }
+
+                slot->tree[0] = winner;
+        }
+
+        if (used)
+                parallel_write(output, scratch->bytes, used);
+}
+
+#define SORT_SAMPLE_ORDER(one, two) sort_sample_order(one, two)
+
+/*
+        The samples, splitters and boundaries of a pool merge over every
+        entry, or false with nothing said when the merge is too small to cut
+        into two pieces, or -1 once a failure has been said.
+*/
+static b32 sort_pool_merge_ready()
+{
+        positive count = sort_entries_count;
+        positive total = sort_text_used;
+
+        sort_samples_count = 0;
+        sort_samples_text_used = 0;
+        sort_splitters_count = 0;
+
+        if (sort_alone || count < 2 ||
+            !array_store_reserve(sort_sizes, sort_sizes_room, 0, count, 64) ||
+            !array_store_reserve(sort_fences_at, sort_fences_at_room, 0, count + 1, 64))
+                return 0;
+
+        for (positive source = 0; source < count; source++)
+        {
+                sort_entry address_to entry = sort_entries + source;
+                file_status status;
+
+                sort_sizes[source] = 0;
+
+                if (entry->handle == SORT_ENTRY_MEMORY)
+                        continue;
+
+                if (system_file_status((positive)entry->handle, address_of status) < 0)
+                        return 0;
+
+                sort_sizes[source] = (positive)status.size;
+                total += (positive)status.size;
+        }
+
+        if (total < SORT_POOL_MERGE_BYTES)
+                return 0;
+
+        for (positive source = 0; source < count; source++)
+        {
+                bipolar handle = sort_entries[source].handle;
+
+                sort_fences_at[source] = sort_samples_count;
+
+                if (handle == SORT_ENTRY_MEMORY)
+                {
+                        for (positive item = SORT_FENCE_ITEMS; item < sort_lines_count;
+                             item += SORT_FENCE_ITEMS)
+                                if (!sort_sample_add(source, item, null, 0))
+                                        return 0;
+
+                        continue;
+                }
+
+                positive last = 0;
+
+                for (positive at = SORT_FENCE_BYTES; at < sort_sizes[source];
+                     at += SORT_FENCE_BYTES)
+                {
+                        positive start;
+                        positive length;
+                        bipolar failed = sort_run_line_at(handle, sort_sizes[source], at,
+                                                          address_of start,
+                                                          address_of length);
+
+                        if (failed)
+                        {
+                                text_flush();
+                                string_format(writer_stderr, "%s: read failed: %s: %s\n",
+                                              text_name,
+                                              sort_temporary_place
+                                                  ? sort_temporary_place
+                                                  : (string_address) "temporary file",
+                                              file_reason(failed));
+                                return -1;
+                        }
+
+                        if (start >= sort_sizes[source] || start == last)
+                                continue;
+
+                        if (!sort_sample_add(source, start, sort_scan, length))
+                                return 0;
+
+                        last = start;
+                }
+        }
+
+        sort_fences_at[count] = sort_samples_count;
+
+        if (sort_samples_count < 2 * SORT_SPLIT_EVERY ||
+            !array_store_reserve(sort_order, sort_order_room, 0, sort_samples_count, 1024) ||
+            !array_store_reserve(sort_order_spare, sort_order_spare_room, 0,
+                                 sort_samples_count, 1024))
+                return 0;
+
+        for (positive at = 0; at < sort_samples_count; at++)
+                sort_order[at] = (p32)at;
+
+        p32 address_to sorted = array_merge_sort(sort_order, sort_order_spare,
+                                                 sort_samples_count, SORT_SAMPLE_ORDER);
+
+        for (positive at = SORT_SPLIT_EVERY; at < sort_samples_count;
+             at += SORT_SPLIT_EVERY)
+        {
+                if (!array_store_reserve(sort_splitters, sort_splitters_room,
+                                         sort_splitters_count, sort_splitters_count + 1,
+                                         256))
+                        return 0;
+
+                sort_splitters[sort_splitters_count++] = sorted[at];
+        }
+
+        positive pieces = sort_splitters_count + 1;
+
+        if (!array_store_reserve(sort_bounds, sort_bounds_room, 0, (pieces + 1) * count,
+                                 1024) ||
+            !array_store_reserve(sort_piece_errors, sort_piece_errors_room, 0, pieces, 256) ||
+            !sort_merge_slots_ready())
+                return 0;
+
+        for (positive source = 0; source < count; source++)
+        {
+                sort_bounds[source] = 0;
+                sort_bounds[pieces * count + source] =
+                    sort_entries[source].handle == SORT_ENTRY_MEMORY ? sort_lines_count
+                                                                     : sort_sizes[source];
+        }
+
+        memory_fill(sort_piece_errors, 0, pieces * sizeof(bipolar));
+
+        if (!parallel_for(sort_bound_job, null, sort_splitters_count, total))
+        {
+                for (positive at = 0; at < pieces; at++)
+                        if (sort_piece_errors[at])
+                        {
+                                text_flush();
+                                string_format(writer_stderr, "%s: read failed: %s: %s\n",
+                                              text_name,
+                                              sort_temporary_place
+                                                  ? sort_temporary_place
+                                                  : (string_address) "temporary file",
+                                              file_reason(sort_piece_errors[at]));
+                                return -1;
+                        }
+
+                return 0;
+        }
+
+        return 1;
+}
+
+// The pieces merged on the pool and written in order.
+static bool sort_pool_merge(sort_writer address_to out)
+{
+        positive pieces = sort_splitters_count + 1;
+        positive total = sort_text_used;
+
+        for (positive source = 0; source < sort_entries_count; source++)
+                total += sort_sizes[source];
+
+        memory_fill(sort_piece_errors, 0, pieces * sizeof(bipolar));
+        sort_writer_flush(out);
+
+        if (parallel_ordered(sort_piece_job, sort_emit_sink, out, pieces, total))
+                return true;
+
+        if (out->failed)
+                return true;
+
+        for (positive at = 0; at < pieces; at++)
+                if (sort_piece_errors[at])
+                {
+                        text_flush();
+                        string_format(writer_stderr, "%s: %s failed: %s\n", text_name,
+                                      sort_piece_errors[at] == -12 ? "merge" : "read",
+                                      file_reason(sort_piece_errors[at]));
+                        return false;
+                }
+
+        return false;
 }
 
 // GNU names the temporary and the reason. An unnamed temporary has only the
@@ -21964,6 +22626,35 @@ static fn sort_release()
         for (positive at = 0; at < sort_scratches_count; at++)
                 array_store_release(sort_scratches[at].bytes, sort_scratches[at].room,
                                     none);
+
+        for (positive at = 0; at < sort_merge_slots_count; at++)
+        {
+                sort_merge_slot address_to slot = sort_merge_slots + at;
+
+                for (positive source = 0; source < slot->sources_count; source++)
+                        array_store_release(slot->sources[source].buffer,
+                                            slot->sources[source].room, none);
+
+                array_store_release(slot->sources, slot->sources_room, none);
+                array_store_release(slot->tree, slot->tree_room, none);
+                array_store_release(slot->held, slot->held_room, none);
+                array_store_release(slot->scan, slot->scan_room, none);
+        }
+
+        sort_merge_slots_count = 0;
+        array_store_release(sort_merge_slots, sort_merge_slots_room, none);
+
+        array_store_release(sort_samples, sort_samples_room, sort_samples_count);
+        array_store_release(sort_samples_text, sort_samples_text_room,
+                            sort_samples_text_used);
+        array_store_release(sort_order, sort_order_room, none);
+        array_store_release(sort_order_spare, sort_order_spare_room, none);
+        array_store_release(sort_splitters, sort_splitters_room, sort_splitters_count);
+        array_store_release(sort_fences_at, sort_fences_at_room, none);
+        array_store_release(sort_bounds, sort_bounds_room, none);
+        array_store_release(sort_piece_errors, sort_piece_errors_room, none);
+        array_store_release(sort_sizes, sort_sizes_room, none);
+        array_store_release(sort_scan, sort_scan_room, none);
 
         sort_scratches_count = 0;
         array_store_release(sort_scratches, sort_scratches_room, none);
@@ -22423,6 +23114,22 @@ static b32 sort_inputs(string_address output)
         if (sort_lines_count)
                 sort_entries[sort_entries_count++] =
                     (sort_entry){.handle = SORT_ENTRY_MEMORY};
+
+        b32 pool = sort_pool_merge_ready();
+
+        if (pool < 0)
+                return 2;
+
+        if (pool)
+        {
+                if (!sort_output_open(output, address_of out))
+                        return 2;
+
+                bool merged = sort_pool_merge(address_of out);
+
+                sort_output_close(address_of out);
+                return merged ? 0 : 2;
+        }
 
         if (!sort_sources_open(0, sort_entries_count) ||
             !sort_output_open(output, address_of out))
