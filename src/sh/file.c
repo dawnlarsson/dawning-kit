@@ -24843,8 +24843,538 @@ static fn rm_batch_replay(walk_batch address_to batch)
         }
 }
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        rm -r over parallel_tree.  A directory's plain names are unlinked in
+        the job that reads it, and the directory is removed in its own leave,
+        once everything under it has been, through the parent it opens as
+        ".." -- by name where nobody but the caller and root can write that
+        parent, and otherwise only after the parent proves to be the one the
+        walk read and the name proves to be this directory.  A name that stays
+        marks its directory kept, and a kept directory marks its parent, so
+        what stays is reported once, where it was met, and no directory above
+        it is tried.  A subdirectory the caller cannot read is handled by the
+        job reading its parent, where the pool could not open it: removed if
+        it is empty, reported if not.  Every line is said in the sink in walk
+        order, which is where the batch form said it.  There is no depth
+        limit.
+*/
+typedef struct rm_tree_node
+{
+        struct rm_tree_node address_to parent;
+        file_facts facts;
+        b32 kept;
+        b32 read_error;
+        bool trusted;
+        bool skip;
+        positive name_at;
+        positive length;
+        p8 path[];
+} rm_tree_node;
+
+enum
+{
+        RM_TREE_REMOVED = 1,
+        RM_TREE_REMOVED_DIRECTORY,
+        RM_TREE_CANNOT_REMOVE,
+        RM_TREE_CANNOT_READ,
+        RM_TREE_REFUSED_ROOT,
+};
+
+typedef struct
+{
+        p8 kind;
+        p8 spare[3];
+        b32 code;
+        p32 path_bytes;
+} rm_tree_record;
+
+static rm_tree_node address_to rm_tree_top;
+
+static rm_tree_node address_to rm_tree_node_new(rm_tree_node address_to parent,
+                                               string_address name,
+                                               positive name_length)
+{
+        positive joint = parent && parent->length &&
+                         parent->path[parent->length - 1] != '/';
+        positive length = (parent ? parent->length + joint : 0) + name_length;
+        rm_tree_node address_to node = memory_take(sizeof(rm_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(rm_tree_node));
+        node->parent = parent;
+        node->length = length;
+        node->name_at = length - name_length;
+        if (parent)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                if (joint)
+                        node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + joint, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+        node->path[length] = end;
+        return node;
+}
+
+//      A line to say and the whole path it names: head, and name when
+//      there is one, written straight into the output.
+static bool rm_tree_put(parallel_output address_to output, p8 kind, bipolar code,
+                        string_address head, positive head_length,
+                        string_address name, positive name_length)
+{
+        positive joint = name_length && head_length && head[head_length - 1] != '/';
+        positive length = head_length + joint + name_length;
+        p8 address_to at = parallel_reserve(output, sizeof(rm_tree_record) + length + 1);
+        rm_tree_record record;
+
+        if (!at)
+                return false;
+
+        memory_fill(address_of record, 0, sizeof(record));
+        record.kind = kind;
+        record.code = (b32)code;
+        record.path_bytes = (p32)(length + 1);
+        memory_copy(at, address_of record, sizeof(record));
+
+        p8 address_to path = at + sizeof(rm_tree_record);
+
+        memory_copy(path, head, head_length);
+        if (joint)
+                path[head_length] = '/';
+        memory_copy(path + head_length + joint, name, name_length);
+        path[length] = end;
+        return true;
+}
+
+static fn rm_tree_keep(rm_tree_node address_to node)
+{
+        if (node)
+                atomic_exchange(address_of node->kept, 1);
+}
+
+static fn rm_tree_enter(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        rm_tree_node address_to node = node_address;
+        p8 records[WALK_READ];
+
+        (void)context;
+
+        //      Its parent could search it a moment ago and the pool could not
+        //      open it: nothing under it is read, and it stays.
+        if (directory < 0)
+        {
+                node->skip = true;
+                if (!(rm_force && directory == -ERROR_NO_ENTRY))
+                {
+                        (void)rm_tree_put(output, RM_TREE_CANNOT_REMOVE, directory,
+                                          (string_address)node->path, node->length,
+                                          (string_address)"", 0);
+                        rm_tree_keep(node->parent);
+                }
+                return;
+        }
+
+        if (node->parent)
+        {
+                bipolar looked = file_look_code(directory, (string_address)"",
+                                                AT_EMPTY_PATH, address_of node->facts);
+
+                if (looked >= 0 &&
+                    (node->facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        looked = -ERROR_NOT_DIRECTORY;
+                if (looked < 0)
+                {
+                        node->skip = true;
+                        (void)rm_tree_put(output, RM_TREE_CANNOT_REMOVE, looked,
+                                          (string_address)node->path, node->length,
+                                          (string_address)"", 0);
+                        rm_tree_keep(node->parent);
+                        return;
+                }
+                if (rm_preserve_root &&
+                    file_same_identity(address_of node->facts, address_of rm_root))
+                {
+                        node->skip = true;
+                        (void)rm_tree_put(output, RM_TREE_REFUSED_ROOT, 0,
+                                          (string_address)node->path, node->length,
+                                          (string_address)"", 0);
+                        rm_tree_keep(node->parent);
+                        return;
+                }
+                node->trusted = (node->facts.owner == rm_user || node->facts.owner == 0) &&
+                                !(node->facts.mode & 0022);
+        }
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                {
+                        if (got < 0)
+                                node->read_error = (b32)got;
+                        break;
+                }
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                            (struct linux_dirent64 address_to)(records + at);
+                        string_address name = (string_address)record->d_name;
+                        positive name_length;
+                        bool said = true;
+
+                        at += record->d_reclen;
+                        if (file_is_dot(name))
+                                continue;
+
+                        name_length = string_length(name);
+
+                        //      A kind the listing would not give is unlinked
+                        //      first, as a serial rm does: for a file that is
+                        //      all of it.
+                        if (record->d_type != DT_DIR)
+                        {
+                                bipolar gone = system_remove_at(directory, name, 0);
+                                file_facts entry;
+                                bipolar seen;
+
+                                if (gone == 0)
+                                {
+                                        if (rm_loud)
+                                                said = rm_tree_put(output, RM_TREE_REMOVED, 0,
+                                                                   (string_address)node->path,
+                                                                   node->length, name, name_length);
+                                        goto next;
+                                }
+
+                                seen = file_look_code(directory, name, AT_SYMLINK_NOFOLLOW,
+                                                      address_of entry);
+                                if (!(record->d_type == 0 && seen >= 0 &&
+                                      (entry.mode & MODE_FORMAT) == MODE_DIRECTORY))
+                                {
+                                        // -f forgives only a name that is not
+                                        // there, and a name that is not there
+                                        // holds nothing up.
+                                        if (rm_force && gone == -ERROR_NO_ENTRY)
+                                                goto next;
+                                        said = rm_tree_put(output, RM_TREE_CANNOT_REMOVE,
+                                                           seen < 0 ? seen : gone,
+                                                           (string_address)node->path,
+                                                           node->length, name, name_length);
+                                        atomic_exchange(address_of node->kept, 1);
+                                        goto next;
+                                }
+                        }
+
+                        //      A directory this caller cannot read is not
+                        //      one the pool could open: it is removed here
+                        //      if it is empty, as the reference rm removes
+                        //      it, and reported if it is not.
+                        if (system_access_at(directory, name, 5) < 0)
+                        {
+                                bipolar opened = system_open_at(directory, name,
+                                                                FILE_READ | O_DIRECTORY |
+                                                                    O_NOFOLLOW | O_CLOEXEC);
+
+                                if (opened >= 0)
+                                        system_close(opened);
+                                else
+                                {
+                                        file_facts entry;
+                                        bipolar gone;
+
+                                        if (rm_force && opened == -ERROR_NO_ENTRY)
+                                                goto next;
+
+                                        gone = file_look_code(directory, name,
+                                                              AT_SYMLINK_NOFOLLOW,
+                                                              address_of entry);
+                                        if (gone >= 0 &&
+                                            (entry.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                                                gone = file_remove_same(directory, name,
+                                                                        AT_REMOVEDIR,
+                                                                        address_of entry);
+                                        else if (gone >= 0)
+                                                gone = -ERROR_NOT_DIRECTORY;
+
+                                        if (gone == 0)
+                                        {
+                                                if (rm_loud)
+                                                        said = rm_tree_put(output,
+                                                                           RM_TREE_REMOVED_DIRECTORY, 0,
+                                                                           (string_address)node->path,
+                                                                           node->length, name,
+                                                                           name_length);
+                                                goto next;
+                                        }
+
+                                        said = rm_tree_put(output, RM_TREE_CANNOT_REMOVE, opened,
+                                                           (string_address)node->path,
+                                                           node->length, name, name_length);
+                                        atomic_exchange(address_of node->kept, 1);
+                                        goto next;
+                                }
+                        }
+
+                        {
+                                rm_tree_node address_to child =
+                                    rm_tree_node_new(node, name, name_length);
+
+                                if (!child || !parallel_child(output, name, child))
+                                {
+                                        memory_give(child);
+                                        said = false;
+                                }
+                        }
+next:
+                        if (!said)
+                        {
+                                parallel_stop();
+                                return;
+                        }
+                }
+        }
+}
+
+static fn rm_tree_leave(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        rm_tree_node address_to node = node_address;
+        rm_tree_node address_to parent = node->parent;
+
+        (void)context;
+
+        if (node->skip)
+                return;
+
+        if (directory < 0)
+        {
+                (void)rm_tree_put(output, RM_TREE_CANNOT_REMOVE, directory,
+                                  (string_address)node->path, node->length,
+                                  (string_address)"", 0);
+                rm_tree_keep(parent);
+                return;
+        }
+
+        if (node->read_error)
+        {
+                (void)rm_tree_put(output, RM_TREE_CANNOT_READ, node->read_error,
+                                  (string_address)node->path, node->length,
+                                  (string_address)"", 0);
+                atomic_exchange(address_of node->kept, 1);
+        }
+
+        if (atomic_load(address_of node->kept))
+        {
+                rm_tree_keep(parent);
+                return;
+        }
+
+        //      The operand itself is removed by the caller, through the name
+        //      it was given.
+        if (!parent)
+                return;
+
+        string_address name = (string_address)node->path + node->name_at;
+        bipolar above = system_open_at(directory, (string_address)"..",
+                                       O_PATH | O_DIRECTORY | O_CLOEXEC);
+        bipolar code = above;
+
+        if (above >= 0)
+        {
+                if (parent->trusted)
+                        code = system_remove_at(above, name, AT_REMOVEDIR);
+                else
+                {
+                        file_facts facts;
+                        bipolar looked = file_look_code(above, (string_address)"",
+                                                        AT_EMPTY_PATH, address_of facts);
+
+                        code = looked < 0 ? looked
+                               : !file_same_identity(address_of facts, address_of parent->facts)
+                                   ? -ERROR_AGAIN
+                                   : file_remove_same(above, name, AT_REMOVEDIR,
+                                                      address_of node->facts);
+                }
+                system_close(above);
+        }
+
+        if (code == 0)
+        {
+                if (rm_loud)
+                        (void)rm_tree_put(output, RM_TREE_REMOVED_DIRECTORY, 0,
+                                          (string_address)node->path, node->length,
+                                          (string_address)"", 0);
+                return;
+        }
+        if (rm_force && code == -ERROR_NO_ENTRY)
+                return;
+
+        (void)rm_tree_put(output, RM_TREE_CANNOT_REMOVE, code,
+                          (string_address)node->path, node->length,
+                          (string_address)"", 0);
+        rm_tree_keep(parent);
+}
+
+static bool rm_tree_sink(address_any context, address_any node_address,
+                         address_any data, positive length, bool finished)
+{
+        p8 address_to bytes = data;
+        positive at = 0;
+
+        (void)context;
+        if (finished)
+        {
+                if (node_address != rm_tree_top)
+                        memory_give(node_address);
+                return true;
+        }
+
+        while (at < length)
+        {
+                rm_tree_record record;
+                string_address path;
+
+                memory_copy(address_of record, bytes + at, sizeof(record));
+                path = (string_address)bytes + at + sizeof(record);
+                at += sizeof(record) + record.path_bytes;
+
+                switch (record.kind)
+                {
+                case RM_TREE_REMOVED:
+                        string_format(log, "removed '%w'\n", writer_terminal_quoted_name, path);
+                        break;
+                case RM_TREE_REMOVED_DIRECTORY:
+                        string_format(log, "removed directory '%w'\n",
+                                      writer_terminal_quoted_name, path);
+                        break;
+                case RM_TREE_CANNOT_REMOVE:
+                        string_format(log_error, "rm: cannot remove '%w': %s\n",
+                                      writer_terminal_quoted_name, path,
+                                      file_reason(record.code));
+                        rm_status = 1;
+                        break;
+                case RM_TREE_CANNOT_READ:
+                        string_format(log_error, "rm: cannot read '%w': %s\n",
+                                      writer_terminal_quoted_name, path,
+                                      file_reason(record.code));
+                        rm_status = 1;
+                        break;
+                case RM_TREE_REFUSED_ROOT:
+                        string_format(log_error, "rm: refusing to read '%w': preserved root directory\n",
+                                      writer_terminal_quoted_name, path);
+                        rm_status = 1;
+                        break;
+                }
+        }
+        return true;
+}
+
+static fn rm_tree_parallel(string_address root, file_facts address_to facts)
+{
+        positive length = string_length(root);
+        bipolar opened = length >= FILE_PATH_MAX
+                             ? -ERROR_NAME_TOO_LONG
+                             : system_open_at(AT_FDCWD, root,
+                                              FILE_READ | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        file_facts inside;
+        bipolar looked = opened < 0 ? opened
+                                    : file_look_code(opened, (string_address)"",
+                                                     AT_EMPTY_PATH, address_of inside);
+
+        rm_user = (p32)system_call(syscall(geteuid));
+
+        if (looked >= 0 &&
+            (!file_same_identity(facts, address_of inside) ||
+             (inside.mode & MODE_FORMAT) != MODE_DIRECTORY))
+                looked = -ERROR_AGAIN;
+        if (looked < 0)
+        {
+                if (opened >= 0)
+                        system_close(opened);
+                if (rm_force && looked == -ERROR_NO_ENTRY)
+                        return;
+                if (looked != -ERROR_AGAIN &&
+                    file_remove_same(AT_FDCWD, root, AT_REMOVEDIR, facts) == 0)
+                {
+                        if (rm_loud)
+                                string_format(log, "removed directory '%w'\n",
+                                              writer_terminal_quoted_name, root);
+                        return;
+                }
+                string_format(log_error, "rm: cannot remove '%w': %s\n",
+                              writer_terminal_quoted_name, root,
+                              file_reason(looked));
+                rm_status = 1;
+                return;
+        }
+
+        rm_tree_node address_to top = rm_tree_node_new(null, root, length);
+
+        if (!top)
+        {
+                system_close(opened);
+                log_error("rm: out of memory while walking the tree\n", 0);
+                rm_status = 1;
+                return;
+        }
+
+        top->facts = inside;
+        top->trusted = (inside.owner == rm_user || inside.owner == 0) &&
+                       !(inside.mode & 0022);
+        rm_tree_top = top;
+
+        bool whole = parallel_tree(rm_tree_enter, rm_tree_leave, rm_tree_sink, null,
+                                   opened, top, O_NOFOLLOW);
+
+        system_close(opened);
+        log_flush();
+
+        if (!whole)
+        {
+                log_error("rm: out of memory while walking the tree\n", 0);
+                rm_status = 1;
+        }
+        else if (!atomic_load(address_of top->kept))
+        {
+                bipolar code = rm_through_link(root)
+                                   ? -ERROR_NOT_DIRECTORY
+                                   : file_remove_same(AT_FDCWD, root, AT_REMOVEDIR,
+                                                      address_of top->facts);
+
+                if (code == 0)
+                {
+                        if (rm_loud)
+                                string_format(log, "removed directory '%w'\n",
+                                              writer_terminal_quoted_name, root);
+                }
+                else if (!(rm_force && code == -ERROR_NO_ENTRY))
+                {
+                        string_format(log_error, "rm: cannot remove '%w': %s\n",
+                                      writer_terminal_quoted_name, root,
+                                      file_reason(code));
+                        rm_status = 1;
+                }
+        }
+
+        rm_tree_top = null;
+        memory_give(top);
+}
+#endif
+
 static fn rm_batched(string_address root, file_facts address_to facts)
 {
+#if defined(LIBRARY_THREAD_RUNTIME)
+        rm_tree_parallel(root, facts);
+        return;
+#endif
         walk address_to walker = address_of rm_walker;
         walk_batch address_to batch = address_of rm_batch;
         walk_item address_to item;
