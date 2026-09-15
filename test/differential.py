@@ -17315,7 +17315,7 @@ static unsigned mock_resumes;
 static _Bool desktop_taken(void) { assert(desktop.lock);return mock_taken; }
 static void desktop_resume(void) { assert(desktop.lock);mock_resumes++;desktop.suspended=0; }
 """
-    source += section(pointer, "#define CANVAS_SUSPENDED_POLL_MS", "static int canvas_loop")
+    source += section(pointer, "#define CANVAS_SUSPENDED_POLL_MS", "static void canvas_flush_wake")
     # The power button's handler and the work it queues, against a mocked
     # workqueue, helper and reboot: what runs, how it is started, what a
     # failure falls back to, and which presses count.
