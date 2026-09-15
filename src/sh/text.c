@@ -21070,7 +21070,7 @@ static positive sort_scratches_count;
 // included, each written only by the thread in that slot.
 static bool sort_slots_ready()
 {
-        positive slots = parallel_width() + 1;
+        positive slots = parallel_slots();
 
         if (!array_store_reserve(sort_scratches, sort_scratches_room,
                                  sort_scratches_count, slots, 64))
@@ -21717,7 +21717,7 @@ static positive sort_merge_slots_count;
 
 static bool sort_merge_slots_ready()
 {
-        positive slots = parallel_width() + 1;
+        positive slots = parallel_slots();
 
         if (!sort_slots_ready() ||
             !array_store_reserve(sort_merge_slots, sort_merge_slots_room,
