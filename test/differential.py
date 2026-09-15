@@ -20318,6 +20318,7 @@ def harness_canvas_lifetime(argv):
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #define COLD
 #define GFP_KERNEL 0
 #define CURSOR_W 16
@@ -20326,6 +20327,15 @@ def harness_canvas_lifetime(argv):
 #define DRM_FORMAT_ARGB8888 1
 #define DRM_FORMAT_INVALID 0
 #define IS_ERR(p) ((intptr_t)(p) < 0)
+#define PTR_ERR(p) ((long)(intptr_t)(p))
+#define max_t(t,a,b) ((t)(a) > (t)(b) ? (t)(a) : (t)(b))
+#define min_t(t,a,b) ((t)(a) < (t)(b) ? (t)(a) : (t)(b))
+/* A plane given up is said, never silently dropped: count what is said. */
+static unsigned said;
+static char said_last[256];
+#define pr_info(...) (said++, (void)snprintf(said_last, sizeof(said_last), __VA_ARGS__))
+#define pr_info_once(...) do { static bool once; if (!once) { once=true; pr_info(__VA_ARGS__); } } while (0)
+static bool canvas_cursor_plane = true;
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 struct list_head { struct list_head *next, *prev; };
 static void list_init(struct list_head *h) { h->next = h->prev = h; }
@@ -20341,7 +20351,9 @@ static void list_del(struct list_head *n) { n->prev->next=n->next; n->next->prev
     for (p=container_of((h)->next,__typeof__(*p),m), \
          n=container_of(p->m.next,__typeof__(*p),m); &p->m!=(h); \
          p=n,n=container_of(n->m.next,__typeof__(*n),m))
-struct drm_device { bool atomic; struct { unsigned cursor_width,cursor_height; } mode_config; };
+struct drm_driver { const char *name; };
+struct drm_mode_config { unsigned cursor_width,cursor_height; int min_width,min_height,max_width,max_height; };
+struct drm_device { bool atomic; struct drm_mode_config mode_config; const struct drm_driver *driver; };
 struct drm_client_dev { struct drm_device *dev; };
 struct drm_client_buffer { unsigned resource; };
 struct drm_plane_funcs { void (*update_plane)(void), (*disable_plane)(void); };
@@ -20380,9 +20392,10 @@ static unsigned canvas_plane_pick_format(struct drm_plane *p, unsigned a, unsign
     (void)p; (void)b; return a;
 }
 static void collect(struct resource *r) { if (!r->wrapper && !r->file && !r->plane) r->gem=false; }
+static unsigned created_w, created_h;
 static struct drm_client_buffer *drm_client_buffer_create_dumb(
     struct drm_client_dev *c,unsigned w,unsigned h,unsigned f) {
-    (void)w; (void)h; (void)f;
+    (void)f; created_w=w; created_h=h;
     if (create_fail) return (void *)(intptr_t)-12;
     assert(allocated < 64);
     struct drm_client_buffer *b=malloc(sizeof(*b)); assert(b);
@@ -20425,6 +20438,7 @@ static void drm_client_release(struct drm_client_dev *c) {
 
     bodies = "".join(function(file, name) for file, name in [
         ("src/canvas/plane.c", "plane_drop"),
+        ("src/canvas/plane.c", "plane_lost"),
         ("src/canvas/plane.c", "plane_claim"),
         ("src/canvas/output.c", "output_drop"),
         ("src/canvas/output.c", "cursor_plane_recover"),
@@ -20453,7 +20467,8 @@ static const struct drm_plane_funcs funcs={dummy,dummy};
 static struct drm_plane plane={&funcs};
 static struct drm_crtc crtc={&plane};
 static struct drm_mode_set mode={&crtc};
-static struct drm_device atomic_device={.atomic=true}, legacy_device={0};
+static const struct drm_driver driver={"stub"};
+static struct drm_device atomic_device={.atomic=true,.driver=&driver}, legacy_device={.driver=&driver};
 static struct canvas *card(bool atomic) {
     struct canvas *c=calloc(1,sizeof(*c)); assert(c);
     c->client.dev=atomic?&atomic_device:&legacy_device; c->started=true;
@@ -20538,11 +20553,56 @@ int main(void) {
     client_unregister(&c->client); check("software-only teardown is balanced",!gems());
 
     reset(); c=card(true); o=calloc(1,sizeof(*o)); assert(o); o->canvas=c; o->mode_set=&mode;
-    create_fail=true; plane_claim(&c->client,o);
+    said=0; create_fail=true; plane_claim(&c->client,o);
     check("allocation failure leaves no cursor owner",!o->cursor_buffer && !o->cursor_plane);
+    check("allocation failure says the plane was lost",said==1);
+    check("a lost plane names the driver, the size tried and the error",
+          strstr(said_last,"stub ") && strstr(said_last,"64x64") && strstr(said_last,"(-12)"));
     create_fail=false; paint_fail=true; plane_claim(&c->client,o);
     check("paint failure releases unsubmitted buffer",!o->cursor_buffer && !o->cursor_plane && !gems());
+    check("paint failure says the plane was lost",said==2);
     free(o); client_unregister(&c->client); reset();
+
+    /* moonwater.cursor_plane=0: nothing claimed on any output, nothing made
+       for a plane, and said once however many outputs there are. */
+    reset(); said=0; canvas_cursor_plane=false;
+    c=card(true); o=output(c); struct output *unplaned=output(c);
+    check("a plane turned off is never claimed",
+          !o->cursor_plane && !o->cursor_buffer && !unplaned->cursor_plane &&
+          !unplaned->cursor_buffer && !paint_calls && allocated==2);
+    check("turning the plane off is said once",said==1 && strstr(said_last,"turned off"));
+    client_unregister(&c->client);
+    check("plane-off teardown is balanced",!gems());
+    canvas_cursor_plane=true; reset();
+
+    /* The plane's size: the driver's cursor size, 64 when it gives none (what
+       DRM_CAP_CURSOR_WIDTH answers userspace), raised to its framebuffer
+       minimum and held to its maximum. virtio-gpu gives none and refuses
+       anything under 32x32; the arrow's own 16x20 fallback lost its plane. */
+    static const struct { unsigned cw,ch; int minw,minh,maxw,maxh; unsigned w,h; bool plane; } sizes[] = {
+        {0,0, 32,32, 16384,16384, 64,64, true},    /* virtio-gpu */
+        {0,0, 0,0, 0,0, 64,64, true},              /* nothing said at all */
+        {24,28, 0,0, 8192,8192, 24,28, true},      /* the driver's own size */
+        {0,0, 96,80, 4096,4096, 96,80, true},      /* a larger minimum wins */
+        {256,256, 0,0, 128,128, 128,128, true},    /* held to the maximum */
+        {0,0, 0,0, 8,8, 8,8, false},               /* smaller than the arrow */
+    };
+    for (unsigned i=0;i<sizeof(sizes)/sizeof(sizes[0]);i++) {
+        reset(); said=0; created_w=created_h=0;
+        atomic_device.mode_config=(struct drm_mode_config){sizes[i].cw,sizes[i].ch,
+            sizes[i].minw,sizes[i].minh,sizes[i].maxw,sizes[i].maxh};
+        c=card(true); o=output(c);
+        check("cursor plane size follows the driver",
+              o->cursor_w==sizes[i].w && o->cursor_h==sizes[i].h &&
+              (!sizes[i].plane || (created_w==sizes[i].w && created_h==sizes[i].h)));
+        check("a plane is claimed exactly when the arrow fits",
+              !!o->cursor_plane==sizes[i].plane);
+        check("only a lost plane is said", said==(sizes[i].plane ? 0u : 1u));
+        client_unregister(&c->client);
+        check("sized claim teardown is balanced",!gems());
+    }
+    atomic_device.mode_config=(struct drm_mode_config){0};
+    reset();
     printf("canvas-lifetime %u/%u\n",checks-failures,checks); return failures?1:0;
 }
 '''

@@ -142,9 +142,45 @@ static int plane_paint(struct output *output, unsigned int shape,
         return 0;
 }
 
+/*
+        moonwater.cursor_plane=0 turns the plane off: every output draws the
+        cursor into its framebuffer, as one with no cursor plane does.
+
+        The escape hatch for a machine whose cursor plane is broken --
+        misplaced, stale, or never shown -- on a card where the software cursor
+        still works, slower on every move and otherwise the same. The canvas
+        lane boots with it too, because QEMU's screendump holds the primary
+        plane only and its pixel checks are the software cursor's. Read back
+        under /sys/module/moonwater/parameters, and by the pointer applet.
+*/
+static bool canvas_cursor_plane = true;
+module_param_named(cursor_plane, canvas_cursor_plane, bool, 0444);
+
+/*
+        Said, once for the output it happened to, because what it leaves is
+        the software cursor: identical on screen and slower on every move, so
+        nothing else would ever show that a plane was there to be had. It went
+        unseen that way on virtio-gpu for as long as the fallback below was the
+        arrow's own size.
+*/
+static COLD void plane_lost(struct drm_client_dev *client, struct output *output,
+                            const char *why, long error)
+{
+        pr_info("[moonwater canvas] " "%s cursor plane %ux%u %s (%ld), drawing the cursor instead\n",
+                client->dev->driver->name, output->cursor_w, output->cursor_h, why, error);
+}
+
 static void plane_claim(struct drm_client_dev *client, struct output *output)
 {
         struct drm_plane *plane = output->mode_set->crtc->cursor;
+        const struct drm_mode_config *config = &client->dev->mode_config;
+        int ret;
+
+        if (!canvas_cursor_plane)
+        {
+                pr_info_once("[moonwater canvas] " "cursor plane turned off (moonwater.cursor_plane=0), drawing the cursor instead\n");
+                return;
+        }
 
         // Direct callbacks rely on atomic state owning framebuffer references;
         // legacy callbacks need core bookkeeping and a different recovery path.
@@ -154,22 +190,53 @@ static void plane_claim(struct drm_client_dev *client, struct output *output)
                                      DRM_FORMAT_ARGB8888) == DRM_FORMAT_INVALID)
                 return;
 
-        output->cursor_w = client->dev->mode_config.cursor_width ?: CURSOR_W;
-        output->cursor_h = client->dev->mode_config.cursor_height ?: CURSOR_H;
+        /*
+                The size the driver asks for, and 64 when it asks for none --
+                what DRM_CAP_CURSOR_WIDTH and _HEIGHT answer a compositor in
+                userspace for the same silence -- then raised to the smallest
+                framebuffer the driver makes at all.
+
+                The arrow's own 16x20 was the fallback. virtio-gpu sets no
+                cursor size and refuses a framebuffer under 32x32, so this
+                buffer failed with EINVAL and every move was drawn into the
+                screen instead: a blocking commit in the canvas thread, a
+                display period long, beside a plane nothing used. The arrow is
+                drawn at its hotspot inside whatever buffer this is, and
+                plane_scale fits the shape to it, so a larger buffer moves
+                nothing but where the transparent part ends.
+        */
+        output->cursor_w = max_t(unsigned int, config->cursor_width ?: 64,
+                                 config->min_width);
+        output->cursor_h = max_t(unsigned int, config->cursor_height ?: 64,
+                                 config->min_height);
+
+        if (config->max_width)
+                output->cursor_w = min_t(unsigned int, output->cursor_w,
+                                         config->max_width);
+        if (config->max_height)
+                output->cursor_h = min_t(unsigned int, output->cursor_h,
+                                         config->max_height);
 
         if (output->cursor_w < CURSOR_W || output->cursor_h < CURSOR_H)
+        {
+                plane_lost(client, output, "is smaller than the arrow", 0);
                 return;
+        }
 
         output->cursor_buffer = drm_client_buffer_create_dumb(
             client, output->cursor_w, output->cursor_h, DRM_FORMAT_ARGB8888);
         if (IS_ERR(output->cursor_buffer))
         {
+                plane_lost(client, output, "has no buffer",
+                           PTR_ERR(output->cursor_buffer));
                 output->cursor_buffer = NULL;
                 return;
         }
 
-        if (plane_paint(output, CURSOR_ARROW, 1))
+        ret = plane_paint(output, CURSOR_ARROW, 1);
+        if (ret)
         {
+                plane_lost(client, output, "would not take the arrow", ret);
                 drm_client_buffer_delete(output->cursor_buffer);
                 output->cursor_buffer = NULL;
                 return;

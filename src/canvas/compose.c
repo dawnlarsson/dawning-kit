@@ -1412,10 +1412,18 @@ static void output_draw_cursor(struct output *output, u32 *pixels)
 
         cursor_cell(&cell, desktop.cursor_x, desktop.cursor_y,
                     desktop.cursor_shape, desktop.cursor_scale);
-        output->cursor_shown = !output->cursor_plane &&
-                               output_touched(output, &cell, 1);
 
-        if (!output->cursor_shown)
+        /*
+                Whether this draws the cursor, kept here. cursor_shown is
+                plane.c's -- set when a plane is armed over the pointer and
+                counted by the pointer applet as a plane showing it -- and
+                storing this answer into it cleared a live plane's flag on
+                every compose: a terminal redrawing under a cursor that sat on
+                its plane made the applet say no plane was showing.
+        */
+        _Bool drawn = !output->cursor_plane && output_touched(output, &cell, 1);
+
+        if (!drawn)
                 return;
 
         drm_rect_init(&screen, output->x, output->y, (int)output->width,

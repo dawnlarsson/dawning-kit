@@ -169,6 +169,21 @@ keeping the general utility surface. When the shell and utilities are enabled,
 launcher scripts. Disabled registry roots are discarded by the section linker,
 so these settings reduce the compiled payload as well as the installed names.
 
+## Boot options
+
+`moonwater.cursor_plane` decides how Canvas shows the pointer. It is on by
+default: the pointer rides the graphics card's own cursor plane, so moving it
+touches no pixels. If a machine's graphics driver draws a broken or missing
+hardware cursor, put this on the kernel command line and Canvas draws the
+pointer itself:
+```sh
+moonwater.cursor_plane=0
+```
+to check what a machine is using, read
+`/sys/module/moonwater/parameters/cursor_plane` (`Y` or `N`), or run
+`pointer`: its `cursor plane knob` line is the setting, and `cursor planes`
+says how many screens actually have one.
+
 ## The tests
 
 One command, and everything is under `test/`:

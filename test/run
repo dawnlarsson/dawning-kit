@@ -10965,8 +10965,10 @@ guest = subprocess.Popen([
     "-qmp", "unix:" + qmp + ",server,nowait",
     "-monitor", "unix:" + mon + ",server,nowait",
     # CANVAS_APPEND adds to the guest's command line: a profiling run wants
-    # nokaslr so the samples map onto System.map.
-    "-append", "console=ttyS0 drm_client_lib.active= " + os.environ.get("CANVAS_APPEND", "")],
+    # nokaslr so the samples map onto System.map. The cursor plane is off here
+    # because QEMU's screendump has no cursor plane in it, and the pixel checks
+    # below count the cursor's pixels; the plane boot after this one covers it.
+    "-append", "console=ttyS0 drm_client_lib.active= moonwater.cursor_plane=0 " + os.environ.get("CANVAS_APPEND", "")],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 for _ in range(200):
@@ -11995,7 +11997,9 @@ leak_guest = subprocess.Popen([
     "-no-reboot", "-display", "none", "-serial", "file:" + work + "/leak-serial",
     "-qmp", "unix:" + leak_qmp + ",server,nowait",
     "-monitor", "unix:" + leak_mon + ",server,nowait",
-    "-append", "drm_client_lib.active= " + os.environ.get("CANVAS_APPEND", "")],
+    # The cursor plane is off here too: this guest counts the cursor's pixels in
+    # a screendump, and QEMU's screendump has no cursor plane in it.
+    "-append", "drm_client_lib.active= moonwater.cursor_plane=0 " + os.environ.get("CANVAS_APPEND", "")],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 for _ in range(200):
@@ -12214,6 +12218,231 @@ fi
 while IFS='|' read -r name got want; do
         same "$name" "$want" "$got"
 done < "$work/answers"
+
+#       The cursor on its plane.
+#
+#       The boot above passes moonwater.cursor_plane=0, because QEMU's
+#       screendump holds the primary surface only: a cursor on virtio-gpu's
+#       cursor plane is composited by QEMU's display and appears in no
+#       screendump, so every pixel check above would count an empty desktop.
+#       Those checks are the software cursor's. This boot leaves the plane on
+#       and asks the kernel instead, through the pointer applet: that each
+#       output's plane is claimed and shown, that every move re-arms it, that
+#       none of those updates fails, and that after a titlebar drag -- the
+#       path that arms planes ahead of the window's repaint -- the last move
+#       is armed exactly where the tablet put the pointer.
+python3 - "$image" > "$work/plane-answers" 2>"$work/plane-why" <<'PY'
+import os, re, socket, subprocess, sys, time
+
+image = sys.argv[1]
+work = os.environ["MOONWATER_CANVAS_WORK"] + "/plane"
+os.makedirs(work, exist_ok=True)
+W, H = 2560, 1080
+
+processor = ["-cpu", "Nehalem"]
+if os.access("/dev/kvm", os.R_OK | os.W_OK):
+    processor = ["-cpu", "host", "-enable-kvm"]
+
+guest = subprocess.Popen([
+    "qemu-system-x86_64", "-m", "2G", "-smp", "2"] + processor + [
+    "-kernel", image, "-vga", "none", "-device", "virtio-gpu-pci,xres=3658,yres=1543",
+    "-device", "qemu-xhci", "-device", "usb-tablet", "-device", "usb-kbd",
+    "-device", "usb-mouse,id=xhcimouse",
+    "-no-reboot", "-display", "none", "-serial", "file:" + work + "/serial",
+    "-qmp", "unix:" + work + "/qmp,server,nowait",
+    "-monitor", "unix:" + work + "/mon,server,nowait",
+    "-append", "console=ttyS0 drm_client_lib.active= " + os.environ.get("CANVAS_APPEND", "")],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+for _ in range(200):
+    if os.path.exists(work + "/qmp") and os.path.exists(work + "/mon"):
+        break
+    time.sleep(0.2)
+
+qs = socket.socket(socket.AF_UNIX)
+qs.connect(work + "/qmp")
+qs.settimeout(20)
+qf = qs.makefile("rwb")
+qf.readline()
+
+def qcmd(obj):
+    import json
+    qf.write((json.dumps(obj) + "\n").encode())
+    qf.flush()
+    while True:
+        line = qf.readline()
+        if not line:
+            return {}
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if "event" not in msg:
+            return msg
+
+qcmd({"execute": "qmp_capabilities"})
+hs = socket.socket(socket.AF_UNIX)
+hs.connect(work + "/mon")
+hf = hs.makefile("rwb")
+
+def send(events):
+    qcmd({"execute": "input-send-event", "arguments": {"events": events}})
+
+def press(code, down):
+    return {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": code}}}
+
+def key(code):
+    send([press(code, True), press(code, False)])
+    time.sleep(0.02)
+
+def chord(*codes):
+    send([press(c, True) for c in codes] + [press(c, False) for c in reversed(codes)])
+    time.sleep(0.2)
+
+def type_text(value):
+    names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus", "\n": "ret"}
+    for character in value:
+        key(names.get(character, character))
+
+# What the tablet reports for a point, and where pointer.c puts the pointer
+# for that report: offset * size / span, span 32767 on QEMU's tablet.
+def report(v, size):
+    return int(v * 32767 / size)
+
+def placed(v, size):
+    return report(v, size) * size // 32767
+
+def moveto(x, y):
+    send([{"type": "abs", "data": {"axis": "x", "value": report(x, W)}},
+          {"type": "abs", "data": {"axis": "y", "value": report(y, H)}}])
+    time.sleep(0.1)
+
+def button(down):
+    send([{"type": "btn", "data": {"down": down, "button": "left"}}])
+    time.sleep(0.08)
+
+def monitor(line):
+    return qcmd({"execute": "human-monitor-command",
+                 "arguments": {"command-line": line}}).get("return", "")
+
+def sample():
+    type_text("pointer ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0\n")
+    time.sleep(1.0)
+
+time.sleep(25)
+out = []
+
+sample()
+spots = [(700, 400), (1500, 700), (900, 300)]
+for x, y in spots:
+    moveto(x, y)
+    time.sleep(0.3)
+mice = [line.split("#")[1].split(":")[0] for line in monitor("info mice").splitlines()
+        if "HID Mouse" in line]
+for index in mice:
+    monitor("mouse_set " + index)
+    for step in range(20):
+        send([{"type": "rel", "data": {"axis": "x", "value": 4}},
+              {"type": "rel", "data": {"axis": "y", "value": 3}}])
+        time.sleep(0.01)
+    time.sleep(0.3)
+sample()
+
+# The terminal, found as the lane above finds it, and dragged by its titlebar.
+hf.write(("screendump %s/drag.ppm\n" % work).encode())
+hf.flush()
+time.sleep(2)
+d = open(work + "/drag.ppm", "rb").read()
+i, vals = 2, []
+while len(vals) < 3:
+    while d[i:i + 1].isspace():
+        i += 1
+    j = i
+    while not d[j:j + 1].isspace():
+        j += 1
+    vals.append(int(d[i:j]))
+    i = j
+w, h, px = vals[0], vals[1], d[i + 1:]
+
+def at(x, y):
+    o = (y * w + x) * 3
+    return px[o:o + 3]
+
+bg = at(4, 4)
+runs, start = [], None
+for x in range(w):
+    lit = at(x, h // 2) != bg
+    if lit and start is None:
+        start = x
+    elif not lit and start is not None:
+        if x - start > 40:
+            runs.append((start, x - 1))
+        start = None
+
+end = None
+if runs:
+    left, right = runs[-1]
+    cx = (left + right) // 2
+    top = next((y for y in range(h) if at(cx, y) != bg), 0)
+    gx, gy = cx, top + 6
+    moveto(gx, gy)
+    button(True)
+    for k in range(1, 7):
+        moveto(gx - 20 * k, gy + 10 * k)
+    end = (gx - 120, gy + 60)
+    button(False)
+    time.sleep(0.3)
+sample()
+
+serial = open(work + "/serial", "rb").read().decode("utf-8", "replace").lower()
+planes = re.findall(r"cursor planes +(\d+) active, (\d+) shown", serial)
+io = re.findall(r"cursor plane io +(\d+) updates, (\d+) failures", serial)
+sync = re.findall(r"cursor sync +(\d+) requested, (\d+) armed", serial)
+where = re.findall(r"cursor requested (-?\d+),(-?\d+) armed (-?\d+),(-?\d+)", serial)
+
+out.append(("the cursor rides a plane",
+            "%s active, %s shown" % planes[1] if len(planes) > 1 else "no pointer sample",
+            "1 active, 1 shown"))
+moves = len(spots) + len(mice)
+rearmed = int(io[1][0]) - int(io[0][0]) if len(io) > 1 else -1
+out.append(("every move re-arms the plane",
+            "yes" if rearmed >= moves else "%d updates for %d moves" % (rearmed, moves),
+            "yes"))
+out.append(("no plane update fails", io[-1][1] if io else "no pointer sample", "0"))
+if end is None or len(sync) < 3 or len(where) < 3:
+    drag = "not run: no window or no pointer sample"
+else:
+    wanted = (placed(end[0], W), placed(end[1], H))
+    armed = (int(where[-1][2]), int(where[-1][3]))
+    drag = ("yes" if sync[-1][0] == sync[-1][1] and int(sync[-1][0]) > 0 and armed == wanted
+            else "sync %s/%s armed %s wanted %s" % (sync[-1][0], sync[-1][1], armed, wanted))
+out.append(("a drag leaves the plane armed under the pointer", drag, "yes"))
+
+hf.write(b"quit\n")
+hf.flush()
+time.sleep(1)
+guest.terminate()
+try:
+    guest.wait(10)
+except Exception:
+    guest.kill()
+
+for name, got, want in out:
+    print("%s|%s|%s" % (name, got, want))
+PY
+
+if [ ! -s "$work/plane-answers" ]; then
+        same "the plane boot answered" "yes" "no"
+        sed 's/^/    /' "$work/plane-why" | tail -5
+else
+        while IFS='|' read -r name got want; do
+                same "$name" "$want" "$got"
+        done < "$work/plane-answers"
+fi
 
 counted
 )

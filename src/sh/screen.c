@@ -917,6 +917,22 @@ static b32 screen_pointer()
         string_format(log, "cursor outputs   %p wanted, recovery %p\n",
                       (positive)cursor.wanted, (positive)cursor.recovering);
 
+        // moonwater.cursor_plane, so a cursor drawn in software says whether
+        // it was asked for or the plane was lost.
+        {
+                p8 knob[8];
+                bipolar got = file_slurp_once_at(AT_FDCWD,
+                    (string_address) "/sys/module/moonwater/parameters/cursor_plane",
+                    knob, sizeof(knob) - 1);
+
+                if (got > 0)
+                {
+                        knob[knob[got - 1] == '\n' ? got - 1 : got] = 0;
+                        string_format(log, "cursor plane knob %s\n",
+                                      (string_address)knob);
+                }
+        }
+
         // Every device the kernel attached, so a mouse that is silent can be
         // told from one whose reports the cursor did not follow.
         struct input_devices devices;
