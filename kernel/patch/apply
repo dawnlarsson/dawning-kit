@@ -433,6 +433,207 @@ then
         echo "  folded constant memcpy and memset into $(basename "$fold_header")"
 fi
 
+#
+#       Settings kept in the boot image, which is the fifth kind of edit: the
+#       image's own layout, and the EFI stub that reads it.
+#
+#       bootx64.efi carries a section of its own, .mwset, beside .data in the
+#       decompressor where nothing compresses it: two 16 KiB slots, each
+#       starting on a page of its own, laid down by the linker script with
+#       their magic and the rest zero. The moonwater command rewrites the
+#       older slot in place, so the section's file offset never moves once
+#       an image is built, and src/spark.c says what the bytes mean.
+#
+#       The stub copies the section into EFI pool memory of the type the
+#       random seed table uses and installs it as a configuration table, and
+#       efi.c records where, the way it records the seed. It reads nothing:
+#       src/core.c checks both slots, keeps the newest that holds, and boots
+#       on the defaults when neither does, so a torn write can never stop a
+#       machine starting. A kernel started any other way -- QEMU's -kernel,
+#       a loader using the handover entry with no image -- has no table and
+#       the defaults.
+#
+#       Configuration table rather than setup_data because the same table
+#       and the same reader work on arm64 and riscv64, which have no
+#       setup_data; only x86 lays out the section today.
+#
+#       Every edit is placed by an exact line of the kernel's and guarded by
+#       a word of its own, so a second run changes nothing, and a kernel
+#       whose line moved stops the build here rather than building without.
+#
+tab=$(printf '\t')
+settings_work=$(mktemp -d)
+
+
+#       A sed edit written back through a copy, as the displacements are: GNU
+#       and BSD sed spell editing in place differently, and sed answers 0
+#       whether or not it matched, which is why each caller checks its line
+#       first.
+settings_replace() {
+        sed "$2" "$1" > "$settings_work/replace" &&
+                sudo cp "$settings_work/replace" "$1"
+}
+
+settings_insert() {
+        file=$1
+        marker=$2
+        anchor=$3
+        where=$4
+        text=$5
+
+        [ -f "$file" ] || die "settings: no $file"
+        grep -q -F -- "$marker" "$file" && return 0
+
+        awk -v anchor="$anchor" -v where="$where" -v add="$text" '
+                index($0, anchor) == 1 && !placed {
+                        if (where == "after")
+                                print
+                        while ((getline line < add) > 0)
+                                print line
+                        close(add)
+                        if (where == "before")
+                                print
+                        placed = 1
+                        next
+                }
+                { print }
+                END { if (!placed) exit 3 }
+        ' "$file" > "$settings_work/edit" &&
+                sudo cp "$settings_work/edit" "$file" ||
+                die "settings: $file no longer has the line this edit is placed by"
+        echo "  settings: $(basename "$file") gains $marker"
+}
+
+cat > "$settings_work/guid" <<EOF
+#define LINUX_EFI_MOONWATER_SETTINGS_GUID${tab}EFI_GUID(0x7097ac1c, 0x01db, 0x4db4,  0x8a, 0xcb, 0x11, 0x8e, 0x8a, 0x46, 0x2d, 0x8e)
+EOF
+settings_insert linux/include/linux/efi.h LINUX_EFI_MOONWATER_SETTINGS_GUID \
+        "#define LINUX_EFI_RANDOM_SEED_TABLE_GUID${tab}" after "$settings_work/guid"
+
+cat > "$settings_work/extern" <<EOF
+extern unsigned long __ro_after_init efi_moonwater_settings;${tab}/* Moonwater settings table */
+EOF
+settings_insert linux/include/linux/efi.h "efi_moonwater_settings;" \
+        "extern unsigned long __ro_after_init efi_rng_seed;" after "$settings_work/extern"
+
+cat > "$settings_work/struct" <<EOF
+/* Moonwater's settings: the image's .mwset section as the EFI stub found it. */
+struct linux_efi_moonwater_settings {
+${tab}u32${tab}size;
+${tab}u32${tab}reserved;
+${tab}u8${tab}bytes[];
+};
+
+EOF
+settings_insert linux/include/linux/efi.h "struct linux_efi_moonwater_settings {" \
+        "struct linux_efi_random_seed {" before "$settings_work/struct"
+
+cat > "$settings_work/variable" <<EOF
+unsigned long __ro_after_init efi_moonwater_settings = EFI_INVALID_TABLE_ADDR;
+EOF
+settings_insert linux/drivers/firmware/efi/efi.c "efi_moonwater_settings =" \
+        "unsigned long __ro_after_init efi_rng_seed = EFI_INVALID_TABLE_ADDR;" after \
+        "$settings_work/variable"
+
+cat > "$settings_work/table" <<EOF
+${tab}{LINUX_EFI_MOONWATER_SETTINGS_GUID,${tab}&efi_moonwater_settings,${tab}"Moonwater"${tab}},
+EOF
+settings_insert linux/drivers/firmware/efi/efi.c "&efi_moonwater_settings" \
+        "${tab}{LINUX_EFI_RANDOM_SEED_TABLE_GUID," after "$settings_work/table"
+
+case "$(key_one arch)" in
+x86_64 | amd64 | x64)
+        cat > "$settings_work/stub" <<EOF
+extern char _mwset[], _emwset[];
+
+/*
+ * Moonwater's settings: the image's .mwset section, copied where the kernel
+ * finds it once boot services are gone, in pool memory of the type the random
+ * seed table uses. Nothing here reads the bytes; the kernel checks them.
+ */
+static void efi_moonwater_settings_table(void)
+{
+${tab}efi_guid_t guid = LINUX_EFI_MOONWATER_SETTINGS_GUID;
+${tab}struct linux_efi_moonwater_settings *table;
+${tab}unsigned long size = _emwset - _mwset;
+${tab}efi_status_t status;
+
+${tab}status = efi_bs_call(allocate_pool, EFI_ACPI_RECLAIM_MEMORY,
+${tab}${tab}${tab}     struct_size(table, bytes, size), (void **)&table);
+${tab}if (status != EFI_SUCCESS)
+${tab}${tab}return;
+
+${tab}table->size = size;
+${tab}table->reserved = 0;
+${tab}memcpy(table->bytes, _mwset, size);
+
+${tab}status = efi_bs_call(install_configuration_table, &guid, table);
+${tab}if (status != EFI_SUCCESS)
+${tab}${tab}efi_bs_call(free_pool, table);
+}
+EOF
+        settings_insert linux/drivers/firmware/efi/libstub/x86-stub.c \
+                "efi_moonwater_settings_table(void)" "extern char _bss[], _ebss[];" after \
+                "$settings_work/stub"
+
+        printf '%sefi_moonwater_settings_table();\n' "$tab" > "$settings_work/call"
+        settings_insert linux/drivers/firmware/efi/libstub/x86-stub.c \
+                "efi_moonwater_settings_table();" "${tab}efi_random_get_seed();" before \
+                "$settings_work/call"
+
+        cat > "$settings_work/lds" <<EOF
+${tab}/* Moonwater's settings: two slots on pages of their own, never compressed. */
+${tab}.mwset : ALIGN(0x1000) {
+${tab}${tab}_mwset = . ;
+${tab}${tab}QUAD(0x474e54544553574d) SHORT(1) SHORT(64) LONG(16384)
+${tab}${tab}. = _mwset + 16384;
+${tab}${tab}QUAD(0x474e54544553574d) SHORT(1) SHORT(64) LONG(16384)
+${tab}${tab}. = _mwset + 32768;
+${tab}${tab}_emwset = . ;
+${tab}}
+EOF
+        settings_insert linux/arch/x86/boot/compressed/vmlinux.lds.S "_mwset" \
+                "${tab}.data :${tab}ALIGN(0x1000) {" before "$settings_work/lds"
+
+        cat > "$settings_work/section" <<'EOF'
+	# Moonwater's settings, uncompressed and rewritten in place
+	.ascii	".mwset\0\0"
+	.long	ZO__emwset - ZO__mwset		# VirtualSize
+	.long	setup_size + ZO__mwset		# VirtualAddress
+	.long	ZO__emwset - ZO__mwset		# SizeOfRawData
+	.long	setup_size + ZO__mwset		# PointerToRawData
+
+	.long	0, 0, 0
+	.long	IMAGE_SCN_CNT_INITIALIZED_DATA	| \
+		IMAGE_SCN_MEM_READ		# Characteristics
+
+EOF
+        #       awk -v reads escapes in what it is handed, so the line is named
+        #       without its \0s: there is one .data in the section table.
+        settings_insert linux/arch/x86/boot/header.S '".mwset' \
+                "${tab}.ascii${tab}\".data" before "$settings_work/section"
+
+        #       .text ends where the settings begin, not where .data does.
+        if ! grep -q -F "textsize, ZO__mwset" linux/arch/x86/boot/header.S; then
+                grep -q -F "${tab}.set${tab}textsize, ZO__data" linux/arch/x86/boot/header.S &&
+                        settings_replace linux/arch/x86/boot/header.S \
+                                "s/^${tab}\\.set${tab}textsize, ZO__data\$/${tab}.set${tab}textsize, ZO__mwset/" ||
+                        die "settings: header.S no longer sets textsize from ZO__data"
+                echo "  settings: header.S ends .text at the settings"
+        fi
+
+        if ! grep -q -F '_e\?mwset' linux/arch/x86/boot/Makefile; then
+                grep -q -F '\|_e\?sbat\|' linux/arch/x86/boot/Makefile &&
+                        settings_replace linux/arch/x86/boot/Makefile \
+                                's/\\|_e\\?sbat\\|/\\|_e\\?sbat\\|_e\\?mwset\\|/' ||
+                        die "settings: the boot Makefile no longer exports _e?sbat"
+                echo "  settings: the boot Makefile exports the settings' offsets"
+        fi
+        ;;
+esac
+
+rm -rf "$settings_work"
+
 line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\"" ||
         die "grafting kernel/moonwater/Kconfig into linux/Kconfig"
 line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/" ||

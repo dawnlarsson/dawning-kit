@@ -32,6 +32,10 @@
 #include <linux/reboot.h>
 #include <linux/umh.h>
 #include <linux/workqueue.h>
+#include <linux/io.h>
+#ifdef CONFIG_EFI
+#include <linux/efi.h>
+#endif
 
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
@@ -1315,6 +1319,125 @@ static HOT void snapshot_networks(struct snapshot_builder *build,
         rcu_read_unlock();
 }
 
+/*
+        The settings this machine booted with.
+
+        The EFI stub hands over the image's .mwset section as a configuration
+        table; this keeps the newest of its two slots that checks, and nothing
+        when neither does, which is the defaults. A torn write, a made-up
+        table or an image with no section all start the machine the same way,
+        and only spark_settings_check decides which is which.
+
+        SET replaces the copy for the rest of the session, checked the same
+        way; the moonwater command writes the image itself.
+*/
+static struct spark_settings *settings_current;
+static DEFINE_MUTEX(settings_lock);
+
+static COLD void __init settings_start(void)
+{
+#if defined(CONFIG_EFI) && !defined(MODULE)
+        struct linux_efi_moonwater_settings *table;
+        struct spark_settings *slots;
+        u32 size;
+        b32 newest;
+
+        if (efi_moonwater_settings == EFI_INVALID_TABLE_ADDR)
+                return;
+
+        table = memremap(efi_moonwater_settings, sizeof(*table), MEMREMAP_WB);
+        if (!table)
+                return;
+
+        size = table->size;
+        memunmap(table);
+
+        if (size < 2 * SPARK_SETTINGS_SLOT || size > 64 * SPARK_SETTINGS_SLOT)
+        {
+                pr_warn("[moonwater] " "a settings table of %u bytes is not one; booting on the defaults\n", size);
+                return;
+        }
+
+        table = memremap(efi_moonwater_settings, sizeof(*table) + size, MEMREMAP_WB);
+        if (!table)
+                return;
+
+        slots = kmalloc(2 * SPARK_SETTINGS_SLOT, GFP_KERNEL);
+        if (slots)
+                memory_copy_apart(slots, table->bytes, 2 * SPARK_SETTINGS_SLOT);
+        memunmap(table);
+
+        if (!slots)
+                return;
+
+        newest = spark_settings_newest(slots);
+        if (newest < 0)
+                pr_warn("[moonwater] " "both settings slots in the image are damaged; booting on the defaults\n");
+        else
+        {
+                settings_current = kmemdup(slots + newest, SPARK_SETTINGS_SLOT, GFP_KERNEL);
+                pr_info("[moonwater] " "settings: slot %d, generation %llu\n", newest,
+                        (unsigned long long)slots[newest].generation);
+        }
+
+        kfree(slots);
+#endif
+}
+
+static long settings_get(struct spark_settings_request __user *request)
+{
+        struct spark_settings_request asked;
+        long answer = 0;
+
+        if (!capable(CAP_SYS_ADMIN))
+                return -EPERM;
+        if (copy_from_user(&asked, request, sizeof(asked)))
+                return -EFAULT;
+        if (asked.flags)
+                return -EINVAL;
+
+        mutex_lock(&settings_lock);
+        if (!settings_current)
+                answer = -ENODATA;
+        else if (copy_to_user((void __user *)asked.address, settings_current, SPARK_SETTINGS_SLOT))
+                answer = -EFAULT;
+        mutex_unlock(&settings_lock);
+
+        return answer;
+}
+
+static long settings_set(struct spark_settings_request __user *request)
+{
+        struct spark_settings_request asked;
+        struct spark_settings *settings;
+        struct spark_settings *before;
+
+        if (!capable(CAP_SYS_ADMIN))
+                return -EPERM;
+        if (copy_from_user(&asked, request, sizeof(asked)))
+                return -EFAULT;
+        if (asked.flags)
+                return -EINVAL;
+
+        settings = memdup_user((void __user *)asked.address, SPARK_SETTINGS_SLOT);
+        if (IS_ERR(settings))
+                return PTR_ERR(settings);
+
+        if (spark_settings_check(settings) < 0)
+        {
+                kfree(settings);
+                return -EINVAL;
+        }
+
+        mutex_lock(&settings_lock);
+        before = settings_current;
+        settings_current = settings;
+        mutex_unlock(&settings_lock);
+
+        kfree(before);
+        return 0;
+}
+
 static HOT long report_snapshot(struct snapshot_request __user *out)
 {
         struct snapshot_request request;
@@ -1421,6 +1544,10 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 return report_snapshot((struct snapshot_request __user *)arg);
         case SPARK_IOCTL_POWER_BUTTON:
                 return report_power_button((struct power_button_control __user *)arg);
+        case SPARK_IOCTL_SETTINGS_GET:
+                return settings_get((struct spark_settings_request __user *)arg);
+        case SPARK_IOCTL_SETTINGS_SET:
+                return settings_set((struct spark_settings_request __user *)arg);
 #ifdef CONFIG_MOONWATER_CANVAS
         case SPARK_IOCTL_INPUT_STATS:
                 return report_input((struct input_stats __user *)arg);
@@ -1557,6 +1684,9 @@ static b32 __init start()
         */
         pr_alert("[moonwater] " "Moonwater starting...\n");
 
+        // Before anything that starts from them: Canvas asks at its probe.
+        settings_start();
+
         /*
                 The initramfs is unpacked on a workqueue, not inline, so at
                 device_initcall time the root filesystem may still be empty --
@@ -1622,6 +1752,7 @@ static void __exit exit_module(void)
 
         misc_deregister(&device);
         kvfree(snapshot);
+        kfree(settings_current);
         unregister_binfmt(&format);
         pr_alert("[moonwater] " "Spark format unregistered\n");
 }

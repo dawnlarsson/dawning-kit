@@ -16717,6 +16717,20 @@ static void check(int okay, const char *name) {
     if (!okay && ++failures <= 12) fprintf(stderr, "FAIL %s\n", name);
 }
 '''
+    # spark.c's settings sum calls library.c's hash_crc32, which this program
+    # does not link: a reference CRC-32 in its place, held below to the
+    # published check value and to the slot sums checks.c holds the real
+    # routine to, so the two cannot drift apart unseen.
+    source += r'''
+static unsigned int hash_crc32(unsigned int crc, const void *data, unsigned long size) {
+    const unsigned char *at = data;
+    while (size--) {
+        crc ^= *at++;
+        for (int bit = 0; bit < 8; bit++) crc = crc & 1 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+    }
+    return crc;
+}
+'''
     source += spark.replace('#include "platform/spark.inc"',
                             (root / "src/platform/spark.inc").read_text())
     source += section(core, "struct snapshot_builder", "static HOT void snapshot_system")
@@ -16927,6 +16941,12 @@ static long stat_task_ns, stat_spawns;
 static long report_stats(struct stats *out) { (void)out; return 322; }
 '''
     source += "static long report_power_button(struct power_button_control *out);\n"
+    # The settings requests are checked where they are written, not here:
+    # device_ioctl only has to reach them.
+    source += r'''
+static long settings_get(struct spark_settings_request *request) { (void)request; return -61; }
+static long settings_set(struct spark_settings_request *request) { (void)request; return -22; }
+'''
     source += section(core, "static long device_ioctl", "/*\n        misc_open")
     source += r'''
 static void check_spawn_dispatch(void) {
@@ -17509,6 +17529,21 @@ static void check_input_suspension(void) {
           "a desktop that was not suspended is not resumed again");
     memset(&desktop,0,sizeof(desktop));mock_taken=0;mock_resumes=0;
 }
+static void check_settings_sum(void) {
+    static struct spark_settings slot;
+    check(~hash_crc32(~0u, "123456789", 9) == 0xcbf43926u, "the reference CRC-32 is CRC-32");
+    memset(&slot, 0, sizeof(slot));
+    slot.magic = SPARK_SETTINGS_MAGIC; slot.version = SPARK_SETTINGS_VERSION;
+    slot.header = SPARK_SETTINGS_HEADER; slot.slot = SPARK_SETTINGS_SLOT; slot.generation = 1;
+    check(spark_settings_sum(&slot) == 0x3ae8f589u, "an empty slot sums as zlib sums it");
+    slot.generation = 7; slot.next[0] = 2; slot.length = 20;
+    memset(slot.medium, 0x5a, sizeof(slot.medium));
+    memcpy(slot.payload, "\x01\x01\x01\x00\x0b\x00\x00\x00pacman -Syu", 19);
+    check(spark_settings_sum(&slot) == 0x3f693c1fu, "a slot with an entry sums as zlib sums it");
+    slot.sum = spark_settings_sum(&slot);
+    check(spark_settings_check(&slot) == 1, "and checks");
+}
+
 static void check_power_button(void) {
     check(!strcmp(power_command,"poweroff"),"the power button runs poweroff until told otherwise");
     power_press("poweroff",0);
@@ -18054,6 +18089,7 @@ int main(void) {
     check_keyboard_state();
     check_console_keyboard();
     check_power_button();
+    check_settings_sum();
     check_input_suspension();
     free(output);
     printf("  core-state %u of %u\n",checks-failures,checks);
@@ -18081,6 +18117,39 @@ int main(void) {
                           "ifeq ($(CONFIG_X86_32),y)\n        lib-y += memmove_32.o\n"
                           "else\n        lib-y += memmove_64.o memset_64.o\nendif\n")
 
+        settings_anchors = {
+            "linux/include/linux/efi.h":
+                "#define LINUX_EFI_RANDOM_SEED_TABLE_GUID\tEFI_GUID(0x1ce1e5bc, 0x7ceb, 0x42f2,  0x81, 0xe5, 0x8a, 0xad, 0xf1, 0x80, 0xf5, 0x7b)\n"
+                "extern unsigned long __ro_after_init efi_rng_seed;\t\t/* RNG Seed table */\n"
+                "struct linux_efi_random_seed {\n\tu32\tsize;\n\tu8\tbits[];\n};\n",
+            "linux/drivers/firmware/efi/efi.c":
+                "unsigned long __ro_after_init efi_rng_seed = EFI_INVALID_TABLE_ADDR;\n"
+                "static const efi_config_table_type_t common_tables[] __initconst = {\n"
+                "\t{LINUX_EFI_RANDOM_SEED_TABLE_GUID,\t&efi_rng_seed,\t\t\"RNG\"\t\t},\n\t{},\n};\n",
+            "linux/drivers/firmware/efi/libstub/x86-stub.c":
+                "extern char _bss[], _ebss[];\n\nvoid efi_stub_entry(void)\n{\n\tefi_random_get_seed();\n}\n",
+            "linux/arch/x86/boot/compressed/vmlinux.lds.S":
+                "\t.rodata : {\n\t}\n\t.data :\tALIGN(0x1000) {\n\t}\n",
+            "linux/arch/x86/boot/header.S":
+                "#else\n\t.set\ttextsize, ZO__data\n#endif\n\n\t.ascii\t\".data\\0\\0\\0\"\n",
+            "linux/arch/x86/boot/Makefile":
+                "sed-zoffset := -e 's/^\\([0-9a-fA-F]*\\) [a-zA-Z] \\(startup_32\\|_e\\?data\\|_e\\?sbat\\|z_.*\\)$$/\\#define ZO_\\2 0x\\1/p'\n",
+        }
+
+        def settings_placed(tree):
+            read = lambda name: (tree / name).read_text()
+            stub = read("linux/drivers/firmware/efi/libstub/x86-stub.c")
+            lds = read("linux/arch/x86/boot/compressed/vmlinux.lds.S")
+            header = read("linux/arch/x86/boot/header.S")
+            return ("LINUX_EFI_MOONWATER_SETTINGS_GUID" in read("linux/include/linux/efi.h") and
+                    "struct linux_efi_moonwater_settings {" in read("linux/include/linux/efi.h") and
+                    "&efi_moonwater_settings" in read("linux/drivers/firmware/efi/efi.c") and
+                    stub.index("efi_moonwater_settings_table();") < stub.index("efi_random_get_seed();") and
+                    lds.index("_mwset") < lds.index(".data :") and
+                    header.index('".mwset') < header.index('".data') and
+                    "textsize, ZO__mwset" in header and "textsize, ZO__data" not in header and
+                    "_e\\?mwset" in read("linux/arch/x86/boot/Makefile"))
+
         def patch_tree(tree, makefile):
             for directory in ("src/build", "kernel", "linux/kernel", "linux/arch/x86/include/asm",
                               "linux/arch/x86/lib", "kernel/patch"):
@@ -18098,6 +18167,10 @@ line_add_padded() { line_add "$@"; }
             for target in ("linux/Kconfig", "linux/kernel/Makefile"):
                 (tree / target).write_text("")
             shutil.copy(root / "kernel/patch/fold-x86.h", tree / "kernel/patch/fold-x86.h")
+            # The kernel's own lines the settings section's edits are placed by.
+            for name, text in settings_anchors.items():
+                (tree / name).parent.mkdir(parents=True, exist_ok=True)
+                (tree / name).write_text(text)
 
         for stock in (False, True):
             for kind in ("absent", "symlink", "directory", "file"):
@@ -18120,6 +18193,7 @@ line_add_padded() { line_add "$@"; }
                 makefile = (tree / "linux/arch/x86/lib/Makefile").read_text()
                 assert all(("# moonwater took " + name in makefile) != stock
                            for name in displaced), makefile
+                assert settings_placed(tree), result.stderr
                 if kind in ("directory", "file"):
                     preserved = link / "precious" if kind == "directory" else link
                     assert preserved.read_text() == "preserve me\n"
@@ -18128,9 +18202,12 @@ line_add_padded() { line_add "$@"; }
                     assert link.resolve() == (tree / "src").resolve()
                     # Reapplying retains the same source and header contents.
                     before = header.read_bytes()
+                    settings_before = {name: (tree / name).read_bytes() for name in settings_anchors}
                     subprocess.run(["sh", str(patch)], cwd=tree, env=env,
                                    capture_output=True, check=True)
                     assert header.read_bytes() == before
+                    assert settings_before == {name: (tree / name).read_bytes()
+                                               for name in settings_anchors}
         # A makefile that no longer names an object stops the build, and says
         # which: apply had no die of its own, and every edit it could not make
         # used to go by without a word.
@@ -18140,8 +18217,18 @@ line_add_padded() { line_add "$@"; }
                                 env={**os.environ, "MOONWATER_STOCK": ""},
                                 text=True, capture_output=True)
         assert result.returncode != 0 and "memset_64.o" in result.stderr, result.stderr
-        print("  kernel-glue 9 of 9", flush=True)
-        write_tally("kernel-glue", 9, 9)
+        # A kernel line the settings section is placed by, moved: the build stops
+        # and names the file, rather than building an image without the section.
+        tree = Path(work) / "patch-moved-settings"
+        patch_tree(tree, makefile_lines)
+        stub = tree / "linux/drivers/firmware/efi/libstub/x86-stub.c"
+        stub.write_text(stub.read_text().replace("\tefi_random_get_seed();\n", ""))
+        result = subprocess.run(["sh", str(patch)], cwd=tree,
+                                env={**os.environ, "MOONWATER_STOCK": ""},
+                                text=True, capture_output=True)
+        assert result.returncode != 0 and "x86-stub.c" in result.stderr, result.stderr
+        print("  kernel-glue 10 of 10", flush=True)
+        write_tally("kernel-glue", 10, 10)
         binary, _ = build_c(Path(work) / "core-state.c", source,
                             ("-std=c11", "-O2", "-Wall", "-Wextra"), sanitize=False)
         subprocess.run([str(binary)], check=True)

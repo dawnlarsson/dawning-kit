@@ -328,10 +328,11 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
         them at once: 1 spawn, 2 stats, 3 input stats, 4 window create
         (window.c), 5 window commit (window.c), 6 cursor stats, 7 input
         devices, 9 snapshot, 10 reserved for the Canvas on/off request, 11
-        the power button. 8 was never used and stays that way. The next
-        request takes the next free number past the highest, 12 at the time
-        of writing, and a gap is never filled: an old program sending an old
-        number must never reach a new request that happens to share it.
+        the power button, 12 and 13 reading and setting the boot settings.
+        8 was never used and stays that way. The next request takes the next
+        free number past the highest, 14 at the time of writing, and a gap is
+        never filled: an old program sending an old number must never reach a
+        new request that happens to share it.
 */
 
 /*
@@ -397,5 +398,206 @@ struct spawn {
 // Userspace fills this field by field and the loader reads it in one
 // copy_from_user, so the two only agree while the size does.
 _Static_assert(sizeof(struct spawn) == 64, "spark spawn request ABI");
+
+/*
+        Settings kept inside the boot image.
+
+        The image carries a section of its own, .mwset, that nothing
+        compresses: two slots of SPARK_SETTINGS_SLOT bytes, each starting on a
+        page of its own. A change is written over the older slot only, in
+        place, so the file never changes size and a machine that loses power
+        part way has one slot torn and the other whole. The torn one fails its
+        sum, or still reads as never written, and the other is what boots.
+
+        The EFI stub copies the section into a configuration table before it
+        leaves the firmware, the kernel keeps the newest slot that checks, and
+        userspace reads and replaces that copy through /dev/spark. Every
+        reader goes through spark_settings_check, so a slot nobody wrote, a
+        slot somebody tore and a slot somebody made up are told apart the same
+        way in the stub's consumer, the compositor and the shell -- and none of
+        them can walk past the end of one.
+
+        Layout, native byte order, which is little-endian on every machine
+        this builds for:
+
+                0       magic "MWSETTNG"
+                8       version, header size, slot size
+                16      generation, highest is newest
+                24      medium, sixteen random bytes naming the copy
+                40      payload length and CRC-32 over header and payload
+                48      flags, and the next id each list hands out
+                64      entries: list, kind, id, length, then the text,
+                        padded to four bytes; in the bind table the id is
+                        the event and the text what runs on it
+
+        A slot whose generation, length, sum and flags are all zero was never
+        written: it is the image as built, and means the defaults.
+*/
+#define SPARK_SETTINGS_MAGIC 0x474e54544553574dull
+#define SPARK_SETTINGS_VERSION 1
+#define SPARK_SETTINGS_HEADER 64
+#define SPARK_SETTINGS_SLOT 16384
+#define SPARK_SETTINGS_PAYLOAD (SPARK_SETTINGS_SLOT - SPARK_SETTINGS_HEADER)
+#define SPARK_SETTINGS_ENTRY 8
+#define SPARK_SETTINGS_TEXT_MOST 4096
+#define SPARK_SETTINGS_LIST_MOST 16
+#define SPARK_SETTINGS_BIND_MOST 48       // events bound at once
+#define SPARK_SETTINGS_BIND_TEXT_MOST 255 // a bound command, without its terminator
+
+//      flags: each is the change from the default, so zero is as built.
+#define SPARK_SETTINGS_CANVAS_OFF 0x1u   // Canvas does not start at boot
+#define SPARK_SETTINGS_MOUNT_OFF 0x2u    // boot keeps the disks' data unmounted
+#define SPARK_SETTINGS_STARTUP_SET 0x4u  // the startup list is the one written
+
+//      lists, and the kinds of entry in them.
+#define SPARK_SETTINGS_INIT 1
+#define SPARK_SETTINGS_STARTUP 2
+#define SPARK_SETTINGS_EXIT 3
+#define SPARK_SETTINGS_BIND 4 // event id -> command; no entry is the event's default
+#define SPARK_SETTINGS_LISTS 4
+
+#define SPARK_SETTINGS_COMMAND 1       // run through /shell -c
+#define SPARK_SETTINGS_SHELL 2         // a terminal window with a shell
+#define SPARK_SETTINGS_KERNEL_SHELL 3  // the kernel log window
+
+struct spark_settings {
+        unsigned long magic;
+        unsigned short version;
+        unsigned short header;
+        unsigned int slot;
+        unsigned long generation;
+        unsigned char medium[16];
+        unsigned int length;
+        unsigned int sum;
+        unsigned int flags;
+        unsigned short next[SPARK_SETTINGS_LISTS - 1]; // init, startup, exit
+        unsigned char reserved[6];
+        unsigned char payload[SPARK_SETTINGS_PAYLOAD];
+};
+
+struct spark_settings_entry {
+        unsigned char list;
+        unsigned char kind;
+        unsigned short id;     // in the bind table, the event
+        unsigned short length;
+        unsigned short reserved;
+};
+
+_Static_assert(sizeof(struct spark_settings) == SPARK_SETTINGS_SLOT,
+               "spark settings slot ABI");
+_Static_assert(sizeof(struct spark_settings_entry) == SPARK_SETTINGS_ENTRY,
+               "spark settings entry ABI");
+_Static_assert(__builtin_offsetof(struct spark_settings, sum) == 44 &&
+                   __builtin_offsetof(struct spark_settings, payload) ==
+                       SPARK_SETTINGS_HEADER,
+               "spark settings header ABI");
+
+#define spark_settings_padded(length) (((unsigned long)(length) + 3) & ~3ul)
+
+//      The sum a sealed slot carries: CRC-32 over its header with the sum field
+//      read as zero, then exactly length bytes of payload -- library.c's
+//      hash_crc32, which the kernel and the shell both read before this file,
+//      chained the way the moonwater command seals a slot.
+static inline unsigned int spark_settings_sum(const struct spark_settings *slot)
+{
+        const unsigned char *bytes = (const unsigned char *)slot;
+        unsigned int crc = hash_crc32(~0u, (void *)bytes, 44);
+
+        crc = hash_crc32(crc, (void *)"\0\0\0", 4);
+        crc = hash_crc32(crc, (void *)(bytes + 48), SPARK_SETTINGS_HEADER - 48);
+        return ~hash_crc32(crc, (void *)slot->payload, slot->length);
+}
+
+/*
+        0 for a slot never written, 1 for one whose settings check, -1 for
+        anything else: another format, a torn write, a length past the slot, a
+        sum that disagrees, or entries that do not walk exactly to the end
+        within their limits.
+*/
+static inline int spark_settings_check(const struct spark_settings *slot)
+{
+        unsigned long counts[SPARK_SETTINGS_LISTS + 1] = {0};
+        unsigned long at = 0;
+
+        if (slot->magic != SPARK_SETTINGS_MAGIC ||
+            slot->version != SPARK_SETTINGS_VERSION ||
+            slot->header != SPARK_SETTINGS_HEADER ||
+            slot->slot != SPARK_SETTINGS_SLOT)
+                return -1;
+
+        if (!slot->generation && !slot->length && !slot->sum && !slot->flags)
+                return 0;
+
+        if (slot->length > SPARK_SETTINGS_PAYLOAD ||
+            spark_settings_sum(slot) != slot->sum)
+                return -1;
+
+        while (at < slot->length)
+        {
+                const unsigned char *entry = slot->payload + at;
+                unsigned int list;
+                unsigned int length;
+
+                if (slot->length - at < SPARK_SETTINGS_ENTRY)
+                        return -1;
+
+                list = entry[0];
+                length = entry[4] | (unsigned int)entry[5] << 8;
+                at += SPARK_SETTINGS_ENTRY;
+
+                if (!list || list > SPARK_SETTINGS_LISTS ||
+                    ++counts[list] > (list == SPARK_SETTINGS_BIND
+                                          ? SPARK_SETTINGS_BIND_MOST
+                                          : SPARK_SETTINGS_LIST_MOST) ||
+                    length > (list == SPARK_SETTINGS_BIND
+                                  ? SPARK_SETTINGS_BIND_TEXT_MOST
+                                  : SPARK_SETTINGS_TEXT_MOST) ||
+                    slot->length - at < spark_settings_padded(length))
+                        return -1;
+
+                at += spark_settings_padded(length);
+        }
+
+        return 1;
+}
+
+/*
+        Which of two slots to believe: the newest that checks, a slot never
+        written counting as generation zero. -1 when neither does, which reads
+        as the defaults.
+*/
+static inline int spark_settings_newest(const struct spark_settings *slots)
+{
+        int first = spark_settings_check(slots);
+        int second = spark_settings_check(slots + 1);
+
+        if (first < 0)
+                return second < 0 ? -1 : 1;
+        if (second < 0)
+                return 0;
+
+        return slots[1].generation > slots[0].generation ? 1 : 0;
+}
+
+/*
+        The settings the kernel holds: the newest slot the image booted with,
+        or the last one set since. Both requests are root's, because a command
+        can carry a secret. GET answers ENODATA when the image handed over
+        nothing and nothing was set. SET checks the slot the way boot does and
+        takes effect at the next Canvas start and the next power button press;
+        it opens and closes nothing on its own.
+*/
+struct spark_settings_request {
+        unsigned long address; // user pointer to SPARK_SETTINGS_SLOT bytes
+        unsigned long flags;   // none defined; nonzero is refused
+};
+
+// _IOR('s', 12, struct spark_settings_request)
+#define SPARK_IOCTL_SETTINGS_GET 0x8010730cu
+// _IOW('s', 13, struct spark_settings_request)
+#define SPARK_IOCTL_SETTINGS_SET 0x4010730du
+
+_Static_assert(sizeof(struct spark_settings_request) == 16,
+               "spark settings request ABI");
 
 #endif
