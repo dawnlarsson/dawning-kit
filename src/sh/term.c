@@ -520,6 +520,17 @@ static PURE unsigned int character_width(unsigned int c)
         if (c < 0x300)
                 return 1;
 
+        /*
+                The CJK ideographs and the Hangul syllables are most of the
+                wide characters a terminal is sent, and neither block holds a
+                mark, so they are answered before the two searches -- behind
+                one compare, so box drawing and every script below them pay
+                no more than that. The term lane checks every character
+                against the tables alone.
+        */
+        if (c >= 0x3250 && (c <= 0xa48c || c - 0xac00u <= 0xd7a3 - 0xac00))
+                return 2;
+
         if (character_in(character_zero, array_count(character_zero), c))
                 return 0;
 

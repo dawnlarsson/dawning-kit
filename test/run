@@ -5673,6 +5673,29 @@ b32 main()
                         tell(got == 1 && result == 1 ? "lowfds ok\n"
                                                      : "lowfds failed\n");
                 }
+                else if (string_compare(verb, (string_address) "widths") == 0)
+                {
+                        unsigned int wrong = 0;
+
+                        // Every character, as character_width answers it and
+                        // as the two tables alone say, so no shortcut in front
+                        // of the searches can disagree with them.
+                        for (unsigned int c = 0; c <= 0x10ffff; c++)
+                        {
+                                unsigned int tables =
+                                    c < 0x300 ? 1
+                                    : character_in(character_zero,
+                                                   array_count(character_zero), c) ? 0
+                                    : character_in(character_wide,
+                                                   array_count(character_wide), c) ? 2
+                                                                                    : 1;
+
+                                wrong += character_width(c) != tables;
+                        }
+
+                        say_number(wrong);
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "mode") == 0)
                 {
                         tell("wrap=");
@@ -6163,6 +6186,10 @@ same 'wraps whole'    '[abc]|[<6f22>]|1,2'       4 2 in 'abc\xe6\xbc\xa2' dump c
 same 'right half hit' '[ x]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;2Hx' row 0
 same 'left half hit'  '[x ]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;1Hx' row 0
 same 'pinned at the edge' '[ab<6f22>]|0,4'       4 2 in '\e[?7l' in 'abc\xe6\xbc\xa2' row 0 cursor
+#       The ideographs and the Hangul syllables are answered before the table
+#       searches; every character from U+0000 to U+10FFFF has to get the width
+#       the tables alone give it.
+same 'shortcuts agree with the tables' '0'        8 2 widths
 
 group runs
 #       A read is handed over whole, and the text in it goes into cells a run
