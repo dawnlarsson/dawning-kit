@@ -10513,7 +10513,7 @@ HOT bool test_short(positive from, positive to, bool address_to handled)
         return false;
 }
 
-FLAT HOT fn shell_test(writer write, string_address input)
+HOT fn shell_test(writer write, string_address input)
 {
         bool value;
         bool handled;
