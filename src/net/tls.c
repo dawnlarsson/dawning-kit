@@ -1897,23 +1897,6 @@ static bipolar tls_server_hello_keys(p8 address_to hello, positive length,
         return seen_version && seen_share ? TLS_OK : TLS_FAIL;
 }
 
-static bipolar tls_server_hello_share(p8 address_to hello, positive length,
-                                      p8 address_to peer)
-{
-        p8 key[97];
-        positive n = 0;
-        positive group = 0;
-
-        if (tls_server_hello_keys(hello, length, key, sizeof key, address_of n,
-                                  address_of group))
-                return TLS_FAIL;
-        if (group != 0x001d || n != 32)
-                return TLS_FAIL;
-
-        memory_copy(peer, key, 32);
-        return TLS_OK;
-}
-
 #define TLS_HANDSHAKE_MORE 0
 #define TLS_HANDSHAKE_COMPLETE 1
 

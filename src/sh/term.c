@@ -560,6 +560,17 @@ static PURE unsigned int character_width(unsigned int c)
         if (c < 0x300)
                 return 1;
 
+        /*
+                The CJK ideographs and the Hangul syllables are most of the
+                wide characters a terminal is sent, and neither block holds a
+                mark, so they are answered before the two searches -- behind
+                one compare, so box drawing and every script below them pay
+                no more than that. The term lane checks every character
+                against the tables alone.
+        */
+        if (c >= 0x3250 && (c <= 0xa48c || c - 0xac00u <= 0xd7a3 - 0xac00))
+                return 2;
+
         if (character_in(character_zero, array_count(character_zero), c))
                 return 0;
 
@@ -2081,6 +2092,228 @@ static fn consume(unsigned int c)
         }
 
         utf8_byte(c);
+}
+
+/*
+        Text, a run at a time.
+
+        Most of what a pty carries is characters, and a byte at a time every
+        one of them went through each test the escape machine makes and a
+        UTF-8 decoder that keeps its state in memory. Between sequences, with
+        nothing half decoded, insert mode off and plain ASCII in GL, a run of
+        printable ASCII goes straight into the row it lands on, and a whole,
+        valid UTF-8 character goes to put() in one step, which is where its
+        width is decided. Anything else ends the run -- a control, DEL, a
+        byte that is not UTF-8 or a character the read has not all of -- and
+        the byte it ended at is consume()'s, as it always was.
+
+        Every loop here is bounded by the bytes it was handed: the kernel
+        console calls this with interrupts off.
+*/
+static inline INLINE b32 text_ground()
+{
+        return !in_escape && !in_csi && !in_string && !terminal_utf8.left &&
+               !insert_mode &&
+               (charset_gl ? charset_g1 : charset_g0) == CHARSET_ASCII;
+}
+
+/* Printable ASCII from the first byte, as far as the row has room, left as
+   put() a character at a time would leave it. Answers the bytes taken. */
+static positive text_ascii(const p8 address_to bytes, positive count)
+{
+        struct window_cell address_to cells;
+        unsigned int address_to length;
+        unsigned int first, had, slot;
+        positive room, attribute, n = 0;
+
+        // put_cells' wrap, for a character one column wide.
+        if (column + 1 > COLUMNS)
+        {
+                if (!autowrap)
+                        column = COLUMNS - 1;
+                else
+                {
+                        column = 0;
+                        line_feed();
+                }
+        }
+
+        first = column;
+        room = COLUMNS - first;
+        slot = row_slot(row);
+        cells = slot_cells(slot);
+        length = slot_length(slot);
+
+        if (address_to length < first)
+        {
+                cells_blank(row, address_to length, first - address_to length);
+                address_to length = first;
+        }
+
+        had = address_to length;
+
+        // A cell as BLANK_CELL_WORD lays one out: the character in the low
+        // half, the colours and flags above it.
+        attribute = ((positive)(reverse ? paper : ink_drawn()) << 32) |
+                    ((positive)(reverse ? ink_drawn() : paper) << 40) |
+                    ((positive)style << 48);
+
+        /*
+                Half of a wide character among the cells written over makes
+                put() blank its other half, and that half can be a cell of
+                this same run or the one before it. Only a cell inside the
+                line can be one, and unpairing a cell that is not one does
+                nothing, so it is asked only of those -- still before the
+                store, in put()'s own order.
+        */
+        for (;;)
+        {
+                unsigned int at = first + (unsigned int)n;
+                positive word = attribute | bytes[n];
+
+                if (at < had &&
+                    (cells[at].flags & (WINDOW_CELL_WIDE | WINDOW_CELL_WIDE_RIGHT)))
+                        unpair(cells, had, at);
+
+                memory_copy(cells + at, address_of word, sizeof(word));
+                n++;
+
+                if (n == count || n == room || (unsigned int)bytes[n] - ' ' >= 95)
+                        break;
+        }
+
+        last_character = bytes[n - 1];
+        column = first + (unsigned int)n;
+        touch(row);
+
+        if (address_to length < column)
+                address_to length = column;
+
+        return n;
+}
+
+/* A whole, valid UTF-8 character of two to four bytes, just as
+   memory_utf8_feed would finish it and utf8_byte would draw it, or 0 for one
+   it would refuse, one that is not drawn, or one the bytes do not hold all
+   of. */
+static unsigned int text_utf8(const p8 address_to bytes, positive count,
+                              unsigned int address_to character)
+{
+        unsigned int lead = bytes[0];
+        unsigned int value;
+
+        if (lead >= 0xc2 && lead < 0xe0)
+        {
+                if (count < 2 || (bytes[1] & 0xc0) != 0x80)
+                        return 0;
+
+                // U+0080 to U+009F are C1 controls, which utf8_byte drops
+                // rather than draws: consume() says what becomes of them.
+                if (lead == 0xc2 && bytes[1] < 0xa0)
+                        return 0;
+
+                address_to character = ((lead & 0x1f) << 6) | (bytes[1] & 0x3f);
+                return 2;
+        }
+
+        if (lead >= 0xe0 && lead < 0xf0)
+        {
+                if (count < 3 || (bytes[1] & 0xc0) != 0x80 ||
+                    (bytes[2] & 0xc0) != 0x80)
+                        return 0;
+
+                value = ((lead & 0x0f) << 12) | ((bytes[1] & 0x3f) << 6) |
+                        (bytes[2] & 0x3f);
+
+                if (value < 0x800 || (value >= 0xd800 && value <= 0xdfff))
+                        return 0;
+
+                address_to character = value;
+                return 3;
+        }
+
+        if (lead >= 0xf0 && lead < 0xf5)
+        {
+                if (count < 4 || (bytes[1] & 0xc0) != 0x80 ||
+                    (bytes[2] & 0xc0) != 0x80 || (bytes[3] & 0xc0) != 0x80)
+                        return 0;
+
+                value = ((lead & 0x07) << 18) | ((bytes[1] & 0x3f) << 12) |
+                        ((bytes[2] & 0x3f) << 6) | (bytes[3] & 0x3f);
+
+                if (value < 0x10000 || value > 0x10ffff)
+                        return 0;
+
+                address_to character = value;
+                return 4;
+        }
+
+        return 0;
+}
+
+static positive text_run(const p8 address_to bytes, positive count)
+{
+        positive at = 0;
+
+        while (at < count)
+        {
+                unsigned int c = bytes[at];
+                unsigned int character;
+                unsigned int used;
+
+                if (c - ' ' < 95)
+                {
+                        at += text_ascii(bytes + at, count - at);
+                        continue;
+                }
+
+                used = c >= 0x80 ? text_utf8(bytes + at, count - at,
+                                             address_of character)
+                                 : 0;
+
+                if (!used)
+                        break;
+
+                put(character);
+                at += used;
+        }
+
+        // What consume() does for every byte, and it is the same for a run.
+        if (at)
+                line_forget();
+
+        return at;
+}
+
+/*
+        A read's worth of what the far end sent.
+
+        The pty loop and the kernel console hand over what they have in one
+        call, so a run of text can be taken whole; everything else is still
+        consume()'s one byte at a time.
+*/
+static fn term_bytes(const p8 address_to bytes, positive count)
+{
+        positive at = 0;
+
+        while (at < count)
+        {
+                unsigned int c = bytes[at];
+
+                if (c >= ' ' && c != 127 && text_ground())
+                {
+                        positive used = text_run(bytes + at, count - at);
+
+                        if (used)
+                        {
+                                at += used;
+                                continue;
+                        }
+                }
+
+                consume(c);
+                at++;
+        }
 }
 
 #ifdef KERNEL_MODE

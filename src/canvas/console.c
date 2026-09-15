@@ -57,12 +57,22 @@ static void console_put_line(struct console *console, const char *text,
                 wraps. The return is put in here, which is where the pty that
                 is missing would have put it.
         */
-        for (i = 0; i < count; i++)
+        for (i = 0; i < count;)
         {
-                if (text[i] == '\n')
-                        consume('\r');
+                unsigned int stop = i;
 
-                consume((unsigned char)text[i]);
+                // What comes before the next newline goes in as one run.
+                while (stop < count && text[stop] != '\n')
+                        stop++;
+
+                term_bytes((const p8 *)(text + i), stop - i);
+
+                if (stop == count)
+                        break;
+
+                consume('\r');
+                consume('\n');
+                i = stop + 1;
         }
 
         // The emulator counts the ring on in the page; the compositor reads
