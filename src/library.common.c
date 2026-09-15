@@ -3772,11 +3772,26 @@ static positive allocator_chunk_next;
 
 //      What threads share, and the lock that covers it: the three words
 //      above, and the depot of free chains joined threads handed back.
-#define ALLOCATOR_DEPOT_SLOTS 8
+//
+//      The depot is a stack of whole chains per class, threaded through the
+//      chains themselves: a chain's first block keeps the chain below it in
+//      its tag word, and the chain at the bottom keeps the ordinary freed
+//      tag. Handing a chain in and taking one out are a store each, however
+//      many blocks a chain holds and however many threads were joined. A
+//      fixed array of eight chains filled up instead, and a join past that
+//      walked the whole of a chain to its tail while holding the lock every
+//      other thread's slow path waits on: a million freed blocks held it
+//      for tens of milliseconds.
+//
+//      Nothing else reads the tag of a block on a chain. The shelf pop on
+//      all three machines writes the tag of the block it hands out and reads
+//      none; free reads only the tag of the block it is given, and a heap
+//      address where a tag should be is past every band it recognises, so a
+//      second free of a chain's first block does nothing, as it does for any
+//      other freed block.
 #define ALLOCATOR_BATCH 8
 static lock allocator_lock;
-static address_any allocator_depot[ALLOCATOR_CLASSES][ALLOCATOR_DEPOT_SLOTS];
-static p8 allocator_depot_count[ALLOCATOR_CLASSES];
+static address_any allocator_depot[ALLOCATOR_CLASSES];
 
 //      The address of the tag, and of the second word the two wide kinds put
 //      in front of it. Written as functions returning the address rather than
@@ -4001,9 +4016,15 @@ allocator_take_shared(b32 class, bool address_to fresh)
 
         lock_take(address_of allocator_lock);
 
-        if (allocator_depot_count[class])
+        block = allocator_depot[class];
+
+        if (block)
         {
-                block = allocator_depot[class][--allocator_depot_count[class]];
+                positive below = address_to allocator_tag(block);
+
+                allocator_depot[class] = below >= ALLOCATOR_FREED + ALLOCATOR_CLASSES
+                                                 ? (address_any)below
+                                                 : null;
                 lock_release(address_of allocator_lock);
 
                 allocator_free_list[class] = address_to allocator_link(block);
@@ -4086,7 +4107,7 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
                 return block;
         }
 
-        if_rare(threads_live | allocator_depot_count[class])
+        if_rare(threads_live | (positive)allocator_depot[class])
                 return allocator_take_shared(class, fresh);
 
         return allocator_cut(class, fresh);
@@ -4121,12 +4142,14 @@ pub address_any allocator_take_slow(positive bytes)
         return allocator_take(bytes, null);
 }
 
-//      Every non-empty shelf of a thread goes to the depot whole; a full depot
-//      slot has the chain spliced in front of it. thread_join's call, made
-//      after the kernel has cleared the thread's id and before its block is
-//      unmapped, so reading its shelves races with nothing; and a consumer's
-//      own call, so blocks other threads allocated and it freed go back to
-//      where those threads look when their shelves run dry.
+//      Every non-empty shelf of a thread goes onto its class's depot whole,
+//      with the chain that was on top written into its first block's tag, so
+//      the lock is held for fifty two loads and stores at most, whatever the
+//      chains hold. thread_join's call, made after the kernel has cleared the
+//      thread's id and before its block is unmapped, so reading its shelves
+//      races with nothing; and a consumer's own call, so blocks other threads
+//      allocated and it freed go back to where those threads look when their
+//      shelves run dry.
 static fn allocator_shelves_hand(thread address_to it)
 {
         b32 class;
@@ -4142,20 +4165,10 @@ static fn allocator_shelves_hand(thread address_to it)
 
                 it->shelves[class] = null;
 
-                if (allocator_depot_count[class] < ALLOCATOR_DEPOT_SLOTS)
-                {
-                        allocator_depot[class][allocator_depot_count[class]++] = head;
-                        continue;
-                }
-
-                address_any tail = head;
-
-                while (address_to allocator_link(tail))
-                        tail = address_to allocator_link(tail);
-
-                address_to allocator_link(tail) =
-                        allocator_depot[class][ALLOCATOR_DEPOT_SLOTS - 1];
-                allocator_depot[class][ALLOCATOR_DEPOT_SLOTS - 1] = head;
+                address_to allocator_tag(head) =
+                        allocator_depot[class] ? (positive)allocator_depot[class]
+                                               : ALLOCATOR_FREED + class;
+                allocator_depot[class] = head;
         }
 
         lock_release(address_of allocator_lock);

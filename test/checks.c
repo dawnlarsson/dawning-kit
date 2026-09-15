@@ -42091,6 +42091,166 @@ static fn lock_allocator(void)
         check("the first thread allocates cleanly after the joins", fine);
 }
 
+/*
+        A depot deeper than a fixed array ever held.
+
+        Thirty two threads each allocate and free a run of blocks of one
+        class, so each leaves a chain of it on its shelf, and all of them are
+        joined. Every join stacks its chain on the class's depot through the
+        chain's first block's tag; the depot these replaced held eight chains
+        and walked a ninth to its tail under the lock. The checks read the
+        stack itself -- one chain per join, every freed block on one of them
+        -- and then take everything back through malloc on the first thread:
+        every block the threads freed must come out again and none twice, and
+        the depot must be as it was before.
+*/
+#define LOCK_DEPOT_THREADS 32
+#define LOCK_DEPOT_MOST 40
+#define LOCK_DEPOT_SIZE 5000
+#define LOCK_DEPOT_NODES 4096
+
+static address_any lock_depot_blocks[LOCK_DEPOT_THREADS][LOCK_DEPOT_MOST];
+static volatile positive lock_depot_ready = 0;
+static address_any lock_depot_taken[LOCK_DEPOT_NODES];
+
+static fn lock_depot_thread(address_any argument)
+{
+        positive who = (positive)argument;
+        positive count = 1 + who % LOCK_DEPOT_MOST;
+        positive at;
+
+        lock_wait_for_go();
+
+        for (at = 0; at < count; at++)
+                lock_depot_blocks[who][at] = malloc(LOCK_DEPOT_SIZE);
+
+        for (at = 0; at < count; at++)
+                free(lock_depot_blocks[who][at]);
+
+        atomic_add(address_of lock_depot_ready, 1);
+}
+
+//      The chain below one on the depot, as allocator_take_shared reads it.
+static address_any lock_depot_below(address_any chain)
+{
+        positive tag = address_to allocator_tag(chain);
+
+        return tag >= ALLOCATOR_FREED + ALLOCATOR_CLASSES ? (address_any)tag : null;
+}
+
+static positive lock_depot_depth(b32 class)
+{
+        positive depth = 0;
+        address_any chain;
+
+        for (chain = allocator_depot[class]; chain; chain = lock_depot_below(chain))
+                depth++;
+
+        return depth;
+}
+
+static fn lock_depot(void)
+{
+        thread address_to handles[LOCK_DEPOT_THREADS];
+        b32 class = allocator_class_of(LOCK_DEPOT_SIZE + ALLOCATOR_HEADER);
+        positive before = lock_depot_depth(class);
+        positive started = 0;
+        positive nodes = 0;
+        positive taken = 0;
+        positive who, at, i, j;
+        address_any chain;
+        bool on_chains = true;
+        bool came_back = true;
+        bool once = true;
+
+        //      Whatever the first thread already holds of the class goes
+        //      aside first, so that what malloc hands back below can only
+        //      have come off the depot or been cut fresh.
+        positive aside = 0;
+        address_any held[64];
+
+        while (allocator_free_list[class] && aside < 64)
+                held[aside++] = malloc(LOCK_DEPOT_SIZE);
+
+        atomic_exchange(address_of lock_go, 0);
+
+        for (who = 0; who < LOCK_DEPOT_THREADS; who++)
+        {
+                handles[who] = thread_start(lock_depot_thread, (address_any)who);
+                started += handles[who] != null;
+        }
+
+        lock_open_gate();
+
+        while (atomic_load(address_of lock_depot_ready) < started)
+                ;
+
+        for (who = 0; who < LOCK_DEPOT_THREADS; who++)
+                if (handles[who])
+                        thread_join(handles[who]);
+
+        check("thirty two chain-leaving threads started", started == LOCK_DEPOT_THREADS);
+        check("every join stacked one chain on the depot",
+              lock_depot_depth(class) == before + started);
+
+        for (chain = allocator_depot[class]; chain; chain = lock_depot_below(chain))
+                for (address_any block = chain; block; block = address_to allocator_link(block))
+                        nodes++;
+
+        for (who = 0; who < started; who++)
+                for (at = 0; at < 1 + who % LOCK_DEPOT_MOST; at++)
+                {
+                        bool found = false;
+
+                        for (chain = allocator_depot[class]; chain && !found;
+                             chain = lock_depot_below(chain))
+                                for (address_any block = chain; block && !found;
+                                     block = address_to allocator_link(block))
+                                        found = block == lock_depot_blocks[who][at];
+
+                        on_chains = on_chains && found;
+                }
+
+        check("every freed block is on a stacked chain", on_chains);
+
+        while (taken < nodes && taken < LOCK_DEPOT_NODES)
+        {
+                lock_depot_taken[taken] = malloc(LOCK_DEPOT_SIZE);
+                if (!lock_depot_taken[taken])
+                        break;
+                taken++;
+        }
+
+        for (who = 0; who < started; who++)
+                for (at = 0; at < 1 + who % LOCK_DEPOT_MOST; at++)
+                {
+                        bool found = false;
+
+                        for (i = 0; i < taken && !found; i++)
+                                found = lock_depot_taken[i] == lock_depot_blocks[who][at];
+
+                        came_back = came_back && found;
+                }
+
+        for (i = 0; i < taken; i++)
+                for (j = i + 1; j < taken; j++)
+                        once = once && lock_depot_taken[i] != lock_depot_taken[j];
+
+        check("every stacked block comes back out through malloc", came_back && taken == nodes);
+        check("no stacked block comes back twice", once);
+        //      Everything counted was every chain on the depot, any that were
+        //      there before the threads included, so taking them all empties
+        //      it.
+        check("the depot is empty once every stacked block is taken",
+              lock_depot_depth(class) == 0);
+
+        for (i = 0; i < taken; i++)
+                free(lock_depot_taken[i]);
+
+        while (aside)
+                free(held[--aside]);
+}
+
 //      -- the process -------------------------------------------------------
 
 static fn lock_process(void)
@@ -43438,6 +43598,7 @@ b32 main(void)
         lock_storm();
         lock_exclusion();
         lock_allocator();
+        lock_depot();
         lock_process();
         lock_pool(program_argument_count() > 1 &&
                   !string_compare(program_argument(1), (string_address)"--emulated"));
