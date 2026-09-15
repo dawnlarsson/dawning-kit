@@ -16462,6 +16462,62 @@ HARNESS_COREUTILS_9_11 = {
 }
 
 
+CANVAS_ROUTINES = ("canvas_rect_fill", "canvas_row_blit", "canvas_glyph",
+                   "canvas_glyph2", "canvas_cell", "canvas_cell2")
+
+
+def canvas_assembly(library, arch):
+    """The Canvas pixel loops for one machine, as a .S lifted out of library.c.
+
+    library.c assembles them only into a kernel build with Canvas, so no
+    user-space build of it carries them. A body is the lines between ASM_FUNC(name) and
+    ASM_END(name) in the machine's block: C string literals, ASM_RET and
+    comments. The strings are decoded rather than transcribed, so what the
+    check runs is the text library.c holds, and anything else in a body stops
+    the lift instead of being guessed at.
+    """
+    block = {"x86_64": "X64", "amd64": "X64", "aarch64": "ARM64",
+             "arm64": "ARM64", "riscv64": "RISCV64"}.get(arch)
+    if block is None:
+        sys.exit("canvas assembly: library.c has no block for %s" % arch)
+    lines = Path(library).read_text().split("\n")
+    owner, current = [], None
+    for line in lines:
+        selected = re.match(r"^#(el)?if (X64|ARM64|RISCV64)\b", line.strip())
+        if selected:
+            current = selected.group(2)
+        owner.append(current)
+    piece = re.compile(r'\s*("(?:\\.|[^"\\])*"|ASM_RET\b|//.*$)')
+    out = [".text"]
+    for name in CANVAS_ROUTINES:
+        begins = [i for i, line in enumerate(lines)
+                  if line.strip() == "ASM_FUNC(%s)" % name and owner[i] == block]
+        if len(begins) != 1:
+            sys.exit("canvas assembly: %d %s ASM_FUNC(%s) in %s"
+                     % (len(begins), block, name, library))
+        end = next((i for i in range(begins[0] + 1, len(lines))
+                    if lines[i].strip().startswith(("ASM_FUNC(", "ASM_END("))), None)
+        if end is None or lines[end].strip() != "ASM_END(%s)" % name:
+            sys.exit("canvas assembly: ASM_FUNC(%s) has no ASM_END" % name)
+        body = []
+        for number in range(begins[0] + 1, end):
+            line, at = lines[number], 0
+            while line[at:].strip():
+                found = piece.match(line, at)
+                if not found:
+                    sys.exit("canvas assembly: library.c:%d is not a string, "
+                             "ASM_RET or a comment: %s" % (number + 1, line.strip()))
+                token = found.group(1)
+                if token == "ASM_RET":
+                    body.append("ret\n")
+                elif token.startswith('"'):
+                    body.append(ast.literal_eval(token))
+                at = found.end()
+        out += [".globl %s" % name, ".type %s, %%function" % name, ".balign 16",
+                "%s:" % name, "".join(body).rstrip("\n"), ".size %s, .-%s" % (name, name)]
+    return "\n".join(out) + "\n"
+
+
 def harness_core_state(argv):
     """Kernel snapshot allocation and Canvas geometry, with syscall/DRM-free mocks."""
     root = HARNESS_ROOT
@@ -16517,18 +16573,11 @@ def harness_core_state(argv):
         geometry += "#undef compose_cells\n"
         geometry += section(drag, "static void bar_move", "/*\n        Filling the screen")
         (work / "canvas-pane.inc").write_text(geometry)
-        # `build asm` supplies the function macros; these empty include files replace
-        # only the kernel declarations, never the renderer's assembly bodies.
-        (work / "linux").mkdir(exist_ok=True)
-        for name in ("export.h", "linkage.h"):
-            (work / "linux" / name).write_text("")
-        inputs = ["-DCHECK_canvas_cells", str(root / "test/checks.c")]
-        for name in ("glyph", "fill"):
-            target = work / f"{name}.S"
-            subprocess.run([build_tool(root), "asm", arch,
-                            str(root / f"src/canvas/{name}.asm"), str(target)], check=True)
-            inputs.append(str(target))
-        return inputs
+        # The renderer's own assembly bodies. library.c assembles them only into
+        # a kernel build with Canvas, so they are lifted out of it rather than linked.
+        target = work / "canvas.S"
+        target.write_text(canvas_assembly(root / "src/library.c", arch))
+        return ["-DCHECK_canvas_cells", str(root / "test/checks.c"), str(target)]
 
 
     source = r'''
@@ -17780,8 +17829,7 @@ line_add_padded() { line_add "$@"; }
             inputs = canvas_sources(Path(work), os.uname().machine)
             executable = str(Path(work) / "canvas-cells")
             subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-O2", "-fno-builtin",
-                            "-DMOONWATER_FREESTANDING_ASM", "-I", work,
-                            *inputs, "-o", executable], check=True)
+                            "-I", work, *inputs, "-o", executable], check=True)
             subprocess.run([executable], check=True)
     return 0
 

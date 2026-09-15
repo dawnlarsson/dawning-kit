@@ -10,9 +10,9 @@
                         interface it needs -- see there first
             pane.c      windows: creating, destroying, and reading the shared
                         page without trusting it
-            fill.asm    one run of pixels, per architecture. Everything
-                        Canvas draws goes through it
-            glyph.asm   one glyph, for the same reason
+            library.c   one run of pixels and one glyph, per architecture,
+                        under KERNEL_MODE. Everything Canvas draws goes
+                        through them
             paint.c     pixels: a pointer, a pitch, a rectangle
             text.c      words: a box, where the lines break, where they sit
             compose.c   what a window looks like and in what order
@@ -428,9 +428,9 @@ static u64 canvas_flush_ns;
 static u64 canvas_text_ns;
 
 /*
-        The loops every pixel goes through. The reusable 32-bit span is in
-        library.c; strided rectangles and alpha blits stay in fill.asm, and
-        bitmap expansion stays in glyph.asm. They are assembly because a full
+        The loops every pixel goes through, all assembly in library.c: the
+        reusable 32-bit span, and under KERNEL_MODE the strided rectangles,
+        alpha blits and bitmap expansion. They are assembly because a full
         compose is four megabytes of stores and the kernel is built with no
         vector instructions on x86, so what the C turned into was two four
         byte stores an iteration.

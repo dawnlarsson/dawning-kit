@@ -32,11 +32,13 @@ obj-$(CONFIG_MOONWATER_FLOODLIGHT) += floodlight.o
 #       assembled by the toolchain's own assembler through the kernel's
 #       ordinary rule for .S files. See `build asm` for the dialect.
 #
-#       Two directories, named rather than found recursively. kernel/replace/
-#       holds the other kind of .asm -- the ones that stand in for a file the
-#       kernel already builds -- and those must not be linked into the module
-#       as well, or the symbol they define exists twice and vmlinux does not
-#       link. Everything that draws lives in canvas/, assembly included.
+#       This directory only, not found recursively. kernel/replace/ holds the
+#       other kind of .asm -- the ones that stand in for a file the kernel
+#       already builds -- and those must not be linked into the module as
+#       well, or the symbol they define exists twice and vmlinux does not
+#       link. Canvas's pixel loops are not .asm: they are assembly in
+#       library.c, which core.c includes, assembled only when
+#       CONFIG_MOONWATER_CANVAS builds Canvas.
 #
 #       Which architecture that is comes from the kernel's own configuration
 #       rather than from the build scripts, so the answer cannot disagree with
@@ -54,9 +56,6 @@ asm-arch-$(CONFIG_ARM64) := arm64
 asm-arch-$(CONFIG_ARCH_RV64I) := riscv64
 
 asm-sources := $(notdir $(wildcard $(src)/*.asm))
-canvas-asm-sources-$(CONFIG_MOONWATER_CANVAS) := \
-               $(patsubst $(src)/%,%,$(wildcard $(src)/canvas/*.asm))
-asm-sources += $(canvas-asm-sources-y)
 
 moonwater-y += $(asm-sources:.asm=.o)
 targets += $(asm-sources:.asm=.S)

@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        325 routines (312 public, 13 local), 324 of them on all three and 1 local to one.
+        331 routines (318 public, 13 local), 330 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -113,6 +113,12 @@
           byte_to_upper                  public  yes     yes     yes
           bytes_reverse_16               public  yes     yes     yes
           bytes_reverse_32               public  yes     yes     yes
+          canvas_cell                    public  yes     yes     yes
+          canvas_cell2                   public  yes     yes     yes
+          canvas_glyph                   public  yes     yes     yes
+          canvas_glyph2                  public  yes     yes     yes
+          canvas_rect_fill               public  yes     yes     yes
+          canvas_row_blit                public  yes     yes     yes
           cells_from_ascii               public  yes     yes     yes
           cpu_hash_detect                local   yes     yes     yes
           decimal_ceiling                public  yes     yes     yes
@@ -38070,6 +38076,982 @@ ASM_EXPORT(memset32);
 ASM_EXPORT(memset64);
 #endif
 #endif
+
+//
+//      Canvas, the compositor in the kernel module, draws every pixel through
+//      the six routines below. Nothing else calls them, so they are assembled
+//      only into a kernel module that builds Canvas: KERNEL_MODE and
+//      CONFIG_MOONWATER_CANVAS. Every x86_64 body is general purpose registers
+//      and rep stosq, because the kernel is built -mno-sse and nothing here
+//      takes kernel_fpu_begin.
+//
+//
+//       Canvas rectangles and alpha blits.
+//
+//       Large rectangles and copied pixel windows go through these. Short
+//       solid runs share memory_fill_u32 in library.c, while glyph expansion
+//       comes after them. A full compose of one 1280x800 output is four
+//       megabytes of stores, and
+//       the kernel is built -mno-sse on x86, so what gcc emitted for the C was
+//       two four byte stores per iteration and no vector anything:
+//
+//           mov %ecx,(%rdx,%rax,4)
+//           mov %ecx,0x4(%rdx,%rax,4)
+//           add $0x2,%rax
+//           cmp %eax,%esi
+//           jg  loop
+//
+//       Eight bytes for five instructions. That is the shape the string
+//       functions had, not the shape find_bit had.
+//
+//       void canvas_row_blit(u32 *at, const u32 *from, unsigned long count,
+//                            u32 opaque)
+//       void canvas_rect_fill(u32 *at, unsigned long pitch, unsigned long width,
+//                             unsigned long height, u32 colour)
+//
+//       The rectangle is the one that matters. A window's two sides are two
+//       pixels wide and a hundred and ninety rows tall, so a row at a time was
+//       4560 calls a compose to write 2 pixels each; a desktop was 800 calls.
+//       All the row walking is in here now, and the decision about how to fill
+//       a row is taken once for the whole rectangle rather than once a row.
+//
+
+//
+//       canvas_glyph -- one glyph, eight pixels wide, scale one.
+//
+//       Text was measured at 45% of a compose while drawing about 2.5% of the
+//       pixels. The cost was never the pixels: a glyph row was scanned bit by
+//       bit for runs, each run clipped, and each run a call. Fifteen or so
+//       calls per glyph, thousands of glyphs.
+//
+//       This draws a whole glyph in one call. The caller has already decided
+//       the glyph is entirely inside the damage, which is the ordinary case;
+//       one that straddles the edge still goes the long way round.
+//
+//       void canvas_glyph(u32 *at, unsigned long pitch, const u8 *bits,
+//                         unsigned long stride, unsigned long rows, u32 colour)
+//       void canvas_glyph2(u32 *at, unsigned long pitch, const u8 *bits,
+//                          unsigned long stride, unsigned long rows, u32 colour)
+//       void canvas_cell(u32 *at, unsigned long pitch, const u8 *bits,
+//                        unsigned long rows, u32 ink, u32 paper)
+//       void canvas_cell2(u32 *at, unsigned long pitch, const u8 *bits,
+//                         unsigned long rows, u32 ink, u32 paper)
+//
+//       canvas_cell is the same glyph with its background, written in one pass.
+//       There is one framebuffer and the display is reading it, so filling the
+//       paper and then drawing the glyph over it is every letter on the screen
+//       flashing its background whenever it is repainted. Every pixel here is
+//       stored once, already the colour it ends up.
+//
+//       The 2 variants expand each source bit into a two-by-two. Scale two is
+//       the Retina metric; compose_row used to take the long way round there,
+//       and that path was measured at nine times this table on a kernel-like
+//       compile (599 ns a cell against 65 ns for the table in C, 74 ns for
+//       the ARM64 floor, Apple M2, -O2 -fno-tree-vectorize -fno-unroll-loops).
+//       The scale-one floor already paid the same spike down on Zen, 110
+//       cycles to 71.
+//
+//       pitch is in pixels. bits is one byte a row, most significant bit
+//       leftmost, which is how the kernel's console fonts are stored, and
+//       stride is how far apart those bytes are. A font row is one byte, so
+//       stride is one; the cursor is sixteen wide and drawn as two halves of a
+//       two byte row, so stride is two and the second call starts a byte along
+//       and eight pixels over.
+//
+#if defined(KERNEL_MODE) && defined(CONFIG_MOONWATER_CANVAS)
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(canvas_rect_fill)
+    "        test    %rcx, %rcx\n"
+    "        jz      9f\n"
+    "        test    %rdx, %rdx\n"
+    "        jz      9f\n"
+
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+    "        mov     %r8d, %eax\n"
+    "        mov     %eax, %r11d\n"
+    "        shl     $32, %r11\n"
+    "        or      %r11, %rax              # the colour twice\n"
+    "        mov     %rdi, %r9               # where this row starts\n"
+    "        mov     %rcx, %r10              # rows left\n"
+
+        // The overwhelmingly common narrow rectangle is one scale-one window
+        // border.  Keep its two stores out of the generic tail ladder.
+    "        cmp     $2, %rdx\n"
+    "        je      8f\n"
+
+        // The shared u32-fill floor crosses at 208 words on native Zen 5.
+        // This is the same row traffic and therefore the same threshold.
+    "        cmp     $208, %rdx\n"
+    "        jae     5f\n"
+
+        //
+        //       Narrow. Four pixels an iteration, and the two pixel case that
+        //       a window's side is takes the tail alone.
+        //
+    "1:      mov     %r9, %rdi\n"
+    "        mov     %rdx, %rcx\n"
+    "        sub     $4, %rcx\n"
+    "        jb      3f\n"
+    "2:      mov     %rax, (%rdi)\n"
+    "        mov     %rax, 8(%rdi)\n"
+    "        add     $16, %rdi\n"
+    "        sub     $4, %rcx\n"
+    "        jae     2b\n"
+    "3:      add     $4, %rcx\n"
+    "        jz      4f\n"
+    "        test    $2, %cl\n"
+    "        jz      6f\n"
+    "        mov     %rax, (%rdi)\n"
+    "        add     $8, %rdi\n"
+    "6:      test    $1, %cl\n"
+    "        jz      4f\n"
+    "        mov     %eax, (%rdi)\n"
+    "4:      add     %rsi, %r9\n"
+    "        dec     %r10\n"
+    "        jnz     1b\n"
+    "9:      " ASM_RET
+
+    "8:      mov     %rax, (%r9)\n"
+    "        add     %rsi, %r9\n"
+    "        dec     %r10\n"
+    "        jnz     8b\n"
+    ASM_RET
+
+        // Wide enough that starting a rep costs less than the stores it saves.
+    "5:      mov     %r9, %rdi\n"
+    "        mov     %rdx, %rcx\n"
+    "        shr     $1, %rcx\n"
+    "        rep stosq\n"
+    "        test    $1, %dl\n"
+    "        jz      7f\n"
+    "        mov     %eax, (%rdi)\n"
+    "7:      add     %rsi, %r9\n"
+    "        dec     %r10\n"
+    "        jnz     5b\n"
+    ASM_RET
+    ASM_END(canvas_rect_fill)
+
+    ASM_FUNC(canvas_row_blit)
+    "        test    %ecx, %ecx\n"
+    "        jnz     5f\n"
+
+        // XRGB needs no alpha fixup.  The common copy floor already owns the
+        // size/alignment ladder and ERMS crossover, so do not carry a second,
+        // less complete copy engine here.
+    "        shl     $2, %rdx\n"
+    "        jmp     memory_copy_apart\n"
+
+    "5:      mov     %ecx, %eax\n"
+    "        shl     $32, %rcx\n"
+    "        or      %rax, %rcx              # the mask twice\n"
+
+    "        sub     $2, %rdx\n"
+    "        jb      7f\n"
+    "6:      mov     (%rsi), %r8             # two pixels an iteration\n"
+    "        or      %rcx, %r8\n"
+    "        mov     %r8, (%rdi)\n"
+    "        add     $8, %rsi\n"
+    "        add     $8, %rdi\n"
+    "        sub     $2, %rdx\n"
+    "        jae     6b\n"
+    "7:      test    $1, %dl\n"
+    "        jz      9f\n"
+    "        mov     (%rsi), %r8d\n"
+    "        or      %eax, %r8d\n"
+    "        mov     %r8d, (%rdi)\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_row_blit)
+
+    ASM_FUNC(canvas_glyph)
+    "        test    %r8, %r8\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+
+    "1:      movzbl  (%rdx), %eax\n"
+    "        add     %rcx, %rdx\n"
+    "        test    %eax, %eax\n"
+    "        jz      2f                      # a blank row, and most rows are\n"
+
+    "        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7\n"
+    "        test    $(0x80 >> \\pixel), %al\n"
+    "        jz      3f\n"
+    "        mov     %r9d, (4 * \\pixel)(%rdi)\n"
+    "3:\n"
+    "        .endr\n"
+
+    "2:      add     %rsi, %rdi\n"
+    "        dec     %r8\n"
+    "        jnz     1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph)
+
+    ASM_FUNC(canvas_glyph2)
+    "        test    %r8, %r8\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+
+    "1:      movzbl  (%rdx), %eax\n"
+    "        add     %rcx, %rdx\n"
+    "        test    %eax, %eax\n"
+    "        jz      2f                      # a blank row, and most rows are\n"
+
+    "        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7\n"
+    "        test    $(0x80 >> \\pixel), %al\n"
+    "        jz      3f\n"
+    "        mov     %r9d, (8 * \\pixel)(%rdi)\n"
+    "        mov     %r9d, (8 * \\pixel + 4)(%rdi)\n"
+    "        mov     %r9d, (8 * \\pixel)(%rdi, %rsi)\n"
+    "        mov     %r9d, (8 * \\pixel + 4)(%rdi, %rsi)\n"
+    "3:\n"
+    "        .endr\n"
+
+    "2:      lea     (%rdi, %rsi, 2), %rdi\n"
+    "        dec     %r8\n"
+    "        jnz     1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph2)
+
+    ASM_FUNC(canvas_cell)
+    "        test    %rcx, %rcx\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+
+        //
+        //       Sixteen entries of two pixel pairs, one for every nibble of
+        //       the bitmap, built once for this cell's two colours.
+        //
+        //       The four pairs a nibble can be made of are paper-paper,
+        //       paper-ink, ink-paper and ink-ink; entry n holds the pair its
+        //       top two bits ask for and then the pair its bottom two ask
+        //       for, so a row is two loads of sixteen bytes and four stores
+        //       and no per bit work at all. The pixels within a pair are
+        //       little endian -- the left one is the low half -- which is
+        //       true of all three machines this file is written for.
+        //
+        //       The colours arrive as u32, so the top half of the register
+        //       is whatever the caller last had there: cleared here rather
+        //       than shifted into a pixel.
+        //
+        //       A sixteen row cell, call included, over a screen of the
+        //       kernel's own boot log: 620 instructions became 345 here, 475
+        //       became 243 on arm64 and 655 became 367 on riscv64. On a
+        //       native Zen the same cell went from 110 cycles to 71.
+        //
+        //       Skipping the rows that are all paper was measured and is not
+        //       here. They are 47 percent of the rows a boot log draws, but
+        //       the table has already made such a row twelve instructions
+        //       rather than thirty two, so the test costs about what it
+        //       saves -- 346 against 345 -- and buys a branch that depends on
+        //       the letter being drawn.
+        //
+    "        mov     %r9d, %eax              # paper\n"
+    "        mov     %r8d, %r8d              # ink\n"
+    "        mov     %rax, %r9\n"
+    "        shl     $32, %r9                # paper on the right\n"
+    "        mov     %r8, %r11\n"
+    "        shl     $32, %r11               # ink on the right\n"
+    "        mov     %rax, %r10\n"
+    "        or      %r11, %r10              # paper then ink\n"
+    "        or      %r8, %r11               # ink then ink\n"
+    "        or      %r9, %rax               # paper then paper\n"
+    "        or      %r9, %r8                # ink then paper\n"
+
+    "        sub     $256, %rsp\n"
+    "        .set .Lcell_pair, 0\n"
+    "        .irp left, %rax, %r10, %r8, %r11\n"
+    "        .irp right, %rax, %r10, %r8, %r11\n"
+    "        mov     \\left, .Lcell_pair(%rsp)\n"
+    "        mov     \\right, .Lcell_pair+8(%rsp)\n"
+    "        .set .Lcell_pair, .Lcell_pair+16\n"
+    "        .endr\n"
+    "        .endr\n"
+
+    "1:      movzbl  (%rdx), %eax\n"
+    "        inc     %rdx\n"
+    "        mov     %eax, %r10d\n"
+    "        and     $0xf0, %r10d            # the top nibble, times sixteen\n"
+    "        shl     $4, %eax\n"
+    "        and     $0xf0, %eax             # the bottom nibble, times sixteen\n"
+
+    "        mov     (%rsp,%r10,1), %r11\n"
+    "        mov     %r11, (%rdi)\n"
+    "        mov     8(%rsp,%r10,1), %r11\n"
+    "        mov     %r11, 8(%rdi)\n"
+    "        mov     (%rsp,%rax,1), %r11\n"
+    "        mov     %r11, 16(%rdi)\n"
+    "        mov     8(%rsp,%rax,1), %r11\n"
+    "        mov     %r11, 24(%rdi)\n"
+
+    "        add     %rsi, %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     1b\n"
+
+    "        add     $256, %rsp\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell)
+
+    ASM_FUNC(canvas_cell2)
+    "        test    %rcx, %rcx\n"
+    "        jz      9f\n"
+    "        shl     $2, %rsi                # pitch, pixels to bytes\n"
+
+        //
+        //       Sixteen entries of four pixel pairs. Each source bit is two
+        //       pixels of the same colour, so a nibble is eight destination
+        //       pixels and a row is two loads of thirty two bytes, stored
+        //       once and then again on the next scanline.
+        //
+    "        mov     %r9d, %eax              # paper\n"
+    "        mov     %r8d, %r8d              # ink\n"
+    "        mov     %rax, %r9\n"
+    "        shl     $32, %r9\n"
+    "        or      %rax, %r9               # paper then paper\n"
+    "        mov     %r8, %r11\n"
+    "        shl     $32, %r11\n"
+    "        or      %r8, %r11               # ink then ink\n"
+
+    "        sub     $512, %rsp\n"
+    "        .set .Lcell2_pair, 0\n"
+    "        .irp b3, %r9, %r11\n"
+    "        .irp b2, %r9, %r11\n"
+    "        .irp b1, %r9, %r11\n"
+    "        .irp b0, %r9, %r11\n"
+    "        mov     \\b3, .Lcell2_pair(%rsp)\n"
+    "        mov     \\b2, .Lcell2_pair+8(%rsp)\n"
+    "        mov     \\b1, .Lcell2_pair+16(%rsp)\n"
+    "        mov     \\b0, .Lcell2_pair+24(%rsp)\n"
+    "        .set .Lcell2_pair, .Lcell2_pair+32\n"
+    "        .endr\n"
+    "        .endr\n"
+    "        .endr\n"
+    "        .endr\n"
+
+    "1:      movzbl  (%rdx), %eax\n"
+    "        inc     %rdx\n"
+    "        mov     %eax, %r10d\n"
+    "        and     $0xf0, %r10d\n"
+    "        shl     $1, %r10d               # the top nibble, times thirty two\n"
+    "        and     $0x0f, %eax\n"
+    "        shl     $5, %eax                # the bottom nibble, times thirty two\n"
+
+    "        .irp off, 0, 8, 16, 24\n"
+    "        mov     \\off(%rsp,%r10,1), %r8\n"
+    "        mov     %r8, \\off(%rdi)\n"
+    "        mov     %r8, \\off(%rdi,%rsi)\n"
+    "        .endr\n"
+    "        .irp off, 0, 8, 16, 24\n"
+    "        mov     \\off(%rsp,%rax,1), %r8\n"
+    "        mov     %r8, (32+\\off)(%rdi)\n"
+    "        mov     %r8, (32+\\off)(%rdi,%rsi)\n"
+    "        .endr\n"
+
+    "        lea     (%rdi, %rsi, 2), %rdi\n"
+    "        dec     %rcx\n"
+    "        jnz     1b\n"
+
+    "        add     $512, %rsp\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell2)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(canvas_rect_fill)
+    "        cbz     x3, 9f\n"
+    "        cbz     x2, 9f\n"
+
+    "        lsl     x1, x1, #2\n"
+    "        mov     w4, w4\n"
+    "        orr     x5, x4, x4, lsl #32\n"
+
+    "        cmp     x2, #2\n"
+    "        b.eq    8f\n"
+
+    "1:      mov     x6, x0                  // where this row starts\n"
+    "        mov     x7, x2                  // pixels left in it\n"
+
+    "        cmp     x7, #4\n"
+    "        b.lo    3f\n"
+    "2:      stp     x5, x5, [x6], #16\n"
+    "        sub     x7, x7, #4\n"
+    "        cmp     x7, #4\n"
+    "        b.hs    2b\n"
+
+    "3:      tbz     x7, #1, 4f\n"
+    "        str     x5, [x6], #8\n"
+    "4:      tbz     x7, #0, 5f\n"
+    "        str     w4, [x6]\n"
+
+    "5:      add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    1b\n"
+    "9:      " ASM_RET
+
+    "8:      str     x5, [x0]\n"
+    "        add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    8b\n"
+    ASM_RET
+    ASM_END(canvas_rect_fill)
+
+    ASM_FUNC(canvas_row_blit)
+    "        cbnz    w3, 4f\n"
+    "        lsl     x2, x2, #2\n"
+    "        b       memory_copy_apart\n"
+
+    "4:\n"
+    "        mov     w3, w3\n"
+    "        orr     x4, x3, x3, lsl #32\n"
+
+    "        cmp     x2, #2\n"
+    "        b.lo    2f\n"
+
+    "1:      ldr     x5, [x1], #8            // two pixels\n"
+    "        orr     x5, x5, x4\n"
+    "        str     x5, [x0], #8\n"
+    "        sub     x2, x2, #2\n"
+    "        cmp     x2, #2\n"
+    "        b.hs    1b\n"
+
+    "2:      cbz     x2, 3f\n"
+    "        ldr     w5, [x1]\n"
+    "        orr     w5, w5, w3\n"
+    "        str     w5, [x0]\n"
+    "3:      " ASM_RET
+    ASM_END(canvas_row_blit)
+
+    ASM_FUNC(canvas_cell)
+    "        cbz     x3, 9f\n"
+    "        lsl     x1, x1, #2\n"
+
+        // The same sixteen entry table of pixel pairs; see the x86_64 block
+        // above for what is in it. Here a row is two ldp and two stp.
+    "        mov     w4, w4                  // ink, top half cleared\n"
+    "        mov     w5, w5                  // paper\n"
+    "        orr     x6, x5, x5, lsl #32     // paper then paper\n"
+    "        orr     x7, x5, x4, lsl #32     // paper then ink\n"
+    "        orr     x8, x4, x5, lsl #32     // ink then paper\n"
+    "        orr     x9, x4, x4, lsl #32     // ink then ink\n"
+
+    "        sub     sp, sp, #256\n"
+    "        .set .Lcell_pair, 0\n"
+    "        .irp left, x6, x7, x8, x9\n"
+    "        .irp right, x6, x7, x8, x9\n"
+    "        stp     \\left, \\right, [sp, #.Lcell_pair]\n"
+    "        .set .Lcell_pair, .Lcell_pair+16\n"
+    "        .endr\n"
+    "        .endr\n"
+
+    "1:      ldrb    w6, [x2], #1\n"
+    "        and     x7, x6, #0xf0           // the top nibble, times sixteen\n"
+    "        ubfiz   x8, x6, #4, #4          // the bottom nibble, times sixteen\n"
+    "        add     x7, sp, x7\n"
+    "        add     x8, sp, x8\n"
+    "        ldp     x9, x10, [x7]\n"
+    "        ldp     x11, x12, [x8]\n"
+    "        stp     x9, x10, [x0]\n"
+    "        stp     x11, x12, [x0, #16]\n"
+
+    "        add     x0, x0, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    1b\n"
+
+    "        add     sp, sp, #256\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell)
+
+    ASM_FUNC(canvas_cell2)
+    "        cbz     x3, 9f\n"
+    "        lsl     x1, x1, #2\n"
+
+    "        mov     w4, w4                  // ink, top half cleared\n"
+    "        mov     w5, w5                  // paper\n"
+    "        orr     x6, x5, x5, lsl #32     // paper then paper\n"
+    "        orr     x7, x4, x4, lsl #32     // ink then ink\n"
+
+    "        sub     sp, sp, #512\n"
+    "        .set .Lcell2_pair, 0\n"
+    "        .irp b3, x6, x7\n"
+    "        .irp b2, x6, x7\n"
+    "        .irp b1, x6, x7\n"
+    "        .irp b0, x6, x7\n"
+    "        stp     \\b3, \\b2, [sp, #.Lcell2_pair]\n"
+    "        stp     \\b1, \\b0, [sp, #.Lcell2_pair+16]\n"
+    "        .set .Lcell2_pair, .Lcell2_pair+32\n"
+    "        .endr\n"
+    "        .endr\n"
+    "        .endr\n"
+    "        .endr\n"
+
+    "1:      ldrb    w8, [x2], #1\n"
+    "        and     x9, x8, #0xf0\n"
+    "        lsl     x9, x9, #1              // the top nibble, times thirty two\n"
+    "        ubfiz   x10, x8, #5, #4         // the bottom nibble, times thirty two\n"
+    "        add     x9, sp, x9\n"
+    "        add     x10, sp, x10\n"
+    "        add     x8, x0, x1              // the duplicated row\n"
+
+    "        ldp     x11, x12, [x9]\n"
+    "        ldp     x13, x14, [x9, #16]\n"
+    "        stp     x11, x12, [x0]\n"
+    "        stp     x13, x14, [x0, #16]\n"
+    "        stp     x11, x12, [x8]\n"
+    "        stp     x13, x14, [x8, #16]\n"
+    "        ldp     x11, x12, [x10]\n"
+    "        ldp     x13, x14, [x10, #16]\n"
+    "        stp     x11, x12, [x0, #32]\n"
+    "        stp     x13, x14, [x0, #48]\n"
+    "        stp     x11, x12, [x8, #32]\n"
+    "        stp     x13, x14, [x8, #48]\n"
+
+    "        add     x0, x8, x1\n"
+    "        subs    x3, x3, #1\n"
+    "        b.ne    1b\n"
+
+    "        add     sp, sp, #512\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell2)
+
+    ASM_FUNC(canvas_glyph)
+    "        cbz     x4, 9f\n"
+    "        lsl     x1, x1, #2\n"
+
+    "1:      ldrb    w6, [x2]\n"
+    "        add     x2, x2, x3\n"
+    "        cbz     w6, 2f                  // a blank row, and most rows are\n"
+
+    "        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7\n"
+    "        tbz     w6, #(7 - \\pixel), 3f\n"
+    "        str     w5, [x0, #(4 * \\pixel)]\n"
+    "3:\n"
+    "        .endr\n"
+
+    "2:      add     x0, x0, x1\n"
+    "        subs    x4, x4, #1\n"
+    "        b.ne    1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph)
+
+    ASM_FUNC(canvas_glyph2)
+    "        cbz     x4, 9f\n"
+    "        lsl     x1, x1, #2\n"
+
+    "1:      ldrb    w6, [x2]\n"
+    "        add     x2, x2, x3\n"
+    "        cbz     w6, 2f                  // a blank row, and most rows are\n"
+    "        add     x7, x0, x1\n"
+
+    "        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7\n"
+    "        tbz     w6, #(7 - \\pixel), 3f\n"
+    "        str     w5, [x0, #(8 * \\pixel)]\n"
+    "        str     w5, [x0, #(8 * \\pixel + 4)]\n"
+    "        str     w5, [x7, #(8 * \\pixel)]\n"
+    "        str     w5, [x7, #(8 * \\pixel + 4)]\n"
+    "3:\n"
+    "        .endr\n"
+
+    "2:      add     x0, x0, x1\n"
+    "        add     x0, x0, x1\n"
+    "        subs    x4, x4, #1\n"
+    "        b.ne    1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph2)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(canvas_rect_fill)
+    "        beqz    a3, 9f\n"
+    "        beqz    a2, 9f\n"
+
+    "        slli    a1, a1, 2\n"
+    "        slli    a4, a4, 32\n"
+    "        srli    a4, a4, 32\n"
+    "        slli    t0, a4, 32\n"
+    "        or      t0, t0, a4\n"
+    "        li      t3, 2\n"
+
+    "        beq     a2, t3, 8f\n"
+
+    "1:      mv      t1, a0\n"
+    "        mv      t2, a2\n"
+
+    "        blt     t2, t3, 3f\n"
+
+        // A row at a time, because an odd pitch puts every other row half a
+        // pair out of step with the one above it.
+    "        andi    t4, t1, 7\n"
+    "        beqz    t4, 2f\n"
+    "        sw      a4, 0(t1)\n"
+    "        addi    t1, t1, 4\n"
+    "        addi    t2, t2, -1\n"
+    "        blt     t2, t3, 3f\n"
+
+    "2:      sd      t0, 0(t1)\n"
+    "        addi    t1, t1, 8\n"
+    "        addi    t2, t2, -2\n"
+    "        bge     t2, t3, 2b\n"
+
+    "3:      beqz    t2, 4f\n"
+    "        sw      a4, 0(t1)\n"
+
+    "4:      add     a0, a0, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 1b\n"
+    "9:      " ASM_RET
+
+        // A u32 row need only be four-byte aligned on baseline RISC-V, so the
+        // two pixels stay two word stores rather than one potentially
+        // misaligned doubleword store.
+    "8:      sw      a4, 0(a0)\n"
+    "        sw      a4, 4(a0)\n"
+    "        add     a0, a0, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 8b\n"
+    ASM_RET
+    ASM_END(canvas_rect_fill)
+
+    ASM_FUNC(canvas_row_blit)
+    "        bnez    a3, 4f\n"
+    "        slli    a2, a2, 2\n"
+    "        tail    memory_copy_apart\n"
+
+    "4:\n"
+    "        slli    a3, a3, 32\n"
+    "        srli    a3, a3, 32\n"
+    "        slli    t0, a3, 32\n"
+    "        or      t0, t0, a3\n"
+
+    "        li      t1, 2\n"
+    "        blt     a2, t1, 2f\n"
+
+        // Both ends have to be eight byte aligned for the pair path, and a
+        // pixel pointer is only aligned to four, so one pixel goes first to
+        // bring the destination up. A source that is still out of step after
+        // that cannot be brought into it, and goes a pixel at a time.
+    "        andi    t2, a0, 7\n"
+    "        beqz    t2, 4f\n"
+    "        lw      t2, 0(a1)\n"
+    "        or      t2, t2, a3\n"
+    "        sw      t2, 0(a0)\n"
+    "        addi    a1, a1, 4\n"
+    "        addi    a0, a0, 4\n"
+    "        addi    a2, a2, -1\n"
+    "        blt     a2, t1, 2f\n"
+
+    "4:      andi    t2, a1, 7\n"
+    "        bnez    t2, 5f\n"
+
+    "1:      ld      t2, 0(a1)\n"
+    "        or      t2, t2, t0\n"
+    "        sd      t2, 0(a0)\n"
+    "        addi    a1, a1, 8\n"
+    "        addi    a0, a0, 8\n"
+    "        addi    a2, a2, -2\n"
+    "        bge     a2, t1, 1b\n"
+
+    "2:      beqz    a2, 3f\n"
+    "        lw      t2, 0(a1)\n"
+    "        or      t2, t2, a3\n"
+    "        sw      t2, 0(a0)\n"
+    "3:      " ASM_RET
+
+    "5:      lw      t2, 0(a1)\n"
+    "        or      t2, t2, a3\n"
+    "        sw      t2, 0(a0)\n"
+    "        addi    a1, a1, 4\n"
+    "        addi    a0, a0, 4\n"
+    "        addi    a2, a2, -1\n"
+    "        bnez    a2, 5b\n"
+    ASM_RET
+    ASM_END(canvas_row_blit)
+
+    ASM_FUNC(canvas_cell)
+    "        beqz    a3, 9f\n"
+    "        slli    a1, a1, 2\n"
+
+        // The same sixteen entry table of pixel pairs; see the x86_64 block
+        // above for what is in it.
+    "        slli    a4, a4, 32\n"
+    "        srli    a4, a4, 32              # ink, top half cleared\n"
+    "        slli    a5, a5, 32\n"
+    "        srli    a5, a5, 32              # paper\n"
+    "        slli    t4, a5, 32              # paper on the right\n"
+    "        slli    t5, a4, 32              # ink on the right\n"
+    "        or      t0, a5, t4              # paper then paper\n"
+    "        or      t1, a5, t5              # paper then ink\n"
+    "        or      t2, a4, t4              # ink then paper\n"
+    "        or      t3, a4, t5              # ink then ink\n"
+
+    "        addi    sp, sp, -256\n"
+    "        .set .Lcell_pair, 0\n"
+    "        .irp left, t0, t1, t2, t3\n"
+    "        .irp right, t0, t1, t2, t3\n"
+    "        sd      \\left, .Lcell_pair(sp)\n"
+    "        sd      \\right, .Lcell_pair+8(sp)\n"
+    "        .set .Lcell_pair, .Lcell_pair+16\n"
+    "        .endr\n"
+    "        .endr\n"
+
+        // A pixel pointer is only aligned to four, and there is no Zbb and no
+        // promise that a misaligned sd is anything but a trap into firmware.
+        // Both the start of the cell and the step between its rows have to be
+        // eight byte aligned for the pair path; an odd pitch puts every other
+        // row half a pair out of step, so the pitch is in the test too.
+    "        or      t4, a0, a1\n"
+    "        andi    t4, t4, 7\n"
+    "        bnez    t4, 3f\n"
+
+    "1:      lbu     a6, 0(a2)\n"
+    "        addi    a2, a2, 1\n"
+    "        andi    t4, a6, 0xf0            # the top nibble, times sixteen\n"
+    "        add     t4, sp, t4\n"
+    "        slli    t5, a6, 4\n"
+    "        andi    t5, t5, 0xf0            # the bottom nibble, times sixteen\n"
+    "        add     t5, sp, t5\n"
+
+    "        ld      t0, 0(t4)\n"
+    "        ld      t1, 8(t4)\n"
+    "        ld      t2, 0(t5)\n"
+    "        ld      t3, 8(t5)\n"
+    "        sd      t0, 0(a0)\n"
+    "        sd      t1, 8(a0)\n"
+    "        sd      t2, 16(a0)\n"
+    "        sd      t3, 24(a0)\n"
+
+    "        add     a0, a0, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 1b\n"
+    "        j       8f\n"
+
+        // A word at a time, which needs no alignment the caller has not
+        // already given. The table is read as words out of the same entries.
+    "3:      lbu     a6, 0(a2)\n"
+    "        addi    a2, a2, 1\n"
+    "        andi    t4, a6, 0xf0\n"
+    "        add     t4, sp, t4\n"
+    "        slli    t5, a6, 4\n"
+    "        andi    t5, t5, 0xf0\n"
+    "        add     t5, sp, t5\n"
+
+    "        lw      t0, 0(t4)\n"
+    "        lw      t1, 4(t4)\n"
+    "        lw      t2, 8(t4)\n"
+    "        lw      t3, 12(t4)\n"
+    "        sw      t0, 0(a0)\n"
+    "        sw      t1, 4(a0)\n"
+    "        sw      t2, 8(a0)\n"
+    "        sw      t3, 12(a0)\n"
+    "        lw      t0, 0(t5)\n"
+    "        lw      t1, 4(t5)\n"
+    "        lw      t2, 8(t5)\n"
+    "        lw      t3, 12(t5)\n"
+    "        sw      t0, 16(a0)\n"
+    "        sw      t1, 20(a0)\n"
+    "        sw      t2, 24(a0)\n"
+    "        sw      t3, 28(a0)\n"
+
+    "        add     a0, a0, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 3b\n"
+
+    "8:      addi    sp, sp, 256\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell)
+
+    ASM_FUNC(canvas_cell2)
+    "        beqz    a3, 9f\n"
+    "        slli    a1, a1, 2\n"
+
+    "        slli    a4, a4, 32\n"
+    "        srli    a4, a4, 32              # ink, top half cleared\n"
+    "        slli    a5, a5, 32\n"
+    "        srli    a5, a5, 32              # paper\n"
+    "        slli    t0, a5, 32\n"
+    "        or      t0, a5, t0              # paper then paper\n"
+    "        slli    t1, a4, 32\n"
+    "        or      t1, a4, t1              # ink then ink\n"
+
+    "        addi    sp, sp, -512\n"
+    "        .set .Lcell2_pair, 0\n"
+    "        .irp b3, t0, t1\n"
+    "        .irp b2, t0, t1\n"
+    "        .irp b1, t0, t1\n"
+    "        .irp b0, t0, t1\n"
+    "        sd      \\b3, .Lcell2_pair(sp)\n"
+    "        sd      \\b2, .Lcell2_pair+8(sp)\n"
+    "        sd      \\b1, .Lcell2_pair+16(sp)\n"
+    "        sd      \\b0, .Lcell2_pair+24(sp)\n"
+    "        .set .Lcell2_pair, .Lcell2_pair+32\n"
+    "        .endr\n"
+    "        .endr\n"
+    "        .endr\n"
+    "        .endr\n"
+
+        // Same alignment rule as canvas_cell: a pixel pointer is only aligned
+        // to four, and an odd pitch puts every other row half a pair out.
+    "        or      t4, a0, a1\n"
+    "        andi    t4, t4, 7\n"
+    "        bnez    t4, 3f\n"
+
+    "1:      lbu     a6, 0(a2)\n"
+    "        addi    a2, a2, 1\n"
+    "        andi    t4, a6, 0xf0\n"
+    "        slli    t4, t4, 1               # the top nibble, times thirty two\n"
+    "        add     t4, sp, t4\n"
+    "        andi    t5, a6, 0x0f\n"
+    "        slli    t5, t5, 5               # the bottom nibble, times thirty two\n"
+    "        add     t5, sp, t5\n"
+    "        add     a7, a0, a1\n"
+
+    "        ld      t0, 0(t4)\n"
+    "        ld      t1, 8(t4)\n"
+    "        ld      t2, 16(t4)\n"
+    "        ld      t3, 24(t4)\n"
+    "        sd      t0, 0(a0)\n"
+    "        sd      t1, 8(a0)\n"
+    "        sd      t2, 16(a0)\n"
+    "        sd      t3, 24(a0)\n"
+    "        sd      t0, 0(a7)\n"
+    "        sd      t1, 8(a7)\n"
+    "        sd      t2, 16(a7)\n"
+    "        sd      t3, 24(a7)\n"
+    "        ld      t0, 0(t5)\n"
+    "        ld      t1, 8(t5)\n"
+    "        ld      t2, 16(t5)\n"
+    "        ld      t3, 24(t5)\n"
+    "        sd      t0, 32(a0)\n"
+    "        sd      t1, 40(a0)\n"
+    "        sd      t2, 48(a0)\n"
+    "        sd      t3, 56(a0)\n"
+    "        sd      t0, 32(a7)\n"
+    "        sd      t1, 40(a7)\n"
+    "        sd      t2, 48(a7)\n"
+    "        sd      t3, 56(a7)\n"
+
+    "        add     a0, a7, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 1b\n"
+    "        j       8f\n"
+
+    "3:      lbu     a6, 0(a2)\n"
+    "        addi    a2, a2, 1\n"
+    "        andi    t4, a6, 0xf0\n"
+    "        slli    t4, t4, 1\n"
+    "        add     t4, sp, t4\n"
+    "        andi    t5, a6, 0x0f\n"
+    "        slli    t5, t5, 5\n"
+    "        add     t5, sp, t5\n"
+    "        add     a7, a0, a1\n"
+
+    "        lw      t0, 0(t4)\n"
+    "        lw      t1, 4(t4)\n"
+    "        lw      t2, 8(t4)\n"
+    "        lw      t3, 12(t4)\n"
+    "        sw      t0, 0(a0)\n"
+    "        sw      t1, 4(a0)\n"
+    "        sw      t2, 8(a0)\n"
+    "        sw      t3, 12(a0)\n"
+    "        sw      t0, 0(a7)\n"
+    "        sw      t1, 4(a7)\n"
+    "        sw      t2, 8(a7)\n"
+    "        sw      t3, 12(a7)\n"
+    "        lw      t0, 16(t4)\n"
+    "        lw      t1, 20(t4)\n"
+    "        lw      t2, 24(t4)\n"
+    "        lw      t3, 28(t4)\n"
+    "        sw      t0, 16(a0)\n"
+    "        sw      t1, 20(a0)\n"
+    "        sw      t2, 24(a0)\n"
+    "        sw      t3, 28(a0)\n"
+    "        sw      t0, 16(a7)\n"
+    "        sw      t1, 20(a7)\n"
+    "        sw      t2, 24(a7)\n"
+    "        sw      t3, 28(a7)\n"
+    "        lw      t0, 0(t5)\n"
+    "        lw      t1, 4(t5)\n"
+    "        lw      t2, 8(t5)\n"
+    "        lw      t3, 12(t5)\n"
+    "        sw      t0, 32(a0)\n"
+    "        sw      t1, 36(a0)\n"
+    "        sw      t2, 40(a0)\n"
+    "        sw      t3, 44(a0)\n"
+    "        sw      t0, 32(a7)\n"
+    "        sw      t1, 36(a7)\n"
+    "        sw      t2, 40(a7)\n"
+    "        sw      t3, 44(a7)\n"
+    "        lw      t0, 16(t5)\n"
+    "        lw      t1, 20(t5)\n"
+    "        lw      t2, 24(t5)\n"
+    "        lw      t3, 28(t5)\n"
+    "        sw      t0, 48(a0)\n"
+    "        sw      t1, 52(a0)\n"
+    "        sw      t2, 56(a0)\n"
+    "        sw      t3, 60(a0)\n"
+    "        sw      t0, 48(a7)\n"
+    "        sw      t1, 52(a7)\n"
+    "        sw      t2, 56(a7)\n"
+    "        sw      t3, 60(a7)\n"
+
+    "        add     a0, a7, a1\n"
+    "        addi    a3, a3, -1\n"
+    "        bnez    a3, 3b\n"
+
+    "8:      addi    sp, sp, 512\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_cell2)
+
+    ASM_FUNC(canvas_glyph)
+    "        beqz    a4, 9f\n"
+    "        slli    a1, a1, 2\n"
+
+    "1:      lbu     a6, 0(a2)\n"
+    "        add     a2, a2, a3\n"
+    "        beqz    a6, 2f                  # a blank row, and most rows are\n"
+
+    "        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7\n"
+    "        andi    t0, a6, (0x80 >> \\pixel)\n"
+    "        beqz    t0, 3f\n"
+    "        sw      a5, (4 * \\pixel)(a0)\n"
+    "3:\n"
+    "        .endr\n"
+
+    "2:      add     a0, a0, a1\n"
+    "        addi    a4, a4, -1\n"
+    "        bnez    a4, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph)
+
+    ASM_FUNC(canvas_glyph2)
+    "        beqz    a4, 9f\n"
+    "        slli    a1, a1, 2\n"
+
+    "1:      lbu     a6, 0(a2)\n"
+    "        add     a2, a2, a3\n"
+    "        beqz    a6, 2f                  # a blank row, and most rows are\n"
+    "        add     a7, a0, a1\n"
+
+    "        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7\n"
+    "        andi    t0, a6, (0x80 >> \\pixel)\n"
+    "        beqz    t0, 3f\n"
+    "        sw      a5, (8 * \\pixel)(a0)\n"
+    "        sw      a5, (8 * \\pixel + 4)(a0)\n"
+    "        sw      a5, (8 * \\pixel)(a7)\n"
+    "        sw      a5, (8 * \\pixel + 4)(a7)\n"
+    "3:\n"
+    "        .endr\n"
+
+    "2:      slli    t0, a1, 1\n"
+    "        add     a0, a0, t0\n"
+    "        addi    a4, a4, -1\n"
+    "        bnez    a4, 1b\n"
+    "9:      " ASM_RET
+    ASM_END(canvas_glyph2)
+);
+#endif
+#endif // KERNEL_MODE && CONFIG_MOONWATER_CANVAS
 
 /* Expand a preformatted decimal record in place. The first record already
    occupies length bytes. Its [first,end) field contains decimal digits and

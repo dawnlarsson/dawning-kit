@@ -117,6 +117,15 @@ signal_jump_mark signal_jump_to_mark
 ''', 'the mask travels or stays across a jump, from a handler and back, on '
      'three machines; timed before and after in the commit that made them asm')
 
+cover('correctness_only', 'test/checks.c#CHECK_canvas_cells', '''
+canvas_cell canvas_cell2 canvas_glyph canvas_glyph2 canvas_rect_fill
+canvas_row_blit
+''', 'the kernel-only Canvas pixel loops, lifted out of library.c and linked '
+     'into the canvas cells check, which compares what the compositor draws '
+     'with them against a per-pixel reference; canvas_cell and canvas_cell2 '
+     'are also driven directly over 36 colour pairs and 256 bit patterns. '
+     'No timing row here')
+
 cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',
       'the short-decimal reader is held to the general path by name on '
       '131,072 generated inputs a machine in CHECK_number, and reached '
