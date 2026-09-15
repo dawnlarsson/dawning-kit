@@ -41,12 +41,14 @@ static PURE unsigned int output_mode_count(struct drm_connector *connector)
 }
 
 /*
-        Highest resolution, and at that size the highest refresh.
+        Highest resolution, and at that size the highest refresh, among the
+        modes that carry every bit of type; a type of 0 is every mode.
 
         Same size at 60 Hz and 120 Hz is the 120 Hz entry: that is what a
         Mac's virtio EDID actually offers, and what the cursor needs.
 */
-static struct drm_display_mode *output_best_mode(struct drm_connector *connector)
+static struct drm_display_mode *output_largest_mode(struct drm_connector *connector,
+                                                    unsigned int type)
 {
         struct drm_display_mode *mode, *best = NULL;
         int best_score = 0, best_refresh = 0;
@@ -55,6 +57,8 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
         {
                 int score, refresh;
 
+                if ((mode->type & type) != type)
+                        continue;
                 if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
                         continue;
 
@@ -78,30 +82,10 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
 */
 static struct drm_display_mode *output_screen_mode(struct drm_connector *connector)
 {
-        struct drm_display_mode *mode, *best = NULL;
-        int best_score = 0, best_refresh = 0;
+        struct drm_display_mode *preferred =
+            output_largest_mode(connector, DRM_MODE_TYPE_PREFERRED);
 
-        list_for_each_entry(mode, &connector->modes, head)
-        {
-                int score, refresh;
-
-                if (!(mode->type & DRM_MODE_TYPE_PREFERRED))
-                        continue;
-                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
-                        continue;
-
-                refresh = drm_mode_vrefresh(mode);
-                score = mode->hdisplay * mode->vdisplay;
-                if (best && (score < best_score ||
-                             (score == best_score && refresh <= best_refresh)))
-                        continue;
-
-                best = mode;
-                best_score = score;
-                best_refresh = refresh;
-        }
-
-        return best ? best : output_best_mode(connector);
+        return preferred ? preferred : output_largest_mode(connector, 0);
 }
 
 /*
@@ -307,7 +291,7 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
                 }
                 else
                 {
-                        want = biggest ? output_best_mode(connector)
+                        want = biggest ? output_largest_mode(connector, 0)
                                        : output_mode_wh(connector,
                                                         (unsigned int)mode_set->mode->hdisplay,
                                                         (unsigned int)mode_set->mode->vdisplay);
@@ -397,6 +381,32 @@ static void output_disable_modeset(struct drm_device *dev,
                                    struct drm_mode_set *mode_set);
 
 /*
+        A screen with a mode: say which, and how much of a choice there was,
+        then put an output on it. A mode that turns out to be wrong on a
+        machine that is not here is answered by what its connector offered,
+        not by what was picked out of it. A screen that cannot take an output
+        has its mode set turned off.
+*/
+static _Bool output_bring_up(struct canvas *canvas, struct drm_mode_set *mode_set)
+{
+        struct drm_connector *connector =
+            mode_set->num_connectors ? mode_set->connectors[0] : NULL;
+        struct output *output;
+
+        pr_info("[moonwater canvas] " "screen %s %ux%u at %u Hz, drawn %ux, %u mode(s) offered\n", connector && connector->name ? connector->name : "?", mode_set->mode->hdisplay, mode_set->mode->vdisplay, drm_mode_vrefresh(mode_set->mode), desktop.scale, connector ? output_mode_count(connector) : 0);
+
+        output = output_add(canvas, mode_set);
+        if (!output)
+        {
+                output_disable_modeset(canvas->client.dev, mode_set);
+                return false;
+        }
+
+        list_add_tail(&output->link, &desktop.outputs);
+        return true;
+}
+
+/*
         A hotplug after the first picture.
 
         drm_client_modeset_probe drops every modeset's framebuffer pointer.
@@ -433,8 +443,6 @@ static int canvas_rebind(struct canvas *canvas)
         mutex_lock(&client->modeset_mutex);
         drm_client_for_each_modeset(mode_set, client)
         {
-                struct drm_connector *connector;
-
                 if (!mode_set->mode)
                         continue;
 
@@ -445,19 +453,8 @@ static int canvas_rebind(struct canvas *canvas)
                         continue;
                 }
 
-                connector = mode_set->num_connectors ? mode_set->connectors[0]
-                                                     : NULL;
-                pr_info("[moonwater canvas] " "screen %s %ux%u at %u Hz, drawn %ux, %u mode(s) offered\n", connector && connector->name ? connector->name : "?", mode_set->mode->hdisplay, mode_set->mode->vdisplay, drm_mode_vrefresh(mode_set->mode), desktop.scale, connector ? output_mode_count(connector) : 0);
-
-                output = output_add(canvas, mode_set);
-                if (!output)
-                {
-                        output_disable_modeset(client->dev, mode_set);
-                        continue;
-                }
-
-                list_add_tail(&output->link, &desktop.outputs);
-                placed = true;
+                if (output_bring_up(canvas, mode_set))
+                        placed = true;
         }
         mutex_unlock(&client->modeset_mutex);
 
@@ -759,7 +756,6 @@ static COLD void canvas_release(struct canvas *canvas);
 static int canvas_build(struct canvas *canvas, _Bool biggest)
 {
         struct drm_client_dev *client = &canvas->client;
-        struct drm_connector *connector;
         struct drm_mode_set *mode_set;
         unsigned int count = 0;
 
@@ -775,30 +771,11 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
         mutex_lock(&client->modeset_mutex);
         drm_client_for_each_modeset(mode_set, client)
         {
-                struct output *output;
-
                 if (!mode_set->mode)
                         continue;
 
-                /*
-                        Which screen, and how much of a choice there was. A
-                        mode that turns out to be wrong on a machine that is
-                        not here is answered by what its connector offered,
-                        not by what was picked out of it.
-                */
-                connector = mode_set->num_connectors ? mode_set->connectors[0] : NULL;
-
-                pr_info("[moonwater canvas] " "screen %s %ux%u at %u Hz, drawn %ux, %u mode(s) offered\n", connector && connector->name ? connector->name : "?", mode_set->mode->hdisplay, mode_set->mode->vdisplay, drm_mode_vrefresh(mode_set->mode), desktop.scale, connector ? output_mode_count(connector) : 0);
-
-                output = output_add(canvas, mode_set);
-                if (!output)
-                {
-                        output_disable_modeset(client->dev, mode_set);
-                        continue;
-                }
-
-                list_add_tail(&output->link, &desktop.outputs);
-                count++;
+                if (output_bring_up(canvas, mode_set))
+                        count++;
         }
         mutex_unlock(&client->modeset_mutex);
 
