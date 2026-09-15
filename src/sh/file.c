@@ -11713,8 +11713,9 @@ static bool du_separate;
 static bool du_one_system;
 static bool du_count_links;
 static bool du_follow;
+static bool du_hash_all;
 static positive du_unit = 1024;
-static positive du_maximum = FILE_MAX_DEPTH;
+static positive du_maximum = positive_max;
 static b32 du_status;
 static p64 du_grand;
 static p64 du_device;
@@ -11788,11 +11789,13 @@ static fn du_report(p64 bytes, string_address path)
         per depth keeps what the directory itself costs with what is under it,
         and, for -S, what of that is under its subdirectories.
 */
+#if !defined(LIBRARY_THREAD_RUNTIME)
 static struct
 {
         p64 total;
         p64 below;
 } du_levels[WALK_LEVELS];
+#endif
 
 static walk du_walker;
 static walk_batch du_batch;
@@ -11825,8 +11828,565 @@ static fn du_look_job(address_any context, positive index)
                     du_follow ? 0 : AT_SYMLINK_NOFOLLOW, batch->facts + index);
 }
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        du over parallel_tree.  enter looks at every name of one directory
+        through the handle the pool opened and writes a record for each into
+        the node's output; a subdirectory's whole subtree lands where
+        parallel_child was called for it, and leave writes the directory's
+        end after the last of them.  The sink reads the records on the
+        calling thread in preorder, the order a serial walk meets them in, so
+        hard links, lines and totals come out the same at every width: the
+        jobs only look, and everything whose order shows happens in the sink.
+        Nothing here has a depth limit.
+
+        Under -L, or with more than one operand, GNU's du counts every
+        identity once, directories too, and does not go into a directory it
+        has already counted.  The jobs cannot know which of two names for one
+        directory the walk meets first, so both are read and the sink passes
+        over the second and everything under it.  A directory that is its own
+        ancestor is not entered at all, which is what keeps -L out of a loop.
+*/
+typedef struct du_tree_node
+{
+        struct du_tree_node address_to parent;
+        positive depth;
+        p64 own;
+        p64 device;
+        p64 inode;
+        p32 device_major;
+        p32 device_minor;
+        bool unread;
+        positive length;
+        p8 path[];
+} du_tree_node;
+
+typedef struct
+{
+        p64 total;
+        p64 below;
+} du_tree_level;
+
+enum
+{
+        DU_TREE_BEGIN = 1,
+        DU_TREE_ENTRY,
+        DU_TREE_FAILED,
+        DU_TREE_UNREAD,
+        DU_TREE_READ,
+        DU_TREE_LEAVE,
+};
+
+typedef struct
+{
+        p8 kind;
+        p8 spare[3];
+        b32 error;
+        p32 links;
+        p32 device_major;
+        p32 device_minor;
+        p32 path_bytes;
+        p64 inode;
+        p64 cost;
+} du_tree_record;
+
+static du_tree_level address_to du_tree_levels;
+static positive du_tree_levels_room;
+static p64 du_tree_result;
+static du_tree_node address_to du_tree_skipping;
+
+static du_tree_node address_to du_tree_node_new(du_tree_node address_to parent,
+                                               string_address name,
+                                               positive name_length)
+{
+        positive joint = parent && parent->length &&
+                         parent->path[parent->length - 1] != '/';
+        positive length = (parent ? parent->length + joint : 0) + name_length;
+        du_tree_node address_to node = memory_take(sizeof(du_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(du_tree_node));
+        node->parent = parent;
+        node->depth = parent ? parent->depth + 1 : 0;
+        node->length = length;
+        if (parent)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                if (joint)
+                        node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + joint, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+        node->path[length] = end;
+        return node;
+}
+
+//      A name's whole path, on the stack when it fits.
+static p8 address_to du_tree_path(du_tree_node address_to node, string_address name,
+                                  positive name_length, p8 address_to small,
+                                  positive address_to length)
+{
+        positive joint = node->length && node->path[node->length - 1] != '/';
+        positive total = node->length + joint + name_length;
+        p8 address_to path = total < FILE_PATH_MAX ? small : memory_take(total + 1);
+
+        if (!path)
+                return null;
+        memory_copy(path, node->path, node->length);
+        if (joint)
+                path[node->length] = '/';
+        memory_copy(path + node->length + joint, name, name_length);
+        path[total] = end;
+        address_to length = total;
+        return path;
+}
+
+//      A record and, when there is one, its NUL-terminated path after it.
+static bool du_tree_put(parallel_output address_to output,
+                        du_tree_record address_to record,
+                        string_address path, positive length)
+{
+        positive bytes = path ? length + 1 : 0;
+        p8 address_to at = parallel_reserve(output, sizeof(du_tree_record) + bytes);
+
+        if (!at)
+                return false;
+
+        record->path_bytes = (p32)bytes;
+        memory_copy(at, record, sizeof(du_tree_record));
+        if (bytes)
+        {
+                memory_copy(at + sizeof(du_tree_record), path, length);
+                at[sizeof(du_tree_record) + length] = end;
+        }
+        return true;
+}
+
+static fn du_tree_enter(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        du_tree_node address_to node = node_address;
+        du_tree_record record;
+        p8 records[WALK_READ];
+        positive depth = node->depth + 1;
+        bool shown = du_all && depth <= du_maximum;
+
+        (void)context;
+        memory_fill(address_of record, 0, sizeof(record));
+
+        if (directory < 0)
+        {
+                node->unread = true;
+                record.kind = DU_TREE_UNREAD;
+                record.error = (b32)directory;
+                (void)du_tree_put(output, address_of record, null, 0);
+                return;
+        }
+
+        record.kind = DU_TREE_BEGIN;
+        if (!du_tree_put(output, address_of record, null, 0))
+                return;
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                {
+                        if (got < 0)
+                        {
+                                memory_fill(address_of record, 0, sizeof(record));
+                                record.kind = DU_TREE_READ;
+                                record.error = (b32)got;
+                                (void)du_tree_put(output, address_of record, null, 0);
+                        }
+                        break;
+                }
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to entry =
+                            (struct linux_dirent64 address_to)(records + at);
+                        string_address name = (string_address)entry->d_name;
+
+                        at += entry->d_reclen;
+                        if (file_is_dot(name))
+                                continue;
+
+                        positive name_length = string_length(name);
+                        positive length = 0;
+                        p8 small[FILE_PATH_MAX];
+                        p8 address_to path = null;
+                        file_facts facts;
+                        bool kept = true;
+
+                        //      The path is made only for what reads it: an
+                        //      exclusion, an -a line or a complaint.
+                        if (du_exclude_have || shown)
+                        {
+                                path = du_tree_path(node, name, name_length, small,
+                                                    address_of length);
+                                if (!path)
+                                {
+                                        parallel_stop();
+                                        return;
+                                }
+                                if (du_exclude_have && du_excluded((string_address)path))
+                                {
+                                        if (path != small)
+                                                memory_give(path);
+                                        continue;
+                                }
+                        }
+
+                        bipolar looked = file_look_code(directory, name,
+                                                        du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                        address_of facts);
+
+                        memory_fill(address_of record, 0, sizeof(record));
+
+                        if (looked < 0)
+                        {
+                                if (!path)
+                                        path = du_tree_path(node, name, name_length, small,
+                                                            address_of length);
+                                //      -L through a link that dangles has no
+                                //      reason to give, and GNU's du gives none.
+                                record.kind = DU_TREE_FAILED;
+                                record.error = du_follow && looked == -ERROR_NO_ENTRY
+                                                   ? 0 : (b32)looked;
+                                kept = path && du_tree_put(output, address_of record,
+                                                           (string_address)path, length);
+                        }
+                        else
+                        {
+                                p64 device = file_device_key(facts.device_major,
+                                                             facts.device_minor);
+
+                                if (du_one_system && device != du_device)
+                                        ;
+                                else if ((facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                                {
+                                        bool cycle = false;
+
+                                        for (du_tree_node address_to up = node;
+                                             du_follow && up && !cycle; up = up->parent)
+                                                cycle = up->device == device &&
+                                                        up->inode == facts.inode;
+
+                                        if (!cycle)
+                                        {
+                                                du_tree_node address_to child =
+                                                    du_tree_node_new(node, name, name_length);
+
+                                                kept = child != null;
+                                                if (child)
+                                                {
+                                                        child->own = du_apparent ? 0 : facts.blocks * 512;
+                                                        child->device = device;
+                                                        child->inode = facts.inode;
+                                                        child->device_major = facts.device_major;
+                                                        child->device_minor = facts.device_minor;
+                                                        if (!parallel_child(output, name, child))
+                                                        {
+                                                                memory_give(child);
+                                                                kept = false;
+                                                        }
+                                                }
+                                        }
+                                }
+                                else
+                                {
+                                        record.kind = DU_TREE_ENTRY;
+                                        record.links = facts.hard_links;
+                                        record.device_major = facts.device_major;
+                                        record.device_minor = facts.device_minor;
+                                        record.inode = facts.inode;
+                                        record.cost = du_apparent ? (p64)facts.size
+                                                                  : facts.blocks * 512;
+                                        kept = du_tree_put(output, address_of record,
+                                                           shown ? (string_address)path : null,
+                                                           length);
+                                }
+                        }
+
+                        if (path && path != small)
+                                memory_give(path);
+                        if (!kept)
+                        {
+                                parallel_stop();
+                                return;
+                        }
+                }
+        }
+}
+
+static fn du_tree_leave(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        du_tree_node address_to node = node_address;
+        du_tree_record record;
+
+        (void)context;
+        (void)directory;
+        if (node->unread)
+                return;
+        memory_fill(address_of record, 0, sizeof(record));
+        record.kind = DU_TREE_LEAVE;
+        (void)du_tree_put(output, address_of record, null, 0);
+}
+
+static fn du_tree_add(positive depth, p64 cost, bool below)
+{
+        if (!depth)
+        {
+                du_tree_result = cost;
+                return;
+        }
+        du_tree_levels[depth - 1].total += cost;
+        if (below)
+                du_tree_levels[depth - 1].below += cost;
+}
+
+//      Whether an identity was counted already.  A hard link always asks;
+//      under GNU's hash_all every name and every directory asks.
+static bool du_tree_seen(p32 major, p32 minor, p64 inode, p32 links, bool directory)
+{
+        if (du_count_links || (!du_hash_all && (directory || links < 2)))
+                return false;
+
+        file_facts facts;
+
+        memory_fill(address_of facts, 0, sizeof(facts));
+        facts.device_major = major;
+        facts.device_minor = minor;
+        facts.inode = inode;
+
+        bipolar seen = file_identity_seen(address_of du_seen, address_of facts);
+
+        if (seen < 0)
+        {
+                shell_memory_failed = true;
+                log_error("du: out of memory while tracking hard links\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
+        }
+        return seen != 0;
+}
+
+static bool du_tree_sink(address_any context, address_any node_address,
+                         address_any data, positive length, bool finished)
+{
+        du_tree_node address_to node = node_address;
+        p8 address_to bytes = data;
+        positive at = 0;
+
+        (void)context;
+        if (finished)
+        {
+                if (du_tree_skipping == node)
+                        du_tree_skipping = null;
+                memory_give(node);
+                return true;
+        }
+
+        while (at < length)
+        {
+                du_tree_record record;
+                string_address path;
+
+                memory_copy(address_of record, bytes + at, sizeof(record));
+                path = (string_address)bytes + at + sizeof(record);
+                at += sizeof(record) + record.path_bytes;
+
+                //      A directory counted under another name is passed over
+                //      with everything under it, up to its own end.
+                if (du_tree_skipping)
+                {
+                        if (node == du_tree_skipping && record.kind == DU_TREE_LEAVE)
+                                du_tree_skipping = null;
+                        continue;
+                }
+
+                if (record.kind == DU_TREE_BEGIN)
+                {
+                        if (node->depth &&
+                            du_tree_seen(node->device_major, node->device_minor,
+                                         node->inode, 2, true))
+                        {
+                                if (du_seen_broken)
+                                        return false;
+                                du_tree_skipping = node;
+                                continue;
+                        }
+                        if (!array_store_reserve(du_tree_levels, du_tree_levels_room,
+                                                 du_tree_levels_room, node->depth + 1, 64))
+                        {
+                                log_error("du: out of memory while walking the tree\n", 0);
+                                du_seen_broken = true;
+                                du_status = 1;
+                                return false;
+                        }
+                        du_tree_levels[node->depth].total = node->own;
+                        du_tree_levels[node->depth].below = 0;
+                }
+                else if (record.kind == DU_TREE_UNREAD)
+                {
+                        if (node->depth &&
+                            du_tree_seen(node->device_major, node->device_minor,
+                                         node->inode, 2, true))
+                        {
+                                if (du_seen_broken)
+                                        return false;
+                                continue;
+                        }
+                        string_format(log_error, "du: cannot read directory '%w': %s\n",
+                                      writer_terminal_quoted_name, (string_address)node->path,
+                                      file_reason(record.error));
+                        du_status = 1;
+                        if (node->depth <= du_maximum)
+                                du_report(node->own, (string_address)node->path);
+                        du_tree_add(node->depth, node->own, true);
+                }
+                else if (record.kind == DU_TREE_READ)
+                {
+                        string_format(log_error, "du: cannot read directory '%w': %s\n",
+                                      writer_terminal_quoted_name, (string_address)node->path,
+                                      file_reason(record.error));
+                        du_status = 1;
+                }
+                else if (record.kind == DU_TREE_FAILED)
+                {
+                        if (record.error)
+                                string_format(log_error, "du: cannot access '%w': %s\n",
+                                              writer_terminal_quoted_name, path,
+                                              file_reason(record.error));
+                        else
+                                string_format(log_error, "du: cannot access '%w'\n",
+                                              writer_terminal_quoted_name, path);
+                        du_status = 1;
+                }
+                else if (record.kind == DU_TREE_ENTRY)
+                {
+                        positive depth = node->depth + 1;
+
+                        if (du_tree_seen(record.device_major, record.device_minor,
+                                         record.inode, record.links, false))
+                        {
+                                if (du_seen_broken)
+                                        return false;
+                                continue;
+                        }
+                        if (du_all && depth <= du_maximum)
+                                du_report(record.cost, path);
+                        du_tree_add(depth, record.cost, false);
+                }
+                else if (record.kind == DU_TREE_LEAVE)
+                {
+                        p64 total = du_tree_levels[node->depth].total;
+
+                        if (node->depth <= du_maximum)
+                                du_report(du_separate ? total - du_tree_levels[node->depth].below
+                                                      : total,
+                                          (string_address)node->path);
+                        du_tree_add(node->depth, total, true);
+                }
+        }
+        return true;
+}
+
+static p64 du_measure_tree(string_address root)
+{
+        file_facts facts;
+        bipolar looked = file_look_code(AT_FDCWD, root,
+                                        du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                        address_of facts);
+
+        if (looked < 0)
+        {
+                if (du_follow && looked == -ERROR_NO_ENTRY)
+                        string_format(log_error, "du: cannot access '%w'\n",
+                                      writer_terminal_quoted_name, root);
+                else
+                        string_format(log_error, "du: cannot access '%w': %s\n",
+                                      writer_terminal_quoted_name, root, file_reason(looked));
+                du_status = 1;
+                return 0;
+        }
+
+        //      GNU's du holds an operand to its exclusions like any other name.
+        if (du_exclude_have && du_excluded(root))
+                return 0;
+
+        bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        du_device = file_device_key(facts.device_major, facts.device_minor);
+        if (du_tree_seen(facts.device_major, facts.device_minor, facts.inode,
+                         facts.hard_links, directory))
+                return 0;
+
+        p64 mine = du_apparent ? (p64)facts.size : facts.blocks * 512;
+
+        if (du_apparent && directory)
+                mine = 0;
+        if (!directory)
+        {
+                du_report(mine, root);
+                return mine;
+        }
+
+        bipolar handle = system_open_at(AT_FDCWD, root, FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        if (handle < 0)
+        {
+                string_format(log_error, "du: cannot read directory '%w': %s\n",
+                              writer_terminal_quoted_name, root, file_reason(handle));
+                du_status = 1;
+                du_report(mine, root);
+                return mine;
+        }
+
+        du_tree_node address_to top = du_tree_node_new(null, root, string_length(root));
+
+        if (!top)
+        {
+                system_close(handle);
+                log_error("du: out of memory while walking the tree\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
+                return 0;
+        }
+        top->own = mine;
+        top->device = du_device;
+        top->inode = facts.inode;
+        top->device_major = facts.device_major;
+        top->device_minor = facts.device_minor;
+        du_tree_result = 0;
+        du_tree_skipping = null;
+
+        bool whole = parallel_tree(du_tree_enter, du_tree_leave, du_tree_sink, null,
+                                   handle, top, du_follow ? 0 : O_NOFOLLOW);
+
+        system_close(handle);
+        if (!whole && !du_seen_broken)
+        {
+                log_error("du: out of memory while walking the tree\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
+        }
+        return du_seen_broken ? 0 : du_tree_result;
+}
+#endif
+
 static p64 du_measure(string_address root)
 {
+#if defined(LIBRARY_THREAD_RUNTIME)
+        return du_measure_tree(root);
+#else
         walk address_to walker = address_of du_walker;
         walk_batch address_to batch = address_of du_batch;
         p64 result = 0;
@@ -12045,6 +12605,7 @@ static p64 du_measure(string_address root)
         }
 
         return result;
+#endif
 }
 
 static bool du_exclude_seen(p8 letter, string_address value)
@@ -12084,7 +12645,7 @@ static b32 file_du()
         du_status = 0;
         du_grand = 0;
         du_unit = 1024;
-        du_maximum = FILE_MAX_DEPTH;
+        du_maximum = positive_max;
         du_exclude_have = 0;
         file_identity_set_clear(address_of du_seen);
         du_seen_broken = false;
@@ -12113,6 +12674,10 @@ static b32 file_du()
         du_one_system = (flags & FILE_FLAG('x')) != 0;
         du_count_links = (flags & FILE_FLAG('l')) != 0;
         du_follow = (flags & FILE_FLAG('L')) != 0;
+        //      GNU's du counts every identity once, directories too, when -L
+        //      can reach one twice or more than one operand is named.
+        du_hash_all = !du_count_links &&
+                      (du_follow || (taking.first < count && count - taking.first > 1));
 
         if (du_unit_option == 'b')
                 du_unit = 1;
