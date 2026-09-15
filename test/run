@@ -5977,6 +5977,21 @@ same 'four bytes'     '[<1f600>]'                8 2 in '\xf0\x9f\x98\x80' row 0
 same 'six hex digits' '[<10ffff>]'               8 2 in '\xf4\x8f\xbf\xbf' row 0
 same 'one cell each'  '0,3'                      8 2 in '\xc3\xa9\xc3\xa9\xc3\xa9' cursor
 
+group width
+#       Programs count columns with wcwidth. An ideograph or an emoji takes
+#       two cells and a combining mark takes none; a terminal that gave each
+#       one cell put everything after them a column away from where the
+#       program drew it. Half of a wide character cannot stand alone, so
+#       writing over either half blanks the other.
+same 'two columns each' '0,4'                    8 2 in '\xe6\xbc\xa2\xe5\xad\x97' cursor
+same 'wide prints once' '[<6f22><5b57>]'         8 2 in '\xe6\xbc\xa2\xe5\xad\x97' row 0
+same 'emoji is wide'  '0,2'                      8 2 in '\xf0\x9f\x98\x80' cursor
+same 'mark takes none' '[ex]|0,2'                8 2 in 'e\xcc\x81x' row 0 cursor
+same 'wraps whole'    '[abc]|[<6f22>]|1,2'       4 2 in 'abc\xe6\xbc\xa2' dump cursor
+same 'right half hit' '[ x]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;2Hx' row 0
+same 'left half hit'  '[x ]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;1Hx' row 0
+same 'pinned at the edge' '[ab<6f22>]|0,4'       4 2 in '\e[?7l' in 'abc\xe6\xbc\xa2' row 0 cursor
+
 group malformed
 #       Unicode 3.9, and the substitution of maximal subparts: a sequence
 #       that stopped short is one character that never arrived, and the byte

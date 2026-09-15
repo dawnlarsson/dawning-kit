@@ -519,6 +519,19 @@ static void glyph_tofu(unsigned char *bits)
                 bits[y] = 0x42;
 }
 
+// One half of a box two cells wide, for a double-width character the face
+// has no glyph for.
+static void glyph_tofu_half(unsigned char *bits, _Bool right)
+{
+        unsigned int y;
+
+        memory_fill(bits, 0, WINDOW_CELL_H);
+        bits[1] = right ? 0xfe : 0x7f;
+        bits[WINDOW_CELL_H - 2] = bits[1];
+        for (y = 2; y < WINDOW_CELL_H - 2; y++)
+                bits[y] = right ? 0x02 : 0x40;
+}
+
 /*
         What the VGA face already draws.
 
@@ -908,6 +921,11 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                                                         (size_t)glyph *
                                                             glyph_size,
                                                     WINDOW_CELL_H);
+                                else if (flags & (WINDOW_CELL_WIDE |
+                                                  WINDOW_CELL_WIDE_RIGHT))
+                                        glyph_tofu_half(
+                                            made,
+                                            (flags & WINDOW_CELL_WIDE_RIGHT) != 0);
                                 else if (!glyph_synthesize(character, made) &&
                                          !(font_data &&
                                            glyph_script_digit(character,

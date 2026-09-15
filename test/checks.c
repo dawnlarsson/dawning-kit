@@ -4838,6 +4838,10 @@ static fn say_row(unsigned int row)
         {
                 unsigned int character = cells[column].character;
 
+                // The second cell of a double-width character is the same one.
+                if (cells[column].flags & WINDOW_CELL_WIDE_RIGHT)
+                        continue;
+
                 if (character >= ' ' && character < 127)
                         say_byte(character);
                 else
@@ -55920,6 +55924,8 @@ typedef uint64_t u64;
 #define WINDOW_CELL_BLINK 16u
 #define WINDOW_CELL_HIDDEN 32u
 #define WINDOW_CELL_STRIKE 64u
+#define WINDOW_CELL_WIDE 128u
+#define WINDOW_CELL_WIDE_RIGHT 256u
 #define DRM_FORMAT_ARGB8888 0x34325241u
 static struct {unsigned scale;int bar_grab,frame_pending;} desktop={1};
 #define canvas_cell_w (WINDOW_CELL_W * (int)desktop.scale)

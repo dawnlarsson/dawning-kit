@@ -333,6 +333,12 @@ struct window_cell
 #define WINDOW_CELL_HIDDEN 32u
 #define WINDOW_CELL_STRIKE 64u
 
+/* A character two columns wide takes two cells: itself with WINDOW_CELL_WIDE
+   in the first, and again with WINDOW_CELL_WIDE_RIGHT in the second, so what
+   follows it lands in the column the program counted. */
+#define WINDOW_CELL_WIDE 128u
+#define WINDOW_CELL_WIDE_RIGHT 256u
+
 /* The program writes this; the compositor reads it. A terminal that has
    asked for mouse tracking sets WINDOW_WANT_POINTER so clicks, drags and
    the wheel reach its key ring instead of only moving the desktop. */
