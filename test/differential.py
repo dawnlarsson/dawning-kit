@@ -23714,6 +23714,25 @@ def harness_compression(argv):
                         damaged[len(damaged) // 3] ^= 0x55
                         broken = call(decode, bytes(damaged))
                         check(label + '/xz/multi-block-damaged', broken.returncode != 0)
+                        # What survives damage is what GNU recovers: the same
+                        # bytes and a failing status, whether blocks carry sizes
+                        # or not, decoded side by side or on the calling thread.
+                        unsized = call([refs['xz'], '-c', '-1', '-T1'], data).stdout
+                        for kind, blob in (('sized', parts[1]), ('unsized', unsized)):
+                            for percent in (31, 50, 77):
+                                at = len(blob) * percent // 100
+                                flipped = bytearray(blob)
+                                flipped[at] ^= 0x55
+                                for what, broken in (('corrupt', bytes(flipped)), ('cut', blob[:at])):
+                                    ref = call([refs['xz'], '-dc'], broken)
+                                    for mode in ([], ['-T1']):
+                                        got = call(decode + mode, broken)
+                                        check('%s/xz/salvage-%s-%s-%d%s' % (label, kind, what, percent,
+                                                                           '-T1' if mode else ''),
+                                              (got.returncode != 0) == (ref.returncode != 0) and
+                                              got.stdout == ref.stdout,
+                                              '%d bytes, GNU %d; %s' % (len(got.stdout), len(ref.stdout),
+                                                                        got.stderr.decode(errors='replace')))
 
                     # Different search budgets and reset paths must remain interoperable.
                     for other_level in ('1', '6', '9'):

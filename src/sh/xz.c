@@ -3561,6 +3561,7 @@ typedef struct
         p64 unpadded;           /* header + compressed + check, for the index */
         p64 uncompressed;
         string_address why;     /* the job's verdict, reported by the sink */
+        positive written;       /* bytes decoded before a failure, all on success */
 } xz_par_block;
 
 typedef struct
@@ -3590,6 +3591,7 @@ typedef struct
         bool failed;
         string_address why;
         p64 in_abs;
+        positive partial;       /* bytes a short read delivered */
 } xz_par;
 
 static bool xz_par_fail(xz_par address_to r, string_address why)
@@ -3613,7 +3615,10 @@ static bipolar xz_par_read(xz_par address_to r, p8 address_to into, positive n)
                 if (k < 0)
                         return xz_par_fail(r, "xz read failed"), -1;
                 if (!k)
+                {
+                        r->partial = got;
                         return got ? (xz_par_fail(r, "xz truncated input"), -1) : 0;
+                }
                 got += (positive)k;
         }
         r->in_abs += n;
@@ -3703,21 +3708,22 @@ static bool xz_par_record(xz_par address_to r, p64 unpadded, p64 uncompressed)
         return true;
 }
 
-/* One block through a slot's decoder, from a
-   memory span of exactly its bytes into exactly its output. The decoder is
-   kept per slot so its dictionary mapping survives from block to block. */
+/* One block through a slot's decoder, from a memory span of its bytes into
+   exactly its output. The decoder is kept per slot so its dictionary mapping
+   survives from block to block. On a failure `written` still says how much
+   of the block decoded, which is what GNU writes before its error. */
 static string_address xz_par_block_decode(xz_par address_to r, positive slot,
                                           p8 address_to bytes, positive total,
-                                          p8 address_to into, p64 uncompressed)
+                                          p8 address_to into, p64 uncompressed,
+                                          positive address_to written)
 {
+        address_to written = 0;
         if (!r->slots[slot])
                 r->slots[slot] = xz_block_decoder();
         if (!r->slots[slot])
                 return "xz cannot map a decoder";
-        positive written;
-
         if (!xz_block_decode(r->slots[slot], bytes, total, uncompressed, into,
-                             r->check, null, address_of written))
+                             r->check, null, written))
         {
                 string_address why = xz_pull_error(r->slots[slot]);
 
@@ -3734,13 +3740,14 @@ static fn xz_par_job(address_any context, positive index, parallel_output addres
         xz_par_block address_to b = r->blocks + index;
         p8 address_to into = b->uncompressed ? parallel_reserve(output, b->uncompressed) : null;
 
+        b->written = 0;
         if (b->uncompressed && !into)
         {
                 b->why = "xz cannot map block output";
                 return;
         }
         b->why = xz_par_block_decode(r, parallel_slot(), r->bytes + b->at, b->total,
-                                     into, b->uncompressed);
+                                     into, b->uncompressed, address_of b->written);
 }
 
 static bool xz_par_sink(address_any context, positive index, address_any data, positive length)
@@ -3748,11 +3755,11 @@ static bool xz_par_sink(address_any context, positive index, address_any data, p
         xz_par address_to r = (xz_par address_to)context;
         xz_par_block address_to b = r->blocks + index;
 
-        if (b->why)
-                return xz_par_fail(r, b->why);
-        if (length && system_write_all((positive)r->out, data, length) != (bipolar)length)
+        positive keep = b->why && b->written < length ? b->written : length;
+
+        if (keep && system_write_all((positive)r->out, data, keep) != (bipolar)keep)
                 return xz_par_fail(r, "xz write failed");
-        return true;
+        return b->why ? xz_par_fail(r, b->why) : true;
 }
 
 static bool xz_par_run_batch(xz_par address_to r)
@@ -3939,8 +3946,15 @@ static bipolar xz_par_walk(xz_par address_to r, positive batch_output)
                             !xz_par_grow(address_of r->bytes, address_of r->room, r->used + size,
                                          r->used + total))
                                 return xz_par_fail(r, "xz cannot map the input"), -1;
+                        r->partial = 0;
                         if (xz_par_read(r, r->bytes + r->used + size, total - size) != 1)
-                                return xz_par_fail(r, "xz truncated block"), -1;
+                        {
+                                /* Queued as it is: the driver writes the
+                                   blocks before it, then what it decodes. */
+                                r->blocks[r->count++] = (xz_par_block){
+                                    r->used, size + r->partial, 0, uncompressed, null, 0};
+                                return -1;
+                        }
                         r->blocks[r->count] = (xz_par_block){
                             r->used, total, size + body + r->check_size, uncompressed, null};
                         if (!xz_par_record(r, size + body + r->check_size, uncompressed))
@@ -4007,6 +4021,17 @@ static bool xz_par_decode(bipolar in, bipolar out)
         {
                 bipolar got = xz_par_walk(r, xz_batch_room((positive)1 << 20));
 
+                if (got < 0 && r->count)
+                {
+                        string_address why = r->why;
+
+                        r->why = null;
+                        r->failed = false;
+                        xz_par_run_batch(r);
+                        if (!r->why)
+                                r->why = why;
+                        r->failed = true;
+                }
                 ok = got > 0 || (got == 0 && xz_par_serial_rest(r));
                 for (positive i = 0; i < r->slot_count; i++)
                         if (r->slots[i])
