@@ -5288,6 +5288,9 @@ static bipolar shell_exec_file(string_address path,
 #define SHARED_terminal_fixture
 #include "test/checks.c"
 #undef SHARED_terminal_fixture
+#define SHARED_unicode_width_reference
+#include "test/checks.c"
+#undef SHARED_unicode_width_reference
 
 // Whether in hands its bytes over one at a time or as one read.
 static b32 feed_reads;
@@ -5705,21 +5708,13 @@ b32 main()
                 {
                         unsigned int wrong = 0;
 
-                        // Every character, as character_width answers it and
-                        // as the two tables alone say, so no shortcut in front
-                        // of the searches can disagree with them.
+                        // Every character, as unicode_width answers it for
+                        // the terminal and as term.c's two range tables alone
+                        // said, so no shortcut in front of the table lookup
+                        // can disagree with them.
                         for (unsigned int c = 0; c <= 0x10ffff; c++)
-                        {
-                                unsigned int tables =
-                                    c < 0x300 ? 1
-                                    : character_in(character_zero,
-                                                   array_count(character_zero), c) ? 0
-                                    : character_in(character_wide,
-                                                   array_count(character_wide), c) ? 2
-                                                                                    : 1;
-
-                                wrong += character_width(c) != tables;
-                        }
+                                wrong += unicode_width(c, UNICODE_WIDTH_TERMINAL) !=
+                                         unicode_width_reference_tables(c);
 
                         say_number(wrong);
                         say_byte('\n');
