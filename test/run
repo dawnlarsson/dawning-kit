@@ -5931,6 +5931,14 @@ same 'bright paper'  '7,13'                      8 2 in '\e[105mx' attr 0,0
 same 'defaults back' '7,0'                       8 2 in '\e[31;44m\e[39;49mx' attr 0,0
 same 'reset'         '7,0'                       8 2 in '\e[31;44m\e[0mx' attr 0,0
 same 'no parameter'  '7,0'                       8 2 in '\e[31;44m\e[mx' attr 0,0
+#       Bold draws the first eight bright when the cell is written, so SGR 22
+#       takes the bold away and leaves a bright colour chosen as one. Past the
+#       last parameter slot the rest are dropped, not run into the last one.
+same 'normal intensity keeps bright' '9,0'       8 2 in '\e[91m\e[22mx' attr 0,0
+same 'normal intensity after bold' '1,0'         8 2 in '\e[1;31m\e[22mx' attr 0,0
+same 'bold default'  '15,0'                      8 2 in '\e[1;39mx' attr 0,0
+same 'double underline' '8'                      8 2 in '\e[21mx' flags 0,0
+same 'nineteen parameters' '1,1|0'               8 2 in '\e[1;2;3;4;5;6;7;8;9;21;22;23;24;25;27;28;29;31;41mx' attr 0,0 flags 0,0
 
 group reverse
 #       Reverse video is the two colours the other way round when the cell is
@@ -5951,6 +5959,16 @@ same 'paper too'     '7,1'                       8 2 in '\e[48;5;1mx' attr 0,0
 same 'true colour'   '196,0'                     8 2 in '\e[38;2;250;10;10mx' attr 0,0
 same 'and what follows it' '196,4'               8 2 in '\e[38;2;250;10;10;44mx' attr 0,0
 same 'sub parameters' '9,0'                      8 2 in '\e[38:5:9mx' attr 0,0
+#       A colon joins a parameter to the one before, so what follows it is that
+#       one's and not an SGR number of its own.
+same 'direct with a colour space' '196,0'        8 2 in '\e[38:2::255:0:0mx' attr 0,0
+same 'direct without one' '196,0'                8 2 in '\e[38:2:255:0:0mx' attr 0,0
+same 'joined ends at a semicolon' '196,4'        8 2 in '\e[38:2::255:0:0;44mx' attr 0,0
+same 'index past the table' '2,0'                8 2 in '\e[32;38;5;256mx' attr 0,0
+same 'underline style' '8'                       8 2 in '\e[4:3mx' flags 0,0
+same 'underline style off' '0|1,0'               8 2 in '\e[31;4m\e[4:0mx' flags 0,0 attr 0,0
+same 'underline colour' '0|1,0'                  8 2 in '\e[58;5;1;31mx' flags 0,0 attr 0,0
+same 'underline colour joined' '0|1,0'           8 2 in '\e[58:2::9:9:9;31mx' flags 0,0 attr 0,0
 
 #
 #       Modes.

@@ -177,10 +177,20 @@ static inline INLINE unsigned int slot_after(unsigned int slot, unsigned int cou
 */
 #define BLANK_CELL_WORD ((positive)' ' | ((positive)7 << 32))
 
+/*
+        Bold draws the first eight inks in their bright spellings. It is done
+        when a cell is written rather than to the ink itself, so SGR 22 takes
+        the bold off without taking a bright colour chosen as one with it.
+*/
+static PURE unsigned char ink_drawn()
+{
+        return (style & WINDOW_CELL_BOLD) && ink < 8 ? (unsigned char)(ink | 8) : ink;
+}
+
 static PURE positive blank_cell_word()
 {
-        positive clear_ink = reverse ? paper : ink;
-        positive clear_paper = reverse ? ink : paper;
+        positive clear_ink = reverse ? paper : ink_drawn();
+        positive clear_paper = reverse ? ink_drawn() : paper;
 
         return (positive)' ' | (clear_ink << 32) | (clear_paper << 40);
 }
@@ -597,8 +607,8 @@ static fn put_cells(unsigned int character, unsigned int width)
 
         cell = cells + column;
         cell->character = character;
-        cell->ink = reverse ? paper : ink;
-        cell->paper = reverse ? ink : paper;
+        cell->ink = reverse ? paper : ink_drawn();
+        cell->paper = reverse ? ink_drawn() : paper;
         cell->flags = style;
 
         if (width == 2)
@@ -678,17 +688,20 @@ static fn emit(unsigned int byte)
 /* One CSI parameter machine serves both terminal output and editor input.
    The final byte is deliberately not stored: it is the caller's action, while
    digits, separators and the private marker are the reusable transition. */
-#define TERMINAL_PARAMETERS 16
+#define TERMINAL_PARAMETERS 32
 typedef struct
 {
         unsigned int value[TERMINAL_PARAMETERS];
         unsigned int count;
+        unsigned int colon; // bit n: value[n] was joined to the one before by ':'
         p8 marker;
+        p8 full;            // a separator past the last slot: the rest is dropped
 } terminal_parameters;
 
 #define terminal_parameters_reset(sequence)                                 \
         ((sequence)->count = 0, (sequence)->marker = 0,                     \
-         (sequence)->value[0] = 0)
+         (sequence)->value[0] = 0, (sequence)->colon = 0,                   \
+         (sequence)->full = 0)
 
 static inline INLINE bool terminal_parameters_take(
     terminal_parameters address_to sequence, unsigned int byte)
@@ -697,6 +710,9 @@ static inline INLINE bool terminal_parameters_take(
         {
                 unsigned int digit = byte - '0';
                 unsigned int address_to value;
+
+                if (sequence->full)
+                        return false;
 
                 if (!sequence->count)
                         sequence->count = 1;
@@ -720,8 +736,16 @@ static inline INLINE bool terminal_parameters_take(
                 if (!sequence->count)
                         sequence->count = 1;
 
-                if (sequence->count < TERMINAL_PARAMETERS)
+                // Past the last slot the rest are dropped, where they used
+                // to run their digits on into the last one's.
+                if (sequence->count == TERMINAL_PARAMETERS)
+                        sequence->full = 1;
+                else if (!sequence->full)
+                {
+                        if (byte == ':')
+                                sequence->colon |= 1u << sequence->count;
                         sequence->value[sequence->count++] = 0;
+                }
 
                 return false;
         }
@@ -960,11 +984,6 @@ static fn tab_backward()
         them was what made 38;5;31m paint the text red: the number after 38;5
         fell through into the plain foreground range.
 */
-static CONST unsigned char colour_256(unsigned int n)
-{
-        return (unsigned char)(n < 256 ? n : 15);
-}
-
 static CONST unsigned char colour_cube_level(unsigned int v)
 {
         if (v < 48)
@@ -1005,44 +1024,63 @@ static CONST unsigned char colour_rgb(unsigned int r, unsigned int g,
         return (unsigned char)(dgrey < dcube ? 232 + grey : cube);
 }
 
-// Returns how many parameters past this one it took, so the caller can step
-// over the ones an extended colour is spelled with.
-static unsigned int sgr_extended(unsigned int at, unsigned char address_to which)
+/*
+        The parameters a colon joined to this one, which are its own and not
+        SGR numbers in their own right: 4:3 is an underline's style and
+        38:2::255:0:0 one colour with an empty colour space.
+*/
+static unsigned int sgr_joined(unsigned int at)
+{
+        unsigned int n = 0;
+
+        while (at + n + 1 < terminal_csi.count &&
+               (terminal_csi.colon >> (at + n + 1) & 1))
+                n++;
+
+        return n;
+}
+
+/*
+        Returns how many parameters past this one it took, so the caller can
+        step over the ones an extended colour is spelled with. Joined by
+        colons the colour is those parameters and no more, and a direct colour
+        may name a colour space before its channels or leave it out, so the
+        channels are the last three either way. An index past the table leaves
+        the colour as it was.
+*/
+static unsigned int sgr_extended(unsigned int at, unsigned int joined,
+                                 unsigned char address_to which)
 {
         unsigned int kind = at + 1 < terminal_csi.count
                                 ? terminal_csi.value[at + 1] : 0;
+        unsigned int took = joined;
 
-        if (kind == 5 && at + 2 < terminal_csi.count)
-        {
-                address_to which = colour_256(terminal_csi.value[at + 2]);
-                return 2;
-        }
+        if (!joined)
+                took = kind == 5 ? 2 : kind == 2 ? 4 : terminal_csi.count - at - 1;
 
-        if (kind == 2 && at + 4 < terminal_csi.count)
-        {
-                address_to which = colour_rgb(
-                    terminal_csi.value[at + 2], terminal_csi.value[at + 3],
-                    terminal_csi.value[at + 4]);
-                return 4;
-        }
+        if (at + took >= terminal_csi.count)
+                return terminal_csi.count - at - 1;
 
-        return terminal_csi.count - at - 1;
+        if (kind == 5 && took >= 2 && terminal_csi.value[at + 2] < 256)
+                address_to which = (unsigned char)terminal_csi.value[at + 2];
+        else if (kind == 2 && took >= 4)
+                address_to which = colour_rgb(terminal_csi.value[at + took - 2],
+                                              terminal_csi.value[at + took - 1],
+                                              terminal_csi.value[at + took]);
+
+        return took;
 }
 
 static fn sgr()
 {
-        if (!terminal_csi.count)
-        {
-                ink = 7;
-                paper = 0;
-                reverse = false;
-                style = 0;
-                return;
-        }
+        unsigned int count = terminal_csi.count ? terminal_csi.count : 1;
 
-        for (unsigned int i = 0; i < terminal_csi.count; i++)
+        // No parameter at all is a 0, and a reset parameter slot holds one.
+        for (unsigned int i = 0; i < count; i++)
         {
                 unsigned int p = terminal_csi.value[i];
+                unsigned int took = sgr_joined(i);
+                unsigned char unused;
 
                 if (p == 0)
                 {
@@ -1052,16 +1090,16 @@ static fn sgr()
                         style = 0;
                 }
                 else if (p == 1)
-                {
                         style |= WINDOW_CELL_BOLD;
-                        if (ink < 8)
-                                ink |= 8;
-                }
                 else if (p == 2)
                         style |= WINDOW_CELL_DIM;
                 else if (p == 3)
                         style |= WINDOW_CELL_ITALIC;
-                else if (p == 4)
+                // 4:0 is no underline and 4:1 to 4:5 its styles, and 21 is
+                // ECMA-48's double one: all of them the one line here.
+                else if (p == 4 && took && !terminal_csi.value[i + 1])
+                        style &= (unsigned short)~WINDOW_CELL_UNDERLINE;
+                else if (p == 4 || p == 21)
                         style |= WINDOW_CELL_UNDERLINE;
                 else if (p == 5 || p == 6)
                         style |= WINDOW_CELL_BLINK;
@@ -1071,12 +1109,8 @@ static fn sgr()
                         style |= WINDOW_CELL_HIDDEN;
                 else if (p == 9)
                         style |= WINDOW_CELL_STRIKE;
-                else if (p == 21 || p == 22)
-                {
+                else if (p == 22)
                         style &= (unsigned short)~(WINDOW_CELL_BOLD | WINDOW_CELL_DIM);
-                        if (ink >= 8 && ink < 16)
-                                ink &= 7;
-                }
                 else if (p == 23)
                         style &= (unsigned short)~WINDOW_CELL_ITALIC;
                 else if (p == 24)
@@ -1090,22 +1124,27 @@ static fn sgr()
                 else if (p == 29)
                         style &= (unsigned short)~WINDOW_CELL_STRIKE;
                 else if (p >= 30 && p <= 37)
-                        ink = (unsigned char)(((style & WINDOW_CELL_BOLD) ? 8 : 0) |
-                                              (p - 30));
+                        ink = (unsigned char)(p - 30);
                 else if (p == 38)
-                        i += sgr_extended(i, address_of ink);
+                        took = sgr_extended(i, took, address_of ink);
                 else if (p == 39)
-                        ink = (unsigned char)((style & WINDOW_CELL_BOLD) ? 15 : 7);
+                        ink = 7;
                 else if (p >= 40 && p <= 47)
                         paper = (unsigned char)(p - 40);
                 else if (p == 48)
-                        i += sgr_extended(i, address_of paper);
+                        took = sgr_extended(i, took, address_of paper);
                 else if (p == 49)
                         paper = 0;
+                // The underline's own colour, spelled the way 38 is, and with
+                // nowhere to go.
+                else if (p == 58)
+                        took = sgr_extended(i, took, address_of unused);
                 else if (p >= 90 && p <= 97)
                         ink = (unsigned char)(8 + (p - 90));
                 else if (p >= 100 && p <= 107)
                         paper = (unsigned char)(8 + (p - 100));
+
+                i += took;
         }
 }
 
