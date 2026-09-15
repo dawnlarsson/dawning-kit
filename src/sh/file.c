@@ -22360,12 +22360,657 @@ static bool cp_batch_replay(walk_batch address_to batch, positive depth)
         return complete;
 }
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        cp -r below a directory cp made itself, over parallel_tree.
+
+        The job reading a source directory opens its copy by its path below
+        the destination: every directory on that path was made 0700 by this
+        command and is given its mode only once everything under it is in,
+        so nobody else can have put anything there.  A plain file is copied
+        in that job the way the batch form's job copies it; a subdirectory
+        is made there, fresh, before the pool opens its source.  Every name a
+        job does not finish, and every name that is not a plain file or a
+        directory this caller can read, goes to the ordinary one-name copy in
+        the sink, through its source and destination directories opened
+        again by their paths below the two roots, and is reported there in
+        its own words.  A directory gets its mode, or what -p keeps, in its
+        leave -- unless a name in it went to the sink, whose copy lands in it
+        after any job has finished: then the sink gives the directory its
+        mode after that copy, in walk order, which is where the batch form
+        gave it.  -v's lines and every complaint are said in the sink in walk
+        order.  There is no depth limit.
+*/
+typedef struct cp_tree_node
+{
+        struct cp_tree_node address_to parent;
+        file_facts facts;
+        b32 read_error;
+        bool skip;
+        bool deferred;
+        positive level;
+        positive name_at;
+        positive length;
+        p8 path[];
+} cp_tree_node;
+
+enum
+{
+        CP_TREE_FILE = 1,
+        CP_TREE_DIRECTORY,
+        CP_TREE_SERIAL,
+        CP_TREE_DIRECTORY_FAILED,
+        CP_TREE_READ_FAILED,
+        CP_TREE_ATTRIBUTES_FAILED,
+        CP_TREE_ATTRIBUTES,
+};
+
+typedef struct
+{
+        p8 kind;
+        p8 spare[3];
+        b32 code;
+        p32 name_at;
+        p32 path_bytes;
+        p32 level;
+} cp_tree_record;
+
+#define CP_TREE_OPEN_ROOM 3072
+
+static bipolar cp_tree_source_root = -1;
+static bipolar cp_tree_destination_root = -1;
+static string_address cp_tree_source_shown;
+static string_address cp_tree_destination_shown;
+static positive cp_tree_depth;
+static bool cp_tree_complete;
+static cp_tree_node address_to cp_tree_top;
+
+static cp_tree_node address_to cp_tree_node_new(cp_tree_node address_to parent,
+                                               string_address name,
+                                               positive name_length)
+{
+        positive joint = parent && parent->length ? 1 : 0;
+        positive length = (parent ? parent->length + joint : 0) + name_length;
+        cp_tree_node address_to node = memory_take(sizeof(cp_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(cp_tree_node));
+        node->parent = parent;
+        node->level = parent ? parent->level + 1 : 0;
+        node->length = length;
+        node->name_at = length - name_length;
+        if (parent && parent->length)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + 1, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+        node->path[length] = end;
+        return node;
+}
+
+/* A directory below root by its relative path, a piece at a time where the
+   whole would not fit one open.  Every piece but the last is a directory
+   this walk read or made, and none is followed if it is a link. */
+static bipolar cp_tree_open_below(bipolar root, string_address path, positive length)
+{
+        p8 piece[CP_TREE_OPEN_ROOM + 1];
+        bipolar at = -1;
+        positive done = 0;
+
+        if (!length)
+                return system_open_at(root, (string_address)".",
+                                      FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        while (done < length)
+        {
+                positive take = length - done;
+
+                if (take > CP_TREE_OPEN_ROOM)
+                {
+                        take = CP_TREE_OPEN_ROOM;
+                        while (take && path[done + take] != '/')
+                                take--;
+                        if (!take)
+                        {
+                                if (at >= 0)
+                                        system_close(at);
+                                return -ERROR_NAME_TOO_LONG;
+                        }
+                }
+                memory_copy(piece, path + done, take);
+                piece[take] = end;
+
+                bipolar next = system_open_at(at >= 0 ? at : root, (string_address)piece,
+                                              FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+
+                if (at >= 0)
+                        system_close(at);
+                if (next < 0)
+                        return next;
+                at = next;
+                done += take;
+                while (done < length && path[done] == '/')
+                        done++;
+        }
+        return at;
+}
+
+static bool cp_tree_put(parallel_output address_to output, p8 kind, bipolar code,
+                        cp_tree_node address_to node, string_address name,
+                        positive name_length)
+{
+        positive joint = name_length && node->length ? 1 : 0;
+        positive length = name_length ? node->length + joint + name_length : node->length;
+        p8 address_to at = parallel_reserve(output, sizeof(cp_tree_record) + length + 1);
+        cp_tree_record record;
+
+        if (!at)
+                return false;
+
+        memory_fill(address_of record, 0, sizeof(record));
+        record.kind = kind;
+        record.code = (b32)code;
+        record.name_at = (p32)(name_length ? length - name_length : node->name_at);
+        record.path_bytes = (p32)(length + 1);
+        record.level = (p32)(name_length ? node->level + 1 : node->level);
+        memory_copy(at, address_of record, sizeof(record));
+
+        p8 address_to path = at + sizeof(cp_tree_record);
+
+        memory_copy(path, node->path, node->length);
+        if (name_length)
+        {
+                if (joint)
+                        path[node->length] = '/';
+                memory_copy(path + node->length + joint, name, name_length);
+        }
+        path[length] = end;
+        return true;
+}
+
+//      The batch form's job: true when the copy is whole and kept.
+static bool cp_tree_file(bipolar source, bipolar copy, string_address name)
+{
+        file_facts facts;
+        bipolar in = system_open_at(source, name,
+                                    FILE_READ | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+
+        if (in < 0)
+                return false;
+
+        bipolar looked = file_look_code(in, (string_address)"", AT_EMPTY_PATH, address_of facts);
+
+        if (looked < 0 || (facts.mode & MODE_FORMAT) != MODE_FILE)
+        {
+                system_close(in);
+                return false;
+        }
+
+        bipolar out = file_copy_destination_open(
+            copy, name, file_copy_creation_mode(address_of facts), false, address_of facts, true);
+
+        if (out < 0)
+        {
+                system_close(in);
+                return false;
+        }
+
+        bool copied = file_copy_handles_known(in, out, address_of facts);
+
+        system_close(in);
+
+        bipolar kept = copied && cp_preserve
+                           ? file_keep_handle(out, -1, null, address_of facts) : 0;
+        bipolar closed = system_close(out);
+
+        if (!copied || kept < 0 || closed < 0)
+        {
+                (void)system_remove_at(copy, name, 0);
+                return false;
+        }
+        return true;
+}
+
+static fn cp_tree_enter(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        cp_tree_node address_to node = node_address;
+        p8 records[WALK_READ];
+        bipolar copy;
+
+        (void)context;
+
+        if (node->parent)
+        {
+                bipolar looked = directory < 0
+                                     ? directory
+                                     : file_look_code(directory, (string_address)"",
+                                                      AT_EMPTY_PATH, address_of node->facts);
+
+                if (looked >= 0 && (node->facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        looked = -ERROR_AGAIN;
+                if (looked < 0)
+                {
+                        //      Its parent could read it a moment ago: the copy
+                        //      made for it goes, and the name takes the long
+                        //      way.
+                        bipolar above = cp_tree_open_below(cp_tree_destination_root,
+                                                           (string_address)node->path,
+                                                           node->name_at ? node->name_at - 1 : 0);
+
+                        if (above >= 0)
+                        {
+                                (void)system_remove_at(above,
+                                                       (string_address)node->path + node->name_at,
+                                                       AT_REMOVEDIR);
+                                system_close(above);
+                        }
+                        node->skip = true;
+                        (void)cp_tree_put(output, CP_TREE_SERIAL, 0, node, (string_address)"", 0);
+                        return;
+                }
+        }
+
+        copy = cp_tree_open_below(cp_tree_destination_root, (string_address)node->path,
+                                  node->length);
+        if (copy < 0)
+        {
+                node->skip = true;
+                (void)cp_tree_put(output, CP_TREE_DIRECTORY_FAILED, copy, node,
+                                  (string_address)"", 0);
+                return;
+        }
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                {
+                        if (got < 0)
+                                node->read_error = (b32)got;
+                        break;
+                }
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                            (struct linux_dirent64 address_to)(records + at);
+                        string_address name = (string_address)record->d_name;
+                        positive name_length;
+                        bool said = true;
+
+                        at += record->d_reclen;
+                        if (file_is_dot(name))
+                                continue;
+
+                        name_length = string_length(name);
+
+                        if (record->d_type == DT_REG)
+                        {
+                                if (!cp_tree_file(directory, copy, name))
+                                {
+                                        node->deferred = true;
+                                        said = cp_tree_put(output, CP_TREE_SERIAL, 0, node,
+                                                           name, name_length);
+                                }
+                                else if (cp_loud)
+                                        said = cp_tree_put(output, CP_TREE_FILE, 0, node,
+                                                           name, name_length);
+                        }
+                        else if (record->d_type == DT_DIR &&
+                                 system_access_at(directory, name, 5) == 0)
+                        {
+                                bipolar made = file_copy_directory_fresh(copy, name);
+
+                                if (made < 0)
+                                        said = cp_tree_put(output, CP_TREE_DIRECTORY_FAILED, made,
+                                                           node, name, name_length);
+                                else
+                                {
+                                        cp_tree_node address_to child;
+
+                                        system_close(made);
+                                        child = cp_tree_node_new(node, name, name_length);
+                                        said = child != null &&
+                                               (!cp_loud ||
+                                                cp_tree_put(output, CP_TREE_DIRECTORY, 0, node,
+                                                            name, name_length)) &&
+                                               parallel_child(output, name, child);
+                                        if (!said)
+                                                memory_give(child);
+                                }
+                        }
+                        else
+                        {
+                                node->deferred = true;
+                                said = cp_tree_put(output, CP_TREE_SERIAL, 0, node, name,
+                                                   name_length);
+                        }
+
+                        if (!said)
+                        {
+                                system_close(copy);
+                                parallel_stop();
+                                return;
+                        }
+                }
+        }
+        system_close(copy);
+}
+
+static fn cp_tree_leave(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        cp_tree_node address_to node = node_address;
+
+        (void)context;
+        (void)directory;
+
+        if (node->skip)
+                return;
+
+        if (node->read_error)
+                (void)cp_tree_put(output, CP_TREE_READ_FAILED, node->read_error, node,
+                                  (string_address)"", 0);
+
+        //      The operand's own copy is given its mode by the caller.
+        if (!node->parent)
+                return;
+
+        if (node->deferred)
+        {
+                positive length = node->length;
+                p8 address_to at = parallel_reserve(output, sizeof(cp_tree_record) +
+                                                                sizeof(file_facts) + length + 1);
+                cp_tree_record record;
+
+                if (!at)
+                        return;
+                memory_fill(address_of record, 0, sizeof(record));
+                record.kind = CP_TREE_ATTRIBUTES;
+                record.name_at = (p32)node->name_at;
+                record.path_bytes = (p32)(sizeof(file_facts) + length + 1);
+                memory_copy(at, address_of record, sizeof(record));
+                memory_copy(at + sizeof(record), address_of node->facts, sizeof(file_facts));
+                memory_copy(at + sizeof(record) + sizeof(file_facts), node->path, length);
+                at[sizeof(record) + sizeof(file_facts) + length] = end;
+                return;
+        }
+
+        bipolar copy = cp_tree_open_below(cp_tree_destination_root,
+                                          (string_address)node->path, node->length);
+        bipolar attributed = copy < 0
+                                 ? copy
+                                 : cp_preserve
+                                 ? file_keep_handle(copy, -1, null, address_of node->facts)
+                                 : file_change_mode_handle(copy,
+                                                           file_copy_creation_mode(address_of node->facts));
+
+        if (copy >= 0)
+                system_close(copy);
+        if (attributed < 0)
+                (void)cp_tree_put(output, CP_TREE_ATTRIBUTES_FAILED, attributed, node,
+                                  (string_address)"", 0);
+}
+
+//      A path below one of the two roots, as it is shown.
+static p8 address_to cp_tree_shown(string_address root, string_address below,
+                                   positive below_length)
+{
+        positive root_length = string_length(root);
+        positive joint = below_length && root_length && root[root_length - 1] != '/';
+        p8 address_to shown = memory_take(root_length + joint + below_length + 1);
+
+        if (!shown)
+                return null;
+        memory_copy(shown, root, root_length);
+        if (joint)
+                shown[root_length] = '/';
+        memory_copy(shown + root_length + joint, below, below_length);
+        shown[root_length + joint + below_length] = end;
+        return shown;
+}
+
+//      The sink's directories for the one-name copy, kept open for the next
+//      name in the same directory.
+static struct
+{
+        bipolar source;
+        bipolar destination;
+        p8 address_to below;
+        positive length;
+} cp_tree_serial = {-1, -1, null, 0};
+
+static fn cp_tree_serial_close(void)
+{
+        if (cp_tree_serial.source >= 0)
+                system_close(cp_tree_serial.source);
+        if (cp_tree_serial.destination >= 0)
+                system_close(cp_tree_serial.destination);
+        memory_give(cp_tree_serial.below);
+        cp_tree_serial.source = -1;
+        cp_tree_serial.destination = -1;
+        cp_tree_serial.below = null;
+        cp_tree_serial.length = 0;
+}
+
+static bool cp_tree_serial_copy(string_address path, positive name_at, positive level)
+{
+        positive parent_length = name_at ? name_at - 1 : 0;
+        string_address name = path + name_at;
+        positive length = string_length(path);
+
+        if (!cp_tree_serial.below || cp_tree_serial.length != parent_length ||
+            memory_compare(cp_tree_serial.below, path, parent_length) != 0)
+        {
+                cp_tree_serial_close();
+                cp_tree_serial.below = memory_take(parent_length + 1);
+                if (!cp_tree_serial.below)
+                        return false;
+                memory_copy(cp_tree_serial.below, path, parent_length);
+                cp_tree_serial.below[parent_length] = end;
+                cp_tree_serial.length = parent_length;
+                cp_tree_serial.source = cp_tree_open_below(cp_tree_source_root, path,
+                                                           parent_length);
+                cp_tree_serial.destination = cp_tree_open_below(cp_tree_destination_root,
+                                                                path, parent_length);
+        }
+
+        p8 address_to from = cp_tree_shown(cp_tree_source_shown, path, length);
+        p8 address_to to = cp_tree_shown(cp_tree_destination_shown, path, length);
+        bool whole = false;
+
+        if (!from || !to)
+                log_error("cp: out of memory while walking the tree\n", 0);
+        else if (cp_tree_serial.source < 0 || cp_tree_serial.destination < 0)
+        {
+                string_format(log_error, "cp: cannot access '%w': %s\n",
+                              writer_terminal_quoted_name, (string_address)from,
+                              file_reason(cp_tree_serial.source < 0
+                                              ? cp_tree_serial.source
+                                              : cp_tree_serial.destination));
+        }
+        else
+                whole = file_copy_one(cp_tree_serial.source, name, (string_address)from,
+                                      cp_tree_serial.destination, name, (string_address)to,
+                                      cp_tree_depth > level ? cp_tree_depth - level : 1,
+                                      false, false, false, null, -1, FILE_COPY_FRESH);
+
+        memory_give(from);
+        memory_give(to);
+        return whole;
+}
+
+static bool cp_tree_sink(address_any context, address_any node_address,
+                         address_any data, positive length, bool finished)
+{
+        p8 address_to bytes = data;
+        positive at = 0;
+
+        (void)context;
+        if (finished)
+        {
+                if (node_address != cp_tree_top)
+                        memory_give(node_address);
+                return true;
+        }
+
+        while (at < length)
+        {
+                cp_tree_record record;
+                string_address path;
+                positive path_length;
+
+                memory_copy(address_of record, bytes + at, sizeof(record));
+                path = (string_address)bytes + at + sizeof(record);
+                path_length = record.path_bytes - 1;
+                at += sizeof(record) + record.path_bytes;
+
+                if (record.kind == CP_TREE_ATTRIBUTES)
+                {
+                        file_facts facts;
+
+                        memory_copy(address_of facts, path, sizeof(facts));
+                        path += sizeof(file_facts);
+                        path_length -= sizeof(file_facts);
+
+                        bipolar copy = cp_tree_open_below(cp_tree_destination_root, path,
+                                                          path_length);
+                        bipolar attributed = copy < 0
+                                                 ? copy
+                                                 : cp_preserve
+                                                 ? file_keep_handle(copy, -1, null, address_of facts)
+                                                 : file_change_mode_handle(
+                                                       copy, file_copy_creation_mode(address_of facts));
+
+                        if (copy >= 0)
+                                system_close(copy);
+                        if (attributed < 0)
+                        {
+                                p8 address_to to = cp_tree_shown(cp_tree_destination_shown,
+                                                                  path, path_length);
+
+                                string_format(log_error,
+                                              "cp: cannot preserve attributes for '%w': %s\n",
+                                              writer_terminal_quoted_name,
+                                              to ? (string_address)to : path,
+                                              file_reason(attributed));
+                                memory_give(to);
+                                cp_tree_complete = false;
+                        }
+                        continue;
+                }
+
+                if (record.kind == CP_TREE_SERIAL)
+                {
+                        if (!cp_tree_serial_copy(path, record.name_at, record.level))
+                                cp_tree_complete = false;
+                        continue;
+                }
+
+                p8 address_to from = cp_tree_shown(cp_tree_source_shown, path, path_length);
+                p8 address_to to = cp_tree_shown(cp_tree_destination_shown, path, path_length);
+
+                if (!from || !to)
+                {
+                        memory_give(from);
+                        memory_give(to);
+                        log_error("cp: out of memory while walking the tree\n", 0);
+                        cp_tree_complete = false;
+                        continue;
+                }
+
+                switch (record.kind)
+                {
+                case CP_TREE_FILE:
+                case CP_TREE_DIRECTORY:
+                        string_format(log, "'%w' -> '%w'\n",
+                                      writer_terminal_quoted_name, (string_address)from,
+                                      writer_terminal_quoted_name, (string_address)to);
+                        break;
+                case CP_TREE_DIRECTORY_FAILED:
+                        string_format(log_error, "cp: cannot open directory '%w': %s\n",
+                                      writer_terminal_quoted_name, (string_address)to,
+                                      file_reason(record.code));
+                        cp_tree_complete = false;
+                        break;
+                case CP_TREE_READ_FAILED:
+                        string_format(log_error, "cp: cannot read directory '%w': %s\n",
+                                      writer_terminal_quoted_name, (string_address)from,
+                                      file_reason(record.code));
+                        cp_tree_complete = false;
+                        break;
+                case CP_TREE_ATTRIBUTES_FAILED:
+                        string_format(log_error,
+                                      "cp: cannot preserve attributes for '%w': %s\n",
+                                      writer_terminal_quoted_name, (string_address)to,
+                                      file_reason(record.code));
+                        cp_tree_complete = false;
+                        break;
+                }
+                memory_give(from);
+                memory_give(to);
+        }
+        return true;
+}
+
+static bool cp_tree_parallel(bipolar source_handle, string_address source_shown,
+                             bipolar destination_handle,
+                             string_address destination_shown, positive depth)
+{
+        cp_tree_node address_to top = cp_tree_node_new(null, (string_address)"", 0);
+
+        if (!top)
+        {
+                log_error("cp: out of memory while walking the tree\n", 0);
+                return false;
+        }
+
+        cp_tree_source_root = source_handle;
+        cp_tree_destination_root = destination_handle;
+        cp_tree_source_shown = source_shown;
+        cp_tree_destination_shown = destination_shown;
+        cp_tree_depth = depth;
+        cp_tree_complete = true;
+        cp_tree_top = top;
+
+        (void)file_transfer_prepare();
+
+        bool whole = parallel_tree(cp_tree_enter, cp_tree_leave, cp_tree_sink, null,
+                                   source_handle, top, O_NOFOLLOW);
+
+        cp_tree_serial_close();
+        cp_tree_top = null;
+        memory_give(top);
+        cp_tree_source_root = -1;
+        cp_tree_destination_root = -1;
+
+        if (!whole)
+        {
+                log_error("cp: out of memory while walking the tree\n", 0);
+                return false;
+        }
+        return cp_tree_complete;
+}
+#endif
+
 /* The copy of what is in source_handle into destination_handle, a directory
    this cp made; false when anything below could not be copied. */
 static bool cp_tree_batched(bipolar source_handle, string_address source_shown,
                             bipolar destination_handle,
                             string_address destination_shown, positive depth)
 {
+#if defined(LIBRARY_THREAD_RUNTIME)
+        return cp_tree_parallel(source_handle, source_shown, destination_handle,
+                                destination_shown, depth);
+#endif
         walk address_to walker = address_of cp_walker;
         walk_batch address_to batch = address_of cp_batch;
         positive source_length = string_length(source_shown);
