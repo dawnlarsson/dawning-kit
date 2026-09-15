@@ -170,9 +170,8 @@ static b32 screen_term()
 
         system_close(slave);
 
+        // Centred, and published once below with its cursor already in it.
         window->region = WINDOW_CENTRED;
-        window_damage(window, 0, ROWS);
-        window_commit(window);
 
         p8 from_shell[1024];
         struct window_key typed[WINDOW_KEYS];
