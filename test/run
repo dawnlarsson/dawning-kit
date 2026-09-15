@@ -6755,6 +6755,28 @@ same 'grown then left takes back history' '[m1]|[m2]|[m3]|2,2' \
 #       the shell's with it.
 same 'own save inside' '0,2'                     20 3 in 'ab' in '\e[?1049h\e[3;3H\e7\e[H' \
                                                  in '\e[?1049l' cursor
+#       A program that scrolls there with line feeds, as less does paging a
+#       manual, moves on through the ring behind the shell's lines. What it
+#       scrolls over is the shell's history, oldest first, and then no more:
+#       a hundred lines on a ring of sixty four had given the shell back a
+#       screen of the program's lines, and a taller window took them in too.
+scrolled=
+at=0
+while [ "$at" -lt 100 ]; do
+        scrolled="${scrolled}x\\n"
+        at=$((at + 1))
+done
+same 'a long scroll gives the screen back' '[one]|[two]|[three]' \
+                                                 20 3 in 'one\r\ntwo\r\nthree' in '\e[?1049h\e[H' \
+                                                 in "$scrolled" in '\e[?1049l' dump
+same 'what it scrolled over is not history' '[l8]|[l9]|[l10]|[]|[]' \
+                                                 20 3 in 'l1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6\r\nl7\r\nl8\r\nl9\r\nl10' \
+                                                 in '\e[?1049h\e[H' in "$scrolled" in '\e[?1049l' \
+                                                 resize '20x5' dump
+same 'a short scroll keeps the history' '[l6]|[l7]|[l8]|[l9]|[l10]' \
+                                                 20 3 in 'l1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6\r\nl7\r\nl8\r\nl9\r\nl10' \
+                                                 in '\e[?1049h\e[Hx\nx\nx\nx' in '\e[?1049l' \
+                                                 resize '20x5' dump
 
 group narrowed
 #       An erase that reaches the edge of a narrower window takes the stored

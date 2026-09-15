@@ -239,17 +239,24 @@ static fn cells_blank(unsigned int r, unsigned int first, unsigned int count)
         to come back to. This used to be a copy of every cell on the screen
         with the top row thrown away.
 */
+static COLD __attribute__((__noinline__)) fn alternate_advance();
+
 static fn ring_scroll()
 {
-        window_scroll(window);
+        if (alternate)
+                alternate_advance();
+        else
+        {
+                window_scroll(window);
 
-        if (!alternate && history_lines + ROWS < window->history)
-                history_lines++;
+                if (history_lines + ROWS < window->history)
+                        history_lines++;
+        }
 
         touch_all();
 }
 
-static fn slot_copy(unsigned int to, unsigned int from)
+static inline INLINE fn slot_copy(unsigned int to, unsigned int from)
 {
         struct window_cell address_to source = slot_cells(from);
         struct window_cell address_to target = slot_cells(to);
@@ -1169,6 +1176,47 @@ static bipolar primary_regrid(unsigned int at, unsigned int was_rows)
 }
 
 /*
+        A line handed out while the alternate screen is up.
+
+        The alternate screen is the lines after the primary one in the ring,
+        so a program that scrolls there with line feeds -- less paging a
+        manual a line at a time -- moves head on into the slots behind the
+        primary screen. The primary screen's scrollback goes first, oldest
+        line first, and history_lines says so, or a window made taller took
+        the program's lines back as the shell's. Once none is left the next
+        slot would be the primary screen's own top row, and five hundred
+        lines of a pager had put themselves where the shell's screen comes
+        back: its rows move up behind the alternate screen instead, over
+        lines the program has scrolled away, and alternate_head moves with
+        them. That is a copy of the primary screen once every ring's length
+        of scrolling, bounded by the rows it has.
+*/
+static COLD __attribute__((__noinline__)) fn alternate_advance()
+{
+        if (window->head - alternate_head + alternate_rows + history_lines >=
+            window->history)
+        {
+                if (history_lines)
+                        history_lines--;
+                else
+                {
+                        unsigned int to = window->head - ROWS - alternate_rows;
+                        unsigned int from = alternate_head - alternate_rows;
+
+                        // Forward, so a destination that starts before the
+                        // source only writes over rows already moved.
+                        for (unsigned int n = 0; n < alternate_rows; n++)
+                                slot_copy((to + n) % window->history,
+                                          (from + n) % window->history);
+
+                        alternate_head = window->head - ROWS;
+                }
+        }
+
+        window_scroll(window);
+}
+
+/*
         Only 1049 saves the cursor on the way in and puts it back on the way
         out, as DECSC and DECRC would; 47 and 1047 leave it where the program
         has it. None of them moves it: a program that wants the alternate
@@ -1184,11 +1232,11 @@ static fn alternate_enter(b32 save)
 
         alternate_head = window->head;
         alternate_rows = ROWS;
+        alternate = true;
 
         for (unsigned int r = 0; r < ROWS; r++)
-                window_scroll(window);
+                alternate_advance();
 
-        alternate = true;
         touch_all();
 }
 
@@ -3442,7 +3490,7 @@ fn regrid(b32 master)
                 unsigned int added = 0;
 
                 for (; window->head - alternate_head < ROWS; added++)
-                        window_scroll(window);
+                        alternate_advance();
 
                 shift = (bipolar)ROWS - (bipolar)was_rows - (bipolar)added;
         }
