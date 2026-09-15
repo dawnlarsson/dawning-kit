@@ -4857,19 +4857,30 @@ static fn say_row(unsigned int row)
         tell("]\n");
 }
 
-static fn say_attribute(string_address text)
+// The cell a "row,column" argument names.
+static struct window_cell *fixture_cell(string_address text)
 {
         positive at = 0;
-        unsigned int row = number(text);
-        unsigned int column;
 
         while (text[at] && text[at] != ',')
                 at++;
 
-        column = number(text + at + 1);
-        say_number(row_cells(row)[column].ink);
+        return row_cells(number(text)) + number(text + at + 1);
+}
+
+static fn say_attribute(string_address text)
+{
+        struct window_cell *cell = fixture_cell(text);
+
+        say_number(cell->ink);
         say_byte(',');
-        say_number(row_cells(row)[column].paper);
+        say_number(cell->paper);
+        say_byte('\n');
+}
+
+static fn say_flags(string_address text)
+{
+        say_number(fixture_cell(text)->flags);
         say_byte('\n');
 }
 
@@ -56111,6 +56122,7 @@ typedef uint64_t u64;
 #define WINDOW_CELL_STRIKE 64u
 #define WINDOW_CELL_WIDE 128u
 #define WINDOW_CELL_WIDE_RIGHT 256u
+#define WINDOW_CELL_BAR 512u
 #define DRM_FORMAT_ARGB8888 0x34325241u
 static struct {unsigned scale;int bar_grab,frame_pending;} desktop={1};
 #define canvas_cell_w (WINDOW_CELL_W * (int)desktop.scale)

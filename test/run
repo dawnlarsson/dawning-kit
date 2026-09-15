@@ -5234,6 +5234,7 @@ lane_awk()
 #           back N        the N lines above the screen, out of the ring
 #           cursor        where the cursor is, as row,column
 #           attr R,C      the colours of one cell, as ink,paper
+#           flags R,C     the style and shape bits of one cell
 #           sent          what would have gone up the pty, and forgets it
 #           wrote RESULT  apply a write result (count, again, intr, fatal)
 #           mode          the modes that are set
@@ -5485,6 +5486,11 @@ b32 main()
                 else if (string_compare(verb, (string_address) "attr") == 0)
                 {
                         say_attribute(argument);
+                        i++;
+                }
+                else if (string_compare(verb, (string_address) "flags") == 0)
+                {
+                        say_flags(argument);
                         i++;
                 }
                 else if (string_compare(verb, (string_address) "sent") == 0)
@@ -6061,6 +6067,17 @@ same 'cht past the edge' '0,19'                  20 3 in '\e[4294967295I' cursor
 same 'cbt past the start' '0,0'                  20 3 in 'abcdefghijk\e[4294967295Z' cursor
 same 'rep of a screen' '[xxxxxxxxxxxxxxxxxxxx]|[xxxxxxxxxxxxxxxxxxxx]|[x]|2,1' \
                                                  20 3 in 'x\e[4294967295b' dump cursor
+
+group shape
+#       DECSCUSR: 1 and 2 are a block, 3 and 4 an underline, 5 and 6 a bar, and
+#       nothing here blinks. A block turns the cell's colours round; the other
+#       two add a mark to the cell. vim and fish ask for a bar while inserting,
+#       and with the sequence ignored they always got a block.
+same 'block by default' '0,7'                    20 3 in 'ab' show attr 0,2
+same 'underline'     '8|7,0'                     20 3 in '\e[4 q' in 'ab' show flags 0,2 attr 0,2
+same 'bar'           '512|7,0'                   20 3 in '\e[6 q' in 'ab' show flags 0,2 attr 0,2
+same 'back to a block' '0,7'                     20 3 in '\e[6 q\e[2 q' in 'ab' show attr 0,2
+same 'q alone is not a shape' '0,7'              20 3 in '\e[4q' in 'ab' show attr 0,2
 
 #
 #       Bytes into characters.

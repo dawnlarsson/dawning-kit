@@ -91,6 +91,12 @@ static p8 csi_intermediate;
 static unsigned int shown_row, shown_column;
 static b32 shown;
 
+/* What the cursor is, as DECSCUSR numbers it, and what showing it did to its
+   cell: turned the colours round for a block, or added these marks. */
+static unsigned int cursor_shape;
+static b32 shown_block;
+static unsigned short shown_marks;
+
 /* A cursor with the colours it writes in: one saved by ESC 7 and CSI s, one
    kept for the primary screen while the alternate one is up. They are two, or
    a program saving its own cursor lost the shell's when it ended. */
@@ -1148,6 +1154,7 @@ static fn full_reset()
 {
         alternate_leave();
         soft_reset();
+        cursor_shape = 0;
         tabs_reset();
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 }
@@ -1343,6 +1350,11 @@ static fn csi_final(unsigned int final)
                 }
                 break;
         case 'q':
+                // DECSCUSR: 1 and 2 are a block, 3 and 4 an underline, 5 and 6
+                // a bar. Nothing here blinks, so each pair is one shape. Without
+                // the space it is DECLL, which has no lights here to set.
+                if (csi_intermediate == ' ' && a <= 6)
+                        cursor_shape = a;
                 break;
         case 'p':
                 if (csi_intermediate == '!')
@@ -1675,8 +1687,14 @@ static fn cursor_hide()
         struct window_cell address_to cell = row_cells(shown_row) + shown_column;
         unsigned char was = cell->ink;
 
-        cell->ink = cell->paper;
-        cell->paper = was;
+        if (shown_block)
+        {
+                cell->ink = cell->paper;
+                cell->paper = was;
+        }
+        else
+                cell->flags &= (unsigned short)~shown_marks;
+
         touch(shown_row);
         shown = false;
 }
@@ -1703,8 +1721,25 @@ static fn SPARE cursor_show()
         cell = row_cells(row) + at;
         was = cell->ink;
 
-        cell->ink = cell->paper;
-        cell->paper = was;
+        // A block is the cell with its colours the other way round. An
+        // underline or a bar is a mark added to the cell, and hiding takes
+        // off only the mark this added.
+        shown_block = cursor_shape < 3;
+
+        if (shown_block)
+        {
+                cell->ink = cell->paper;
+                cell->paper = was;
+        }
+        else
+        {
+                unsigned short mark = cursor_shape >= 5 ? WINDOW_CELL_BAR
+                                                        : WINDOW_CELL_UNDERLINE;
+
+                shown_marks = (unsigned short)(mark & ~cell->flags);
+                cell->flags |= shown_marks;
+        }
+
         shown_row = row;
         shown_column = at;
         shown = true;

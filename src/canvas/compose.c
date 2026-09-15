@@ -788,6 +788,10 @@ static void glyph_apply_style(unsigned char *bits, unsigned short flags)
                 bits[WINDOW_CELL_H - 2] |= 0xff;
                 bits[WINDOW_CELL_H - 1] |= 0xff;
         }
+
+        if (flags & WINDOW_CELL_BAR)
+                for (y = 0; y < WINDOW_CELL_H; y++)
+                        bits[y] |= 0x80;
 }
 
 static u32 cell_palette(unsigned char index, u32 opaque)
@@ -884,7 +888,8 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
 
                 styled = (flags & (WINDOW_CELL_BOLD | WINDOW_CELL_ITALIC |
                                    WINDOW_CELL_UNDERLINE | WINDOW_CELL_STRIKE |
-                                   WINDOW_CELL_HIDDEN | WINDOW_CELL_DIM)) != 0;
+                                   WINDOW_CELL_HIDDEN | WINDOW_CELL_DIM |
+                                   WINDOW_CELL_BAR)) != 0;
 
                 if (character <= ' ' && !styled)
                 {
@@ -946,7 +951,8 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                                 bits = made;
                         }
                 }
-                else if (flags & (WINDOW_CELL_UNDERLINE | WINDOW_CELL_STRIKE))
+                else if (flags & (WINDOW_CELL_UNDERLINE | WINDOW_CELL_STRIKE |
+                                  WINDOW_CELL_BAR))
                 {
                         memory_fill(made, 0, WINDOW_CELL_H);
                         glyph_apply_style(made, flags);

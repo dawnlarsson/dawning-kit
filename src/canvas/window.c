@@ -339,6 +339,10 @@ struct window_cell
 #define WINDOW_CELL_WIDE 128u
 #define WINDOW_CELL_WIDE_RIGHT 256u
 
+/* A bar down the left edge of the cell: the terminal's cursor when a program
+   has asked for a bar rather than a block. */
+#define WINDOW_CELL_BAR 512u
+
 /* The program writes this; the compositor reads it. A terminal that has
    asked for mouse tracking sets WINDOW_WANT_POINTER so clicks, drags and
    the wheel reach its key ring instead of only moving the desktop. */
