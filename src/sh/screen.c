@@ -627,6 +627,42 @@ static b32 screen_text()
         return 0;
 }
 
+/*
+        The Spark device, for a report. A machine without the module says so
+        and gets no report.
+*/
+static b32 spark_report_open()
+{
+        b32 device = system_open_at(AT_FDCWD, SPARK_DEVICE,
+                                    FILE_READ_WRITE | O_CLOEXEC);
+
+        if (device < 0)
+        {
+                string_format(log, "cannot open %s: %b\n", SPARK_DEVICE, device);
+                log_flush();
+        }
+
+        return device;
+}
+
+// One set of its counters, or a said reason why not.
+static b32 spark_report_read(b32 device, positive request, address_any into,
+                             string_address what)
+{
+        if (system_control(device, request, into) == 0)
+                return true;
+
+        string_format(log, "could not read %s stats\n", what);
+        return false;
+}
+
+static b32 spark_report_close(b32 device, b32 result)
+{
+        system_close(device);
+        log_flush();
+        return result;
+}
+
 // spawn -----------------------------------------------------------
 /*
         What the kernel spends starting a program, per phase.
@@ -643,25 +679,16 @@ static b32 screen_text()
 */
 static b32 screen_spawn()
 {
-        b32 device = system_open_at(AT_FDCWD, SPARK_DEVICE,
-                                    FILE_READ_WRITE | O_CLOEXEC);
+        b32 device = spark_report_open();
         struct stats stats;
         positive spawns;
-        b32 result = 0;
 
         if (device < 0)
-        {
-                string_format(log, "cannot open %s: %b\n", SPARK_DEVICE, device);
-                log_flush();
                 return 1;
-        }
 
-        if (system_control(device, SPARK_IOCTL_STATS, address_of stats) != 0)
-        {
-                string_format(log, "could not read spawn stats\n");
-                result = 1;
-                goto finished;
-        }
+        if (!spark_report_read(device, SPARK_IOCTL_STATS, address_of stats,
+                               "spawn"))
+                return spark_report_close(device, 1);
 
         spawns = stats.spawns ? stats.spawns : 1;
 
@@ -684,10 +711,7 @@ static b32 screen_spawn()
 
         string_format(log, "totals           %p ns task, %p ns exec\n",
                       stats.task_ns, stats.exec_ns);
-finished:
-        system_close(device);
-        log_flush();
-        return result;
+        return spark_report_close(device, 0);
 }
 
 // pointer ---------------------------------------------------------
@@ -695,36 +719,18 @@ finished:
 // cursor being on screen. Move the mouse, then run this.
 static b32 screen_pointer()
 {
-        b32 device = system_open_at(AT_FDCWD,
-                                   SPARK_DEVICE,
-                                   FILE_READ_WRITE | O_CLOEXEC);
-        b32 result = 0;
-
-        if (device < 0)
-        {
-                string_format(log, "cannot open %s: %b\n", SPARK_DEVICE, device);
-                log_flush();
-                return 1;
-        }
-
+        b32 device = spark_report_open();
         struct input_stats stats;
         struct cursor_stats cursor;
 
-        if (system_control(device, SPARK_IOCTL_INPUT_STATS,
-                          address_of stats) != 0)
-        {
-                string_format(log, "could not read input stats\n");
-                result = 1;
-                goto finished;
-        }
+        if (device < 0)
+                return 1;
 
-        if (system_control(device, SPARK_IOCTL_CURSOR_STATS,
-                          address_of cursor) != 0)
-        {
-                string_format(log, "could not read cursor stats\n");
-                result = 1;
-                goto finished;
-        }
+        if (!spark_report_read(device, SPARK_IOCTL_INPUT_STATS,
+                               address_of stats, "input") ||
+            !spark_report_read(device, SPARK_IOCTL_CURSOR_STATS,
+                               address_of cursor, "cursor"))
+                return spark_report_close(device, 1);
 
         // Drawing happens whether or not anything has touched the mouse.
         string_format(log, "composes         %p\n", stats.composes);
@@ -773,7 +779,7 @@ static b32 screen_pointer()
         if (!stats.events)
         {
                 string_format(log, "no pointer movement seen yet\n");
-                goto finished;
+                return spark_report_close(device, 0);
         }
 
         string_format(log, "pointer events   %p\n", stats.events);
@@ -784,8 +790,5 @@ static b32 screen_pointer()
         string_format(log, "  flush          %p ns\n", stats.flush_ns);
         string_format(log, "counts reported  %p\n", stats.counts);
         string_format(log, "pixels moved     %p\n", stats.moved);
-finished:
-        system_close(device);
-        log_flush();
-        return result;
+        return spark_report_close(device, 0);
 }
