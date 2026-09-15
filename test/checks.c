@@ -5244,6 +5244,557 @@ static fn montgomery_reference_square(p64 address_to d, const p64 address_to a,
 }
 
 #endif
+#elif defined(SHARED_unicode_width_reference)
+/*
+        The two display-width functions unicode_width answers for, as their
+        files had them: src/sh/term.c's character_width, Unicode 16 range
+        tables with the ideograph shortcut in front of them, and
+        src/sh/text.c's wc_width, glibc 2.44's wcwidth with nought for what
+        iswprint refuses. Only the names are changed, and the tables alone,
+        without the shortcut, are unicode_width_reference_tables -- what the
+        term lane's widths verb has always held character_width to.
+
+        unicode_width_reference_table lays unicode_width_tab out from them:
+        for every 128 code points a byte naming a block, padded to eight; a
+        block of eight 16-bit leaf offsets; a leaf of eight bytes holding
+        sixteen nibbles, the terminal's width low and wc's high. Blocks and
+        leaves are kept once each, in the order they are first met, and the
+        code points U+E0000-E01FF follow U+3FFFF.
+*/
+#ifndef DAWNING_UNICODE_WIDTH_REFERENCE_C
+#define DAWNING_UNICODE_WIDTH_REFERENCE_C
+
+/*
+        How many columns a character takes.
+
+        Programs count columns with wcwidth, and a terminal that disagrees puts
+        everything after an ideograph, an emoji or a combining accent a column
+        away from where the program meant it. The ranges are Unicode 16's: East
+        Asian Wide and Fullwidth take two, marks and format characters take
+        none, and everything below U+0300 takes one.
+*/
+struct unicode_width_reference_range
+{
+        unsigned int first, last;
+};
+
+static const struct unicode_width_reference_range unicode_width_reference_zero[] = {
+    {0x00300, 0x0036f}, {0x00483, 0x00489}, {0x00591, 0x005bd}, {0x005bf, 0x005bf},
+    {0x005c1, 0x005c2}, {0x005c4, 0x005c5}, {0x005c7, 0x005c7}, {0x00600, 0x00605},
+    {0x00610, 0x0061a}, {0x0061c, 0x0061c}, {0x0064b, 0x0065f}, {0x00670, 0x00670},
+    {0x006d6, 0x006dd}, {0x006df, 0x006e4}, {0x006e7, 0x006e8}, {0x006ea, 0x006ed},
+    {0x0070f, 0x0070f}, {0x00711, 0x00711}, {0x00730, 0x0074a}, {0x007a6, 0x007b0},
+    {0x007eb, 0x007f3}, {0x007fd, 0x007fd}, {0x00816, 0x00819}, {0x0081b, 0x00823},
+    {0x00825, 0x00827}, {0x00829, 0x0082d}, {0x00859, 0x0085b}, {0x00890, 0x00891},
+    {0x00897, 0x0089f}, {0x008ca, 0x00902}, {0x0093a, 0x0093a}, {0x0093c, 0x0093c},
+    {0x00941, 0x00948}, {0x0094d, 0x0094d}, {0x00951, 0x00957}, {0x00962, 0x00963},
+    {0x00981, 0x00981}, {0x009bc, 0x009bc}, {0x009c1, 0x009c4}, {0x009cd, 0x009cd},
+    {0x009e2, 0x009e3}, {0x009fe, 0x009fe}, {0x00a01, 0x00a02}, {0x00a3c, 0x00a3c},
+    {0x00a41, 0x00a42}, {0x00a47, 0x00a48}, {0x00a4b, 0x00a4d}, {0x00a51, 0x00a51},
+    {0x00a70, 0x00a71}, {0x00a75, 0x00a75}, {0x00a81, 0x00a82}, {0x00abc, 0x00abc},
+    {0x00ac1, 0x00ac5}, {0x00ac7, 0x00ac8}, {0x00acd, 0x00acd}, {0x00ae2, 0x00ae3},
+    {0x00afa, 0x00aff}, {0x00b01, 0x00b01}, {0x00b3c, 0x00b3c}, {0x00b3f, 0x00b3f},
+    {0x00b41, 0x00b44}, {0x00b4d, 0x00b4d}, {0x00b55, 0x00b56}, {0x00b62, 0x00b63},
+    {0x00b82, 0x00b82}, {0x00bc0, 0x00bc0}, {0x00bcd, 0x00bcd}, {0x00c00, 0x00c00},
+    {0x00c04, 0x00c04}, {0x00c3c, 0x00c3c}, {0x00c3e, 0x00c40}, {0x00c46, 0x00c48},
+    {0x00c4a, 0x00c4d}, {0x00c55, 0x00c56}, {0x00c62, 0x00c63}, {0x00c81, 0x00c81},
+    {0x00cbc, 0x00cbc}, {0x00cbf, 0x00cbf}, {0x00cc6, 0x00cc6}, {0x00ccc, 0x00ccd},
+    {0x00ce2, 0x00ce3}, {0x00d00, 0x00d01}, {0x00d3b, 0x00d3c}, {0x00d41, 0x00d44},
+    {0x00d4d, 0x00d4d}, {0x00d62, 0x00d63}, {0x00d81, 0x00d81}, {0x00dca, 0x00dca},
+    {0x00dd2, 0x00dd4}, {0x00dd6, 0x00dd6}, {0x00e31, 0x00e31}, {0x00e34, 0x00e3a},
+    {0x00e47, 0x00e4e}, {0x00eb1, 0x00eb1}, {0x00eb4, 0x00ebc}, {0x00ec8, 0x00ece},
+    {0x00f18, 0x00f19}, {0x00f35, 0x00f35}, {0x00f37, 0x00f37}, {0x00f39, 0x00f39},
+    {0x00f71, 0x00f7e}, {0x00f80, 0x00f84}, {0x00f86, 0x00f87}, {0x00f8d, 0x00f97},
+    {0x00f99, 0x00fbc}, {0x00fc6, 0x00fc6}, {0x0102d, 0x01030}, {0x01032, 0x01037},
+    {0x01039, 0x0103a}, {0x0103d, 0x0103e}, {0x01058, 0x01059}, {0x0105e, 0x01060},
+    {0x01071, 0x01074}, {0x01082, 0x01082}, {0x01085, 0x01086}, {0x0108d, 0x0108d},
+    {0x0109d, 0x0109d}, {0x01160, 0x011ff}, {0x0135d, 0x0135f}, {0x01712, 0x01714},
+    {0x01732, 0x01733}, {0x01752, 0x01753}, {0x01772, 0x01773}, {0x017b4, 0x017b5},
+    {0x017b7, 0x017bd}, {0x017c6, 0x017c6}, {0x017c9, 0x017d3}, {0x017dd, 0x017dd},
+    {0x0180b, 0x0180f}, {0x01885, 0x01886}, {0x018a9, 0x018a9}, {0x01920, 0x01922},
+    {0x01927, 0x01928}, {0x01932, 0x01932}, {0x01939, 0x0193b}, {0x01a17, 0x01a18},
+    {0x01a1b, 0x01a1b}, {0x01a56, 0x01a56}, {0x01a58, 0x01a5e}, {0x01a60, 0x01a60},
+    {0x01a62, 0x01a62}, {0x01a65, 0x01a6c}, {0x01a73, 0x01a7c}, {0x01a7f, 0x01a7f},
+    {0x01ab0, 0x01ace}, {0x01b00, 0x01b03}, {0x01b34, 0x01b34}, {0x01b36, 0x01b3a},
+    {0x01b3c, 0x01b3c}, {0x01b42, 0x01b42}, {0x01b6b, 0x01b73}, {0x01b80, 0x01b81},
+    {0x01ba2, 0x01ba5}, {0x01ba8, 0x01ba9}, {0x01bab, 0x01bad}, {0x01be6, 0x01be6},
+    {0x01be8, 0x01be9}, {0x01bed, 0x01bed}, {0x01bef, 0x01bf1}, {0x01c2c, 0x01c33},
+    {0x01c36, 0x01c37}, {0x01cd0, 0x01cd2}, {0x01cd4, 0x01ce0}, {0x01ce2, 0x01ce8},
+    {0x01ced, 0x01ced}, {0x01cf4, 0x01cf4}, {0x01cf8, 0x01cf9}, {0x01dc0, 0x01dff},
+    {0x0200b, 0x0200f}, {0x0202a, 0x0202e}, {0x02060, 0x02064}, {0x02066, 0x0206f},
+    {0x020d0, 0x020f0}, {0x02cef, 0x02cf1}, {0x02d7f, 0x02d7f}, {0x02de0, 0x02dff},
+    {0x0302a, 0x0302d}, {0x03099, 0x0309a}, {0x0a66f, 0x0a672}, {0x0a674, 0x0a67d},
+    {0x0a69e, 0x0a69f}, {0x0a6f0, 0x0a6f1}, {0x0a802, 0x0a802}, {0x0a806, 0x0a806},
+    {0x0a80b, 0x0a80b}, {0x0a825, 0x0a826}, {0x0a82c, 0x0a82c}, {0x0a8c4, 0x0a8c5},
+    {0x0a8e0, 0x0a8f1}, {0x0a8ff, 0x0a8ff}, {0x0a926, 0x0a92d}, {0x0a947, 0x0a951},
+    {0x0a980, 0x0a982}, {0x0a9b3, 0x0a9b3}, {0x0a9b6, 0x0a9b9}, {0x0a9bc, 0x0a9bd},
+    {0x0a9e5, 0x0a9e5}, {0x0aa29, 0x0aa2e}, {0x0aa31, 0x0aa32}, {0x0aa35, 0x0aa36},
+    {0x0aa43, 0x0aa43}, {0x0aa4c, 0x0aa4c}, {0x0aa7c, 0x0aa7c}, {0x0aab0, 0x0aab0},
+    {0x0aab2, 0x0aab4}, {0x0aab7, 0x0aab8}, {0x0aabe, 0x0aabf}, {0x0aac1, 0x0aac1},
+    {0x0aaec, 0x0aaed}, {0x0aaf6, 0x0aaf6}, {0x0abe5, 0x0abe5}, {0x0abe8, 0x0abe8},
+    {0x0abed, 0x0abed}, {0x0fb1e, 0x0fb1e}, {0x0fe00, 0x0fe0f}, {0x0fe20, 0x0fe2f},
+    {0x0feff, 0x0feff}, {0x0fff9, 0x0fffb}, {0x101fd, 0x101fd}, {0x102e0, 0x102e0},
+    {0x10376, 0x1037a}, {0x10a01, 0x10a03}, {0x10a05, 0x10a06}, {0x10a0c, 0x10a0f},
+    {0x10a38, 0x10a3a}, {0x10a3f, 0x10a3f}, {0x10ae5, 0x10ae6}, {0x10d24, 0x10d27},
+    {0x10d69, 0x10d6d}, {0x10eab, 0x10eac}, {0x10efc, 0x10eff}, {0x10f46, 0x10f50},
+    {0x10f82, 0x10f85}, {0x11001, 0x11001}, {0x11038, 0x11046}, {0x11070, 0x11070},
+    {0x11073, 0x11074}, {0x1107f, 0x11081}, {0x110b3, 0x110b6}, {0x110b9, 0x110ba},
+    {0x110bd, 0x110bd}, {0x110c2, 0x110c2}, {0x110cd, 0x110cd}, {0x11100, 0x11102},
+    {0x11127, 0x1112b}, {0x1112d, 0x11134}, {0x11173, 0x11173}, {0x11180, 0x11181},
+    {0x111b6, 0x111be}, {0x111c9, 0x111cc}, {0x111cf, 0x111cf}, {0x1122f, 0x11231},
+    {0x11234, 0x11234}, {0x11236, 0x11237}, {0x1123e, 0x1123e}, {0x11241, 0x11241},
+    {0x112df, 0x112df}, {0x112e3, 0x112ea}, {0x11300, 0x11301}, {0x1133b, 0x1133c},
+    {0x11340, 0x11340}, {0x11366, 0x1136c}, {0x11370, 0x11374}, {0x113bb, 0x113c0},
+    {0x113ce, 0x113ce}, {0x113d0, 0x113d0}, {0x113d2, 0x113d2}, {0x113e1, 0x113e2},
+    {0x11438, 0x1143f}, {0x11442, 0x11444}, {0x11446, 0x11446}, {0x1145e, 0x1145e},
+    {0x114b3, 0x114b8}, {0x114ba, 0x114ba}, {0x114bf, 0x114c0}, {0x114c2, 0x114c3},
+    {0x115b2, 0x115b5}, {0x115bc, 0x115bd}, {0x115bf, 0x115c0}, {0x115dc, 0x115dd},
+    {0x11633, 0x1163a}, {0x1163d, 0x1163d}, {0x1163f, 0x11640}, {0x116ab, 0x116ab},
+    {0x116ad, 0x116ad}, {0x116b0, 0x116b5}, {0x116b7, 0x116b7}, {0x1171d, 0x1171d},
+    {0x1171f, 0x1171f}, {0x11722, 0x11725}, {0x11727, 0x1172b}, {0x1182f, 0x11837},
+    {0x11839, 0x1183a}, {0x1193b, 0x1193c}, {0x1193e, 0x1193e}, {0x11943, 0x11943},
+    {0x119d4, 0x119d7}, {0x119da, 0x119db}, {0x119e0, 0x119e0}, {0x11a01, 0x11a0a},
+    {0x11a33, 0x11a38}, {0x11a3b, 0x11a3e}, {0x11a47, 0x11a47}, {0x11a51, 0x11a56},
+    {0x11a59, 0x11a5b}, {0x11a8a, 0x11a96}, {0x11a98, 0x11a99}, {0x11c30, 0x11c36},
+    {0x11c38, 0x11c3d}, {0x11c3f, 0x11c3f}, {0x11c92, 0x11ca7}, {0x11caa, 0x11cb0},
+    {0x11cb2, 0x11cb3}, {0x11cb5, 0x11cb6}, {0x11d31, 0x11d36}, {0x11d3a, 0x11d3a},
+    {0x11d3c, 0x11d3d}, {0x11d3f, 0x11d45}, {0x11d47, 0x11d47}, {0x11d90, 0x11d91},
+    {0x11d95, 0x11d95}, {0x11d97, 0x11d97}, {0x11ef3, 0x11ef4}, {0x11f00, 0x11f01},
+    {0x11f36, 0x11f3a}, {0x11f40, 0x11f40}, {0x11f42, 0x11f42}, {0x11f5a, 0x11f5a},
+    {0x13430, 0x13440}, {0x13447, 0x13455}, {0x1611e, 0x16129}, {0x1612d, 0x1612f},
+    {0x16af0, 0x16af4}, {0x16b30, 0x16b36}, {0x16f4f, 0x16f4f}, {0x16f8f, 0x16f92},
+    {0x16fe4, 0x16fe4}, {0x1bc9d, 0x1bc9e}, {0x1bca0, 0x1bca3}, {0x1cf00, 0x1cf2d},
+    {0x1cf30, 0x1cf46}, {0x1d167, 0x1d169}, {0x1d173, 0x1d182}, {0x1d185, 0x1d18b},
+    {0x1d1aa, 0x1d1ad}, {0x1d242, 0x1d244}, {0x1da00, 0x1da36}, {0x1da3b, 0x1da6c},
+    {0x1da75, 0x1da75}, {0x1da84, 0x1da84}, {0x1da9b, 0x1da9f}, {0x1daa1, 0x1daaf},
+    {0x1e000, 0x1e006}, {0x1e008, 0x1e018}, {0x1e01b, 0x1e021}, {0x1e023, 0x1e024},
+    {0x1e026, 0x1e02a}, {0x1e08f, 0x1e08f}, {0x1e130, 0x1e136}, {0x1e2ae, 0x1e2ae},
+    {0x1e2ec, 0x1e2ef}, {0x1e4ec, 0x1e4ef}, {0x1e5ee, 0x1e5ef}, {0x1e8d0, 0x1e8d6},
+    {0x1e944, 0x1e94a}, {0xe0001, 0xe0001}, {0xe0020, 0xe007f}, {0xe0100, 0xe01ef},
+};
+static const struct unicode_width_reference_range unicode_width_reference_wide[] = {
+    {0x01100, 0x0115f}, {0x0231a, 0x0231b}, {0x02329, 0x0232a}, {0x023e9, 0x023ec},
+    {0x023f0, 0x023f0}, {0x023f3, 0x023f3}, {0x025fd, 0x025fe}, {0x02614, 0x02615},
+    {0x02630, 0x02637}, {0x02648, 0x02653}, {0x0267f, 0x0267f}, {0x0268a, 0x0268f},
+    {0x02693, 0x02693}, {0x026a1, 0x026a1}, {0x026aa, 0x026ab}, {0x026bd, 0x026be},
+    {0x026c4, 0x026c5}, {0x026ce, 0x026ce}, {0x026d4, 0x026d4}, {0x026ea, 0x026ea},
+    {0x026f2, 0x026f3}, {0x026f5, 0x026f5}, {0x026fa, 0x026fa}, {0x026fd, 0x026fd},
+    {0x02705, 0x02705}, {0x0270a, 0x0270b}, {0x02728, 0x02728}, {0x0274c, 0x0274c},
+    {0x0274e, 0x0274e}, {0x02753, 0x02755}, {0x02757, 0x02757}, {0x02795, 0x02797},
+    {0x027b0, 0x027b0}, {0x027bf, 0x027bf}, {0x02b1b, 0x02b1c}, {0x02b50, 0x02b50},
+    {0x02b55, 0x02b55}, {0x02e80, 0x02e99}, {0x02e9b, 0x02ef3}, {0x02f00, 0x02fd5},
+    {0x02ff0, 0x03029}, {0x0302e, 0x0303e}, {0x03041, 0x03096}, {0x0309b, 0x030ff},
+    {0x03105, 0x0312f}, {0x03131, 0x0318e}, {0x03190, 0x031e5}, {0x031ef, 0x0321e},
+    {0x03220, 0x03247}, {0x03250, 0x0a48c}, {0x0a490, 0x0a4c6}, {0x0a960, 0x0a97c},
+    {0x0ac00, 0x0d7a3}, {0x0f900, 0x0faff}, {0x0fe10, 0x0fe19}, {0x0fe30, 0x0fe52},
+    {0x0fe54, 0x0fe66}, {0x0fe68, 0x0fe6b}, {0x0ff01, 0x0ff60}, {0x0ffe0, 0x0ffe6},
+    {0x16fe0, 0x16fe3}, {0x16ff0, 0x16ff1}, {0x17000, 0x187f7}, {0x18800, 0x18cd5},
+    {0x18cff, 0x18d08}, {0x1aff0, 0x1aff3}, {0x1aff5, 0x1affb}, {0x1affd, 0x1affe},
+    {0x1b000, 0x1b122}, {0x1b132, 0x1b132}, {0x1b150, 0x1b152}, {0x1b155, 0x1b155},
+    {0x1b164, 0x1b167}, {0x1b170, 0x1b2fb}, {0x1d300, 0x1d356}, {0x1d360, 0x1d376},
+    {0x1f004, 0x1f004}, {0x1f0cf, 0x1f0cf}, {0x1f18e, 0x1f18e}, {0x1f191, 0x1f19a},
+    {0x1f200, 0x1f202}, {0x1f210, 0x1f23b}, {0x1f240, 0x1f248}, {0x1f250, 0x1f251},
+    {0x1f260, 0x1f265}, {0x1f300, 0x1f320}, {0x1f32d, 0x1f335}, {0x1f337, 0x1f37c},
+    {0x1f37e, 0x1f393}, {0x1f3a0, 0x1f3ca}, {0x1f3cf, 0x1f3d3}, {0x1f3e0, 0x1f3f0},
+    {0x1f3f4, 0x1f3f4}, {0x1f3f8, 0x1f43e}, {0x1f440, 0x1f440}, {0x1f442, 0x1f4fc},
+    {0x1f4ff, 0x1f53d}, {0x1f54b, 0x1f54e}, {0x1f550, 0x1f567}, {0x1f57a, 0x1f57a},
+    {0x1f595, 0x1f596}, {0x1f5a4, 0x1f5a4}, {0x1f5fb, 0x1f64f}, {0x1f680, 0x1f6c5},
+    {0x1f6cc, 0x1f6cc}, {0x1f6d0, 0x1f6d2}, {0x1f6d5, 0x1f6d7}, {0x1f6dc, 0x1f6df},
+    {0x1f6eb, 0x1f6ec}, {0x1f6f4, 0x1f6fc}, {0x1f7e0, 0x1f7eb}, {0x1f7f0, 0x1f7f0},
+    {0x1f90c, 0x1f93a}, {0x1f93c, 0x1f945}, {0x1f947, 0x1f9ff}, {0x1fa70, 0x1fa7c},
+    {0x1fa80, 0x1fa89}, {0x1fa8f, 0x1fac6}, {0x1face, 0x1fadc}, {0x1fadf, 0x1fae9},
+    {0x1faf0, 0x1faf8}, {0x20000, 0x2fffd}, {0x30000, 0x3fffd},
+};
+
+static PURE b32 unicode_width_reference_in(const struct unicode_width_reference_range address_to ranges,
+                             positive count, unsigned int c)
+{
+        positive low = 0, high = count;
+
+        while (low < high)
+        {
+                positive middle = (low + high) / 2;
+
+                if (ranges[middle].last < c)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        return low < count && ranges[low].first <= c;
+}
+
+static PURE unsigned int unicode_width_reference_terminal(unsigned int c)
+{
+        if (c < 0x300)
+                return 1;
+
+        /*
+                The CJK ideographs and the Hangul syllables are most of the
+                wide characters a terminal is sent, and neither block holds a
+                mark, so they are answered before the two searches -- behind
+                one compare, so box drawing and every script below them pay
+                no more than that. The term lane checks every character
+                against the tables alone.
+        */
+        if (c >= 0x3250 && (c <= 0xa48c || c - 0xac00u <= 0xd7a3 - 0xac00))
+                return 2;
+
+        if (unicode_width_reference_in(unicode_width_reference_zero, array_count(unicode_width_reference_zero), c))
+                return 0;
+
+        return unicode_width_reference_in(unicode_width_reference_wide, array_count(unicode_width_reference_wide), c)
+                   ? 2
+                   : 1;
+}
+
+static PURE unsigned int unicode_width_reference_tables(unsigned int c)
+{
+        return c < 0x300 ? 1
+               : unicode_width_reference_in(unicode_width_reference_zero,
+                                            array_count(unicode_width_reference_zero), c) ? 0
+               : unicode_width_reference_in(unicode_width_reference_wide,
+                                            array_count(unicode_width_reference_wide), c) ? 2
+                                                                                          : 1;
+}
+
+/*
+        The display width of every code point past ASCII that is not one
+        column wide, as wc -L measures it in a UTF-8 locale: glibc's wcwidth
+        for a printable character and nought for anything iswprint refuses,
+        unassigned code points included. Generated from glibc 2.44 on the
+        reference machine; each row packs first << 32 | last << 2 | width,
+        sorted, so a binary search on the first code point finds a row.
+*/
+#define UNICODE_WIDTH_REFERENCE_ROWS 1044
+static const p64 unicode_width_reference_rows[UNICODE_WIDTH_REFERENCE_ROWS] = {
+    0x800000027c, 0x30000000dbc, 0x37800000de4, 0x38000000e0c, 0x38b00000e2c,
+    0x38d00000e34, 0x3a200000e88, 0x48300001224, 0x530000014c0, 0x55700001560,
+    0x58b00001630, 0x590000016f4, 0x5bf000016fc, 0x5c100001708, 0x5c400001714,
+    0x5c70000173c, 0x5eb000017b8, 0x5f5000017fc, 0x61000001868, 0x61c00001870,
+    0x64b0000197c, 0x670000019c0, 0x6d600001b70, 0x6df00001b90, 0x6e700001ba0,
+    0x6ea00001bb4, 0x70e00001c38, 0x71100001c44, 0x73000001d30, 0x7a600001ec0,
+    0x7b200001efc, 0x7eb00001fcc, 0x7fb00001ff4, 0x81600002064, 0x81b0000208c,
+    0x8250000209c, 0x829000020bc, 0x83f000020fc, 0x85900002174, 0x85f0000217c,
+    0x86b000021bc, 0x8920000227c, 0x8ca00002384, 0x8e300002408, 0x93a000024e8,
+    0x93c000024f0, 0x94100002520, 0x94d00002534, 0x9510000255c, 0x9620000258c,
+    0x98100002604, 0x98400002610, 0x98d00002638, 0x99100002648, 0x9a9000026a4,
+    0x9b1000026c4, 0x9b3000026d4, 0x9ba000026f0, 0x9c100002718, 0x9c900002728,
+    0x9cd00002734, 0x9cf00002758, 0x9d80000276c, 0x9de00002778, 0x9e200002794,
+    0x9fe00002808, 0xa0400002810, 0xa0b00002838, 0xa1100002848, 0xa29000028a4,
+    0xa31000028c4, 0xa34000028d0, 0xa37000028dc, 0xa3a000028f4, 0xa4100002960,
+    0xa5d00002974, 0xa5f00002994, 0xa70000029c4, 0xa75000029d4, 0xa7700002a08,
+    0xa8400002a10, 0xa8e00002a38, 0xa9200002a48, 0xaa900002aa4, 0xab100002ac4,
+    0xab400002ad0, 0xaba00002af0, 0xac100002b20, 0xaca00002b28, 0xacd00002b3c,
+    0xad100002b7c, 0xae200002b94, 0xaf200002be0, 0xafa00002c04, 0xb0400002c10,
+    0xb0d00002c38, 0xb1100002c48, 0xb2900002ca4, 0xb3100002cc4, 0xb3400002cd0,
+    0xb3a00002cf0, 0xb3f00002cfc, 0xb4100002d18, 0xb4900002d28, 0xb4d00002d58,
+    0xb5800002d6c, 0xb5e00002d78, 0xb6200002d94, 0xb7800002e08, 0xb8400002e10,
+    0xb8b00002e34, 0xb9100002e44, 0xb9600002e60, 0xb9b00002e6c, 0xb9d00002e74,
+    0xba000002e88, 0xba500002e9c, 0xbab00002eb4, 0xbba00002ef4, 0xbc000002f00,
+    0xbc300002f14, 0xbc900002f24, 0xbcd00002f3c, 0xbd100002f58, 0xbd800002f94,
+    0xbfb00003000, 0xc0400003010, 0xc0d00003034, 0xc1100003044, 0xc29000030a4,
+    0xc3a000030f0, 0xc3e00003100, 0xc450000315c, 0xc5b0000316c, 0xc5e0000317c,
+    0xc6200003194, 0xc70000031d8, 0xc8100003204, 0xc8d00003234, 0xc9100003244,
+    0xca9000032a4, 0xcb4000032d0, 0xcba000032f0, 0xcbf000032fc, 0xcc500003318,
+    0xcc900003324, 0xccc00003350, 0xcd70000336c, 0xcdf0000337c, 0xce200003394,
+    0xcf0000033c0, 0xcf400003404, 0xd0d00003434, 0xd1100003444, 0xd3b000034f0,
+    0xd4100003514, 0xd4900003524, 0xd4d00003534, 0xd500000354c, 0xd6200003594,
+    0xd8000003604, 0xd8400003610, 0xd9700003664, 0xdb2000036c8, 0xdbc000036f0,
+    0xdbe000036fc, 0xdc700003738, 0xdd20000375c, 0xde000003794, 0xdf0000037c4,
+    0xdf500003800, 0xe31000038c4, 0xe34000038f8, 0xe4700003938, 0xe5c00003a00,
+    0xe8300003a0c, 0xe8500003a14, 0xe8b00003a2c, 0xea400003a90, 0xea600003a98,
+    0xeb100003ac4, 0xeb400003af0, 0xebe00003afc, 0xec500003b14, 0xec700003b3c,
+    0xeda00003b6c, 0xee000003bfc, 0xf1800003c64, 0xf3500003cd4, 0xf3700003cdc,
+    0xf3900003ce4, 0xf4800003d20, 0xf6d00003df8, 0xf8000003e10, 0xf8600003e1c,
+    0xf8d00003ef4, 0xfc600003f18, 0xfcd00003f34, 0xfdb00003ffc, 0x102d000040c0,
+    0x1032000040dc, 0x1039000040e8, 0x103d000040f8, 0x105800004164, 0x105e00004180,
+    0x1071000041d0, 0x108200004208, 0x108500004218, 0x108d00004234, 0x109d00004274,
+    0x10c600004318, 0x10c800004330, 0x10ce0000433c, 0x11000000457e, 0x1160000047fc,
+    0x124900004924, 0x124e0000493c, 0x12570000495c, 0x125900004964, 0x125e0000497c,
+    0x128900004a24, 0x128e00004a3c, 0x12b100004ac4, 0x12b600004adc, 0x12bf00004afc,
+    0x12c100004b04, 0x12c600004b1c, 0x12d700004b5c, 0x131100004c44, 0x131600004c5c,
+    0x135b00004d7c, 0x137d00004dfc, 0x139a00004e7c, 0x13f600004fdc, 0x13fe00004ffc,
+    0x169d00005a7c, 0x16f900005bfc, 0x171200005c50, 0x171600005c78, 0x173200005ccc,
+    0x173700005cfc, 0x175200005d7c, 0x176d00005db4, 0x177100005dfc, 0x17b400005ed4,
+    0x17b700005ef4, 0x17c600005f18, 0x17c900005f4c, 0x17dd00005f7c, 0x17ea00005fbc,
+    0x17fa00005ffc, 0x180b0000603c, 0x181a0000607c, 0x1879000061fc, 0x188500006218,
+    0x18a9000062a4, 0x18ab000062bc, 0x18f6000063fc, 0x191f00006488, 0x1927000064a0,
+    0x192c000064bc, 0x1932000064c8, 0x1939000064fc, 0x19410000650c, 0x196e000065bc,
+    0x1975000065fc, 0x19ac000066bc, 0x19ca0000673c, 0x19db00006774, 0x1a1700006860,
+    0x1a1b00006874, 0x1a5600006958, 0x1a5800006980, 0x1a6200006988, 0x1a65000069b0,
+    0x1a73000069fc, 0x1a8a00006a3c, 0x1a9a00006a7c, 0x1aae00006c0c, 0x1b3400006cd0,
+    0x1b3600006ce8, 0x1b3c00006cf0, 0x1b4200006d08, 0x1b4d00006d34, 0x1b6b00006dcc,
+    0x1b8000006e04, 0x1ba200006e94, 0x1ba800006ea4, 0x1bab00006eb4, 0x1be600006f98,
+    0x1be800006fa4, 0x1bed00006fb4, 0x1bef00006fc4, 0x1bf400006fec, 0x1c2c000070cc,
+    0x1c36000070e8, 0x1c4a00007130, 0x1c8b0000723c, 0x1cbb000072f0, 0x1cc800007348,
+    0x1cd400007380, 0x1ce2000073a0, 0x1ced000073b4, 0x1cf4000073d0, 0x1cf8000073e4,
+    0x1cfb000073fc, 0x1dc0000077fc, 0x1f1600007c5c, 0x1f1e00007c7c, 0x1f4600007d1c,
+    0x1f4e00007d3c, 0x1f5800007d60, 0x1f5a00007d68, 0x1f5c00007d70, 0x1f5e00007d78,
+    0x1f7e00007dfc, 0x1fb500007ed4, 0x1fc500007f14, 0x1fd400007f54, 0x1fdc00007f70,
+    0x1ff000007fc4, 0x1ff500007fd4, 0x1fff00007ffc, 0x200b0000803c, 0x2028000080b8,
+    0x2060000081bc, 0x2072000081cc, 0x208f0000823c, 0x209d0000827c, 0x20c2000083fc,
+    0x218c0000863c, 0x231a00008c6e, 0x232900008caa, 0x23e900008fb2, 0x23f000008fc2,
+    0x23f300008fce, 0x242a000090fc, 0x244b0000917c, 0x25fd000097fa, 0x261400009856,
+    0x2630000098de, 0x26480000994e, 0x267f000099fe, 0x268a00009a3e, 0x269300009a4e,
+    0x26a100009a86, 0x26aa00009aae, 0x26bd00009afa, 0x26c400009b16, 0x26ce00009b3a,
+    0x26d400009b52, 0x26ea00009baa, 0x26f200009bce, 0x26f500009bd6, 0x26fa00009bea,
+    0x26fd00009bf6, 0x270500009c16, 0x270a00009c2e, 0x272800009ca2, 0x274c00009d32,
+    0x274e00009d3a, 0x275300009d56, 0x275700009d5e, 0x279500009e5e, 0x27b000009ec2,
+    0x27bf00009efe, 0x2b1b0000ac72, 0x2b500000ad42, 0x2b550000ad56, 0x2b740000add4,
+    0x2cef0000b3c4, 0x2cf40000b3e0, 0x2d260000b498, 0x2d280000b4b0, 0x2d2e0000b4bc,
+    0x2d680000b5b8, 0x2d710000b5fc, 0x2d970000b67c, 0x2da70000b69c, 0x2daf0000b6bc,
+    0x2db70000b6dc, 0x2dbf0000b6fc, 0x2dc70000b71c, 0x2dcf0000b73c, 0x2dd70000b75c,
+    0x2ddf0000b7fc, 0x2e5e0000b9fc, 0x2e800000ba66, 0x2e9a0000ba68, 0x2e9b0000bbce,
+    0x2ef40000bbfc, 0x2f000000bf56, 0x2fd60000bfbc, 0x2ff00000c0a6, 0x302a0000c0b4,
+    0x302e0000c0fa, 0x30400000c100, 0x30410000c25a, 0x30970000c268, 0x309b0000c3fe,
+    0x31000000c410, 0x31050000c4be, 0x31300000c4c0, 0x31310000c58e, 0x31640000c590,
+    0x31650000c63a, 0x318f0000c63c, 0x31900000c796, 0x31e60000c7b8, 0x31ef0000c87a,
+    0x321f0000c87c, 0x322000029232, 0xa48d0002923c, 0xa4900002931a, 0xa4c70002933c,
+    0xa62c000298fc, 0xa66f000299c8, 0xa674000299f4, 0xa69e00029a7c, 0xa6f000029bc4,
+    0xa6f800029bfc, 0xa7dd00029fc0, 0xa8020002a008, 0xa8060002a018, 0xa80b0002a02c,
+    0xa8250002a098, 0xa82c0002a0bc, 0xa83a0002a0fc, 0xa8780002a1fc, 0xa8c40002a334,
+    0xa8da0002a3c4, 0xa8ff0002a3fc, 0xa9260002a4b4, 0xa9470002a544, 0xa9540002a578,
+    0xa9600002a5f2, 0xa97d0002a608, 0xa9b30002a6cc, 0xa9b60002a6e4, 0xa9bc0002a6f4,
+    0xa9ce0002a738, 0xa9da0002a774, 0xa9e50002a794, 0xa9ff0002a7fc, 0xaa290002a8b8,
+    0xaa310002a8c8, 0xaa350002a8fc, 0xaa430002a90c, 0xaa4c0002a930, 0xaa4e0002a93c,
+    0xaa5a0002a96c, 0xaa7c0002a9f0, 0xaab00002aac0, 0xaab20002aad0, 0xaab70002aae0,
+    0xaabe0002aafc, 0xaac10002ab04, 0xaac30002ab68, 0xaaec0002abb4, 0xaaf60002ac00,
+    0xab070002ac20, 0xab0f0002ac40, 0xab170002ac7c, 0xab270002ac9c, 0xab2f0002acbc,
+    0xab6c0002adbc, 0xabe50002af94, 0xabe80002afa0, 0xabed0002afbc, 0xabfa0002affc,
+    0xac0000035e8e, 0xd7a400035ffc, 0xf9000003e9b6, 0xfa6e0003e9bc, 0xfa700003eb66,
+    0xfada0003ebfc, 0xfb070003ec48, 0xfb180003ec70, 0xfb1e0003ec78, 0xfb370003ecdc,
+    0xfb3d0003ecf4, 0xfb3f0003ecfc, 0xfb420003ed08, 0xfb450003ed14, 0xfdd00003f7bc,
+    0xfe000003f83c, 0xfe100003f866, 0xfe1a0003f8bc, 0xfe300003f94a, 0xfe530003f94c,
+    0xfe540003f99a, 0xfe670003f99c, 0xfe680003f9ae, 0xfe6c0003f9bc, 0xfe750003f9d4,
+    0xfefd0003fc00, 0xff010003fd82, 0xffa00003fe80, 0xffbf0003ff04, 0xffc80003ff24,
+    0xffd00003ff44, 0xffd80003ff64, 0xffdd0003ff7c, 0xffe00003ff9a, 0xffe70003ff9c,
+    0xffef0003ffe0, 0xfffe0003fffc, 0x1000c00040030, 0x100270004009c, 0x1003b000400ec,
+    0x1003e000400f8, 0x1004e0004013c, 0x1005e000401fc, 0x100fb000403fc, 0x1010300040418,
+    0x10134000404d8, 0x1018f0004063c, 0x1019d0004067c, 0x101a10004073c, 0x101fd000409fc,
+    0x1029d00040a7c, 0x102d100040b80, 0x102fc00040bfc, 0x1032400040cb0, 0x1034b00040d3c,
+    0x1037600040dfc, 0x1039e00040e78, 0x103c400040f1c, 0x103d600040ffc, 0x1049e0004127c,
+    0x104aa000412bc, 0x104d40004135c, 0x104fc000413fc, 0x10528000414bc, 0x10564000415b8,
+    0x1057b000415ec, 0x1058b0004162c, 0x105930004164c, 0x1059600041658, 0x105a200041688,
+    0x105b2000416c8, 0x105ba000416e8, 0x105bd000416fc, 0x105f4000417fc, 0x1073700041cfc,
+    0x1075600041d7c, 0x1076800041dfc, 0x1078600041e18, 0x107b100041ec4, 0x107bb00041ffc,
+    0x108060004201c, 0x1080900042024, 0x10836000420d8, 0x10839000420ec, 0x1083d000420f8,
+    0x1085600042158, 0x1089f00042298, 0x108b00004237c, 0x108f3000423cc, 0x108f6000423e8,
+    0x1091c00042478, 0x1093a000424f8, 0x1095a000425fc, 0x109b8000426ec, 0x109d000042744,
+    0x10a010004283c, 0x10a1400042850, 0x10a1800042860, 0x10a36000428fc, 0x10a490004293c,
+    0x10a590004297c, 0x10aa000042afc, 0x10ae500042ba8, 0x10af700042bfc, 0x10b3600042ce0,
+    0x10b5600042d5c, 0x10b7300042ddc, 0x10b9200042e60, 0x10b9d00042ea0, 0x10bb000042ffc,
+    0x10c49000431fc, 0x10cb3000432fc, 0x10cf3000433e4, 0x10d24000434bc, 0x10d3a000434fc,
+    0x10d66000435b4, 0x10d8600043634, 0x10d900004397c, 0x10e7f000439fc, 0x10eaa00043ab0,
+    0x10eae00043abc, 0x10eb200043b04, 0x10ec800043b3c, 0x10ed900043bfc, 0x10f2800043cbc,
+    0x10f4600043d40, 0x10f5a00043dbc, 0x10f8200043e14, 0x10f8a00043ebc, 0x10fcc00043f7c,
+    0x10ff700043ffc, 0x1100100044004, 0x1103800044118, 0x1104e00044144, 0x11070000441c0,
+    0x11073000441d0, 0x1107600044204, 0x110b3000442d8, 0x110b9000442e8, 0x110c200044330,
+    0x110ce0004433c, 0x110e9000443bc, 0x110fa00044408, 0x11127000444ac, 0x1112d000444d4,
+    0x111480004453c, 0x11173000445cc, 0x1117700044604, 0x111b6000446f8, 0x111c900044730,
+    0x111cf0004473c, 0x111e000044780, 0x111f5000447fc, 0x1121200044848, 0x1122f000448c4,
+    0x11234000448d0, 0x11236000448dc, 0x1123e000448f8, 0x11241000449fc, 0x1128700044a1c,
+    0x1128900044a24, 0x1128e00044a38, 0x1129e00044a78, 0x112aa00044abc, 0x112df00044b7c,
+    0x112e300044bbc, 0x112fa00044c04, 0x1130400044c10, 0x1130d00044c38, 0x1131100044c48,
+    0x1132900044ca4, 0x1133100044cc4, 0x1133400044cd0, 0x1133a00044cf0, 0x1134000044d00,
+    0x1134500044d18, 0x1134900044d28, 0x1134e00044d3c, 0x1135100044d58, 0x1135800044d70,
+    0x1136400044dfc, 0x1138a00044e28, 0x1138c00044e34, 0x1138f00044e3c, 0x113b600044ed8,
+    0x113bb00044f04, 0x113c300044f10, 0x113c600044f18, 0x113cb00044f2c, 0x113ce00044f38,
+    0x113d000044f40, 0x113d200044f48, 0x113d600044f58, 0x113d900044ffc, 0x11438000450fc,
+    0x1144200045110, 0x1144600045118, 0x1145c00045170, 0x1145e00045178, 0x11462000451fc,
+    0x114b3000452e0, 0x114ba000452e8, 0x114bf00045300, 0x114c20004530c, 0x114c80004533c,
+    0x114da000455fc, 0x115b2000456dc, 0x115bc000456f4, 0x115bf00045700, 0x115dc000457fc,
+    0x11633000458e8, 0x1163d000458f4, 0x1163f00045900, 0x116450004593c, 0x1165a0004597c,
+    0x1166d000459fc, 0x116ab00045aac, 0x116ad00045ab4, 0x116b000045ad4, 0x116b700045adc,
+    0x116ba00045afc, 0x116ca00045b3c, 0x116e400045bfc, 0x1171b00045c74, 0x1171f00045c7c,
+    0x1172200045c94, 0x1172700045cbc, 0x1174700045ffc, 0x1182f000460dc, 0x11839000460e8,
+    0x1183c0004627c, 0x118f3000463f8, 0x1190700046420, 0x1190a0004642c, 0x1191400046450,
+    0x119170004645c, 0x11936000464d8, 0x11939000464f0, 0x1193e000464f8, 0x119430004650c,
+    0x119470004653c, 0x1195a0004667c, 0x119a8000466a4, 0x119d40004676c, 0x119e000046780,
+    0x119e5000467fc, 0x11a0100046828, 0x11a33000468e0, 0x11a3b000468f8, 0x11a470004693c,
+    0x11a5100046958, 0x11a590004696c, 0x11a8a00046a58, 0x11a9800046a64, 0x11aa300046abc,
+    0x11af900046bfc, 0x11b0a00046d80, 0x11b6200046d90, 0x11b6600046d98, 0x11b6800046efc,
+    0x11be200046fbc, 0x11bfa00046ffc, 0x11c0900047024, 0x11c30000470f4, 0x11c3f000470fc,
+    0x11c460004713c, 0x11c6d000471bc, 0x11c90000472a0, 0x11caa000472c0, 0x11cb2000472cc,
+    0x11cb5000473fc, 0x11d070004741c, 0x11d0a00047428, 0x11d3100047514, 0x11d470004753c,
+    0x11d5a0004757c, 0x11d6600047598, 0x11d69000475a4, 0x11d8f00047648, 0x11d9500047654,
+    0x11d970004765c, 0x11d990004767c, 0x11daa000476bc, 0x11ddc0004777c, 0x11dea00047b7c,
+    0x11ef300047bd0, 0x11ef900047c04, 0x11f1100047c44, 0x11f3600047cf4, 0x11f4000047d00,
+    0x11f4200047d08, 0x11f5a00047ebc, 0x11fb100047efc, 0x11ff200047ff8, 0x1239a00048ffc,
+    0x1246f000491bc, 0x12475000491fc, 0x125440004be3c, 0x12ff30004bffc, 0x134400004d100,
+    0x134470004d17c, 0x143fb00050ffc, 0x14647000583fc, 0x1611e000584a4, 0x1612d000584bc,
+    0x1613a00059ffc, 0x16a390005a8fc, 0x16a5f0005a97c, 0x16a6a0005a9b4, 0x16abf0005aafc,
+    0x16aca0005ab3c, 0x16aee0005abd0, 0x16af60005abfc, 0x16b300005acd8, 0x16b460005ad3c,
+    0x16b5a0005ad68, 0x16b620005ad88, 0x16b780005adf0, 0x16b900005b4fc, 0x16d7a0005b8fc,
+    0x16e9b0005ba7c, 0x16eb90005bae8, 0x16ed40005bbfc, 0x16f4b0005bd3c, 0x16f880005be48,
+    0x16fa00005bf7c, 0x16fe00005bf8e, 0x16fe40005bfbc, 0x16ff00005bfda, 0x16ff70005bffc,
+    0x1700000063356, 0x18cd6000633f8, 0x18cff0006347a, 0x18d1f000635fc, 0x18d80000637ca,
+    0x18df30006bfbc, 0x1aff00006bfce, 0x1aff40006bfd0, 0x1aff50006bfee, 0x1affc0006bff0,
+    0x1affd0006bffa, 0x1afff0006bffc, 0x1b0000006c48a, 0x1b1230006c4c4, 0x1b1320006c4ca,
+    0x1b1330006c53c, 0x1b1500006c54a, 0x1b1530006c550, 0x1b1550006c556, 0x1b1560006c58c,
+    0x1b1640006c59e, 0x1b1680006c5bc, 0x1b1700006cbee, 0x1b2fc0006effc, 0x1bc6b0006f1bc,
+    0x1bc7d0006f1fc, 0x1bc890006f23c, 0x1bc9a0006f26c, 0x1bc9d0006f278, 0x1bca000072ffc,
+    0x1ccfd000733fc, 0x1ceb400073ae4, 0x1ced100073b7c, 0x1cef100073d3c, 0x1cfc400073ffc,
+    0x1d0f6000743fc, 0x1d127000744a0, 0x1d167000745a4, 0x1d17300074608, 0x1d1850007462c,
+    0x1d1aa000746b4, 0x1d1eb000747fc, 0x1d24200074910, 0x1d24600074afc, 0x1d2d400074b7c,
+    0x1d2f400074bfc, 0x1d30000074d5a, 0x1d35700074d7c, 0x1d36000074dda, 0x1d37900074ffc,
+    0x1d45500075154, 0x1d49d00075274, 0x1d4a000075284, 0x1d4a300075290, 0x1d4a7000752a0,
+    0x1d4ad000752b4, 0x1d4ba000752e8, 0x1d4bc000752f0, 0x1d4c400075310, 0x1d50600075418,
+    0x1d50b00075430, 0x1d51500075454, 0x1d51d00075474, 0x1d53a000754e8, 0x1d53f000754fc,
+    0x1d54500075514, 0x1d54700075524, 0x1d55100075544, 0x1d6a600075a9c, 0x1d7cc00075f34,
+    0x1da00000768d8, 0x1da3b000769b0, 0x1da75000769d4, 0x1da8400076a10, 0x1da8c00077bfc,
+    0x1df1f00077c90, 0x1df2b000780bc, 0x1e06e000783fc, 0x1e12d000784d8, 0x1e13e000784fc,
+    0x1e14a00078534, 0x1e15000078a3c, 0x1e2ae00078afc, 0x1e2ec00078bbc, 0x1e2fa00078bf8,
+    0x1e3000007933c, 0x1e4ec000793bc, 0x1e4fa0007973c, 0x1e5ee000797bc, 0x1e5fb000797f8,
+    0x1e60000079afc, 0x1e6df00079b7c, 0x1e6e300079b8c, 0x1e6e600079b98, 0x1e6ee00079bbc,
+    0x1e6f500079bf4, 0x1e70000079f7c, 0x1e7e700079f9c, 0x1e7ec00079fb0, 0x1e7ef00079fbc,
+    0x1e7ff00079ffc, 0x1e8c50007a318, 0x1e8d00007a3fc, 0x1e9440007a528, 0x1e94c0007a53c,
+    0x1e95a0007a574, 0x1e9600007b1c0, 0x1ecb50007b400, 0x1ed3e0007b7fc, 0x1ee040007b810,
+    0x1ee200007b880, 0x1ee230007b88c, 0x1ee250007b898, 0x1ee280007b8a0, 0x1ee330007b8cc,
+    0x1ee380007b8e0, 0x1ee3a0007b8e8, 0x1ee3c0007b904, 0x1ee430007b918, 0x1ee480007b920,
+    0x1ee4a0007b928, 0x1ee4c0007b930, 0x1ee500007b940, 0x1ee530007b94c, 0x1ee550007b958,
+    0x1ee580007b960, 0x1ee5a0007b968, 0x1ee5c0007b970, 0x1ee5e0007b978, 0x1ee600007b980,
+    0x1ee630007b98c, 0x1ee650007b998, 0x1ee6b0007b9ac, 0x1ee730007b9cc, 0x1ee780007b9e0,
+    0x1ee7d0007b9f4, 0x1ee7f0007b9fc, 0x1ee8a0007ba28, 0x1ee9c0007ba80, 0x1eea40007ba90,
+    0x1eeaa0007baa8, 0x1eebc0007bbbc, 0x1eef20007bffc, 0x1f0040007c012, 0x1f02c0007c0bc,
+    0x1f0940007c27c, 0x1f0af0007c2c0, 0x1f0c00007c300, 0x1f0cf0007c33e, 0x1f0d00007c340,
+    0x1f0f60007c3fc, 0x1f18e0007c63a, 0x1f1910007c66a, 0x1f1ae0007c794, 0x1f2000007c80a,
+    0x1f2030007c83c, 0x1f2100007c8ee, 0x1f23c0007c8fc, 0x1f2400007c922, 0x1f2490007c93c,
+    0x1f2500007c946, 0x1f2520007c97c, 0x1f2600007c996, 0x1f2660007cbfc, 0x1f3000007cc82,
+    0x1f32d0007ccd6, 0x1f3370007cdf2, 0x1f37e0007ce4e, 0x1f3a00007cf2a, 0x1f3cf0007cf4e,
+    0x1f3e00007cfc2, 0x1f3f40007cfd2, 0x1f3f80007d0fa, 0x1f4400007d102, 0x1f4420007d3f2,
+    0x1f4ff0007d4f6, 0x1f54b0007d53a, 0x1f5500007d59e, 0x1f57a0007d5ea, 0x1f5950007d65a,
+    0x1f5a40007d692, 0x1f5fb0007d93e, 0x1f6800007db16, 0x1f6cc0007db32, 0x1f6d00007db4a,
+    0x1f6d50007db62, 0x1f6d90007db6c, 0x1f6dc0007db7e, 0x1f6eb0007dbb2, 0x1f6ed0007dbbc,
+    0x1f6f40007dbf2, 0x1f6fd0007dbfc, 0x1f7da0007df7c, 0x1f7e00007dfae, 0x1f7ec0007dfbc,
+    0x1f7f00007dfc2, 0x1f7f10007dffc, 0x1f80c0007e03c, 0x1f8480007e13c, 0x1f85a0007e17c,
+    0x1f8880007e23c, 0x1f8ae0007e2bc, 0x1f8bc0007e2fc, 0x1f8c20007e33c, 0x1f8d90007e3fc,
+    0x1f90c0007e4ea, 0x1f93c0007e516, 0x1f9470007e7fe, 0x1fa580007e97c, 0x1fa6e0007e9bc,
+    0x1fa700007e9f2, 0x1fa7d0007e9fc, 0x1fa800007ea2a, 0x1fa8b0007ea34, 0x1fa8e0007eb1a,
+    0x1fac70007eb1c, 0x1fac80007eb22, 0x1fac90007eb30, 0x1facd0007eb72, 0x1fadd0007eb78,
+    0x1fadf0007ebaa, 0x1faeb0007ebb8, 0x1faef0007ebe2, 0x1faf90007ebfc, 0x1fb930007ee4c,
+    0x1fbfb0007fffc, 0x20000000a9b7e, 0x2a6e0000a9bfc, 0x2a700000ae076, 0x2b81e000ae07c,
+    0x2b820000b3ab6, 0x2ceae000b3abc, 0x2ceb0000baf82, 0x2ebe1000bafbc, 0x2ebf0000bb976,
+    0x2ee5e000bdffc, 0x2f800000be876, 0x2fa1e000bfffc, 0x30000000c4d2a, 0x3134b000c4d3c,
+    0x31350000cd1e6, 0x3347a003bfffc, 0xffffe003ffffc, 0x10fffe0043fffc,
+};
+
+static positive unicode_width_reference_wcwidth(p32 code)
+{
+        positive low = 0;
+        positive high = UNICODE_WIDTH_REFERENCE_ROWS;
+
+        while (low < high)
+        {
+                positive middle = (low + high) / 2;
+
+                if ((p32)(unicode_width_reference_rows[middle] >> 32) <= code)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        if (!low)
+                return 1;
+
+        p64 row = unicode_width_reference_rows[low - 1];
+
+        return code <= (p32)((row >> 2) & 0x3fffffff) ? (positive)(row & 3) : 1;
+}
+
+#define UNICODE_WIDTH_REFERENCE_SPAN 0x40200u
+#define UNICODE_WIDTH_REFERENCE_BLOCKS 256
+#define UNICODE_WIDTH_REFERENCE_LEAVES 512
+
+static PURE p32 unicode_width_reference_code(positive index)
+{
+        return index < 0x40000 ? (p32)index : (p32)(index - 0x40000 + 0xe0000);
+}
+
+/* The table, into room bytes at out. Answers its size, with where the
+   blocks and the leaves start, or 0 when it does not fit. */
+static positive unicode_width_reference_table(p8 address_to out, positive room,
+                                              positive address_to blocks_at,
+                                              positive address_to leaves_at)
+{
+        static p8 leaves[UNICODE_WIDTH_REFERENCE_LEAVES * 8];
+        static p8 blocks[UNICODE_WIDTH_REFERENCE_BLOCKS * 16];
+        positive leaf_count = 0;
+        positive block_count = 0;
+        positive stages = UNICODE_WIDTH_REFERENCE_SPAN / 128;
+        positive size = (stages + 7) & ~(positive)7;
+
+        if (room < size)
+                return 0;
+
+        for (positive stage = 0; stage < stages; stage++)
+        {
+                p8 block[16];
+                positive at;
+
+                for (positive part = 0; part < 8; part++)
+                {
+                        p8 leaf[8];
+
+                        for (positive k = 0; k < 16; k++)
+                        {
+                                p32 code = unicode_width_reference_code(
+                                    stage * 128 + part * 16 + k);
+                                p8 nibble = (p8)(unicode_width_reference_terminal(code) |
+                                                 unicode_width_reference_wcwidth(code) << 2);
+
+                                if (k & 1)
+                                        leaf[k / 2] |= (p8)(nibble << 4);
+                                else
+                                        leaf[k / 2] = nibble;
+                        }
+
+                        for (at = 0; at < leaf_count; at++)
+                                if (!memory_compare(leaves + at * 8, leaf, 8))
+                                        break;
+
+                        if (at == leaf_count)
+                        {
+                                if (leaf_count == UNICODE_WIDTH_REFERENCE_LEAVES)
+                                        return 0;
+                                memory_copy(leaves + at * 8, leaf, 8);
+                                leaf_count++;
+                        }
+
+                        block[part * 2] = (p8)(at * 8);
+                        block[part * 2 + 1] = (p8)(at * 8 >> 8);
+                }
+
+                for (at = 0; at < block_count; at++)
+                        if (!memory_compare(blocks + at * 16, block, 16))
+                                break;
+
+                if (at == block_count)
+                {
+                        if (block_count == UNICODE_WIDTH_REFERENCE_BLOCKS)
+                                return 0;
+                        memory_copy(blocks + at * 16, block, 16);
+                        block_count++;
+                }
+
+                out[stage] = (p8)at;
+        }
+
+        if (size + block_count * 16 + leaf_count * 8 > room)
+                return 0;
+
+        for (positive pad = stages; pad < size; pad++)
+                out[pad] = 0;
+
+        address_to blocks_at = size;
+        memory_copy(out + size, blocks, block_count * 16);
+        size += block_count * 16;
+        address_to leaves_at = size;
+        memory_copy(out + size, leaves, leaf_count * 8);
+        return size + leaf_count * 8;
+}
+
+#endif
 #elif defined(SHARED_native)
 /*
         What the native sections share: the references the hunts are held
@@ -20372,6 +20923,82 @@ fn check_paths()
 }
 
 /*
+        unicode_width against the two functions it replaced, at every code
+        point in both variants, then past U+10FFFF at every power of two and
+        either side of it. The code goes in with the register's high half
+        dirty on odd code points, which a 32-bit argument allows. Last, the
+        table against the one the references lay out, so the table shipped is
+        the layout library.c describes and not just one that happens to agree.
+*/
+#define SHARED_unicode_width_reference
+#include "checks.c"
+#undef SHARED_unicode_width_reference
+
+static fn unicode_width_one(p32 code, positive address_to wrong, p32 address_to first)
+{
+        positive (*volatile width)(positive, positive) =
+            (positive (*)(positive, positive))(address_any)unicode_width;
+        positive dirty = code & 1 ? (positive)0xa5a5a5a5u << 32 : 0;
+
+        if (width(dirty | code, UNICODE_WIDTH_TERMINAL) !=
+            unicode_width_reference_terminal(code))
+                if (!wrong[0]++)
+                        first[0] = code;
+
+        if (width(dirty | code, UNICODE_WIDTH_WCWIDTH) !=
+            unicode_width_reference_wcwidth(code))
+                if (!wrong[1]++)
+                        first[1] = code;
+}
+
+fn check_unicode_width()
+{
+        static p8 table[9560];
+        positive wrong[2] = {0, 0};
+        positive above[2] = {0, 0};
+        p32 first[2] = {0, 0};
+        p32 past[2] = {0, 0};
+        positive tables = 0;
+        positive blocks_at = 0;
+        positive leaves_at = 0;
+
+        for (p32 code = 0; code <= 0x10ffff; code++)
+        {
+                unicode_width_one(code, wrong, first);
+                tables += unicode_width_reference_terminal(code) !=
+                          unicode_width_reference_tables(code);
+        }
+
+        for (positive bit = 20; bit < 32; bit++)
+                for (p32 near = 0; near < 3; near++)
+                        unicode_width_one(((p32)1 << bit) + near - 1, above, past);
+        for (p32 code = 0x110000; code < 0x110100; code++)
+                unicode_width_one(code, above, past);
+        unicode_width_one(0xffffffffu, above, past);
+
+        same("unicode_width", "terminal at U+0000-10FFFF", wrong[0], 0);
+        same("unicode_width", "wcwidth at U+0000-10FFFF", wrong[1], 0);
+        same("unicode_width", "both past U+10FFFF", above[0] + above[1], 0);
+        if (wrong[0] || wrong[1] || above[0] || above[1])
+                string_format(log, "  first wrong: terminal %p, wcwidth %p, "
+                                   "past the range %p and %p\n",
+                              (positive)first[0], (positive)first[1],
+                              (positive)past[0], (positive)past[1]);
+        same("unicode_width", "term.c's shortcut against its tables", tables, 0);
+
+        positive size = unicode_width_reference_table(table, sizeof table,
+                                                      address_of blocks_at,
+                                                      address_of leaves_at);
+        same("unicode_width", "table size from the references", size,
+             sizeof table);
+        same("unicode_width", "where the blocks start", blocks_at, 2056);
+        same("unicode_width", "where the leaves start", leaves_at, 5928);
+        same_bytes("unicode_width", "table from the references",
+                   (b8 address_to)unicode_width_tab, (b8 address_to)table,
+                   sizeof table);
+}
+
+/*
         The shared numeric core, in one list.
 
         It runs twice: on its own, for the small cross-machine lane that a
@@ -20458,6 +21085,7 @@ b32 main()
         check_reverse();
         check_translate();
         check_cells_from_ascii();
+        check_unicode_width();
         check_checksums();
         check_copy_match();
         check_move();
@@ -57290,6 +57918,299 @@ b32 main(void)
         return agree ? 0 : 1;
 }
 #endif /* BENCH_cksum_crc */
+
+#ifdef BENCH_unicode_width
+/*
+        Display widths, variant by variant: the C src/sh/term.c and
+        src/sh/text.c ran -- character_width's two range searches behind its
+        shortcuts, and wc_width's search of 1,044 rows -- against
+        unicode_width, over streams of code points drawn the way their readers
+        meet them. The C is SHARED_unicode_width_reference, static here as it
+        was static there and free to inline; the assembly is a call.
+
+        Streams: mixed is Latin, Greek and Cyrillic, box drawing, ideographs,
+        Hangul, kana, emoji, combining marks and a few unassigned code points
+        in the proportions of a multilingual log; the rest are one family
+        each. Every stream is 65,536 code points from a fixed seed.
+
+        With no arguments it prints best-of-seven ticks a code point. `BODY
+        VARIANT STREAM [ROUNDS]`, BODY former, assembly or none and VARIANT
+        terminal or wcwidth, runs one body over one stream and prints the sum
+        of its widths, so perf stat or an emulator's instruction count sees
+        one body a process; none builds the stream and exits, for the fixed
+        cost. `table` prints unicode_width_tab's lines for library.c, laid out
+        from the references.
+*/
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+#define SHARED_unicode_width_reference
+#include "checks.c"
+#undef SHARED_unicode_width_reference
+
+#define WIDTH_BENCH_CODES 65536
+
+struct width_bench_range
+{
+        p32 first, count, weight;
+};
+
+struct width_bench_stream
+{
+        string_address name;
+        const struct width_bench_range address_to ranges;
+        positive count;
+};
+
+static const struct width_bench_range width_bench_mixed[] = {
+    {0x00a0, 0x0260, 25}, {0x0370, 0x0190, 15}, {0x2500, 0x0100, 15},
+    {0x4e00, 0x5200, 15}, {0xac00, 0x2ba4, 5},  {0x3040, 0x00c0, 5},
+    {0x1f300, 0x0350, 10}, {0x0300, 0x0070, 7}, {0x2fe0, 0x0010, 3},
+};
+static const struct width_bench_range width_bench_latin[] = {
+    {0x00a0, 0x0260, 1},
+};
+static const struct width_bench_range width_bench_box[] = {
+    {0x2500, 0x0100, 1},
+};
+static const struct width_bench_range width_bench_wide[] = {
+    {0x4e00, 0x5200, 6}, {0xac00, 0x2ba4, 3}, {0x3040, 0x00c0, 2},
+    {0xff01, 0x005f, 1},
+};
+static const struct width_bench_range width_bench_emoji[] = {
+    {0x1f300, 0x0350, 3}, {0x1f900, 0x0100, 1}, {0x2600, 0x0100, 1},
+};
+static const struct width_bench_range width_bench_marks[] = {
+    {0x0300, 0x0070, 3}, {0x0591, 0x0037, 1}, {0x0900, 0x0080, 1},
+    {0x200b, 0x0005, 1}, {0xfe00, 0x0010, 1},
+};
+
+static const struct width_bench_stream width_bench_streams[] = {
+    {"mixed", width_bench_mixed, array_count(width_bench_mixed)},
+    {"latin", width_bench_latin, array_count(width_bench_latin)},
+    {"box", width_bench_box, array_count(width_bench_box)},
+    {"wide", width_bench_wide, array_count(width_bench_wide)},
+    {"emoji", width_bench_emoji, array_count(width_bench_emoji)},
+    {"marks", width_bench_marks, array_count(width_bench_marks)},
+};
+
+static p32 width_bench_codes[WIDTH_BENCH_CODES];
+static positive width_bench_rounds = 64;
+static volatile positive width_bench_sink;
+
+static fn width_bench_fill(const struct width_bench_stream address_to stream)
+{
+        p32 random = 0x2545f491u;
+        positive total = 0;
+
+        for (positive at = 0; at < stream->count; at++)
+                total += stream->ranges[at].weight;
+
+        for (positive at = 0; at < WIDTH_BENCH_CODES; at++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                positive pick = random % total;
+                positive which = 0;
+
+                while (pick >= stream->ranges[which].weight)
+                        pick -= stream->ranges[which++].weight;
+
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                width_bench_codes[at] = stream->ranges[which].first +
+                                        random % stream->ranges[which].count;
+        }
+}
+
+static fn width_bench_former_terminal(void)
+{
+        positive sum = 0;
+
+        for (positive round = 0; round < width_bench_rounds; round++)
+                for (positive at = 0; at < WIDTH_BENCH_CODES; at++)
+                        sum += unicode_width_reference_terminal(width_bench_codes[at]);
+        width_bench_sink = sum;
+}
+
+static fn width_bench_former_wcwidth(void)
+{
+        positive sum = 0;
+
+        for (positive round = 0; round < width_bench_rounds; round++)
+                for (positive at = 0; at < WIDTH_BENCH_CODES; at++)
+                        sum += unicode_width_reference_wcwidth(width_bench_codes[at]);
+        width_bench_sink = sum;
+}
+
+static fn width_bench_assembly_terminal(void)
+{
+        positive sum = 0;
+
+        for (positive round = 0; round < width_bench_rounds; round++)
+                for (positive at = 0; at < WIDTH_BENCH_CODES; at++)
+                        sum += unicode_width(width_bench_codes[at], UNICODE_WIDTH_TERMINAL);
+        width_bench_sink = sum;
+}
+
+static fn width_bench_assembly_wcwidth(void)
+{
+        positive sum = 0;
+
+        for (positive round = 0; round < width_bench_rounds; round++)
+                for (positive at = 0; at < WIDTH_BENCH_CODES; at++)
+                        sum += unicode_width(width_bench_codes[at], UNICODE_WIDTH_WCWIDTH);
+        width_bench_sink = sum;
+}
+
+static positive width_bench_number(string_address text, positive otherwise)
+{
+        positive value = 0;
+
+        if (!text)
+                return otherwise;
+        while (*text >= '0' && *text <= '9')
+                value = value * 10 + (positive)(*text++ - '0');
+        return value;
+}
+
+static fn width_bench_quads(const p8 address_to table, positive from, positive to)
+{
+        static const p8 digits[] = "0123456789abcdef";
+        p8 line[128];
+
+        for (positive quad = from; quad < to; quad += 4)
+        {
+                positive used = 0;
+
+                memory_copy(line, "    \".quad ", 11);
+                used = 11;
+                for (positive at = quad; at < to && at < quad + 4; at++)
+                {
+                        p64 value = 0;
+
+                        for (positive byte = 0; byte < 8; byte++)
+                                value |= (p64)table[at * 8 + byte] << (byte * 8);
+                        if (at != quad)
+                                line[used++] = ',';
+                        line[used++] = '0';
+                        line[used++] = 'x';
+                        for (positive nibble = 16; nibble--;)
+                                line[used++] = digits[(value >> (nibble * 4)) & 15];
+                }
+                memory_copy(line + used, "\\n\"\n", 4);
+                used += 4;
+                line[used] = end;
+                string_format(log, "%s", line);
+        }
+}
+
+static fn width_bench_mark(positive at, string_address before, string_address after)
+{
+        string_format(log, "    \".if . - unicode_width_tab - %p\\n.error "
+                           "\\\"unicode_width_tab: %s %p%s\\\"\\n.endif\\n\"\n",
+                      at, before, at, after);
+}
+
+static b32 width_bench_table(void)
+{
+        static p8 table[16384];
+        positive blocks_at = 0;
+        positive leaves_at = 0;
+        positive size = unicode_width_reference_table(table, sizeof table,
+                                                      address_of blocks_at,
+                                                      address_of leaves_at);
+
+        if (!size || size % 8)
+        {
+                string_format(log, "the references no longer fit the layout\n");
+                return 1;
+        }
+
+        width_bench_quads(table, 0, blocks_at / 8);
+        width_bench_mark(blocks_at, "the blocks do not start at", "");
+        width_bench_quads(table, blocks_at / 8, leaves_at / 8);
+        width_bench_mark(leaves_at, "the leaves do not start at", "");
+        width_bench_quads(table, leaves_at / 8, size / 8);
+        width_bench_mark(size, "the table is not", " bytes");
+        return 0;
+}
+
+b32 main(void)
+{
+        string_address body = program_argument(1);
+
+        if (body && string_equals(body, "table"))
+                return width_bench_table();
+
+        if (body)
+        {
+                string_address variant = program_argument(2);
+                string_address name = program_argument(3);
+                const struct width_bench_stream address_to stream = null;
+
+                for (positive at = 0; name && at < array_count(width_bench_streams); at++)
+                        if (string_equals(name, width_bench_streams[at].name))
+                                stream = width_bench_streams + at;
+
+                if (!variant || !stream)
+                        return 2;
+
+                width_bench_fill(stream);
+                width_bench_rounds = width_bench_number(program_argument(4), 64);
+
+                bool terminal = string_equals(variant, "terminal");
+
+                if (!terminal && !string_equals(variant, "wcwidth"))
+                        return 2;
+                if (string_equals(body, "none"))
+                        return 0;
+                if (string_equals(body, "former"))
+                        (terminal ? width_bench_former_terminal
+                                  : width_bench_former_wcwidth)();
+                else if (string_equals(body, "assembly"))
+                        (terminal ? width_bench_assembly_terminal
+                                  : width_bench_assembly_wcwidth)();
+                else
+                        return 2;
+                string_format(log, "%p\n", (positive)width_bench_sink);
+                return 0;
+        }
+
+        bool agree = true;
+
+        for (positive at = 0; at < array_count(width_bench_streams); at++)
+        {
+                const struct width_bench_stream address_to stream = width_bench_streams + at;
+                positive units = width_bench_rounds * WIDTH_BENCH_CODES;
+
+                width_bench_fill(stream);
+                string_format(log, "  %s:\n", stream->name);
+
+                bench_report("terminal, term.c's C  ", width_bench_former_terminal, 7,
+                             units, "code point");
+                positive former = width_bench_sink;
+                bench_report("terminal, unicode_width", width_bench_assembly_terminal, 7,
+                             units, "code point");
+                agree = agree && former == width_bench_sink;
+
+                bench_report("wcwidth, text.c's C   ", width_bench_former_wcwidth, 7,
+                             units, "code point");
+                former = width_bench_sink;
+                bench_report("wcwidth, unicode_width ", width_bench_assembly_wcwidth, 7,
+                             units, "code point");
+                agree = agree && former == width_bench_sink;
+        }
+
+        if (!agree)
+                string_format(log, "  the C and unicode_width disagree\n");
+        log_flush();
+        return agree ? 0 : 1;
+}
+#endif /* BENCH_unicode_width */
 
 #ifdef CHECK_spark_entry
 #include "../src/compiler_memory.c"

@@ -371,6 +371,10 @@ hash_xxh64 hash_xxh64_add hash_crc32 hash_crc64 zstd_bits_open zstd_huffman_stre
 cover('folds_already', 'size', 'hash_crc32_msb',
       "cksum's read blocks, build.c's path and the one to eight length bytes "
       'are all counted at run time; no call site hands a literal')
+cover('folds_already', 'variant', 'unicode_width',
+      'every call site names its variant, but the variant is only the shift '
+      'of a nibble the body loads for both; a body per variant would remove '
+      'one addition and duplicate the compares')
 
 # No production caller presents these bounds as literals. The proposed forms
 # duplicate the same bounded scan/copy work and only remove entry dispatch;
