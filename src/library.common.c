@@ -5679,6 +5679,7 @@ static fn parallel_tree_enter(parallel_tree_run address_to run,
         thread address_to self = thread_self();
         address_any outer = self->run;
         parallel_tree_node address_to parent = node->parent;
+        parallel_tree_node address_to first_child;
         bipolar directory;
 
         atomic_add(address_of run->held_nodes, 1);
@@ -5770,6 +5771,9 @@ static fn parallel_tree_enter(parallel_tree_run address_to run,
                 atomic_add(address_of run->pending_count, node->unstarted);
         }
 
+        //      Once the guard drops, the children can all finish and the emitter
+        //      free this node, so whether it has any is read before.
+        first_child = node->first_child;
         atomic_exchange(address_of node->state, PARALLEL_TREE_ENTERED);
 
         if (parent && !node->leaf)
@@ -5777,7 +5781,7 @@ static fn parallel_tree_enter(parallel_tree_run address_to run,
 
         lock_release(address_of run->guard);
 
-        if (node->first_child)
+        if (first_child)
                 parallel_tree_wake_progress(run);
         else
                 parallel_tree_finish(run, node);
