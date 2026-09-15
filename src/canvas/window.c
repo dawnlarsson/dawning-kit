@@ -325,6 +325,29 @@ struct window_cell
         unsigned short flags;
 };
 
+// The colour an index names, as 0xrrggbb.
+static inline unsigned int window_cell_colour(unsigned int index)
+{
+        static const unsigned int sixteen[16] = {
+            0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd,
+            0xe5e5e5, 0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff,
+            0x00ffff, 0xffffff,
+        };
+        static const unsigned char level[6] = {0, 95, 135, 175, 215, 255};
+
+        if (index < 16)
+                return sixteen[index];
+
+        if (index < 232)
+        {
+                index -= 16;
+                return (unsigned int)level[index / 36] << 16 |
+                       (unsigned int)level[index / 6 % 6] << 8 | level[index % 6];
+        }
+
+        return (8 + (index - 232) % 24 * 10) * 0x010101u;
+}
+
 #define WINDOW_CELL_BOLD 1u
 #define WINDOW_CELL_DIM 2u
 #define WINDOW_CELL_ITALIC 4u

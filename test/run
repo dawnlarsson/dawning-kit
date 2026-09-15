@@ -5861,6 +5861,18 @@ same 'cursor position three digits' '[\e[3;160R]' 200 5 in '\e[3;160H\e[6n' sent
 same 'device status'   '[\e[0n]'                 20 5 in '\e[5n' sent
 same 'device attributes' '[\e[?1;2c]'            20 5 in '\e[c' sent
 same 'secondary attributes' '[\e[>0;115;0c]'     20 5 in '\e[>c' sent
+#       DECRQM answers from the same list SM and RM change.
+same 'mode set'      '[\e[?7;1$y]'               20 5 in '\e[?7$p' sent
+same 'mode reset'    '[\e[?1049;2$y]'            20 5 in '\e[?1049$p' sent
+same 'mode once set' '[\e[?2026;1$y]'            20 5 in '\e[?2026h\e[?2026$p' sent
+same 'ansi mode'     '[\e[4;2$y]'                20 5 in '\e[4$p' sent
+same 'unknown mode'  '[\e[?9999;0$y]'            20 5 in '\e[?9999$p' sent
+#       OSC colour queries, answered in the terminator they came with.
+same 'paper asked'   '[\e]11;rgb:0000/0000/0000\x07]' 20 5 in '\e]11;?\x07' sent
+same 'ink asked with st' '[\e]10;rgb:e5e5/e5e5/e5e5\e\]' 20 5 in '\e]10;?\e\\' sent
+same 'ink then paper' '[\e]10;rgb:e5e5/e5e5/e5e5\x07\e]11;rgb:0000/0000/0000\x07]' 20 5 in '\e]10;?;?\x07' sent
+same 'palette asked' '[\e]4;196;rgb:ffff/0000/0000\x07\e]4;244;rgb:8080/8080/8080\x07]' 20 5 in '\e]4;196;?;244;?\x07' sent
+same 'setting a colour' '[]'                     20 5 in '\e]11;#ffffff\x07\e]4;300;?\x07' sent
 
 #
 #       Erasing.
