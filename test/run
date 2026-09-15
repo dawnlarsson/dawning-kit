@@ -6710,6 +6710,19 @@ group off
 same 'passes through' '[a\e[D]'                  20 3 edit off keys 'a<left>' sent
 same 'shift is encoded' '[\e[1;2D]'              20 3 edit off keys '<s-left>' sent
 same 'shift tab is kcbt' '[\e[Z]'                 20 3 edit off keys '<s-	>' sent
+#       Control and a symbol is xterm's control code for it; the keymap turns
+#       only letters, and NUL cannot ride a character, so the terminal spells
+#       them. nano's ^\ Replace and ^/ Go To Line were never sent.
+same 'control backslash' '[\x1c]'          20 3 edit off keys '<c-\>' sent
+same 'control bracket'   '[\x1d]'          20 3 edit off keys '<c-]>' sent
+same 'control caret'     '[\x1e]'          20 3 edit off keys '<c-^>' sent
+same 'control underscore' '[\x1f]'         20 3 edit off keys '<c-_>' sent
+same 'control slash'     '[\x1f]'          20 3 edit off keys '<c-/>' sent
+same 'control space'     '[\x00]'          20 3 edit off keys '<c- >' sent
+same 'control two'       '[\x00]'          20 3 edit off keys '<c-2>' sent
+same 'control eight'     '[\x7f]'          20 3 edit off keys '<c-8>' sent
+same 'alt control backslash' '[\e\x1c]'   20 3 edit off keys '<a-c-\>' sent
+same 'control backslash in a line' '[\x1c]' 20 3 edit on keys '<c-\>' sent
 same 'control tilde encoded' '[\e[5;5~]'         20 3 edit off keys '<c-pgup>' sent
 same 'and back on'    '[a]|[]'                   20 3 edit off keys 'a' sent edit on keys 'b' sent
 same 'the line goes with it' '[ab ]|[x]'         20 3 edit on keys 'abc\x7f' row 0 edit off keys 'x' sent

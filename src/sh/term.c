@@ -3288,6 +3288,47 @@ static fn SPARE term_key_modified(unsigned int character, unsigned int code,
         if (code == KEY_ENTER || code == KEY_KPENTER)
                 character = '\r';
 
+        /*
+                Control and a symbol is the control code xterm sends for it:
+                Ctrl+Space, Ctrl+2 and Ctrl+@ are NUL, Ctrl+[ and 3 ESC, Ctrl+\
+                and 4 FS, Ctrl+] and 5 GS, Ctrl+^ and 6 RS, Ctrl+_, Ctrl+/ and 7
+                US, and Ctrl+? and 8 DEL. The keymap turns only letters, and a
+                character of 0 is its word for no character at all, so these
+                are the terminal's to spell: nano's ^\ Replace and ^/ Go To
+                Line, telnet's escape and emacs's mark were never sent. The
+                keypad's digits stay digits, as they do in xterm.
+        */
+        if ((held & WINDOW_KEY_CONTROL) && character &&
+            !(code >= 71 && code <= 83) && code != 55 && code != 98)
+        {
+                static const char symbols[] = " 2@3[4\\5]6^7_/8?";
+                static const unsigned char codes[] = {
+                    0, 0, 0, 27, 27, 28, 28, 29, 29, 30, 30, 31, 31, 31, 127, 127};
+
+                for (unsigned int i = 0; i < sizeof(codes); i++)
+                {
+                        if (character != (unsigned char)symbols[i])
+                                continue;
+
+                        character = codes[i];
+
+                        // NUL is the one no character can carry, and a line
+                        // being edited has no use for it.
+                        if (!character)
+                        {
+                                if (!line_editing)
+                                {
+                                        if (held & WINDOW_KEY_ALT)
+                                                emit(27);
+                                        emit(0);
+                                }
+                                return;
+                        }
+
+                        break;
+                }
+        }
+
         if (line_editing && line_key(character, code))
         {
                 line_show();
