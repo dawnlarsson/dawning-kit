@@ -10821,6 +10821,14 @@ __asm__(
     "test $7, %al\n   jnz .Lcells_from_ascii_x64_" #body "_cell\n"            \
     "jmp .Lcells_from_ascii_x64_" #body "\n"
 
+    //      The entry starts a 64-byte window. Most calls are runs of two to
+    //      fifteen cells, where the entry and the first byte tests are most of
+    //      the work, and where the linker happened to put the routine moved
+    //      ascii.bin by 7% and dmesg.bin by 9% with no instruction changed. The
+    //      alignment goes on the routine's own section, so the linker places
+    //      it and nothing runs through padding; in the kernel, with no section
+    //      per routine, it pads .noinstr.text in front of the label.
+    ASM_ROUTINE_SECTION(cells_from_ascii) ".p2align 6\n" ASM_ROUTINE_SECTION_END
     ASM_FUNC(cells_from_ascii)
     ASM_USERSPACE_WIDE(
         WIDE_PICK
