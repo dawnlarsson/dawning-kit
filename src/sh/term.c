@@ -177,12 +177,24 @@ static inline INLINE unsigned int slot_after(unsigned int slot, unsigned int cou
 */
 #define BLANK_CELL_WORD ((positive)' ' | ((positive)7 << 32))
 
+/*
+        Bold draws the first eight inks in their bright spellings. It is done
+        when a cell is written rather than to the ink itself, so SGR 22 takes
+        the bold off without taking a bright colour chosen as one with it.
+*/
+static PURE unsigned char ink_drawn()
+{
+        return (style & WINDOW_CELL_BOLD) && ink < 8 ? (unsigned char)(ink | 8) : ink;
+}
+
+/*
+        What an erase leaves: a blank in the background in force, and only
+        that. Reverse video and the ink are what text is written in, and an
+        erase that took them painted the line white.
+*/
 static PURE positive blank_cell_word()
 {
-        positive clear_ink = reverse ? paper : ink;
-        positive clear_paper = reverse ? ink : paper;
-
-        return (positive)' ' | (clear_ink << 32) | (clear_paper << 40);
+        return BLANK_CELL_WORD | (positive)paper << 40;
 }
 
 /* Erase in the colours in force, so a program can clear a coloured panel. */
@@ -236,6 +248,15 @@ static fn slot_copy(unsigned int to, unsigned int from)
 
 static fn row_blank(unsigned int r)
 {
+        // A line given out blank takes the background in force, the way an
+        // erase does: nano scrolls and inserts its blue title bar's rows.
+        if (paper)
+        {
+                cells_clear(r, 0, COLUMNS);
+                address_to row_length(r) = COLUMNS;
+                return;
+        }
+
         address_to row_length(r) = 0;
         touch(r);
 }
@@ -257,8 +278,12 @@ static fn scroll_up(unsigned int count)
                 if (count > ROWS)
                         count = ROWS;
 
-                while (count--)
+                for (unsigned int n = count; n; n--)
                         ring_scroll();
+
+                if (paper)
+                        for (unsigned int r = ROWS - count; r < ROWS; r++)
+                                row_blank(r);
 
                 return;
         }
@@ -608,8 +633,8 @@ static fn put_cells(unsigned int character, unsigned int width)
 
         cell = cells + column;
         cell->character = character;
-        cell->ink = reverse ? paper : ink;
-        cell->paper = reverse ? ink : paper;
+        cell->ink = reverse ? paper : ink_drawn();
+        cell->paper = reverse ? ink_drawn() : paper;
         cell->flags = style;
 
         if (width == 2)
@@ -689,17 +714,20 @@ static fn emit(unsigned int byte)
 /* One CSI parameter machine serves both terminal output and editor input.
    The final byte is deliberately not stored: it is the caller's action, while
    digits, separators and the private marker are the reusable transition. */
-#define TERMINAL_PARAMETERS 16
+#define TERMINAL_PARAMETERS 32
 typedef struct
 {
         unsigned int value[TERMINAL_PARAMETERS];
         unsigned int count;
+        unsigned int colon; // bit n: value[n] was joined to the one before by ':'
         p8 marker;
+        p8 full;            // a separator past the last slot: the rest is dropped
 } terminal_parameters;
 
 #define terminal_parameters_reset(sequence)                                 \
         ((sequence)->count = 0, (sequence)->marker = 0,                     \
-         (sequence)->value[0] = 0)
+         (sequence)->value[0] = 0, (sequence)->colon = 0,                   \
+         (sequence)->full = 0)
 
 static inline INLINE bool terminal_parameters_take(
     terminal_parameters address_to sequence, unsigned int byte)
@@ -708,6 +736,9 @@ static inline INLINE bool terminal_parameters_take(
         {
                 unsigned int digit = byte - '0';
                 unsigned int address_to value;
+
+                if (sequence->full)
+                        return false;
 
                 if (!sequence->count)
                         sequence->count = 1;
@@ -731,8 +762,16 @@ static inline INLINE bool terminal_parameters_take(
                 if (!sequence->count)
                         sequence->count = 1;
 
-                if (sequence->count < TERMINAL_PARAMETERS)
+                // Past the last slot the rest are dropped, where they used
+                // to run their digits on into the last one's.
+                if (sequence->count == TERMINAL_PARAMETERS)
+                        sequence->full = 1;
+                else if (!sequence->full)
+                {
+                        if (byte == ':')
+                                sequence->colon |= 1u << sequence->count;
                         sequence->value[sequence->count++] = 0;
+                }
 
                 return false;
         }
@@ -751,6 +790,7 @@ static b32 in_escape, in_csi, in_string, escape_intermediate;
 
 // A string sequence ends at ST, and ST is two bytes with an ESC in front.
 static b32 string_escape;
+static p8 string_kind;
 static p8 osc_bytes[WINDOW_TITLE_MAX];
 static unsigned int osc_length;
 
@@ -798,6 +838,11 @@ static fn osc_finish(b32 bell)
         unsigned int i = 0;
         unsigned int command = 0;
         unsigned int n;
+
+        // DCS, SOS, PM and APC are read the same way and say nothing here:
+        // only an OSC names the window or asks for a colour.
+        if (string_kind != ']')
+                return;
 
         while (i < osc_length && osc_bytes[i] >= '0' && osc_bytes[i] <= '9')
                 command = command * 10 + (unsigned int)(osc_bytes[i++] - '0');
@@ -868,7 +913,7 @@ static fn osc_finish(b32 bell)
 static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int to_row, unsigned int to_column)
 {
-        b32 coloured = blank_cell_word() != BLANK_CELL_WORD;
+        b32 coloured = paper != 0;
         unsigned int r;
 
         for (r = from_row; r <= to_row && r < ROWS; r++)
@@ -876,7 +921,16 @@ static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int first = r == from_row ? from_column : 0;
                 unsigned int last = r == to_row ? to_column : COLUMNS - 1;
                 unsigned int past = min(last + 1, COLUMNS);
-                unsigned int address_to length = row_length(r);
+                unsigned int slot = row_slot(r);
+                unsigned int address_to length = slot_length(slot);
+
+                // Half of a double-width character cannot stand alone, so an
+                // erase that takes one half takes the other with it.
+                if (first < past)
+                {
+                        unpair(slot_cells(slot), address_to length, first);
+                        unpair(slot_cells(slot), address_to length, past - 1);
+                }
 
                 /*
                         An erase that reaches the end of a line, or the edge
@@ -965,11 +1019,6 @@ static fn tab_backward()
         them was what made 38;5;31m paint the text red: the number after 38;5
         fell through into the plain foreground range.
 */
-static CONST unsigned char colour_256(unsigned int n)
-{
-        return (unsigned char)(n < 256 ? n : 15);
-}
-
 static CONST unsigned char colour_cube_level(unsigned int v)
 {
         if (v < 48)
@@ -1010,44 +1059,63 @@ static CONST unsigned char colour_rgb(unsigned int r, unsigned int g,
         return (unsigned char)(dgrey < dcube ? 232 + grey : cube);
 }
 
-// Returns how many parameters past this one it took, so the caller can step
-// over the ones an extended colour is spelled with.
-static unsigned int sgr_extended(unsigned int at, unsigned char address_to which)
+/*
+        The parameters a colon joined to this one, which are its own and not
+        SGR numbers in their own right: 4:3 is an underline's style and
+        38:2::255:0:0 one colour with an empty colour space.
+*/
+static unsigned int sgr_joined(unsigned int at)
+{
+        unsigned int n = 0;
+
+        while (at + n + 1 < terminal_csi.count &&
+               (terminal_csi.colon >> (at + n + 1) & 1))
+                n++;
+
+        return n;
+}
+
+/*
+        Returns how many parameters past this one it took, so the caller can
+        step over the ones an extended colour is spelled with. Joined by
+        colons the colour is those parameters and no more, and a direct colour
+        may name a colour space before its channels or leave it out, so the
+        channels are the last three either way. An index past the table leaves
+        the colour as it was.
+*/
+static unsigned int sgr_extended(unsigned int at, unsigned int joined,
+                                 unsigned char address_to which)
 {
         unsigned int kind = at + 1 < terminal_csi.count
                                 ? terminal_csi.value[at + 1] : 0;
+        unsigned int took = joined;
 
-        if (kind == 5 && at + 2 < terminal_csi.count)
-        {
-                address_to which = colour_256(terminal_csi.value[at + 2]);
-                return 2;
-        }
+        if (!joined)
+                took = kind == 5 ? 2 : kind == 2 ? 4 : terminal_csi.count - at - 1;
 
-        if (kind == 2 && at + 4 < terminal_csi.count)
-        {
-                address_to which = colour_rgb(
-                    terminal_csi.value[at + 2], terminal_csi.value[at + 3],
-                    terminal_csi.value[at + 4]);
-                return 4;
-        }
+        if (at + took >= terminal_csi.count)
+                return terminal_csi.count - at - 1;
 
-        return terminal_csi.count - at - 1;
+        if (kind == 5 && took >= 2 && terminal_csi.value[at + 2] < 256)
+                address_to which = (unsigned char)terminal_csi.value[at + 2];
+        else if (kind == 2 && took >= 4)
+                address_to which = colour_rgb(terminal_csi.value[at + took - 2],
+                                              terminal_csi.value[at + took - 1],
+                                              terminal_csi.value[at + took]);
+
+        return took;
 }
 
 static fn sgr()
 {
-        if (!terminal_csi.count)
-        {
-                ink = 7;
-                paper = 0;
-                reverse = false;
-                style = 0;
-                return;
-        }
+        unsigned int count = terminal_csi.count ? terminal_csi.count : 1;
 
-        for (unsigned int i = 0; i < terminal_csi.count; i++)
+        // No parameter at all is a 0, and a reset parameter slot holds one.
+        for (unsigned int i = 0; i < count; i++)
         {
                 unsigned int p = terminal_csi.value[i];
+                unsigned int took = sgr_joined(i);
+                unsigned char unused;
 
                 if (p == 0)
                 {
@@ -1057,16 +1125,16 @@ static fn sgr()
                         style = 0;
                 }
                 else if (p == 1)
-                {
                         style |= WINDOW_CELL_BOLD;
-                        if (ink < 8)
-                                ink |= 8;
-                }
                 else if (p == 2)
                         style |= WINDOW_CELL_DIM;
                 else if (p == 3)
                         style |= WINDOW_CELL_ITALIC;
-                else if (p == 4)
+                // 4:0 is no underline and 4:1 to 4:5 its styles, and 21 is
+                // ECMA-48's double one: all of them the one line here.
+                else if (p == 4 && took && !terminal_csi.value[i + 1])
+                        style &= (unsigned short)~WINDOW_CELL_UNDERLINE;
+                else if (p == 4 || p == 21)
                         style |= WINDOW_CELL_UNDERLINE;
                 else if (p == 5 || p == 6)
                         style |= WINDOW_CELL_BLINK;
@@ -1076,12 +1144,8 @@ static fn sgr()
                         style |= WINDOW_CELL_HIDDEN;
                 else if (p == 9)
                         style |= WINDOW_CELL_STRIKE;
-                else if (p == 21 || p == 22)
-                {
+                else if (p == 22)
                         style &= (unsigned short)~(WINDOW_CELL_BOLD | WINDOW_CELL_DIM);
-                        if (ink >= 8 && ink < 16)
-                                ink &= 7;
-                }
                 else if (p == 23)
                         style &= (unsigned short)~WINDOW_CELL_ITALIC;
                 else if (p == 24)
@@ -1095,22 +1159,27 @@ static fn sgr()
                 else if (p == 29)
                         style &= (unsigned short)~WINDOW_CELL_STRIKE;
                 else if (p >= 30 && p <= 37)
-                        ink = (unsigned char)(((style & WINDOW_CELL_BOLD) ? 8 : 0) |
-                                              (p - 30));
+                        ink = (unsigned char)(p - 30);
                 else if (p == 38)
-                        i += sgr_extended(i, address_of ink);
+                        took = sgr_extended(i, took, address_of ink);
                 else if (p == 39)
-                        ink = (unsigned char)((style & WINDOW_CELL_BOLD) ? 15 : 7);
+                        ink = 7;
                 else if (p >= 40 && p <= 47)
                         paper = (unsigned char)(p - 40);
                 else if (p == 48)
-                        i += sgr_extended(i, address_of paper);
+                        took = sgr_extended(i, took, address_of paper);
                 else if (p == 49)
                         paper = 0;
+                // The underline's own colour, spelled the way 38 is, and with
+                // nowhere to go.
+                else if (p == 58)
+                        took = sgr_extended(i, took, address_of unused);
                 else if (p >= 90 && p <= 97)
                         ink = (unsigned char)(8 + (p - 90));
                 else if (p >= 100 && p <= 107)
                         paper = (unsigned char)(8 + (p - 100));
+
+                i += took;
         }
 }
 
@@ -1317,12 +1386,75 @@ static fn full_reset()
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 }
 
+/*
+        ED 3 is xterm's: the lines scrolled off the top are forgotten and the
+        screen stays as it is. clear sends it after ED 2, and it blanked the
+        screen a second time and kept the history. The alternate screen has no
+        history, and the lines behind it are the primary screen waiting to
+        come back.
+*/
+static fn history_clear()
+{
+        unsigned int slot = row_slot(0);
+
+        if (alternate)
+                return;
+
+        for (unsigned int n = ROWS; n < window->history; n++)
+        {
+                slot = slot ? slot - 1 : window->history - 1;
+                address_to slot_length(slot) = 0;
+        }
+}
+
+/*
+        A marker or an intermediate byte makes another sequence of the same
+        final. CSI > 4 ; 2 m is xterm's modifyOtherKeys and not an underline,
+        CSI ? u asks about the keyboard rather than restoring the cursor, and
+        CSI 2 SP @ scrolls sideways rather than inserting. A final that does
+        not take the marker or intermediate it came with is ignored, which is
+        what xterm does with a sequence it has never heard of.
+*/
+static b32 csi_known(unsigned int final)
+{
+        switch (csi_intermediate)
+        {
+        case 0:
+                break;
+        case ' ':
+                return final == 'q' && !terminal_csi.marker;
+        case '!':
+                return final == 'p' && !terminal_csi.marker;
+        case '$':
+                return final == 'p';
+        default:
+                return false;
+        }
+
+        switch (terminal_csi.marker)
+        {
+        case 0:
+                return true;
+        case '?':
+                return final == 'h' || final == 'l' || final == 'n' ||
+                       final == 'J' || final == 'K';
+        case '>':
+        case '=':
+                return final == 'c';
+        default:
+                return false;
+        }
+}
+
 static fn csi_final(unsigned int final)
 {
         unsigned int a = terminal_csi.count && terminal_csi.value[0]
                              ? terminal_csi.value[0] : 1;
         unsigned int b = terminal_csi.count > 1 && terminal_csi.value[1]
                              ? terminal_csi.value[1] : 1;
+
+        if (!csi_known(final))
+                return;
 
         switch (final)
         {
@@ -1373,21 +1505,25 @@ static fn csi_final(unsigned int final)
                 row = r < bottom ? r : (bottom ? bottom - 1 : 0);
                 break;
         }
+        // A reset parameter slot is 0, so no parameter is ED 0 and EL 0, and
+        // a number nobody has defined erases nothing.
         case 'J':
-                if (terminal_csi.count && terminal_csi.value[0] == 1)
-                        erase(0, 0, row, column);
-                else if (terminal_csi.count && terminal_csi.value[0] >= 2)
-                        erase(0, 0, ROWS - 1, COLUMNS - 1);
-                else
+                if (terminal_csi.value[0] == 0)
                         erase(row, column, ROWS - 1, COLUMNS - 1);
+                else if (terminal_csi.value[0] == 1)
+                        erase(0, 0, row, column);
+                else if (terminal_csi.value[0] == 2)
+                        erase(0, 0, ROWS - 1, COLUMNS - 1);
+                else if (terminal_csi.value[0] == 3)
+                        history_clear();
                 break;
         case 'K':
-                if (terminal_csi.count && terminal_csi.value[0] == 1)
-                        erase(row, 0, row, column);
-                else if (terminal_csi.count && terminal_csi.value[0] == 2)
-                        erase(row, 0, row, COLUMNS - 1);
-                else
+                if (terminal_csi.value[0] == 0)
                         erase(row, column, row, COLUMNS - 1);
+                else if (terminal_csi.value[0] == 1)
+                        erase(row, 0, row, column);
+                else if (terminal_csi.value[0] == 2)
+                        erase(row, 0, row, COLUMNS - 1);
                 break;
         case 'L':
         case 'M':
@@ -1410,10 +1546,19 @@ static fn csi_final(unsigned int final)
                 break;
         case 'P':
         {
-                unsigned int address_to length = row_length(row);
-                struct window_cell address_to cells = row_cells(row);
-                unsigned int last = address_to length;
+                unsigned int address_to length;
+                struct window_cell address_to cells;
+                unsigned int last;
                 unsigned int gone;
+
+                // In colour the line is drawn to the edge, and what DCH pulls
+                // in at the right margin is that colour.
+                if (paper && column < COLUMNS)
+                        reach(row, COLUMNS);
+
+                length = row_length(row);
+                cells = row_cells(row);
+                last = address_to length;
 
                 if (column >= last)
                         break;
@@ -1424,7 +1569,11 @@ static fn csi_final(unsigned int final)
                             (positive)(last - column - gone) *
                                 sizeof(struct window_cell));
 
-                address_to length = last - gone;
+                if (paper)
+                        cells_clear(row, last - gone, gone);
+                else
+                        address_to length = last - gone;
+
                 touch(row);
                 break;
         }
@@ -1432,9 +1581,10 @@ static fn csi_final(unsigned int final)
                 open_gap(column, a);
                 break;
         case 'X':
-                reach(row, column);
-
-                cells_clear(row, column, min(a, COLUMNS - column));
+                // An erase like the others, so one in colour past the end of
+                // the line is drawn there.
+                if (column < COLUMNS)
+                        erase(row, column, row, column + min(a, COLUMNS - column) - 1);
                 break;
         case 'S':
                 scroll_up(a);
@@ -1465,21 +1615,27 @@ static fn csi_final(unsigned int final)
                 if (terminal_csi.count && terminal_csi.value[0] == 6)
                 {
                         emit_literal("\x1b[");
+                        if (terminal_csi.marker)
+                                emit('?');
                         positive_to_string(emit_bytes, row + 1);
                         emit(';');
                         positive_to_string(emit_bytes,
                                            column < COLUMNS ? column + 1 : COLUMNS);
                         emit('R');
                 }
-                else if (terminal_csi.count && terminal_csi.value[0] == 5)
+                else if (terminal_csi.count && terminal_csi.value[0] == 5 &&
+                         !terminal_csi.marker)
                         emit_literal("\x1b[0n");
                 break;
         case 'c':
                 // Primary DA names a VT100 with AVO, which is what xterm
                 // answers and what ncurses's u8 reads for. Secondary DA is
-                // the xterm version report.
+                // the xterm version report, and tertiary DA the unit's number,
+                // which xterm gives as zeros.
                 if (terminal_csi.marker == '>')
                         emit_literal("\x1b[>0;115;0c");
+                else if (terminal_csi.marker == '=')
+                        emit_literal("\x1bP!|00000000\x1b\\");
                 else
                         emit_literal("\x1b[?1;2c");
                 break;
@@ -1539,9 +1695,6 @@ static fn csi_final(unsigned int final)
                 unsigned int top;
                 unsigned int bottom;
 
-                if (terminal_csi.marker)
-                        break;
-
                 top = terminal_csi.count && terminal_csi.value[0]
                           ? terminal_csi.value[0] - 1 : 0;
                 bottom = terminal_csi.count > 1 && terminal_csi.value[1]
@@ -1595,8 +1748,12 @@ static fn utf8_byte(unsigned int c)
                 put(0xfffd);
                 result = memory_utf8_feed(address_of terminal_utf8, (p8)c);
         }
-        if (result)
-                put(result < 0 ? 0xfffd : terminal_utf8.value);
+        // A C1 control spelled in UTF-8 is a control nothing here acts on,
+        // not a character to draw.
+        if (result < 0)
+                put(0xfffd);
+        else if (result && terminal_utf8.value >= 0xa0)
+                put(terminal_utf8.value);
 }
 
 static fn line_forget();
@@ -1695,6 +1852,47 @@ static fn consume(unsigned int c)
                 return;
         }
 
+        /*
+                A control is done where it arrives, in the middle of a sequence
+                too: ESC [ BS C steps back and then forward, and ESC LF 7 is a
+                line feed and a save. Dropping them put what followed the
+                sequence a column or a line away from where it was sent. One
+                inside a UTF-8 character cuts it short like any other byte that
+                is not a continuation, and DEL is nothing anywhere.
+        */
+        if (c < ' ' || c == 127)
+        {
+                utf8_flush();
+
+                switch (c)
+                {
+                case '\n':
+                case 11:
+                case 12:
+                        line_feed();
+                        touch(row);
+                        break;
+                case '\r':
+                        column = 0;
+                        break;
+                case '\b':
+                        if (column)
+                                column--;
+                        break;
+                case '\t':
+                        tab_forward();
+                        break;
+                case 14:
+                        charset_gl = 1;
+                        break;
+                case 15:
+                        charset_gl = 0;
+                        break;
+                }
+
+                return;
+        }
+
         if (in_csi)
         {
                 if (c >= 0x20 && c <= 0x2f)
@@ -1727,6 +1925,7 @@ static fn consume(unsigned int c)
                 {
                         in_string = true;
                         string_escape = false;
+                        string_kind = (p8)c;
                         osc_length = 0;
                         return;
                 }
@@ -1783,47 +1982,12 @@ static fn consume(unsigned int c)
                 case 'c':
                         full_reset();
                         break;
-                case '=':
-                        application_keys = true;
-                        break;
-                case '>':
-                        application_keys = false;
-                        break;
+                // ESC = and ESC > are the keypad's modes, and the keypad
+                // sends the same in both. They are not DECCKM's arrows.
                 }
 
                 return;
         }
-
-        switch (c)
-        {
-        case '\n':
-        case 11:
-        case 12:
-                line_feed();
-                touch(row);
-                return;
-        case '\r':
-                column = 0;
-                return;
-        case '\b':
-                if (column)
-                        column--;
-                return;
-        case '\t':
-                tab_forward();
-                return;
-        case 7:
-                return;
-        case 14:
-                charset_gl = 1;
-                return;
-        case 15:
-                charset_gl = 0;
-                return;
-        }
-
-        if (c < ' ' || c == 127)
-                return;
 
         if (c < 128)
         {
@@ -1897,8 +2061,8 @@ static positive text_ascii(const p8 address_to bytes, positive count)
 
         // A cell as BLANK_CELL_WORD lays one out: the character in the low
         // half, the colours and flags above it.
-        attribute = ((positive)(reverse ? paper : ink) << 32) |
-                    ((positive)(reverse ? ink : paper) << 40) |
+        attribute = ((positive)(reverse ? paper : ink_drawn()) << 32) |
+                    ((positive)(reverse ? ink_drawn() : paper) << 40) |
                     ((positive)style << 48);
 
         /*
@@ -1936,8 +2100,9 @@ static positive text_ascii(const p8 address_to bytes, positive count)
 }
 
 /* A whole, valid UTF-8 character of two to four bytes, just as
-   memory_utf8_feed would finish it, or 0 for one it would refuse or that the
-   bytes do not hold all of. */
+   memory_utf8_feed would finish it and utf8_byte would draw it, or 0 for one
+   it would refuse, one that is not drawn, or one the bytes do not hold all
+   of. */
 static unsigned int text_utf8(const p8 address_to bytes, positive count,
                               unsigned int address_to character)
 {
@@ -1947,6 +2112,11 @@ static unsigned int text_utf8(const p8 address_to bytes, positive count,
         if (lead >= 0xc2 && lead < 0xe0)
         {
                 if (count < 2 || (bytes[1] & 0xc0) != 0x80)
+                        return 0;
+
+                // U+0080 to U+009F are C1 controls, which utf8_byte drops
+                // rather than draws: consume() says what becomes of them.
+                if (lead == 0xc2 && bytes[1] < 0xa0)
                         return 0;
 
                 address_to character = ((lead & 0x1f) << 6) | (bytes[1] & 0x3f);

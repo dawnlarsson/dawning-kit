@@ -5712,6 +5712,12 @@ b32 main()
                         say_number(region_bottom);
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "title") == 0)
+                {
+                        say_byte('[');
+                        tell(window->title);
+                        tell("]\n");
+                }
                 else if (string_compare(verb, (string_address) "sync") == 0)
                 {
                         say_number(synchronized_output != 0);
@@ -5884,6 +5890,8 @@ same 'cursor position three digits' '[\e[3;160R]' 200 5 in '\e[3;160H\e[6n' sent
 same 'device status'   '[\e[0n]'                 20 5 in '\e[5n' sent
 same 'device attributes' '[\e[?1;2c]'            20 5 in '\e[c' sent
 same 'secondary attributes' '[\e[>0;115;0c]'     20 5 in '\e[>c' sent
+same 'tertiary attributes' '[\eP!|00000000\e\]'  20 5 in '\e[=c' sent
+same 'cursor position asked privately' '[\e[?3;4R]' 20 5 in '\e[3;4H\e[?6n' sent
 #       DECRQM answers from the same list SM and RM change.
 same 'mode set'      '[\e[?7;1$y]'               20 5 in '\e[?7$p' sent
 same 'mode reset'    '[\e[?1049;2$y]'            20 5 in '\e[?1049$p' sent
@@ -5909,16 +5917,22 @@ same 'to the end'   '[ab]|[]|[]'                 20 3 in 'abc\r\ndef\e[1;3H\e[J'
 #       of the page reaches the active position inclusive.
 same 'to the start' '[]|[   gh]|[]'              20 3 in 'abc\r\ndefgh\e[2;3H\e[1J' dump
 same 'all of it'    '[]|[]|[]'                   20 3 in 'abc\r\ndef\e[2J' dump
+#       ED 3 forgets the lines scrolled off the top and leaves the screen, and
+#       a number nobody has defined erases nothing.
+same 'history only'  '[abc]|[def]|[]'            20 3 in 'abc\r\ndef\e[3J' dump
+same 'past three'    '[abc]'                     20 3 in 'abc\e[4J' row 0
 
 group el
 same 'line to end'   '[ab]'                      20 3 in 'abcdef\e[1;3H\e[K' row 0
 same 'line to start' '[    ef]'                  20 3 in 'abcdef\e[1;4H\e[1K' row 0
 same 'whole line'    '[]'                        20 3 in 'abcdef\e[2K' row 0
+same 'past two'      '[abc]'                     20 3 in 'abc\e[1G\e[3K' row 0
 
 group ech
 #       ECH blanks in place and does not move the cursor or shorten the line.
 same 'erases in place' '[   def]'                20 3 in 'abcdef\e[1G\e[3X' row 0
 same 'cursor stays'    '0,0'                     20 3 in 'abcdef\e[1G\e[3X' cursor
+same 'in colour past the end' '[ab     ]|7,4'    20 3 in 'ab\e[44m\e[5X' row 0 attr 0,6
 
 group background
 #       Erasing takes the background in force. Without it a program that
@@ -5928,6 +5942,10 @@ group background
 #       them put stray colour behind every gap a program stepped across.
 same 'erase in colour' '7,1'                     8 2 in '\e[41m\e[2Jx' attr 0,1
 same 'stepped over'    '7,0'                     8 2 in '\e[42m\e[5Cx' attr 0,0
+#       An erase takes the background and nothing else: under reverse video it
+#       took the ink as well and painted the line white.
+same 'reverse erase'   '[]|[]'                   8 2 in '\e[7mab\e[2J' dump
+same 'reverse erase in colour' '7,4'             8 2 in '\e[44;7m\e[2J' attr 1,0
 
 #
 #       Lines and characters put in and taken out.
@@ -5944,6 +5962,8 @@ same 'insert at edge' '[  ab]'                   4 3 in 'abcd\e[1G\e[2@' row 0
 same 'delete past end' '[abc]'                   20 3 in 'abc\e[1;9H\e[5P' row 0
 same 'insert mode'   '[XYabc]'                   20 3 in 'abc\e[1G\e[4hXY' row 0
 same 'insert mode off' '[XYc]'                   20 3 in 'abc\e[1G\e[4h\e[4lXY' row 0
+#       In colour what DCH pulls in at the right margin is that colour.
+same 'delete in colour' '[def     ]|7,0|7,4'     8 3 in 'abcdef\e[1G\e[44m\e[3P' row 0 attr 0,3 attr 0,5
 
 group lines
 #       IL and DL move the rest of the region and never the rows above the
@@ -5954,6 +5974,10 @@ same 'insert below'  '[a]|[]|[b]|[c]'            20 4 in 'a\r\nb\r\nc\e[2;1H\e[L
 same 'line attributes move' '1,4'                 20 4 in 'a\r\nb\r\n\e[31;44mX\e[0m\e[2;1H\e[M' attr 1,0
 same 'scroll up'     '[b]|[c]|[]|[]'             20 4 in 'a\r\nb\r\nc\e[S' dump
 same 'scroll down'   '[]|[a]|[b]|[c]'            20 4 in 'a\r\nb\r\nc\e[T' dump
+#       Lines scrolled or put in take the background in force.
+same 'scrolled in colour' '7,4'                  8 3 in 'a\r\nb\r\nc\e[44m\n' attr 2,0
+same 'inserted in colour' '7,4'                  8 3 in 'a\r\nb\e[44m\e[1;1H\e[L' attr 0,0
+same 'region scrolled in colour' '7,4'           8 4 in '\e[2;3r\e[3;1H\e[44m\n' attr 2,0
 
 group region
 #       DECSTBM names the rows a scroll happens between. The VT100 manual
@@ -5988,6 +6012,14 @@ same 'bright paper'  '7,13'                      8 2 in '\e[105mx' attr 0,0
 same 'defaults back' '7,0'                       8 2 in '\e[31;44m\e[39;49mx' attr 0,0
 same 'reset'         '7,0'                       8 2 in '\e[31;44m\e[0mx' attr 0,0
 same 'no parameter'  '7,0'                       8 2 in '\e[31;44m\e[mx' attr 0,0
+#       Bold draws the first eight bright when the cell is written, so SGR 22
+#       takes the bold away and leaves a bright colour chosen as one. Past the
+#       last parameter slot the rest are dropped, not run into the last one.
+same 'normal intensity keeps bright' '9,0'       8 2 in '\e[91m\e[22mx' attr 0,0
+same 'normal intensity after bold' '1,0'         8 2 in '\e[1;31m\e[22mx' attr 0,0
+same 'bold default'  '15,0'                      8 2 in '\e[1;39mx' attr 0,0
+same 'double underline' '8'                      8 2 in '\e[21mx' flags 0,0
+same 'nineteen parameters' '1,1|0'               8 2 in '\e[1;2;3;4;5;6;7;8;9;21;22;23;24;25;27;28;29;31;41mx' attr 0,0 flags 0,0
 
 group reverse
 #       Reverse video is the two colours the other way round when the cell is
@@ -6008,6 +6040,16 @@ same 'paper too'     '7,1'                       8 2 in '\e[48;5;1mx' attr 0,0
 same 'true colour'   '196,0'                     8 2 in '\e[38;2;250;10;10mx' attr 0,0
 same 'and what follows it' '196,4'               8 2 in '\e[38;2;250;10;10;44mx' attr 0,0
 same 'sub parameters' '9,0'                      8 2 in '\e[38:5:9mx' attr 0,0
+#       A colon joins a parameter to the one before, so what follows it is that
+#       one's and not an SGR number of its own.
+same 'direct with a colour space' '196,0'        8 2 in '\e[38:2::255:0:0mx' attr 0,0
+same 'direct without one' '196,0'                8 2 in '\e[38:2:255:0:0mx' attr 0,0
+same 'joined ends at a semicolon' '196,4'        8 2 in '\e[38:2::255:0:0;44mx' attr 0,0
+same 'index past the table' '2,0'                8 2 in '\e[32;38;5;256mx' attr 0,0
+same 'underline style' '8'                       8 2 in '\e[4:3mx' flags 0,0
+same 'underline style off' '0|1,0'               8 2 in '\e[31;4m\e[4:0mx' flags 0,0 attr 0,0
+same 'underline colour' '0|1,0'                  8 2 in '\e[58;5;1;31mx' flags 0,0 attr 0,0
+same 'underline colour joined' '0|1,0'           8 2 in '\e[58:2::9:9:9;31mx' flags 0,0 attr 0,0
 
 #
 #       Modes.
@@ -6087,11 +6129,26 @@ same 'osc to st'     '[XY]'                      20 3 in '\e]0;a title\e\\XY' ro
 same 'dcs'           '[XY]'                      20 3 in '\ePq#0;2;0;0;0\e\\XY' row 0
 same 'apc'           '[XY]'                      20 3 in '\e_Gf=100,a=T\e\\XY' row 0
 same 'privacy message' '[XY]'                    20 3 in '\e^anything\e\\XY' row 0
+#       Only an OSC names the window. DCS, SOS, PM and APC are read the same
+#       way and say nothing to it.
+same 'osc names the window' '[a title]'          20 3 in '\e]0;a title\a' title
+same 'dcs does not'   '[]'                       20 3 in '\eP+q544e\e\\' title
 
 group private
 same 'bracketed paste' '[AB]'                    20 3 in '\e[?2004hA\e[?2004lB' row 0
 same 'a private final nobody has' '[AB]'         20 3 in 'A\e[?1000hB' row 0
 same 'modifier options'  '[AB]'                  20 3 in 'A\e[>4;2mB' row 0
+#       A marker or an intermediate makes another sequence of the same final,
+#       and one nothing here takes is ignored rather than run as the plain
+#       one: xterm's key options, the keyboard and graphics queries, scrolling
+#       sideways and attributes in a rectangle.
+same 'key options leave the text plain' '0'      20 3 in '\e[>4;2mab' flags 0,0
+same 'keyboard query is no restore' '2,1'        20 3 in '\e[2;3H\e7\e[3;1H\e[?ux' cursor
+same 'graphics query does not scroll' '[a]|[b]|[c]' 20 3 in 'a\r\nb\r\nc\e[?2;1;0S' dump
+same 'scroll left is no insert' '[abcdef]'       20 3 in 'abcdef\e[1G\e[2 @' row 0
+same 'a rectangle is no region' 'wrap=1 insert=0 alternate=0 cursor=1 region=0,3' \
+                                                 20 3 in '\e[1;2$r' mode
+same 'selective erase is an erase' '[]'          20 3 in 'abc\e[1G\e[?K' row 0
 same 'window ops'        '[AB]'                  20 3 in 'A\e[22;0;0tB' row 0
 #       A private marker is not a parameter: ESC[?25l is the cursor and
 #       ESC[25l is a mode number nobody uses. Reading the first as the second
@@ -6109,7 +6166,10 @@ same 'shift in'       '[<2500>x]'                8 2 in '\e)0\x0eq\x0fx' row 0
 same 'repeat'         '[aaaa]'                   8 2 in 'a\e[3b' row 0
 same 'screen alignment' '[XY]'                   20 3 in '\e#8XY' row 0
 same 'not a restore'  '[abXY]'                   20 3 in 'ab\e#8XY' row 0
-same 'nothing at all' '[XY]'                     20 3 in '\e\x7fXY' row 0
+same 'nothing at all' '[Y]'                      20 3 in '\e\x7fxY' row 0
+#       A control is done where it arrives, inside a sequence as well.
+same 'backspace in a sequence' '[abx]'           20 3 in 'ab\e[\bCx' row 0
+same 'line feed in an escape' '[]|[x]|[]'        20 3 in '\e\n7x' dump
 #       CAN and SUB abandon whatever was being parsed, which is what they are
 #       for.
 same 'cancelled'      '[X]'                      20 3 in '\e[3;3\x18X' row 0
@@ -6171,6 +6231,10 @@ same 'three bytes'    '[<2500>]'                 8 2 in '\xe2\x94\x80' row 0
 same 'four bytes'     '[<1f600>]'                8 2 in '\xf0\x9f\x98\x80' row 0
 same 'six hex digits' '[<10ffff>]'               8 2 in '\xf4\x8f\xbf\xbf' row 0
 same 'one cell each'  '0,3'                      8 2 in '\xc3\xa9\xc3\xa9\xc3\xa9' cursor
+#       A byte that is not a continuation cuts a character short, and a control
+#       is one. A C1 control spelled in UTF-8 is not drawn.
+same 'a control cuts a character' '[<fffd>]|[ <fffd><fffd>]' 8 2 in '\xe6\n\xbc\xa2' row 0 row 1
+same 'c1 in utf-8'    '[ab]'                     8 2 in 'a\xc2\x85b' row 0
 
 group width
 #       Programs count columns with wcwidth. An ideograph or an emoji takes
@@ -6186,6 +6250,10 @@ same 'wraps whole'    '[abc]|[<6f22>]|1,2'       4 2 in 'abc\xe6\xbc\xa2' dump c
 same 'right half hit' '[ x]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;2Hx' row 0
 same 'left half hit'  '[x ]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;1Hx' row 0
 same 'pinned at the edge' '[ab<6f22>]|0,4'       4 2 in '\e[?7l' in 'abc\xe6\xbc\xa2' row 0 cursor
+#       Erasing half of a double-width character erases the other half too,
+#       so what is written over the pair afterwards stands whole.
+same 'erasing the left half' '[ab]'              8 2 in '\xe6\xbc\xa2\e[1;1H\e[Xab' row 0
+same 'erasing the right half' '[ ]'              8 2 in '\xe6\xbc\xa2\e[1;2H\e[X' row 0
 #       The ideographs and the Hangul syllables are answered before the table
 #       searches; every character from U+0000 to U+10FFFF has to get the width
 #       the tables alone give it.
@@ -6201,11 +6269,9 @@ group runs
 same 'run wraps rows' '[abcd]|[efgh]|[ij]|2,2'    4 3 in 'abcdefghij' dump cursor
 same 'run pinned'    '[abcg]|0,4'                 4 2 in '\e[?7l' in 'abcdefg' row 0 cursor
 same 'run over a pair' '[ xy]|0,3'                8 2 in '\xe6\xbc\xa2' in '\e[1;2Hxy' row 0 cursor
-#       An erase over the left half leaves the right half standing alone, so
-#       the next character written over that right half blanks the character
-#       before it. A terminal erases both halves; a run has to match what a
-#       byte at a time does here, and this pins it.
-differs 'run over an erased half' '[ b]'          8 2 in '\xe6\xbc\xa2' in '\e[1;1H\e[X' in 'ab' row 0
+#       An erase over either half takes the pair, so a run written where
+#       the pair was stands whole even when it arrives in a read of its own.
+same 'run over an erased half' '[ab]'             8 2 in '\xe6\xbc\xa2' in '\e[1;1H\e[X' in 'ab' row 0
 same 'run inserting' '[xyabc]'                    8 2 in 'abc\r\e[4hxy' row 0
 same 'run in line drawing' '[<2500><2500><2500>q]' 8 2 in '\e(0qqq\e(Bq' row 0
 same 'cut between reads' '[<6f22>x]|0,3'          8 2 in '\xe6\xbc' in '\xa2x' row 0 cursor
@@ -6213,6 +6279,8 @@ same 'bad bytes end a run' '[a<fffd>b<fffd>c]'    8 2 in 'a\xffb\xe6\xbcc' row 0
 same 'marks inside a run' '[aexy]|0,4'            8 2 in 'ae\xcc\x81x\xe2\x80\x8by' row 0 cursor
 same 'wide at a run end' '[abcde]|[<6f22>f]|1,3'  6 2 in 'abcde\xe6\xbc\xa2f' dump cursor
 same 'colours in a run' '1,0|0,1'                 6 2 in '\e[31mab\e[7mcd\e[m' attr 0,1 attr 0,3
+same 'bold in a run'  '9,0|0,9'                   6 2 in '\e[1;31mab\e[7mcd\e[m' attr 0,1 attr 0,3
+same 'c1 cut a run'   '[ab]|0,2'                  6 2 in 'a\xc2\x9bb' row 0 cursor
 
 group malformed
 #       Unicode 3.9, and the substitution of maximal subparts: a sequence
@@ -6245,6 +6313,7 @@ same 'alt character' '[\eb]'                     20 3 edit off keys '<a-b>' sent
 #       DECCKM sends the arrows as SS3 instead, which is what an application
 #       that asked for it is reading for.
 same 'application arrows' '[\eOA\eOD]'           20 3 edit off in '\e[?1h' keys '<up><left>' sent
+same 'keypad mode is not the arrows' '[\e[A]'    20 3 edit off in '\e=' keys '<up>' sent
 same 'and back again' '[\e[A]'                   20 3 edit off in '\e[?1h\e[?1l' keys '<up>' sent
 
 group writes
@@ -8284,7 +8353,7 @@ done
 
 group utf8
 same 'two bytes'       '[1 <00e9>]'     40 6 keys '\xc3\xa9' row 0
-same 'two byte minimum' '[1 <0080>]'    40 6 keys '\xc2\x80' row 0
+same 'two byte minimum' '0,2'           40 6 keys '\xc2\x80' carets
 same 'three byte minimum' '[1 <0800>]'  40 6 keys '\xe0\xa0\x80' row 0
 same 'four byte minimum' '[1 <10000>]'  40 6 keys '\xf0\x90\x80\x80' row 0
 same 'six hex digits'  '[1 <10ffff>]'   40 6 keys '\xf4\x8f\xbf\xbf' row 0
