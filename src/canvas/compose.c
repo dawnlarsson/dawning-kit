@@ -519,6 +519,117 @@ static void glyph_tofu(unsigned char *bits)
                 bits[y] = 0x42;
 }
 
+/*
+        What the VGA face already draws.
+
+        The cell font is the IBM VGA ROM face, 256 glyphs in code page 437
+        order. Past ASCII its slots hold accented Latin, Greek, arrows, card
+        suits and maths, so a character with one of those shapes is drawn from
+        the font rather than as a question mark. Box drawing and the blocks are
+        not here: glyph_synthesize draws those to the edges of the cell so that
+        neighbours join. Sorted by character for the search.
+*/
+static const struct
+{
+        unsigned short character;
+        unsigned char glyph;
+} glyph_face[] = {
+    {0x00a0, 0xff}, {0x00a1, 0xad}, {0x00a2, 0x9b}, {0x00a3, 0x9c},
+    {0x00a5, 0x9d}, {0x00a7, 0x15}, {0x00aa, 0xa6}, {0x00ab, 0xae},
+    {0x00ac, 0xaa}, {0x00b0, 0xf8}, {0x00b1, 0xf1}, {0x00b5, 0xe6},
+    {0x00b6, 0x14}, {0x00b7, 0xfa}, {0x00ba, 0xa7}, {0x00bb, 0xaf},
+    {0x00bc, 0xac}, {0x00bd, 0xab}, {0x00bf, 0xa8}, {0x00c4, 0x8e},
+    {0x00c5, 0x8f}, {0x00c6, 0x92}, {0x00c7, 0x80}, {0x00c9, 0x90},
+    {0x00d1, 0xa5}, {0x00d6, 0x99}, {0x00dc, 0x9a}, {0x00df, 0xe1},
+    {0x00e0, 0x85}, {0x00e1, 0xa0}, {0x00e2, 0x83}, {0x00e4, 0x84},
+    {0x00e5, 0x86}, {0x00e6, 0x91}, {0x00e7, 0x87}, {0x00e8, 0x8a},
+    {0x00e9, 0x82}, {0x00ea, 0x88}, {0x00eb, 0x89}, {0x00ec, 0x8d},
+    {0x00ed, 0xa1}, {0x00ee, 0x8c}, {0x00ef, 0x8b}, {0x00f1, 0xa4},
+    {0x00f2, 0x95}, {0x00f3, 0xa2}, {0x00f4, 0x93}, {0x00f6, 0x94},
+    {0x00f7, 0xf6}, {0x00f9, 0x97}, {0x00fa, 0xa3}, {0x00fb, 0x96},
+    {0x00fc, 0x81}, {0x00ff, 0x98}, {0x0192, 0x9f}, {0x0393, 0xe2},
+    {0x0398, 0xe9}, {0x03a3, 0xe4}, {0x03a6, 0xe8}, {0x03a9, 0xea},
+    {0x03b1, 0xe0}, {0x03b4, 0xeb}, {0x03b5, 0xee}, {0x03c0, 0xe3},
+    {0x03c3, 0xe5}, {0x03c4, 0xe7}, {0x03c6, 0xed}, {0x2022, 0x07},
+    {0x203c, 0x13}, {0x207f, 0xfc}, {0x20a7, 0x9e}, {0x2190, 0x1b},
+    {0x2191, 0x18}, {0x2192, 0x1a}, {0x2193, 0x19}, {0x2194, 0x1d},
+    {0x2195, 0x12}, {0x21a8, 0x17}, {0x2219, 0xf9}, {0x221a, 0xfb},
+    {0x221e, 0xec}, {0x221f, 0x1c}, {0x2229, 0xef}, {0x2248, 0xf7},
+    {0x2261, 0xf0}, {0x2264, 0xf3}, {0x2265, 0xf2}, {0x2302, 0x7f},
+    {0x2310, 0xa9}, {0x2320, 0xf4}, {0x2321, 0xf5}, {0x25a0, 0xfe},
+    {0x25ac, 0x16}, {0x25b2, 0x1e}, {0x25ba, 0x10}, {0x25bc, 0x1f},
+    {0x25c4, 0x11}, {0x25cb, 0x09}, {0x25d8, 0x08}, {0x25d9, 0x0a},
+    {0x263a, 0x01}, {0x263b, 0x02}, {0x263c, 0x0f}, {0x2640, 0x0c},
+    {0x2642, 0x0b}, {0x2660, 0x06}, {0x2663, 0x05}, {0x2665, 0x03},
+    {0x2666, 0x04}, {0x266a, 0x0d}, {0x266b, 0x0e},
+};
+
+// The font's slot for a character past ASCII, or 0 when it has none.
+static unsigned int glyph_in_face(unsigned int c)
+{
+        unsigned int low = 0, high = sizeof(glyph_face) / sizeof(glyph_face[0]);
+
+        while (low < high)
+        {
+                unsigned int middle = (low + high) / 2;
+
+                if (glyph_face[middle].character < c)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        return low < sizeof(glyph_face) / sizeof(glyph_face[0]) &&
+                       glyph_face[low].character == c
+                   ? glyph_face[low].glyph
+                   : 0;
+}
+
+/*
+        A digit raised or lowered: the face's own digit at half size, each
+        pair of rows and of columns folded into one, in the top or the bottom
+        half of the cell. btop names every box with a superscript digit.
+*/
+static _Bool glyph_script_digit(unsigned int c, const unsigned char *face,
+                                size_t glyph_size, unsigned char *bits)
+{
+        static const unsigned short raised[10] = {
+            0x2070, 0x00b9, 0x00b2, 0x00b3, 0x2074,
+            0x2075, 0x2076, 0x2077, 0x2078, 0x2079};
+        const unsigned char *from;
+        unsigned int digit = 0, top = 0, y, x;
+
+        if (c >= 0x2080 && c <= 0x2089)
+        {
+                digit = c - 0x2080;
+                top = WINDOW_CELL_H / 2;
+        }
+        else
+        {
+                while (digit < 10 && raised[digit] != c)
+                        digit++;
+                if (digit == 10)
+                        return false;
+        }
+
+        from = face + (size_t)('0' + digit) * glyph_size;
+        memory_fill(bits, 0, WINDOW_CELL_H);
+
+        for (y = 0; y < WINDOW_CELL_H / 2; y++)
+        {
+                unsigned char pair = (unsigned char)(from[2 * y] | from[2 * y + 1]);
+                unsigned char half = 0;
+
+                for (x = 0; x < WINDOW_CELL_W / 2; x++)
+                        if (pair & (0xc0 >> (2 * x)))
+                                half |= (unsigned char)(0x20 >> x);
+
+                bits[top + y] = half;
+        }
+
+        return true;
+}
+
 static _Bool glyph_synthesize(unsigned int c, unsigned char *bits)
 {
         unsigned int nsew;
@@ -576,69 +687,10 @@ static _Bool glyph_synthesize(unsigned int c, unsigned char *bits)
                 return true;
         }
 
-        if (c == 0x00a0)
-                return true;
-
-        if (c == 0x00b0)
-        {
-                bits[2] = 0x60;
-                bits[3] = 0x90;
-                bits[4] = 0x90;
-                bits[5] = 0x60;
-                return true;
-        }
-
-        if (c == 0x00b1)
-        {
-                bits[4] = 0x18;
-                bits[5] = 0x18;
-                bits[6] = 0xff;
-                bits[7] = 0x18;
-                bits[8] = 0x18;
-                bits[10] = 0xff;
-                return true;
-        }
-
-        if (c == 0x00a3)
-        {
-                bits[2] = 0x1c;
-                bits[3] = 0x22;
-                bits[4] = 0x20;
-                bits[5] = 0x20;
-                bits[6] = 0x7c;
-                bits[7] = 0x20;
-                bits[8] = 0x20;
-                bits[9] = 0x20;
-                bits[11] = 0x7e;
-                return true;
-        }
-
-        if (c == 0x00b7 || c == 0x2022 || c == 0x2219 || c == 0x25e6)
+        if (c == 0x25e6)
         {
                 bits[7] = 0x18;
                 bits[8] = 0x18;
-                return true;
-        }
-
-        if (c == 0x2264)
-        {
-                bits[4] = 0x04;
-                bits[5] = 0x18;
-                bits[6] = 0x60;
-                bits[7] = 0x18;
-                bits[8] = 0x04;
-                bits[10] = 0x7e;
-                return true;
-        }
-
-        if (c == 0x2265)
-        {
-                bits[4] = 0x20;
-                bits[5] = 0x18;
-                bits[6] = 0x06;
-                bits[7] = 0x18;
-                bits[8] = 0x20;
-                bits[10] = 0x7e;
                 return true;
         }
 
@@ -654,24 +706,13 @@ static _Bool glyph_synthesize(unsigned int c, unsigned char *bits)
                 return true;
         }
 
-        if (c == 0x03c0)
-        {
-                bits[5] = 0x7e;
-                bits[6] = 0x24;
-                bits[7] = 0x24;
-                bits[8] = 0x24;
-                bits[9] = 0x24;
-                bits[10] = 0x26;
-                return true;
-        }
-
-        if (c == 0x25a0 || c == 0x25ae || c == 0x25fc || c == 0x25fe)
+        if (c == 0x25ae || c == 0x25fc || c == 0x25fe)
         {
                 memory_fill(bits + 3, 0x7e, 10);
                 return true;
         }
 
-        if (c == 0x25c6 || c == 0x2666)
+        if (c == 0x25c6)
         {
                 bits[3] = 0x18;
                 bits[4] = 0x3c;
@@ -853,17 +894,26 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                 bits = NULL;
                 if (!(flags & WINDOW_CELL_HIDDEN) && character > ' ')
                 {
-                        if (character <= 126 && font_data && !styled)
-                                bits = font_data + (size_t)character * glyph_size;
+                        unsigned int glyph = character <= 126
+                                                 ? character
+                                                 : glyph_in_face(character);
+
+                        if (glyph && font_data && !styled)
+                                bits = font_data + (size_t)glyph * glyph_size;
                         else
                         {
-                                if (character <= 126 && font_data)
+                                if (glyph && font_data)
                                         memory_copy(made,
                                                     font_data +
-                                                        (size_t)character *
+                                                        (size_t)glyph *
                                                             glyph_size,
                                                     WINDOW_CELL_H);
-                                else if (!glyph_synthesize(character, made))
+                                else if (!glyph_synthesize(character, made) &&
+                                         !(font_data &&
+                                           glyph_script_digit(character,
+                                                              font_data,
+                                                              glyph_size,
+                                                              made)))
                                 {
                                         if (font_data)
                                                 memory_copy(made,
