@@ -164,120 +164,6 @@ static p8 zstd_highbit32(p32 value)
 #endif
 }
 
-static bool zstd_fail(string_address why);
-
-/* FSE-compressed Huffman weights stop on OVERFLOW, not on END_BUFFER.
-   The library reload maps every non-overflow to 0, which is the same
-   stop rule, but the C look/skip here is the one host_huff was proved
-   against: a tail shorter than tableLog zero-pads, and consumed may
-   run past 64 before the next reload. */
-#define ZSTD_BITS_UNFINISHED 0
-#define ZSTD_BITS_END_BUFFER 1
-#define ZSTD_BITS_COMPLETED 2
-#define ZSTD_BITS_OVERFLOW 3
-
-static bool zstd_wt_open(zstd_bits address_to b, p8 address_to src,
-                         positive size)
-{
-        p8 last;
-
-        if (!size)
-                return zstd_fail("zstd empty bitstream");
-
-        last = src[size - 1];
-        if (!last)
-                return zstd_fail("zstd bitstream missing the end mark");
-
-        b->start = src;
-        b->last = src + size;
-        b->limit = src + 8;
-
-        if (size >= 8)
-        {
-                b->ptr = src + size - 8;
-                b->bits = memory_get64(b->ptr);
-                b->consumed = 8 - zstd_highbit32(last);
-        }
-        else
-        {
-                positive i;
-
-                b->ptr = src;
-                b->bits = src[0];
-                for (i = 1; i < size; i++)
-                        b->bits |= (p64)src[i] << (8 * i);
-                b->consumed = (8 - size) * 8 + (8 - zstd_highbit32(last));
-        }
-
-        return true;
-}
-
-static p64 zstd_wt_look(zstd_bits address_to b, p8 n)
-{
-        if (!n || b->consumed >= 64)
-                return 0;
-        return (b->bits << b->consumed) >> (64 - n);
-}
-
-static fn zstd_wt_skip(zstd_bits address_to b, p8 n)
-{
-        b->consumed += n;
-}
-
-static p64 zstd_wt_get(zstd_bits address_to b, p8 n)
-{
-        p64 value = zstd_wt_look(b, n);
-
-        zstd_wt_skip(b, n);
-        return value;
-}
-
-static p8 zstd_wt_reload(zstd_bits address_to b)
-{
-        if (b->consumed > 64)
-                return ZSTD_BITS_OVERFLOW;
-
-        if (b->ptr >= b->limit)
-        {
-                b->ptr -= b->consumed >> 3;
-                b->consumed &= 7;
-                b->bits = memory_get64(b->ptr);
-                return ZSTD_BITS_UNFINISHED;
-        }
-
-        if (b->ptr == b->start)
-        {
-                if (b->consumed < 64)
-                        return ZSTD_BITS_END_BUFFER;
-                return ZSTD_BITS_COMPLETED;
-        }
-
-        {
-                positive bytes = b->consumed >> 3;
-                p8 status = ZSTD_BITS_UNFINISHED;
-
-                if (b->ptr - bytes < b->start)
-                {
-                        bytes = (positive)(b->ptr - b->start);
-                        status = ZSTD_BITS_END_BUFFER;
-                }
-                b->ptr -= bytes;
-                b->consumed -= bytes * 8;
-                if ((positive)(b->last - b->ptr) >= 8)
-                        b->bits = memory_get64(b->ptr);
-                else
-                {
-                        positive have = (positive)(b->last - b->ptr);
-                        positive i;
-
-                        b->bits = 0;
-                        for (i = 0; i < have; i++)
-                                b->bits |= (p64)b->ptr[i] << (8 * i);
-                }
-                return status;
-        }
-}
-
 static bool zstd_fail(string_address why)
 {
         zstd_why = why;
@@ -352,7 +238,7 @@ static fn zstd_fse_step(zstd_fse address_to table, p16 address_to state,
 
         cell = table->cell[address_to state];
         address_to state =
-            (p16)(cell.next + (p16)zstd_wt_get(bits, cell.bits));
+            (p16)(cell.next + (p16)zstd_bits_get(bits, cell.bits));
 }
 
 static p8 zstd_fse_symbol(zstd_fse address_to table, p16 address_to state,
@@ -761,11 +647,13 @@ static bool zstd_fse_unpack(zstd_fse address_to table, p8 address_to into,
         p16 state2;
         positive n = 0;
 
-        if (!zstd_wt_open(address_of bits, src, size))
-                return false;
-        state1 = (p16)zstd_wt_get(address_of bits, table->log);
-        state2 = (p16)zstd_wt_get(address_of bits, table->log);
-        if (zstd_wt_reload(address_of bits) == ZSTD_BITS_OVERFLOW)
+        if (!size)
+                return zstd_fail("zstd empty bitstream");
+        if (zstd_bits_open(address_of bits, src, size))
+                return zstd_fail("zstd bitstream missing the end mark");
+        state1 = (p16)zstd_bits_get(address_of bits, table->log);
+        state2 = (p16)zstd_bits_get(address_of bits, table->log);
+        if (zstd_bits_reload(address_of bits))
                 return zstd_fail("zstd Huffman FSE overflow");
 
         for (;;)
@@ -774,7 +662,7 @@ static bool zstd_fse_unpack(zstd_fse address_to table, p8 address_to into,
                         return zstd_fail("zstd Huffman too many weights");
                 into[n++] = zstd_fse_symbol(table, address_of state1,
                                             address_of bits);
-                if (zstd_wt_reload(address_of bits) == ZSTD_BITS_OVERFLOW)
+                if (zstd_bits_reload(address_of bits))
                 {
                         into[n++] = zstd_fse_symbol(table, address_of state2,
                                                     address_of bits);
@@ -782,7 +670,7 @@ static bool zstd_fse_unpack(zstd_fse address_to table, p8 address_to into,
                 }
                 into[n++] = zstd_fse_symbol(table, address_of state2,
                                             address_of bits);
-                if (zstd_wt_reload(address_of bits) == ZSTD_BITS_OVERFLOW)
+                if (zstd_bits_reload(address_of bits))
                 {
                         into[n++] = zstd_fse_symbol(table, address_of state1,
                                                     address_of bits);
