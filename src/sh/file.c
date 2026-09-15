@@ -28220,6 +28220,12 @@ static b32 file_seq()
                 }
                 written = true;
 
+                //      A refused write ends the sequence, as GNU's does: seq
+                //      inf, or a last number past what anyone could read,
+                //      would otherwise count on for ever into nothing.
+                if (log_failed())
+                        return 1;
+
                 value = (bipolar)((positive)value +
                                  (positive)step.coefficient * (records - 1));
 

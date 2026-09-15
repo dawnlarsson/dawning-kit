@@ -4206,6 +4206,21 @@ lane_files()
                 files_failed=1
         fi
 
+        #       seq to a last number nobody could read, into a device that
+        #       refuses every write and to a closed descriptor: GNU's stops at
+        #       the first refusal with status 1, and ours counted on for ever.
+        timeout 10 "$farm/seq" 1 1000000000000000000 > /dev/full 2> /dev/null
+        seq_full=$?
+        timeout 10 "$farm/seq" 1 1000000000000000000 2> /dev/null >&-
+        seq_closed=$?
+        if [ "$seq_full:$seq_closed" = 1:1 ]; then
+                tally seq-stops-at-refused-write 1 1
+        else
+                tally seq-stops-at-refused-write 0 1
+                note "seq into /dev/full returned $seq_full, to a closed descriptor $seq_closed"
+                files_failed=1
+        fi
+
         printf 'old text\n' > "$work/cp-mode-regression/sed"
         chmod 4755 "$work/cp-mode-regression/sed"
         "$farm/sed" -i s/old/new/ "$work/cp-mode-regression/sed"
