@@ -124,6 +124,7 @@ static bool host_settings_install(host_install address_to install,
                                   host_settings address_to into);
 static fn host_events_boot(host_settings address_to settings);
 static b32 host_usage(void);
+static fn host_usage_write(writer out);
 
 static b32 host_refuse(string_address text, string_address name)
 {
@@ -3122,14 +3123,22 @@ static b32 host_status(void)
                 host_unmount(HOST_MEDIUM);
         }
 
+        {
+                struct canvas_control control;
+
+                if (host_canvas_request(SPARK_CANVAS_STATUS, address_of control) >= 0)
+                        host_canvas_say(address_of control);
+        }
+
         log_flush();
         return 0;
 }
 
-static b32 host_usage(void)
+static fn host_usage_write(writer out)
 {
-        string_format(log_error,
-                      host_label "usage: moonwater [status]\n"
+        string_format(out,
+                      host_label "usage: moonwater [-h]\n"
+                      host_label "       moonwater status\n"
                       host_label "       moonwater install DISK [--removable]\n"
                       host_label "       moonwater use [DISK]\n"
                       host_label "       moonwater update [DISK]\n"
@@ -3145,6 +3154,11 @@ static b32 host_usage(void)
                       host_label "Settings are kept in the image this session started from.\n"
                       host_label "install takes this session's; update keeps the disk's.\n");
         log_flush();
+}
+
+static b32 host_usage(void)
+{
+        host_usage_write(log_error);
         return 2;
 }
 
@@ -3206,7 +3220,16 @@ static b32 host_main()
 {
         string_address address_to arguments = program_argument_list();
         positive count = (positive)program_argument_count();
-        string_address verb = count > 1 ? arguments[1] : (string_address)"status";
+        string_address verb = count > 1 ? arguments[1] : null;
+
+        if (!verb || string_equals(verb, "-h") || string_equals(verb, "--help"))
+        {
+                if (count > 2)
+                        return host_usage();
+
+                host_usage_write(log);
+                return 0;
+        }
 
         if (string_equals(verb, "status") && count <= 2)
                 return host_status();
