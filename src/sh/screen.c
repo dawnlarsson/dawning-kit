@@ -81,6 +81,146 @@ static fn term_follow_modes(b32 master)
         system_control(master, PTY_TCSETS, address_of modes);
 }
 
+/*
+        Which of the window and its shell the kernel takes first.
+
+        When memory runs out the kernel kills whichever process holds the most
+        pages, and the ring this window draws from is pages its shell does not
+        hold -- so once apt and dpkg had gone, on a live session whose root is
+        RAM that stays full, the window was next, ahead of the shell that was
+        using the memory. openssh's listener does the same for itself. Half of
+        memory is taken off what the window seems to hold rather than exempting
+        it, so a window that is itself the leak still goes.
+
+        The shell is put back to nought before it runs, or everything it starts
+        would inherit the window's protection. Not being allowed to change it
+        -- a window run by someone without the privilege -- changes nothing.
+*/
+#define TERM_OOM_WINDOW "-500\n"
+#define TERM_OOM_SHELL "0\n"
+
+static fn term_oom_adjust(string_address value)
+{
+        bipolar handle = system_open_at(AT_FDCWD,
+                                        (string_address) "/proc/self/oom_score_adj",
+                                        FILE_WRITE | O_CLOEXEC);
+
+        if (handle < 0)
+                return;
+
+        (void)system_write_all((positive)handle, value, string_length(value));
+        system_close(handle);
+}
+
+/*
+        How many processes the kernel has killed for want of memory, or
+        positive_max when it will not say. A count that moved while the shell
+        ran says memory ran out, not that the shell was the one chosen: it
+        counts every process.
+*/
+static positive term_oom_kills(void)
+{
+        static p8 text[16384];
+        bipolar got = file_slurp_once_at(AT_FDCWD,
+                                         (string_address) "/proc/vmstat", text,
+                                         sizeof(text));
+
+        for (positive at = 0; got > 0 && at < (positive)got; at++)
+        {
+                positive count = 0;
+
+                if ((at && text[at - 1] != '\n') ||
+                    string_compare_max(text + at, (string_address) "oom_kill ", 9))
+                        continue;
+
+                for (at += 9; text[at] >= '0' && text[at] <= '9'; at++)
+                        count = count * 10 + (text[at] - '0');
+
+                return count;
+        }
+
+        return positive_max;
+}
+
+/*
+        The shell went by a signal this window did not send.
+
+        A window that closed then could not be told from one that crashed, and
+        an out-of-memory kill on a live session looked exactly like a crash. So
+        the screen is put back the way a person reads it -- off the alternate
+        screen, out of any frame a program was holding, without the line being
+        typed -- and DECSTR takes back whatever else a dead full-screen program
+        left set: colours, a scroll region the line below would scroll inside,
+        a hidden cursor, line drawing in G0 that spells the words in box
+        glyphs, insert mode, autowrap and origin mode, mouse reports. What
+        happened is said after whatever was on the screen. Nothing is sent:
+        the pty is already gone.
+*/
+static fn term_child_killed(positive signal, string_address name,
+                            b32 out_of_memory)
+{
+        static const p8 restore[] = "\x1b[?2026l\x1b[?1049l\x1b[!p\r\n";
+        p8 line[96];
+        positive at;
+
+        term_line_editing(false);
+        term_bytes(restore, sizeof(restore) - 1);
+
+        string_copy(line, (string_address) "[shell killed by signal ");
+        at = string_length(line);
+        at += positive_into_string(line + at, signal);
+
+        // A signal with a name says it; one known only by its number has
+        // already said everything there is.
+        if (name[0] < '0' || name[0] > '9')
+        {
+                string_copy(line + at, (string_address) " (SIG");
+                at += 5;
+                string_copy_max_end(line + at, name, 16);
+                at += string_length(line + at);
+                line[at++] = ')';
+        }
+
+        if (out_of_memory)
+        {
+                string_copy(line + at, (string_address) ": out of memory");
+                at += 15;
+        }
+
+        line[at++] = ']';
+        term_bytes(line, at);
+}
+
+/*
+        What is left of a window whose shell is gone: its cells, until the X.
+        Keys and the pointer are taken and dropped, since nothing is there to
+        send them to, and a resize is still drawn. It sleeps in between: the
+        compositor wakes it for a key, a new grid and the close request.
+*/
+static fn term_linger(void)
+{
+        struct window_key dropped;
+
+        cursor_show();
+        window_damage(window, 0, ROWS);
+        window_flush(window);
+
+        while (!window_closing(window))
+        {
+                while (window_key(window, address_of dropped))
+                        ;
+
+                if (window->columns != COLUMNS || window->rows != ROWS)
+                {
+                        regrid(-1);
+                        window_damage(window, 0, ROWS);
+                        window_flush(window);
+                }
+
+                window_wait(window, -1, -1);
+        }
+}
+
 // term ---------------------------------------------------------
 static b32 screen_term()
 {
@@ -135,6 +275,11 @@ static b32 screen_term()
 
         terminal_terminfo_install();
 
+        // Here and not sooner: the kernel mounts /proc before init mounts the
+        // devpts the pty above waited for.
+        term_oom_adjust(TERM_OOM_WINDOW);
+
+        positive oom_kills = term_oom_kills();
         bipolar child = system_fork();
 
         if (child < 0)
@@ -159,6 +304,9 @@ static b32 screen_term()
 
                 if (process_pty_child_setup(master, slave, -1, -1) < 0)
                         system_call_1(syscall(exit), 126);
+
+                // A fork shares no memory, so this is the shell's alone.
+                term_oom_adjust(TERM_OOM_SHELL);
 
                 //      Boot may still be looking for an installed disk, and
                 //      may have a question for whoever is at this window.
@@ -384,6 +532,25 @@ static b32 screen_term()
 
         system_wait4_retry(child, address_of status, 0, null);
         system_close(master);
+
+        // An exit of any status, and the hangup the X sent, close the window
+        // as they always have. Only a signal from elsewhere keeps it.
+        positive signal = status & 0x7f;
+
+        if (!hung_up && signal && signal != 0x7f)
+        {
+                p8 name[16];
+                positive kills = term_oom_kills();
+
+                kill_name(signal, name);
+                cursor_hide();
+                term_child_killed(signal, name,
+                                  oom_kills != positive_max &&
+                                      kills != positive_max &&
+                                      kills != oom_kills);
+                term_linger();
+        }
+
         window_close(window);
 
         return 0;

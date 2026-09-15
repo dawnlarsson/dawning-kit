@@ -5281,6 +5281,12 @@ static bipolar shell_exec_file(string_address path,
         (void)environment;
         return -1;
 }
+// The shell's signal names live in file.c, which the fixture leaves out; only
+// screen_term, which never runs here, asks it. The killed verb names its own.
+static fn kill_name(positive number, p8 address_to into)
+{
+        positive_into_string(into, number);
+}
 #include "src/sh/screen.c"
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
@@ -5590,6 +5596,32 @@ b32 main()
                                 wrote = (bipolar)number(argument);
 
                         tell(term_sent(wrote) ? "alive\n" : "dead\n");
+                        i++;
+                }
+                /*
+                        What a window says when its shell dies of a signal it
+                        did not send: killed NUMBER,NAME or NUMBER,NAME,oom.
+                */
+                else if (string_compare(verb, (string_address) "killed") == 0)
+                {
+                        static p8 name[16];
+                        positive at = 0;
+                        positive length = 0;
+
+                        while (argument[at] && argument[at] != ',')
+                                at++;
+                        if (argument[at])
+                                at++;
+                        while (argument[at + length] && argument[at + length] != ',' &&
+                               length + 1 < sizeof(name))
+                        {
+                                name[length] = argument[at + length];
+                                length++;
+                        }
+                        name[length] = 0;
+
+                        term_child_killed(number(argument), name,
+                                          argument[at + length] == ',');
                         i++;
                 }
                 /*
@@ -6530,6 +6562,23 @@ same 'again keeps all' 'alive|[abcdef]'            20 3 edit off keys 'abcdef' w
 same 'interrupt keeps all' 'alive|[abcdef]'        20 3 edit off keys 'abcdef' wrote intr sent
 same 'fatal keeps evidence' 'dead|[abcdef]'        20 3 edit off keys 'abcdef' wrote fatal sent
 same 'zero cannot spin' 'dead|[abcdef]'            20 3 edit off keys 'abcdef' wrote 0 sent
+
+group killed
+#       A shell that died of a signal the window did not send leaves the window
+#       up with a line saying so, after whatever was on the screen, with the
+#       screen put back and nothing sent to the pty that is gone.
+same 'says the signal' '[$ ls]|[[shell killed by signal 9 (SIGKILL)]]|[]' 44 3 in '$ ls' killed '9,KILL' dump
+same 'and memory' '[]|[[shell killed by signal 9 (SIGKILL): out of memory]]' 60 2 killed '9,KILL,oom' dump
+same 'number only' '[x]|[[shell killed by signal 33]]|[]'   40 3 in 'x' killed '33,33' dump
+same 'off the alternate screen' '[shell]|[[shell killed by signal 9 (SIGKILL)]]|[]' 44 3 in 'shell\e[?1049h\e[2JPAGER' killed '9,KILL' dump
+same 'colours reset' '7,0'                       44 3 in '\e[31;44mred' killed '9,KILL' attr 1,1
+same 'frame let go' '1|0'                        44 3 in '\e[?2026h' sync killed '9,KILL' sync
+same 'nothing sent' '[]'                         44 3 edit on keys 'half typed' killed '9,KILL' sent
+#       A full-screen program that died with a scroll region, a hidden cursor,
+#       line drawing in G0, insert mode and mouse reports set: the line lands
+#       below the region's last row in letters, and every mode is back.
+same 'dead program put back' '[[shell killed by signal 9 (SIGKILL)]]|10,36|0' 44 12 in 'tui\e[5;10r\e[?25l\e(0\e[4h\e[?1000h\e[?6h\e[10;1H' killed '9,KILL' row 10 cursor mouse
+same 'dead program modes' '[\e[?25;1$y\e[4;2$y\e[?6;2$y\e[?1000;2$y]' 44 12 in '\e[5;10r\e[?25l\e(0\e[4h\e[?1000h\e[?6h' killed '9,KILL' in '\e[?25$p\e[4$p\e[?6$p\e[?1000$p' sent
 
 #
 #       The line being typed, before it is a line.
