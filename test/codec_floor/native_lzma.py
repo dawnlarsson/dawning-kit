@@ -62,6 +62,7 @@ typedef void (*parallel_emit_job)(void *context, positive index, parallel_output
 typedef bool (*parallel_sink)(void *context, positive index, void *data, positive length);
 static positive parallel_width(void) { return 1; }
 static positive parallel_slot(void) { return 0; }
+static positive parallel_slots(void) { return 1; }
 static bool parallel_write(parallel_output *o, void *data, positive length)
 {
         if (!length) return true;
