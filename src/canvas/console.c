@@ -216,10 +216,10 @@ static void console_stop(void)
 
         // unregister_console drains callbacks. This owned pane has no file
         // context whose release could return its ring to the desktop budget.
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
         pane = console_pane;
         WRITE_ONCE(console_pane, NULL);
         if (pane)
                 pane_free(pane);
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 }

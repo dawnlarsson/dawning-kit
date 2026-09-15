@@ -26,10 +26,14 @@ static COLD void client_unregister(struct drm_client_dev *client)
                 canvas_thread_stop();
         mutex_unlock(&canvas_list_lock);
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
         canvas->started = 0;
         canvas_release(canvas);
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
+
+        // An output dropped while its buffer was with the flusher is freed by
+        // the flusher, and that buffer is this client's.
+        wait_event(desktop.flush_idle, !atomic_read(&canvas->retiring));
 
         drm_client_release(client);
 }
@@ -44,7 +48,7 @@ static int client_hotplug(struct drm_client_dev *client)
         struct canvas *canvas = canvas_from_client(client);
         int ret = 0;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         if (!canvas->started)
         {
@@ -56,7 +60,7 @@ static int client_hotplug(struct drm_client_dev *client)
                 ret = canvas_rebind(canvas);
         }
 
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
         return ret;
 }
 
@@ -68,7 +72,7 @@ static int client_restore(struct drm_client_dev *client, _Bool in_atomic)
         if (in_atomic)
                 return -EBUSY;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
         if (canvas->started)
         {
                 // The last program that held the card has closed it.
@@ -77,7 +81,7 @@ static int client_restore(struct drm_client_dev *client, _Bool in_atomic)
                 else
                         desktop_redraw();
         }
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 
         return 0;
 }

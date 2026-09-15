@@ -16796,6 +16796,8 @@ static unsigned cpu_records, network_records, growing, captures;
    first member is one. */
 static void mutex_lock(void *held) { int *lock=held; assert(!*lock); *lock=1; }
 static void mutex_unlock(void *held) { int *lock=held; assert(*lock); *lock=0; }
+#define rt_mutex_lock(lock) mutex_lock(lock)
+#define rt_mutex_unlock(lock) mutex_unlock(lock)
 static void *kvrealloc(void *old, size_t bytes, int flags) {
     (void)flags;
     return ++allocations == fail_allocation ? NULL : realloc(old, bytes);
@@ -20336,6 +20338,15 @@ static char said_last[256];
 #define pr_info(...) (said++, (void)snprintf(said_last, sizeof(said_last), __VA_ARGS__))
 #define pr_info_once(...) do { static bool once; if (!once) { once=true; pr_info(__VA_ARGS__); } } while (0)
 static bool canvas_cursor_plane = true;
+/* Used as statements only; void, so gcc's -Werror=unused-value accepts them. */
+#define atomic_fetch_add(v,p) ((void)(*(p) += (v)))
+#define atomic_fetch_sub(v,p) ((void)(*(p) -= (v)))
+#define atomic_read(p) (*(p))
+#define wake_up_all(q) ((void)(q))
+/* The release waits for the flusher: here, waiting is the flush finishing. */
+static void flusher_step(void);
+static unsigned waited;
+#define wait_event(q,cond) do { (void)(q); while (!(cond)) { waited++; flusher_step(); } } while (0)
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 struct list_head { struct list_head *next, *prev; };
 static void list_init(struct list_head *h) { h->next = h->prev = h; }
@@ -20344,6 +20355,7 @@ static void list_add_tail(struct list_head *n, struct list_head *h) {
     n->prev=h->prev; n->next=h; h->prev->next=n; h->prev=n;
 }
 static void list_del(struct list_head *n) { n->prev->next=n->next; n->next->prev=n->prev; }
+static void list_del_init(struct list_head *n) { list_del(n); list_init(n); }
 #define list_for_each_entry(p,h,m) \
     for (p=container_of((h)->next,__typeof__(*p),m); &p->m!=(h); \
          p=container_of(p->m.next,__typeof__(*p),m))
@@ -20360,20 +20372,25 @@ struct drm_plane_funcs { void (*update_plane)(void), (*disable_plane)(void); };
 struct drm_plane { const struct drm_plane_funcs *funcs; };
 struct drm_crtc { struct drm_plane *cursor; };
 struct drm_mode_set { struct drm_crtc *crtc; };
-struct canvas { struct list_head link; struct drm_client_dev client; bool started; };
+struct canvas { struct list_head link; struct drm_client_dev client; bool started; int retiring; };
 struct output {
     struct list_head link; struct canvas *canvas;
     struct drm_client_buffer *buffer, *cursor_buffer;
     struct drm_mode_set *mode_set; struct drm_plane *cursor_plane;
     unsigned cursor_w,cursor_h,cursor_recovery; bool cursor_shown; int x,y;
+    struct list_head flush_link; bool flush_queued, flush_whole, flushing, retired;
 };
-static struct { struct list_head outputs; int lock; } desktop;
+static struct { struct list_head outputs; int lock; int flush_lock; struct list_head flush_queue; int flush_idle; } desktop;
 static struct list_head canvas_list;
 static int canvas_list_lock, cursor_plane_failures;
 static bool cursor_plane_recovery;
 static void atomic_long_inc(int *n) { ++*n; }
 static void mutex_lock(int *m) { (void)m; }
 static void mutex_unlock(int *m) { (void)m; }
+static void rt_mutex_lock(int *m) { assert(!*m); *m=1; }
+static void rt_mutex_unlock(int *m) { assert(*m); *m=0; }
+static void spin_lock(int *l) { assert(!*l); *l=1; }
+static void spin_unlock(int *l) { assert(*l); *l=0; }
 static void canvas_thread_stop(void) {}
 static struct canvas *canvas_from_client(struct drm_client_dev *c) {
     return container_of(c,struct canvas,client);
@@ -20426,7 +20443,12 @@ static int plane_paint(struct output *o,unsigned shape,unsigned scale) {
 static void desktop_place_outputs(void) {}
 static void desktop_redraw(void) {}
 static bool desktop_commit(void);
+/* What the card still had when its client was released. */
+static int release_retiring;
+static unsigned release_wrappers;
 static void drm_client_release(struct drm_client_dev *c) {
+    release_retiring=canvas_from_client(c)->retiring; release_wrappers=0;
+    for (unsigned i=0;i<allocated;i++) release_wrappers+=resources[i].client==c && resources[i].wrapper;
     /* Client close cannot discover an orphaned drm_client_buffer wrapper. */
     for (unsigned i=0;i<allocated;i++) if (resources[i].client==c) {
         if (resources[i].file && !remove_fail) resources[i].plane=false;
@@ -20440,6 +20462,8 @@ static void drm_client_release(struct drm_client_dev *c) {
         ("src/canvas/plane.c", "plane_drop"),
         ("src/canvas/plane.c", "plane_lost"),
         ("src/canvas/plane.c", "plane_claim"),
+        ("src/canvas/output.c", "output_free"),
+        ("src/canvas/compose.c", "output_flush_done"),
         ("src/canvas/output.c", "output_drop"),
         ("src/canvas/output.c", "cursor_plane_recover"),
         ("src/canvas/output.c", "canvas_release"),
@@ -20447,6 +20471,12 @@ static void drm_client_release(struct drm_client_dev *c) {
     ])
 
     runner = r'''
+/* The one flush the flusher has with the driver, finished on demand. */
+static struct output *in_flight;
+static void flusher_step(void) {
+    assert(in_flight);
+    struct output *o=in_flight; in_flight=NULL; output_flush_done(o);
+}
 static bool desktop_commit(void) {
     commit_calls++;
     if (commit_fail) return false;
@@ -20505,7 +20535,8 @@ static void reset(void) {
     allocated=deleted=paint_calls=release_calls=commit_calls=0;
     disable_fail=remove_fail=close_fail=commit_fail=create_fail=paint_fail=false;
     fail_during_commit=NULL; cursor_plane_recovery=false; cursor_plane_failures=0;
-    list_init(&desktop.outputs); list_init(&canvas_list);
+    list_init(&desktop.outputs); list_init(&canvas_list); list_init(&desktop.flush_queue);
+    in_flight=NULL; waited=0;
 }
 int main(void) {
     for (unsigned pending=0;pending<2;pending++) for(unsigned failure=0;failure<2;failure++)
@@ -20602,6 +20633,39 @@ int main(void) {
         check("sized claim teardown is balanced",!gems());
     }
     atomic_device.mode_config=(struct drm_mode_config){0};
+    reset();
+
+    /* Hotplug against the flusher. A queued flush goes with its output; a
+       flush with the driver keeps the scanout buffer until it is back, the
+       flusher frees that output exactly once, and the card's client is
+       released only after -- never while a dirtyfb holds its buffer. */
+    reset(); c=card(true); o=output(c);
+    o->flush_queued=true; list_add_tail(&o->flush_link,&desktop.flush_queue);
+    output_drop(o);
+    check("a queued flush leaves with its output",list_empty(&desktop.flush_queue) && wrappers()==0 && c->retiring==0);
+    client_unregister(&c->client);
+    check("no flush in flight means no wait",waited==0 && release_calls==1);
+
+    reset(); c=card(true); o=output(c);
+    o->flushing=true; in_flight=o;
+    output_drop(o);
+    /* o itself is not read again: if it had been freed here, reading it is the bug. */
+    check("an output mid-flush keeps its scanout buffer",c->retiring==1 && wrappers()==1 && deleted==1);
+    check("and is off the desktop",list_empty(&desktop.outputs));
+    client_unregister(&c->client);
+    check("the card waits for the flush to come back",waited==1 && release_retiring==0 && release_wrappers==0);
+    check("the flusher freed that buffer once, before the client",wrappers()==0 && deleted==2 && release_calls==1);
+    check("device shutdown after a flush in flight is balanced",!gems());
+
+    reset(); c=card(true); o=output(c); struct output *next=output(c);
+    next->flushing=true; in_flight=next;
+    o->flush_queued=true; list_add_tail(&o->flush_link,&desktop.flush_queue);
+    canvas_release(c);
+    check("releasing a card clears its queue and retires the flushing output",
+          list_empty(&desktop.flush_queue) && c->retiring==1 && wrappers()==1);
+    client_unregister(&c->client);
+    check("two outputs, one mid-flush, tear down balanced",
+          waited==1 && release_retiring==0 && release_wrappers==0 && wrappers()==0 && deleted==4 && !gems());
     reset();
     printf("canvas-lifetime %u/%u\n",checks-failures,checks); return failures?1:0;
 }

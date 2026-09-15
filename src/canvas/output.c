@@ -510,18 +510,45 @@ static void output_disable_modeset(struct drm_device *dev,
         mode_set->num_connectors = 0;
 }
 
+static void output_free(struct output *output)
+{
+        drm_client_buffer_delete(output->buffer);
+        kfree(output);
+}
+
 static void output_drop(struct output *output)
 {
+        _Bool flushing;
+
         plane_drop(output);
 
         // A failed disable leaves a client buffer that recovery can no longer
         // reach after this output is gone. RMFB drops the client ownership;
         // atomic plane state keeps scanout alive even if removal also fails.
         drm_client_buffer_delete(output->cursor_buffer);
-        drm_client_buffer_delete(output->buffer);
 
         list_del(&output->link);
-        kfree(output);
+
+        /*
+                Off the flusher's queue, and left to the flusher if its buffer
+                is with the driver right now: deleting it under a dirtyfb in
+                flight frees what the driver is using. output_flush_done frees
+                it instead, and client_unregister waits for that.
+        */
+        spin_lock(&desktop.flush_lock);
+        if (output->flush_queued)
+        {
+                list_del_init(&output->flush_link);
+                output->flush_queued = false;
+        }
+        flushing = output->flushing;
+        output->retired = flushing;
+        if (flushing)
+                atomic_fetch_add(1, &output->canvas->retiring);
+        spin_unlock(&desktop.flush_lock);
+
+        if (!flushing)
+                output_free(output);
 }
 
 /*
@@ -867,11 +894,11 @@ static int __init canvas_initcalls_finished(void)
 {
         _Bool waiting;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
         canvas_initcalls_done = true;
         waiting = canvas_terminal_waiting;
         canvas_terminal_waiting = false;
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 
         if (waiting)
                 pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());

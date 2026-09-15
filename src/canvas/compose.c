@@ -1488,6 +1488,132 @@ static _Bool output_describe(struct output *output)
 }
 
 /*
+        Hands a flush to the flusher: a rectangle in the output's own
+        coordinates, or NULL for the whole buffer, which is what compose_output
+        tells the driver. With no flusher -- before the canvas thread starts,
+        or if its flusher could not be made -- the flush happens here, as every
+        flush did before there was one.
+
+        Process context only, which is why flush_lock is a plain spin_lock.
+        Every caller composes, and composing sleeps: the console's write path
+        only wakes the canvas thread and never queues. Anything that would
+        queue from the console, an interrupt or a panic has to make this lock
+        irqsave first, or hand the flush to process context instead.
+*/
+static void output_flush_queue(struct output *output, const struct drm_rect *rect)
+{
+        if (!canvas_flush_running())
+        {
+                struct drm_rect clip = rect ? *rect : (struct drm_rect){0};
+                u64 started = ktime_get_ns();
+
+                drm_client_buffer_flush(output->buffer, rect ? &clip : NULL);
+                canvas_flush_ns += ktime_get_ns() - started;
+                return;
+        }
+
+        spin_lock(&desktop.flush_lock);
+
+        if (!output->flush_queued)
+        {
+                output->flush_queued = true;
+                output->flush_whole = !rect;
+                if (rect)
+                        output->flush_pending = *rect;
+                list_add_tail(&output->flush_link, &desktop.flush_queue);
+        }
+        else if (!rect)
+                output->flush_whole = true;
+        else if (!output->flush_whole)
+                canvas_rect_join(&output->flush_pending, rect);
+
+        spin_unlock(&desktop.flush_lock);
+
+        canvas_flush_wake();
+}
+
+// The next output with a flush waiting, now marked as with the driver.
+static struct output *output_flush_take(struct drm_rect *rect, _Bool *whole)
+{
+        struct output *output = NULL;
+
+        spin_lock(&desktop.flush_lock);
+
+        if (!list_empty(&desktop.flush_queue))
+        {
+                output = list_first_entry(&desktop.flush_queue, struct output,
+                                          flush_link);
+                list_del_init(&output->flush_link);
+                *rect = output->flush_pending;
+                *whole = output->flush_whole;
+                output->flush_queued = false;
+                output->flush_whole = false;
+                output->flushing = true;
+        }
+
+        spin_unlock(&desktop.flush_lock);
+        return output;
+}
+
+/*
+        The flush is back. An output dropped while its buffer was with the
+        driver was left for this, because the buffer could not be deleted out
+        from under a flush in flight, and its card's release is waiting on it.
+*/
+static void output_flush_done(struct output *output)
+{
+        struct canvas *canvas = output->canvas;
+        _Bool retired;
+
+        spin_lock(&desktop.flush_lock);
+        output->flushing = false;
+        retired = output->retired;
+        spin_unlock(&desktop.flush_lock);
+
+        if (retired)
+        {
+                output_free(output);
+                atomic_fetch_sub(1, &canvas->retiring);
+        }
+
+        wake_up_all(&desktop.flush_idle);
+}
+
+/*
+        The flusher: the canvas thread's policy, started and stopped beside it,
+        and it never takes desktop.lock. Waiting out the driver is all it does.
+*/
+static int canvas_flush_loop(void *unused)
+{
+        while (!kthread_should_stop())
+        {
+                struct drm_rect rect;
+                struct output *output;
+                _Bool whole = false;
+                u64 started;
+
+                set_current_state(TASK_IDLE);
+                output = output_flush_take(&rect, &whole);
+
+                if (!output)
+                {
+                        schedule();
+                        continue;
+                }
+
+                __set_current_state(TASK_RUNNING);
+
+                started = ktime_get_ns();
+                drm_client_buffer_flush(output->buffer, whole ? NULL : &rect);
+                canvas_flush_ns += ktime_get_ns() - started;
+
+                output_flush_done(output);
+        }
+
+        return 0;
+}
+
+/*
         Repaints a set of damaged rectangles on one output and hands the driver
         their union. A set rather than a pair because moving a window damages
         four things: where its frame was and is, and where the cursor was and
@@ -1566,9 +1692,7 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
                         .x2 = (int)output->width, .y2 = (int)output->height }))
                 return;
 
-        started = ktime_get_ns();
-        drm_client_buffer_flush(output->buffer, &flush);
-        pointer_flush_total += ktime_get_ns() - started;
+        output_flush_queue(output, &flush);
 }
 
 static void compose_output(struct output *output)
@@ -1601,10 +1725,5 @@ static void compose_output(struct output *output)
                 have just painted, and what reaches the screen is the new
                 picture with holes of the old one through it.
         */
-        {
-                u64 started = ktime_get_ns();
-
-                drm_client_buffer_flush(output->buffer, NULL);
-                canvas_flush_ns += ktime_get_ns() - started;
-        }
+        output_flush_queue(output, NULL);
 }

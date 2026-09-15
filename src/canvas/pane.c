@@ -1371,20 +1371,20 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
         if (copy_from_user(&request, (void __user *)argument, sizeof(request)))
                 return -EFAULT;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         // Tested and stored under the one lock: two threads on one file used
         // to be able to both create, and the window one of them made was then
         // reachable from nothing and freed by nothing.
         if (context->pane)
         {
-                mutex_unlock(&desktop.lock);
+                rt_mutex_unlock(&desktop.lock);
                 return -EBUSY;
         }
 
         if (list_empty(&desktop.outputs))
         {
-                mutex_unlock(&desktop.lock);
+                rt_mutex_unlock(&desktop.lock);
                 return -ENODEV;
         }
 
@@ -1392,7 +1392,7 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
                            request.columns, request.rows, false);
         if (!pane)
         {
-                mutex_unlock(&desktop.lock);
+                rt_mutex_unlock(&desktop.lock);
                 return -EINVAL;
         }
 
@@ -1427,7 +1427,7 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
 
         desktop_redraw();
 
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 
         // How much to map, which the program cannot work out for itself.
         return (long)bytes;
@@ -1484,7 +1484,7 @@ static long window_ioctl_commit(struct file *file)
         if (!context->pane)
                 return -EINVAL;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         // Another program has the display: nothing drawn now would land, and
         // the resume draws everything once it lets go.
@@ -1496,14 +1496,14 @@ static long window_ioctl_commit(struct file *file)
                         canvas_thread_wake();
                 }
 
-                mutex_unlock(&desktop.lock);
+                rt_mutex_unlock(&desktop.lock);
                 return 0;
         }
 
         desktop_watch();
         desktop_refresh_panes();
         desktop_repaint();
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 
         return 0;
 }
@@ -1534,7 +1534,7 @@ static void window_release(struct file *file)
         if (!pane)
                 return;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         // Asked before the free, which is what clears it.
         refocus = desktop.focused == pane;
@@ -1549,7 +1549,7 @@ static void window_release(struct file *file)
         if (!list_empty(&desktop.outputs))
                 desktop_redraw();
 
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 
         context->pane = NULL;
 }
@@ -1759,7 +1759,7 @@ static void cursor_settle(void)
 
 static void desktop_frame_pass(void)
 {
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         cursor_settle();
 
@@ -1792,5 +1792,5 @@ static void desktop_frame_pass(void)
                 }
         }
 
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 }

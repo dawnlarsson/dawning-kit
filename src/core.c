@@ -114,6 +114,7 @@ struct device_context
 #ifdef CONFIG_MOONWATER_CANVAS
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
+#include <linux/rtmutex.h>
 #include <uapi/linux/sched/types.h>
 #include <linux/pm_qos.h>
 #include <linux/input.h>

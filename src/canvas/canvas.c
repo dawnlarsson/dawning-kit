@@ -197,6 +197,19 @@ struct output
         unsigned int cursor_scale;
         _Bool cursor_shown;
         unsigned int cursor_recovery; // 1 pending, 2 covered by this commit
+
+        /*
+                The flusher's, under desktop.flush_lock: the rectangle waiting
+                for the driver or the whole buffer, whether this output is
+                with the driver right now, and whether it was dropped while it
+                was -- in which case the flusher is the one to free it.
+        */
+        struct list_head flush_link;
+        struct drm_rect flush_pending;
+        _Bool flush_queued;
+        _Bool flush_whole;
+        _Bool flushing;
+        _Bool retired;
 };
 
 struct canvas
@@ -209,11 +222,28 @@ struct canvas
         // twice. One, because no commit ever answers that: nothing has been
         // put on this card's screens yet.
         int set_result;
+
+        // Outputs dropped while their buffer was with the flusher. The card
+        // is released only once the flusher has freed every one.
+        atomic_t retiring;
 };
 
 static struct desktop
 {
-        struct mutex lock;
+        /*
+                An rt_mutex, so whoever holds it runs at the priority of whoever
+                waits for it.
+
+                The canvas thread is SCHED_FIFO and takes this for every pointer
+                move, key and frame, while a program's WINDOW_IOCTL_COMMIT takes
+                it in that program's own context at that program's priority. As
+                a plain mutex the cursor waited behind a SCHED_OTHER terminal
+                that stress-ng had preempted inside its commit: 27 waits of up
+                to 11 ms in 7 s of one trace. The driver's flush is no longer
+                done under it (flush_lock below), and what is left of a hold is
+                run at the waiter's priority until it lets go.
+        */
+        struct rt_mutex lock;
 
         /*
                 Serialises the input handler against itself.
@@ -376,9 +406,29 @@ static struct desktop
         atomic_t client_button;
         atomic_t client_down;
         atomic_t client_changed;
+
+        /*
+                The driver's half of a repaint, handed to the flusher.
+
+                drm_client_buffer_flush is dirtyfb, and on virtio-gpu and bochs
+                that is a blocking atomic commit waiting out a display period.
+                Done where the pixels were drawn, it was done under the lock
+                above by whoever drew them -- a terminal's commit, the canvas
+                thread's software cursor -- and every waiter for the lock
+                waited out the period too. Each output keeps one pending
+                rectangle, grown by whatever arrives before the flusher takes
+                it, so a repaint costs a merge and a wake, and the driver sees
+                at most one flush in flight and one waiting per output.
+        */
+        spinlock_t flush_lock;
+        struct list_head flush_queue;
+        wait_queue_head_t flush_idle;
 } desktop = {
-    .lock = __MUTEX_INITIALIZER(desktop.lock),
+    .lock = __RT_MUTEX_INITIALIZER(desktop.lock),
     .input_lock = __SPIN_LOCK_UNLOCKED(desktop.input_lock),
+    .flush_lock = __SPIN_LOCK_UNLOCKED(desktop.flush_lock),
+    .flush_queue = LIST_HEAD_INIT(desktop.flush_queue),
+    .flush_idle = __WAIT_QUEUE_HEAD_INITIALIZER(desktop.flush_idle),
     .outputs = LIST_HEAD_INIT(desktop.outputs),
     .windows = LIST_HEAD_INIT(desktop.windows),
     .scale = 1,
@@ -398,6 +448,9 @@ static LIST_HEAD(canvas_list);
 static void canvas_thread_start(void);
 static void canvas_thread_stop(void);
 static void canvas_thread_wake(void);
+static void canvas_flush_wake(void);
+static _Bool canvas_flush_running(void);
+static void output_free(struct output *output);
 static void desktop_redraw(void);
 static void desktop_repaint(void);
 static void cursor_plane_recover(void);

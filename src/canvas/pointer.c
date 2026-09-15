@@ -15,6 +15,7 @@
 */
 
 static struct task_struct __rcu *canvas_thread;
+static struct task_struct __rcu *canvas_flusher;
 static _Bool pointer_handler_registered;
 
 /*
@@ -184,7 +185,7 @@ static void pointer_apply(void)
         if (started)
                 pointer_queue_total += ktime_get_ns() - started;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         if (!list_empty(&desktop.outputs))
         {
@@ -296,7 +297,7 @@ static void pointer_apply(void)
                 }
         }
 
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 
         if (started)
                 pointer_latency_record(started);
@@ -862,13 +863,24 @@ static void canvas_thread_stop(void)
         canvas_keyboard_give();
         cpu_latency_qos_remove_request(&pointer_qos);
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
         desktop_set_awake(false);
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
         hrtimer_cancel(&desktop.frame);
 
         synchronize_rcu();
         kthread_stop(thread);
+
+        // After the canvas thread, which queues flushes until it stops. A
+        // flush in flight finishes before the flusher does.
+        thread = rcu_dereference_protected(canvas_flusher,
+                                           lockdep_is_held(&canvas_list_lock));
+        if (thread)
+        {
+                RCU_INIT_POINTER(canvas_flusher, NULL);
+                synchronize_rcu();
+                kthread_stop(thread);
+        }
 }
 
 /*
@@ -941,7 +953,7 @@ static _Bool canvas_suspend_check(void)
 {
         _Bool taken;
 
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         taken = desktop_taken();
         if (taken)
@@ -949,12 +961,29 @@ static _Bool canvas_suspend_check(void)
         else if (desktop.suspended)
                 desktop_resume();
 
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 
         if (taken)
                 canvas_input_drop();
 
         return taken;
+}
+
+static void canvas_flush_wake(void)
+{
+        struct task_struct *thread;
+
+        rcu_read_lock();
+        thread = rcu_dereference(canvas_flusher);
+        if (thread)
+                wake_up_process(thread);
+        rcu_read_unlock();
+}
+
+// Without a flusher, a flush happens where it is asked for.
+static _Bool canvas_flush_running(void)
+{
+        return rcu_access_pointer(canvas_flusher) != NULL;
 }
 
 static int canvas_loop(void *unused)
@@ -1007,7 +1036,7 @@ static int canvas_loop(void *unused)
                         _Bool minimize = atomic_xchg(&desktop.minimize, 0);
                         _Bool changed = false;
 
-                        mutex_lock(&desktop.lock);
+                        rt_mutex_lock(&desktop.lock);
                         while (steps--)
                                 changed |= pane_focus_step();
                         if (minimize)
@@ -1016,23 +1045,23 @@ static int canvas_loop(void *unused)
                                 changed |= pane_focus_commit();
                         if (changed)
                                 desktop_redraw();
-                        mutex_unlock(&desktop.lock);
+                        rt_mutex_unlock(&desktop.lock);
                 }
 
                 if (atomic_read(&desktop.key_head) != atomic_read(&desktop.key_tail))
                 {
-                        mutex_lock(&desktop.lock);
+                        rt_mutex_lock(&desktop.lock);
                         keys_deliver();
-                        mutex_unlock(&desktop.lock);
+                        rt_mutex_unlock(&desktop.lock);
                 }
 
                 // On this thread because it walks the window list and writes
                 // cells, neither of which an input callback may do.
                 if (atomic_read(&desktop.wheel))
                 {
-                        mutex_lock(&desktop.lock);
+                        rt_mutex_lock(&desktop.lock);
                         wheel_deliver();
-                        mutex_unlock(&desktop.lock);
+                        rt_mutex_unlock(&desktop.lock);
                 }
 
                 if (atomic_xchg(&desktop.frame_pending, 0))
@@ -1075,7 +1104,7 @@ static void canvas_thread_start(void)
                 .sched_priority = 1,
                 .sched_flags = SCHED_FLAG_RESET_ON_FORK,
         };
-        struct task_struct *thread;
+        struct task_struct *thread, *flush;
 
         hrtimer_setup(&desktop.frame, desktop_frame, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
         thread = kthread_run(canvas_loop, NULL, "moonwater/canvas");
@@ -1088,6 +1117,20 @@ static void canvas_thread_start(void)
 
         rcu_assign_pointer(canvas_thread, thread);
         WARN_ON_ONCE(sched_setattr_nocheck(thread, &canvas_policy));
+
+        /*
+                The flusher, at the same policy. Without it every flush happens
+                where it is asked for, which still works: it is what the canvas
+                thread and every committing program did before there was one.
+        */
+        flush = kthread_run(canvas_flush_loop, NULL, "moonwater/flush");
+        if (IS_ERR(flush))
+                pr_info("[moonwater canvas] " "no flush thread, flushing in place\n");
+        else
+        {
+                WARN_ON_ONCE(sched_setattr_nocheck(flush, &canvas_policy));
+                rcu_assign_pointer(canvas_flusher, flush);
+        }
 
         // 0 microseconds: no idle state whose exit can be measured.
         cpu_latency_qos_add_request(&pointer_qos, 0);
@@ -1131,7 +1174,7 @@ static void canvas_cursor_stats(struct cursor_stats *out)
         struct output *output;
 
         memory_fill(out, 0, sizeof(*out));
-        mutex_lock(&desktop.lock);
+        rt_mutex_lock(&desktop.lock);
 
         out->requested_generation = cursor_plane_requested_generation;
         out->armed_generation = cursor_plane_armed_generation;
@@ -1160,5 +1203,5 @@ static void canvas_cursor_stats(struct cursor_stats *out)
 
         out->recovering = cursor_plane_recovery;
 
-        mutex_unlock(&desktop.lock);
+        rt_mutex_unlock(&desktop.lock);
 }
