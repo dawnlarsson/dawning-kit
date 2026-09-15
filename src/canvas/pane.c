@@ -1485,6 +1485,21 @@ static long window_ioctl_commit(struct file *file)
                 return -EINVAL;
 
         mutex_lock(&desktop.lock);
+
+        // Another program has the display: nothing drawn now would land, and
+        // the resume draws everything once it lets go.
+        if (desktop_taken())
+        {
+                if (!desktop.suspended)
+                {
+                        desktop.suspended = true;
+                        canvas_thread_wake();
+                }
+
+                mutex_unlock(&desktop.lock);
+                return 0;
+        }
+
         desktop_watch();
         desktop_refresh_panes();
         desktop_repaint();

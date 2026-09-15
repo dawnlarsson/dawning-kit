@@ -313,6 +313,13 @@ static struct desktop
         _Bool terminal;
 
         /*
+                Another program is master of a card Canvas draws on. Input is
+                not Canvas's while it is, and nothing drawn would land. Written
+                under the lock; see canvas_suspend_check.
+        */
+        _Bool suspended;
+
+        /*
                 How many device pixels one drawn pixel is.
 
                 A cell is eight by sixteen and a titlebar is twenty, and those
@@ -396,6 +403,7 @@ static void desktop_repaint(void);
 static void cursor_plane_recover(void);
 static void desktop_watch(void);
 static void cursor_move(int x, int y);
+static _Bool desktop_taken(void);
 
 // Nanoseconds from an event arriving to the cursor being on screen.
 static u64 pointer_latency_total;

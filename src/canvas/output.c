@@ -583,6 +583,14 @@ static _Bool desktop_commit(void)
                 committed = output->canvas;
                 set = drm_client_modeset_commit(&committed->client);
 
+                // Somebody else is master, and the card is not ours to draw
+                // on until they let go. The loop is woken so it watches for that.
+                if (set == -EBUSY || set == -EACCES)
+                {
+                        desktop.suspended = true;
+                        canvas_thread_wake();
+                }
+
                 if (set)
                         complete = false;
 
@@ -661,6 +669,98 @@ static void desktop_redraw(void)
         canvas_compose_ns += ktime_get_ns() - started;
 
         desktop_commit();
+}
+
+/*
+        Whether a program other than this one is master of a card Canvas draws
+        on: Weston, a game, anything that opened the card for itself.
+
+        In-kernel clients never become master, so a device with one has a
+        program in front of it. Tested under the device's master_mutex, taken
+        inside desktop.lock the way drm_client_modeset_commit already takes
+        it, and never dereferenced: the master can go the moment the lock is
+        dropped, and all this answers is whether there was one.
+*/
+static _Bool desktop_taken(void)
+{
+        struct drm_device *checked = NULL;
+        struct output *output;
+        _Bool taken = false;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                struct drm_device *dev = output->canvas->client.dev;
+
+                if (dev == checked)
+                        continue;
+
+                checked = dev;
+                mutex_lock(&dev->master_mutex);
+                taken = dev->master != NULL;
+                mutex_unlock(&dev->master_mutex);
+
+                if (taken)
+                        break;
+        }
+
+        return taken;
+}
+
+/*
+        The card is Canvas's again.
+
+        Nothing Canvas remembers about the screen can be trusted after another
+        program had it: the mode on each crtc is theirs, and so may be the
+        image, the position and whether there is anything at all on the cursor
+        plane. So the windows are read again, everything is drawn and
+        committed, which puts Canvas's modes back and disables every plane
+        but the primary, and each cursor plane is painted and armed afresh
+        under a new request generation that only counts as armed once every
+        output showing the cursor has it back: on its plane where it has one,
+        and drawn by the redraw where it has none.
+*/
+static void desktop_resume(void)
+{
+        struct drm_rect cursor;
+        struct output *output;
+        _Bool presented = false;
+        _Bool complete = true;
+
+        desktop.suspended = false;
+
+        cursor_plane_requested_generation++;
+        cursor_plane_requested_x = desktop.cursor_x;
+        cursor_plane_requested_y = desktop.cursor_y;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+                output->cursor_shape = ~0u;
+
+        desktop_refresh_panes();
+        desktop_redraw();
+        cursor_plane_recover();
+
+        cursor_cell(&cursor, desktop.cursor_x, desktop.cursor_y,
+                    desktop.cursor_shape, desktop.cursor_scale);
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                if (!output_touched(output, &cursor, 1))
+                        continue;
+
+                // An output with no cursor plane had its cursor drawn by the
+                // redraw above; one with a plane has it only if it is shown.
+                if (!output->cursor_plane || output->cursor_shown)
+                        presented = true;
+                else
+                        complete = false;
+        }
+
+        if (presented && complete && !desktop.suspended)
+        {
+                cursor_plane_armed_generation = cursor_plane_requested_generation;
+                cursor_plane_armed_x = desktop.cursor_x;
+                cursor_plane_armed_y = desktop.cursor_y;
+        }
 }
 
 // Whatever desktop_refresh_panes recorded, or the whole thing when it gave up

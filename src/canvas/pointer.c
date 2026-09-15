@@ -895,6 +895,68 @@ static _Bool canvas_thread_running(void)
         return rcu_access_pointer(canvas_thread) != NULL;
 }
 
+/*
+        While another program is master of a card Canvas draws on.
+
+        libinput does not grab a device, and neither does this, so a program
+        that took the display -- Weston, a game -- and Canvas both heard every
+        key. Everything typed into it went into the focused Canvas window as
+        well, usually a root shell and often the one that started it, which
+        read it all once the program exited. A Control-Shift-T typed there
+        opened a terminal behind it.
+
+        So Canvas drops what arrives while somebody else is master: every key,
+        button, movement, wheel step, chord and asked-for terminal is taken and
+        thrown away before any of it reaches a window, and no frame is drawn,
+        since nothing drawn would land. The consoles stay off throughout. The
+        other program reads the devices itself and loses nothing.
+
+        The test is made at the top of every pass the thread wakes for, before
+        anything is delivered, and every ~250 ms while suspended with nothing
+        else to wake for, so a program that drops master and stays running
+        does not leave a frozen screen until the mouse moves. A key that
+        arrived before the other program became master can still be delivered
+        by the pass that was already running; none after. Flushes queued
+        before the program took the card answer EBUSY and change nothing.
+*/
+#define CANVAS_SUSPENDED_POLL_MS 250
+
+static void canvas_input_drop(void)
+{
+        atomic_set(&desktop.button_changed, 0);
+        atomic_set(&desktop.client_changed, 0);
+        atomic_set(&desktop.motion_pending, 0);
+        atomic_set(&desktop.wheel, 0);
+        atomic_set(&desktop.focus_steps, 0);
+        atomic_set(&desktop.focus_commit, 0);
+        atomic_set(&desktop.minimize, 0);
+        atomic_set(&desktop.spawn, 0);
+        atomic_set(&desktop.frame_pending, 0);
+
+        // The tail is this thread's to move; the handler only moves head.
+        atomic_set(&desktop.key_tail, atomic_read(&desktop.key_head));
+}
+
+static _Bool canvas_suspend_check(void)
+{
+        _Bool taken;
+
+        mutex_lock(&desktop.lock);
+
+        taken = desktop_taken();
+        if (taken)
+                desktop.suspended = true;
+        else if (desktop.suspended)
+                desktop_resume();
+
+        mutex_unlock(&desktop.lock);
+
+        if (taken)
+                canvas_input_drop();
+
+        return taken;
+}
+
 static int canvas_loop(void *unused)
 {
         while (!kthread_should_stop())
@@ -911,9 +973,14 @@ static int canvas_loop(void *unused)
                     !atomic_read(&desktop.minimize) &&
                     !atomic_read(&desktop.spawn) &&
                     atomic_read(&desktop.key_head) == atomic_read(&desktop.key_tail))
-                        schedule();
+                        schedule_timeout(READ_ONCE(desktop.suspended)
+                                             ? msecs_to_jiffies(CANVAS_SUSPENDED_POLL_MS)
+                                             : MAX_SCHEDULE_TIMEOUT);
 
                 __set_current_state(TASK_RUNNING);
+
+                if (canvas_suspend_check())
+                        continue;
 
                 pointer_apply();
 

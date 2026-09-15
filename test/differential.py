@@ -17085,6 +17085,10 @@ static struct {
     int resize_x,resize_y,resize_w,resize_h,press_x,press_y;
     void *resizing;
     atomic_t spawn;
+    // What a suspension throws away, and the lock it is decided under.
+    atomic_t frame_pending;
+    int lock;
+    _Bool suspended;
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
 static unsigned wakes,wheel_cas,drain_race;
@@ -17183,6 +17187,15 @@ static void vt_event(unsigned long event,unsigned console) {
     source += section(drag, "#define WHEEL_LINES", "static void wheel_deliver")
     source += section(pointer, "#define ACCEL_ONE", "static void desktop_confine_cursor")
     source += section(pointer, "static void pointer_commit", "#define POINTER_OPEN_TRIES")
+    # Canvas giving up input while another program is master: what is
+    # dropped, and when the desktop is taken back.
+    source += r"""
+static _Bool mock_taken;
+static unsigned mock_resumes;
+static _Bool desktop_taken(void) { assert(desktop.lock);return mock_taken; }
+static void desktop_resume(void) { assert(desktop.lock);mock_resumes++;desktop.suspended=0; }
+"""
+    source += section(pointer, "#define CANVAS_SUSPENDED_POLL_MS", "static int canvas_loop")
     # The power button's handler and the work it queues, against a mocked
     # workqueue, helper and reboot: what runs, how it is started, what a
     # failure falls back to, and which presses count.
@@ -17469,6 +17482,33 @@ static void power_press(const char *command,int answer) {
     power_work.func(&power_work);
 }
 // ACPI's button arrives as KEY_POWER and nothing listened to it.
+static void suspend_pending(void) {
+    desktop.button_changed=desktop.client_changed=desktop.motion_pending=1;
+    desktop.wheel=120;desktop.focus_steps=2;desktop.focus_commit=1;desktop.minimize=1;
+    desktop.spawn=1;desktop.frame_pending=1;desktop.key_head=7;desktop.key_tail=3;
+}
+// A program that took the display heard every key Canvas did.
+static void check_input_suspension(void) {
+    memset(&desktop,0,sizeof(desktop));
+    suspend_pending();mock_taken=1;mock_resumes=0;
+    check(canvas_suspend_check() && desktop.suspended && !desktop.lock,
+          "a card another program is master of suspends Canvas");
+    check(!desktop.button_changed && !desktop.client_changed && !desktop.motion_pending &&
+          !desktop.wheel && !desktop.focus_steps && !desktop.focus_commit &&
+          !desktop.minimize && !desktop.spawn && !desktop.frame_pending,
+          "every button, movement, wheel step, chord, asked-for terminal and frame is dropped");
+    check(desktop.key_tail==desktop.key_head && desktop.key_head==7,
+          "every key recorded is dropped by moving the tail, the thread's own index");
+    check(!mock_resumes,"nothing resumes while the card is still taken");
+    suspend_pending();mock_taken=0;
+    check(!canvas_suspend_check() && !desktop.suspended && mock_resumes==1,
+          "a card given back resumes the desktop once");
+    check(desktop.spawn && desktop.key_tail==3 && desktop.motion_pending,
+          "input arriving after the card is given back is delivered");
+    check(!canvas_suspend_check() && mock_resumes==1,
+          "a desktop that was not suspended is not resumed again");
+    memset(&desktop,0,sizeof(desktop));mock_taken=0;mock_resumes=0;
+}
 static void check_power_button(void) {
     check(!strcmp(power_command,"poweroff"),"the power button runs poweroff until told otherwise");
     power_press("poweroff",0);
@@ -18014,6 +18054,7 @@ int main(void) {
     check_keyboard_state();
     check_console_keyboard();
     check_power_button();
+    check_input_suspension();
     free(output);
     printf("  core-state %u of %u\n",checks-failures,checks);
     const char *tally=getenv("TEST_TALLY");

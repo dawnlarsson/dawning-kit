@@ -70,7 +70,13 @@ static int client_restore(struct drm_client_dev *client, _Bool in_atomic)
 
         mutex_lock(&desktop.lock);
         if (canvas->started)
-                desktop_redraw();
+        {
+                // The last program that held the card has closed it.
+                if (desktop.suspended)
+                        desktop_resume();
+                else
+                        desktop_redraw();
+        }
         mutex_unlock(&desktop.lock);
 
         return 0;

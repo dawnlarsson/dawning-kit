@@ -11444,6 +11444,94 @@ switcher = subprocess.run(["cc", "-O2", "-static", "-o", stick + "/vtswitch",
                            work + "/vtswitch.c"],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
+#       And a program that takes the display for itself, the way Weston does:
+#       master of the card, a mode of its own, held, and optionally master
+#       given back while it keeps running. It says when it holds the card,
+#       and nothing is typed before it does.
+open(work + "/drmhold.c", "w").write(r'''
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <drm/drm.h>
+#include <drm/drm_mode.h>
+int main(int argc, char **argv)
+{
+        int hold = argc > 1 ? atoi(argv[1]) : 5, drop = argc > 2 ? atoi(argv[2]) : 0;
+        int after = argc > 3 ? atoi(argv[3]) : 0;
+        int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+        struct drm_mode_card_res res = {0};
+        uint32_t connectors[16], crtcs[16], encoders[16];
+        if (fd < 0 || ioctl(fd, DRM_IOCTL_SET_MASTER, 0) ||
+            ioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &res) ||
+            res.count_connectors > 16 || res.count_crtcs > 16 || res.count_encoders > 16)
+                return printf("DRMHOLD failed\n"), 1;
+        res.connector_id_ptr = (uintptr_t)connectors;
+        res.crtc_id_ptr = (uintptr_t)crtcs;
+        res.encoder_id_ptr = (uintptr_t)encoders;
+        res.count_fbs = 0;
+        if (ioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &res))
+                return printf("DRMHOLD failed\n"), 1;
+        for (uint32_t i = 0; i < res.count_connectors; i++)
+        {
+                struct drm_mode_get_connector conn = {.connector_id = connectors[i]};
+                struct drm_mode_modeinfo modes[64];
+                struct drm_mode_create_dumb dumb = {0};
+                struct drm_mode_map_dumb map = {0};
+                struct drm_mode_fb_cmd fb = {0};
+                struct drm_mode_crtc crtc = {0};
+                uint32_t id = connectors[i];
+                uint8_t *pixels;
+                if (ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn) || conn.connection != 1 ||
+                    !conn.count_modes || conn.count_modes > 64)
+                        continue;
+                conn.modes_ptr = (uintptr_t)modes;
+                conn.count_props = conn.count_encoders = 0;
+                if (ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn))
+                        continue;
+                dumb.width = modes[0].hdisplay;
+                dumb.height = modes[0].vdisplay;
+                dumb.bpp = 32;
+                if (ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &dumb))
+                        break;
+                fb.width = dumb.width; fb.height = dumb.height; fb.bpp = 32; fb.depth = 24;
+                fb.pitch = dumb.pitch; fb.handle = dumb.handle;
+                map.handle = dumb.handle;
+                if (ioctl(fd, DRM_IOCTL_MODE_ADDFB, &fb) || ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map))
+                        break;
+                pixels = mmap(0, dumb.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
+                if (pixels == MAP_FAILED)
+                        break;
+                memset(pixels, 0xff, dumb.size);
+                crtc.crtc_id = crtcs[0]; crtc.fb_id = fb.fb_id;
+                crtc.set_connectors_ptr = (uintptr_t)&id; crtc.count_connectors = 1;
+                crtc.mode = modes[0]; crtc.mode_valid = 1;
+                if (ioctl(fd, DRM_IOCTL_MODE_SETCRTC, &crtc))
+                        break;
+                printf("DRMHOLD master\n");
+                fflush(stdout);
+                sleep(hold);
+                if (drop)
+                {
+                        ioctl(fd, DRM_IOCTL_DROP_MASTER, 0);
+                        printf("DRMHOLD dropped\n");
+                        fflush(stdout);
+                        sleep(after);
+                }
+                printf("DRMHOLD done\n");
+                return 0;
+        }
+        return printf("DRMHOLD failed\n"), 1;
+}
+''')
+holder = subprocess.run(["cc", "-O2", "-static", "-o", stick + "/drmhold",
+                         work + "/drmhold.c"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
 leak_qmp = work + "/leak-qmp"
 leak_mon = work + "/leak-mon"
 leak_guest = subprocess.Popen([
@@ -11533,6 +11621,113 @@ else:
                 "not run: no static cc for the switcher", "yes"))
     out.append(("and a typed line still runs in one shell",
                 "not run: no static cc for the switcher", "1"))
+
+def serial_wait(marker, seconds):
+    stop = time.time() + seconds
+    while time.time() < stop:
+        if marker in open(work + "/leak-serial", "rb").read():
+            return True
+        time.sleep(0.2)
+    return False
+
+def typed_to_serial(word):
+    type_text("echo " + word + "-")
+    chord("shift", "4")
+    chord("shift", "4")
+    type_text(" ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0\n")
+
+def run_holder(arguments):
+    type_text("/mnt/drmhold " + arguments + " ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0 2")
+    chord("shift", "dot")
+    chord("shift", "7")
+    type_text("1 ")
+    chord("shift", "7")
+    type_text("\n")
+
+#       Keys typed at a program that holds the display are that program's.
+#       Canvas and the program both hear every key, and this one used to go
+#       into the focused terminal as well and run there when it could.
+if switcher and holder:
+    shot("foreign-before")
+    before_w, before_h, before_px = load("foreign-before")
+    run_holder("8 0 0")
+    held = serial_wait(b"DRMHOLD master", 15)
+    if held:
+        typed_to_serial("weston")
+    finished = serial_wait(b"DRMHOLD done", 20)
+    time.sleep(2)
+    serial_now = open(work + "/leak-serial", "rb").read()
+    out.append(("a program takes the display", "yes" if held and finished else "no", "yes"))
+    out.append(("keys typed at it never reach a Canvas window",
+                str(len(re.findall(rb"weston-(\d+)", serial_now))), "0"))
+    typed_to_serial("after")
+    time.sleep(3)
+    serial_now = open(work + "/leak-serial", "rb").read()
+    out.append(("and typing reaches Canvas once it exits",
+                str(len(re.findall(rb"after-(\d+)", serial_now))), "1"))
+    shot("foreign-after")
+    after_w, after_h, after_px = load("foreign-after")
+    out.append(("the desktop comes back the size it was",
+                "%dx%d" % (after_w, after_h), "%dx%d" % (before_w, before_h)))
+
+    #   The cursor this guest draws into the framebuffer, where the screendump
+    #   can see it: nothing moved the pointer, so it is where it started, in
+    #   the middle of the desktop, and pure white is no ink but the cursor's.
+    def cursor_white(data, width, height):
+        x, y = width // 2, height // 2
+        return sum(1 for py in range(max(y - 4, 0), min(y + 28, height))
+                   for px in range(max(x - 4, 0), min(x + 24, width))
+                   if data[(py * width + px) * 3:(py * width + px) * 3 + 3] == b"\xff\xff\xff")
+    cursor_before = cursor_white(before_px, before_w, before_h)
+    cursor_after = cursor_white(after_px, after_w, after_h)
+    out.append(("the cursor is drawn again where it was",
+                "yes" if cursor_before and cursor_after == cursor_before
+                else "%d before, %d after" % (cursor_before, cursor_after), "yes"))
+    type_text("pointer ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0\n")
+    time.sleep(2)
+    synced = re.findall(rb"cursor sync +(\d+) requested, (\d+) armed",
+                        open(work + "/leak-serial", "rb").read())
+    out.append(("the cursor is back at a new generation",
+                "yes" if synced and synced[-1][0] == synced[-1][1] and int(synced[-1][0]) > 0
+                else repr(synced[-1:]), "yes"))
+
+    #   A program that gives master back without exiting. Nothing closes
+    #   the card, so nothing tells Canvas; it has to notice on its own.
+    run_holder("3 1 8")
+    dropped = serial_wait(b"DRMHOLD dropped", 20)
+    if dropped:
+        time.sleep(1)
+        typed_to_serial("dropped")
+        time.sleep(2)
+    serial_now = open(work + "/leak-serial", "rb").read()
+    out.append(("a program that gives master back and stays is noticed",
+                "yes" if dropped and serial_now.count(b"DRMHOLD done") == 1 else "no", "yes"))
+    out.append(("and typing reaches Canvas while it still runs",
+                str(len(re.findall(rb"dropped-(\d+)", serial_now))), "1"))
+    serial_wait(b"DRMHOLD done\r\nDRMHOLD", 0)
+    time.sleep(8)
+else:
+    for name, want in (("a program takes the display", "yes"),
+                       ("keys typed at it never reach a Canvas window", "0"),
+                       ("and typing reaches Canvas once it exits", "1"),
+                       ("the desktop comes back the size it was", "same"),
+                       ("the cursor is drawn again where it was", "yes"),
+                       ("the cursor is back at a new generation", "yes"),
+                       ("a program that gives master back and stays is noticed", "yes"),
+                       ("and typing reaches Canvas while it still runs", "1")):
+        out.append((name, "not run: no static cc for the helpers", want))
 
 #       And the power button with Canvas up, which has its own input handler
 #       beside the button's: poweroff by default, so the machine goes.
