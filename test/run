@@ -6612,13 +6612,22 @@ group alternate
 same 'grown is blank below' '[a1]|[a2]|[]|1,2' \
                                                  20 2 in 'm1\r\nm2' in '\e[?1049h\e[H' \
                                                  in 'a1\r\na2' resize '20x3' dump cursor
-same 'grown then left' '[]|[m1]|[m2]|2,2' \
+same 'grown then left' '[m1]|[m2]|[]|1,2' \
                                                  20 2 in 'm1\r\nm2' in '\e[?1049h\e[H' \
                                                  in 'a1\r\na2' resize '20x3' in '\e[?1049l' \
                                                  dump cursor
 same 'shrunk then left' '[m2]|[m3]' \
                                                  20 3 in 'm1\r\nm2\r\nm3' in '\e[?1049h\e[H' \
                                                  in 'a1\r\na2\r\na3' resize '20x2' in '\e[?1049l' dump
+#       A resize while the alternate screen was up is the primary screen's once
+#       it is back, by the same rules: quitting btop in a maximized window left
+#       the shell's lines under rows nothing had written.
+same 'shrunk then left keeps the top' '[m1]|[]|0,2' \
+                                                 20 3 in 'm1' in '\e[?1049h\e[H' in 'a1' \
+                                                 resize '20x2' in '\e[?1049l' dump cursor
+same 'grown then left takes back history' '[m1]|[m2]|[m3]|2,2' \
+                                                 20 2 in 'm1\r\nm2\r\nm3' in '\e[?1049h\e[H' \
+                                                 in 'a1' resize '20x3' in '\e[?1049l' dump cursor
 #       A program saving its own cursor on the alternate screen does not take
 #       the shell's with it.
 same 'own save inside' '0,2'                     20 3 in 'ab' in '\e[?1049h\e[3;3H\e7\e[H' \

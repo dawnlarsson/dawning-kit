@@ -82,7 +82,7 @@ static b32 origin_mode;
 // Whether the alternate screen is up, and the head that hands the primary one
 // back when it goes (see alternate_enter).
 static b32 alternate;
-static unsigned int alternate_head;
+static unsigned int alternate_head, alternate_rows;
 
 // Lines that have scrolled off the top of the primary screen and are still in
 // the ring: what a taller window can take back in.
@@ -1237,6 +1237,56 @@ static fn cursor_restore(const struct cursor_state address_to from)
         origin_mode = from->origin_mode;
 }
 
+// Where a row of the screen is once its lines have stayed where they are in
+// the ring and the top of the screen has moved up by shift rows.
+static unsigned int regrid_row(unsigned int at, bipolar shift)
+{
+        bipolar to = (bipolar)at + shift;
+
+        return to < 0 ? 0 : to < (bipolar)ROWS ? (unsigned int)to : ROWS - 1;
+}
+
+/*
+        Where head goes for the primary screen once it is ROWS tall instead of
+        was_rows with the cursor on row at, and so how far every row on it
+        shifts. Nothing is copied: a shorter screen gives up blank rows below
+        the cursor before it pushes anything off the top, and a taller one
+        takes back the lines that scrolled off, as many as did, with blank
+        ones below for the rest. That keeps what was on the screen where it
+        was, as tmux does.
+*/
+static bipolar primary_regrid(unsigned int at, unsigned int was_rows)
+{
+        unsigned int head_was = window->head;
+
+        if (ROWS < was_rows)
+        {
+                unsigned int blank = 0;
+
+                while (blank < was_rows - ROWS && at + blank + 1 < was_rows &&
+                       !address_to slot_length((window->head - 1 - blank) %
+                                               window->history))
+                        blank++;
+
+                __atomic_store_n(address_of window->head, window->head - blank,
+                                 __ATOMIC_RELEASE);
+                history_lines = min(history_lines + (was_rows - ROWS - blank),
+                                    window->history - ROWS);
+        }
+        else
+        {
+                unsigned int back = min(ROWS - was_rows, history_lines);
+
+                for (unsigned int n = ROWS - was_rows - back; n; n--)
+                        window_scroll(window);
+
+                history_lines -= back;
+        }
+
+        return (bipolar)ROWS - (bipolar)was_rows -
+               ((bipolar)window->head - (bipolar)head_was);
+}
+
 /*
         Only 1049 saves the cursor on the way in and puts it back on the way
         out, as DECSC and DECRC would; 47 and 1047 leave it where the program
@@ -1252,6 +1302,7 @@ static fn alternate_enter(b32 save)
                 cursor_save(address_of cursor_primary);
 
         alternate_head = window->head;
+        alternate_rows = ROWS;
 
         for (unsigned int r = 0; r < ROWS; r++)
                 window_scroll(window);
@@ -1268,6 +1319,14 @@ static fn alternate_leave(b32 restore)
         __atomic_store_n(address_of window->head, alternate_head, __ATOMIC_RELEASE);
 
         alternate = false;
+
+        // The primary screen was put away alternate_rows tall, and a resize
+        // while it was away is its resize now: quitting a program in a window
+        // made taller had put the shell's lines under rows never written.
+        cursor_primary.row = regrid_row(
+            cursor_primary.row,
+            primary_regrid(restore ? cursor_primary.row : row, alternate_rows));
+
         if (restore)
                 cursor_restore(address_of cursor_primary);
         touch_all();
@@ -3265,15 +3324,6 @@ static fn grid_tell(b32 master)
 }
 #endif
 
-// Where a row of the screen is once its lines have stayed where they are in
-// the ring and the top of the screen has moved up by shift rows.
-static unsigned int regrid_row(unsigned int at, bipolar shift)
-{
-        bipolar to = (bipolar)at + shift;
-
-        return to < 0 ? 0 : to < (bipolar)ROWS ? (unsigned int)to : ROWS - 1;
-}
-
 /*
         The window was resized.
 
@@ -3294,7 +3344,6 @@ static unsigned int regrid_row(unsigned int at, bipolar shift)
 fn regrid(b32 master)
 {
         unsigned int was_rows = ROWS;
-        unsigned int head_was = window->head;
         bipolar shift;
 #ifndef KERNEL_MODE
         b32 cursor_was_shown = shown;
@@ -3326,40 +3375,19 @@ fn regrid(b32 master)
                 lines at the bottom, and the cursor does not move for them.
         */
         if (alternate)
-                while (window->head - alternate_head < ROWS)
-                        window_scroll(window);
-        else if (ROWS < was_rows)
         {
-                unsigned int blank = 0;
+                unsigned int added = 0;
 
-                while (blank < was_rows - ROWS && row + blank + 1 < was_rows &&
-                       !address_to slot_length((window->head - 1 - blank) %
-                                               window->history))
-                        blank++;
+                for (; window->head - alternate_head < ROWS; added++)
+                        window_scroll(window);
 
-                __atomic_store_n(address_of window->head, window->head - blank,
-                                 __ATOMIC_RELEASE);
-                history_lines = min(history_lines + (was_rows - ROWS - blank),
-                                    window->history - ROWS);
+                shift = (bipolar)ROWS - (bipolar)was_rows - (bipolar)added;
         }
         else
-        {
-                unsigned int back = min(ROWS - was_rows, history_lines);
+                shift = primary_regrid(row, was_rows);
 
-                for (unsigned int n = ROWS - was_rows - back; n; n--)
-                        window_scroll(window);
-
-                history_lines -= back;
-        }
-
-        shift = (bipolar)ROWS - (bipolar)was_rows -
-                ((bipolar)window->head - (bipolar)head_was);
         row = regrid_row(row, shift);
         cursor_saved.row = regrid_row(cursor_saved.row, shift);
-
-        if (alternate)
-                cursor_primary.row = regrid_row(cursor_primary.row,
-                                                (bipolar)ROWS - (bipolar)was_rows);
 
         if (column >= COLUMNS)
                 column = COLUMNS - 1;
