@@ -608,7 +608,7 @@ cover('nothing_to_fold', None, 'lzma_range_shift deflate_decode_span lzma_decode
 #       nothing_to_fold
 # ----------------------------------------------------------------------
 cover('nothing_to_fold', None, '''
-_start moonwater_cpu_detect program_initial_identity get_cpu_time term_size working_directory_get
+_start moonwater_cpu_detect program_initial_identity get_cpu_time signal_return_trampoline term_size working_directory_get
 working_directory_set program_argument_count program_argument_list program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
 string_hash_33_length hash_xxh64_finish sha256_compress ghash_blocks ghash_key ghash_integer aes128_ctr_blocks

@@ -277,7 +277,7 @@ socket_connect socket_listen socket_name socket_new socket_option_get
 socket_option_set socket_receive socket_send socket_shutdown
 ''', 'straight-line byte-order or socket syscall ABI body; statically reviewed only')
 cover('static_leaf', 'src/library.c', '''
-get_cpu_time system_call system_call_1 system_call_2 system_call_3
+get_cpu_time signal_return_trampoline system_call system_call_1 system_call_2 system_call_3
 system_call_4 system_call_5 system_call_6
 memory_sum_bytes memory_checksum_bsd16
 ''', 'counter read, syscall ABI, or checksum leaf loop; statically reviewed '

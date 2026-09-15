@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        321 routines (308 public, 13 local), 320 of them on all three and 1 local to one.
+        322 routines (309 public, 13 local), 321 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -283,6 +283,7 @@
           sha256_compress                public  yes     yes     yes
           sha512_blocks                  public  yes     yes     yes
           shell_set_cursor               public  yes     yes     yes
+          signal_return_trampoline       public  yes     yes     yes
           sleep                          public  yes     yes     yes
           socket_accept                  public  yes     yes     yes
           socket_bind                    public  yes     yes     yes
@@ -43246,6 +43247,75 @@ __asm__(
 );
 
 #endif // !KERNEL_MODE && !STANDARD_NO_PLATFORM
+
+/*
+        The restorer, which is the whole of what x86_64 needs and the other
+        two do not.
+
+        Two instructions and no stack frame, because there is no stack frame
+        to have: the kernel arranged for the handler to return here, and what
+        is under the stack pointer at this moment is the signal frame the
+        kernel built, which is exactly what rt_sigreturn expects to find. A
+        prologue of any kind would move the stack pointer off it.
+
+        The number is taken through MOONWATER_NUMBER rather than written as
+        fifteen, so it stays whatever the syscall table says it is.
+
+        ASM_FUNC puts an endbr64 at the top. The kernel reaches this with a
+        return rather than an indirect jump, so indirect branch tracking does
+        not require the marker, but a build with a shadow stack would need
+        more than a marker here and the closing note on jump_mark in library.c already says
+        that the indirect jump at the end of jump_to_mark is the other place
+        such a build has to be revisited.
+*/
+#if defined(LINUX) && !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+
+fn signal_return_trampoline(void);
+
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(signal_return_trampoline)
+    "mov $" MOONWATER_NUMBER(syscall(rt_sigreturn)) ", %eax\n"
+    "syscall\n"
+    ASM_END(signal_return_trampoline)
+);
+
+#elif ARM64
+
+/*
+        arm64 needs none: setup_rt_frame points x30 at the vDSO's sigreturn
+        unless SA_RESTORER is set, and nothing here sets it. The same two
+        instructions are here anyway, because arm64 honours the flag when a
+        caller does set it and one name on every machine keeps the address
+        something C can take without an #if of its own.
+*/
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(signal_return_trampoline)
+    "mov x8, #" MOONWATER_NUMBER(syscall(rt_sigreturn)) "\n"
+    "svc #0\n"
+    ASM_END(signal_return_trampoline)
+);
+
+#elif RISCV64
+
+/*
+        riscv64 has no sa_restorer field for this to go in -- the kernel writes
+        ra to the vDSO trampoline itself -- so nothing takes this address
+        there. It is the kernel's own two instructions, kept for the one name.
+*/
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(signal_return_trampoline)
+    "li a7, " MOONWATER_NUMBER(syscall(rt_sigreturn)) "\n"
+    "ecall\n"
+    ASM_END(signal_return_trampoline)
+);
+
+#endif
+
+#endif // LINUX && !KERNEL_MODE && !STANDARD_NO_PLATFORM
 
 /*
         THE TEXT FAMILY, FROM src/standard/text.c

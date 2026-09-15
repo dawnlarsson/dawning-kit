@@ -98,36 +98,6 @@ fn signal_jump_to_mark(jump_state state, b32 value) DEAD_END;
 #if X64
 
 /*
-        The restorer, which is the whole of what x86_64 needs and the other
-        two do not.
-
-        Two instructions and no stack frame, because there is no stack frame
-        to have: the kernel arranged for the handler to return here, and what
-        is under the stack pointer at this moment is the signal frame the
-        kernel built, which is exactly what rt_sigreturn expects to find. A
-        prologue of any kind would move the stack pointer off it.
-
-        The number is taken through MOONWATER_NUMBER rather than written as
-        fifteen, so it stays whatever the syscall table says it is.
-
-        ASM_FUNC puts an endbr64 at the top. The kernel reaches this with a
-        return rather than an indirect jump, so indirect branch tracking does
-        not require the marker, but a build with a shadow stack would need
-        more than a marker here and the closing note on jump_mark in library.c already says
-        that the indirect jump at the end of jump_to_mark is the other place
-        such a build has to be revisited.
-*/
-__asm__(
-    ASM_SECTION
-    ASM_FUNC(signal_return_trampoline)
-    "mov $" MOONWATER_NUMBER(syscall(rt_sigreturn)) ", %eax\n"
-    "syscall\n"
-    ASM_END(signal_return_trampoline)
-);
-
-fn signal_return_trampoline(void);
-
-/*
         sigsetjmp.
 
         Eight bytes of stack and one call. rdi is the state and esi is the
