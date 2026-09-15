@@ -10267,6 +10267,49 @@ trap 'rm -rf "$work"' EXIT INT TERM
 
 counting install 12 30
 
+#
+#       The image as firmware reads it: a PE whose sections run in order,
+#       aligned, inside the file and the image and overlapping nothing, and
+#       whose settings section is where the moonwater command looks for it --
+#       a whole number of pages at the raw offset that is also its address,
+#       two 16 KiB slots, both carrying the magic.
+#
+if command -v python3 > /dev/null 2>&1; then
+        python3 - "$image" > "$work/layout" 2>&1 <<'PY'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+pe = struct.unpack_from('<I', d, 0x3c)[0]
+optional = pe + 24
+count = struct.unpack_from('<H', d, pe + 6)[0]
+table = optional + struct.unpack_from('<H', d, pe + 20)[0]
+section_align, file_align = struct.unpack_from('<II', d, optional + 32)
+image_size, headers = struct.unpack_from('<II', d, optional + 56)
+rows = []
+for at in range(count):
+    s = d[table + 40 * at:table + 40 * at + 40]
+    rows.append((s[:8].rstrip(b'\0'),) + struct.unpack_from('<IIII', s, 8))
+def said(word, holds):
+    print('layout-%s-%s' % (word, 'yes' if holds else 'no'))
+said('pe', d[:2] == b'MZ' and d[pe:pe + 4] == b'PE\0\0' and table + 40 * count <= headers)
+said('ordered', rows[0][2] >= headers and
+     all(a[2] + a[1] <= b[2] and a[4] + a[3] <= b[4] for a, b in zip(rows, rows[1:])))
+said('aligned', all(va % section_align == 0 and raw % file_align == 0
+                    for _, vs, va, rs, raw in rows))
+said('inside', image_size % section_align == 0 and
+     all(raw + rs <= len(d) and va + vs <= image_size for _, vs, va, rs, raw in rows))
+found = [r for r in rows if r[0] == b'.mwset']
+said('settings', len(found) == 1 and found[0][2] == found[0][4] and
+     found[0][4] % 4096 == 0 and found[0][1] == found[0][3] == 32768 and
+     all(struct.unpack_from('<Q', d, found[0][4] + k)[0] == 0x474e54544553574d
+         for k in (0, 16384)))
+PY
+        says layout 'the image is a PE firmware reads' 'layout-pe-yes'
+        says layout 'its sections run in order'   'layout-ordered-yes'
+        says layout 'every section is aligned'     'layout-aligned-yes'
+        says layout 'every section is inside it'   'layout-inside-yes'
+        says layout 'settings are where moonwater looks' 'layout-settings-yes'
+fi
+
 mkdir -p "$work/stick/EFI/BOOT" &&
         cp "$image" "$work/stick/EFI/BOOT/BOOTX64.EFI" &&
         truncate -s 4G "$work/disk.img" || exit 1
@@ -10365,6 +10408,11 @@ printf 'status-stick-%s\n' $(( $(grep -c 'this image is on sda1' /tmp/status) * 
 mkdir -p /bowls/probe
 printf 'kept\n' > /bowls/probe/file
 printf 'home\n' > /root/probe
+moonwater init add "echo carried > /root/carried" > /tmp/init-add 2>&1
+printf 'in-memory-%s\n' $(( $(grep -c 'this session only: sda1 is read-only' /tmp/init-add) * 7 ))
+moonwater init add "echo boot >> /root/boots" > /dev/null 2>&1
+moonwater exit add "echo stop >> /root/stops" > /dev/null 2>&1
+printf 'listed-%s\n' $(( $(moonwater init | grep -c -e '^1  echo carried' -e '^2  echo boot') * 7 ))
 printf 'no\n' | moonwater install nvme0n1 > /tmp/refused 2>&1
 printf 'unconfirmed-%s\n' $(( $? + 40 ))
 printf 'sda\n' | moonwater install sda > /tmp/removable 2>&1
@@ -10390,6 +10438,9 @@ says live 'the install succeeds'        'installed-40'
 says live 'the session keeps the disk'  'verdict-1n0emvn ksid'
 says live 'live files went along'       'bound-emoh'
 says live 'three directories are bound' 'mounts-33'
+says live 'a read-only stick keeps settings in memory' 'in-memory-7'
+says live 'the session lists what it keeps' 'listed-14'
+says live 'the install takes the settings' 'with this session'"'"'s settings'
 disk_checks live
 
 cat > "$work/disk.commands" <<'COMMANDS'
@@ -10400,6 +10451,13 @@ printf 'root-%s\n' "$(rev < /root/probe)"
 printf 'second\n' > /root/second
 moonwater status > /tmp/status 2>&1
 printf 'status-same-%s\n' $(( $(grep -c 'installed on nvme0n1, this build' /tmp/status) * 5 ))
+sleep 2
+printf 'carried-%s\n' "$(rev < /root/carried)"
+printf 'booted-%s\n' $(( $(grep -c boot /root/boots) * 7 ))
+moonwater init add "echo disk >> /root/disk" > /tmp/disk-add 2>&1
+printf 'written-%s\n' $(( $(grep -c 'saved in the image on nvme0n1p1' /tmp/disk-add) * 7 ))
+moonwater init add "sleep 8; poweroff" > /dev/null 2>&1
+printf 'disk-listed-%s\n' $(( $(moonwater init | grep -c -e '^3  echo disk' -e '^4  sleep 8') * 7 ))
 mkdir -p /mnt
 mount -t vfat /dev/nvme0n1p1 /mnt
 at=$(od -An -tu2 -j526 -N2 /mnt/EFI/BOOT/BOOTX64.EFI)
@@ -10416,6 +10474,10 @@ says disk 'the bowl probe was kept'      'kept-tpek'
 says disk 'root was kept'                'root-emoh'
 says disk 'status sees this build'       'status-same-5'
 says disk 'a patched image is another'   'status-other-5'
+says disk 'the install carried init'     'carried-deirrac'
+says disk 'init ran at the disk boot'    'booted-7'
+says disk 'a setting writes the disk in place' 'written-7'
+says disk 'and reads back from it'       'disk-listed-14'
 disk_checks disk
 
 cat > "$work/update.commands" <<'COMMANDS'
@@ -10449,7 +10511,87 @@ says update 'answering keeps the disk'   'verdict-1n0emvn ksid'
 says update 'the data came with it'      'updated-root-dnoces'
 says update 'the disk has this build'    'status-updated-5'
 says update 'the old image was kept'     'previous-differs-9'
+says update 'an update keeps the disk settings' 'nvme0n1 keeps its own settings'
 disk_checks update
+
+#
+#       What the disk's own image carries, read from here: the GPT, the FAT32
+#       the install wrote, BOOTX64.EFI's clusters and the newest of its two
+#       settings slots whose sum holds.
+#
+disk_settings()
+{
+        python3 - "$work/disk.img" > "$work/$1" 2>&1 <<'PY'
+import struct, sys, zlib
+f = open(sys.argv[1], 'rb')
+def at(offset, size):
+    f.seek(offset)
+    return f.read(size)
+head = at(512, 92)
+entries, count, size = struct.unpack_from('<QII', head, 72)
+start = [struct.unpack_from('<Q', e, 32)[0] * 512
+         for e in (at(entries * 512 + i * size, size) for i in range(count))
+         if e[56:128].decode('utf-16-le').rstrip('\0') == 'moonwater-boot'][0]
+boot = at(start, 512)
+sector, per, reserved, fats = struct.unpack_from('<HBHB', boot, 11)
+fat_sectors, root = struct.unpack_from('<I', boot, 36)[0], struct.unpack_from('<I', boot, 44)[0]
+cluster = sector * per
+fat = start + reserved * sector
+data = fat + fats * fat_sectors * sector
+def chain(c):
+    out = []
+    while 2 <= c < 0x0ffffff8:
+        out.append(c)
+        c = struct.unpack('<I', at(fat + c * 4, 4))[0] & 0x0fffffff
+    return out
+def find(directory, name):
+    for c in chain(directory):
+        blob = at(data + (c - 2) * cluster, cluster)
+        for o in range(0, cluster, 32):
+            if blob[o:o + 11] == name:
+                return struct.unpack_from('<H', blob, o + 20)[0] << 16 | struct.unpack_from('<H', blob, o + 26)[0]
+runs = [data + (c - 2) * cluster
+        for c in chain(find(find(find(root, b'EFI        '), b'BOOT       '), b'BOOTX64 EFI'))]
+def read(offset, size):
+    out = b''
+    while size:
+        i, o = divmod(offset, cluster)
+        k = min(size, cluster - o)
+        out += at(runs[i] + o, k)
+        offset, size = offset + k, size - k
+    return out
+image = read(0, 4096)
+pe = struct.unpack_from('<I', image, 0x3c)[0]
+table = pe + 24 + struct.unpack_from('<H', image, pe + 20)[0]
+raw = [struct.unpack_from('<I', image, table + 40 * i + 20)[0]
+       for i in range(struct.unpack_from('<H', image, pe + 6)[0])
+       if image[table + 40 * i:table + 40 * i + 8] == b'.mwset\0\0'][0]
+best = None
+for k in range(2):
+    s = read(raw + k * 16384, 16384)
+    generation = struct.unpack_from('<Q', s, 16)[0]
+    length, total = struct.unpack_from('<II', s, 40)
+    if length <= 16320 and zlib.crc32(s[:44] + b'\0\0\0\0' + s[48:64 + length]) == total and \
+            (best is None or generation > best[0]):
+        best = (generation, s, length)
+print('settings-generation-%d' % best[0])
+names = {1: 'init', 2: 'startup', 3: 'exit', 4: 'bind'}
+kinds = {2: 'shell', 3: 'kernel_shell'}
+o = 0
+while o < best[2]:
+    l, kind, ident, n = struct.unpack_from('<BBHH', best[1], 64 + o)
+    print('settings-%s-%d-%s' % (names[l], ident,
+                                 kinds.get(kind) or best[1][72 + o:72 + o + n].decode()))
+    o += 8 + ((n + 3) & ~3)
+PY
+}
+
+if command -v python3 > /dev/null 2>&1; then
+        disk_settings update-settings
+        says update-settings 'the update kept what the stick set' 'settings-init-1-echo carried > /root/carried'
+        says update-settings 'and what the disk wrote in place' 'settings-init-3-echo disk >> /root/disk'
+        says update-settings 'and its exit list'          'settings-exit-1-echo stop >> /root/stops'
+fi
 
 cat > "$work/use.commands" <<'COMMANDS'
 this line is eaten by the console
@@ -10515,6 +10657,148 @@ elif ! command -v sfdisk > /dev/null 2>&1; then
         printf '  %-30s no sfdisk here to find the data partition\n' 'firmware'
 else
         cp "${firmware%CODE*}VARS${firmware##*CODE}" "$work/vars.fd"
+
+        #
+        #       Settings an image carries, read by the kernel it boots.
+        #
+        #       Only a firmware start runs the EFI stub that hands the section
+        #       over -- every -kernel boot above saw the defaults -- so these
+        #       go through OVMF, whose loader still passes -append to the stub.
+        #       Each copy has its slots written the way the moonwater command
+        #       writes them: @SLOT GENERATION FLAGS good|bad, then list/command
+        #       pairs; bad is a sum that does not hold.
+        #
+        settings_write()
+        {
+                python3 - "$@" <<'PY'
+import struct, sys, zlib
+path, words = sys.argv[1], sys.argv[2:]
+d = bytearray(open(path, 'rb').read())
+pe = struct.unpack_from('<I', d, 0x3c)[0]
+table = pe + 24 + struct.unpack_from('<H', d, pe + 20)[0]
+raw = [struct.unpack_from('<I', d, table + 40 * i + 20)[0]
+       for i in range(struct.unpack_from('<H', d, pe + 6)[0])
+       if d[table + 40 * i:table + 40 * i + 8] == b'.mwset\0\0'][0]
+lists = {'init': 1, 'startup': 2, 'exit': 3, 'bind': 4}
+at = 0
+while at < len(words):
+    slot, generation = int(words[at][1:]), int(words[at + 1])
+    flags, state = int(words[at + 2], 0), words[at + 3]
+    at += 4
+    payload, nexts = b'', [0, 0, 0]
+    while at < len(words) and not words[at].startswith('@'):
+        l, text = lists[words[at]], words[at + 1].encode()
+        at += 2
+        ident = 0
+        if l != 4:
+            nexts[l - 1] += 1
+            ident = nexts[l - 1]
+        payload += struct.pack('<BBHHH', l, 1, ident, len(text), 0) + text + b'\0' * (-len(text) % 4)
+    head = struct.pack('<QHHIQ16sIIIHHH6s', 0x474e54544553574d, 1, 64, 16384, generation,
+                       b'\x5a' * 16, len(payload), 0, flags,
+                       nexts[0] + 1, nexts[1] + 1, nexts[2] + 1, b'\0' * 6)
+    total = zlib.crc32(head + payload) ^ (state == 'bad')
+    d[raw + slot * 16384:raw + (slot + 1) * 16384] = \
+        (head[:44] + struct.pack('<I', total) + head[48:] + payload).ljust(16384, b'\0')
+open(path, 'wb').write(d)
+PY
+        }
+
+        settings_boot()
+        {
+                name=$1
+                rm -f "$work/serial.in"
+                mkfifo "$work/serial.in" || exit 1
+                cp "${firmware%CODE*}VARS${firmware##*CODE}" "$work/$name.vars"
+                # shellcheck disable=SC2086
+                timeout 180 qemu-system-x86_64 -m 2G -smp 2 $cpu -machine q35 \
+                        -drive if=pflash,format=raw,readonly=on,file="$firmware" \
+                        -drive if=pflash,format=raw,file="$work/$name.vars" \
+                        -kernel "$work/$name.efi" -no-reboot -display none -vga none \
+                        -serial stdio -append "console=ttyS0 drm_client_lib.active=" \
+                        < "$work/serial.in" > "$work/$name" 2>&1 &
+                booting=$!
+                exec 9> "$work/serial.in"
+
+                waited=0
+                until grep -q -F ' $ ' "$work/$name" 2>/dev/null; do
+                        kill -0 "$booting" 2>/dev/null || break
+                        [ "$waited" -lt 150 ] || break
+                        sleep 1
+                        waited=$((waited + 1))
+                done
+
+                cat "$work/$name.commands" >&9
+                exec 9>&-
+                wait "$booting" 2>/dev/null || true
+
+                says "$name" "$name powered down" 'reboot: Power down'
+                never "$name" "$name without a panic" 'Kernel panic'
+        }
+
+        cp "$image" "$work/preset.efi" &&
+                settings_write "$work/preset.efi" @0 1 0x2 good \
+                        init "printf 'init-%s\n' \"\$(printf nar | rev)\" > /dev/ttyS0" \
+                        exit "true" || exit 1
+        cat > "$work/preset.commands" <<'COMMANDS'
+this line is eaten by the console
+sleep 2
+printf 'read-%s\n' $(( $(dmesg | grep -c 'settings: slot 0, generation 1') * 7 ))
+printf 'listed-%s\n' $(( $(moonwater init | grep -c '^1  printf') * 7 ))
+printf 'switch-%s\n' $(( $(moonwater init mount | grep -c 'init mount off') * 7 ))
+printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
+printf 'ended-%s\n' "$(rev < /run/moonwater/init/1.status)"
+poweroff
+COMMANDS
+        settings_boot preset
+        says preset 'the kernel read the slot'      'read-7'
+        says preset 'init ran what it carries'      'init-ran'
+        says preset 'the session lists it'          'listed-7'
+        says preset 'a switch arrives with it'      'switch-7'
+        says preset 'mount off leaves the disks'    'verdict-evil'
+        says preset 'how init ended is kept'        'ended-0 detixe'
+
+        cp "$image" "$work/damaged.efi" &&
+                settings_write "$work/damaged.efi" \
+                        @0 5 0 bad init "printf 'init-%s\n' \"\$(printf gnorw | rev)\" > /dev/ttyS0" \
+                        @1 4 0 bad init "printf 'init-%s\n' \"\$(printf gnorw | rev)\" > /dev/ttyS0" || exit 1
+        cat > "$work/damaged.commands" <<'COMMANDS'
+this line is eaten by the console
+sleep 2
+printf 'damaged-%s\n' $(( $(dmesg | grep -c 'both settings slots in the image are damaged') * 7 ))
+printf 'defaults-%s\n' $(( $(moonwater init | grep -c 'nothing runs at boot') * 7 ))
+poweroff
+COMMANDS
+        settings_boot damaged
+        says damaged 'two bad slots are said once'  'damaged-7'
+        says damaged 'and boot on the defaults'     'defaults-7'
+        never damaged 'and run nothing they hold'   'init-wrong'
+
+        cp "$image" "$work/torn.efi" &&
+                settings_write "$work/torn.efi" \
+                        @0 2 0 good init "printf 'init-%s\n' \"\$(printf dlo | rev)\" > /dev/ttyS0" \
+                        @1 3 0 bad init "printf 'init-%s\n' \"\$(printf wen | rev)\" > /dev/ttyS0" || exit 1
+        cat > "$work/torn.commands" <<'COMMANDS'
+this line is eaten by the console
+sleep 2
+printf 'torn-read-%s\n' $(( $(dmesg | grep -c 'settings: slot 0, generation 2') * 7 ))
+poweroff
+COMMANDS
+        settings_boot torn
+        says torn 'a torn newer slot loses'         'torn-read-7'
+        says torn 'the older slot runs'             'init-old'
+        never torn 'the torn one does not'          'init-new'
+
+        #       Lines a file on the data partition has, read from here.
+        data_lines()
+        {
+                where=$(sfdisk -d "$work/disk.img" 2>/dev/null |
+                        awk -F '[=,]' '/name="moonwater-data"/ { print $2 * 512; exit }')
+                debugfs -R "cat $1" "$work/disk.img?offset=$where" 2>/dev/null | grep -c -F "$2"
+        }
+
+        boots_before=$(data_lines /root/boots boot)
+        stops_before=$(data_lines /root/stops stop)
         before=$(mounts_of)
         # shellcheck disable=SC2086
         timeout 60 qemu-system-x86_64 -m 2G -smp 2 $cpu -machine q35 \
@@ -10536,6 +10820,16 @@ else
         else
                 lost 'Moonwater came up from disk' \
                         "the data was never mounted (mount count ${before:-unread}, then ${after:-unread})"
+        fi
+
+        #       The disk's own settings, through the stub this time: init
+        #       appended a line and powered the machine off, and exit
+        #       appended one on the way down.
+        if command -v debugfs > /dev/null 2>&1; then
+                same 'init ran from the firmware boot' "$((boots_before + 1))" \
+                        "$(data_lines /root/boots boot)"
+                same 'exit ran at its power off' "$((stops_before + 1))" \
+                        "$(data_lines /root/stops stop)"
         fi
 fi
 

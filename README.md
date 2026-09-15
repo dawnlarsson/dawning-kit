@@ -15,16 +15,30 @@ what the machine's own buttons do.
 ```sh
 moonwater                              where this session runs: live, from a disk, or waiting for an answer
 moonwater install DISK [--removable]   erase DISK and install Moonwater on it
-moonwater update [DISK]                write this build over an install, keeping its data
+moonwater update [DISK]                write this build over an install, keeping its data and settings
 moonwater use [DISK]                   run this build with an install's /bowls, /root and /home
 moonwater live                         leave the disks alone this session
+
+moonwater init                         list what runs at every boot, with ids
+moonwater init add "command"           run a command at boot, once the disks are settled
+moonwater init remove ID|"command"
+moonwater init mount on|off            mount the data partition over /bowls, /root and /home [on]
+
+moonwater exit                         list what runs when the machine powers off or reboots
+moonwater exit add "command"           run a command before the disks go read-only
+moonwater exit remove ID|"command"
 
 moonwater button power                 show what the power button runs
 moonwater button power "command"       run a command when it is pressed [poweroff]
 ```
 
 Commands given to `moonwater` run as root through the shell, exactly as if typed
-into a terminal.
+into a terminal. init runs in the background and keeps each command's output in
+/run/moonwater/init; exit gives each command 10 seconds and all of them 30.
+
+The init and exit settings live inside the boot image. Set them on a live USB stick
+and `moonwater install` takes them to the disk; `moonwater update` keeps the disk's
+own. On a read-only stick a change lasts only for the session.
 
 Canvas, the desktop, is part of the kernel: a compositor that draws with the CPU
 through DRM, so it works on any display the kernel can drive.

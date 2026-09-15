@@ -110,6 +110,21 @@ typedef struct
         positive count;
 } host_census;
 
+// Settings, defined further down with the commands that change them.
+typedef struct spark_settings host_settings;
+
+static fn host_settings_empty(host_settings address_to settings);
+static b32 host_settings_image(string_address path, host_settings address_to into);
+static bipolar host_settings_stamp(string_address path, host_settings address_to settings);
+static bool host_settings_booted(host_settings address_to into);
+static bool host_settings_kept(host_settings address_to into);
+static fn host_settings_session(host_settings address_to settings);
+static fn host_settings_keep(host_settings address_to settings);
+static bool host_settings_install(host_install address_to install,
+                                  host_settings address_to into);
+static fn host_events_boot(host_settings address_to settings);
+static b32 host_usage(void);
+
 static b32 host_refuse(string_address text, string_address name)
 {
         string_format(log_error, host_label);
@@ -683,7 +698,8 @@ static b32 host_copy_file(string_address from, string_address to)
         new one is written beside the old and renamed over it, so a machine
         that loses power part way still has an image that starts.
 */
-static b32 host_place_image(string_address system, string_address running)
+static b32 host_place_image(string_address system, string_address running,
+                            host_settings address_to carry)
 {
         p8 image[HOST_PATH_ROOM];
         p8 next[HOST_PATH_ROOM];
@@ -717,6 +733,12 @@ static b32 host_place_image(string_address system, string_address running)
         if (!host_join(next, sizeof(next), system, HOST_IMAGE_NEXT) ||
             host_copy_file(source, next))
                 return 1;
+
+        //      Both slots of the new image say what the disk is to keep, before
+        //      the rename makes it the one that starts.
+        failed = carry ? host_settings_stamp(next, carry) : 0;
+        if (failed < 0)
+                return host_fail(next, failed);
 
         failed = system_rename_at(AT_FDCWD, next, AT_FDCWD, image, 0);
         if (failed < 0)
@@ -825,7 +847,44 @@ static b32 host_update(host_install address_to install)
                       install->system, search.name);
         log_flush();
 
-        failed = host_place_image(HOST_SYSTEM, running);
+        /*      An update keeps the disk's settings: they are that machine's,
+                and the stick is only carrying a build. An image from before
+                there were settings has none, which is the defaults. */
+        {
+                host_settings disk;
+                host_settings session;
+                p8 path[HOST_PATH_ROOM];
+                bool blank = true;
+
+                host_settings_empty(address_of disk);
+                if (host_join(path, sizeof(path), HOST_SYSTEM, HOST_IMAGE))
+                        host_settings_image(path, address_of disk);
+
+                disk.generation++;
+                for (positive at = 0; at < sizeof(disk.medium); at++)
+                        blank &= !disk.medium[at];
+                if (blank)
+                        system_random_fill(disk.medium, sizeof(disk.medium), 0);
+
+                failed = host_place_image(HOST_SYSTEM, running, address_of disk);
+
+                if (!failed)
+                {
+                        //      A session started from this disk is still its copy.
+                        if (host_settings_kept(address_of session) &&
+                            !memory_compare(session.medium, disk.medium,
+                                            sizeof(disk.medium)))
+                        {
+                                session.generation = disk.generation;
+                                host_settings_keep(address_of session);
+                        }
+
+                        string_format(log, host_label "%s keeps its own settings\n",
+                                      install->disk);
+                        log_flush();
+                }
+        }
+
         host_unmount(HOST_SYSTEM);
         host_unmount(HOST_MEDIUM);
         return failed;
@@ -888,9 +947,29 @@ static b32 host_boot(void)
         p8 running[HOST_BUILD_ROOM];
         host_census census;
         host_install address_to chosen = null;
+        host_settings settings;
+        bool known;
 
         host_state_ready();
         host_running_build(running, sizeof(running));
+
+        /*      The settings the image booted with. A kernel started without
+                the EFI stub has none, and takes an install's of this build
+                once the disks are found. */
+        known = host_settings_booted(address_of settings);
+        if (known)
+                host_settings_keep(address_of settings);
+
+        if (known && settings.flags & SPARK_SETTINGS_MOUNT_OFF)
+        {
+                host_write_text(HOST_HINT, "");
+                host_verdict_set("live", "");
+                string_format(log, host_label "init mount is off: nothing on this machine's "
+                                              "disks is mounted this session\n");
+                log_flush();
+                host_events_boot(address_of settings);
+                return 0;
+        }
 
         for (;;)
         {
@@ -908,6 +987,7 @@ static b32 host_boot(void)
         {
                 host_write_text(HOST_HINT, "");
                 host_verdict_set("live", "");
+                host_events_boot(known ? address_of settings : null);
                 return 0;
         }
 
@@ -921,10 +1001,32 @@ static b32 host_boot(void)
 
         if (chosen)
         {
-                if (!host_take(chosen, false))
+                if (!known && host_settings_install(chosen, address_of settings))
+                {
+                        known = true;
+                        host_settings_keep(address_of settings);
+                }
+
+                if (known && settings.flags & SPARK_SETTINGS_MOUNT_OFF)
+                {
+                        host_write_text(HOST_HINT, "");
+                        host_verdict_set("live", "");
+                        string_format(log, host_label "init mount is off: %s is not mounted "
+                                                      "this session\n",
+                                      chosen->disk);
+                        log_flush();
+                        host_events_boot(address_of settings);
                         return 0;
+                }
+
+                if (!host_take(chosen, false))
+                {
+                        host_events_boot(known ? address_of settings : null);
+                        return 0;
+                }
 
                 host_verdict_set("live", "");
+                host_events_boot(known ? address_of settings : null);
                 return 1;
         }
 
@@ -936,6 +1038,7 @@ static b32 host_boot(void)
                            "moonwater use, update or live answers from a shell.\n",
                       chosen->disk);
         log_flush();
+        host_events_boot(known ? address_of settings : null);
         return 0;
 }
 
@@ -1161,6 +1264,15 @@ static b32 host_install_disk(string_address asked, bool removable)
         if (!host_running_build(running, sizeof(running)))
                 return host_refuse("%s cannot read its own build\n", "moonwater");
 
+        /*      Read before anything is mounted to look for the image: an
+                install takes this session's settings, which is how what was
+                set on a live stick is still set on the disk it installed. */
+        host_settings carry;
+
+        host_settings_session(address_of carry);
+        carry.generation++;
+        system_random_fill(carry.medium, sizeof(carry.medium), 0);
+
         if (!host_medium_find(address_of search, running, name))
         {
                 if (host_medium_find(address_of search, running, null))
@@ -1314,11 +1426,12 @@ static b32 host_install_disk(string_address asked, bool removable)
                 return host_fail(target.system, failed);
         }
 
-        string_format(log, host_label "writing this build to %s, from %s\n",
+        string_format(log, host_label "writing this build to %s, from %s, with this "
+                                      "session's settings\n",
                       target.system, search.name);
         log_flush();
 
-        failed = host_place_image(HOST_SYSTEM, running);
+        failed = host_place_image(HOST_SYSTEM, running, address_of carry);
         host_unmount(HOST_SYSTEM);
         host_unmount(HOST_MEDIUM);
         if (failed)
@@ -1468,8 +1581,6 @@ static b32 host_power_button_tell(string_address command)
         return failed < 0 ? host_fail(SPARK_DEVICE, failed) : 0;
 }
 
-static b32 host_usage();
-
 /* moonwater button power ["COMMAND"] */
 static b32 host_button(string_address address_to arguments, positive count)
 {
@@ -1494,6 +1605,1288 @@ static b32 host_button(string_address address_to arguments, positive count)
 
         log_flush();
         return 0;
+}
+
+// Settings ------------------------------------------------------
+
+/*
+        What this machine does at boot and when it stops, kept in the boot
+        image itself.
+
+        The block is spark.c's: two slots in the image's .mwset section. A
+        change is made to this session's copy, /run/moonwater/settings, and
+        then written over the older slot of the image this session started
+        from. That image is found by its build and by the medium id and
+        generation the session's copy carries, so of a stick and a disk with
+        the same build only the one that booted is written.
+
+        The write goes to the partition underneath the file, at the blocks the
+        filesystem names, and only once those blocks have read back as the
+        file's own bytes. The file keeps its size, and the FAT, the directory
+        entry and its times are never touched, so power lost part way tears
+        one slot and leaves the other to boot from. No image is copied or
+        renamed to change a setting.
+
+        What cannot be written -- a read-only stick, an image found on no
+        disk, one built without the section -- stays this session's, says
+        why, and still goes along with moonwater install.
+*/
+#define HOST_SETTINGS HOST_STATE "/settings"
+#define HOST_SETTINGS_NEXT HOST_STATE "/settings.next"
+#define HOST_SETTINGS_SECTION ".mwset\0\0"
+#define HOST_SETTINGS_PAGE 4096
+#define HOST_SETTINGS_BLOCKS (SPARK_SETTINGS_SLOT / 512)
+#define HOST_FIBMAP 1
+#define HOST_FIGETBSZ 2
+#define HOST_BLKFLSBUF 0x1261
+#define HOST_FADVISE_DONTNEED 4
+
+#define HOST_SETTINGS_CHANGED 0
+#define HOST_SETTINGS_SHOWN 1
+#define HOST_SETTINGS_USAGE 2
+#define HOST_SETTINGS_REFUSED 3
+
+typedef struct
+{
+        struct spark_settings_entry entry;
+        p8 address_to text;
+        positive at;
+} host_setting;
+
+static const struct
+{
+        string_address verb;
+        p8 list;
+        string_address empty;
+} host_lists[] = {
+    {"init", SPARK_SETTINGS_INIT, "nothing runs at boot"},
+    {"exit", SPARK_SETTINGS_EXIT, "nothing runs when the machine stops"},
+};
+
+/*
+        Which command each switch is spelled under. Moving one is a line here.
+
+        The block also holds the startup list and Canvas at boot, which nothing
+        reads yet: no command takes them until Canvas does, so none is a
+        setting that is accepted and then does nothing.
+*/
+static const struct
+{
+        string_address verb;
+        string_address word;
+        p32 flag;
+} host_switches[] = {
+    {"init", "mount", SPARK_SETTINGS_MOUNT_OFF},
+};
+
+static fn host_settings_empty(host_settings address_to settings)
+{
+        memory_zero(settings, sizeof(address_to settings));
+        settings->magic = SPARK_SETTINGS_MAGIC;
+        settings->version = SPARK_SETTINGS_VERSION;
+        settings->header = SPARK_SETTINGS_HEADER;
+        settings->slot = SPARK_SETTINGS_SLOT;
+}
+
+static fn host_settings_seal(host_settings address_to settings)
+{
+        settings->sum = 0;
+        settings->sum = spark_settings_sum(settings);
+}
+
+/* The entry at at, stepping at past it; false once there are no more. */
+static bool host_settings_next(host_settings address_to settings,
+                               positive address_to at,
+                               host_setting address_to into)
+{
+        if (address_to at + SPARK_SETTINGS_ENTRY > settings->length)
+                return false;
+
+        into->at = address_to at;
+        memory_copy_apart(address_of into->entry, settings->payload + into->at,
+                          SPARK_SETTINGS_ENTRY);
+        into->text = settings->payload + into->at + SPARK_SETTINGS_ENTRY;
+        address_to at += SPARK_SETTINGS_ENTRY +
+                         spark_settings_padded(into->entry.length);
+        return true;
+}
+
+/* An entry's words, the way the command line spells them. */
+static fn host_settings_text(p8 address_to into, host_setting address_to setting)
+{
+        if (setting->entry.kind == SPARK_SETTINGS_SHELL)
+                string_copy(into, "shell");
+        else if (setting->entry.kind == SPARK_SETTINGS_KERNEL_SHELL)
+                string_copy(into, "kernel_shell");
+        else
+        {
+                memory_copy_apart(into, setting->text, setting->entry.length);
+                into[setting->entry.length] = end;
+        }
+}
+
+static positive host_settings_count(host_settings address_to settings, p8 list)
+{
+        host_setting setting;
+        positive at = 0;
+        positive count = 0;
+
+        while (host_settings_next(settings, address_of at, address_of setting))
+                count += setting.entry.list == list;
+
+        return count;
+}
+
+/*
+        An entry at the end of its list, with the next id that list hands out:
+        ids are never given twice, so a remove by number cannot reach an entry
+        added after the number was read. Null once it is in, else why not.
+*/
+static string_address host_settings_add(host_settings address_to settings,
+                                        p8 list, p8 kind, string_address text,
+                                        positive length, p16 address_to id)
+{
+        positive room = spark_settings_padded(length);
+        struct spark_settings_entry entry;
+
+        if (length > (list == SPARK_SETTINGS_BIND ? SPARK_SETTINGS_BIND_TEXT_MOST
+                                                  : SPARK_SETTINGS_TEXT_MOST))
+                return list == SPARK_SETTINGS_BIND ? "a bound command is 255 bytes at most"
+                                                   : "an entry is 4096 bytes at most";
+
+        if (host_settings_count(settings, list) >=
+            (list == SPARK_SETTINGS_BIND ? SPARK_SETTINGS_BIND_MOST : SPARK_SETTINGS_LIST_MOST))
+                return list == SPARK_SETTINGS_BIND ? "the bind table holds 48 events at most"
+                                                   : "a list holds 16 entries at most";
+
+        if (SPARK_SETTINGS_PAYLOAD - settings->length < SPARK_SETTINGS_ENTRY + room)
+                return "the settings block is full";
+
+        memory_zero(address_of entry, sizeof(entry));
+        entry.list = list;
+        entry.kind = kind;
+        entry.length = (p16)length;
+
+        //      A bound command's id is its event, which the caller names.
+        if (list == SPARK_SETTINGS_BIND)
+                entry.id = id ? address_to id : 0;
+        else
+        {
+                p16 address_to next = settings->next + list - 1;
+
+                entry.id = address_to next ? address_to next : 1;
+                if (entry.id == 0xffff)
+                        return "this list has handed out every id it has";
+
+                address_to next = entry.id + 1;
+        }
+
+        memory_copy_apart(settings->payload + settings->length, address_of entry,
+                          SPARK_SETTINGS_ENTRY);
+        memory_copy_apart(settings->payload + settings->length + SPARK_SETTINGS_ENTRY,
+                          text, length);
+        memory_zero(settings->payload + settings->length + SPARK_SETTINGS_ENTRY +
+                        length,
+                    room - length);
+        settings->length += SPARK_SETTINGS_ENTRY + room;
+
+        if (id)
+                address_to id = entry.id;
+
+        return null;
+}
+
+static fn host_settings_drop(host_settings address_to settings,
+                             host_setting address_to setting)
+{
+        positive size = SPARK_SETTINGS_ENTRY +
+                        spark_settings_padded(setting->entry.length);
+
+        memory_copy(settings->payload + setting->at,
+                    settings->payload + setting->at + size,
+                    settings->length - setting->at - size);
+        settings->length -= size;
+        memory_zero(settings->payload + settings->length, size);
+}
+
+/* An entry named by its id, all digits, or by its exact words. */
+static bool host_settings_find(host_settings address_to settings, p8 list,
+                               string_address wanted, host_setting address_to into)
+{
+        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+        positive id = 0;
+        positive at = 0;
+        bool by_id = *wanted != end;
+
+        for (string_address digit = wanted; *digit && by_id; digit++)
+        {
+                by_id = byte_is_digit(*digit) && id <= 0xffff;
+                id = id * 10 + (positive)(*digit - '0');
+        }
+
+        while (host_settings_next(settings, address_of at, into))
+        {
+                if (into->entry.list != list)
+                        continue;
+
+                if (by_id ? into->entry.id == id
+                          : (host_settings_text(text, into), string_equals(text, wanted)))
+                        return true;
+        }
+
+        return false;
+}
+
+/* Words given apart, joined by one space the way a shell would read them. */
+static bool host_settings_words(p8 address_to into, positive room,
+                                string_address address_to words, positive count,
+                                positive address_to length)
+{
+        into[0] = end;
+
+        for (positive at = 0; at < count; at++)
+                if ((at && string_append_bounded(into, " ", room) >= room) ||
+                    string_append_bounded(into, words[at], room) >= room)
+                        return false;
+
+        address_to length = string_length(into);
+        return true;
+}
+
+/* Which slot a write goes over: a damaged one, else the older. */
+static positive host_settings_older(host_settings address_to slots)
+{
+        if (spark_settings_check(slots) < 0)
+                return 0;
+        if (spark_settings_check(slots + 1) < 0)
+                return 1;
+
+        return slots[1].generation < slots[0].generation ? 1 : 0;
+}
+
+/* One past the newest generation either slot believably carries. */
+static p64 host_settings_generation(host_settings address_to slots)
+{
+        p64 most = 0;
+
+        for (positive at = 0; at < 2; at++)
+                if (spark_settings_check(slots + at) >= 0 && slots[at].generation > most)
+                        most = slots[at].generation;
+
+        return most + 1;
+}
+
+/*
+        Where an image keeps its settings: the file offset of its first slot,
+        or 0 for an image without them. The section table says where, and both
+        slots must carry the magic there before anything believes it.
+*/
+static p64 host_settings_section(bipolar handle)
+{
+        p8 head[HOST_SETTINGS_PAGE];
+        p64 magic[2];
+        positive pe;
+        positive table;
+        positive count;
+
+        if (file_transfer_exact(syscall(pread64), handle, head, sizeof(head), 0) !=
+                (bipolar)sizeof(head) ||
+            head[0] != 'M' || head[1] != 'Z')
+                return 0;
+
+        pe = storage_le32(head + 0x3c);
+        if (pe > sizeof(head) - 24 || memory_compare(head + pe, "PE\0\0", 4))
+                return 0;
+
+        count = storage_le16(head + pe + 6);
+        table = pe + 24 + storage_le16(head + pe + 20);
+
+        for (positive at = 0; at < count && table + (at + 1) * 40 <= sizeof(head); at++)
+        {
+                p8 address_to section = head + table + at * 40;
+                p64 raw = storage_le32(section + 20);
+
+                if (memory_compare(section, HOST_SETTINGS_SECTION, 8))
+                        continue;
+
+                if (!raw || raw % HOST_SETTINGS_PAGE ||
+                    storage_le32(section + 16) < 2 * SPARK_SETTINGS_SLOT ||
+                    file_transfer_exact(syscall(pread64), handle, (p8 address_to)magic, 8,
+                                        raw) != 8 ||
+                    file_transfer_exact(syscall(pread64), handle,
+                                        (p8 address_to)(magic + 1), 8,
+                                        raw + SPARK_SETTINGS_SLOT) != 8 ||
+                    magic[0] != SPARK_SETTINGS_MAGIC || magic[1] != SPARK_SETTINGS_MAGIC)
+                        return 0;
+
+                return raw;
+        }
+
+        return 0;
+}
+
+static bool host_settings_slots(bipolar handle, host_settings address_to slots,
+                                p64 address_to offset)
+{
+        address_to offset = host_settings_section(handle);
+
+        return address_to offset &&
+               file_transfer_exact(syscall(pread64), handle, (p8 address_to)slots,
+                                   2 * SPARK_SETTINGS_SLOT, address_to offset) ==
+                   (bipolar)(2 * SPARK_SETTINGS_SLOT);
+}
+
+/*
+        The settings an image boots with: 1 from a slot that checks, 0 for the
+        defaults because both are damaged, -1 for an image without settings.
+*/
+static b32 host_settings_image(string_address path, host_settings address_to into)
+{
+        host_settings slots[2];
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        p64 offset;
+        bool read;
+        b32 newest;
+
+        host_settings_empty(into);
+        if (handle < 0)
+                return -1;
+
+        read = host_settings_slots(handle, slots, address_of offset);
+        system_close(handle);
+        if (!read)
+                return -1;
+
+        newest = spark_settings_newest(slots);
+        if (newest < 0)
+                return 0;
+
+        memory_copy_apart(into, slots + newest, SPARK_SETTINGS_SLOT);
+        return 1;
+}
+
+static bool host_settings_kept(host_settings address_to into)
+{
+        bipolar handle = system_open_at(AT_FDCWD, HOST_SETTINGS, FILE_READ | O_CLOEXEC);
+        bipolar got;
+
+        if (handle < 0)
+                return false;
+
+        got = file_transfer_exact(syscall(pread64), handle, (p8 address_to)into,
+                                  SPARK_SETTINGS_SLOT, 0);
+        system_close(handle);
+        return got == (bipolar)SPARK_SETTINGS_SLOT && spark_settings_check(into) >= 0;
+}
+
+/*
+        The kernel's copy: what the image booted with, or what was set since.
+        A kernel with no /dev/spark, or started without the stub, has none.
+*/
+static bool host_settings_booted(host_settings address_to into)
+{
+        struct spark_settings_request request = {(unsigned long)into, 0};
+        bipolar device = system_open_at(AT_FDCWD, SPARK_DEVICE,
+                                        FILE_READ_WRITE | O_CLOEXEC);
+        bipolar failed;
+
+        if (device < 0)
+                return false;
+
+        failed = system_control(device, SPARK_IOCTL_SETTINGS_GET, address_of request);
+        system_close(device);
+        return failed >= 0 && spark_settings_check(into) >= 0;
+}
+
+/* This session's copy, root's alone because a command can carry a secret, and the kernel's. */
+static fn host_settings_keep(host_settings address_to settings)
+{
+        struct spark_settings_request request = {(unsigned long)settings, 0};
+        bipolar handle;
+
+        host_settings_seal(settings);
+        host_state_ready();
+
+        handle = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ_WRITE | O_CLOEXEC);
+        if (handle >= 0)
+        {
+                system_control(handle, SPARK_IOCTL_SETTINGS_SET, address_of request);
+                system_close(handle);
+        }
+
+        handle = system_open_at_mode(AT_FDCWD, HOST_SETTINGS_NEXT,
+                                     FILE_WRITE | O_CLOEXEC, 0600);
+        if (handle < 0)
+                return;
+
+        if (!storage_format_write(handle, (p8 address_to)settings,
+                                  SPARK_SETTINGS_SLOT, 0))
+                system_rename_at(AT_FDCWD, HOST_SETTINGS_NEXT, AT_FDCWD,
+                                 HOST_SETTINGS, 0);
+
+        system_close(handle);
+}
+
+typedef struct
+{
+        string_address build;
+        host_settings address_to session;
+        p8 name[HOST_NAME_ROOM];
+        p8 other[HOST_NAME_ROOM];
+        positive count;
+        host_settings found;
+} host_settings_search;
+
+/* A FAT partition whose image is this build and, when asked, this session's copy. */
+static bool host_settings_visit(storage_identity address_to identity,
+                                address_any opaque)
+{
+        host_settings_search address_to search = (host_settings_search address_to)opaque;
+        string_address name = identity->path + sizeof("/dev/") - 1;
+        p8 path[HOST_PATH_ROOM];
+        p8 build[HOST_BUILD_ROOM];
+        host_settings newest;
+
+        if (!string_equals(identity->type, "vfat") || !host_name_valid(name) ||
+            host_mount(name, HOST_MEDIUM, "vfat", HOST_READ_ONLY) < 0)
+                return true;
+
+        if (host_join(path, sizeof(path), HOST_MEDIUM, HOST_IMAGE) &&
+            host_image_build(path, build, sizeof(build)) &&
+            string_equals(build, search->build) &&
+            host_settings_image(path, address_of newest) >= 0 &&
+            (!search->session ||
+             (newest.generation == search->session->generation &&
+              !memory_compare(newest.medium, search->session->medium,
+                              sizeof(newest.medium)))))
+        {
+                if (!search->count)
+                {
+                        string_copy(search->name, name);
+                        memory_copy_apart(address_of search->found, address_of newest,
+                                          SPARK_SETTINGS_SLOT);
+                }
+                else if (search->count == 1)
+                        string_copy(search->other, name);
+
+                search->count++;
+        }
+
+        host_unmount(HOST_MEDIUM);
+        return true;
+}
+
+/* This session's settings: its own copy, else the one image of this build a disk here has, else the defaults. */
+static fn host_settings_session(host_settings address_to settings)
+{
+        host_settings_search search;
+        p8 running[HOST_BUILD_ROOM];
+
+        if (host_settings_kept(settings) || host_settings_booted(settings))
+                return;
+
+        host_settings_empty(settings);
+        memory_zero(address_of search, sizeof(search));
+
+        if (!host_running_build(running, sizeof(running)))
+                return;
+
+        search.build = running;
+        storage_each_device(host_settings_visit, address_of search);
+
+        if (search.count == 1)
+                memory_copy_apart(settings, address_of search.found, SPARK_SETTINGS_SLOT);
+}
+
+typedef struct
+{
+        host_settings slots[2];
+        p64 offset;
+        b32 blocks[HOST_SETTINGS_BLOCKS];
+        positive size;
+        positive target;
+} host_settings_place;
+
+/* The partition blocks under the slot a write goes over, as its filesystem names them. */
+static string_address host_settings_map(string_address name,
+                                        host_settings_place address_to place)
+{
+        p8 path[HOST_PATH_ROOM];
+        string_address failed = null;
+        bipolar handle = -ERROR_INVALID;
+        b32 size = 0;
+
+        if (host_mount(name, HOST_MEDIUM, "vfat", HOST_READ_ONLY) < 0)
+                return "could not be mounted";
+
+        if (host_join(path, sizeof(path), HOST_MEDIUM, HOST_IMAGE))
+                handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                failed = "has no image";
+        else if (!host_settings_slots(handle, place->slots, address_of place->offset))
+                failed = "has an image built without settings";
+        else if (system_control(handle, HOST_FIGETBSZ, address_of size) < 0 ||
+                 size < 512 || size > HOST_SETTINGS_PAGE || HOST_SETTINGS_PAGE % size)
+                failed = "keeps its image in blocks this cannot map";
+
+        place->size = failed ? 512 : (positive)size;
+        place->target = host_settings_older(place->slots);
+
+        for (positive at = 0; !failed && at < SPARK_SETTINGS_SLOT / place->size; at++)
+        {
+                b32 block = (b32)((place->offset + place->target * SPARK_SETTINGS_SLOT) /
+                                      place->size +
+                                  at);
+
+                if (system_control(handle, HOST_FIBMAP, address_of block) < 0 || block <= 0)
+                        failed = "keeps its image in blocks this cannot map";
+
+                place->blocks[at] = block;
+        }
+
+        if (handle >= 0)
+                system_close(handle);
+
+        host_unmount(HOST_MEDIUM);
+        return failed;
+}
+
+/*
+        This session's settings over the older slot of the image on name.
+
+        Nothing else may have the partition mounted, and the blocks must hold
+        the file's bytes before one is written. Afterwards the partition's
+        cache is flushed and the file read again from a fresh mount with its
+        pages dropped, so what is checked is the disk and not memory. Null
+        once written and read back, else how it went wrong, said after the
+        partition's name.
+*/
+static string_address host_settings_write(string_address name,
+                                          host_settings address_to settings)
+{
+        host_settings_place place;
+        host_settings slot;
+        storage_mount_table table;
+        p8 device[HOST_NAME_ROOM + 8];
+        p8 path[HOST_PATH_ROOM];
+        p8 text[8];
+        p8 block[HOST_SETTINGS_PAGE];
+        string_address failed = null;
+        bipolar handle;
+        p64 offset = 0;
+        b32 newest;
+        bool blank = true;
+
+        if (!host_join(device, sizeof(device), "/dev/", name) ||
+            !host_join(path, sizeof(path), "/sys/class/block/", name) ||
+            !host_join(path, sizeof(path), path, "/ro"))
+                return "has a name too long to write";
+
+        if (host_read_text(path, text, sizeof(text)) > 0 && string_equals(text, "1"))
+                return "is read-only";
+
+        if (storage_mount_table_load(address_of table, null))
+        {
+                bool mounted = false;
+
+                for (positive at = 0; at < table.count; at++)
+                        mounted |= string_equals(table.entry[at].source, device);
+
+                storage_mount_table_release(address_of table);
+                if (mounted)
+                        return "is mounted; unmount it and try again";
+        }
+
+        failed = host_settings_map(name, address_of place);
+        if (failed)
+                return failed;
+
+        memory_copy_apart(address_of slot, settings, SPARK_SETTINGS_SLOT);
+        slot.generation = host_settings_generation(place.slots);
+
+        for (positive at = 0; at < sizeof(slot.medium); at++)
+                blank &= !slot.medium[at];
+
+        if (blank)
+        {
+                newest = spark_settings_newest(place.slots);
+                if (newest >= 0)
+                        memory_copy_apart(slot.medium, place.slots[newest].medium,
+                                          sizeof(slot.medium));
+
+                blank = true;
+                for (positive at = 0; at < sizeof(slot.medium); at++)
+                        blank &= !slot.medium[at];
+
+                if (blank)
+                        system_random_fill(slot.medium, sizeof(slot.medium), 0);
+        }
+
+        host_settings_seal(address_of slot);
+
+        handle = system_open_at(AT_FDCWD, device,
+                                FILE_READ_WRITE | FILE_EXCLUSIVE | O_CLOEXEC);
+        if (handle < 0)
+                return handle == -ERROR_BUSY ? "is in use; unmount it and try again"
+                       : handle == -ERROR_READ_ONLY || handle == -ERROR_ACCESS
+                           ? "is read-only"
+                           : "cannot be opened for writing";
+
+        for (positive at = 0; !failed && at < SPARK_SETTINGS_SLOT / place.size; at++)
+                if (file_transfer_exact(syscall(pread64), handle, block, place.size,
+                                        (p64)place.blocks[at] * place.size) !=
+                        (bipolar)place.size ||
+                    memory_compare(block,
+                                   (p8 address_to)(place.slots + place.target) +
+                                       at * place.size,
+                                   place.size))
+                        failed = "does not keep its image where its filesystem says, "
+                                 "so nothing was written";
+
+        for (positive at = 0; !failed && at < SPARK_SETTINGS_SLOT / place.size; at++)
+                if (storage_write(handle, (p8 address_to)address_of slot + at * place.size,
+                                  place.size, (p64)place.blocks[at] * place.size) !=
+                    (bipolar)place.size)
+                        failed = "could not be written; its other slot still has the "
+                                 "settings from before";
+
+        if (!failed && system_call_1(syscall(fsync), (positive)handle) < 0)
+                failed = "could not be synced; its other slot still has the settings "
+                         "from before";
+
+        system_control(handle, HOST_BLKFLSBUF, 0);
+        system_close(handle);
+        if (failed)
+                return failed;
+
+        if (host_mount(name, HOST_MEDIUM, "vfat", HOST_READ_ONLY) < 0)
+                return "was written, and could not be mounted again to check it";
+
+        handle = host_join(path, sizeof(path), HOST_MEDIUM, HOST_IMAGE)
+                     ? system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC)
+                     : -ERROR_INVALID;
+
+        if (handle >= 0)
+        {
+                system_call_4(syscall(fadvise64), (positive)handle, 0, 0,
+                              HOST_FADVISE_DONTNEED);
+                if (!host_settings_slots(handle, place.slots, address_of offset))
+                        offset = 0;
+                system_close(handle);
+        }
+
+        host_unmount(HOST_MEDIUM);
+
+        if (offset != place.offset ||
+            memory_compare(place.slots + place.target, address_of slot,
+                           SPARK_SETTINGS_SLOT) ||
+            spark_settings_newest(place.slots) != (b32)place.target)
+                return "was written and did not read back as written";
+
+        settings->generation = slot.generation;
+        memory_copy_apart(settings->medium, slot.medium, sizeof(slot.medium));
+        return null;
+}
+
+/* Writes this session's settings to its image where it can, ending the line with where they went. */
+static fn host_settings_save(host_settings address_to settings)
+{
+        host_settings_search search;
+        p8 running[HOST_BUILD_ROOM];
+        string_address failed = null;
+
+        memory_zero(address_of search, sizeof(search));
+
+        if (host_running_build(running, sizeof(running)))
+        {
+                search.build = running;
+                search.session = settings;
+                storage_each_device(host_settings_visit, address_of search);
+        }
+
+        if (search.count == 1)
+                failed = host_settings_write(search.name, settings);
+
+        if (search.count == 1 && !failed)
+                string_format(log, "saved in the image on %s\n", search.name);
+        else if (search.count == 1)
+                string_format(log, "this session only: %s %s\n", search.name, failed);
+        else if (search.count)
+                string_format(log, "this session only: %s and %s both have this "
+                                   "session's image\n",
+                              search.name, search.other);
+        else
+                string_format(log, "this session only: no disk here has the image "
+                                   "this session started from\n");
+
+        log_flush();
+        host_settings_keep(settings);
+}
+
+static fn host_settings_list(host_settings address_to settings, positive which)
+{
+        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+        host_setting setting;
+        positive at = 0;
+        positive shown = 0;
+
+        while (host_settings_next(settings, address_of at, address_of setting))
+        {
+                if (setting.entry.list != host_lists[which].list)
+                        continue;
+
+                host_settings_text(text, address_of setting);
+                string_format(log, "%p  %s\n", (positive)setting.entry.id, text);
+                shown++;
+        }
+
+        if (!shown)
+                string_format(log, host_label "%s: %s\n", host_lists[which].verb,
+                              host_lists[which].empty);
+
+        log_flush();
+}
+
+static b32 host_settings_refused(string_address verb, string_address why,
+                                 host_settings address_to settings)
+{
+        string_format(log_error, host_label "%s: %s", verb, why);
+        if (string_equals(why, "the settings block is full"))
+                string_format(log_error, " (%p of %p bytes); remove an entry first",
+                              (positive)settings->length,
+                              (positive)SPARK_SETTINGS_PAYLOAD);
+        string_format(log_error, "\n");
+        log_flush();
+        return HOST_SETTINGS_REFUSED;
+}
+
+/*
+        One settings command against a copy in memory, nothing read or written
+        but that copy: CHANGED once it printed what changed and wants the
+        line finished by saving, SHOWN once it printed what was asked, USAGE,
+        or REFUSED once it said why.
+*/
+static b32 host_settings_apply(host_settings address_to settings,
+                               string_address address_to arguments, positive count)
+{
+        string_address verb = arguments[1];
+        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+        host_setting setting;
+        string_address failed;
+        positive length = 0;
+        positive which = 0;
+        p16 id = 0;
+        p8 list;
+
+        while (which < array_count(host_lists) && !string_equals(verb, host_lists[which].verb))
+                which++;
+
+        if (which == array_count(host_lists))
+                return HOST_SETTINGS_USAGE;
+
+        list = host_lists[which].list;
+
+        if (count == 2)
+        {
+                host_settings_list(settings, which);
+                return HOST_SETTINGS_SHOWN;
+        }
+
+        for (positive at = 0; at < array_count(host_switches); at++)
+        {
+                p32 flag = host_switches[at].flag;
+
+                if (!string_equals(verb, host_switches[at].verb) ||
+                    !string_equals(arguments[2], host_switches[at].word))
+                        continue;
+
+                if (count == 3)
+                {
+                        string_format(log, host_label "%s %s %s\n", verb,
+                                      host_switches[at].word,
+                                      settings->flags & flag ? "off" : "on");
+                        log_flush();
+                        return HOST_SETTINGS_SHOWN;
+                }
+
+                if (count != 4 || (!string_equals(arguments[3], "on") &&
+                                   !string_equals(arguments[3], "off")))
+                        return HOST_SETTINGS_USAGE;
+
+                if (string_equals(arguments[3], "off"))
+                        settings->flags |= flag;
+                else
+                        settings->flags &= ~flag;
+
+                string_format(log, host_label "%s %s %s; ", verb,
+                              host_switches[at].word, arguments[3]);
+                return HOST_SETTINGS_CHANGED;
+        }
+
+        if (string_equals(arguments[2], "add") || string_equals(arguments[2], "remove"))
+        {
+                bool adding = string_equals(arguments[2], "add");
+
+                if (count < 4)
+                        return HOST_SETTINGS_USAGE;
+
+                if (!host_settings_words(text, sizeof(text), arguments + 3, count - 3,
+                                         address_of length))
+                        return host_settings_refused(verb, "an entry is 4096 bytes at most",
+                                                     settings);
+
+                if (!length)
+                        return HOST_SETTINGS_USAGE;
+
+                if (adding)
+                {
+                        failed = host_settings_add(settings, list, SPARK_SETTINGS_COMMAND,
+                                                   text, length, address_of id);
+                        if (failed)
+                                return host_settings_refused(verb, failed, settings);
+
+                        string_format(log, host_label "%s %p added: %s; ", verb,
+                                      (positive)id, text);
+                        return HOST_SETTINGS_CHANGED;
+                }
+
+                if (!host_settings_find(settings, list, text, address_of setting))
+                {
+                        string_format(log_error, host_label "%s has no entry %s\n", verb,
+                                      text);
+                        log_flush();
+                        return HOST_SETTINGS_REFUSED;
+                }
+
+                id = setting.entry.id;
+                host_settings_text(text, address_of setting);
+                host_settings_drop(settings, address_of setting);
+                string_format(log, host_label "%s %p removed: %s; ", verb, (positive)id,
+                              text);
+                return HOST_SETTINGS_CHANGED;
+        }
+
+        return HOST_SETTINGS_USAGE;
+}
+
+/*
+        A command naming a file the machine will not have when the entry runs:
+        a live session's files, and /root, /home and the bowls once boot stops
+        mounting them, are gone at power off.
+*/
+static fn host_settings_note(host_settings address_to settings,
+                             string_address verb, string_address text)
+{
+        p8 path[HOST_PATH_ROOM];
+        p8 verdict[HOST_NAME_ROOM + 16];
+        positive length = 0;
+        bool kept = false;
+
+        if (text[0] != '/')
+                return;
+
+        while (text[length] && text[length] != ' ' && length + 1 < sizeof(path))
+        {
+                path[length] = text[length];
+                length++;
+        }
+        path[length] = end;
+
+        if (system_access_at(AT_FDCWD, path, 0) < 0)
+                return;
+
+        host_read_text(HOST_VERDICT, verdict, sizeof(verdict));
+
+        for (positive at = 0; at < array_count(host_kept); at++)
+        {
+                positive prefix = string_length(host_kept[at].path);
+
+                kept |= host_starts(path, host_kept[at].path) && path[prefix] == '/';
+        }
+
+        if (kept && host_starts(verdict, "disk ") &&
+            !(settings->flags & SPARK_SETTINGS_MOUNT_OFF))
+                return;
+
+        string_format(log, host_label "%s is read when the entry runs and is not kept "
+                                      "after power off; moonwater %s add \"$(cat %s)\" "
+                                      "keeps the script itself\n",
+                      path, verb, path);
+        log_flush();
+}
+
+static b32 host_settings_command(string_address address_to arguments, positive count)
+{
+        host_settings settings;
+        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+        positive length = 0;
+        b32 outcome;
+
+        if (!bowl_is_root())
+                return host_refuse("%s needs root\n", "moonwater");
+
+        host_state_ready();
+        host_settings_session(address_of settings);
+
+        outcome = host_settings_apply(address_of settings, arguments, count);
+        if (outcome == HOST_SETTINGS_USAGE)
+                return host_usage();
+        if (outcome != HOST_SETTINGS_CHANGED)
+                return outcome == HOST_SETTINGS_SHOWN ? 0 : 1;
+
+        host_settings_save(address_of settings);
+
+        if (count > 3 && string_equals(arguments[2], "add") &&
+            host_settings_words(text, sizeof(text), arguments + 3, count - 3,
+                                address_of length))
+                host_settings_note(address_of settings, arguments[1], text);
+
+        return 0;
+}
+
+/* Both slots of an image not yet in place, as these settings. */
+static bipolar host_settings_stamp(string_address path, host_settings address_to settings)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ_WRITE | O_CLOEXEC);
+        bipolar failed = 0;
+        p64 offset;
+
+        if (handle < 0)
+                return handle;
+
+        offset = host_settings_section(handle);
+        if (offset)
+        {
+                host_settings_seal(settings);
+                failed = storage_format_write(handle, (p8 address_to)settings,
+                                              SPARK_SETTINGS_SLOT, offset);
+                if (!failed)
+                        failed = storage_format_write(handle, (p8 address_to)settings,
+                                                      SPARK_SETTINGS_SLOT,
+                                                      offset + SPARK_SETTINGS_SLOT);
+                if (!failed)
+                        failed = system_call_1(syscall(fsync), (positive)handle);
+        }
+
+        system_close(handle);
+        return failed < 0 ? failed : 0;
+}
+
+/* The settings an install's own image starts with. */
+static bool host_settings_install(host_install address_to install,
+                                  host_settings address_to into)
+{
+        p8 path[HOST_PATH_ROOM];
+        b32 found = -1;
+
+        if (host_mount(install->system, HOST_LOOK, "vfat", HOST_READ_ONLY) < 0)
+                return false;
+
+        if (host_join(path, sizeof(path), HOST_LOOK, HOST_IMAGE))
+                found = host_settings_image(path, into);
+
+        host_unmount(HOST_LOOK);
+        return found >= 0;
+}
+
+// Events --------------------------------------------------------
+
+/*
+        init and exit, run the way a terminal runs what is typed into it:
+        /shell -c, from /root, with the path a terminal gives its shell, so a
+        bowl's published launchers -- pacman once bowl setup arch has run on
+        a machine that keeps /bowls -- are found by name.
+
+        init runs once per boot, as root, in the background and in the order
+        written, once boot has settled the disks and somebody has answered
+        its question when it asked one, so a command reads the /root and the
+        bowls it will be using. Each entry's output goes to
+        /run/moonwater/init/ID.log and how it ended to ID.status, the kernel
+        log -- the kernel log window -- says when each starts and ends, and
+        neither the prompt nor the desktop waits for any of it.
+
+        exit runs when the machine stops, before anything is remounted
+        read-only, with its output on the terminal that stopped it. Each
+        entry gets ten seconds and all of them thirty; one still running then
+        is killed with its process group, so a stuck command cannot keep a
+        machine from powering off. A stop that is not the shell's -- the
+        kernel's own orderly power off -- runs none of it.
+*/
+#define HOST_EVENTS_INIT HOST_STATE "/init"
+#define HOST_EVENT_SHELL "/shell"
+#define HOST_EXIT_EACH_NS ((p64)10000000000)
+#define HOST_EXIT_ALL_NS ((p64)30000000000)
+#define HOST_EVENT_POLL_NS ((p64)20000000)
+#define HOST_EVENT_SHOWN 80
+
+static string_address host_event_environment[] = {
+    "TERM=dumb", "HOME=/root", "PATH=" BOWL_DEFAULT_PATH, "LANG=C.UTF-8", null};
+
+static fn host_decimal(p8 address_to into, positive room, positive value)
+{
+        p8 digits[24];
+        positive used = 0;
+        positive at = 0;
+
+        do
+                digits[used++] = (p8)('0' + value % 10);
+        while ((value /= 10) && used < sizeof(digits));
+
+        while (used && at + 1 < room)
+                into[at++] = digits[--used];
+
+        into[at] = end;
+}
+
+/* A command as one short line: control bytes as spaces, and cut with ... past eighty. */
+static fn host_event_shown(p8 address_to into, string_address text)
+{
+        positive at = 0;
+
+        for (; text[at] && at < HOST_EVENT_SHOWN; at++)
+                into[at] = (p8)text[at] < ' ' || text[at] == 0x7f ? ' ' : (p8)text[at];
+
+        into[at] = end;
+        if (text[at])
+                string_append_bounded(into, "...", HOST_EVENT_SHOWN + 4);
+}
+
+static fn host_event_ending(p8 address_to into, positive room, positive status)
+{
+        p8 number[24];
+
+        host_decimal(number, sizeof(number),
+                     status & 0x7f ? status & 0x7f : status >> 8 & 0xff);
+        string_copy_bounded(into, status & 0x7f ? "killed by signal " : "exited ", room);
+        string_append_bounded(into, number, room);
+}
+
+/* One line in the kernel log, which the kernel log window shows. */
+static fn host_kmsg(string_address address_to parts)
+{
+        p8 line[320];
+        bipolar handle;
+
+        string_copy_bounded(line, "<6>[moonwater] ", sizeof(line) - 1);
+        for (; *parts; parts++)
+                string_append_bounded(line, *parts, sizeof(line) - 1);
+        string_append_bounded(line, "\n", sizeof(line));
+
+        handle = system_open_at(AT_FDCWD, "/dev/kmsg", 01 | O_CLOEXEC);
+        if (handle < 0)
+                return;
+
+        system_call_3(syscall(write), (positive)handle, (positive)line, string_length(line));
+        system_close(handle);
+}
+
+/* /shell -c text in a session of its own, from /root, its output where asked or inherited. */
+static bipolar host_event_start(string_address text, bipolar output,
+                                string_address address_to environment)
+{
+        bipolar child = system_fork();
+
+        if (child)
+                return child;
+
+        {
+                string_address argv[] = {HOST_EVENT_SHELL, "-c", text, null};
+                bipolar quiet = system_open_at(AT_FDCWD, "/dev/null",
+                                               FILE_READ_WRITE | O_CLOEXEC);
+
+                system_call(syscall(setsid));
+                if (quiet > 0)
+                        system_call_3(syscall(dup3), (positive)quiet, 0, 0);
+                if (output > 2)
+                {
+                        system_call_3(syscall(dup3), (positive)output, 1, 0);
+                        system_call_3(syscall(dup3), (positive)output, 2, 0);
+                }
+
+                system_call_1(syscall(chdir), (positive)(string_address)"/root");
+                (void)shell_exec_file(HOST_EVENT_SHELL, argv, 3, environment);
+                system_call_1(syscall(exit), 127);
+        }
+
+        return -1;
+}
+
+/*
+        A child to its end, or past limit killed with its group and then
+        waited for: its wait status, and whether it had to be stopped. A limit
+        of zero waits as long as it takes.
+*/
+static positive host_event_wait(bipolar child, p64 limit, bool address_to stopped)
+{
+        p64 started = system_clock_ns(HOST_CLOCK_BOOTTIME);
+        positive status = 0;
+
+        address_to stopped = false;
+
+        for (;;)
+        {
+                bipolar reaped = system_call_4(syscall(wait4), (positive)child,
+                                               (positive)address_of status,
+                                               limit ? 1 : 0, 0);
+
+                if (reaped == child)
+                        return status;
+                if (reaped == -4)
+                        continue;
+                if (reaped < 0)
+                        return 0;
+
+                if (system_clock_ns(HOST_CLOCK_BOOTTIME) - started >= limit)
+                {
+                        system_call_2(syscall(kill), (positive)(-child), SIGKILL);
+                        system_call_2(syscall(kill), (positive)child, SIGKILL);
+                        address_to stopped = true;
+                        limit = 0;
+                        continue;
+                }
+
+                host_pause(HOST_EVENT_POLL_NS);
+        }
+}
+
+static fn host_events_boot(host_settings address_to settings)
+{
+        host_setting setting;
+        positive at = 0;
+
+        if (!settings || !host_settings_count(settings, SPARK_SETTINGS_INIT) ||
+            system_fork())
+                return;
+
+        //      The runner, from here on: its own session, outliving boot.
+        system_call(syscall(setsid));
+        system_make_directory_at(AT_FDCWD, HOST_EVENTS_INIT, 0700);
+
+        for (;;)
+        {
+                p8 verdict[HOST_NAME_ROOM + 16];
+
+                if (host_read_text(HOST_VERDICT, verdict, sizeof(verdict)) >= 0
+                        ? !host_starts(verdict, "ask ")
+                        : system_clock_ns(HOST_CLOCK_BOOTTIME) >= HOST_VERDICT_WAIT_NS)
+                        break;
+
+                host_pause(HOST_POLL_NS * 2);
+        }
+
+        while (host_settings_next(settings, address_of at, address_of setting))
+        {
+                p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+                p8 shown[HOST_EVENT_SHOWN + 4];
+                p8 id[8];
+                p8 path[HOST_PATH_ROOM];
+                p8 status_path[HOST_PATH_ROOM];
+                p8 ending[48];
+                bipolar output;
+                bipolar child;
+                positive status;
+                bool stopped = false;
+
+                if (setting.entry.list != SPARK_SETTINGS_INIT)
+                        continue;
+
+                host_settings_text(text, address_of setting);
+                host_event_shown(shown, text);
+                host_decimal(id, sizeof(id), setting.entry.id);
+
+                if (!host_join(path, sizeof(path), HOST_EVENTS_INIT "/", id) ||
+                    !host_join(status_path, sizeof(status_path), path, ".status") ||
+                    !host_join(path, sizeof(path), path, ".log"))
+                        continue;
+
+                {
+                        string_address line[] = {"init ", id, " started: ", shown, null};
+
+                        host_kmsg(line);
+                }
+
+                host_write_text(status_path, "running\n");
+                output = system_open_at_mode(AT_FDCWD, path, FILE_WRITE | O_CLOEXEC, 0600);
+                child = host_event_start(text, output, host_event_environment);
+                if (output >= 0)
+                        system_close(output);
+
+                status = child < 0 ? (positive)127 << 8
+                                   : host_event_wait(child, 0, address_of stopped);
+                host_event_ending(ending, sizeof(ending), status);
+                string_append_bounded(ending, "\n", sizeof(ending));
+                host_write_text(status_path, ending);
+                ending[string_length(ending) - 1] = end;
+
+                {
+                        string_address line[] = {"init ", id, " ", ending, "; its output is in ",
+                                                 path, null};
+
+                        host_kmsg(line);
+                }
+        }
+
+        system_call_1(syscall(exit), 0);
+}
+
+fn host_exit_run(void)
+{
+        host_settings settings;
+        host_setting setting;
+        positive at = 0;
+        p64 started = system_clock_ns(HOST_CLOCK_BOOTTIME);
+
+        if (!bowl_is_root() ||
+            (!host_settings_kept(address_of settings) &&
+             !host_settings_booted(address_of settings)))
+                return;
+
+        while (host_settings_next(address_of settings, address_of at, address_of setting))
+        {
+                p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+                p8 ending[48];
+                p64 spent = system_clock_ns(HOST_CLOCK_BOOTTIME) - started;
+                p64 limit = HOST_EXIT_ALL_NS - spent;
+                bool stopped = false;
+                positive status;
+                bipolar child;
+
+                if (setting.entry.list != SPARK_SETTINGS_EXIT)
+                        continue;
+
+                if (spent >= HOST_EXIT_ALL_NS)
+                {
+                        string_format(log_error, host_label "exit: thirty seconds are spent, "
+                                                            "and the rest do not run\n");
+                        log_flush();
+                        break;
+                }
+
+                host_settings_text(text, address_of setting);
+                string_format(log, host_label "exit %p: %s\n", (positive)setting.entry.id, text);
+                log_flush();
+
+                //      The environment init's entries get, not the stopping
+                //      shell's: the power button's poweroff has almost none.
+                child = host_event_start(text, -1, host_event_environment);
+                if (child < 0)
+                        continue;
+
+                status = host_event_wait(child, limit < HOST_EXIT_EACH_NS ? limit
+                                                                          : HOST_EXIT_EACH_NS,
+                                         address_of stopped);
+                host_event_ending(ending, sizeof(ending), status);
+
+                if (stopped)
+                        string_format(log_error, host_label "exit %p did not finish in time "
+                                                            "and was killed\n",
+                                      (positive)setting.entry.id);
+                else if (status)
+                        string_format(log_error, host_label "exit %p %s\n",
+                                      (positive)setting.entry.id, ending);
+                log_flush();
+        }
 }
 
 // The command ---------------------------------------------------
@@ -1561,7 +2954,15 @@ static b32 host_usage(void)
                       host_label "       moonwater use [DISK]\n"
                       host_label "       moonwater update [DISK]\n"
                       host_label "       moonwater live\n"
-                      host_label "       moonwater button power [COMMAND]\n");
+                      host_label "       moonwater init                     what runs at boot\n"
+                      host_label "       moonwater init add \"command\"\n"
+                      host_label "       moonwater init remove ID|\"command\"\n"
+                      host_label "       moonwater init mount [on|off]\n"
+                      host_label "       moonwater exit                     what runs when the machine stops\n"
+                      host_label "       moonwater exit add|remove ...\n"
+                      host_label "       moonwater button power [COMMAND]\n"
+                      host_label "Settings are kept in the image this session started from.\n"
+                      host_label "install takes this session's; update keeps the disk's.\n");
         log_flush();
         return 2;
 }
@@ -1633,6 +3034,9 @@ static b32 host_main()
         // decides who may set it.
         if (string_equals(verb, "button"))
                 return host_button(arguments, count);
+
+        if (string_equals(verb, "init") || string_equals(verb, "exit"))
+                return host_settings_command(arguments, count);
 
         if (!string_equals(verb, "install") && !string_equals(verb, "use") &&
             !string_equals(verb, "update") && !string_equals(verb, "live") &&

@@ -57290,8 +57290,498 @@ static fn format_images(string_address directory)
         }
 }
 
+/*
+        The settings block: what reads as never written, as whole and as
+        damaged; the limits a reader holds a slot to even when its sum is
+        right; which of two slots wins; that a write torn at any sector, or
+        any byte, leaves the settings from before or the new ones and never
+        neither; where an image's section is believed; and the command line
+        against a copy in memory.
+*/
+static host_settings settings_slot;
+static host_settings settings_pair[2];
+static host_settings settings_before[2];
+static host_settings settings_next;
+static p8 settings_text[SPARK_SETTINGS_TEXT_MOST + 2];
+
+static fn settings_one(host_settings address_to slot, p64 generation, p8 fill,
+                       positive length)
+{
+        memory_fill(settings_text, fill, length);
+        host_settings_empty(slot);
+        slot->generation = generation;
+        memory_fill(slot->medium, 0x5a, sizeof(slot->medium));
+        host_settings_add(slot, SPARK_SETTINGS_INIT, SPARK_SETTINGS_COMMAND,
+                          settings_text, length, null);
+        host_settings_seal(slot);
+}
+
+static fn settings_raw(host_settings address_to slot, p8 list, p16 length)
+{
+        struct spark_settings_entry entry = {list, SPARK_SETTINGS_COMMAND, 1, length, 0};
+
+        memory_copy_apart(slot->payload + slot->length, address_of entry,
+                          SPARK_SETTINGS_ENTRY);
+        memory_zero(slot->payload + slot->length + SPARK_SETTINGS_ENTRY,
+                    spark_settings_padded(length));
+        slot->length += SPARK_SETTINGS_ENTRY + spark_settings_padded(length);
+}
+
+static bool settings_same(host_settings address_to left, host_settings address_to right)
+{
+        return left->length == right->length &&
+               !memory_compare(left, right, SPARK_SETTINGS_HEADER + left->length);
+}
+
+static fn settings_format(void)
+{
+        host_settings address_to slot = address_of settings_slot;
+        string_address wanted[] = {"pacman -Syu", "sync", "echo hello > /tmp/marker",
+                                   "echo pressed > /tmp/p"};
+        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+        host_setting setting;
+        positive at = 0;
+        positive seen = 0;
+        bool order = true;
+        bool caught = true;
+        p16 id = 0;
+
+        //      The same sums the core_state harness holds its reference CRC-32 to.
+        host_settings_empty(slot);
+        slot->generation = 1;
+        check("an empty slot sums as zlib sums it", spark_settings_sum(slot) == 0x3ae8f589);
+        slot->generation = 7;
+        memory_fill(slot->medium, 0x5a, sizeof(slot->medium));
+        host_settings_add(slot, SPARK_SETTINGS_INIT, SPARK_SETTINGS_COMMAND, "pacman -Syu",
+                          11, null);
+        check("a slot with an entry sums as zlib sums it",
+              slot->next[0] == 2 && spark_settings_sum(slot) == 0x3f693c1f);
+
+        host_settings_empty(slot);
+        check("a slot as built reads as never written", spark_settings_check(slot) == 0);
+        slot->generation = 1;
+        check("a slot with a generation and no sum is damaged",
+              spark_settings_check(slot) < 0);
+        host_settings_seal(slot);
+        check("a sealed slot with no entries checks", spark_settings_check(slot) == 1);
+
+        host_settings_empty(slot);
+        check("a list's ids start at one",
+              !host_settings_add(slot, SPARK_SETTINGS_INIT, SPARK_SETTINGS_COMMAND,
+                                 wanted[0], 11, address_of id) &&
+                  id == 1);
+        check("every list hands out its own ids",
+              !host_settings_add(slot, SPARK_SETTINGS_EXIT, SPARK_SETTINGS_COMMAND,
+                                 wanted[1], 4, address_of id) &&
+                  id == 1);
+        host_settings_add(slot, SPARK_SETTINGS_INIT, SPARK_SETTINGS_COMMAND, wanted[2],
+                          24, address_of id);
+        check("a list's second id is two", id == 2);
+        id = 7;
+        host_settings_add(slot, SPARK_SETTINGS_BIND, SPARK_SETTINGS_COMMAND, wanted[3],
+                          21, address_of id);
+        slot->generation = 7;
+        memory_fill(slot->medium, 0xa5, sizeof(slot->medium));
+        host_settings_seal(slot);
+        check("a slot with entries in every list checks", spark_settings_check(slot) == 1);
+
+        while (host_settings_next(slot, address_of at, address_of setting))
+        {
+                host_settings_text(text, address_of setting);
+                order &= seen < 4 && string_equals(text, wanted[seen]);
+                seen++;
+        }
+        check("entries come back as written, in the order written", order && seen == 4);
+
+        for (positive bit = 0; bit < (SPARK_SETTINGS_HEADER + slot->length) * 8; bit++)
+        {
+                p8 address_to byte = (p8 address_to)slot + bit / 8;
+
+                address_to byte ^= (p8)(1 << (bit % 8));
+                caught &= spark_settings_check(slot) < 0;
+                address_to byte ^= (p8)(1 << (bit % 8));
+        }
+        check("every one-bit change to a slot's header or entries is caught", caught);
+        check("and the slot checks again once each is put back",
+              spark_settings_check(slot) == 1);
+}
+
+static fn settings_bounds(void)
+{
+        host_settings address_to slot = address_of settings_slot;
+        string_address failed;
+        bool refused = true;
+        p16 id = 0;
+        host_setting setting;
+
+        host_settings_empty(slot);
+        slot->generation = 1;
+        slot->length = SPARK_SETTINGS_PAYLOAD + 4;
+        host_settings_seal(slot);
+        check("a length past the slot is damaged, sum or no sum",
+              spark_settings_check(slot) < 0);
+
+        host_settings_empty(slot);
+        slot->generation = 1;
+        settings_raw(slot, SPARK_SETTINGS_INIT, SPARK_SETTINGS_TEXT_MOST + 1);
+        host_settings_seal(slot);
+        check("an entry past 4096 bytes is damaged", spark_settings_check(slot) < 0);
+
+        host_settings_empty(slot);
+        slot->generation = 1;
+        settings_raw(slot, SPARK_SETTINGS_BIND, SPARK_SETTINGS_BIND_TEXT_MOST + 1);
+        host_settings_seal(slot);
+        check("a bound command past 255 bytes is damaged",
+              spark_settings_check(slot) < 0);
+
+        host_settings_empty(slot);
+        slot->generation = 1;
+        for (positive at = 0; at < SPARK_SETTINGS_BIND_MOST; at++)
+                settings_raw(slot, SPARK_SETTINGS_BIND, 3);
+        host_settings_seal(slot);
+        check("forty-eight bound events check", spark_settings_check(slot) == 1);
+        settings_raw(slot, SPARK_SETTINGS_BIND, 3);
+        host_settings_seal(slot);
+        check("a forty-ninth is damaged", spark_settings_check(slot) < 0);
+
+        host_settings_empty(slot);
+        slot->generation = 1;
+        for (positive at = 0; at <= SPARK_SETTINGS_LIST_MOST; at++)
+                settings_raw(slot, SPARK_SETTINGS_STARTUP, 3);
+        host_settings_seal(slot);
+        check("a seventeenth entry in one list is damaged", spark_settings_check(slot) < 0);
+
+        for (p8 list = 0; list < 8; list += list == 0 ? SPARK_SETTINGS_LISTS + 1 : 1)
+        {
+                host_settings_empty(slot);
+                slot->generation = 1;
+                settings_raw(slot, list, 3);
+                host_settings_seal(slot);
+                refused &= spark_settings_check(slot) < 0;
+        }
+        check("a list nobody defined is damaged", refused);
+
+        host_settings_empty(slot);
+        slot->generation = 1;
+        settings_raw(slot, SPARK_SETTINGS_INIT, 9);
+        slot->length -= 4;
+        host_settings_seal(slot);
+        check("entries that run past the length are damaged",
+              spark_settings_check(slot) < 0);
+
+        host_settings_empty(slot);
+        slot->generation = 1;
+        settings_raw(slot, SPARK_SETTINGS_INIT, 8);
+        slot->length += 3;
+        host_settings_seal(slot);
+        check("a length that ends inside an entry header is damaged",
+              spark_settings_check(slot) < 0);
+
+        host_settings_empty(slot);
+        refused = true;
+        for (positive at = 0; at < SPARK_SETTINGS_LIST_MOST; at++)
+                refused &= !host_settings_add(slot, SPARK_SETTINGS_INIT,
+                                              SPARK_SETTINGS_COMMAND, "true", 4, null);
+        check("sixteen entries fit in one list", refused);
+        check("a seventeenth is refused",
+              host_settings_add(slot, SPARK_SETTINGS_INIT, SPARK_SETTINGS_COMMAND,
+                                "true", 4, null) != null);
+        check("a full list leaves the others room",
+              !host_settings_add(slot, SPARK_SETTINGS_EXIT, SPARK_SETTINGS_COMMAND,
+                                 "true", 4, null));
+
+        memory_fill(settings_text, 'x', SPARK_SETTINGS_TEXT_MOST + 1);
+        host_settings_empty(slot);
+        check("an entry past 4096 bytes is refused",
+              host_settings_add(slot, SPARK_SETTINGS_INIT, SPARK_SETTINGS_COMMAND,
+                                settings_text, SPARK_SETTINGS_TEXT_MOST + 1, null) != null);
+        check("a bound command past 255 bytes is refused",
+              host_settings_add(slot, SPARK_SETTINGS_BIND, SPARK_SETTINGS_COMMAND,
+                                settings_text, SPARK_SETTINGS_BIND_TEXT_MOST + 1, null) != null);
+
+        for (positive at = 0; at < 3; at++)
+                host_settings_add(slot, SPARK_SETTINGS_STARTUP, SPARK_SETTINGS_COMMAND,
+                                  settings_text, SPARK_SETTINGS_TEXT_MOST, null);
+        failed = host_settings_add(slot, SPARK_SETTINGS_EXIT, SPARK_SETTINGS_COMMAND,
+                                   settings_text, SPARK_SETTINGS_TEXT_MOST, null);
+        check("a block with no room left says it is full",
+              failed && string_equals(failed, "the settings block is full"));
+        slot->generation = 2;
+        host_settings_seal(slot);
+        check("and what did fit still checks", spark_settings_check(slot) == 1);
+
+        host_settings_empty(slot);
+        host_settings_add(slot, SPARK_SETTINGS_EXIT, SPARK_SETTINGS_COMMAND, "a", 1, null);
+        host_settings_add(slot, SPARK_SETTINGS_EXIT, SPARK_SETTINGS_COMMAND, "b", 1, null);
+        host_settings_add(slot, SPARK_SETTINGS_EXIT, SPARK_SETTINGS_COMMAND, "c", 1, null);
+        host_settings_find(slot, SPARK_SETTINGS_EXIT, "2", address_of setting);
+        host_settings_drop(slot, address_of setting);
+        host_settings_add(slot, SPARK_SETTINGS_EXIT, SPARK_SETTINGS_COMMAND, "d", 1,
+                          address_of id);
+        check("an id is never handed out twice", id == 4);
+        check("a removed entry is gone by its words",
+              !host_settings_find(slot, SPARK_SETTINGS_EXIT, "b", address_of setting));
+        check("the entries after it keep their ids",
+              host_settings_find(slot, SPARK_SETTINGS_EXIT, "3", address_of setting) &&
+                  setting.entry.length == 1 && setting.text[0] == 'c');
+}
+
+static fn settings_torn(void)
+{
+        bool held = true;
+        bool bytes = true;
+        positive target;
+
+        settings_one(settings_pair, 5, 'o', 4000);
+        settings_one(settings_pair + 1, 4, 'p', 3000);
+        target = host_settings_older(settings_pair);
+        check("a write goes over the older slot", target == 1);
+        check("a write takes the generation after the newest",
+              host_settings_generation(settings_pair) == 6);
+        check("the newer of two good slots is believed",
+              spark_settings_newest(settings_pair) == 0);
+        memory_copy_apart(settings_before, settings_pair, sizeof(settings_pair));
+        settings_one(address_of settings_next, 6, 'n', 3500);
+
+        //      Every sector of the new slot landed or not, then every 37th byte.
+        for (positive landed = 0; landed <= SPARK_SETTINGS_SLOT; landed += 1)
+        {
+                b32 newest;
+
+                if (landed % 512 && landed % 37)
+                        continue;
+
+                memory_copy_apart(settings_pair, settings_before, sizeof(settings_pair));
+                memory_copy_apart(settings_pair + target, address_of settings_next, landed);
+                newest = spark_settings_newest(settings_pair);
+
+                bool kept = newest == (b32)target
+                                ? settings_same(settings_pair + target,
+                                                address_of settings_next)
+                                : newest == 0 &&
+                                      settings_same(settings_pair, settings_before);
+
+                if (landed % 512)
+                        bytes &= kept;
+                else
+                        held &= kept;
+        }
+        check("a write torn at any sector boots the old settings or the new", held);
+        check("a write torn at any byte boots the old settings or the new", bytes);
+
+        host_settings_empty(settings_pair);
+        host_settings_empty(settings_pair + 1);
+        check("two slots as built are the defaults", spark_settings_newest(settings_pair) == 0 &&
+                                                         spark_settings_check(settings_pair) == 0);
+        check("the first write goes over the first slot",
+              host_settings_older(settings_pair) == 0 &&
+                  host_settings_generation(settings_pair) == 1);
+        settings_one(address_of settings_next, 1, 'f', 2000);
+        held = true;
+        for (positive landed = 0; landed <= SPARK_SETTINGS_SLOT; landed += 512)
+        {
+                b32 newest;
+
+                host_settings_empty(settings_pair);
+                memory_copy_apart(settings_pair, address_of settings_next, landed);
+                newest = spark_settings_newest(settings_pair);
+                held &= newest >= 0 &&
+                        (spark_settings_check(settings_pair + newest) == 0 ||
+                         settings_same(settings_pair + newest, address_of settings_next));
+        }
+        check("a first write torn anywhere boots the defaults or the new settings", held);
+
+        settings_one(settings_pair, 3, 'a', 100);
+        settings_one(settings_pair + 1, 9, 'b', 100);
+        settings_pair[1].payload[20] ^= 1;
+        check("a newer slot that fails its sum loses to the older",
+              spark_settings_newest(settings_pair) == 0);
+        check("and the write after goes over the damaged one",
+              host_settings_older(settings_pair) == 1 &&
+                  host_settings_generation(settings_pair) == 4);
+        settings_pair[0].payload[20] ^= 1;
+        check("two damaged slots are the defaults", spark_settings_newest(settings_pair) < 0);
+}
+
+static b32 settings_run(string_address first, string_address second,
+                        string_address third, string_address fourth)
+{
+        string_address arguments[] = {"moonwater", first, second, third, fourth, null};
+        positive count = 1;
+
+        b32 outcome;
+
+        while (arguments[count])
+                count++;
+
+        //      A change leaves its line for saving to finish, and nothing is
+        //      saved here: end it, or the verdict lands on the same line.
+        outcome = host_settings_apply(address_of settings_slot, arguments, count);
+        if (outcome == HOST_SETTINGS_CHANGED)
+        {
+                string_format(log, "\n");
+                log_flush();
+        }
+
+        return outcome;
+}
+
+static positive settings_listed(p8 list, p8 kind)
+{
+        host_setting setting;
+        positive at = 0;
+        positive count = 0;
+
+        while (host_settings_next(address_of settings_slot, address_of at, address_of setting))
+                count += setting.entry.list == list &&
+                         (!kind || setting.entry.kind == kind);
+
+        return count;
+}
+
+static fn settings_commands(void)
+{
+        host_settings address_to slot = address_of settings_slot;
+        host_setting setting;
+
+        host_settings_empty(slot);
+
+        check("init add takes the words given apart",
+              settings_run("init", "add", "pacman", "-Syu") == HOST_SETTINGS_CHANGED &&
+                  host_settings_find(slot, SPARK_SETTINGS_INIT, "pacman -Syu",
+                                     address_of setting) &&
+                  setting.entry.id == 1);
+        check("init add takes them quoted",
+              settings_run("init", "add", "pacman -Syu", null) == HOST_SETTINGS_CHANGED &&
+                  host_settings_find(slot, SPARK_SETTINGS_INIT, "2", address_of setting) &&
+                  setting.entry.length == 11);
+        check("init remove takes an id",
+              settings_run("init", "remove", "1", null) == HOST_SETTINGS_CHANGED &&
+                  !host_settings_find(slot, SPARK_SETTINGS_INIT, "1", address_of setting));
+        check("init remove takes the words",
+              settings_run("init", "remove", "pacman -Syu", null) == HOST_SETTINGS_CHANGED &&
+                  !settings_listed(SPARK_SETTINGS_INIT, 0));
+        check("init remove of no such entry is refused",
+              settings_run("init", "remove", "9", null) == HOST_SETTINGS_REFUSED);
+        check("init alone lists", settings_run("init", null, null, null) == HOST_SETTINGS_SHOWN);
+        check("init add with nothing is usage",
+              settings_run("init", "add", null, null) == HOST_SETTINGS_USAGE &&
+                  settings_run("init", "add", "", null) == HOST_SETTINGS_USAGE);
+        check("an init word nobody defined is usage",
+              settings_run("init", "pacman -Syu", null, null) == HOST_SETTINGS_USAGE);
+
+        check("init mount off turns the mount off",
+              settings_run("init", "mount", "off", null) == HOST_SETTINGS_CHANGED &&
+                  slot->flags & SPARK_SETTINGS_MOUNT_OFF);
+        check("init mount alone shows it",
+              settings_run("init", "mount", null, null) == HOST_SETTINGS_SHOWN);
+        check("init mount takes on or off only",
+              settings_run("init", "mount", "maybe", null) == HOST_SETTINGS_USAGE &&
+                  settings_run("init", "mount", "on", "now") == HOST_SETTINGS_USAGE);
+        check("init mount on turns it back on",
+              settings_run("init", "mount", "on", null) == HOST_SETTINGS_CHANGED &&
+                  !(slot->flags & SPARK_SETTINGS_MOUNT_OFF));
+        check("a switch belongs to its own command",
+              settings_run("exit", "mount", "off", null) == HOST_SETTINGS_USAGE);
+
+        //      Nothing reads these yet, so no command takes them: a setting
+        //      accepted and then ignored is one nobody can tell is unsupported.
+        host_settings_empty(slot);
+        check("neither Canvas at boot nor the startup list is taken yet",
+              settings_run("init", "canvas", "off", null) == HOST_SETTINGS_USAGE &&
+                  settings_run("startup", null, null, null) == HOST_SETTINGS_USAGE &&
+                  settings_run("startup", "shell", null, null) == HOST_SETTINGS_USAGE &&
+                  settings_run("startup", "add", "btop", null) == HOST_SETTINGS_USAGE &&
+                  !slot->flags && !slot->length);
+
+        check("exit add and remove",
+              settings_run("exit", "add", "sync", null) == HOST_SETTINGS_CHANGED &&
+                  settings_listed(SPARK_SETTINGS_EXIT, 0) == 1 &&
+                  settings_run("exit", "remove", "sync", null) == HOST_SETTINGS_CHANGED &&
+                  !settings_listed(SPARK_SETTINGS_EXIT, 0));
+        check("exit with a command and no add is usage",
+              settings_run("exit", "sync", null, null) == HOST_SETTINGS_USAGE);
+
+        slot->generation = 3;
+        host_settings_seal(slot);
+        check("what the commands leave behind checks", spark_settings_check(slot) == 1);
+}
+
+static fn settings_sections(void)
+{
+        static p8 image[0x10000];
+        static const struct
+        {
+                string_address name;
+                p32 raw;
+                p32 size;
+                bool second;
+                p64 found;
+        } cases[] = {
+            {".mwset\0\0", 0x2000, 0x8000, true, 0x2000},
+            {".mwsex\0\0", 0x2000, 0x8000, true, 0},
+            {".mwset\0\0", 0x2001, 0x8000, true, 0},
+            {".mwset\0\0", 0x2000, 0x4000, true, 0},
+            {".mwset\0\0", 0x2000, 0x8000, false, 0},
+        };
+        bool held = true;
+
+        for (positive at = 0; at < array_count(cases); at++)
+        {
+                bipolar handle = system_call_2(syscall(memfd_create),
+                                               (positive)(string_address)"settings", 0);
+                p8 address_to table = image + 0x80 + 24 + 0xf0;
+                p64 offset = 0;
+
+                if (handle < 0)
+                {
+                        held = false;
+                        break;
+                }
+
+                memory_zero(image, sizeof(image));
+                image[0] = 'M';
+                image[1] = 'Z';
+                storage_put32(image + 0x3c, 0x80);
+                memory_copy_apart(image + 0x80, "PE\0\0", 4);
+                storage_put16(image + 0x86, 3);
+                storage_put16(image + 0x94, 0xf0);
+                memory_copy_apart(table, ".text\0\0\0", 8);
+                storage_put32(table + 16, 0x1000);
+                storage_put32(table + 20, 0x1000);
+                memory_copy_apart(table + 40, cases[at].name, 8);
+                storage_put32(table + 56, cases[at].size);
+                storage_put32(table + 60, cases[at].raw);
+                memory_copy_apart(table + 80, ".data\0\0\0", 8);
+                storage_put32(table + 96, 0x1000);
+                storage_put32(table + 100, 0xa000);
+
+                host_settings_empty(address_of settings_slot);
+                memory_copy_apart(image + 0x2000, address_of settings_slot, 64);
+                if (cases[at].second)
+                        memory_copy_apart(image + 0x6000, address_of settings_slot, 64);
+
+                held &= storage_write(handle, image, sizeof(image), 0) == (bipolar)sizeof(image) &&
+                        host_settings_section(handle) == cases[at].found &&
+                        host_settings_slots(handle, settings_pair, address_of offset) ==
+                            (cases[at].found != 0) &&
+                        (!cases[at].found ||
+                         (offset == 0x2000 && spark_settings_newest(settings_pair) == 0));
+                system_close(handle);
+        }
+
+        check("an image's settings are believed only where its section table and "
+              "both magics agree",
+              held);
+}
+
 b32 main(void)
 {
+        settings_format();
+        settings_bounds();
+        settings_torn();
+        settings_commands();
+        settings_sections();
         format_sums();
         format_spans();
         format_layouts();
