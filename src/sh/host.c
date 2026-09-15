@@ -1407,6 +1407,95 @@ fn host_quiesce(void)
         storage_mount_table_release(address_of table);
 }
 
+// Buttons -------------------------------------------------------
+
+/*
+        One request to the power button: set the line it runs first when
+        `command` is not null, then read back what it runs into `control`.
+        A command too long for the kernel is handed over whole, cut at the
+        size without a terminator, so the kernel's own refusal is what
+        answers it.
+*/
+static bipolar host_power_button_request(string_address command,
+                                         struct power_button_control address_to control)
+{
+        bipolar device;
+        bipolar failed;
+
+        memory_zero(control, sizeof(address_to control));
+
+        if (command)
+        {
+                positive length = string_length(command);
+
+                memory_copy(control->command, command,
+                            length < SPARK_POWER_COMMAND_MAX ? length + 1
+                                                             : SPARK_POWER_COMMAND_MAX);
+                control->set = 1;
+        }
+
+        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
+        if (device < 0)
+                return device;
+
+        failed = system_control(device, SPARK_IOCTL_POWER_BUTTON, control);
+        system_close(device);
+
+        control->command[SPARK_POWER_COMMAND_MAX - 1] = end;
+        return failed < 0 ? failed : 0;
+}
+
+/*
+        What the power button runs from now until the machine stops: the
+        command line given, or poweroff for an empty one. For this boot only
+        -- the kernel keeps it and nothing here writes it anywhere, so
+        whatever keeps it across boots calls this with what it kept.
+        Answers 0, or 1 having said why not.
+*/
+static b32 host_power_button_tell(string_address command)
+{
+        struct power_button_control control;
+        bipolar failed = host_power_button_request(
+            command && *command ? command : (string_address)"poweroff",
+            address_of control);
+
+        if (failed == -EPERM)
+                return host_refuse("setting what the power button runs needs root%s\n", "");
+        if (failed == -ENAMETOOLONG)
+                return host_refuse("that command is longer than the %s a power button holds\n",
+                                   "255 bytes");
+
+        return failed < 0 ? host_fail(SPARK_DEVICE, failed) : 0;
+}
+
+static b32 host_usage();
+
+/* moonwater button power ["COMMAND"] */
+static b32 host_button(string_address address_to arguments, positive count)
+{
+        struct power_button_control control;
+        bipolar failed;
+
+        if (count < 3 || count > 4 || !string_equals(arguments[2], "power"))
+                return host_usage();
+
+        if (count == 4 && host_power_button_tell(arguments[3]))
+                return 1;
+
+        failed = host_power_button_request(null, address_of control);
+        if (failed < 0)
+                return host_fail(SPARK_DEVICE, failed);
+
+        if (!control.command[0])
+                string_format(log, host_label "the power button is ignored\n");
+        else
+                string_format(log, host_label "the power button runs: %s\n",
+                              (string_address)control.command);
+
+        log_flush();
+        return 0;
+}
+
 // The command ---------------------------------------------------
 
 static b32 host_status(void)
@@ -1471,7 +1560,8 @@ static b32 host_usage(void)
                       host_label "       moonwater install DISK [--removable]\n"
                       host_label "       moonwater use [DISK]\n"
                       host_label "       moonwater update [DISK]\n"
-                      host_label "       moonwater live\n");
+                      host_label "       moonwater live\n"
+                      host_label "       moonwater button power [COMMAND]\n");
         log_flush();
         return 2;
 }
@@ -1538,6 +1628,11 @@ static b32 host_main()
 
         if (string_equals(verb, "status") && count <= 2)
                 return host_status();
+
+        // Before the root check: reading needs nothing, and the kernel
+        // decides who may set it.
+        if (string_equals(verb, "button"))
+                return host_button(arguments, count);
 
         if (!string_equals(verb, "install") && !string_equals(verb, "use") &&
             !string_equals(verb, "update") && !string_equals(verb, "live") &&

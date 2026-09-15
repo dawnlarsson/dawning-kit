@@ -16859,6 +16859,7 @@ static long stat_task_ns, stat_spawns;
     source += r'''
 static long report_stats(struct stats *out) { (void)out; return 322; }
 '''
+    source += "static long report_power_button(struct power_button_control *out);\n"
     source += section(core, "static long device_ioctl", "/*\n        misc_open")
     source += r'''
 static void check_spawn_dispatch(void) {
@@ -17115,6 +17116,50 @@ static void vt_event(unsigned long event,unsigned console) {
     source += section(drag, "#define WHEEL_LINES", "static void wheel_deliver")
     source += section(pointer, "#define ACCEL_ONE", "static void desktop_confine_cursor")
     source += section(pointer, "static void pointer_commit", "#define POINTER_OPEN_TRIES")
+    # The power button's handler and the work it queues, against a mocked
+    # workqueue, helper and reboot: what runs, how it is started, what a
+    # failure falls back to, and which presses count.
+    source += r"""
+#define KEY_POWER 116
+#ifndef READ_ONCE
+#define READ_ONCE(x) (x)
+#endif
+#define UMH_WAIT_EXEC 1
+#define UMH_WAIT_PROC 2
+#ifndef pr_warn
+#define pr_warn(...) ((void)0)
+#endif
+#define ATOMIC_INIT(value) (value)
+#define msecs_to_jiffies(ms) ((unsigned long)(ms))
+#define time_before(a,b) ((long)((a)-(b))<0)
+#define system_unbound_wq ((void *)0)
+#define cmpxchg(at,old,new) ({ __typeof__(*(at)) seen_=*(at); if (seen_==(old)) *(at)=(new); seen_; })
+#undef strscpy
+#define strscpy(to,from,size) power_strscpy((to),(from),(size))
+static void power_strscpy(char *to,const char *from,unsigned long size) {
+    unsigned long at=0; for (;at+1<size && from[at];at++) to[at]=from[at]; if (size) to[at]=0;
+}
+struct work_struct { void (*func)(struct work_struct *); };
+#define DECLARE_WORK(name,run) struct work_struct name={run}
+static unsigned long jiffies;
+static unsigned power_queued,power_helpers,power_offs,power_reboots,power_wait;
+static int power_helper_answer;
+static _Bool power_forced;
+static char power_argv[3][300];
+static _Bool queue_work(void *queue,struct work_struct *work) { (void)queue;(void)work;power_queued++;return 1; }
+static int call_usermodehelper(const char *path,char **argv,char **envp,int wait) {
+    (void)envp;power_helpers++;power_wait=(unsigned)wait;
+    for (unsigned i=0;i<3;i++) snprintf(power_argv[i],sizeof(power_argv[i]),"%s",argv[i]);
+    assert(!strcmp(path,argv[0]) && !argv[3]);
+    return power_helper_answer;
+}
+static void orderly_poweroff(_Bool force) { power_offs++;power_forced=force; }
+static void orderly_reboot(void) { power_reboots++; }
+"""
+    source += section(core, "#define POWER_COMMAND_DEFAULT", "static int power_connect")
+    source += "#define CAP_SYS_BOOT 22\nstatic _Bool power_capable=1;\n"
+    source += "static _Bool capable(int cap) { return cap==CAP_SYS_BOOT && power_capable; }\n"
+    source += section(core, "static long report_power_button", "#ifdef CONFIG_MOONWATER_CANVAS\n#define REPORT_CANVAS")
     # Here rather than beside the geometry it reshapes: resize_move reads the
     # drag state off desktop, and desktop is the mock declared just above.
     source += r'''
@@ -17350,6 +17395,68 @@ static void check_console_keyboard(void) {
     check(vt_sets==sets && vt_modes[0]==K_UNICODE,
           "giving the keys back twice restores once, and a late VT event mutes nothing");
     vt_modes[0]=vt_modes[1]=vt_modes[2]=vt_modes[3]=K_UNICODE;
+}
+static void power_press(const char *command,int answer) {
+    snprintf(power_command,sizeof(power_command),"%s",command);
+    power_helper_answer=answer;power_helpers=power_offs=power_reboots=0;power_forced=0;
+    power_work.func(&power_work);
+}
+// ACPI's button arrives as KEY_POWER and nothing listened to it.
+static void check_power_button(void) {
+    check(!strcmp(power_command,"poweroff"),"the power button runs poweroff until told otherwise");
+    power_press("poweroff",0);
+    check(power_helpers==1 && !strcmp(power_argv[0],"/shell") && !strcmp(power_argv[1],"-c") &&
+          !strcmp(power_argv[2],"poweroff") && power_wait==UMH_WAIT_PROC && !power_offs,
+          "poweroff runs as /shell -c poweroff, waited for, with nothing forced");
+    power_press("poweroff",-2);
+    check(power_offs==1 && power_forced && !power_reboots,
+          "a poweroff that cannot run falls back to orderly_poweroff, forced");
+    power_press("reboot",256);
+    check(power_reboots==1 && !power_offs,"a reboot that fails falls back to orderly_reboot");
+    power_press("echo pressed > /dev/ttyS0",-2);
+    check(power_helpers==1 && power_wait==UMH_WAIT_EXEC && !power_offs && !power_reboots,
+          "any other command is started and left to itself, even when it cannot start");
+    power_press("",0);
+    check(!power_helpers && !power_offs,"an empty command is the button ignored");
+    snprintf(power_command,sizeof(power_command),"poweroff");
+    power_last=0;power_queued=0;jiffies=5000;
+    power_event(0,EV_KEY,KEY_POWER,1);
+    check(power_queued==1,"a press queues the command");
+    jiffies+=400;power_event(0,EV_KEY,KEY_POWER,1);
+    check(power_queued==1,"a second press inside a second is the same press");
+    jiffies+=1200;power_event(0,EV_KEY,KEY_POWER,1);
+    check(power_queued==2,"a press after a second is another press");
+    jiffies+=5000;
+    power_event(0,EV_KEY,KEY_POWER,0);power_event(0,EV_KEY,KEY_POWER,2);
+    power_event(0,EV_KEY,KEY_TAB,1);power_event(0,0,KEY_POWER,1);
+    check(power_queued==2,"a release, a repeat and any other key are not presses");
+    power_last=0;power_queued=0;
+
+    struct power_button_control request;
+    memset(&request,0,sizeof(request));
+    request.set=1;snprintf(request.command,sizeof(request.command),"echo set");
+    check(!report_power_button(&request) && !strcmp(power_command,"echo set") &&
+          !strcmp(request.command,"echo set"),
+          "setting the line with CAP_SYS_BOOT stores it and reads it back");
+    power_capable=0;
+    memset(&request,0,sizeof(request));
+    request.set=1;snprintf(request.command,sizeof(request.command),"reboot");
+    check(report_power_button(&request)==-EPERM && !strcmp(power_command,"echo set"),
+          "setting the line without CAP_SYS_BOOT is refused and changes nothing");
+    memset(&request,0,sizeof(request));
+    check(!report_power_button(&request) && !strcmp(request.command,"echo set"),
+          "reading the line needs no capability");
+    power_capable=1;
+    memset(&request,'x',sizeof(request));request.set=1;request.reserved[0]=request.reserved[1]=0;
+    check(report_power_button(&request)==-ENAMETOOLONG && !strcmp(power_command,"echo set"),
+          "a line with no end inside the request is refused");
+    memset(&request,0,sizeof(request));request.set=2;
+    check(report_power_button(&request)==-EINVAL,"a set that is neither 0 nor 1 is refused");
+    memset(&request,0,sizeof(request));request.reserved[1]=1;
+    check(report_power_button(&request)==-EINVAL,"a reserved field that is not zero is refused");
+    power_presses=3;memset(&request,0,sizeof(request));
+    check(!report_power_button(&request) && request.presses==3,"the presses acted on are read back");
+    power_presses=0;snprintf(power_command,sizeof(power_command),"poweroff");
 }
 static int reference_int(s64 value) {
     return value<INT_MIN?INT_MIN:value>INT_MAX?INT_MAX:(int)value;
@@ -17839,6 +17946,7 @@ int main(void) {
     check_key_typed();
     check_keyboard_state();
     check_console_keyboard();
+    check_power_button();
     free(output);
     printf("  core-state %u of %u\n",checks-failures,checks);
     const char *tally=getenv("TEST_TALLY");

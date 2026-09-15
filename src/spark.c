@@ -324,6 +324,45 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
 #define SPARK_IOCTL_SNAPSHOT 0xc0207309u
 
 /*
+        The request numbers, in one place, because more than one change adds
+        them at once: 1 spawn, 2 stats, 3 input stats, 4 window create
+        (window.c), 5 window commit (window.c), 6 cursor stats, 7 input
+        devices, 9 snapshot, 10 reserved for the Canvas on/off request, 11
+        the power button. 8 was never used and stays that way. The next
+        request takes the next free number past the highest, 12 at the time
+        of writing, and a gap is never filled: an old program sending an old
+        number must never reach a new request that happens to share it.
+*/
+
+/*
+        The power button, and the command line it runs.
+
+        The power button runs its line the way `/shell -c` does, and the line
+        is "poweroff" until somebody sets another: the shell's own poweroff,
+        which syncs, remounts the disks read-only and stops the machine. Set
+        it to a script, to "reboot", or to nothing at all to have the button
+        ignored. The kernel holds the line while it is up and nothing longer;
+        keeping it across a boot belongs to whoever sets it at boot.
+
+        Reading needs nothing. Setting needs CAP_SYS_BOOT, because a button
+        that runs a command is a way to run one as root.
+*/
+#define SPARK_POWER_COMMAND_MAX 256u
+
+struct power_button_control {
+        unsigned int set;      // 1 stores command first; 0 only reads it back
+        unsigned int presses;  // presses acted on since boot
+        unsigned int reserved[2];
+        char command[SPARK_POWER_COMMAND_MAX]; // NUL terminated, "" ignores
+};
+
+_Static_assert(sizeof(struct power_button_control) == 272,
+               "spark power button ABI");
+
+// _IOWR('s', 11, struct power_button_control)
+#define SPARK_IOCTL_POWER_BUTTON 0xc110730bu
+
+/*
         One launch request.
 
         stdio names the child's standard descriptors, and a pipeline stage is

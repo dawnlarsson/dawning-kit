@@ -9876,6 +9876,174 @@ else
         printf '  %-24s no /dev/kvm, the widest pass did not run\n' 'this host'
 fi
 
+#
+#       The power button, on a machine with no screen at all.
+#
+#       ACPI's button driver reports the button as a key and nothing listened,
+#       so a press did nothing. The handler is the kernel's own and not the
+#       compositor's, and this is where that is shown: no display device, so
+#       Canvas gives up on a card and never takes input, and the button still
+#       runs what it was told. QMP presses it. Every answer is reversed or
+#       counted so the command echo on this console cannot pass for one.
+#
+if [ -r /dev/kvm ] && command -v python3 > /dev/null 2>&1; then
+        MOONWATER_BOOT_WORK=$work python3 - "$image" > "$work/power-answers" 2> "$work/power-why" <<'PY'
+import json, os, socket, subprocess, sys, time
+
+image = sys.argv[1]
+work = os.environ["MOONWATER_BOOT_WORK"]
+qmp = work + "/power-qmp"
+console = work + "/power-console"
+out = []
+
+guest = subprocess.Popen([
+    "qemu-system-x86_64", "-m", "1G", "-smp", "2", "-cpu", "host", "-enable-kvm",
+    "-kernel", image, "-vga", "none", "-no-reboot", "-display", "none",
+    "-chardev", "socket,id=console,path=" + console + ",server=on,wait=off",
+    "-serial", "chardev:console",
+    "-qmp", "unix:" + qmp + ",server,nowait",
+    "-append", "console=ttyS0 drm_client_lib.active="],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+for _ in range(200):
+    if os.path.exists(qmp) and os.path.exists(console):
+        break
+    time.sleep(0.1)
+
+serial = socket.socket(socket.AF_UNIX)
+serial.connect(console)
+serial.settimeout(0.2)
+transcript = bytearray()
+
+def pump(seconds):
+    stop = time.time() + seconds
+    while time.time() < stop:
+        try:
+            chunk = serial.recv(65536)
+        except socket.timeout:
+            continue
+        except OSError:
+            return
+        if not chunk:
+            return
+        transcript.extend(chunk)
+
+def wait_for(marker, seconds):
+    stop = time.time() + seconds
+    while marker not in transcript and time.time() < stop:
+        pump(0.3)
+    return marker in transcript
+
+def say(line):
+    serial.sendall(line.encode() + b"\n")
+
+qs = socket.socket(socket.AF_UNIX)
+qs.connect(qmp)
+qs.settimeout(20)
+qf = qs.makefile("rwb")
+qf.readline()
+
+def qcmd(obj):
+    qf.write((json.dumps(obj) + "\n").encode())
+    qf.flush()
+    while True:
+        line = qf.readline()
+        if not line:
+            return {}
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if "event" not in msg:
+            return msg
+
+qcmd({"execute": "qmp_capabilities"})
+
+def press():
+    qcmd({"execute": "system_powerdown"})
+
+#       A shell that answers before anything is typed at it for real: the UART
+#       drops what arrives while the kernel is still talking.
+wait_for(b"Run /init as init process", 60)
+ready = False
+for _ in range(30):
+    say("printf 'rewop-ydaer\\n' | rev")
+    if wait_for(b"ready-power", 2):
+        ready = True
+        break
+
+def asked(name, line, marker, seconds=20):
+    if not ready:
+        out.append((name, "not run: no shell", "yes"))
+        return
+    say(line)
+    out.append((name, "yes" if wait_for(marker, seconds) else "no", "yes"))
+
+asked("the compositor found no card", "true", b"gave up waiting for a card", 30)
+asked("the power button runs poweroff by default",
+      "moonwater button power | grep -c 'runs: poweroff' | sed 's/^/tluafed-/' | rev",
+      b"1-default")
+asked("a user without CAP_SYS_BOOT cannot set it",
+      "setpriv --reuid=65534 --regid=65534 --clear-groups moonwater button power true 2>&1 | grep -c 'needs root' | sed 's/^/toorn-/' | rev",
+      b"1-nroot")
+asked("a command longer than the button holds is refused",
+      "moonwater button power \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
+      b"1-long")
+asked("the power button takes a command",
+      "moonwater button power 'echo NOTTUB | rev > /dev/ttyS0' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
+      b"1-set")
+
+if ready:
+    press()
+    time.sleep(0.2)
+    press()
+    pump(4)
+out.append(("two presses inside a second run it once",
+            str(transcript.count(b"BUTTON")), "1"))
+
+if ready:
+    press()
+    pump(1.6)
+    press()
+    pump(4)
+out.append(("two presses apart run it twice more",
+            str(transcript.count(b"BUTTON")), "3"))
+
+asked("the power button runs poweroff again",
+      "moonwater button power poweroff | grep -c 'runs: poweroff' | sed 's/^/niaga-/' | rev",
+      b"1-again")
+
+powered = "no"
+if ready:
+    press()
+    try:
+        guest.wait(40)
+        powered = "yes"
+    except Exception:
+        pass
+pump(0.5)
+out.append(("a press powers the machine off", powered, "yes"))
+out.append(("and it went down the orderly way",
+            "yes" if b"reboot: Power down" in transcript else "no", "yes"))
+
+if guest.poll() is None:
+    guest.kill()
+    guest.wait(10)
+
+open(work + "/power-transcript", "wb").write(bytes(transcript))
+for name, got, want in out:
+    print("%s|%s|%s" % (name, got, want))
+PY
+        if [ ! -s "$work/power-answers" ]; then
+                lost 'power button guest' "answered nothing: $(tail -3 "$work/power-why")"
+        fi
+        while IFS='|' read -r name got want; do
+                same "$name" "$want" "$got"
+        done < "$work/power-answers"
+else
+        printf '  %-24s no /dev/kvm, the power button pass did not run\n' 'power button'
+fi
+
 counted
 )
 
@@ -11287,14 +11455,25 @@ else:
     out.append(("and a typed line still runs in one shell",
                 "not run: no static cc for the switcher", "1"))
 
-hf.write(b"quit\n")
-hf.flush()
-time.sleep(1)
-leak_guest.terminate()
+#       And the power button with Canvas up, which has its own input handler
+#       beside the button's: poweroff by default, so the machine goes.
+qcmd({"execute": "system_powerdown"})
 try:
-    leak_guest.wait(10)
+    leak_guest.wait(40)
+    powered = "yes"
 except Exception:
-    leak_guest.kill()
+    powered = "no"
+out.append(("the power button powers off with Canvas up", powered, "yes"))
+
+if leak_guest.poll() is None:
+    hf.write(b"quit\n")
+    hf.flush()
+    time.sleep(1)
+    leak_guest.terminate()
+    try:
+        leak_guest.wait(10)
+    except Exception:
+        leak_guest.kill()
 
 for name, got, want in out:
     print("%s|%s|%s" % (name, got, want))

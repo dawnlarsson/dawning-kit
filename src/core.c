@@ -27,6 +27,11 @@
 #include <linux/netdevice.h>
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
+// The power button, which is the machine's rather than the compositor's.
+#include <linux/input.h>
+#include <linux/reboot.h>
+#include <linux/umh.h>
+#include <linux/workqueue.h>
 
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
@@ -981,6 +986,191 @@ static long report_stats(struct stats __user *out)
         return copy_to_user(out, &stats, sizeof(stats)) ? -EFAULT : 0;
 }
 
+/*
+        The power button.
+
+        ACPI's button driver only reports KEY_POWER as a key, and nothing here
+        listened, so pressing it did nothing at all. This is its own input
+        handler rather than a key the compositor's handler looks for: that one
+        exists only while Canvas has a screen, and the button has to work on a
+        machine with none.
+
+        A press runs the line SPARK_IOCTL_POWER_BUTTON last set, "poweroff" until
+        then, as `/shell -c` would. The handler is called from the input
+        core, in interrupt context, so it only notes the press and queues the
+        work; the command runs from a workqueue. A firmware that reports the
+        button twice, or a hand that presses it twice, is one press inside
+        POWER_DEBOUNCE_MS.
+
+        "poweroff" and "reboot" are the lines that must not fail quietly: one
+        that could not start, or answered that it could not stop the machine,
+        falls back to the kernel's orderly_poweroff or orderly_reboot. The
+        shell's poweroff is tried first because it remounts the disks
+        read-only on the way down, and the kernel's own poweroff_cmd,
+        /sbin/poweroff, is not in this image. Any other line runs and is left
+        to itself.
+*/
+#define POWER_COMMAND_DEFAULT "poweroff"
+#define POWER_DEBOUNCE_MS 1000
+
+static DEFINE_MUTEX(power_command_lock);
+static char power_command[SPARK_POWER_COMMAND_MAX] = POWER_COMMAND_DEFAULT;
+static unsigned long power_last;
+static atomic_t power_presses = ATOMIC_INIT(0);
+
+static void power_run(struct work_struct *work)
+{
+        static char *envp[] = {"HOME=/root",
+                               "PATH=/bin:/sbin:/usr/bin:/usr/sbin", NULL};
+        char command[SPARK_POWER_COMMAND_MAX];
+        char *argv[] = {SPARK_TOOL_PROGRAM, "-c", command, NULL};
+        _Bool poweroff, reboot;
+        int ret;
+
+        (void)work;
+
+        mutex_lock(&power_command_lock);
+        strscpy(command, power_command, sizeof(command));
+        mutex_unlock(&power_command_lock);
+
+        if (!command[0])
+        {
+                pr_info("[moonwater] " "power button: ignored\n");
+                return;
+        }
+
+        poweroff = !strcmp(command, POWER_COMMAND_DEFAULT);
+        reboot = !strcmp(command, "reboot");
+        pr_info("[moonwater] " "power button: %s\n", command);
+
+        ret = call_usermodehelper(argv[0], argv, envp,
+                                  poweroff || reboot ? UMH_WAIT_PROC : UMH_WAIT_EXEC);
+        if (!ret)
+                return;
+
+        if (!poweroff && !reboot)
+        {
+                pr_warn("[moonwater] " "power button: %s did not start (%d)\n", command, ret);
+                return;
+        }
+
+        pr_warn("[moonwater] " "power button: %s answered %d, stopping the machine anyway\n", command, ret);
+
+        if (reboot)
+                orderly_reboot();
+        else
+                orderly_poweroff(true);
+}
+
+static DECLARE_WORK(power_work, power_run);
+
+static void power_event(struct input_handle *handle, unsigned int type,
+                        unsigned int code, int value)
+{
+        unsigned long now = jiffies | 1;
+        unsigned long last = READ_ONCE(power_last);
+
+        (void)handle;
+
+        if (type != EV_KEY || code != KEY_POWER || value != 1)
+                return;
+
+        if (last && time_before(now, last + msecs_to_jiffies(POWER_DEBOUNCE_MS)))
+                return;
+
+        // Two devices reporting one press land here together; one wins.
+        if (cmpxchg(&power_last, last, now) != last)
+                return;
+
+        atomic_fetch_add(1, &power_presses);
+        queue_work(system_unbound_wq, &power_work);
+}
+
+static int power_connect(struct input_handler *handler, struct input_dev *dev,
+                         const struct input_device_id *id)
+{
+        struct input_handle *handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+        int ret;
+
+        if (!handle)
+                return -ENOMEM;
+
+        handle->dev = dev;
+        handle->handler = handler;
+        handle->name = "moonwater-power";
+
+        ret = input_register_handle(handle);
+        if (ret)
+                goto free;
+
+        ret = input_open_device(handle);
+        if (ret)
+                goto unregister;
+
+        return 0;
+
+unregister:
+        input_unregister_handle(handle);
+free:
+        kfree(handle);
+        return ret;
+}
+
+static void power_disconnect(struct input_handle *handle)
+{
+        input_close_device(handle);
+        input_unregister_handle(handle);
+        kfree(handle);
+}
+
+static const struct input_device_id power_ids[] = {
+    {
+        .flags = INPUT_DEVICE_ID_MATCH_EVBIT | INPUT_DEVICE_ID_MATCH_KEYBIT,
+        .evbit = {BIT_MASK(EV_KEY)},
+        .keybit = {[BIT_WORD(KEY_POWER)] = BIT_MASK(KEY_POWER)},
+    },
+    {},
+};
+
+static struct input_handler power_handler = {
+    .event = power_event,
+    .connect = power_connect,
+    .disconnect = power_disconnect,
+    .name = "moonwater-power",
+    .id_table = power_ids,
+};
+
+static _Bool power_handler_registered;
+
+static long report_power_button(struct power_button_control __user *out)
+{
+        struct power_button_control request;
+
+        if (copy_from_user(&request, out, sizeof(request)))
+                return -EFAULT;
+        if (request.set > 1 || request.reserved[0] || request.reserved[1])
+                return -EINVAL;
+
+        if (request.set)
+        {
+                if (!capable(CAP_SYS_BOOT))
+                        return -EPERM;
+                if (!memchr(request.command, 0, sizeof(request.command)))
+                        return -ENAMETOOLONG;
+
+                mutex_lock(&power_command_lock);
+                strscpy(power_command, request.command, sizeof(power_command));
+                mutex_unlock(&power_command_lock);
+        }
+
+        mutex_lock(&power_command_lock);
+        strscpy(request.command, power_command, sizeof(request.command));
+        mutex_unlock(&power_command_lock);
+        request.presses = (unsigned int)atomic_read(&power_presses);
+
+        return copy_to_user(out, &request, sizeof(request)) ? -EFAULT : 0;
+}
+
 #ifdef CONFIG_MOONWATER_CANVAS
 #define REPORT_CANVAS(name, type, collect)                                   \
         static long name(struct type __user *out)                            \
@@ -1229,6 +1419,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 return report_stats((struct stats __user *)arg);
         case SPARK_IOCTL_SNAPSHOT:
                 return report_snapshot((struct snapshot_request __user *)arg);
+        case SPARK_IOCTL_POWER_BUTTON:
+                return report_power_button((struct power_button_control __user *)arg);
 #ifdef CONFIG_MOONWATER_CANVAS
         case SPARK_IOCTL_INPUT_STATS:
                 return report_input((struct input_stats __user *)arg);
@@ -1396,6 +1588,12 @@ static b32 __init start()
                 return ret;
         }
 
+        // Before the compositor: the button has to work with no screen.
+        if (input_register_handler(&power_handler))
+                pr_alert("[moonwater] " "could not watch the power button\n");
+        else
+                power_handler_registered = true;
+
 #if defined(CONFIG_MOONWATER_CANVAS) && \
     defined(CONFIG_MOONWATER_CANVAS_AUTOSTART)
         canvas_start_probing();
@@ -1417,6 +1615,10 @@ static void __exit exit_module(void)
         console_stop();
         put_pid(xchg(&canvas_spawned, NULL));
 #endif
+
+        if (power_handler_registered)
+                input_unregister_handler(&power_handler);
+        cancel_work_sync(&power_work);
 
         misc_deregister(&device);
         kvfree(snapshot);
