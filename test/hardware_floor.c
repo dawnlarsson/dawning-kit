@@ -279,7 +279,7 @@ void *memory_copy_end(void *, const void *, unsigned long);
 void *memory_copy_apart_end(void *, const void *, unsigned long);
 #endif
 
-/* The lock is Linux runtime assembly (platform/linux.inc) and only the
+/* The lock is Linux runtime assembly (in library.c) and only the
    outlined library carries it. threads_live is forced to one around the
    company row to time the atomic path in this single-threaded harness. */
 #if defined(USE_OURS) && !defined(SKIP_LOCK)

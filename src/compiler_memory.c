@@ -3427,10 +3427,10 @@ static inline INLINE address_any copy_until_known(address_any destination,
         So the shim is here, in the umbrella, rather than in the startup
         assembly. Two reasons it does not belong there. A program is one
         translation unit -- it includes this file and then defines main -- so a
-        weak default in linux.inc and a strong override here would be two
+        weak default in library.c's Linux runtime and a strong override here would be two
         definitions of one label in a single assembly stream, which is a
         duplicate symbol at assembly time and not an override; weak linking
-        needs separate objects. And linux.inc sits inside library.c's graph,
+        needs separate objects. And that runtime sits inside library.c,
         where everything must be assembly at three-architecture parity, for
         something with no hardware content in it at all.
 

@@ -253,7 +253,7 @@ cover('benchmark_context', 'test/checks.c#BENCH_span_byte', 'memory_span_byte_wi
 # trapping, moving ABI arguments, reading the architectural counter, or doing a
 # byte swap has no direct timing row here. Do not turn this category into a
 # "hardware floor" assertion without measured evidence.
-cover('static_leaf', 'src/platform/linux.inc', '_start exit sleep',
+cover('static_leaf', 'src/library.c', '_start exit sleep',
       'startup or direct Linux syscall ABI body; statically reviewed only')
 cover('static_leaf', 'src/library.c', '''
 byte_is_alnum byte_is_alpha byte_is_digit byte_is_hexadecimal

@@ -3587,7 +3587,7 @@ static inline fn digest_close(digest_state address_to digest, p8 address_to out)
         THREADS
 
         Every thread pops and pushes its own shelves. The heads live in the
-        thread block (platform/linux.inc), so memory_take and memory_give are
+        thread block (library.c's Linux runtime), so memory_take and memory_give are
         the same load and store they always were, through fs or tp instead of
         a .bss array, and neither takes a lock. A block freed on a thread
         other than the one that took it simply joins the freeing thread's

@@ -85,7 +85,7 @@ SECTIONS
         /DISCARD/ : {
                 /* A __thread object would be reached at a link-time offset
                    from the thread register, and the register points at the
-                   explicit thread block in platform/linux.inc, not at a TLS
+                   explicit thread block in library.c, not at a TLS
                    image. Discarding the sections turns any such object into a
                    link error naming it, instead of a store into another
                    field of the block. */

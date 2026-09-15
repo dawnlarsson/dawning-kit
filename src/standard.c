@@ -591,7 +591,7 @@
 
 /*
         And then something did install the block (2026-09-14). _start in
-        platform/linux.inc points the thread register at thread_main, and
+        library.c's Linux runtime points the thread register at thread_main, and
         thread_start gives every new thread a block of its own, so on Linux
         errno is a field of the calling thread's block: a thread's failures
         are its own, as the standard wants. It is still not __thread. The
@@ -1690,7 +1690,7 @@ static b32 lock_state(lock address_to it)
 //      The two threads-in-one-process spellings, which is the case this
 //      library will meet first.
 /*
-        On Linux the private spellings are the assembly in platform/linux.inc,
+        On Linux the private spellings are the assembly in library.c's Linux runtime,
         which carries the threads_live elision this note used to put off:
         nothing started a thread then, and thread_start now owns the count.
         What stays here is the lock two processes share, which cannot elide.
