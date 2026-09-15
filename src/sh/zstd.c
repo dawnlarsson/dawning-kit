@@ -3227,7 +3227,7 @@ static p8 address_to zstd_parse_dfast(zstd_encoder address_to e, p32 from,
         The row finder of greedy, lazy and lazy2, as libzstd's.  The hash
         table is rows of 2^row_log indices chosen by the hash's top bits; a
         byte tag from the next eight bits sits beside each index in chain,
-        and a head per row (after the tags) wraps downward, so a row keeps
+        and a head per row (the byte before its tags) wraps downward, so a row keeps
         its latest positions with the newest at the head.  A search compares
         the row's tags a word at a time and walks, newest first, only the
         slots whose tag matched; the first one older than the window ends it.
@@ -3266,14 +3266,12 @@ zstd_row_insert(zstd_encoder address_to e, p32 at, p8 row_log, p8 mls)
         positive const h = zstd_hash_bytes(e->base + at,
                                            (p8)(e->p.hash_log - row_log + 8), mls);
         positive const row = h >> 8;
-        p8 address_to const tags = (p8 address_to)e->chain;
-        p8 address_to const heads = tags + ((positive)1 << e->p.hash_log);
-        positive const head = (positive)(heads[row] - 1) & (((positive)1 << row_log) - 1);
-        positive const slot = (row << row_log) + head;
+        p8 address_to const cell = (p8 address_to)e->chain + (row << row_log) + row;
+        positive const head = (positive)(cell[0] - 1) & (((positive)1 << row_log) - 1);
 
-        heads[row] = (p8)head;
-        tags[slot] = (p8)h;
-        e->hash[slot] = at;
+        cell[0] = (p8)head;
+        cell[1 + head] = (p8)h;
+        e->hash[(row << row_log) + head] = at;
 }
 
 /* The positions from e->next to target go in; after a long match only its
@@ -3321,17 +3319,19 @@ zstd_row_find(zstd_encoder address_to e, p8 address_to ip, p8 address_to iend,
            libzstd does, so the load it waits on is in cache by then. */
         if (ip + 16 <= iend)
         {
-                positive const ahead =
-                    (zstd_hash_bytes(ip + 8, (p8)(e->p.hash_log - row_log + 8), mls) >> 8)
-                    << row_log;
+                positive const next = zstd_hash_bytes(ip + 8, (p8)(e->p.hash_log - row_log + 8), mls) >> 8;
+                p8 address_to const ahead = (p8 address_to)e->chain + (next << row_log) + next;
 
-                __builtin_prefetch((p8 address_to)e->chain + ahead);
-                __builtin_prefetch(e->hash + ahead);
+                __builtin_prefetch(ahead);
+                __builtin_prefetch(ahead + entries);
+                __builtin_prefetch(e->hash + (next << row_log));
                 if (row_log > 4)
-                        __builtin_prefetch(e->hash + ahead + 16);
+                        __builtin_prefetch(e->hash + (next << row_log) + 16);
         }
-        head = ((p8 address_to)e->chain + ((positive)1 << e->p.hash_log))[row];
-        mask = zstd_row_mask((p8 address_to)e->chain + (row << row_log), (p8)h, entries);
+        /* A row is its head byte and then its tags, so the head is read
+           from the line the tags are, as libzstd keeps it in tagRow[0]. */
+        head = ((p8 address_to)e->chain + (row << row_log) + row)[0];
+        mask = zstd_row_mask((p8 address_to)e->chain + (row << row_log) + row + 1, (p8)h, entries);
         if (head)
                 mask = (mask >> head) | (mask << (entries - head));
         if (entries < 64)
@@ -4654,7 +4654,7 @@ static b32 zstd_jobs_open(const zstd_params address_to p)
                                : p->strategy >= ZSTD_LAZY2  ? 7
                                                             : 6;
         positive const job = (positive)1 << job_log;
-        positive const slots = parallel_width() + 1;
+        positive const slots = parallel_slots();
         positive per_round = ZSTD_JOBS_BUDGET / job;
         positive room;
 

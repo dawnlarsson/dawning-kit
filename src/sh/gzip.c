@@ -1614,7 +1614,7 @@ static bool gzip_encode_setup(p8 level)
         gzip_writer.failed = false;
         gzip_writer.store = gzip_output.bytes ? address_of gzip_output : null;
         gzip_writer.fd = gzip_out_fd;
-        gzip_writer.slot_count = parallel_width();
+        gzip_writer.slot_count = parallel_slots();
         gzip_writer.slots = (gzip_encoder address_to address_to)memory(
             gzip_writer.slot_count * sizeof(gzip_encoder address_to));
         gzip_writer.done = (p8 address_to)memory(GZIP_BATCH_BLOCKS);

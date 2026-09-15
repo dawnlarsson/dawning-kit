@@ -382,6 +382,7 @@ typedef struct
         positive bytes;
         positive first;
         positive width;
+        positive slots;
         positive inputs;
         positive group;
         bool from_files;
@@ -404,13 +405,13 @@ static string_address checksum_input_name(checksum_batch address_to batch,
 
 /* The transfer block of the thread running a job, taken once per worker. */
 static p8 address_to checksum_slot_block(p8 address_to address_to blocks,
-                                         positive width)
+                                         positive slots)
 {
         positive slot = parallel_slot();
 
         if (!slot)
                 return file_transfer;
-        if (!blocks || slot > width)
+        if (!blocks || slot >= slots)
                 return null;
         if (!blocks[slot])
                 blocks[slot] = memory(FILE_TRANSFER_SIZE);
@@ -439,7 +440,7 @@ static fn checksum_batch_job(address_any context, positive index,
         positive first = index * batch->group;
         positive last = first + batch->group < batch->inputs ? first + batch->group
                                                              : batch->inputs;
-        p8 address_to block = checksum_slot_block(batch->blocks, batch->width);
+        p8 address_to block = checksum_slot_block(batch->blocks, batch->slots);
 
         for (positive at = first; at < last; at++)
         {
@@ -553,6 +554,7 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
             .bytes = checksum_bytes(algorithm),
             .first = first,
             .width = parallel_width(),
+            .slots = parallel_slots(),
             .inputs = inputs,
             .from_files = from_files,
             .tagged = tagged,
@@ -562,7 +564,7 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
         // One thread, or too little to share: the jobs run inline in order
         // on the caller and need neither worker blocks nor the stat test.
         if (inputs > 1 && batch.width > 1 && weight >= PARALLEL_MINIMUM_BYTES)
-                batch.blocks = memory((batch.width + 1) * sizeof(p8 address_to));
+                batch.blocks = memory(batch.slots * sizeof(p8 address_to));
         if (!batch.blocks)
                 weight = 0;
         batch.spread = batch.blocks != null;
@@ -574,10 +576,10 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
 
         if (batch.blocks)
         {
-                for (positive slot = 1; slot <= batch.width; slot++)
+                for (positive slot = 1; slot < batch.slots; slot++)
                         if (batch.blocks[slot])
                                 memory_free(batch.blocks[slot], FILE_TRANSFER_SIZE);
-                memory_free(batch.blocks, (batch.width + 1) * sizeof(p8 address_to));
+                memory_free(batch.blocks, batch.slots * sizeof(p8 address_to));
         }
 
         return batch.answer;
@@ -902,6 +904,7 @@ typedef struct
         positive names_used;
         positive names_room;
         positive width;
+        positive slots;
         positive group;
         p8 address_to address_to blocks;
         bool spread;
@@ -999,7 +1002,7 @@ static fn checksum_check_job(address_any context, positive index,
         checksum_check_run address_to run = context;
         positive first = index * run->group;
         positive last = first + run->group < run->count ? first + run->group : run->count;
-        p8 address_to block = checksum_slot_block(run->blocks, run->width);
+        p8 address_to block = checksum_slot_block(run->blocks, run->slots);
 
         for (positive at = first; at < last; at++)
         {
@@ -1118,7 +1121,7 @@ static fn checksum_check_records(checksum_check_run address_to run)
         positive weight = checksum_weigh(total, sampled, run->count, address_of run->group);
 
         if (run->count > 1 && run->width > 1 && weight >= PARALLEL_MINIMUM_BYTES)
-                run->blocks = memory((run->width + 1) * sizeof(p8 address_to));
+                run->blocks = memory(run->slots * sizeof(p8 address_to));
         run->spread = run->blocks != null;
         if (!run->spread)
                 run->group = 1;
@@ -1129,10 +1132,10 @@ static fn checksum_check_records(checksum_check_run address_to run)
 
         if (run->blocks)
         {
-                for (positive slot = 1; slot <= run->width; slot++)
+                for (positive slot = 1; slot < run->slots; slot++)
                         if (run->blocks[slot])
                                 memory_free(run->blocks[slot], FILE_TRANSFER_SIZE);
-                memory_free(run->blocks, (run->width + 1) * sizeof(p8 address_to));
+                memory_free(run->blocks, run->slots * sizeof(p8 address_to));
         }
         if (run->records)
                 memory_free(run->records, run->room);
@@ -1201,6 +1204,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                     .warn = checksum_selected.verify == 'w',
                     .ignore_missing = ignore_missing,
                     .width = parallel_width(),
+                    .slots = parallel_slots(),
                 };
 
                 checksum_check_collect(address_of run);

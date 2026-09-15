@@ -3772,11 +3772,26 @@ static positive allocator_chunk_next;
 
 //      What threads share, and the lock that covers it: the three words
 //      above, and the depot of free chains joined threads handed back.
-#define ALLOCATOR_DEPOT_SLOTS 8
+//
+//      The depot is a stack of whole chains per class, threaded through the
+//      chains themselves: a chain's first block keeps the chain below it in
+//      its tag word, and the chain at the bottom keeps the ordinary freed
+//      tag. Handing a chain in and taking one out are a store each, however
+//      many blocks a chain holds and however many threads were joined. A
+//      fixed array of eight chains filled up instead, and a join past that
+//      walked the whole of a chain to its tail while holding the lock every
+//      other thread's slow path waits on: a million freed blocks held it
+//      for tens of milliseconds.
+//
+//      Nothing else reads the tag of a block on a chain. The shelf pop on
+//      all three machines writes the tag of the block it hands out and reads
+//      none; free reads only the tag of the block it is given, and a heap
+//      address where a tag should be is past every band it recognises, so a
+//      second free of a chain's first block does nothing, as it does for any
+//      other freed block.
 #define ALLOCATOR_BATCH 8
 static lock allocator_lock;
-static address_any allocator_depot[ALLOCATOR_CLASSES][ALLOCATOR_DEPOT_SLOTS];
-static p8 allocator_depot_count[ALLOCATOR_CLASSES];
+static address_any allocator_depot[ALLOCATOR_CLASSES];
 
 //      The address of the tag, and of the second word the two wide kinds put
 //      in front of it. Written as functions returning the address rather than
@@ -4001,9 +4016,15 @@ allocator_take_shared(b32 class, bool address_to fresh)
 
         lock_take(address_of allocator_lock);
 
-        if (allocator_depot_count[class])
+        block = allocator_depot[class];
+
+        if (block)
         {
-                block = allocator_depot[class][--allocator_depot_count[class]];
+                positive below = address_to allocator_tag(block);
+
+                allocator_depot[class] = below >= ALLOCATOR_FREED + ALLOCATOR_CLASSES
+                                                 ? (address_any)below
+                                                 : null;
                 lock_release(address_of allocator_lock);
 
                 allocator_free_list[class] = address_to allocator_link(block);
@@ -4086,7 +4107,7 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
                 return block;
         }
 
-        if_rare(threads_live | allocator_depot_count[class])
+        if_rare(threads_live | (positive)allocator_depot[class])
                 return allocator_take_shared(class, fresh);
 
         return allocator_cut(class, fresh);
@@ -4121,12 +4142,14 @@ pub address_any allocator_take_slow(positive bytes)
         return allocator_take(bytes, null);
 }
 
-//      Every non-empty shelf of a thread goes to the depot whole; a full depot
-//      slot has the chain spliced in front of it. thread_join's call, made
-//      after the kernel has cleared the thread's id and before its block is
-//      unmapped, so reading its shelves races with nothing; and a consumer's
-//      own call, so blocks other threads allocated and it freed go back to
-//      where those threads look when their shelves run dry.
+//      Every non-empty shelf of a thread goes onto its class's depot whole,
+//      with the chain that was on top written into its first block's tag, so
+//      the lock is held for fifty two loads and stores at most, whatever the
+//      chains hold. thread_join's call, made after the kernel has cleared the
+//      thread's id and before its block is unmapped, so reading its shelves
+//      races with nothing; and a consumer's own call, so blocks other threads
+//      allocated and it freed go back to where those threads look when their
+//      shelves run dry.
 static fn allocator_shelves_hand(thread address_to it)
 {
         b32 class;
@@ -4142,20 +4165,10 @@ static fn allocator_shelves_hand(thread address_to it)
 
                 it->shelves[class] = null;
 
-                if (allocator_depot_count[class] < ALLOCATOR_DEPOT_SLOTS)
-                {
-                        allocator_depot[class][allocator_depot_count[class]++] = head;
-                        continue;
-                }
-
-                address_any tail = head;
-
-                while (address_to allocator_link(tail))
-                        tail = address_to allocator_link(tail);
-
-                address_to allocator_link(tail) =
-                        allocator_depot[class][ALLOCATOR_DEPOT_SLOTS - 1];
-                allocator_depot[class][ALLOCATOR_DEPOT_SLOTS - 1] = head;
+                address_to allocator_tag(head) =
+                        allocator_depot[class] ? (positive)allocator_depot[class]
+                                               : ALLOCATOR_FREED + class;
+                allocator_depot[class] = head;
         }
 
         lock_release(address_of allocator_lock);
@@ -4598,7 +4611,14 @@ pub address_any memalign(positive alignment, positive bytes)
 
         The CPUs sched_getaffinity grants at first use, so taskset decides it.
         The caller counts as one: width - 1 workers are started, slots 1 up,
-        and the caller is slot 0. A beside job's thread is slot width.
+        and the caller is slot 0. A beside job's thread is slot width. One
+        more worker, slot width + 1, joins ordered runs only: there the caller
+        runs no job but the one it is waiting to emit, and this keeps width
+        threads claiming beside it.
+
+        Every parallel_slot() is below parallel_slots(), the beside thread's
+        included. Per-slot scratch is sized by that, never by arithmetic on
+        the width: which threads the pool keeps beside the caller may change.
 
         WHEN IT RUNS INLINE
 
@@ -4630,8 +4650,11 @@ pub address_any memalign(positive alignment, positive bytes)
         entry is never reused before its last owner was emitted. That bound
         is the memory bound and the backpressure: a worker that runs ahead
         sleeps on limit_word until the caller emits. The caller emits
-        whenever the next entry is done, runs a job itself when it can claim
-        one, and otherwise sleeps on finished_word.
+        whenever the next entry is done, runs the job for that entry itself
+        when nobody has claimed it, and otherwise sleeps on finished_word. It
+        claims nothing further ahead: a long job taken there held every
+        output that finished meanwhile back from the sink, so a sink that
+        writes to a file got its bytes in one burst at the end.
 
         STOPPING
 
@@ -4706,7 +4729,7 @@ static struct
         b32 busy;
         b32 quit;
         parallel_run address_to run;
-        thread address_to worker[PARALLEL_WORKERS_MAX];
+        thread address_to worker[PARALLEL_WORKERS_MAX + 1];
 } parallel_pool;
 
 static struct
@@ -4755,6 +4778,12 @@ pub positive parallel_width(void)
 pub positive parallel_slot(void)
 {
         return thread_self()->slot;
+}
+
+//      The bound every parallel_slot() stays below; see WIDTH.
+pub positive parallel_slots(void)
+{
+        return parallel_width() + 2;
 }
 
 static fn parallel_run_stop(parallel_run address_to run)
@@ -4951,9 +4980,14 @@ static fn parallel_worker(address_any argument)
                 {
                         self->run = run;
 
+                        //      The worker past the beside slot is for ordered
+                        //      runs, where the caller does not claim.
                         if (run->work)
-                                run->work(run);
-                        else
+                        {
+                                if (self->slot < parallel_pool.width)
+                                        run->work(run);
+                        }
+                        else if (run->ring || self->slot < parallel_pool.width)
                                 parallel_participate(run);
 
                         self->run = null;
@@ -4999,6 +5033,15 @@ static bool parallel_ready(void)
                         break;
 
                 parallel_pool.worker[parallel_pool.workers++] = handle;
+        }
+
+        if (parallel_width() > 1 && parallel_pool.workers == parallel_width() - 1)
+        {
+                thread address_to handle =
+                        thread_start(parallel_worker, (address_any)(parallel_width() + 1));
+
+                if (handle)
+                        parallel_pool.worker[parallel_pool.workers++] = handle;
         }
 
         return parallel_pool.workers != 0;
@@ -5137,7 +5180,6 @@ pub bool parallel_ordered(parallel_emit_job job, parallel_sink sink,
         while (emitted < count)
         {
                 parallel_entry address_to entry = address_of run.ring[emitted % run.window];
-                positive index;
                 b32 word;
 
                 if (atomic_load(address_of entry->done))
@@ -5162,9 +5204,12 @@ pub bool parallel_ordered(parallel_emit_job job, parallel_sink sink,
                 if (atomic_load(address_of run.stop))
                         break;
 
-                if (parallel_claim(address_of run, address_of index, false))
+                //      Only the entry to emit next, and only if nobody took it.
+                //      Once the claim fails, someone holds it and will wake us.
+                if (!atomic_load(address_of run.stop) &&
+                    atomic_compare_exchange(address_of run.next, emitted, emitted + 1))
                 {
-                        parallel_run_one(address_of run, index);
+                        parallel_run_one(address_of run, emitted);
                         continue;
                 }
 
@@ -5679,6 +5724,7 @@ static fn parallel_tree_enter(parallel_tree_run address_to run,
         thread address_to self = thread_self();
         address_any outer = self->run;
         parallel_tree_node address_to parent = node->parent;
+        parallel_tree_node address_to first_child;
         bipolar directory;
 
         atomic_add(address_of run->held_nodes, 1);
@@ -5770,6 +5816,9 @@ static fn parallel_tree_enter(parallel_tree_run address_to run,
                 atomic_add(address_of run->pending_count, node->unstarted);
         }
 
+        //      Once the guard drops, the children can all finish and the emitter
+        //      free this node, so whether it has any is read before.
+        first_child = node->first_child;
         atomic_exchange(address_of node->state, PARALLEL_TREE_ENTERED);
 
         if (parent && !node->leaf)
@@ -5777,7 +5826,7 @@ static fn parallel_tree_enter(parallel_tree_run address_to run,
 
         lock_release(address_of run->guard);
 
-        if (node->first_child)
+        if (first_child)
                 parallel_tree_wake_progress(run);
         else
                 parallel_tree_finish(run, node);

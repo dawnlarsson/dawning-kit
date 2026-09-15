@@ -3862,7 +3862,94 @@ lane_differential_oracle()
         return "$oracle_status"
 }
 
-lane_text()       { differential_domain text; }
+#       sort cuts its work into fixed blocks and hands them to the pool, so
+#       its bytes must not move with the width it runs at. An input well past
+#       a block is sorted at one CPU, at every CPU the affinity allows, with
+#       --parallel=1, and by the reference, under keys that take each path:
+#       radix windows, numbers, comparator keys, -u and -s ties, a spill.
+text_sort_widths()
+{
+        need_shell || return 1
+
+        if ! command -v taskset > /dev/null 2>&1; then
+                note "sort widths: NOT RUN -- no taskset"
+                return 0
+        fi
+
+        widths="$work/sort-widths"
+        mkdir -p "$widths" || return 1
+        awk 'BEGIN {
+                srand(11)
+                for (i = 0; i < 300000; i++)
+                        printf "%08x %d %s%d tail\n", int(rand() * 4294967295),
+                               int(rand() * 2000000) - 1000000,
+                               i % 7 ? "word" : "Word", int(rand() * 1000)
+        }' > "$widths/input" || return 1
+
+        width_pass=0
+        width_total=0
+        # The CPU this lane already runs on, so one-CPU cases stay inside it.
+        width_cpu=$(taskset -pc $$ | sed 's/.*: *//; s/[-,].*//')
+
+        sort_width_case()
+        {
+                width_input=$1
+                shift
+                want=$(LC_ALL=C sort "$@" "$width_input" | cksum)
+                one=$(LC_ALL=C taskset -c "$width_cpu" "$farm/sort" "$@" "$width_input" | cksum)
+                every=$(LC_ALL=C "$farm/sort" "$@" "$width_input" | cksum)
+                alone=$(LC_ALL=C "$farm/sort" --parallel=1 "$@" "$width_input" | cksum)
+                width_total=$((width_total + 1))
+
+                if [ "$want" = "$one" ] && [ "$want" = "$every" ] &&
+                        [ "$want" = "$alone" ]; then
+                        width_pass=$((width_pass + 1))
+                else
+                        note "sort widths [$*]: reference $want, one CPU $one, every CPU $every, --parallel=1 $alone"
+                fi
+        }
+
+        for options in "" "-r" "-n -k2,2" "-k3" "-u -k3,3" "-s -k3,3" "-f" \
+                "-V -k3" "-h -k2" "-S 1M -k2,2n" "-rs -t x -k2"; do
+                sort_width_case "$widths/input" $options
+        done
+
+        #       Past 64 MiB of spilled runs the merge itself is cut into
+        #       pieces for the pool, and an 8 MiB buffer spills a dozen runs.
+        awk 'BEGIN {
+                srand(13)
+                for (i = 0; i < 800000; i++)
+                        printf "%08x %d word%d %s\n", int(rand() * 4294967295),
+                               int(rand() * 100000), int(rand() * 1000),
+                               "and a tail that makes the input large enough to merge on the pool"
+        }' > "$widths/large" || return 1
+
+        for options in "-S 8M" "-S 8M -u -k3,3" "-S 8M -s -k2,2n"; do
+                sort_width_case "$widths/large" $options
+        done
+        rm -f "$widths/large"
+
+        tally sort-widths "$width_pass" "$width_total"
+        printf '  %-12s %s of %s\n' sort-widths "$width_pass" "$width_total"
+        [ "$width_pass" = "$width_total" ]
+}
+
+lane_text()
+{
+        differential_domain text
+        text_lane_status=$?
+        text_sort_widths || [ "$text_lane_status" != 0 ] || text_lane_status=1
+        [ "$text_lane_status" = 0 ] || return "$text_lane_status"
+
+        #       wc's characters, words and widths follow LC_CTYPE. Its pinned
+        #       rows are answers in the C locale, so the UTF-8 walk pins none,
+        #       and it stays at singles -- every input, every option alone and
+        #       the multibyte files -- where GNU's --debug line, which names the
+        #       machine's vector extension, never meets a pure line count.
+        python3 test/differential.py "$farm" --domain text --utility wc \
+                --locale C.UTF-8 --no-pinned --budget singles \
+                --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}"
+}
 lane_files()
 {
         differential_ready || return $?
@@ -10534,7 +10621,7 @@ counted
 #       absolute number that is not. A Linux host target runs directly.
 #
 
-benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator lock pool tree reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup shell tools awk find boot-time engines compression compression-floor"
+benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator lock pool ordered tree reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup shell tools awk find boot-time engines compression compression-floor"
 
 #       One benchmark's section and one line about it. A name with no section
 #       is one of the drivers below, which time a whole binary against the
@@ -10621,6 +10708,8 @@ bench_about()
                  bench_line="random()'s draw against call/control and additive-ring floors" ;;
         allocator) bench_section=BENCH_allocator
                  bench_line="the malloc/free class fast path against its call and list floors" ;;
+        ordered) bench_section=BENCH_ordered
+                 bench_line="parallel_ordered with 25 MiB outputs to a file and tiny outputs to /dev/null, at the affinity width" ;;
         tree)    bench_section=BENCH_tree
                  bench_line="parallel_tree as find and as du over a directory argument, at widths 1, 2, 4 ... the affinity width" ;;
         pool)    bench_section=BENCH_pool

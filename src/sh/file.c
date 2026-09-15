@@ -3972,15 +3972,38 @@ static p8 file_transfer[FILE_TRANSFER_SIZE];
 #if defined(LIBRARY_THREAD_RUNTIME)
 /* A copy that falls back to reading and writing inside a pool job gets a
    buffer of its own thread's; the caller's slot is the shared one, because
-   nothing else on the calling thread runs while it works a batch. */
-static p8 address_to file_transfer_slots[PARALLEL_WORKERS_MAX + 2];
+   nothing else on the calling thread runs while it works a batch.  The table
+   has a place for every slot below parallel_slots() and grows on the calling
+   thread before a batch runs, never inside a job.  A slot past it gets no
+   buffer rather than the shared one: its job leaves the name to the serial
+   replay, which runs on the caller. */
+static p8 address_to address_to file_transfer_slots;
+static positive file_transfer_slots_room;
+static positive file_transfer_slots_have;
+
+static bool file_transfer_prepare(void)
+{
+        positive wanted = parallel_slots();
+
+        if (wanted <= file_transfer_slots_have)
+                return true;
+        if (!array_store_reserve(file_transfer_slots, file_transfer_slots_room,
+                                 file_transfer_slots_have, wanted, 16))
+                return false;
+        for (positive slot = file_transfer_slots_have; slot < wanted; slot++)
+                file_transfer_slots[slot] = null;
+        file_transfer_slots_have = wanted;
+        return true;
+}
 
 static p8 address_to file_transfer_buffer(void)
 {
         positive slot = parallel_slot();
 
-        if (!slot || slot >= sizeof(file_transfer_slots) / sizeof(file_transfer_slots[0]))
+        if (!slot)
                 return file_transfer;
+        if (slot >= file_transfer_slots_have)
+                return null;
         if (!file_transfer_slots[slot])
         {
                 address_any made = memory(FILE_TRANSFER_SIZE);
@@ -3993,6 +4016,7 @@ static p8 address_to file_transfer_buffer(void)
 }
 #else
 #define file_transfer_buffer() file_transfer
+#define file_transfer_prepare() (true)
 #endif
 
 static bool file_copy_range_fallback(bipolar result)
@@ -21195,6 +21219,7 @@ added:
                 if (!item)
                         walking = false;
 
+                (void)file_transfer_prepare();
                 walk_batch_run(batch, cp_copy_job, batch);
                 if (!cp_batch_replay(batch, depth))
                         complete = false;

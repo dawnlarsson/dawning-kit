@@ -3388,7 +3388,7 @@ static bool xz_encode_setup(p8 level)
         xz_writer.failed = false;
         xz_writer.store = xz_output.bytes ? address_of xz_output : null;
         xz_writer.fd = xz_out_fd;
-        xz_writer.slot_count = parallel_width();
+        xz_writer.slot_count = parallel_slots();
         xz_writer.slots = (xz_encoder address_to address_to)memory(
             xz_writer.slot_count * sizeof(xz_encoder address_to));
         xz_writer.unpadded = (p64 address_to)memory(xz_writer.batch_blocks * sizeof(p64));

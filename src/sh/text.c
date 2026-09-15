@@ -3306,6 +3306,208 @@ static fn cat_walked()
         }
 }
 
+/*
+        cat with no flags is a copy, and the kernel can make it without the
+        bytes passing through this process, which is how GNU makes it
+        (measured with perf trace): copy_file_range from one regular file to
+        another, splice when either end is a pipe, and splice through a pipe
+        of its own when a regular file goes to a device such as /dev/null.
+        A small regular file keeps the read loop, which gathers many small
+        files into one write. Whatever the kernel refuses -- an O_APPEND
+        output, a filesystem, a descriptor splice does not take -- falls to
+        that loop from the offset the kernel left, and the loop owns every
+        diagnostic: a real failure the kernel copy met is met again there and
+        reported the way it always was.
+*/
+#define CAT_KERNEL_MINIMUM TEXT_READ_MAX
+#define CAT_SPLICE_BLOCK (1 << 19)
+#define CAT_SPLICE_FLAGS 5 // SPLICE_F_MOVE | SPLICE_F_MORE
+#define CAT_SETPIPE_SIZE 1031
+#define CAT_INTERRUPTED (-4)
+
+static file_facts cat_output;
+static bool cat_output_known;
+static bool cat_output_append;
+
+static bool cat_splice_all(positive input)
+{
+        for (;;)
+        {
+                bipolar moved = system_call_6(syscall(splice), input, 0,
+                                              text_out_handle, 0,
+                                              CAT_SPLICE_BLOCK, CAT_SPLICE_FLAGS);
+
+                if (moved > 0 || moved == CAT_INTERRUPTED)
+                        continue;
+
+                return !moved;
+        }
+}
+
+// splice wants a pipe at one end, so a file going to a device gets a pipe of
+// its own between them. Bytes a refused second move leaves in that pipe are
+// read back and written through the writer, in order, before the read loop
+// carries on from the input's offset.
+static bool cat_splice_through(positive input)
+{
+        b32 ends[2];
+        bool done = false;
+
+        if (system_call_2(syscall(pipe2), (positive)ends, O_CLOEXEC) < 0)
+                return false;
+
+        system_call_3(syscall(fcntl), (positive)ends[1], CAT_SETPIPE_SIZE,
+                      CAT_SPLICE_BLOCK);
+
+        for (;;)
+        {
+                bipolar taken = system_call_6(syscall(splice), input, 0,
+                                              (positive)ends[1], 0,
+                                              CAT_SPLICE_BLOCK, CAT_SPLICE_FLAGS);
+
+                if (taken == CAT_INTERRUPTED)
+                        continue;
+
+                if (taken <= 0)
+                {
+                        done = !taken;
+                        break;
+                }
+
+                positive left = (positive)taken;
+
+                while (left)
+                {
+                        bipolar moved = system_call_6(syscall(splice),
+                                                      (positive)ends[0], 0,
+                                                      text_out_handle, 0, left,
+                                                      CAT_SPLICE_FLAGS);
+
+                        if (moved == CAT_INTERRUPTED)
+                                continue;
+
+                        if (moved > 0)
+                        {
+                                left -= (positive)moved;
+                                continue;
+                        }
+
+                        while (left)
+                        {
+                                bipolar got = system_read_retry(
+                                    (positive)ends[0], text_input.buffer,
+                                    min(left, (positive)TEXT_READ_MAX));
+
+                                if (got <= 0)
+                                        break;
+
+                                text_put(text_input.buffer, (positive)got);
+                                left -= (positive)got;
+                        }
+
+                        goto closed;
+                }
+        }
+
+closed:
+        system_close((positive)ends[0]);
+        system_close((positive)ends[1]);
+        return done;
+}
+
+// True when the input was copied to its end.
+static bool cat_kernel_copy(const file_facts address_to in)
+{
+        positive input = text_input.handle;
+        positive from = in->mode & MODE_FORMAT;
+        positive to = cat_output.mode & MODE_FORMAT;
+
+        if (from == MODE_FILE && to == MODE_FILE)
+                for (;;)
+                {
+                        bipolar moved = file_copy_range_once(
+                            (bipolar)input, null, (bipolar)text_out_handle, null,
+                            FILE_KERNEL_COPY_SIZE);
+
+                        if (moved > 0 || moved == CAT_INTERRUPTED)
+                                continue;
+
+                        return !moved;
+                }
+
+        if (from == MODE_PIPE || to == MODE_PIPE)
+        {
+                // GNU grows an output pipe to its splice length first, so
+                // each move carries half a megabyte instead of one page
+                // ring's worth; a refusal leaves the pipe as it was.
+                if (to == MODE_PIPE)
+                        system_call_3(syscall(fcntl), text_out_handle,
+                                      CAT_SETPIPE_SIZE, CAT_SPLICE_BLOCK);
+
+                return cat_splice_all(input);
+        }
+
+        if ((from == MODE_FILE || from == MODE_BLOCK) &&
+            (to == MODE_CHARACTER || to == MODE_SOCKET))
+                return cat_splice_through(input);
+
+        return false;
+}
+
+/*
+        GNU's refusal, established case by case against it: a regular output
+        that is the input itself, read from before the place the copy would
+        be written -- the end of the file when appending, the output's own
+        offset when not -- would chase its own writes. Bytes the writer still
+        holds count as written, since GNU has written them by then.
+*/
+static bool cat_same_file(const file_facts address_to in, string_address shown)
+{
+        if (!cat_output_known || (cat_output.mode & MODE_FORMAT) != MODE_FILE ||
+            (in->mode & MODE_FORMAT) != MODE_FILE ||
+            !file_same_identity(in, address_of cat_output))
+                return false;
+
+        bipolar from = system_seek(text_input.handle, 0, FILE_SEEK_CUR);
+        bipolar to = cat_output_append
+                         ? (bipolar)in->size
+                         : system_seek(text_out_handle, 0, FILE_SEEK_CUR);
+
+        if (from < 0 || to < 0 || from >= to + (bipolar)text_out_used)
+                return false;
+
+        string_diagnostic(&text_diagnostic, 0, shown, "input file is output file");
+        text_status = 1;
+        return true;
+}
+
+static fn cat_one(string_address shown)
+{
+        file_facts in;
+        bool known = text_handle_facts(text_input.handle, address_of in);
+
+        if (known && cat_same_file(address_of in, shown))
+                return;
+
+        if (cat_flags)
+        {
+                cat_walked();
+                return;
+        }
+
+        if (known && cat_output_known && !text_out_failed &&
+            ((in.mode & MODE_FORMAT) != MODE_FILE ||
+             in.size >= CAT_KERNEL_MINIMUM))
+        {
+                text_flush();
+
+                if (!text_out_failed && cat_kernel_copy(address_of in))
+                        return;
+        }
+
+        text_put_rest();
+}
+
 static const argument_option cat_options[] = {
     {"show-all", 'A'},
     {"number-nonblank", 'b'},
@@ -3362,10 +3564,23 @@ static b32 text_cat()
         for (b32 i = first; i < text_argument_count; i++)
                 inputs++;
 
+        // The output is the same descriptor for every input, so it is looked
+        // at once: whether it is a regular file, and whether it appends.
+        cat_output_known = text_handle_facts(text_out_handle, address_of cat_output);
+        cat_output_append = false;
+
+        if (cat_output_known && (cat_output.mode & MODE_FORMAT) == MODE_FILE)
+        {
+                bipolar output_flags = system_call_3(syscall(fcntl), text_out_handle,
+                                                     FILE_F_GETFL, 0);
+
+                cat_output_append = output_flags >= 0 && (output_flags & O_APPEND);
+        }
+
         if (!inputs)
         {
                 if (text_open(null))
-                        cat_flags ? cat_walked() : text_put_rest();
+                        cat_one((string_address) "-");
 
                 text_close();
                 return text_done(text_status);
@@ -3373,10 +3588,12 @@ static b32 text_cat()
 
         for (b32 i = first; i < text_argument_count; i++)
         {
-                if (!text_open(program_argument(i)))
+                string_address name = program_argument(i);
+
+                if (!text_open(name))
                         continue;
 
-                cat_flags ? cat_walked() : text_put_rest();
+                cat_one(name);
                 text_close();
         }
 
@@ -3408,9 +3625,8 @@ static const argument_option wc_options[] = {
         The name is the file the counts came from, "total" for the last row,
         or nothing at all when the counts came from standard input.
 
-        -m and -c are two columns holding the same number: this file counts
-        bytes for both, so a character is a byte here and the two flags
-        differ only in whether their column appears.
+        -m and -c are two columns: the same number in a single-byte locale,
+        and in a UTF-8 one -m counts the characters instead.
 */
 static bool wc_want_lines;
 static bool wc_want_words;
@@ -3433,10 +3649,10 @@ static const string_address wc_totals[4] = {
     (string_address) "auto", (string_address) "always",
     (string_address) "only", (string_address) "never"};
 
-static fn wc_row(positive lines, positive words, positive bytes,
+static fn wc_row(positive lines, positive words, positive chars, positive bytes,
                  positive longest, positive width, string_address name)
 {
-        positive counted[5] = {lines, words, bytes, bytes, longest};
+        positive counted[5] = {lines, words, chars, bytes, longest};
         bool wanted[5] = {wc_want_lines, wc_want_words, wc_want_chars,
                           wc_want_bytes, wc_want_longest};
         bool leading = true;
@@ -3460,6 +3676,645 @@ static fn wc_row(positive lines, positive words, positive bytes,
         }
 
         text_put_character('\n');
+}
+
+/*
+        The display width of every code point past ASCII that is not one
+        column wide, as wc -L measures it in a UTF-8 locale: glibc's wcwidth
+        for a printable character and nought for anything iswprint refuses,
+        unassigned code points included. Generated from glibc 2.44 on the
+        reference machine; each row packs first << 32 | last << 2 | width,
+        sorted, so a binary search on the first code point finds a row.
+*/
+#define WC_WIDTH_ROWS 1044
+static const p64 wc_width_rows[WC_WIDTH_ROWS] = {
+    0x800000027c, 0x30000000dbc, 0x37800000de4, 0x38000000e0c, 0x38b00000e2c,
+    0x38d00000e34, 0x3a200000e88, 0x48300001224, 0x530000014c0, 0x55700001560,
+    0x58b00001630, 0x590000016f4, 0x5bf000016fc, 0x5c100001708, 0x5c400001714,
+    0x5c70000173c, 0x5eb000017b8, 0x5f5000017fc, 0x61000001868, 0x61c00001870,
+    0x64b0000197c, 0x670000019c0, 0x6d600001b70, 0x6df00001b90, 0x6e700001ba0,
+    0x6ea00001bb4, 0x70e00001c38, 0x71100001c44, 0x73000001d30, 0x7a600001ec0,
+    0x7b200001efc, 0x7eb00001fcc, 0x7fb00001ff4, 0x81600002064, 0x81b0000208c,
+    0x8250000209c, 0x829000020bc, 0x83f000020fc, 0x85900002174, 0x85f0000217c,
+    0x86b000021bc, 0x8920000227c, 0x8ca00002384, 0x8e300002408, 0x93a000024e8,
+    0x93c000024f0, 0x94100002520, 0x94d00002534, 0x9510000255c, 0x9620000258c,
+    0x98100002604, 0x98400002610, 0x98d00002638, 0x99100002648, 0x9a9000026a4,
+    0x9b1000026c4, 0x9b3000026d4, 0x9ba000026f0, 0x9c100002718, 0x9c900002728,
+    0x9cd00002734, 0x9cf00002758, 0x9d80000276c, 0x9de00002778, 0x9e200002794,
+    0x9fe00002808, 0xa0400002810, 0xa0b00002838, 0xa1100002848, 0xa29000028a4,
+    0xa31000028c4, 0xa34000028d0, 0xa37000028dc, 0xa3a000028f4, 0xa4100002960,
+    0xa5d00002974, 0xa5f00002994, 0xa70000029c4, 0xa75000029d4, 0xa7700002a08,
+    0xa8400002a10, 0xa8e00002a38, 0xa9200002a48, 0xaa900002aa4, 0xab100002ac4,
+    0xab400002ad0, 0xaba00002af0, 0xac100002b20, 0xaca00002b28, 0xacd00002b3c,
+    0xad100002b7c, 0xae200002b94, 0xaf200002be0, 0xafa00002c04, 0xb0400002c10,
+    0xb0d00002c38, 0xb1100002c48, 0xb2900002ca4, 0xb3100002cc4, 0xb3400002cd0,
+    0xb3a00002cf0, 0xb3f00002cfc, 0xb4100002d18, 0xb4900002d28, 0xb4d00002d58,
+    0xb5800002d6c, 0xb5e00002d78, 0xb6200002d94, 0xb7800002e08, 0xb8400002e10,
+    0xb8b00002e34, 0xb9100002e44, 0xb9600002e60, 0xb9b00002e6c, 0xb9d00002e74,
+    0xba000002e88, 0xba500002e9c, 0xbab00002eb4, 0xbba00002ef4, 0xbc000002f00,
+    0xbc300002f14, 0xbc900002f24, 0xbcd00002f3c, 0xbd100002f58, 0xbd800002f94,
+    0xbfb00003000, 0xc0400003010, 0xc0d00003034, 0xc1100003044, 0xc29000030a4,
+    0xc3a000030f0, 0xc3e00003100, 0xc450000315c, 0xc5b0000316c, 0xc5e0000317c,
+    0xc6200003194, 0xc70000031d8, 0xc8100003204, 0xc8d00003234, 0xc9100003244,
+    0xca9000032a4, 0xcb4000032d0, 0xcba000032f0, 0xcbf000032fc, 0xcc500003318,
+    0xcc900003324, 0xccc00003350, 0xcd70000336c, 0xcdf0000337c, 0xce200003394,
+    0xcf0000033c0, 0xcf400003404, 0xd0d00003434, 0xd1100003444, 0xd3b000034f0,
+    0xd4100003514, 0xd4900003524, 0xd4d00003534, 0xd500000354c, 0xd6200003594,
+    0xd8000003604, 0xd8400003610, 0xd9700003664, 0xdb2000036c8, 0xdbc000036f0,
+    0xdbe000036fc, 0xdc700003738, 0xdd20000375c, 0xde000003794, 0xdf0000037c4,
+    0xdf500003800, 0xe31000038c4, 0xe34000038f8, 0xe4700003938, 0xe5c00003a00,
+    0xe8300003a0c, 0xe8500003a14, 0xe8b00003a2c, 0xea400003a90, 0xea600003a98,
+    0xeb100003ac4, 0xeb400003af0, 0xebe00003afc, 0xec500003b14, 0xec700003b3c,
+    0xeda00003b6c, 0xee000003bfc, 0xf1800003c64, 0xf3500003cd4, 0xf3700003cdc,
+    0xf3900003ce4, 0xf4800003d20, 0xf6d00003df8, 0xf8000003e10, 0xf8600003e1c,
+    0xf8d00003ef4, 0xfc600003f18, 0xfcd00003f34, 0xfdb00003ffc, 0x102d000040c0,
+    0x1032000040dc, 0x1039000040e8, 0x103d000040f8, 0x105800004164, 0x105e00004180,
+    0x1071000041d0, 0x108200004208, 0x108500004218, 0x108d00004234, 0x109d00004274,
+    0x10c600004318, 0x10c800004330, 0x10ce0000433c, 0x11000000457e, 0x1160000047fc,
+    0x124900004924, 0x124e0000493c, 0x12570000495c, 0x125900004964, 0x125e0000497c,
+    0x128900004a24, 0x128e00004a3c, 0x12b100004ac4, 0x12b600004adc, 0x12bf00004afc,
+    0x12c100004b04, 0x12c600004b1c, 0x12d700004b5c, 0x131100004c44, 0x131600004c5c,
+    0x135b00004d7c, 0x137d00004dfc, 0x139a00004e7c, 0x13f600004fdc, 0x13fe00004ffc,
+    0x169d00005a7c, 0x16f900005bfc, 0x171200005c50, 0x171600005c78, 0x173200005ccc,
+    0x173700005cfc, 0x175200005d7c, 0x176d00005db4, 0x177100005dfc, 0x17b400005ed4,
+    0x17b700005ef4, 0x17c600005f18, 0x17c900005f4c, 0x17dd00005f7c, 0x17ea00005fbc,
+    0x17fa00005ffc, 0x180b0000603c, 0x181a0000607c, 0x1879000061fc, 0x188500006218,
+    0x18a9000062a4, 0x18ab000062bc, 0x18f6000063fc, 0x191f00006488, 0x1927000064a0,
+    0x192c000064bc, 0x1932000064c8, 0x1939000064fc, 0x19410000650c, 0x196e000065bc,
+    0x1975000065fc, 0x19ac000066bc, 0x19ca0000673c, 0x19db00006774, 0x1a1700006860,
+    0x1a1b00006874, 0x1a5600006958, 0x1a5800006980, 0x1a6200006988, 0x1a65000069b0,
+    0x1a73000069fc, 0x1a8a00006a3c, 0x1a9a00006a7c, 0x1aae00006c0c, 0x1b3400006cd0,
+    0x1b3600006ce8, 0x1b3c00006cf0, 0x1b4200006d08, 0x1b4d00006d34, 0x1b6b00006dcc,
+    0x1b8000006e04, 0x1ba200006e94, 0x1ba800006ea4, 0x1bab00006eb4, 0x1be600006f98,
+    0x1be800006fa4, 0x1bed00006fb4, 0x1bef00006fc4, 0x1bf400006fec, 0x1c2c000070cc,
+    0x1c36000070e8, 0x1c4a00007130, 0x1c8b0000723c, 0x1cbb000072f0, 0x1cc800007348,
+    0x1cd400007380, 0x1ce2000073a0, 0x1ced000073b4, 0x1cf4000073d0, 0x1cf8000073e4,
+    0x1cfb000073fc, 0x1dc0000077fc, 0x1f1600007c5c, 0x1f1e00007c7c, 0x1f4600007d1c,
+    0x1f4e00007d3c, 0x1f5800007d60, 0x1f5a00007d68, 0x1f5c00007d70, 0x1f5e00007d78,
+    0x1f7e00007dfc, 0x1fb500007ed4, 0x1fc500007f14, 0x1fd400007f54, 0x1fdc00007f70,
+    0x1ff000007fc4, 0x1ff500007fd4, 0x1fff00007ffc, 0x200b0000803c, 0x2028000080b8,
+    0x2060000081bc, 0x2072000081cc, 0x208f0000823c, 0x209d0000827c, 0x20c2000083fc,
+    0x218c0000863c, 0x231a00008c6e, 0x232900008caa, 0x23e900008fb2, 0x23f000008fc2,
+    0x23f300008fce, 0x242a000090fc, 0x244b0000917c, 0x25fd000097fa, 0x261400009856,
+    0x2630000098de, 0x26480000994e, 0x267f000099fe, 0x268a00009a3e, 0x269300009a4e,
+    0x26a100009a86, 0x26aa00009aae, 0x26bd00009afa, 0x26c400009b16, 0x26ce00009b3a,
+    0x26d400009b52, 0x26ea00009baa, 0x26f200009bce, 0x26f500009bd6, 0x26fa00009bea,
+    0x26fd00009bf6, 0x270500009c16, 0x270a00009c2e, 0x272800009ca2, 0x274c00009d32,
+    0x274e00009d3a, 0x275300009d56, 0x275700009d5e, 0x279500009e5e, 0x27b000009ec2,
+    0x27bf00009efe, 0x2b1b0000ac72, 0x2b500000ad42, 0x2b550000ad56, 0x2b740000add4,
+    0x2cef0000b3c4, 0x2cf40000b3e0, 0x2d260000b498, 0x2d280000b4b0, 0x2d2e0000b4bc,
+    0x2d680000b5b8, 0x2d710000b5fc, 0x2d970000b67c, 0x2da70000b69c, 0x2daf0000b6bc,
+    0x2db70000b6dc, 0x2dbf0000b6fc, 0x2dc70000b71c, 0x2dcf0000b73c, 0x2dd70000b75c,
+    0x2ddf0000b7fc, 0x2e5e0000b9fc, 0x2e800000ba66, 0x2e9a0000ba68, 0x2e9b0000bbce,
+    0x2ef40000bbfc, 0x2f000000bf56, 0x2fd60000bfbc, 0x2ff00000c0a6, 0x302a0000c0b4,
+    0x302e0000c0fa, 0x30400000c100, 0x30410000c25a, 0x30970000c268, 0x309b0000c3fe,
+    0x31000000c410, 0x31050000c4be, 0x31300000c4c0, 0x31310000c58e, 0x31640000c590,
+    0x31650000c63a, 0x318f0000c63c, 0x31900000c796, 0x31e60000c7b8, 0x31ef0000c87a,
+    0x321f0000c87c, 0x322000029232, 0xa48d0002923c, 0xa4900002931a, 0xa4c70002933c,
+    0xa62c000298fc, 0xa66f000299c8, 0xa674000299f4, 0xa69e00029a7c, 0xa6f000029bc4,
+    0xa6f800029bfc, 0xa7dd00029fc0, 0xa8020002a008, 0xa8060002a018, 0xa80b0002a02c,
+    0xa8250002a098, 0xa82c0002a0bc, 0xa83a0002a0fc, 0xa8780002a1fc, 0xa8c40002a334,
+    0xa8da0002a3c4, 0xa8ff0002a3fc, 0xa9260002a4b4, 0xa9470002a544, 0xa9540002a578,
+    0xa9600002a5f2, 0xa97d0002a608, 0xa9b30002a6cc, 0xa9b60002a6e4, 0xa9bc0002a6f4,
+    0xa9ce0002a738, 0xa9da0002a774, 0xa9e50002a794, 0xa9ff0002a7fc, 0xaa290002a8b8,
+    0xaa310002a8c8, 0xaa350002a8fc, 0xaa430002a90c, 0xaa4c0002a930, 0xaa4e0002a93c,
+    0xaa5a0002a96c, 0xaa7c0002a9f0, 0xaab00002aac0, 0xaab20002aad0, 0xaab70002aae0,
+    0xaabe0002aafc, 0xaac10002ab04, 0xaac30002ab68, 0xaaec0002abb4, 0xaaf60002ac00,
+    0xab070002ac20, 0xab0f0002ac40, 0xab170002ac7c, 0xab270002ac9c, 0xab2f0002acbc,
+    0xab6c0002adbc, 0xabe50002af94, 0xabe80002afa0, 0xabed0002afbc, 0xabfa0002affc,
+    0xac0000035e8e, 0xd7a400035ffc, 0xf9000003e9b6, 0xfa6e0003e9bc, 0xfa700003eb66,
+    0xfada0003ebfc, 0xfb070003ec48, 0xfb180003ec70, 0xfb1e0003ec78, 0xfb370003ecdc,
+    0xfb3d0003ecf4, 0xfb3f0003ecfc, 0xfb420003ed08, 0xfb450003ed14, 0xfdd00003f7bc,
+    0xfe000003f83c, 0xfe100003f866, 0xfe1a0003f8bc, 0xfe300003f94a, 0xfe530003f94c,
+    0xfe540003f99a, 0xfe670003f99c, 0xfe680003f9ae, 0xfe6c0003f9bc, 0xfe750003f9d4,
+    0xfefd0003fc00, 0xff010003fd82, 0xffa00003fe80, 0xffbf0003ff04, 0xffc80003ff24,
+    0xffd00003ff44, 0xffd80003ff64, 0xffdd0003ff7c, 0xffe00003ff9a, 0xffe70003ff9c,
+    0xffef0003ffe0, 0xfffe0003fffc, 0x1000c00040030, 0x100270004009c, 0x1003b000400ec,
+    0x1003e000400f8, 0x1004e0004013c, 0x1005e000401fc, 0x100fb000403fc, 0x1010300040418,
+    0x10134000404d8, 0x1018f0004063c, 0x1019d0004067c, 0x101a10004073c, 0x101fd000409fc,
+    0x1029d00040a7c, 0x102d100040b80, 0x102fc00040bfc, 0x1032400040cb0, 0x1034b00040d3c,
+    0x1037600040dfc, 0x1039e00040e78, 0x103c400040f1c, 0x103d600040ffc, 0x1049e0004127c,
+    0x104aa000412bc, 0x104d40004135c, 0x104fc000413fc, 0x10528000414bc, 0x10564000415b8,
+    0x1057b000415ec, 0x1058b0004162c, 0x105930004164c, 0x1059600041658, 0x105a200041688,
+    0x105b2000416c8, 0x105ba000416e8, 0x105bd000416fc, 0x105f4000417fc, 0x1073700041cfc,
+    0x1075600041d7c, 0x1076800041dfc, 0x1078600041e18, 0x107b100041ec4, 0x107bb00041ffc,
+    0x108060004201c, 0x1080900042024, 0x10836000420d8, 0x10839000420ec, 0x1083d000420f8,
+    0x1085600042158, 0x1089f00042298, 0x108b00004237c, 0x108f3000423cc, 0x108f6000423e8,
+    0x1091c00042478, 0x1093a000424f8, 0x1095a000425fc, 0x109b8000426ec, 0x109d000042744,
+    0x10a010004283c, 0x10a1400042850, 0x10a1800042860, 0x10a36000428fc, 0x10a490004293c,
+    0x10a590004297c, 0x10aa000042afc, 0x10ae500042ba8, 0x10af700042bfc, 0x10b3600042ce0,
+    0x10b5600042d5c, 0x10b7300042ddc, 0x10b9200042e60, 0x10b9d00042ea0, 0x10bb000042ffc,
+    0x10c49000431fc, 0x10cb3000432fc, 0x10cf3000433e4, 0x10d24000434bc, 0x10d3a000434fc,
+    0x10d66000435b4, 0x10d8600043634, 0x10d900004397c, 0x10e7f000439fc, 0x10eaa00043ab0,
+    0x10eae00043abc, 0x10eb200043b04, 0x10ec800043b3c, 0x10ed900043bfc, 0x10f2800043cbc,
+    0x10f4600043d40, 0x10f5a00043dbc, 0x10f8200043e14, 0x10f8a00043ebc, 0x10fcc00043f7c,
+    0x10ff700043ffc, 0x1100100044004, 0x1103800044118, 0x1104e00044144, 0x11070000441c0,
+    0x11073000441d0, 0x1107600044204, 0x110b3000442d8, 0x110b9000442e8, 0x110c200044330,
+    0x110ce0004433c, 0x110e9000443bc, 0x110fa00044408, 0x11127000444ac, 0x1112d000444d4,
+    0x111480004453c, 0x11173000445cc, 0x1117700044604, 0x111b6000446f8, 0x111c900044730,
+    0x111cf0004473c, 0x111e000044780, 0x111f5000447fc, 0x1121200044848, 0x1122f000448c4,
+    0x11234000448d0, 0x11236000448dc, 0x1123e000448f8, 0x11241000449fc, 0x1128700044a1c,
+    0x1128900044a24, 0x1128e00044a38, 0x1129e00044a78, 0x112aa00044abc, 0x112df00044b7c,
+    0x112e300044bbc, 0x112fa00044c04, 0x1130400044c10, 0x1130d00044c38, 0x1131100044c48,
+    0x1132900044ca4, 0x1133100044cc4, 0x1133400044cd0, 0x1133a00044cf0, 0x1134000044d00,
+    0x1134500044d18, 0x1134900044d28, 0x1134e00044d3c, 0x1135100044d58, 0x1135800044d70,
+    0x1136400044dfc, 0x1138a00044e28, 0x1138c00044e34, 0x1138f00044e3c, 0x113b600044ed8,
+    0x113bb00044f04, 0x113c300044f10, 0x113c600044f18, 0x113cb00044f2c, 0x113ce00044f38,
+    0x113d000044f40, 0x113d200044f48, 0x113d600044f58, 0x113d900044ffc, 0x11438000450fc,
+    0x1144200045110, 0x1144600045118, 0x1145c00045170, 0x1145e00045178, 0x11462000451fc,
+    0x114b3000452e0, 0x114ba000452e8, 0x114bf00045300, 0x114c20004530c, 0x114c80004533c,
+    0x114da000455fc, 0x115b2000456dc, 0x115bc000456f4, 0x115bf00045700, 0x115dc000457fc,
+    0x11633000458e8, 0x1163d000458f4, 0x1163f00045900, 0x116450004593c, 0x1165a0004597c,
+    0x1166d000459fc, 0x116ab00045aac, 0x116ad00045ab4, 0x116b000045ad4, 0x116b700045adc,
+    0x116ba00045afc, 0x116ca00045b3c, 0x116e400045bfc, 0x1171b00045c74, 0x1171f00045c7c,
+    0x1172200045c94, 0x1172700045cbc, 0x1174700045ffc, 0x1182f000460dc, 0x11839000460e8,
+    0x1183c0004627c, 0x118f3000463f8, 0x1190700046420, 0x1190a0004642c, 0x1191400046450,
+    0x119170004645c, 0x11936000464d8, 0x11939000464f0, 0x1193e000464f8, 0x119430004650c,
+    0x119470004653c, 0x1195a0004667c, 0x119a8000466a4, 0x119d40004676c, 0x119e000046780,
+    0x119e5000467fc, 0x11a0100046828, 0x11a33000468e0, 0x11a3b000468f8, 0x11a470004693c,
+    0x11a5100046958, 0x11a590004696c, 0x11a8a00046a58, 0x11a9800046a64, 0x11aa300046abc,
+    0x11af900046bfc, 0x11b0a00046d80, 0x11b6200046d90, 0x11b6600046d98, 0x11b6800046efc,
+    0x11be200046fbc, 0x11bfa00046ffc, 0x11c0900047024, 0x11c30000470f4, 0x11c3f000470fc,
+    0x11c460004713c, 0x11c6d000471bc, 0x11c90000472a0, 0x11caa000472c0, 0x11cb2000472cc,
+    0x11cb5000473fc, 0x11d070004741c, 0x11d0a00047428, 0x11d3100047514, 0x11d470004753c,
+    0x11d5a0004757c, 0x11d6600047598, 0x11d69000475a4, 0x11d8f00047648, 0x11d9500047654,
+    0x11d970004765c, 0x11d990004767c, 0x11daa000476bc, 0x11ddc0004777c, 0x11dea00047b7c,
+    0x11ef300047bd0, 0x11ef900047c04, 0x11f1100047c44, 0x11f3600047cf4, 0x11f4000047d00,
+    0x11f4200047d08, 0x11f5a00047ebc, 0x11fb100047efc, 0x11ff200047ff8, 0x1239a00048ffc,
+    0x1246f000491bc, 0x12475000491fc, 0x125440004be3c, 0x12ff30004bffc, 0x134400004d100,
+    0x134470004d17c, 0x143fb00050ffc, 0x14647000583fc, 0x1611e000584a4, 0x1612d000584bc,
+    0x1613a00059ffc, 0x16a390005a8fc, 0x16a5f0005a97c, 0x16a6a0005a9b4, 0x16abf0005aafc,
+    0x16aca0005ab3c, 0x16aee0005abd0, 0x16af60005abfc, 0x16b300005acd8, 0x16b460005ad3c,
+    0x16b5a0005ad68, 0x16b620005ad88, 0x16b780005adf0, 0x16b900005b4fc, 0x16d7a0005b8fc,
+    0x16e9b0005ba7c, 0x16eb90005bae8, 0x16ed40005bbfc, 0x16f4b0005bd3c, 0x16f880005be48,
+    0x16fa00005bf7c, 0x16fe00005bf8e, 0x16fe40005bfbc, 0x16ff00005bfda, 0x16ff70005bffc,
+    0x1700000063356, 0x18cd6000633f8, 0x18cff0006347a, 0x18d1f000635fc, 0x18d80000637ca,
+    0x18df30006bfbc, 0x1aff00006bfce, 0x1aff40006bfd0, 0x1aff50006bfee, 0x1affc0006bff0,
+    0x1affd0006bffa, 0x1afff0006bffc, 0x1b0000006c48a, 0x1b1230006c4c4, 0x1b1320006c4ca,
+    0x1b1330006c53c, 0x1b1500006c54a, 0x1b1530006c550, 0x1b1550006c556, 0x1b1560006c58c,
+    0x1b1640006c59e, 0x1b1680006c5bc, 0x1b1700006cbee, 0x1b2fc0006effc, 0x1bc6b0006f1bc,
+    0x1bc7d0006f1fc, 0x1bc890006f23c, 0x1bc9a0006f26c, 0x1bc9d0006f278, 0x1bca000072ffc,
+    0x1ccfd000733fc, 0x1ceb400073ae4, 0x1ced100073b7c, 0x1cef100073d3c, 0x1cfc400073ffc,
+    0x1d0f6000743fc, 0x1d127000744a0, 0x1d167000745a4, 0x1d17300074608, 0x1d1850007462c,
+    0x1d1aa000746b4, 0x1d1eb000747fc, 0x1d24200074910, 0x1d24600074afc, 0x1d2d400074b7c,
+    0x1d2f400074bfc, 0x1d30000074d5a, 0x1d35700074d7c, 0x1d36000074dda, 0x1d37900074ffc,
+    0x1d45500075154, 0x1d49d00075274, 0x1d4a000075284, 0x1d4a300075290, 0x1d4a7000752a0,
+    0x1d4ad000752b4, 0x1d4ba000752e8, 0x1d4bc000752f0, 0x1d4c400075310, 0x1d50600075418,
+    0x1d50b00075430, 0x1d51500075454, 0x1d51d00075474, 0x1d53a000754e8, 0x1d53f000754fc,
+    0x1d54500075514, 0x1d54700075524, 0x1d55100075544, 0x1d6a600075a9c, 0x1d7cc00075f34,
+    0x1da00000768d8, 0x1da3b000769b0, 0x1da75000769d4, 0x1da8400076a10, 0x1da8c00077bfc,
+    0x1df1f00077c90, 0x1df2b000780bc, 0x1e06e000783fc, 0x1e12d000784d8, 0x1e13e000784fc,
+    0x1e14a00078534, 0x1e15000078a3c, 0x1e2ae00078afc, 0x1e2ec00078bbc, 0x1e2fa00078bf8,
+    0x1e3000007933c, 0x1e4ec000793bc, 0x1e4fa0007973c, 0x1e5ee000797bc, 0x1e5fb000797f8,
+    0x1e60000079afc, 0x1e6df00079b7c, 0x1e6e300079b8c, 0x1e6e600079b98, 0x1e6ee00079bbc,
+    0x1e6f500079bf4, 0x1e70000079f7c, 0x1e7e700079f9c, 0x1e7ec00079fb0, 0x1e7ef00079fbc,
+    0x1e7ff00079ffc, 0x1e8c50007a318, 0x1e8d00007a3fc, 0x1e9440007a528, 0x1e94c0007a53c,
+    0x1e95a0007a574, 0x1e9600007b1c0, 0x1ecb50007b400, 0x1ed3e0007b7fc, 0x1ee040007b810,
+    0x1ee200007b880, 0x1ee230007b88c, 0x1ee250007b898, 0x1ee280007b8a0, 0x1ee330007b8cc,
+    0x1ee380007b8e0, 0x1ee3a0007b8e8, 0x1ee3c0007b904, 0x1ee430007b918, 0x1ee480007b920,
+    0x1ee4a0007b928, 0x1ee4c0007b930, 0x1ee500007b940, 0x1ee530007b94c, 0x1ee550007b958,
+    0x1ee580007b960, 0x1ee5a0007b968, 0x1ee5c0007b970, 0x1ee5e0007b978, 0x1ee600007b980,
+    0x1ee630007b98c, 0x1ee650007b998, 0x1ee6b0007b9ac, 0x1ee730007b9cc, 0x1ee780007b9e0,
+    0x1ee7d0007b9f4, 0x1ee7f0007b9fc, 0x1ee8a0007ba28, 0x1ee9c0007ba80, 0x1eea40007ba90,
+    0x1eeaa0007baa8, 0x1eebc0007bbbc, 0x1eef20007bffc, 0x1f0040007c012, 0x1f02c0007c0bc,
+    0x1f0940007c27c, 0x1f0af0007c2c0, 0x1f0c00007c300, 0x1f0cf0007c33e, 0x1f0d00007c340,
+    0x1f0f60007c3fc, 0x1f18e0007c63a, 0x1f1910007c66a, 0x1f1ae0007c794, 0x1f2000007c80a,
+    0x1f2030007c83c, 0x1f2100007c8ee, 0x1f23c0007c8fc, 0x1f2400007c922, 0x1f2490007c93c,
+    0x1f2500007c946, 0x1f2520007c97c, 0x1f2600007c996, 0x1f2660007cbfc, 0x1f3000007cc82,
+    0x1f32d0007ccd6, 0x1f3370007cdf2, 0x1f37e0007ce4e, 0x1f3a00007cf2a, 0x1f3cf0007cf4e,
+    0x1f3e00007cfc2, 0x1f3f40007cfd2, 0x1f3f80007d0fa, 0x1f4400007d102, 0x1f4420007d3f2,
+    0x1f4ff0007d4f6, 0x1f54b0007d53a, 0x1f5500007d59e, 0x1f57a0007d5ea, 0x1f5950007d65a,
+    0x1f5a40007d692, 0x1f5fb0007d93e, 0x1f6800007db16, 0x1f6cc0007db32, 0x1f6d00007db4a,
+    0x1f6d50007db62, 0x1f6d90007db6c, 0x1f6dc0007db7e, 0x1f6eb0007dbb2, 0x1f6ed0007dbbc,
+    0x1f6f40007dbf2, 0x1f6fd0007dbfc, 0x1f7da0007df7c, 0x1f7e00007dfae, 0x1f7ec0007dfbc,
+    0x1f7f00007dfc2, 0x1f7f10007dffc, 0x1f80c0007e03c, 0x1f8480007e13c, 0x1f85a0007e17c,
+    0x1f8880007e23c, 0x1f8ae0007e2bc, 0x1f8bc0007e2fc, 0x1f8c20007e33c, 0x1f8d90007e3fc,
+    0x1f90c0007e4ea, 0x1f93c0007e516, 0x1f9470007e7fe, 0x1fa580007e97c, 0x1fa6e0007e9bc,
+    0x1fa700007e9f2, 0x1fa7d0007e9fc, 0x1fa800007ea2a, 0x1fa8b0007ea34, 0x1fa8e0007eb1a,
+    0x1fac70007eb1c, 0x1fac80007eb22, 0x1fac90007eb30, 0x1facd0007eb72, 0x1fadd0007eb78,
+    0x1fadf0007ebaa, 0x1faeb0007ebb8, 0x1faef0007ebe2, 0x1faf90007ebfc, 0x1fb930007ee4c,
+    0x1fbfb0007fffc, 0x20000000a9b7e, 0x2a6e0000a9bfc, 0x2a700000ae076, 0x2b81e000ae07c,
+    0x2b820000b3ab6, 0x2ceae000b3abc, 0x2ceb0000baf82, 0x2ebe1000bafbc, 0x2ebf0000bb976,
+    0x2ee5e000bdffc, 0x2f800000be876, 0x2fa1e000bfffc, 0x30000000c4d2a, 0x3134b000c4d3c,
+    0x31350000cd1e6, 0x3347a003bfffc, 0xffffe003ffffc, 0x10fffe0043fffc,
+};
+
+static positive wc_width(p32 code)
+{
+        positive low = 0;
+        positive high = WC_WIDTH_ROWS;
+
+        while (low < high)
+        {
+                positive middle = (low + high) / 2;
+
+                if ((p32)(wc_width_rows[middle] >> 32) <= code)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        if (!low)
+                return 1;
+
+        p64 row = wc_width_rows[low - 1];
+
+        return code <= (p32)((row >> 2) & 0x3fffffff) ? (positive)(row & 3) : 1;
+}
+
+/*
+        What the locale says a character is, as GNU's wc hears it: LC_ALL,
+        then LC_CTYPE, then LANG, the first one set and not empty. A UTF-8
+        codeset is the one multibyte encoding here; C, POSIX and every other
+        name are a byte a character. GNU also falls back to bytes for a UTF-8
+        name the system has no locale for, which a name alone cannot see.
+*/
+static bool text_locale_utf8()
+{
+        string_address locale = file_environment((string_address) "LC_ALL");
+
+        if (!locale || !locale[0])
+                locale = file_environment((string_address) "LC_CTYPE");
+        if (!locale || !locale[0])
+                locale = file_environment((string_address) "LANG");
+        if (!locale || !locale[0])
+                return false;
+
+        string_address code = string_first_of(locale, '.');
+
+        if (!code || byte_to_lower(code[1]) != 'u' || byte_to_lower(code[2]) != 't' ||
+            byte_to_lower(code[3]) != 'f')
+                return false;
+
+        code += 4;
+        code += *code == '-';
+        return code[0] == '8' && (!code[1] || code[1] == '@');
+}
+
+/*
+        Word separators past ASCII in a UTF-8 locale: glibc's iswspace, which
+        leaves the no-break spaces out, and the no-break spaces GNU's wc adds
+        back unless POSIXLY_CORRECT is set -- U+00A0 is one in the C locale
+        too, as the byte 0xa0.
+*/
+static bool wc_wide_space(p32 code, bool posix)
+{
+        switch (code)
+        {
+        case 0x1680:
+        case 0x2028:
+        case 0x2029:
+        case 0x205f:
+        case 0x3000:
+                return true;
+        case 0xa0:
+        case 0x2007:
+        case 0x202f:
+        case 0x2060:
+                return !posix;
+        }
+
+        return (code >= 0x2000 && code <= 0x2006) || (code >= 0x2008 && code <= 0x200a);
+}
+
+enum
+{
+        WC_INVALID,
+        WC_VALID,
+        WC_SHORT,
+};
+
+/*
+        One UTF-8 sequence, strictly: no overlong forms, no surrogates, nothing
+        past U+10FFFF. A byte that cannot begin or continue one is a byte on
+        its own, as mbrtowc's refusal is to GNU; a sequence the span ends in
+        the middle of is short, and waits for the next read.
+*/
+static p8 wc_utf8_decode(const p8 address_to at, positive size, p32 address_to code,
+                         positive address_to length)
+{
+        p8 lead = at[0];
+        p8 low = 0x80;
+        p8 high = 0xbf;
+        positive need;
+        p32 value;
+
+        address_to length = 1;
+        address_to code = lead;
+
+        if (lead < 0x80)
+                return WC_VALID;
+
+        if (lead < 0xc2 || lead > 0xf4)
+                return WC_INVALID;
+
+        if (lead <= 0xdf)
+        {
+                need = 2;
+                value = lead & 0x1f;
+        }
+        else if (lead <= 0xef)
+        {
+                need = 3;
+                value = lead & 0x0f;
+                low = lead == 0xe0 ? 0xa0 : 0x80;
+                high = lead == 0xed ? 0x9f : 0xbf;
+        }
+        else
+        {
+                need = 4;
+                value = lead & 0x07;
+                low = lead == 0xf0 ? 0x90 : 0x80;
+                high = lead == 0xf4 ? 0x8f : 0xbf;
+        }
+
+        for (positive i = 1; i < need; i++)
+        {
+                if (i == size)
+                        return WC_SHORT;
+
+                p8 byte = at[i];
+
+                if (byte < (i == 1 ? low : 0x80) || byte > (i == 1 ? high : 0xbf))
+                        return WC_INVALID;
+
+                value = value << 6 | (byte & 0x3f);
+        }
+
+        address_to code = value;
+        address_to length = need;
+        return WC_VALID;
+}
+
+typedef struct
+{
+        positive chars, words, longest, column;
+        p8 carry[4];
+        positive carried;
+        bool inside, posix, want_words, want_longest;
+} wc_utf8;
+
+static const b8 text_set_ascii[STRING_SET_BYTES] = {[0 ... 127] = 1};
+
+static fn wc_utf8_step(wc_utf8 address_to state, bool valid, p32 code)
+{
+        state->chars += valid;
+
+        if (state->want_longest && valid)
+        {
+                if (code == '\n' || code == '\r' || code == '\f')
+                {
+                        if (state->column > state->longest)
+                                state->longest = state->column;
+
+                        state->column = 0;
+                }
+                else if (code == '\t')
+                        state->column += 8 - state->column % 8;
+                else if (code >= 0x20 && code < 0x7f)
+                        state->column++;
+                else if (code >= 0x80)
+                        state->column += wc_width(code);
+        }
+
+        if (state->want_words)
+        {
+                bool space = valid && (code < 0x80 ? byte_is_space((p8)code)
+                                                   : wc_wide_space(code, state->posix));
+
+                if (space)
+                        state->inside = false;
+                else if (!state->inside)
+                {
+                        state->inside = true;
+                        state->words++;
+                }
+        }
+}
+
+/*
+        A read's worth of bytes in a UTF-8 locale. A sequence the last read
+        ended inside is finished from the front of this one first. Without
+        -L, a run of ASCII is characters by its length and words by the same
+        pass the single-byte count uses; only the rest is decoded.
+*/
+static fn wc_utf8_block(wc_utf8 address_to state, const p8 address_to at, positive size)
+{
+        positive p = 0;
+
+        while (state->carried && p < size)
+        {
+                p8 joined[8];
+                positive have = state->carried;
+                positive take = size - p < 4 ? size - p : 4;
+                p32 code;
+                positive length;
+
+                memory_copy(joined, state->carry, have);
+                memory_copy(joined + have, at + p, take);
+
+                p8 answer = wc_utf8_decode(joined, have + take, address_of code,
+                                           address_of length);
+
+                if (answer == WC_SHORT)
+                {
+                        memory_copy(state->carry + have, at + p, take);
+                        state->carried = have + take;
+                        return;
+                }
+
+                wc_utf8_step(state, answer == WC_VALID, code);
+
+                if (length <= have)
+                {
+                        memory_copy(state->carry, state->carry + length, have - length);
+                        state->carried = have - length;
+                }
+                else
+                {
+                        p += length - have;
+                        state->carried = 0;
+                }
+        }
+
+        while (p < size)
+        {
+                /*
+                        With -L every byte moves the column, so ASCII is taken
+                        here a byte at a time with no call per byte, the same
+                        work the single-byte loop does, and only a byte past
+                        ASCII goes to the decoder.
+                */
+                if (state->want_longest)
+                {
+                        positive column = state->column;
+                        positive longest = state->longest;
+                        positive words = state->words;
+                        bool inside = state->inside;
+                        bool want_words = state->want_words;
+                        positive start = p;
+
+                        while (p < size && at[p] < 0x80)
+                        {
+                                p8 character = at[p++];
+
+                                if (character >= 0x20 && character < 0x7f)
+                                        column++;
+                                else if (character == '\n' || character == '\r' ||
+                                         character == '\f')
+                                {
+                                        if (column > longest)
+                                                longest = column;
+
+                                        column = 0;
+                                }
+                                else if (character == '\t')
+                                        column += 8 - column % 8;
+
+                                if (want_words)
+                                {
+                                        if (byte_is_space(character))
+                                                inside = false;
+                                        else if (!inside)
+                                        {
+                                                inside = true;
+                                                words++;
+                                        }
+                                }
+                        }
+
+                        state->chars += p - start;
+                        state->column = column;
+                        state->longest = longest;
+                        state->words = words;
+                        state->inside = inside;
+
+                        if (p == size)
+                                break;
+                }
+                else
+                {
+                        positive run = string_span_max(at + p, size - p, text_set_ascii);
+
+                        if (run)
+                        {
+                                state->chars += run;
+
+                                if (state->want_words)
+                                {
+                                        positive2 counted = memory_count_words(
+                                            at + p, run, state->inside);
+
+                                        state->words += counted.x;
+                                        state->inside = (bool)counted.y;
+                                }
+
+                                p += run;
+
+                                if (p == size)
+                                        break;
+                        }
+                }
+
+                p32 code;
+                positive length;
+                p8 answer = wc_utf8_decode(at + p, size - p, address_of code,
+                                           address_of length);
+
+                if (answer == WC_SHORT)
+                {
+                        state->carried = size - p;
+                        memory_copy(state->carry, at + p, state->carried);
+                        return;
+                }
+
+                wc_utf8_step(state, answer == WC_VALID, code);
+                p += length;
+        }
+}
+
+// What the input ended in the middle of is bytes, each on its own.
+static fn wc_utf8_finish(wc_utf8 address_to state)
+{
+        for (positive i = 0; i < state->carried; i++)
+                wc_utf8_step(state, false, 0);
+
+        state->carried = 0;
+}
+
+/*
+        -L in a single-byte locale, and whatever else was asked beside it,
+        a byte at a time. Its own function so the loop keeps its registers
+        whatever else text_wc grows.
+*/
+static fn wc_bytes_general(const p8 address_to at, positive left, bool want_lines,
+                           bool want_words, bool posix, positive address_to lines_out,
+                           positive address_to words_out, positive address_to longest_out,
+                           positive address_to column_out, bool address_to inside_out)
+{
+        positive lines = address_to lines_out;
+        positive words = address_to words_out;
+        positive longest = address_to longest_out;
+        positive column = address_to column_out;
+        bool inside = address_to inside_out;
+
+        for (positive c = 0; c < left; c++)
+        {
+                p8 character = at[c];
+
+                if (want_lines && character == '\n')
+                        lines++;
+
+                /*
+                        -L is a width on a terminal rather
+                        than a count of bytes. A tab reaches
+                        the next stop eight columns apart; a
+                        return or a form feed starts the line
+                        over without being a line for the
+                        purpose of counting them; and a byte
+                        that would not show takes no room at
+                        all, which is why a line of control
+                        characters is nought columns wide and
+                        not as many as it has bytes.
+                */
+                if (character == '\n' || character == '\r' ||
+                    character == '\f')
+                {
+                        if (column > longest)
+                                longest = column;
+
+                        column = 0;
+                }
+                else if (character == '\t')
+                {
+                        column += 8 - column % 8;
+                }
+                else if (character >= 0x20 && character < 0x7f)
+                {
+                        column++;
+                }
+
+                if (want_words)
+                {
+                        if (byte_is_space(character) ||
+                            (character == 0xa0 && !posix))
+                        {
+                                inside = false;
+                        }
+                        else if (!inside)
+                        {
+                                inside = true;
+                                words++;
+                        }
+                }
+        }
+
+
+        address_to lines_out = lines;
+        address_to words_out = words;
+        address_to longest_out = longest;
+        address_to column_out = column;
+        address_to inside_out = inside;
 }
 
 static b32 text_wc()
@@ -3498,7 +4353,8 @@ static b32 text_wc()
         bool want_chars = (flags & FILE_FLAG('m')) != 0;
         bool want_longest = (flags & FILE_FLAG('L')) != 0;
         positive total_mode = WC_TOTAL_AUTO;
-        positive total_lines = 0, total_words = 0, total_bytes = 0, total_longest = 0;
+        positive total_lines = 0, total_words = 0, total_chars = 0, total_bytes = 0;
+        positive total_longest = 0;
         positive width = 1;
         positive known = 0;
         bool unknown = false;
@@ -3524,6 +4380,10 @@ static b32 text_wc()
         wc_want_bytes = want_bytes;
         wc_want_chars = want_chars;
         wc_want_longest = want_longest;
+
+        // The environment cannot change while wc runs, so both are asked once.
+        bool utf8 = (want_chars || want_words || want_longest) && text_locale_utf8();
+        bool posix = file_environment((string_address) "POSIXLY_CORRECT") != null;
 
         if (total_mode != WC_TOTAL_ONLY && (selected > 1 || inputs > 1))
         {
@@ -3573,6 +4433,8 @@ static b32 text_wc()
                 positive lines = 0, words = 0, bytes = 0;
                 positive longest = 0, column = 0;
                 bool inside = false;
+                wc_utf8 wide = {.posix = posix, .want_words = want_words,
+                                .want_longest = want_longest};
 
                 if (!text_open(name))
                         continue;
@@ -3596,8 +4458,8 @@ static b32 text_wc()
                         already -- a pipe has no size at all and
                         text_regular_size says so by refusing.
                 */
-                if ((want_bytes || want_chars) && !want_lines && !want_words &&
-                    !want_longest)
+                if ((want_bytes || want_chars) && !(want_chars && utf8) &&
+                    !want_lines && !want_words && !want_longest)
                 {
                         positive size = 0;
 
@@ -3622,6 +4484,16 @@ static b32 text_wc()
 
                         bytes += left;
 
+                        if (utf8)
+                        {
+                                if (want_lines)
+                                        lines += memory_count(at, left, '\n');
+
+                                wc_utf8_block(address_of wide, at, left);
+                                text_input.position = text_input.filled;
+                                continue;
+                        }
+
                         /*
                                 wc -l on its own, which is most of what wc is
                                 asked for, needs nothing carried from one byte
@@ -3644,68 +4516,48 @@ static b32 text_wc()
                                 if (want_lines)
                                         lines += memory_count(at, left, '\n');
 
+                                /*
+                                        A byte 0xa0 is U+00A0, a no-break
+                                        space, which GNU's wc splits words
+                                        at in the C locale unless
+                                        POSIXLY_CORRECT is set. The counting
+                                        pass knows only ASCII white space, so
+                                        a read holding one is counted between
+                                        them, the word state ending at each.
+                                */
                                 if (want_words)
                                 {
-                                        positive2 counted_words =
-                                            memory_count_words(at, left, inside);
+                                        p8 address_to from = at;
+                                        p8 address_to past = at + left;
 
-                                        words += counted_words.x;
-                                        inside = (bool)counted_words.y;
+                                        for (;;)
+                                        {
+                                                p8 address_to stop = posix ? null
+                                                    : (p8 address_to)memory_first_of(
+                                                          from, 0xa0, (positive)(past - from));
+                                                positive run = (positive)((stop ? stop : past) - from);
+                                                positive2 counted_words =
+                                                    memory_count_words(from, run, inside);
+
+                                                words += counted_words.x;
+                                                inside = (bool)counted_words.y;
+
+                                                if (!stop)
+                                                        break;
+
+                                                inside = false;
+                                                from = stop + 1;
+                                        }
                                 }
 
                                 text_input.position = text_input.filled;
                                 continue;
                         }
 
-                        for (positive c = 0; c < left; c++)
-                        {
-                                p8 character = at[c];
-
-                                if (want_lines && character == '\n')
-                                        lines++;
-
-                                /*
-                                        -L is a width on a terminal rather
-                                        than a count of bytes. A tab reaches
-                                        the next stop eight columns apart; a
-                                        return or a form feed starts the line
-                                        over without being a line for the
-                                        purpose of counting them; and a byte
-                                        that would not show takes no room at
-                                        all, which is why a line of control
-                                        characters is nought columns wide and
-                                        not as many as it has bytes.
-                                */
-                                if (character == '\n' || character == '\r' ||
-                                    character == '\f')
-                                {
-                                        if (column > longest)
-                                                longest = column;
-
-                                        column = 0;
-                                }
-                                else if (character == '\t')
-                                {
-                                        column += 8 - column % 8;
-                                }
-                                else if (character >= 0x20 && character < 0x7f)
-                                {
-                                        column++;
-                                }
-
-                                if (want_words)
-                                {
-                                        if (byte_is_space(character))
-                                        {
-                                                inside = false;
-                                        }
-                                        else if (!inside)
-                                        {
-                                                inside = true;
-                                                words++;
-                                        }
-                                }
-                        }
+                        wc_bytes_general(at, left, want_lines, want_words, posix,
+                                         address_of lines, address_of words,
+                                         address_of longest, address_of column,
+                                         address_of inside);
 
                         text_input.position = text_input.filled;
                 }
@@ -3713,18 +4565,30 @@ static b32 text_wc()
         counted:
                 text_close();
 
+                positive chars = bytes;
+
+                if (utf8)
+                {
+                        wc_utf8_finish(address_of wide);
+                        chars = wide.chars;
+                        words = wide.words;
+                        longest = wide.longest;
+                        column = wide.column;
+                }
+
                 if (column > longest)
                         longest = column;
 
                 total_lines += lines;
                 total_words += words;
+                total_chars += chars;
                 total_bytes += bytes;
 
                 if (longest > total_longest)
                         total_longest = longest;
 
                 if (total_mode != WC_TOTAL_ONLY)
-                        wc_row(lines, words, bytes, longest, width, name);
+                        wc_row(lines, words, chars, bytes, longest, width, name);
         }
 
         bool total = total_mode == WC_TOTAL_ALWAYS ||
@@ -3735,7 +4599,7 @@ static b32 text_wc()
         {
                 // The total of the longest lines is the longest of them, not
                 // their sum, which is the one column here that does not add up.
-                wc_row(total_lines, total_words, total_bytes, total_longest,
+                wc_row(total_lines, total_words, total_chars, total_bytes, total_longest,
                        total_mode == WC_TOTAL_ONLY ? 1 : width,
                        total_mode == WC_TOTAL_ONLY ? null
                                                    : (string_address) "total");
@@ -4170,14 +5034,6 @@ static bool text_lines_gather()
         return true;
 }
 
-static fn text_put_slice(text_slice address_to line)
-{
-        text_put(line->at, line->length);
-
-        if (line->ended)
-                text_put_character(text_delimiter);
-}
-
 /*
         Whatever is left of the input, held whole in the arena, for the byte
         counts head and tail can only answer once a pipe has ended.
@@ -4399,9 +5255,11 @@ static positive text_tail_start(positive handle, positive size, positive count,
         return floor;
 }
 
+// Reads no further than the count, so a seekable input is left exactly where
+// the copy stopped -- where GNU leaves it for the command after head.
 static fn text_stream_count(positive left)
 {
-        while (left && text_fill())
+        while (left && text_fill_amount(left))
         {
                 positive have = text_input.filled - text_input.position;
                 positive take = min(have, left);
@@ -4432,6 +5290,245 @@ static fn text_stream_span(positive start, positive stop)
 {
         text_stream_seek(start);
         text_stream_count(difference_or_zero(stop, start));
+}
+
+/*
+        Where the last count records of a span held in memory begin: the
+        in-memory twin of text_tail_start, with its rule that the delimiter
+        ending the span is not one of the ones counted. Counted a read-sized
+        block at a time from the end, so only the block holding the answer
+        is walked delimiter by delimiter.
+*/
+static positive text_window_start(p8 address_to data, positive used,
+                                  positive count, bool by_bytes)
+{
+        if (by_bytes)
+                return used > count ? used - count : 0;
+
+        if (!count)
+                return used;
+
+        positive at = used;
+        positive found = 0;
+
+        if (at && data[at - 1] == text_delimiter)
+                at--;
+
+        while (at)
+        {
+                positive take = min(at, (positive)TEXT_READ_MAX);
+                positive from = at - take;
+                positive have = memory_count(data + from, take, text_delimiter);
+
+                if (found + have < count)
+                {
+                        found += have;
+                        at = from;
+                        continue;
+                }
+
+                positive need = count - found;
+                positive limit = take;
+
+                for (;;)
+                {
+                        p8 address_to hit = (p8 address_to)memory_last_of(
+                            data + from, (b8)text_delimiter, limit);
+
+                        limit = (positive)(hit - (data + from));
+
+                        if (!--need)
+                                return from + limit + 1;
+                }
+        }
+
+        return 0;
+}
+
+/*
+        The last count records of an input that cannot be seeked, in a window
+        that slides. Once the store has grown to twice what the window last
+        held, everything before the window goes -- written out when head is
+        leaving the end off, dropped when tail wants only the end -- and the
+        window moves to the front. So the store holds about twice the answer
+        plus one read, however long the input runs: the line table and the
+        arena used to make a pipe's length the limit instead, and GNU has
+        none.
+*/
+#define TEXT_WINDOW_FIRST (1 << 22)
+#define TEXT_WINDOW_READ (1 << 20)
+
+static bool text_window(positive count, bool by_bytes, bool front)
+{
+        byte_store window = {0};
+        positive limit = TEXT_WINDOW_FIRST;
+        bool okay = true;
+
+        for (;;)
+        {
+                if (window.used > positive_max - TEXT_WINDOW_READ ||
+                    !byte_store_reserve(address_of window,
+                                        window.used + TEXT_WINDOW_READ,
+                                        TEXT_WINDOW_FIRST))
+                {
+                        string_diagnostic(&text_diagnostic, 0, null, "memory exhausted");
+                        text_status = 1;
+                        okay = false;
+                        break;
+                }
+
+                // What the reader already holds goes first; after that the
+                // input is read straight into the window, not through it.
+                positive held = text_input.filled - text_input.position;
+                positive got;
+
+                if (held)
+                {
+                        got = min(held, (positive)TEXT_WINDOW_READ);
+                        memory_copy_apart(window.bytes + window.used,
+                                          text_input.buffer + text_input.position,
+                                          got);
+                        text_input.position += got;
+                }
+                else
+                {
+                        bipolar read = text_input.finished
+                                           ? 0
+                                           : system_read_retry(
+                                                 text_input.handle,
+                                                 window.bytes + window.used,
+                                                 TEXT_WINDOW_READ);
+
+                        if (read <= 0)
+                        {
+                                text_input.finished = true;
+
+                                if (read < 0)
+                                {
+                                        string_diagnostic(&text_diagnostic, 0,
+                                                          text_input.name,
+                                                          "Read error");
+                                        text_input.failed = true;
+                                        text_status = 1;
+                                }
+
+                                break;
+                        }
+
+                        got = (positive)read;
+                }
+
+                window.used += got;
+
+                if (window.used < limit)
+                        continue;
+
+                positive start = text_window_start(window.bytes, window.used,
+                                                   count, by_bytes);
+
+                if (front)
+                        text_put(window.bytes, start);
+
+                memory_copy(window.bytes, window.bytes + start, window.used - start);
+                window.used -= start;
+
+                if (limit < window.used * 2)
+                        limit = window.used * 2;
+        }
+
+        if (okay)
+        {
+                positive start = text_window_start(window.bytes, window.used,
+                                                   count, by_bytes);
+
+                if (front)
+                        text_put(window.bytes, start);
+                else
+                        text_put(window.bytes + start, window.used - start);
+        }
+
+        byte_store_release(address_of window);
+        return okay;
+}
+
+// Step over the first skip records -- lines, or bytes -- a read at a time,
+// walking only the read that holds the last of them.
+static fn text_stream_skip(positive skip, bool by_bytes)
+{
+        while (skip && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+
+                if (by_bytes)
+                {
+                        positive take = min(left, skip);
+
+                        text_input.position += take;
+                        skip -= take;
+                        continue;
+                }
+
+                positive have = memory_count(at, left, text_delimiter);
+
+                if (have < skip)
+                {
+                        skip -= have;
+                        text_input.position = text_input.filled;
+                        continue;
+                }
+
+                p8 address_to past = at;
+
+                for (; skip; skip--)
+                        past = (p8 address_to)memory_first_of(
+                                   past, (b8)text_delimiter,
+                                   (positive)(at + left - past)) + 1;
+
+                text_input.position += (positive)(past - at);
+        }
+}
+
+/*
+        head -n: a read holding fewer delimiters than are still wanted goes
+        out whole, and only the read that holds the last one is walked.
+        What was read past that line is handed back to a seekable input, as
+        GNU hands it back, so the command after head in a group reads on
+        from the line head stopped at. A pipe cannot take it back, for
+        either of them.
+*/
+static fn text_head_records(positive count)
+{
+        while (count && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                positive have = memory_count(at, left, text_delimiter);
+                positive take = left;
+
+                if (have >= count)
+                {
+                        p8 address_to past = at;
+
+                        for (; count; count--)
+                                past = (p8 address_to)memory_first_of(
+                                           past, (b8)text_delimiter,
+                                           (positive)(at + left - past)) + 1;
+
+                        take = (positive)(past - at);
+                }
+                else
+                        count -= have;
+
+                text_put(at, take);
+                text_input.position += take;
+        }
+
+        positive unread = text_input.filled - text_input.position;
+
+        if (unread)
+                system_seek(text_input.handle, (positive)-(bipolar)unread,
+                            FILE_SEEK_CUR);
 }
 
 static const argument_option head_options[] = {
@@ -4467,27 +5564,7 @@ static fn text_head_short(positive count, bool by_bytes)
                 return;
         }
 
-        if (by_bytes)
-        {
-                positive have;
-                p8 address_to held = utility_arena_hold_rest(address_of have);
-
-                if (!held)
-                        return;
-
-                if (count < have)
-                        text_put(held, have - count);
-
-                return;
-        }
-
-        if (!text_lines_gather())
-                return;
-
-        positive stop = difference_or_zero(text_lines_count, count);
-
-        for (positive c = 0; c < stop; c++)
-                text_put_slice(text_lines + c);
+        text_window(count, by_bytes, true);
 }
 
 /*
@@ -4678,6 +5755,17 @@ static inline INLINE b32 text_head_tail(bool tail)
                                address_of count))
                 return text_done(1);
 
+        /*
+                tail asked for nothing from the end, and not following, reads
+                nothing: GNU returns before it opens a file, so a missing one
+                is no error, no header is written, and a seekable input is
+                left where it stood. Measured with -n 0, -c 0 and -0, with and
+                without -q, -v and the following-only words warned about above.
+        */
+        if (tail && !marked && !count &&
+            !(taking.flags & (FILE_FLAG('f') | FILE_FLAG('F'))))
+                return text_done(0);
+
         b32 inputs = text_input_count();
         bool headers = (text_files_count > 1 || loud) && !quiet;
 
@@ -4696,14 +5784,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         else if (by_bytes)
                                 text_stream_count(count);
                         else
-                        {
-                                positive done = 0;
-                                while (done < count && text_line_next(text_line, 0))
-                                {
-                                        text_put_line();
-                                        done++;
-                                }
-                        }
+                                text_head_records(count);
                         text_close();
                         continue;
                 }
@@ -4727,52 +5808,15 @@ static inline INLINE b32 text_head_tail(bool tail)
                         continue;
                 }
 
-                if (by_bytes)
+                // +N starts at the Nth record and streams from there; N wants
+                // the end, which a pipe only has once it has been read through.
+                if (marked)
                 {
-                        // Bytes rather than lines, so the whole input is held
-                        // and the tail of it handed back.
-                        positive have;
-                        p8 address_to held = utility_arena_hold_rest(address_of have);
-
-                        if (!held)
-                                return text_done(1);
-
-                        if (marked)
-                        {
-                                positive skip = count ? count - 1 : 0;
-
-                                if (skip < have)
-                                        text_put(held + skip, have - skip);
-                        }
-                        else
-                        {
-                                positive take = min(count, have);
-
-                                text_put(held + have - take, take);
-                        }
+                        text_stream_skip(count ? count - 1 : 0, by_bytes);
+                        text_put_rest();
                 }
-                else if (marked)
-                {
-                        positive seen = 0;
-
-                        while (text_line_next(text_line, 0))
-                        {
-                                seen++;
-
-                                if (seen >= (count ? count : 1))
-                                        text_put_line();
-                        }
-                }
-                else
-                {
-                        if (!text_lines_gather())
-                                return text_done(1);
-
-                        positive first = difference_or_zero(text_lines_count, count);
-
-                        for (positive c = first; c < text_lines_count; c++)
-                                text_put_slice(text_lines + c);
-                }
+                else if (!text_window(count, by_bytes, false))
+                        return text_done(1);
 
                 text_close();
         }
@@ -11312,6 +12356,61 @@ static positive text_list_single_last;
 // says so rather than treating the whole list as malformed.
 static bool text_list_too_large;
 
+/*
+        The ranges as written, kept so the range starts can be settled the way
+        GNU settles them once the whole list is in: sorted, and merged where
+        one reaches into the next -- an open range reaches into every later
+        start, and two that only touch stay two. Measured against GNU with
+        3-,5 and 5,3-6 and 2-3,1-4 (one range each) and 1-2,3-4 (two).
+        A list with more ranges than this keeps the marks the parse made.
+*/
+#define TEXT_RANGES_MAX 64
+
+typedef struct
+{
+        positive first;
+        positive last; // TEXT_UNSET when the range is open
+} text_range;
+
+static text_range text_list_ranges[TEXT_RANGES_MAX];
+
+static fn text_list_merge_begins(positive count)
+{
+        for (positive i = 1; i < count; i++)
+        {
+                text_range moving = text_list_ranges[i];
+                positive j = i;
+
+                while (j && text_list_ranges[j - 1].first > moving.first)
+                {
+                        text_list_ranges[j] = text_list_ranges[j - 1];
+                        j--;
+                }
+
+                text_list_ranges[j] = moving;
+        }
+
+        memory_fill(text_list_begins, 0, text_list_used);
+
+        positive reach = 0;
+
+        for (positive i = 0; i < count; i++)
+        {
+                text_range address_to range = text_list_ranges + i;
+
+                if (i && range->first <= reach)
+                {
+                        reach = max(reach, range->last);
+                        continue;
+                }
+
+                if (range->first < TEXT_LIST_MAX)
+                        text_list_begins[range->first] = 1;
+
+                reach = range->last;
+        }
+}
+
 static bool text_list_parse(string_address spec)
 {
         positive at = 0;
@@ -11402,6 +12501,10 @@ static bool text_list_parse(string_address spec)
                 else
                         text_list_single = false;
 
+                if (pieces <= TEXT_RANGES_MAX)
+                        text_list_ranges[pieces - 1] =
+                            (text_range){first, open ? TEXT_UNSET : last};
+
                 if (first < TEXT_LIST_MAX)
                 {
                         if (!text_list[first])
@@ -11435,6 +12538,9 @@ static bool text_list_parse(string_address spec)
                         return false;
         }
 
+        if (pieces && pieces <= TEXT_RANGES_MAX)
+                text_list_merge_begins(pieces);
+
         return pieces != 0;
 }
 
@@ -11466,6 +12572,71 @@ static bool text_list_has(positive which)
                 return true;
 
         return which < TEXT_LIST_MAX && text_list[which];
+}
+
+/*
+        The same list as spans, for cut -b and -c, so a line is a handful of
+        copies rather than a membership question for every byte.
+
+        Built from the marks the byte walk reads, in one pass over the
+        positions a list can name: a span starts where the walk would have
+        started writing after a gap, or at a range start, which is exactly
+        where it would have written the output delimiter. So every span
+        after the first one written gets a delimiter, and none inside one
+        does. The open tail is the last span, reaching as far as any line.
+        A list that parts into more spans than the table holds keeps the
+        byte walk.
+*/
+#define TEXT_SPANS_MAX 256
+
+typedef struct
+{
+        positive first;
+        positive last;
+} text_span;
+
+static text_span text_spans[TEXT_SPANS_MAX];
+static positive text_spans_count;
+
+static bool text_spans_build(bool complement)
+{
+        positive limit = max(text_list_used, text_list_open);
+        bool ran = false;
+
+        text_spans_count = 0;
+
+        for (positive at = 1; at < limit; at++)
+        {
+                if (text_list_has(at) == complement)
+                {
+                        ran = false;
+                        continue;
+                }
+
+                if (ran && (complement || !text_list_begins[at]))
+                        text_spans[text_spans_count - 1].last = at;
+                else if (text_spans_count == TEXT_SPANS_MAX)
+                        return false;
+                else
+                        text_spans[text_spans_count++] = (text_span){at, at};
+
+                ran = true;
+        }
+
+        // Every position from limit on answers alike, and none of them was
+        // ever the start of a range.
+        if ((text_list_open != 0) != complement)
+        {
+                if (ran)
+                        text_spans[text_spans_count - 1].last = TEXT_UNSET;
+                else if (text_spans_count == TEXT_SPANS_MAX)
+                        return false;
+                else
+                        text_spans[text_spans_count++] =
+                            (text_span){limit ? limit : 1, TEXT_UNSET};
+        }
+
+        return true;
 }
 
 /*
@@ -11611,6 +12782,9 @@ static b32 text_cut()
         }
 
         b32 inputs = text_input_count();
+        bool spans = by_character &&
+                     !(text_list_single && (!complement || !separator)) &&
+                     text_spans_build(complement);
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -11662,6 +12836,28 @@ static b32 text_cut()
                                         else if (through > from)
                                                 text_put(line + from,
                                                          through - from);
+
+                                        text_put_character(text_delimiter);
+                                        continue;
+                                }
+
+                                if (spans)
+                                {
+                                        for (positive s = 0; s < text_spans_count; s++)
+                                        {
+                                                text_span address_to span = text_spans + s;
+
+                                                if (span->first > line_length)
+                                                        break;
+
+                                                positive through = min(span->last, line_length);
+
+                                                if (s && separator)
+                                                        text_put(separator, separator_length);
+
+                                                text_put(line + span->first - 1,
+                                                         through - span->first + 1);
+                                        }
 
                                         text_put_character(text_delimiter);
                                         continue;
@@ -11747,6 +12943,32 @@ static b32 text_cut()
                                                         break;
 
                                                 split = true;
+
+                                                /* No field past this one is
+                                                   listed, so the rest of the
+                                                   record is kept whole or
+                                                   dropped whole, delimiters
+                                                   and all, without finding
+                                                   them one at a time. */
+                                                if (!text_list_open &&
+                                                    which + 1 >= text_list_used)
+                                                {
+                                                        if (complement)
+                                                        {
+                                                                positive rest =
+                                                                    line_length - at - 1;
+
+                                                                if (wrote)
+                                                                        out[out_length++] = delimiter;
+
+                                                                memory_copy(out + out_length,
+                                                                            line + at + 1, rest);
+                                                                out_length += rest;
+                                                        }
+
+                                                        break;
+                                                }
+
                                                 at++;
                                                 which++;
                                         }
@@ -12746,6 +13968,33 @@ static b32 text_uniq()
                                 count++;
 
                                 /*
+                                        -D with -u keeps what GNU's loop keeps:
+                                        each line of a group is written when
+                                        the next one proves it repeats, and -u
+                                        takes away the one that closes the
+                                        group. So the line before this one goes
+                                        out now and this one becomes the line
+                                        before, and the last of a group never
+                                        does. Equal compared parts are equal to
+                                        each other, so comparing with the line
+                                        just read groups exactly as comparing
+                                        with the first of the group did.
+                                */
+                                if (all_repeated && unique_only)
+                                {
+                                        if (count == 2 &&
+                                            (gap == UNIQ_GROUP_PREPEND ||
+                                             (gap == UNIQ_GROUP_SEPARATE && shown_group)))
+                                                text_put_character(text_delimiter);
+
+                                        shown_group = true;
+                                        text_put(previous, previous_length + 1);
+                                        previous = line;
+                                        previous_length = line_length;
+                                        continue;
+                                }
+
+                                /*
                                         -D and --group both print every line
                                         of a group rather than one of them, so
                                         the rest of a group goes out as it
@@ -13499,11 +14748,19 @@ typedef struct grep_glob
 {
         struct grep_glob address_to next;
         string_address value;
+        // --include rather than --exclude or a line of --exclude-from.
+        bool include;
+        // Holds a ? * [ or ]: GNU matches such a glob with fnmatch and any
+        // other as a string, and the two try different suffixes of a name.
+        bool wild;
 } grep_glob;
 
-static grep_glob address_to grep_include;
-static grep_glob address_to grep_exclude;
+// --include, --exclude and --exclude-from in one list, newest first, since
+// which of them spoke last decides a name.
+static grep_glob address_to grep_file_globs;
 static grep_glob address_to grep_exclude_dir;
+// Whichever of -l and -L came later, for when both did.
+static p8 grep_list_last;
 
 /*
         All three option families are the same list operation. Values from an
@@ -13515,7 +14772,8 @@ static grep_glob address_to grep_exclude_dir;
         --exclude-dir=sub and --exclude-dir=sub/ name the same directory.
 */
 static bool grep_glob_add(grep_glob address_to address_to list,
-                          string_address value, positive length, bool directory)
+                          string_address value, positive length, bool directory,
+                          bool include)
 {
         if (directory)
                 while (length && value[length - 1] == '/')
@@ -13530,51 +14788,124 @@ static bool grep_glob_add(grep_glob address_to address_to list,
         p8 address_to room = (p8 address_to)(made + 1);
 
         memory_copy_apart_end(room, value, length);
+
+        /*
+                GNU matches these with fnmatch, where a bracket expression
+                opened by [^ is the complement just as one opened by [! is.
+                The shell's matcher reads only the exclamation mark, so a
+                bracket's leading caret becomes one here, and only there: a
+                caret anywhere else in a bracket, or outside one, stays itself.
+        */
+        for (positive at = 0; at < length; at++)
+        {
+                if (room[at] == '\\')
+                {
+                        at++;
+                        continue;
+                }
+
+                if (room[at] != '[')
+                        continue;
+
+                positive close = at + 1;
+
+                if (close < length && (room[close] == '^' || room[close] == '!'))
+                        close++;
+                if (close < length && room[close] == ']')
+                        close++;
+                while (close < length && room[close] != ']')
+                        close++;
+
+                if (close == length)
+                        continue;
+
+                if (room[at + 1] == '^')
+                        room[at + 1] = '!';
+
+                at = close;
+        }
+
         made->value = (string_address)room;
+        made->include = include;
+        made->wild = false;
+
+        for (positive at = 0; at < length; at++)
+        {
+                if (room[at] == '\\')
+                        at++;
+                else if (room[at] == '?' || room[at] == '*' ||
+                         room[at] == '[' || room[at] == ']')
+                        made->wild = true;
+        }
+
         made->next = *list;
         *list = made;
 
         return true;
 }
 
-static PURE bool grep_globs_have(grep_glob address_to list, string_address name)
+/*
+        Whether one glob takes a name. A walk hands over the entry's own name
+        and nothing more is tried. An operand is taken as written, and then
+        GNU tries each part of it that follows a slash: a literal glob at
+        every slash, a wildcard one only where the next byte is not another
+        slash. So --exclude=sub/y.txt skips tree/sub/y.txt named on the
+        command line, and not the same file met in a walk.
+*/
+static PURE bool grep_glob_takes(grep_glob address_to glob, string_address name,
+                                 bool operand)
 {
-        for (; list; list = list->next)
-                if (shell_match(list->value, name))
+        if (shell_match(glob->value, name))
+                return true;
+
+        if (!operand)
+                return false;
+
+        for (string_address at = name; at[0]; at++)
+                if (at[0] == '/' && !(glob->wild && at[1] == '/') &&
+                    shell_match(glob->value, at + 1))
                         return true;
 
         return false;
 }
 
+/*
+        GNU's one verdict over --include, --exclude and --exclude-from: the
+        latest glob that takes the name decides, and when none does the
+        earliest decides the other way. A list that opened with --include
+        keeps only what some glob took; one that opened with --exclude keeps
+        whatever no glob took.
+*/
+static PURE bool grep_wanted_name(string_address name, bool operand)
+{
+        for (grep_glob address_to glob = grep_file_globs; glob; glob = glob->next)
+        {
+                if (grep_glob_takes(glob, name, operand))
+                        return glob->include;
+
+                if (!glob->next)
+                        return !glob->include;
+        }
+
+        return true;
+}
+
 static PURE bool grep_wanted_file(string_address path)
 {
-        string_address name = file_last_component(path);
-
-        if (grep_include && !grep_globs_have(grep_include, name))
-                return false;
-
-        return !grep_globs_have(grep_exclude, name);
+        return grep_wanted_name(file_last_component(path), false);
 }
 
-static PURE bool grep_wanted_directory(string_address path)
+// A directory is held to --exclude-dir alone, whether a walk met it or it
+// was named, and never to --include or --exclude.
+static PURE bool grep_wanted_directory(string_address path, bool operand)
 {
-        return !grep_globs_have(grep_exclude_dir, file_last_component(path));
-}
+        string_address name = operand ? path : file_last_component(path);
 
-// The kernel's mode for a path, or zero when there is none to be had.
-static p32 text_path_mode(string_address path)
-{
-        file_facts facts;
-        bipolar handle = text_open_handle(path, FILE_READ, 0);
+        for (grep_glob address_to glob = grep_exclude_dir; glob; glob = glob->next)
+                if (grep_glob_takes(glob, name, operand))
+                        return false;
 
-        if (handle < 0)
-                return 0;
-
-        bool told = text_handle_facts((positive)handle, address_of facts);
-
-        system_close(handle);
-
-        return told ? facts.mode : 0;
+        return true;
 }
 
 static bool grep_path_add(string_address path)
@@ -13629,16 +14960,35 @@ enum
 // A symlink that points at a directory above it is a walk with no end, and -R
 // follows symlinks. The device and node of everything currently being walked
 // through stops that where it starts, and the depth stops what the pair
-// cannot -- a mount arranged to be its own child.
-#define GREP_DEPTH_MAX 64
+// cannot -- a mount arranged to be its own child. GNU has no such bound and
+// finds a file 300 directories down, so the bound sits where a frame of this
+// recursion per level still fits a default stack many times over.
+#define GREP_DEPTH_MAX 1024
 
 static positive grep_seen_device[GREP_DEPTH_MAX + 1];
 static positive grep_seen_node[GREP_DEPTH_MAX + 1];
+// Out of room for names: the one failure that ends every level of a walk.
+static bool grep_walk_halted;
+
+// A directory's records are all read before anything below it is walked, so
+// one buffer serves every level and stays out of the recursion's frames.
+static p8 grep_dirents[GREP_DIRENT_BYTES];
+
+/*
+        The names every directory on the way down is still to walk, as one
+        stack: a level puts its names on top, reads them back by offset -- the
+        stack moves when it grows -- and cuts back to where it found it. One
+        allocation for the whole walk, as deep as the path and never wider,
+        rather than one per directory for the allocator to keep.
+*/
+static p8 address_to grep_walk_names;
+static positive grep_walk_names_used;
+static positive grep_walk_names_room;
 
 static bool grep_walk(string_address path, b32 depth, bool quietly)
 {
         bipolar handle;
-        p8 entries[GREP_DIRENT_BYTES];
+        p8 address_to entries = grep_dirents;
         bool fine = true;
 
         // Too deep is nothing more down here rather than a failure: GNU says
@@ -13648,6 +14998,20 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
 
         handle = text_open_handle(path && path[0] ? path : (string_address) ".",
                                   FILE_READ, 0);
+
+        /*
+                A directory that will not open is searched like a file, so
+                the read that fails the same way reports it where it falls
+                among the files around it, as GNU's message does, and the
+                walk goes on beside it.
+        */
+        if (handle < 0 && path && path[0])
+        {
+                if (!grep_path_add(path))
+                        grep_walk_halted = true;
+
+                return !grep_walk_halted;
+        }
 
         if (handle < 0)
         {
@@ -13679,10 +15043,20 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
         positive have = 0, at = 0;
         bipolar error = 0;
         struct linux_dirent64 address_to entry;
+        positive base = grep_walk_names_used;
 
-        while (fine && (entry = file_directory_next(handle, entries,
-                              sizeof(entries), address_of have, address_of at,
-                              address_of error)))
+        /*
+                The names are read out and the directory closed before any of
+                them is walked, so a walk holds one descriptor however deep it
+                goes -- GNU's fts finds a file 300 directories down under a
+                limit of 256 -- and the names are still taken in readdir order.
+                They wait on the names stack as a kind byte and the name, and
+                become paths only when their turn comes, as they did when the
+                walk went down mid-read.
+        */
+        while ((entry = file_directory_next(handle, entries, GREP_DIRENT_BYTES,
+                                            address_of have, address_of at,
+                                            address_of error)))
         {
                 string_address name = (string_address)entry->d_name;
                 p8 kind = entry->d_type;
@@ -13693,29 +15067,75 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
                 if (kind == DIRENT_LINK && !grep_dereference)
                         continue;
 
-                string_address full = grep_path_join(path, name);
+                positive length = string_length(name) + 1;
+                positive used = grep_walk_names_used;
+
+                if (grep_walk_names_room - used < 1 + length)
+                {
+                        positive room = grep_walk_names_room ? grep_walk_names_room : 65536;
+
+                        while (room - used < 1 + length)
+                                room *= 2;
+
+                        p8 address_to grown = memory_resize(grep_walk_names, room);
+
+                        if (!grown)
+                        {
+                                grep_walk_halted = true;
+                                fine = false;
+                                break;
+                        }
+
+                        grep_walk_names = grown;
+                        grep_walk_names_room = room;
+                }
+
+                grep_walk_names[used] = kind;
+                memory_copy(grep_walk_names + used + 1, name, length);
+                grep_walk_names_used = used + 1 + length;
+        }
+
+        system_close(handle);
+
+        positive top = grep_walk_names_used;
+
+        // A directory below that cannot be read is reported and passed, as
+        // GNU does, and what is beside it is still walked; only running out
+        // of room for names stops the whole walk.
+        for (positive from = base; from < top && !grep_walk_halted;)
+        {
+                p8 kind = grep_walk_names[from];
+                string_address full = grep_path_join(
+                    path, (string_address)(grep_walk_names + from + 1));
+
+                from += 1 + string_length((string_address)(grep_walk_names + from + 1)) + 1;
 
                 if (!full)
                 {
+                        grep_walk_halted = true;
                         fine = false;
                         break;
                 }
 
+                // Asked of the name, not of an open: a directory nobody may
+                // read is still a directory, and is reported when it fails.
                 if (kind == DIRENT_UNKNOWN || kind == DIRENT_LINK)
                 {
-                        p32 mode = text_path_mode(full);
+                        file_facts facts;
 
-                        if (!mode)
+                        if (!file_look(AT_FDCWD, full, 0, address_of facts))
                                 continue;
 
-                        kind = (mode & 0170000) == 0040000 ? DIRENT_DIRECTORY
-                             : (mode & 0170000) == 0100000 ? DIRENT_FILE
-                                                           : DIRENT_OTHER;
+                        p32 mode = facts.mode & MODE_FORMAT;
+
+                        kind = mode == MODE_DIRECTORY ? DIRENT_DIRECTORY
+                             : mode == MODE_FILE      ? DIRENT_FILE
+                                                      : DIRENT_OTHER;
                 }
 
                 if (kind == DIRENT_DIRECTORY)
                 {
-                        if (grep_wanted_directory(full) &&
+                        if (grep_wanted_directory(full, false) &&
                             !grep_walk(full, depth + 1, quietly))
                                 fine = false;
 
@@ -13728,10 +15148,20 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
                         continue;
 
                 if (grep_wanted_file(full) && !grep_path_add(full))
+                {
+                        grep_walk_halted = true;
                         fine = false;
+                }
         }
 
-        system_close(handle);
+        grep_walk_names_used = base;
+
+        if (!depth && grep_walk_names)
+        {
+                memory_give(grep_walk_names);
+                grep_walk_names = null;
+                grep_walk_names_room = 0;
+        }
 
         if (error < 0)
         {
@@ -13941,22 +15371,24 @@ static bool grep_option_seen(p8 letter, string_address value)
                                  grep_extended);
                 grep_said_pattern = true;
         }
+        else if (letter == 'l' || letter == 'L')
+                grep_list_last = letter;
         else if (letter == 'Q')
         {
-                if (!grep_glob_add(address_of grep_include, value,
-                                   string_length(value), false))
+                if (!grep_glob_add(address_of grep_file_globs, value,
+                                   string_length(value), false, true))
                         return false;
         }
         else if (letter == 'S')
         {
-                if (!grep_glob_add(address_of grep_exclude, value,
-                                   string_length(value), false))
+                if (!grep_glob_add(address_of grep_file_globs, value,
+                                   string_length(value), false, false))
                         return false;
         }
         else if (letter == 'V')
         {
                 if (!grep_glob_add(address_of grep_exclude_dir, value,
-                                   string_length(value), true))
+                                   string_length(value), true, false))
                         return false;
         }
         else if (letter == 'X')
@@ -13965,9 +15397,9 @@ static bool grep_option_seen(p8 letter, string_address value)
                         return false;
 
                 while (text_line_next(text_line, 0))
-                        if (!grep_glob_add(address_of grep_exclude,
+                        if (!grep_glob_add(address_of grep_file_globs,
                                            (string_address)text_line,
-                                           text_line_length, false))
+                                           text_line_length, false, false))
                         {
                                 text_close();
                                 return false;
@@ -14606,9 +16038,10 @@ static b32 text_grep()
         grep_pattern_any = false;
         grep_pattern_empty = false;
         grep_pattern_groups = 0;
-        grep_include = null;
-        grep_exclude = null;
+        grep_file_globs = null;
         grep_exclude_dir = null;
+        grep_list_last = 0;
+        grep_walk_halted = false;
         grep_path_count = 0;
         grep_expanded = false;
         grep_skip_directories = false;
@@ -14642,6 +16075,14 @@ static b32 text_grep()
         bool counting = (flags & FILE_FLAG('c')) != 0;
         bool listing = (flags & FILE_FLAG('l')) != 0;
         bool listing_without = (flags & FILE_FLAG('L')) != 0;
+
+        // -l and -L are one setting in GNU, so the later of the two holds.
+        if (listing && listing_without)
+        {
+                listing = grep_list_last == 'l';
+                listing_without = !listing;
+        }
+
         bool quiet = (flags & FILE_FLAG('q')) != 0;
         bool no_names = (flags & FILE_FLAG('h')) != 0;
         bool with_names = (flags & FILE_FLAG('H')) != 0;
@@ -14868,38 +16309,62 @@ static b32 text_grep()
         {
                 string_address name = program_argument(text_files[i]);
 
-                // A bare - is standard input, which no walk descends into.
-                if (grep_recursive && string_equals(name, "-"))
+                // A bare - is standard input, which no walk descends into
+                // and no glob is asked about.
+                if (string_equals(name, "-"))
                 {
                         grep_path_add(name);
                         continue;
                 }
 
-                p32 mode = grep_recursive ? text_path_mode(name) : 0;
-
-                if (grep_recursive && !mode)
+                if (!grep_recursive && !grep_file_globs && !grep_exclude_dir)
                 {
-                        trouble = 2;
+                        grep_path_add(name);
+                        continue;
+                }
 
-                        if (!quietly)
-                                string_diagnostic(&text_diagnostic, 0, name, "No such file or directory");
+                /*
+                        GNU opens an operand before it asks the globs about
+                        it, so one that cannot be had is reported whatever
+                        they say, in its place among the others: it goes on
+                        the list and the read that fails says why. The globs
+                        are asked by what fstat found: a directory, named
+                        itself or through a link, answers to --exclude-dir
+                        and a file to --include and --exclude.
+                */
+                file_facts facts;
+
+                if (!file_look(AT_FDCWD, name, 0, address_of facts))
+                {
+                        grep_path_add(name);
+                        continue;
+                }
+
+                bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                if (directory ? !grep_wanted_directory(name, true)
+                              : !grep_wanted_name(name, true))
+                {
+                        bipolar handle = text_open_handle(name,
+                                                          FILE_READ | O_NONBLOCK, 0);
+
+                        if (handle < 0)
+                                grep_path_add(name);
+                        else
+                                system_close(handle);
 
                         continue;
                 }
 
-                if (grep_recursive && (mode & 0170000) == 0040000)
+                if (grep_recursive && directory)
                 {
-                        if (!grep_wanted_directory(name))
-                                continue;
-
                         grep_expanded = true;
                         if (!grep_walk(name, 0, quietly))
                                 trouble = 2;
                         continue;
                 }
 
-                if (grep_wanted_file(name))
-                        grep_path_add(name);
+                grep_path_add(name);
         }
 
         b32 inputs = from_stdin ? 1 : (b32)grep_path_count;
@@ -14934,19 +16399,23 @@ static b32 text_grep()
                                                      address_of input_facts);
 
                 // A directory reads as EISDIR rather than as bytes, which is
-                // where GNU's message comes from and why -d skip has one to
-                // suppress.
-                if (name && input_known &&
-                    (input_facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                // where GNU's message comes from and why -d skip and -s each
+                // have one to suppress. What is left is a file with no lines
+                // in it: -L names it and -c counts nought for it.
+                bool directory = name && input_known &&
+                                 (input_facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                if (directory)
                 {
                         text_close();
 
                         if (grep_skip_directories)
                                 continue;
 
-                        string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
+                        if (!quietly)
+                                string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
+
                         trouble = 2;
-                        continue;
                 }
 
                 // GNU labels standard input, and -H on a pipe is the one way
@@ -15012,7 +16481,8 @@ static b32 text_grep()
                         that runs past its end, carried across the refill by
                         the line reader as before.
                 */
-                bool spanning = !grouped && !only && !grep_coloring && !never;
+                bool spanning = !grouped && !only && !grep_coloring && !never &&
+                                !directory;
 
                 if (spanning)
                 {
@@ -15087,7 +16557,7 @@ static b32 text_grep()
                         }
                 }
 
-                for (; !spanning;)
+                for (; !spanning && !directory;)
                 {
                         // The line skipping stopped on holds the fixed string
                         // already, and asking the machine again would be the
@@ -18391,7 +19861,30 @@ enum
         SORT_FANIN = 128,
         // GNU's floor for -S: sixteen merge inputs of two bytes and a record.
         SORT_BUDGET_MINIMUM = 544,
+        // Items one job loads, orders or writes, and the size past which a
+        // radix bucket is split again on the caller before the jobs start.
+        // Both are fixed, so where work is cut follows the data and never the
+        // number of threads, and a stable order is unique for its input: the
+        // bytes cannot move with the width.
+        SORT_BLOCK = 1 << 16,
+        SORT_TASK = 1 << 17,
 };
+
+// --parallel=1: every pool call runs on the caller.
+static bool sort_alone;
+
+static inline INLINE positive sort_blocks(positive count)
+{
+        return (count + SORT_BLOCK - 1) / SORT_BLOCK;
+}
+
+typedef struct
+{
+        positive from;
+        positive to;
+        positive depth;
+        b32 stage;
+} sort_range_work;
 
 static p8 sort_stage_kind[SORT_KEYS_MAX + 1];
 static bool sort_stage_reverse[SORT_KEYS_MAX + 1];
@@ -18688,7 +20181,8 @@ static inline INLINE fn sort_item_window(sort_item address_to item,
         item->window = sort_stage_reverse[stage] ? ~window : window;
 }
 
-static fn sort_items_load(positive from, positive to, b32 stage, positive depth)
+static fn sort_items_load_range(positive from, positive to, b32 stage,
+                                positive depth)
 {
         for (positive at = from; at < to; at++)
         {
@@ -18697,6 +20191,31 @@ static fn sort_items_load(positive from, positive to, b32 stage, positive depth)
 
                 sort_item_window(item, address_of view, stage, depth);
         }
+}
+
+static fn sort_items_load_job(address_any context, positive index)
+{
+        sort_range_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+
+        sort_items_load_range(from, min(from + SORT_BLOCK, work->to), work->stage,
+                              work->depth);
+}
+
+// Windows for a range, a block a job when the range is large. Inside a job
+// the pool runs this on the caller, so a bucket's own reload stays serial.
+static fn sort_items_load(positive from, positive to, b32 stage, positive depth)
+{
+        sort_range_work work = {from, to, depth, stage};
+
+        if (to - from <= SORT_BLOCK || sort_alone)
+        {
+                sort_items_load_range(from, to, stage, depth);
+                return;
+        }
+
+        parallel_for(sort_items_load_job, address_of work, sort_blocks(to - from),
+                     (to - from) * sizeof(sort_item));
 }
 
 /*
@@ -18952,18 +20471,444 @@ static fn sort_group(positive from, positive to, b32 stage)
         sort_radix(from, to, stage, 0);
 }
 
+static fn sort_spans_job(address_any context, positive index)
+{
+        positive from = index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, sort_lines_count);
+
+        (void)context;
+
+        for (positive at = from; at < to; at++)
+        {
+                sort_line address_to line = sort_lines + at;
+
+                sort_key_span(sort_keys, sort_text + line->at, line->length,
+                              address_of sort_spans[at].from,
+                              address_of sort_spans[at].to);
+        }
+}
+
+/*
+        The work list a large chunk is cut into before the jobs start.
+
+        The caller splits any task past SORT_TASK items one radix level at a
+        time -- counting and scattering a block a job -- until every task is
+        small or cannot be split, which is a comparator stage or a number
+        whose eight bytes are spent. Then each task is one job, and a task
+        touches only its own items.
+*/
+typedef struct
+{
+        positive from;
+        positive to;
+        positive depth;
+        b32 stage;
+        // The stage's windows are not loaded yet: the job starts the stage.
+        bool fresh;
+        // Split once already and could not be: run it whole.
+        bool whole;
+} sort_task;
+
+typedef struct
+{
+        positive from;
+        positive to;
+        positive column;
+        positive base;
+        positive ended;
+} sort_split_work;
+
+static sort_task address_to sort_tasks;
+static positive sort_tasks_room;
+static positive sort_tasks_count;
+static positive address_to sort_counts;
+static positive sort_counts_room;
+
+static inline INLINE positive sort_bucket(sort_item address_to item,
+                                          sort_split_work address_to work)
+{
+        return item->left > work->column
+                   ? ((item->window >> (56 - 8 * work->column)) & 0xff) + work->base
+                   : work->ended;
+}
+
+static fn sort_split_count_job(address_any context, positive index)
+{
+        sort_split_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, work->to);
+        positive address_to counts = sort_counts + index * 257;
+
+        memory_fill(counts, 0, 257 * sizeof(positive));
+
+        for (positive at = from; at < to; at++)
+                counts[sort_bucket(sort_items + at, work)]++;
+}
+
+static fn sort_split_scatter_job(address_any context, positive index)
+{
+        sort_split_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, work->to);
+        positive address_to next = sort_counts + index * 257;
+
+        for (positive at = from; at < to; at++)
+                sort_spare[next[sort_bucket(sort_items + at, work)]++] = sort_items[at];
+}
+
+static fn sort_split_copy_job(address_any context, positive index)
+{
+        sort_split_work address_to work = context;
+        positive from = work->from + index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, work->to);
+
+        memory_copy_apart(sort_items + from, sort_spare + from,
+                          (to - from) * sizeof(sort_item));
+}
+
+static bool sort_task_push(positive from, positive to, b32 stage, positive depth,
+                           bool fresh)
+{
+        if (to - from < 2 || stage > sort_key_count ||
+            (stage == sort_key_count && (sort_unique || sort_stable)))
+                return true;
+
+        if (!array_store_reserve(sort_tasks, sort_tasks_room, sort_tasks_count,
+                                 sort_tasks_count + 1, 512))
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+
+        sort_tasks[sort_tasks_count++] =
+            (sort_task){.from = from, .to = to, .depth = depth, .stage = stage,
+                        .fresh = fresh};
+        return true;
+}
+
+// One radix level of a large task on the caller, its buckets pushed as tasks
+// in their place. The same buckets, in the same order, sort_radix makes.
+static bool sort_task_split(sort_task task, bool address_to split)
+{
+        b32 stage = task.stage;
+        positive count = task.to - task.from;
+        positive blocks = sort_blocks(count);
+        positive column = task.depth & 7;
+
+        address_to split = false;
+
+        if (sort_stage_kind[stage] == SORT_STAGE_COMPARE)
+                return true;
+
+        if (task.fresh)
+                sort_items_load(task.from, task.to, stage, 0);
+        else if (!column && task.depth)
+        {
+                if (sort_stage_kind[stage] == SORT_STAGE_WINDOW)
+                        return true;
+
+                sort_items_load(task.from, task.to, stage, task.depth);
+        }
+
+        sort_split_work work = {
+            .from = task.from,
+            .to = task.to,
+            .column = column,
+            .base = sort_stage_reverse[stage] ? 0 : 1,
+            .ended = sort_stage_reverse[stage] ? 256 : 0,
+        };
+
+        if (!array_store_reserve(sort_counts, sort_counts_room, 0, blocks * 257, 257 * 64))
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+
+        parallel_for(sort_split_count_job, address_of work, blocks,
+                     count * sizeof(sort_item));
+
+        positive start[258];
+        positive occupied = 0;
+        positive only = 0;
+
+        memory_fill(start, 0, sizeof(start));
+
+        for (positive block = 0; block < blocks; block++)
+                for (positive bucket = 0; bucket < 257; bucket++)
+                        start[bucket + 1] += sort_counts[block * 257 + bucket];
+
+        for (positive bucket = 0; bucket < 257; bucket++)
+                if (start[bucket + 1])
+                {
+                        occupied++;
+                        only = bucket;
+                }
+
+        address_to split = true;
+
+        if (occupied == 1)
+                return only == work.ended
+                           ? sort_task_push(task.from, task.to, stage + 1, 0, true)
+                           : sort_task_push(task.from, task.to, stage,
+                                            task.depth + 1, false);
+
+        start[0] = task.from;
+
+        for (positive bucket = 0; bucket < 257; bucket++)
+                start[bucket + 1] += start[bucket];
+
+        // Each block's first slot in every bucket: the buckets' starts plus
+        // what the blocks before it put there. Input order is kept.
+        for (positive bucket = 0; bucket < 257; bucket++)
+        {
+                positive running = start[bucket];
+
+                for (positive block = 0; block < blocks; block++)
+                {
+                        positive here = sort_counts[block * 257 + bucket];
+
+                        sort_counts[block * 257 + bucket] = running;
+                        running += here;
+                }
+        }
+
+        parallel_for(sort_split_scatter_job, address_of work, blocks,
+                     count * sizeof(sort_item));
+        parallel_for(sort_split_copy_job, address_of work, blocks,
+                     count * sizeof(sort_item));
+
+        for (positive bucket = 0; bucket < 257; bucket++)
+        {
+                bool fine = bucket == work.ended
+                                ? sort_task_push(start[bucket], start[bucket + 1],
+                                                 stage + 1, 0, true)
+                                : sort_task_push(start[bucket], start[bucket + 1],
+                                                 stage, task.depth + 1, false);
+
+                if (!fine)
+                        return false;
+        }
+
+        return true;
+}
+
+static fn sort_task_job(address_any context, positive index)
+{
+        sort_task address_to task = sort_tasks + index;
+
+        (void)context;
+
+        if (task->fresh)
+                sort_group(task->from, task->to, task->stage);
+        else
+                sort_radix(task->from, task->to, task->stage, task->depth);
+}
+
+/*
+        A comparator stage has no windows to split on, so a large chunk of
+        one is a stable merge sort in levels: every block sorted by a job,
+        then each level's merges cut at fixed output positions by merge
+        path, so that the last levels, with one or two merges left, are as
+        wide as the first.
+*/
+typedef struct
+{
+        positive left;
+        positive left_stop;
+        positive right;
+        positive right_stop;
+        positive out;
+} sort_merge_part;
+
+typedef struct
+{
+        sort_item address_to from;
+        sort_item address_to into;
+        b32 stage;
+} sort_merge_level;
+
+static sort_merge_part address_to sort_parts;
+static positive sort_parts_room;
+static positive sort_parts_count;
+
+static fn sort_block_job(address_any context, positive index)
+{
+        positive from = index * SORT_BLOCK;
+
+        (void)context;
+        sort_items_merge(from, min(from + SORT_BLOCK, sort_lines_count), 0);
+}
+
+static fn sort_part_job(address_any context, positive index)
+{
+        sort_merge_level address_to level = context;
+        sort_merge_part address_to part = sort_parts + index;
+        sort_item address_to from = level->from;
+        sort_item address_to into = level->into;
+        positive left = part->left;
+        positive right = part->right;
+        positive out = part->out;
+        b32 stage = level->stage;
+
+        while (left < part->left_stop && right < part->right_stop)
+                into[out++] = sort_compare_lines(from[left].line, from[right].line,
+                                                 stage) <= 0
+                                  ? from[left++]
+                                  : from[right++];
+
+        memory_copy_apart(into + out, from + left,
+                          (part->left_stop - left) * sizeof(sort_item));
+        out += part->left_stop - left;
+        memory_copy_apart(into + out, from + right,
+                          (part->right_stop - right) * sizeof(sort_item));
+}
+
+// How many of the first `diagonal` outputs of a stable merge come from the
+// left run: a left item goes first when it does not order after the right.
+static positive sort_merge_path(sort_item address_to from, positive left,
+                                positive left_count, positive right,
+                                positive right_count, positive diagonal,
+                                b32 stage)
+{
+        positive low = diagonal > right_count ? diagonal - right_count : 0;
+        positive high = diagonal < left_count ? diagonal : left_count;
+
+        while (low < high)
+        {
+                positive middle = low + (high - low) / 2;
+
+                if (sort_compare_lines(from[left + middle].line,
+                                       from[right + diagonal - middle - 1].line,
+                                       stage) <= 0)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        return low;
+}
+
+static bool sort_merge_levels(positive count, b32 stage)
+{
+        sort_merge_level level = {sort_items, sort_spare, stage};
+
+        parallel_for(sort_block_job, null, sort_blocks(count),
+                     count * sizeof(sort_item));
+
+        for (positive width = SORT_BLOCK; width < count; width *= 2)
+        {
+                sort_parts_count = 0;
+
+                for (positive base = 0; base < count; base += 2 * width)
+                {
+                        positive middle = min(base + width, count);
+                        positive stop = min(base + 2 * width, count);
+                        positive left_count = middle - base;
+                        positive right_count = stop - middle;
+                        positive before_left = 0;
+
+                        for (positive diagonal = 0; diagonal < stop - base;
+                             diagonal += SORT_BLOCK)
+                        {
+                                positive next = min(diagonal + SORT_BLOCK, stop - base);
+                                positive after_left = sort_merge_path(
+                                    level.from, base, left_count, middle, right_count,
+                                    next, stage);
+
+                                if (!array_store_reserve(sort_parts, sort_parts_room,
+                                                         sort_parts_count,
+                                                         sort_parts_count + 1, 256))
+                                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                                 "out of memory");
+
+                                sort_parts[sort_parts_count++] = (sort_merge_part){
+                                    .left = base + before_left,
+                                    .left_stop = base + after_left,
+                                    .right = middle + (diagonal - before_left),
+                                    .right_stop = middle + (next - after_left),
+                                    .out = base + diagonal,
+                                };
+                                before_left = after_left;
+                        }
+                }
+
+                parallel_for(sort_part_job, address_of level, sort_parts_count,
+                             count * sizeof(sort_item));
+
+                sort_item address_to swap = level.from;
+
+                level.from = level.into;
+                level.into = swap;
+        }
+
+        if (level.from != sort_items)
+        {
+                // sort_split_copy_job reads spare into items by block.
+                sort_split_work copy = {.from = 0, .to = count};
+
+                parallel_for(sort_split_copy_job, address_of copy, sort_blocks(count),
+                             count * sizeof(sort_item));
+        }
+
+        return true;
+}
+
 static bool sort_chunk()
 {
         positive count = sort_lines_count;
 
         if (!array_store_reserve(sort_items, sort_items_room, 0, count + 1, 4096) ||
-            !array_store_reserve(sort_spare, sort_spare_room, 0, count + 1, 4096))
+            !array_store_reserve(sort_spare, sort_spare_room, 0, count + 1, 4096) ||
+            (!sort_keys[0].whole &&
+             !array_store_reserve(sort_spans, sort_spans_room, 0, count + 1, 4096)))
                 return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
 
         for (positive at = 0; at < count; at++)
                 sort_items[at].line = (p32)at;
 
-        sort_group(0, count, 0);
+        if (!sort_keys[0].whole)
+                parallel_for(sort_spans_job, null, sort_blocks(count),
+                             sort_alone ? 0 : sort_text_used);
+
+        if (count <= 2 * SORT_BLOCK || sort_alone)
+        {
+                sort_group(0, count, 0);
+                return true;
+        }
+
+        if (sort_stage_kind[0] == SORT_STAGE_COMPARE)
+                return sort_merge_levels(count, 0);
+
+        sort_tasks_count = 0;
+
+        if (!sort_task_push(0, count, 0, 0, true))
+                return false;
+
+        for (;;)
+        {
+                positive largest = positive_max;
+
+                for (positive at = 0; at < sort_tasks_count; at++)
+                        if (!sort_tasks[at].whole &&
+                            sort_tasks[at].to - sort_tasks[at].from > SORT_TASK &&
+                            (largest == positive_max ||
+                             sort_tasks[at].to - sort_tasks[at].from >
+                                 sort_tasks[largest].to - sort_tasks[largest].from))
+                                largest = at;
+
+                if (largest == positive_max)
+                        break;
+
+                sort_task task = sort_tasks[largest];
+                bool split;
+
+                sort_tasks[largest] = sort_tasks[--sort_tasks_count];
+
+                if (!sort_task_split(task, address_of split))
+                        return false;
+
+                if (!split)
+                {
+                        task.whole = true;
+                        sort_tasks[sort_tasks_count++] = task;
+                }
+        }
+
+        parallel_for(sort_task_job, null, sort_tasks_count, count * sizeof(sort_item));
         return true;
 }
 
@@ -18975,7 +20920,43 @@ typedef struct
 {
         positive handle;
         bool failed;
+        // The first failed write's error, for the diagnostic.
+        bipolar error;
 } sort_writer;
+
+// Where the newest temporary was made: a run or a merge is written right
+// after its temporary is, so a failed write names this directory.
+static string_address sort_temporary_place;
+
+static bool sort_write_all(sort_writer address_to out, address_any data,
+                           positive length)
+{
+        p8 address_to at = data;
+
+        while (length)
+        {
+                bipolar wrote = system_write_once(out->handle, at, length);
+
+                // Interrupted before anything was written.
+                if (wrote == -4)
+                        continue;
+
+                if (wrote <= 0)
+                {
+                        out->failed = true;
+
+                        if (!out->error)
+                                out->error = wrote ? wrote : -28;
+
+                        return false;
+                }
+
+                at += wrote;
+                length -= (positive)wrote;
+        }
+
+        return true;
+}
 
 static p8 address_to sort_out;
 static positive sort_out_room;
@@ -18985,6 +20966,7 @@ static bool sort_writer_ready(sort_writer address_to out, positive handle)
 {
         out->handle = handle;
         out->failed = false;
+        out->error = 0;
         sort_out_used = 0;
 
         if (sort_out || array_store_reserve(sort_out, sort_out_room, 0,
@@ -18996,9 +20978,8 @@ static bool sort_writer_ready(sort_writer address_to out, positive handle)
 
 static fn sort_writer_flush(sort_writer address_to out)
 {
-        if (sort_out_used &&
-            system_write_all(out->handle, sort_out, sort_out_used) != sort_out_used)
-                out->failed = true;
+        if (sort_out_used)
+                sort_write_all(out, sort_out, sort_out_used);
 
         sort_out_used = 0;
 }
@@ -19012,8 +20993,7 @@ static inline INLINE fn sort_writer_line(sort_writer address_to out,
 
                 if (sort_out_room <= length + SORT_SLACK)
                 {
-                        if (system_write_all(out->handle, at, length) != length)
-                                out->failed = true;
+                        sort_write_all(out, at, length);
 
                         sort_out[sort_out_used++] = text_delimiter;
                         return;
@@ -19035,7 +21015,7 @@ static inline INLINE fn sort_writer_line(sort_writer address_to out,
         sort_out_used += length + 1;
 }
 
-static fn sort_emit(sort_writer address_to out)
+static fn sort_emit_serial(sort_writer address_to out)
 {
         sort_view last;
         bool have_last = false;
@@ -19065,6 +21045,134 @@ static fn sort_emit(sort_writer address_to out)
                 }
 
                 sort_writer_line(out, view.at, view.length);
+        }
+}
+
+/*
+        The answer a block of items a job. Each job copies its lines once, in
+        sorted order with the next records and texts fetched ahead, into
+        scratch its own thread owns, and hands the block to the writer in one
+        piece; the pool gives the blocks to the caller in order. -u asks of
+        every item whether the item before it in sorted order has the same
+        keys, which the first item of a block can ask as well as any.
+*/
+typedef struct
+{
+        p8 address_to bytes;
+        positive room;
+} sort_scratch;
+
+static sort_scratch address_to sort_scratches;
+static positive sort_scratches_room;
+static positive sort_scratches_count;
+
+// A scratch for every slot the pool can run a job on, the caller's
+// included, each written only by the thread in that slot.
+static bool sort_slots_ready()
+{
+        positive slots = parallel_slots();
+
+        if (!array_store_reserve(sort_scratches, sort_scratches_room,
+                                 sort_scratches_count, slots, 64))
+                return false;
+
+        for (; sort_scratches_count < slots; sort_scratches_count++)
+                sort_scratches[sort_scratches_count] = (sort_scratch){0};
+
+        return true;
+}
+
+static fn sort_emit_job(address_any context, positive index,
+                        parallel_output address_to output)
+{
+        positive from = index * SORT_BLOCK;
+        positive to = min(from + SORT_BLOCK, sort_lines_count);
+        sort_scratch address_to scratch = sort_scratches + parallel_slot();
+        positive used = 0;
+
+        (void)context;
+
+        for (positive at = from; at < to; at++)
+        {
+                if (at + 16 < to)
+                        __builtin_prefetch(sort_lines + sort_items[at + 16].line);
+
+                if (at + 8 < to)
+                        __builtin_prefetch(sort_text +
+                                           sort_lines[sort_items[at + 8].line].at);
+
+                if (sort_unique && at)
+                {
+                        sort_view before = sort_view_of(sort_items[at - 1].line);
+                        sort_view view = sort_view_of(sort_items[at].line);
+
+                        if (!sort_compare_views_keys(address_of before, address_of view, 0))
+                                continue;
+                }
+
+                sort_line address_to line = sort_lines + sort_items[at].line;
+                p8 address_to text = sort_text + line->at;
+                positive wanted = used + line->length + 1 + SORT_SLACK;
+
+                if (wanted > scratch->room &&
+                    !array_store_reserve(scratch->bytes, scratch->room, used, wanted,
+                                         4 << 20))
+                {
+                        parallel_stop();
+                        return;
+                }
+
+                p8 address_to into = scratch->bytes + used;
+
+                if (line->length <= 64)
+                        for (positive copied = 0; copied < line->length; copied += 16)
+                                __builtin_memcpy(into + copied, text + copied, 16);
+                else
+                        memory_copy_apart(into, text, line->length);
+
+                into[line->length] = text_delimiter;
+                used += line->length + 1;
+        }
+
+        if (used)
+                parallel_write(output, scratch->bytes, used);
+}
+
+static bool sort_emit_sink(address_any context, positive index, address_any data,
+                           positive length)
+{
+        sort_writer address_to out = context;
+
+        (void)index;
+
+        if (length && !sort_write_all(out, data, length))
+                return false;
+
+        return true;
+}
+
+static fn sort_emit(sort_writer address_to out)
+{
+        if (sort_lines_count <= 2 * SORT_BLOCK || sort_alone)
+        {
+                sort_emit_serial(out);
+                return;
+        }
+
+        if (!sort_slots_ready())
+        {
+                sort_emit_serial(out);
+                return;
+        }
+
+        sort_writer_flush(out);
+
+        if (!parallel_ordered(sort_emit_job, sort_emit_sink, out,
+                              sort_blocks(sort_lines_count), sort_text_used) &&
+            !out->failed)
+        {
+                out->failed = true;
+                out->error = -12;
         }
 }
 
@@ -19155,7 +21263,10 @@ static bipolar sort_temporary()
                 handle = sort_temporary_named(directory);
 
         if (handle >= 0)
+        {
+                sort_temporary_place = directory;
                 return handle;
+        }
 
         text_flush();
         string_format(writer_stderr, "%s: cannot create temporary file in '%s': %s\n",
@@ -19201,6 +21312,13 @@ typedef struct
         string_address name;
         sort_view head;
         sort_item key;
+        // A run read in part stops at this byte and the chunk at this item.
+        positive limit;
+        positive stop;
+        // A job's source keeps its failure here for the caller to report:
+        // a diagnostic belongs to the main thread.
+        bipolar error;
+        bool quiet;
 } sort_source;
 
 static sort_entry address_to sort_entries;
@@ -19233,7 +21351,7 @@ static bool sort_source_next(sort_source address_to source)
 {
         if (source->handle == SORT_ENTRY_MEMORY)
         {
-                if (source->next >= sort_lines_count)
+                if (source->next >= source->stop)
                         return source->have = false;
 
                 source->head = sort_view_of(sort_items[source->next++].line);
@@ -19289,13 +21407,25 @@ static bool sort_source_next(sort_source address_to source)
                                                      SORT_SLACK,
                                                  SORT_SOURCE_BUFFER + SORT_SLACK))
                         {
-                                sort_failed = true;
-                                string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+                                if (source->quiet)
+                                        source->error = -12;
+                                else
+                                {
+                                        sort_failed = true;
+                                        string_diagnostic(&text_diagnostic, 0, null,
+                                                          "out of memory");
+                                }
+
                                 return source->have = false;
                         }
 
                         positive room = source->room - SORT_SLACK - source->filled;
-                        bipolar got = source->positional
+
+                        if (source->positional && source->limit - source->offset < room)
+                                room = source->limit - source->offset;
+
+                        bipolar got = !room ? 0
+                                      : source->positional
                                           ? system_call_4(syscall(pread64),
                                                           (positive)source->handle,
                                                           (positive)(source->buffer +
@@ -19310,7 +21440,9 @@ static bool sort_source_next(sort_source address_to source)
                         {
                                 source->finished = true;
 
-                                if (got < 0)
+                                if (got < 0 && source->quiet)
+                                        source->error = got;
+                                else if (got < 0)
                                 {
                                         string_diagnostic(&text_diagnostic, 0,
                                                           source->name, "Read error");
@@ -19336,6 +21468,8 @@ static bool sort_source_open(sort_source address_to source, sort_entry address_t
         address_to source = (sort_source){
             .handle = entry->handle,
             .name = entry->name,
+            .limit = positive_max,
+            .stop = sort_lines_count,
         };
 
         if (entry->handle >= 0)
@@ -19434,22 +21568,22 @@ static inline INLINE bool sort_source_before(sort_source address_to sources,
         return answer < 0 || (!answer && one < two);
 }
 
-static p32 sort_tree_build(sort_source address_to sources, positive count,
-                           positive node)
+static p32 sort_tree_build(sort_source address_to sources, p32 address_to tree,
+                           positive count, positive node)
 {
         if (node >= count)
                 return (p32)(node - count);
 
-        p32 left = sort_tree_build(sources, count, node * 2);
-        p32 right = sort_tree_build(sources, count, node * 2 + 1);
+        p32 left = sort_tree_build(sources, tree, count, node * 2);
+        p32 right = sort_tree_build(sources, tree, count, node * 2 + 1);
 
         if (sort_source_before(sources, right, left))
         {
-                sort_tree[node] = left;
+                tree[node] = left;
                 return right;
         }
 
-        sort_tree[node] = right;
+        tree[node] = right;
         return left;
 }
 
@@ -19459,7 +21593,7 @@ static bool sort_merge(positive count, sort_writer address_to out)
         sort_view last;
         bool have_last = false;
 
-        sort_tree[0] = sort_tree_build(sources, count, 1);
+        sort_tree[0] = sort_tree_build(sources, sort_tree, count, 1);
 
         for (;;)
         {
@@ -19505,11 +21639,646 @@ static bool sort_merge(positive count, sort_writer address_to out)
         return true;
 }
 
-static fn sort_writer_failed(string_address directory)
+/*
+        The merge on the pool.
+
+        Runs are sorted and can be read anywhere, so the merge can be cut by
+        key. A line every SORT_FENCE_BYTES into every run and every
+        SORT_FENCE_ITEMS lines into the chunk in memory are sampled and
+        sorted, and every SORT_SPLIT_EVERY one is kept as a splitter. A piece
+        is everything ordering from one splitter to the next, found in each
+        source as the first line that does not order before the splitter, so
+        lines with equal keys never fall into two pieces: each piece merged on
+        its own is exactly that stretch of the whole merge, -s and -u
+        included, and the pieces written in order are its bytes. A piece holds
+        about SORT_FENCE_BYTES * SORT_SPLIT_EVERY of input, which bounds what
+        the pool keeps while the writer catches up. -m inputs stay on the
+        serial merge: they need not be in order, or seekable.
+*/
+enum
+{
+        SORT_FENCE_BYTES = 1 << 18,
+        SORT_FENCE_ITEMS = 1 << 13,
+        SORT_SPLIT_EVERY = 16,
+        SORT_POOL_MERGE_BYTES = 64 << 20,
+};
+
+typedef struct
+{
+        positive source;
+        // A run's byte offset or the chunk's item index.
+        positive position;
+        positive at;
+        positive length;
+} sort_sample;
+
+static sort_sample address_to sort_samples;
+static positive sort_samples_room;
+static positive sort_samples_count;
+static p8 address_to sort_samples_text;
+static positive sort_samples_text_room;
+static positive sort_samples_text_used;
+static p32 address_to sort_order;
+static positive sort_order_room;
+static p32 address_to sort_order_spare;
+static positive sort_order_spare_room;
+static p32 address_to sort_splitters;
+static positive sort_splitters_room;
+static positive sort_splitters_count;
+static positive address_to sort_fences_at;
+static positive sort_fences_at_room;
+static positive address_to sort_bounds;
+static positive sort_bounds_room;
+static bipolar address_to sort_piece_errors;
+static positive sort_piece_errors_room;
+static positive address_to sort_sizes;
+static positive sort_sizes_room;
+static p8 address_to sort_scan;
+static positive sort_scan_room;
+
+// A piece's sources, tree and -u line, and a boundary search's read of a
+// run, one set for each slot the pool can run a job on.
+typedef struct
+{
+        sort_source address_to sources;
+        positive sources_room;
+        positive sources_count;
+        p32 address_to tree;
+        positive tree_room;
+        p8 address_to held;
+        positive held_room;
+        p8 address_to scan;
+        positive scan_room;
+} sort_merge_slot;
+
+static sort_merge_slot address_to sort_merge_slots;
+static positive sort_merge_slots_room;
+static positive sort_merge_slots_count;
+
+static bool sort_merge_slots_ready()
+{
+        positive slots = parallel_slots();
+
+        if (!sort_slots_ready() ||
+            !array_store_reserve(sort_merge_slots, sort_merge_slots_room,
+                                 sort_merge_slots_count, slots, 64))
+                return false;
+
+        for (; sort_merge_slots_count < slots; sort_merge_slots_count++)
+                sort_merge_slots[sort_merge_slots_count] = (sort_merge_slot){0};
+
+        return true;
+}
+
+static sort_view sort_sample_view(sort_sample address_to sample)
+{
+        if (sort_entries[sample->source].handle == SORT_ENTRY_MEMORY)
+                return sort_view_of(sort_items[sample->position].line);
+
+        sort_view view = {sort_samples_text + sample->at, sample->length, 0, 0};
+
+        sort_view_ready(address_of view);
+        return view;
+}
+
+static bipolar sort_sample_order(p32 one, p32 two)
+{
+        sort_view a = sort_sample_view(sort_samples + one);
+        sort_view b = sort_sample_view(sort_samples + two);
+
+        return sort_compare_views(address_of a, address_of b, 0);
+}
+
+// Bytes [from, to) of a run into a buffer that grows to hold them.
+static bipolar sort_run_read(bipolar handle, positive from, positive to,
+                             p8 address_to address_to buffer,
+                             positive address_to room)
+{
+        positive have = 0;
+
+        if (to - from + SORT_SLACK > address_to room &&
+            !memory_reserve((address_any address_to)buffer, room, 0,
+                            to - from + SORT_SLACK, 1, SORT_FENCE_BYTES))
+                return -12;
+
+        while (from + have < to)
+        {
+                bipolar got = system_call_4(syscall(pread64), (positive)handle,
+                                            (positive)(address_to buffer + have),
+                                            to - from - have, from + have);
+
+                if (got <= 0)
+                        return got ? got : -5;
+
+                have += (positive)got;
+        }
+
+        return 0;
+}
+
+// The first line of a run starting at or after `from`, and its length.
+static bipolar sort_run_line_at(bipolar handle, positive size, positive from,
+                                positive address_to start,
+                                positive address_to length)
+{
+        positive at = from ? from - 1 : 0;
+
+        address_to start = from ? size : 0;
+
+        for (; from && at < size; at += SORT_FENCE_BYTES)
+        {
+                positive stop = min(at + SORT_FENCE_BYTES, size);
+                bipolar failed = sort_run_read(handle, at, stop, address_of sort_scan,
+                                               address_of sort_scan_room);
+
+                if (failed)
+                        return failed;
+
+                p8 address_to found = memory_first_of(sort_scan, text_delimiter, stop - at);
+
+                if (found)
+                {
+                        address_to start = at + (positive)(found - sort_scan) + 1;
+                        break;
+                }
+        }
+
+        address_to length = 0;
+
+        for (at = address_to start; at < size; at += SORT_FENCE_BYTES)
+        {
+                positive stop = min(at + SORT_FENCE_BYTES, size);
+                bipolar failed = sort_run_read(handle, address_to start, stop,
+                                               address_of sort_scan,
+                                               address_of sort_scan_room);
+
+                if (failed)
+                        return failed;
+
+                p8 address_to found = memory_first_of(sort_scan + (at - address_to start),
+                                                      text_delimiter, stop - at);
+
+                if (found)
+                {
+                        address_to length = (positive)(found - sort_scan);
+                        return 0;
+                }
+
+                address_to length = stop - address_to start;
+        }
+
+        return 0;
+}
+
+static bool sort_sample_add(positive source, positive position, p8 address_to line,
+                            positive length)
+{
+        if (!array_store_reserve(sort_samples, sort_samples_room, sort_samples_count,
+                                 sort_samples_count + 1, 1024) ||
+            !array_store_reserve(sort_samples_text, sort_samples_text_room,
+                                 sort_samples_text_used,
+                                 sort_samples_text_used + length + SORT_SLACK, 1 << 16))
+                return false;
+
+        sort_samples[sort_samples_count++] = (sort_sample){
+            .source = source,
+            .position = position,
+            .at = sort_samples_text_used,
+            .length = length,
+        };
+
+        if (line)
+        {
+                memory_copy_apart(sort_samples_text + sort_samples_text_used, line, length);
+                sort_samples_text_used += length;
+        }
+
+        return true;
+}
+
+static fn sort_bound_job(address_any context, positive index)
+{
+        sort_merge_slot address_to slot = sort_merge_slots + parallel_slot();
+        positive count = sort_entries_count;
+        positive address_to row = sort_bounds + (index + 1) * count;
+        sort_view splitter = sort_sample_view(sort_samples + sort_splitters[index]);
+
+        (void)context;
+
+        for (positive source = 0; source < count; source++)
+        {
+                positive first = sort_fences_at[source];
+                positive fences = sort_fences_at[source + 1] - first;
+                positive low = 0;
+                positive high = fences;
+
+                while (low < high)
+                {
+                        positive middle = low + (high - low) / 2;
+                        sort_view fence = sort_sample_view(sort_samples + first + middle);
+
+                        if (sort_compare_views(address_of fence, address_of splitter, 0) < 0)
+                                low = middle + 1;
+                        else
+                                high = middle;
+                }
+
+                bool memory = sort_entries[source].handle == SORT_ENTRY_MEMORY;
+                positive from = low ? sort_samples[first + low - 1].position : 0;
+                positive to = low < fences ? sort_samples[first + low].position
+                              : memory ? sort_lines_count
+                                       : sort_sizes[source];
+
+                if (memory)
+                {
+                        while (from < to)
+                        {
+                                positive middle = from + (to - from) / 2;
+                                sort_view line = sort_view_of(sort_items[middle].line);
+
+                                if (sort_compare_views(address_of line, address_of splitter, 0) < 0)
+                                        from = middle + 1;
+                                else
+                                        to = middle;
+                        }
+
+                        row[source] = from;
+                        continue;
+                }
+
+                // A fence is a line start, so every line starting in the gap
+                // ends inside it.
+                bipolar failed = sort_run_read(sort_entries[source].handle, from, to,
+                                               address_of slot->scan,
+                                               address_of slot->scan_room);
+
+                if (failed)
+                {
+                        sort_piece_errors[index] = failed;
+                        parallel_stop();
+                        return;
+                }
+
+                positive at = from;
+
+                while (at < to)
+                {
+                        p8 address_to begin = slot->scan + (at - from);
+                        p8 address_to found = memory_first_of(begin, text_delimiter, to - at);
+                        sort_view line = {begin, found ? (positive)(found - begin) : to - at,
+                                          0, 0};
+
+                        sort_view_ready(address_of line);
+
+                        if (sort_compare_views(address_of line, address_of splitter, 0) >= 0)
+                                break;
+
+                        at += line.length + 1;
+                }
+
+                row[source] = at < to ? at : to;
+        }
+}
+
+static fn sort_piece_line(sort_scratch address_to slot, positive address_to used,
+                          parallel_output address_to output, sort_view address_to line)
+{
+        positive wanted = address_to used + line->length + 1 + SORT_SLACK;
+
+        if (address_to used >= SORT_WRITE_BUFFER)
+        {
+                parallel_write(output, slot->bytes, address_to used);
+                address_to used = 0;
+                wanted = line->length + 1 + SORT_SLACK;
+        }
+
+        if (wanted > slot->room &&
+            !array_store_reserve(slot->bytes, slot->room, address_to used, wanted,
+                                 SORT_WRITE_BUFFER + SORT_SLACK))
+        {
+                parallel_stop();
+                return;
+        }
+
+        p8 address_to into = slot->bytes + address_to used;
+
+        if (line->length <= 64)
+                for (positive copied = 0; copied < line->length; copied += 16)
+                        __builtin_memcpy(into + copied, line->at + copied, 16);
+        else
+                memory_copy_apart(into, line->at, line->length);
+
+        into[line->length] = text_delimiter;
+        address_to used += line->length + 1;
+}
+
+static fn sort_piece_job(address_any context, positive index,
+                         parallel_output address_to output)
+{
+        sort_merge_slot address_to slot = sort_merge_slots + parallel_slot();
+        sort_scratch address_to scratch = sort_scratches + parallel_slot();
+        positive count = sort_entries_count;
+        positive address_to from = sort_bounds + index * count;
+        positive address_to to = sort_bounds + (index + 1) * count;
+        positive used = 0;
+        sort_view last = {0};
+        bool have_last = false;
+
+        (void)context;
+
+        if (!array_store_reserve(slot->sources, slot->sources_room, slot->sources_count,
+                                 count, 64) ||
+            !array_store_reserve(slot->tree, slot->tree_room, 0, count + 1, 64))
+        {
+                sort_piece_errors[index] = -12;
+                parallel_stop();
+                return;
+        }
+
+        for (; slot->sources_count < count; slot->sources_count++)
+                slot->sources[slot->sources_count] = (sort_source){0};
+
+        for (positive at = 0; at < count; at++)
+        {
+                sort_source address_to source = slot->sources + at;
+                sort_entry address_to entry = sort_entries + at;
+                p8 address_to buffer = source->buffer;
+                positive room = source->room;
+
+                address_to source = (sort_source){
+                    .handle = entry->handle,
+                    .buffer = buffer,
+                    .room = room,
+                    .quiet = true,
+                    .positional = entry->handle >= 0,
+                    .offset = from[at],
+                    .limit = to[at],
+                    .next = from[at],
+                    .stop = to[at],
+                };
+
+                sort_source_next(source);
+
+                if (source->error)
+                {
+                        sort_piece_errors[index] = source->error;
+                        parallel_stop();
+                        return;
+                }
+        }
+
+        slot->tree[0] = sort_tree_build(slot->sources, slot->tree, count, 1);
+
+        for (;;)
+        {
+                p32 winner = slot->tree[0];
+                sort_source address_to source = slot->sources + winner;
+
+                if (!source->have)
+                        break;
+
+                if (!sort_unique)
+                        sort_piece_line(scratch, address_of used, output, address_of source->head);
+                else if (!have_last ||
+                         sort_compare_views_keys(address_of last, address_of source->head, 0))
+                {
+                        sort_piece_line(scratch, address_of used, output, address_of source->head);
+
+                        if (!array_store_reserve(slot->held, slot->held_room, 0,
+                                                 source->head.length + SORT_SLACK, 4096))
+                        {
+                                sort_piece_errors[index] = -12;
+                                parallel_stop();
+                                return;
+                        }
+
+                        memory_copy_apart(slot->held, source->head.at, source->head.length);
+                        last = source->head;
+                        last.at = slot->held;
+                        have_last = true;
+                }
+
+                sort_source_next(source);
+
+                if (source->error)
+                {
+                        sort_piece_errors[index] = source->error;
+                        parallel_stop();
+                        return;
+                }
+
+                for (positive node = (winner + count) / 2; node; node /= 2)
+                {
+                        if (sort_source_before(slot->sources, slot->tree[node], winner))
+                        {
+                                p32 loser = slot->tree[node];
+
+                                slot->tree[node] = winner;
+                                winner = loser;
+                        }
+                }
+
+                slot->tree[0] = winner;
+        }
+
+        if (used)
+                parallel_write(output, scratch->bytes, used);
+}
+
+#define SORT_SAMPLE_ORDER(one, two) sort_sample_order(one, two)
+
+/*
+        The samples, splitters and boundaries of a pool merge over every
+        entry, or false with nothing said when the merge is too small to cut
+        into two pieces, or -1 once a failure has been said.
+*/
+static b32 sort_pool_merge_ready()
+{
+        positive count = sort_entries_count;
+        positive total = sort_text_used;
+
+        sort_samples_count = 0;
+        sort_samples_text_used = 0;
+        sort_splitters_count = 0;
+
+        if (sort_alone || count < 2 ||
+            !array_store_reserve(sort_sizes, sort_sizes_room, 0, count, 64) ||
+            !array_store_reserve(sort_fences_at, sort_fences_at_room, 0, count + 1, 64))
+                return 0;
+
+        for (positive source = 0; source < count; source++)
+        {
+                sort_entry address_to entry = sort_entries + source;
+                file_status status;
+
+                sort_sizes[source] = 0;
+
+                if (entry->handle == SORT_ENTRY_MEMORY)
+                        continue;
+
+                if (system_file_status((positive)entry->handle, address_of status) < 0)
+                        return 0;
+
+                sort_sizes[source] = (positive)status.size;
+                total += (positive)status.size;
+        }
+
+        if (total < SORT_POOL_MERGE_BYTES)
+                return 0;
+
+        for (positive source = 0; source < count; source++)
+        {
+                bipolar handle = sort_entries[source].handle;
+
+                sort_fences_at[source] = sort_samples_count;
+
+                if (handle == SORT_ENTRY_MEMORY)
+                {
+                        for (positive item = SORT_FENCE_ITEMS; item < sort_lines_count;
+                             item += SORT_FENCE_ITEMS)
+                                if (!sort_sample_add(source, item, null, 0))
+                                        return 0;
+
+                        continue;
+                }
+
+                positive last = 0;
+
+                for (positive at = SORT_FENCE_BYTES; at < sort_sizes[source];
+                     at += SORT_FENCE_BYTES)
+                {
+                        positive start;
+                        positive length;
+                        bipolar failed = sort_run_line_at(handle, sort_sizes[source], at,
+                                                          address_of start,
+                                                          address_of length);
+
+                        if (failed)
+                        {
+                                text_flush();
+                                string_format(writer_stderr, "%s: read failed: %s: %s\n",
+                                              text_name,
+                                              sort_temporary_place
+                                                  ? sort_temporary_place
+                                                  : (string_address) "temporary file",
+                                              file_reason(failed));
+                                return -1;
+                        }
+
+                        if (start >= sort_sizes[source] || start == last)
+                                continue;
+
+                        if (!sort_sample_add(source, start, sort_scan, length))
+                                return 0;
+
+                        last = start;
+                }
+        }
+
+        sort_fences_at[count] = sort_samples_count;
+
+        if (sort_samples_count < 2 * SORT_SPLIT_EVERY ||
+            !array_store_reserve(sort_order, sort_order_room, 0, sort_samples_count, 1024) ||
+            !array_store_reserve(sort_order_spare, sort_order_spare_room, 0,
+                                 sort_samples_count, 1024))
+                return 0;
+
+        for (positive at = 0; at < sort_samples_count; at++)
+                sort_order[at] = (p32)at;
+
+        p32 address_to sorted = array_merge_sort(sort_order, sort_order_spare,
+                                                 sort_samples_count, SORT_SAMPLE_ORDER);
+
+        for (positive at = SORT_SPLIT_EVERY; at < sort_samples_count;
+             at += SORT_SPLIT_EVERY)
+        {
+                if (!array_store_reserve(sort_splitters, sort_splitters_room,
+                                         sort_splitters_count, sort_splitters_count + 1,
+                                         256))
+                        return 0;
+
+                sort_splitters[sort_splitters_count++] = sorted[at];
+        }
+
+        positive pieces = sort_splitters_count + 1;
+
+        if (!array_store_reserve(sort_bounds, sort_bounds_room, 0, (pieces + 1) * count,
+                                 1024) ||
+            !array_store_reserve(sort_piece_errors, sort_piece_errors_room, 0, pieces, 256) ||
+            !sort_merge_slots_ready())
+                return 0;
+
+        for (positive source = 0; source < count; source++)
+        {
+                sort_bounds[source] = 0;
+                sort_bounds[pieces * count + source] =
+                    sort_entries[source].handle == SORT_ENTRY_MEMORY ? sort_lines_count
+                                                                     : sort_sizes[source];
+        }
+
+        memory_fill(sort_piece_errors, 0, pieces * sizeof(bipolar));
+
+        if (!parallel_for(sort_bound_job, null, sort_splitters_count, total))
+        {
+                for (positive at = 0; at < pieces; at++)
+                        if (sort_piece_errors[at])
+                        {
+                                text_flush();
+                                string_format(writer_stderr, "%s: read failed: %s: %s\n",
+                                              text_name,
+                                              sort_temporary_place
+                                                  ? sort_temporary_place
+                                                  : (string_address) "temporary file",
+                                              file_reason(sort_piece_errors[at]));
+                                return -1;
+                        }
+
+                return 0;
+        }
+
+        return 1;
+}
+
+// The pieces merged on the pool and written in order.
+static bool sort_pool_merge(sort_writer address_to out)
+{
+        positive pieces = sort_splitters_count + 1;
+        positive total = sort_text_used;
+
+        for (positive source = 0; source < sort_entries_count; source++)
+                total += sort_sizes[source];
+
+        memory_fill(sort_piece_errors, 0, pieces * sizeof(bipolar));
+        sort_writer_flush(out);
+
+        if (parallel_ordered(sort_piece_job, sort_emit_sink, out, pieces, total))
+                return true;
+
+        if (out->failed)
+                return true;
+
+        for (positive at = 0; at < pieces; at++)
+                if (sort_piece_errors[at])
+                {
+                        text_flush();
+                        string_format(writer_stderr, "%s: %s failed: %s\n", text_name,
+                                      sort_piece_errors[at] == -12 ? "merge" : "read",
+                                      file_reason(sort_piece_errors[at]));
+                        return false;
+                }
+
+        return false;
+}
+
+// GNU names the temporary and the reason. An unnamed temporary has only the
+// directory it lives in, which is what an operator needs to free anyway.
+static fn sort_writer_failed(sort_writer address_to out)
 {
         text_flush();
-        string_format(writer_stderr, "%s: write failed: %s\n", text_name,
-                      directory ? directory : (string_address) "temporary file");
+        string_format(writer_stderr, "%s: write failed: %s: %s\n", text_name,
+                      sort_temporary_place ? sort_temporary_place
+                                           : (string_address) "temporary file",
+                      file_reason(out->error ? out->error : -5));
 }
 
 // The entries in [first, first + count) merged into one new temporary.
@@ -19530,7 +22299,7 @@ static bipolar sort_merge_temporary(positive first, positive count)
 
         if (fine && out.failed)
         {
-                sort_writer_failed(null);
+                sort_writer_failed(address_of out);
                 fine = false;
         }
 
@@ -19599,7 +22368,7 @@ static bool sort_spill()
 
         if (out.failed)
         {
-                sort_writer_failed(null);
+                sort_writer_failed(address_of out);
                 return false;
         }
 
@@ -19628,10 +22397,7 @@ static bool sort_spill()
 static bool sort_line_record(positive stop)
 {
         if (!array_store_reserve(sort_lines, sort_lines_room, sort_lines_count,
-                                 sort_lines_count + 1, 65536) ||
-            (!sort_keys[0].whole &&
-             !array_store_reserve(sort_spans, sort_spans_room, sort_lines_count,
-                                  sort_lines_count + 1, 65536)))
+                                 sort_lines_count + 1, 65536))
         {
                 sort_failed = true;
                 return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
@@ -19641,17 +22407,11 @@ static bool sort_line_record(positive stop)
 
         line->at = sort_line_start;
         line->length = stop - sort_line_start;
-
-        if (sort_spans)
-                sort_key_span(sort_keys, sort_text + line->at, line->length,
-                              address_of sort_spans[sort_lines_count].from,
-                              address_of sort_spans[sort_lines_count].to);
-
         sort_lines_count++;
         return true;
 }
 
-static bool sort_split()
+static bool sort_split_serial()
 {
         p8 address_to at = sort_text + sort_scanned;
         p8 address_to stop = sort_text + sort_text_used;
@@ -19676,6 +22436,140 @@ static bool sort_split()
 }
 
 /*
+        What has been read and not yet cut into lines, cut on the pool: the
+        delimiters of every megabyte counted by one job, the counts summed
+        into each block's first record, and each block's records written by
+        another. A block's first line starts after the delimiter before it,
+        found walking back from its own delimiter, so no job reads a record
+        another writes. Blocks are fixed megabytes, and where a batch ends
+        follows the budget, so the records are the same at any width.
+*/
+enum
+{
+        SORT_SPLIT_BLOCK = 1 << 20,
+        SORT_SPLIT_BATCH = 16 << 20,
+};
+
+typedef struct
+{
+        positive from;
+        positive to;
+        positive line_start;
+} sort_split_region;
+
+static positive address_to sort_split_counts;
+static positive sort_split_counts_room;
+
+static fn sort_lines_count_job(address_any context, positive index)
+{
+        sort_split_region address_to region = context;
+        positive from = region->from + index * SORT_SPLIT_BLOCK;
+        positive to = min(from + SORT_SPLIT_BLOCK, region->to);
+
+        sort_split_counts[index] = memory_count(sort_text + from, to - from,
+                                                text_delimiter);
+}
+
+static fn sort_lines_fill_job(address_any context, positive index)
+{
+        sort_split_region address_to region = context;
+        positive from = region->from + index * SORT_SPLIT_BLOCK;
+        positive to = min(from + SORT_SPLIT_BLOCK, region->to);
+        positive record = sort_split_counts[index];
+        p8 address_to at = sort_text + from;
+        p8 address_to stop = sort_text + to;
+        positive start = positive_max;
+
+        while (at < stop)
+        {
+                p8 address_to found = memory_first_of(at, text_delimiter,
+                                                      (positive)(stop - at));
+
+                if (!found)
+                        break;
+
+                positive close = (positive)(found - sort_text);
+
+                if (start == positive_max)
+                {
+                        start = close;
+
+                        while (start > region->from &&
+                               sort_text[start - 1] != text_delimiter)
+                                start--;
+
+                        if (start == region->from)
+                                start = region->line_start;
+                }
+
+                sort_lines[record].at = start;
+                sort_lines[record].length = close - start;
+                record++;
+                start = close + 1;
+                at = found + 1;
+        }
+}
+
+static bool sort_split()
+{
+        positive bytes = sort_text_used - sort_scanned;
+        positive blocks = (bytes + SORT_SPLIT_BLOCK - 1) / SORT_SPLIT_BLOCK;
+
+        if (blocks < 2 || sort_alone)
+                return sort_split_serial();
+
+        sort_split_region region = {sort_scanned, sort_text_used, sort_line_start};
+        positive total = 0;
+
+        if (!array_store_reserve(sort_split_counts, sort_split_counts_room, 0, blocks, 64))
+        {
+                sort_failed = true;
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        }
+
+        parallel_for(sort_lines_count_job, address_of region, blocks, bytes);
+
+        for (positive block = 0; block < blocks; block++)
+        {
+                positive here = sort_split_counts[block];
+
+                sort_split_counts[block] = sort_lines_count + total;
+                total += here;
+        }
+
+        if (!array_store_reserve(sort_lines, sort_lines_room, sort_lines_count,
+                                 sort_lines_count + total + 1, 65536))
+        {
+                sort_failed = true;
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        }
+
+        parallel_for(sort_lines_fill_job, address_of region, blocks, bytes);
+
+        if (total)
+        {
+                sort_line address_to last = sort_lines + sort_lines_count + total - 1;
+
+                sort_line_start = last->at + last->length + 1;
+        }
+
+        sort_lines_count += total;
+        sort_scanned = sort_text_used;
+        return true;
+}
+
+// How much is read before it is cut: a batch whose every byte could be a
+// line still costs no more records than the budget holds.
+static inline INLINE positive sort_split_batch()
+{
+        positive batch = sort_budget / 64;
+
+        return batch < SORT_READ ? SORT_READ
+               : batch > SORT_SPLIT_BATCH ? SORT_SPLIT_BATCH
+                                          : batch;
+}
+
+/*
         One input read straight into the text, a megabyte at a time, and cut
         into lines as it arrives. A read error is said and ends that input,
         and the sort goes on with the rest, as it always has here.
@@ -19684,7 +22578,19 @@ static bool sort_gather(positive handle, string_address name)
 {
         for (;;)
         {
-                positive cost = sort_text_used + sort_lines_count * sort_line_cost;
+                // Text not yet cut is counted at a line every eight bytes, and
+                // cut before a spill is decided, so a run holds all it can.
+                positive unsplit = sort_text_used - sort_scanned;
+                positive cost = sort_text_used +
+                                (sort_lines_count + unsplit / 8) * sort_line_cost;
+
+                if (unsplit && cost >= sort_budget)
+                {
+                        if (!sort_split())
+                                return false;
+
+                        continue;
+                }
 
                 if (sort_lines_count &&
                     (cost >= sort_budget || sort_lines_count > 0xf0000000u))
@@ -19702,6 +22608,14 @@ static bool sort_gather(positive handle, string_address name)
                                                  sort_text_used + SORT_READ + SORT_SLACK,
                                                  4 * SORT_READ))
                         {
+                                if (unsplit)
+                                {
+                                        if (!sort_split())
+                                                return false;
+
+                                        continue;
+                                }
+
                                 if (sort_lines_count)
                                 {
                                         if (!sort_spill())
@@ -19735,9 +22649,12 @@ static bool sort_gather(positive handle, string_address name)
 
                 sort_text_used += (positive)got;
 
-                if (!sort_split())
+                if (sort_text_used - sort_scanned >= sort_split_batch() && !sort_split())
                         return false;
         }
+
+        if (!sort_split())
+                return false;
 
         if (sort_line_start < sort_text_used && !sort_line_record(sort_text_used))
                 return false;
@@ -19862,6 +22779,44 @@ static fn sort_release()
         array_store_release(sort_held, sort_held_room, none);
         array_store_release(sort_sources, sort_sources_room, none);
         array_store_release(sort_entries, sort_entries_room, none);
+
+        for (positive at = 0; at < sort_scratches_count; at++)
+                array_store_release(sort_scratches[at].bytes, sort_scratches[at].room,
+                                    none);
+
+        for (positive at = 0; at < sort_merge_slots_count; at++)
+        {
+                sort_merge_slot address_to slot = sort_merge_slots + at;
+
+                for (positive source = 0; source < slot->sources_count; source++)
+                        array_store_release(slot->sources[source].buffer,
+                                            slot->sources[source].room, none);
+
+                array_store_release(slot->sources, slot->sources_room, none);
+                array_store_release(slot->tree, slot->tree_room, none);
+                array_store_release(slot->held, slot->held_room, none);
+                array_store_release(slot->scan, slot->scan_room, none);
+        }
+
+        sort_merge_slots_count = 0;
+        array_store_release(sort_merge_slots, sort_merge_slots_room, none);
+
+        array_store_release(sort_samples, sort_samples_room, sort_samples_count);
+        array_store_release(sort_samples_text, sort_samples_text_room,
+                            sort_samples_text_used);
+        array_store_release(sort_order, sort_order_room, none);
+        array_store_release(sort_order_spare, sort_order_spare_room, none);
+        array_store_release(sort_splitters, sort_splitters_room, sort_splitters_count);
+        array_store_release(sort_fences_at, sort_fences_at_room, none);
+        array_store_release(sort_bounds, sort_bounds_room, none);
+        array_store_release(sort_piece_errors, sort_piece_errors_room, none);
+        array_store_release(sort_sizes, sort_sizes_room, none);
+        array_store_release(sort_split_counts, sort_split_counts_room, none);
+        array_store_release(sort_scan, sort_scan_room, none);
+
+        sort_scratches_count = 0;
+        array_store_release(sort_scratches, sort_scratches_room, none);
+        sort_temporary_place = null;
         sort_line_start = 0;
         sort_scanned = 0;
         sort_failed = false;
@@ -20168,6 +23123,10 @@ static bool sort_key_seen(p8 letter, string_address value)
                 if (!number)
                         return string_diagnostic(&text_diagnostic, 0, null,
                                                  "number in parallel must be nonzero");
+
+                // One worker is the caller alone. A larger number cannot
+                // change a byte, and the pool is as wide as the affinity.
+                sort_alone = number == 1;
         }
 
         if (letter == 'W' && !string_equals(value, "numeric") &&
@@ -20313,6 +23272,22 @@ static b32 sort_inputs(string_address output)
         if (sort_lines_count)
                 sort_entries[sort_entries_count++] =
                     (sort_entry){.handle = SORT_ENTRY_MEMORY};
+
+        b32 pool = sort_pool_merge_ready();
+
+        if (pool < 0)
+                return 2;
+
+        if (pool)
+        {
+                if (!sort_output_open(output, address_of out))
+                        return 2;
+
+                bool merged = sort_pool_merge(address_of out);
+
+                sort_output_close(address_of out);
+                return merged ? 0 : 2;
+        }
 
         if (!sort_sources_open(0, sort_entries_count) ||
             !sort_output_open(output, address_of out))
@@ -20474,6 +23449,7 @@ static b32 text_sort()
         sort_have_separator = false;
         sort_size = 0;
         sort_batch = 16;
+        sort_alone = false;
         sort_directories_count = 0;
         sort_directory_next = 0;
 

@@ -42095,6 +42095,166 @@ static fn lock_allocator(void)
         check("the first thread allocates cleanly after the joins", fine);
 }
 
+/*
+        A depot deeper than a fixed array ever held.
+
+        Thirty two threads each allocate and free a run of blocks of one
+        class, so each leaves a chain of it on its shelf, and all of them are
+        joined. Every join stacks its chain on the class's depot through the
+        chain's first block's tag; the depot these replaced held eight chains
+        and walked a ninth to its tail under the lock. The checks read the
+        stack itself -- one chain per join, every freed block on one of them
+        -- and then take everything back through malloc on the first thread:
+        every block the threads freed must come out again and none twice, and
+        the depot must be as it was before.
+*/
+#define LOCK_DEPOT_THREADS 32
+#define LOCK_DEPOT_MOST 40
+#define LOCK_DEPOT_SIZE 5000
+#define LOCK_DEPOT_NODES 4096
+
+static address_any lock_depot_blocks[LOCK_DEPOT_THREADS][LOCK_DEPOT_MOST];
+static volatile positive lock_depot_ready = 0;
+static address_any lock_depot_taken[LOCK_DEPOT_NODES];
+
+static fn lock_depot_thread(address_any argument)
+{
+        positive who = (positive)argument;
+        positive count = 1 + who % LOCK_DEPOT_MOST;
+        positive at;
+
+        lock_wait_for_go();
+
+        for (at = 0; at < count; at++)
+                lock_depot_blocks[who][at] = malloc(LOCK_DEPOT_SIZE);
+
+        for (at = 0; at < count; at++)
+                free(lock_depot_blocks[who][at]);
+
+        atomic_add(address_of lock_depot_ready, 1);
+}
+
+//      The chain below one on the depot, as allocator_take_shared reads it.
+static address_any lock_depot_below(address_any chain)
+{
+        positive tag = address_to allocator_tag(chain);
+
+        return tag >= ALLOCATOR_FREED + ALLOCATOR_CLASSES ? (address_any)tag : null;
+}
+
+static positive lock_depot_depth(b32 class)
+{
+        positive depth = 0;
+        address_any chain;
+
+        for (chain = allocator_depot[class]; chain; chain = lock_depot_below(chain))
+                depth++;
+
+        return depth;
+}
+
+static fn lock_depot(void)
+{
+        thread address_to handles[LOCK_DEPOT_THREADS];
+        b32 class = allocator_class_of(LOCK_DEPOT_SIZE + ALLOCATOR_HEADER);
+        positive before = lock_depot_depth(class);
+        positive started = 0;
+        positive nodes = 0;
+        positive taken = 0;
+        positive who, at, i, j;
+        address_any chain;
+        bool on_chains = true;
+        bool came_back = true;
+        bool once = true;
+
+        //      Whatever the first thread already holds of the class goes
+        //      aside first, so that what malloc hands back below can only
+        //      have come off the depot or been cut fresh.
+        positive aside = 0;
+        address_any held[64];
+
+        while (allocator_free_list[class] && aside < 64)
+                held[aside++] = malloc(LOCK_DEPOT_SIZE);
+
+        atomic_exchange(address_of lock_go, 0);
+
+        for (who = 0; who < LOCK_DEPOT_THREADS; who++)
+        {
+                handles[who] = thread_start(lock_depot_thread, (address_any)who);
+                started += handles[who] != null;
+        }
+
+        lock_open_gate();
+
+        while (atomic_load(address_of lock_depot_ready) < started)
+                ;
+
+        for (who = 0; who < LOCK_DEPOT_THREADS; who++)
+                if (handles[who])
+                        thread_join(handles[who]);
+
+        check("thirty two chain-leaving threads started", started == LOCK_DEPOT_THREADS);
+        check("every join stacked one chain on the depot",
+              lock_depot_depth(class) == before + started);
+
+        for (chain = allocator_depot[class]; chain; chain = lock_depot_below(chain))
+                for (address_any block = chain; block; block = address_to allocator_link(block))
+                        nodes++;
+
+        for (who = 0; who < started; who++)
+                for (at = 0; at < 1 + who % LOCK_DEPOT_MOST; at++)
+                {
+                        bool found = false;
+
+                        for (chain = allocator_depot[class]; chain && !found;
+                             chain = lock_depot_below(chain))
+                                for (address_any block = chain; block && !found;
+                                     block = address_to allocator_link(block))
+                                        found = block == lock_depot_blocks[who][at];
+
+                        on_chains = on_chains && found;
+                }
+
+        check("every freed block is on a stacked chain", on_chains);
+
+        while (taken < nodes && taken < LOCK_DEPOT_NODES)
+        {
+                lock_depot_taken[taken] = malloc(LOCK_DEPOT_SIZE);
+                if (!lock_depot_taken[taken])
+                        break;
+                taken++;
+        }
+
+        for (who = 0; who < started; who++)
+                for (at = 0; at < 1 + who % LOCK_DEPOT_MOST; at++)
+                {
+                        bool found = false;
+
+                        for (i = 0; i < taken && !found; i++)
+                                found = lock_depot_taken[i] == lock_depot_blocks[who][at];
+
+                        came_back = came_back && found;
+                }
+
+        for (i = 0; i < taken; i++)
+                for (j = i + 1; j < taken; j++)
+                        once = once && lock_depot_taken[i] != lock_depot_taken[j];
+
+        check("every stacked block comes back out through malloc", came_back && taken == nodes);
+        check("no stacked block comes back twice", once);
+        //      Everything counted was every chain on the depot, any that were
+        //      there before the threads included, so taking them all empties
+        //      it.
+        check("the depot is empty once every stacked block is taken",
+              lock_depot_depth(class) == 0);
+
+        for (i = 0; i < taken; i++)
+                free(lock_depot_taken[i]);
+
+        while (aside)
+                free(held[--aside]);
+}
+
 //      -- the process -------------------------------------------------------
 
 static fn lock_process(void)
@@ -42171,11 +42331,19 @@ static volatile positive pool_outstanding = 0;
 static volatile positive pool_outstanding_most = 0;
 static volatile positive pool_jobs_run = 0;
 static volatile positive pool_stop_index = positive_max;
+static volatile b32 pool_stopped_word = 0;
+
+static volatile positive pool_slot_out_of_range = 0;
 
 static fn pool_note_slot(void)
 {
         positive slot = parallel_slot();
         positive seen = atomic_load(address_of pool_highest_slot);
+
+        //      Per-slot scratch is sized by parallel_slots(); a slot at or past
+        //      it would index past every utility's array.
+        if (slot >= parallel_slots())
+                atomic_add(address_of pool_slot_out_of_range, 1);
 
         while (slot > seen &&
                !atomic_compare_exchange(address_of pool_highest_slot, seen, slot))
@@ -42195,7 +42363,19 @@ static fn pool_count_job(address_any context, positive index)
         pool_note_slot();
 
         if (index == atomic_load(address_of pool_stop_index))
+        {
                 parallel_stop();
+                atomic_exchange(address_of pool_stopped_word, 1);
+                thread_wake(address_of pool_stopped_word, 1 << 30);
+        }
+        //      A job past the stop waits for it, so how many run is not a race
+        //      with whether the stopping thread was descheduled (under qemu the
+        //      others once ran all 4096 before it got back).
+        else if (index > atomic_load(address_of pool_stop_index))
+        {
+                while (!atomic_load(address_of pool_stopped_word))
+                        thread_wait(address_of pool_stopped_word, 0);
+        }
 }
 
 static positive pool_length(positive index)
@@ -42461,15 +42641,17 @@ static fn lock_pool(bool emulated)
         check("no more than two outputs a thread ever waited", bounded);
         check("nested calls ran inline and answered", pool_nested_bad == 0);
         check("every job kept its own errno", pool_errno_bad == 0);
+        check("every job's slot was below parallel_slots()", pool_slot_out_of_range == 0);
 
         //      Stopping, at width 8.
         parallel_reset(8);
         pool_stop_index = 300;
+        pool_stopped_word = 0;
         pool_jobs_run = 0;
         check("a job's stop makes parallel_for answer false",
               !parallel_for(pool_count_job, null, POOL_JOBS, PARALLEL_SPREAD));
-        check("a stopped parallel_for did not run everything",
-              pool_jobs_run < POOL_JOBS);
+        check("a stopped parallel_for started at most one job a thread past the stop",
+              pool_jobs_run <= 301 + 8);
 
         pool_fresh_stream(address_of stream);
         pool_stop_index = 300;
@@ -42526,6 +42708,8 @@ static fn lock_pool(bool emulated)
                 check("every item the beside job made arrived once",
                       sum == (positive)POOL_BESIDE_ITEMS * (POOL_BESIDE_ITEMS + 1) / 2);
                 check("the beside thread is slot width", pool_beside_slot == 8);
+                check("the beside thread's slot is below parallel_slots()",
+                      pool_beside_slot < parallel_slots());
 
                 check("a stopping beside job starts", parallel_beside(pool_beside_stopper, null));
                 check("a stopped beside job joins false", !parallel_beside_wait());
@@ -43418,6 +43602,7 @@ b32 main(void)
         lock_storm();
         lock_exclusion();
         lock_allocator();
+        lock_depot();
         lock_process();
         lock_pool(program_argument_count() > 1 &&
                   !string_compare(program_argument(1), (string_address)"--emulated"));
@@ -66047,6 +66232,233 @@ b32 main(void)
         return 0;
 }
 #endif /* BENCH_pool */
+
+#ifdef BENCH_ordered
+/* parallel_ordered with outputs big enough that writing them is real work.
+   heavy: 23 jobs, each filling 25 MiB with a generator run over it several
+   times, about 110 ms apiece at width 1 -- the shape of a multi-block xz -d
+   -- written to the file named by the first argument (default ordered.out
+   under TMPDIR or /tmp); a second and third argument change the job count
+   and the passes. light: 4096 jobs hashing 256 KiB each and handing
+   back eight bytes, written to /dev/null. Each prints wall, user and system
+   milliseconds, best wall of three, at the affinity width. */
+#include "../src/compiler_memory.c"
+
+#define ORDERED_HEAVY_JOBS 23
+#define ORDERED_HEAVY_BYTES (25u << 20)
+#define ORDERED_HEAVY_PASSES 24
+#define ORDERED_LIGHT_JOBS 4096
+#define ORDERED_LIGHT_BYTES (256u << 10)
+
+static bipolar ordered_bench_out;
+static p8 address_to ordered_light_data;
+static positive ordered_heavy_jobs = ORDERED_HEAVY_JOBS;
+static positive ordered_heavy_passes = ORDERED_HEAVY_PASSES;
+
+//      When each heavy job finished and when the sink took it, so the time a
+//      finished output waited can be printed beside the wall clock.
+#define ORDERED_TIMED_JOBS 256
+static positive ordered_done[ORDERED_TIMED_JOBS];
+static positive ordered_sunk[ORDERED_TIMED_JOBS];
+static positive ordered_length[ORDERED_TIMED_JOBS];
+
+static positive ordered_bench_clock(void);
+
+static fn ordered_heavy_job(address_any context, positive index,
+                           parallel_output address_to output)
+{
+        p8 address_to span = parallel_reserve(output, ORDERED_HEAVY_BYTES);
+        positive pass;
+
+        (void)context;
+
+        if (!span)
+                return;
+
+        for (pass = 0; pass < ordered_heavy_passes; pass++)
+        {
+                positive state = 0x9e3779b97f4a7c15ull * (index + 1) + pass;
+                positive at;
+
+                for (at = 0; at + 8 <= ORDERED_HEAVY_BYTES; at += 8)
+                {
+                        positive word;
+
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        memory_copy(address_of word, span + at, 8);
+                        word = pass ? word ^ state : state;
+                        memory_copy(span + at, address_of word, 8);
+                }
+        }
+
+        if (index < ORDERED_TIMED_JOBS)
+                ordered_done[index] = ordered_bench_clock();
+}
+
+static fn ordered_light_job(address_any context, positive index,
+                           parallel_output address_to output)
+{
+        positive sum = memory_hash_33(ordered_light_data + index % 64, ORDERED_LIGHT_BYTES);
+
+        (void)context;
+        parallel_write(output, address_of sum, 8);
+}
+
+static bool ordered_bench_sink(address_any context, positive index,
+                               address_any data, positive length)
+{
+        (void)context;
+
+        if (index < ORDERED_TIMED_JOBS)
+        {
+                ordered_sunk[index] = ordered_bench_clock();
+                ordered_length[index] = length;
+        }
+
+        return system_write_all((positive)ordered_bench_out, data, length) == length;
+}
+
+static positive ordered_bench_clock(void)
+{
+        positive when[2] = {0, 0};
+
+        system_call_2(syscall(clock_gettime), 1, (positive)address_of when);
+        return when[0] * 1000000000ull + when[1];
+}
+
+//      user and system time so far, in microseconds.
+static positive2 ordered_bench_usage(void)
+{
+        positive usage[18] = {0};
+
+        system_call_2(syscall(getrusage), 0, (positive)usage);
+        return (positive2){usage[0] * 1000000ull + usage[1],
+                           usage[2] * 1000000ull + usage[3]};
+}
+
+static fn ordered_bench_run(string_address label, string_address path, bool heavy)
+{
+        positive best = positive_max;
+        positive best_user = 0;
+        positive best_system = 0;
+        positive best_held = 0;
+        positive best_early = 0;
+        positive round;
+
+        for (round = 0; round < 3; round++)
+        {
+                positive started;
+                positive2 before;
+                positive2 after;
+
+                ordered_bench_out = system_open_at_mode(
+                        AT_FDCWD, path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+
+                if (ordered_bench_out < 0)
+                        return;
+
+                before = ordered_bench_usage();
+                started = ordered_bench_clock();
+
+                if (heavy)
+                        parallel_ordered(ordered_heavy_job, ordered_bench_sink, null,
+                                         ordered_heavy_jobs, PARALLEL_SPREAD);
+                else
+                        parallel_ordered(ordered_light_job, ordered_bench_sink, null,
+                                         ORDERED_LIGHT_JOBS, PARALLEL_SPREAD);
+
+                started = ordered_bench_clock() - started;
+                after = ordered_bench_usage();
+                system_close(ordered_bench_out);
+
+                if (started < best)
+                {
+                        positive jobs = heavy ? ordered_heavy_jobs : 0;
+                        positive last = 0;
+                        positive held = 0;
+                        positive early = 0;
+                        positive total = 0;
+                        positive at;
+
+                        if (jobs > ORDERED_TIMED_JOBS)
+                                jobs = ORDERED_TIMED_JOBS;
+
+                        for (at = 0; at < jobs; at++)
+                                if (ordered_done[at] > last)
+                                        last = ordered_done[at];
+
+                        for (at = 0; at < jobs; at++)
+                        {
+                                held += ordered_sunk[at] - ordered_done[at];
+                                total += ordered_length[at];
+                                early += ordered_sunk[at] < last ? ordered_length[at] : 0;
+                        }
+
+                        best = started;
+                        best_user = after.x - before.x;
+                        best_system = after.y - before.y;
+                        best_held = held / 1000000;
+                        best_early = total ? early * 100 / total : 0;
+                }
+        }
+
+        string_format(log, "%s width %p, %p heavy jobs x %p passes: %p ms wall, %p ms user, %p ms system, outputs waited %p ms in all, %p%% of bytes handed over before the last job finished\n",
+                      label, parallel_width(), ordered_heavy_jobs, ordered_heavy_passes,
+                      best / 1000000, best_user / 1000, best_system / 1000,
+                      best_held, best_early);
+        log_flush();
+}
+
+b32 main(void)
+{
+        p8 path[256];
+        string_address place = (string_address)getenv("TMPDIR");
+        positive at;
+
+        if (program_argument_count() > 1)
+        {
+                at = string_length(program_argument(1));
+                if (at > 250)
+                        return 2;
+                memory_copy(path, program_argument(1), at + 1);
+        }
+        else
+        {
+                if (!place || !string_get(place) || string_length(place) > 200)
+                        place = (string_address)"/tmp";
+                at = string_length(place);
+                memory_copy(path, place, at);
+                memory_copy(path + at, "/ordered.out", 13);
+        }
+
+        if (program_argument_count() > 2)
+                ordered_heavy_jobs = string_to_positive(program_argument(2));
+
+        if (program_argument_count() > 3)
+                ordered_heavy_passes = string_to_positive(program_argument(3));
+
+        if (!ordered_heavy_jobs || !ordered_heavy_passes)
+                return 2;
+
+        ordered_light_data = (p8 address_to)memory(ORDERED_LIGHT_BYTES + 64);
+
+        if (!ordered_light_data || system_failed((positive)ordered_light_data))
+                return 1;
+
+        for (at = 0; at < ORDERED_LIGHT_BYTES + 64; at++)
+                ordered_light_data[at] = (p8)(at * 2654435761u >> 11);
+
+        parallel_reset(0);
+        ordered_bench_run((string_address)"heavy to a file", path, true);
+        ordered_bench_run((string_address)"light to /dev/null", (string_address)"/dev/null", false);
+        system_call_3(syscall(unlinkat), (positive)AT_FDCWD, (positive)path, 0);
+        parallel_reset(0);
+
+        return 0;
+}
+#endif /* BENCH_ordered */
 
 #ifdef BENCH_tree
 /* parallel_tree as find and as du, over a directory named on the command
