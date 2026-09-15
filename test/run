@@ -6210,6 +6210,48 @@ same 'the older spelling' '[]|[gone]|[]'         20 3 in 'keep\r\n\e[?47hgone' d
 same 'entering keeps the cursor' '0,2'           20 3 in 'ab\e[?1049h' cursor
 same 'leaving 47 keeps the cursor' '2,4'         20 3 in '\e[2;3H\e[?47h\e[3;5H\e[?47l' cursor
 same 'leaving 1049 gives it back' '1,2'          20 3 in '\e[2;3H\e[?1049h\e[3;5H\e[?1049l' cursor
+#       The alternate screen shares the ring with the primary one and its
+#       scrollback, so a program that scrolls past the lines neither holds
+#       copies rather than writing over them: less paged through a long file
+#       left the file where the shell's prompt had been. tmux 3.7c's answers.
+same 'scrolling past the ring gives back the shell' '[one]|[two]|[$ ]|[]|[]|2,2' \
+                                                 20 5 in 'one\r\ntwo\r\n$ \e[?1049h\e[5;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\na40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\na60\r\na61\r\na62\r\na63\r\na64\r\na65\r\na66\r\na67\r\na68\r\na69\r\na70\r\na71\r\na72\r\na73\r\na74\r\na75\r\na76\r\na77\r\na78\r\na79\r\n\e[?1049l' dump cursor
+same 'and its scrollback' '[h8]|[h9]|[h10]|[h11]|[$ ]|[h5]|[h6]|[h7]|4,2' \
+                                                 20 5 in 'h0\r\nh1\r\nh2\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9\r\nh10\r\nh11\r\n$ \e[?1049h\e[5;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\na40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\na60\r\na61\r\na62\r\na63\r\na64\r\na65\r\na66\r\na67\r\na68\r\na69\r\na70\r\na71\r\na72\r\na73\r\na74\r\na75\r\na76\r\na77\r\na78\r\na79\r\n\e[?1049l' dump back 3 cursor
+same 'the older spelling scrolling past' '[one]|[two]|[$ ]|[]|[]|4,0' \
+                                                 20 5 in 'one\r\ntwo\r\n$ \e[?47h\e[5;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\na40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\na60\r\na61\r\na62\r\na63\r\na64\r\na65\r\na66\r\na67\r\na68\r\na69\r\na70\r\na71\r\na72\r\na73\r\na74\r\na75\r\na76\r\na77\r\na78\r\na79\r\n\e[?47l' dump cursor
+same 'scroll up past the ring' '[one]|[two]|[$ ]|[]|[]|2,2' \
+                                                 20 5 in 'one\r\ntwo\r\n$ \e[?1049h\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[5S\e[?1049l' dump cursor
+same 'a taller window mid-page' '[h5]|[h6]|[h7]|[h8]|[h9]|[h10]|[h11]|[$ ]|[h2]|[h3]|[h4]|7,2' \
+                                                 20 5 in 'h0\r\nh1\r\nh2\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9\r\nh10\r\nh11\r\n$ \e[?1049h\e[5;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\n' resize '20x8' in '\e[8;1Ha40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\na60\r\na61\r\na62\r\na63\r\na64\r\na65\r\na66\r\na67\r\na68\r\na69\r\na70\r\na71\r\na72\r\na73\r\na74\r\na75\r\na76\r\na77\r\na78\r\na79\r\na80\r\na81\r\na82\r\na83\r\na84\r\na85\r\na86\r\na87\r\na88\r\na89\r\n\e[?1049l' dump back 3 cursor
+same 'a shorter one mid-page' '[h8]|[h9]|[h10]|[h11]|[$ ]|[h5]|[h6]|[h7]|4,2' \
+                                                 20 8 in 'h0\r\nh1\r\nh2\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9\r\nh10\r\nh11\r\n$ \e[?1049h\e[8;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\n' resize '20x5' in '\e[5;1Ha40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\na60\r\na61\r\na62\r\na63\r\na64\r\na65\r\na66\r\na67\r\na68\r\na69\r\na70\r\na71\r\na72\r\na73\r\na74\r\na75\r\na76\r\na77\r\na78\r\na79\r\na80\r\na81\r\na82\r\na83\r\na84\r\na85\r\na86\r\na87\r\na88\r\na89\r\n\e[?1049l' dump back 3 cursor
+same 'and 1047' '[one]|[two]|[$ ]|[]|[]|4,0'     20 5 in 'one\r\ntwo\r\n$ \e[?1047h\e[5;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\na40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\na60\r\na61\r\na62\r\na63\r\na64\r\na65\r\na66\r\na67\r\na68\r\na69\r\na70\r\na71\r\na72\r\na73\r\na74\r\na75\r\na76\r\na77\r\na78\r\na79\r\n\e[?1047l' dump cursor
+cuts 'past the ring in any two reads' '[one]|[two]|[$ ]|[]|[]|2,2' \
+                                                 20 5 'one\r\ntwo\r\n$ \e[?1049h\e[5;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\na40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\n\e[?1049l' dump cursor
+#       A ring already full of scrollback has no line for the alternate
+#       screen but the oldest of it, so entering takes those out of the count:
+#       a window made taller afterwards takes back only lines that are still
+#       there, where it had pulled a blank one onto the top row. The fixture's
+#       ring holds 64 lines, so this is one line short of tmux's L41.
+same 'a full ring gives up only what it overwrote' '[L42]|[L43]|[$ ]|58,2' \
+                                                 20 5 in 'L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5\r\nL6\r\nL7\r\nL8\r\nL9\r\nL10\r\nL11\r\nL12\r\nL13\r\nL14\r\nL15\r\nL16\r\nL17\r\nL18\r\nL19\r\nL20\r\nL21\r\nL22\r\nL23\r\nL24\r\nL25\r\nL26\r\nL27\r\nL28\r\nL29\r\nL30\r\nL31\r\nL32\r\nL33\r\nL34\r\nL35\r\nL36\r\nL37\r\nL38\r\nL39\r\nL40\r\nL41\r\nL42\r\nL43\r\nL44\r\nL45\r\nL46\r\nL47\r\nL48\r\nL49\r\nL50\r\nL51\r\nL52\r\nL53\r\nL54\r\nL55\r\nL56\r\nL57\r\nL58\r\nL59\r\nL60\r\nL61\r\nL62\r\nL63\r\nL64\r\nL65\r\nL66\r\nL67\r\nL68\r\nL69\r\nL70\r\nL71\r\nL72\r\nL73\r\nL74\r\nL75\r\nL76\r\nL77\r\nL78\r\nL79\r\nL80\r\nL81\r\nL82\r\nL83\r\nL84\r\nL85\r\nL86\r\nL87\r\nL88\r\nL89\r\nL90\r\nL91\r\nL92\r\nL93\r\nL94\r\nL95\r\nL96\r\nL97\r\nL98\r\nL99\r\n$ \e[?1049h\e[?1049l' resize '20x60' row 0 row 1 row 58 cursor
+#       Paging far on a full ring moves the alternate screen back over the
+#       lines it scrolled off, and gives up one screen of the oldest
+#       scrollback, once, to have any to move into: L42 to L46 go, and a
+#       taller window takes back L47 onward. tmux keeps its whole history.
+differs 'a full ring pages far for one screen of scrollback' '[L47]|[L95]|[$ ]|53,2' \
+                                                 20 5 in 'L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5\r\nL6\r\nL7\r\nL8\r\nL9\r\nL10\r\nL11\r\nL12\r\nL13\r\nL14\r\nL15\r\nL16\r\nL17\r\nL18\r\nL19\r\nL20\r\nL21\r\nL22\r\nL23\r\nL24\r\nL25\r\nL26\r\nL27\r\nL28\r\nL29\r\nL30\r\nL31\r\nL32\r\nL33\r\nL34\r\nL35\r\nL36\r\nL37\r\nL38\r\nL39\r\nL40\r\nL41\r\nL42\r\nL43\r\nL44\r\nL45\r\nL46\r\nL47\r\nL48\r\nL49\r\nL50\r\nL51\r\nL52\r\nL53\r\nL54\r\nL55\r\nL56\r\nL57\r\nL58\r\nL59\r\nL60\r\nL61\r\nL62\r\nL63\r\nL64\r\nL65\r\nL66\r\nL67\r\nL68\r\nL69\r\nL70\r\nL71\r\nL72\r\nL73\r\nL74\r\nL75\r\nL76\r\nL77\r\nL78\r\nL79\r\nL80\r\nL81\r\nL82\r\nL83\r\nL84\r\nL85\r\nL86\r\nL87\r\nL88\r\nL89\r\nL90\r\nL91\r\nL92\r\nL93\r\nL94\r\nL95\r\nL96\r\nL97\r\nL98\r\nL99\r\n$ \e[?1049h\e[5;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\na40\r\na41\r\na42\r\na43\r\na44\r\na45\r\na46\r\na47\r\na48\r\na49\r\na50\r\na51\r\na52\r\na53\r\na54\r\na55\r\na56\r\na57\r\na58\r\na59\r\na60\r\na61\r\na62\r\na63\r\na64\r\na65\r\na66\r\na67\r\na68\r\na69\r\na70\r\na71\r\na72\r\na73\r\na74\r\na75\r\na76\r\na77\r\na78\r\na79\r\na80\r\na81\r\na82\r\na83\r\na84\r\na85\r\na86\r\na87\r\na88\r\na89\r\na90\r\na91\r\na92\r\na93\r\na94\r\na95\r\na96\r\na97\r\na98\r\na99\r\na100\r\na101\r\na102\r\na103\r\na104\r\na105\r\na106\r\na107\r\na108\r\na109\r\na110\r\na111\r\na112\r\na113\r\na114\r\na115\r\na116\r\na117\r\na118\r\na119\r\na120\r\na121\r\na122\r\na123\r\na124\r\na125\r\na126\r\na127\r\na128\r\na129\r\na130\r\na131\r\na132\r\na133\r\na134\r\na135\r\na136\r\na137\r\na138\r\na139\r\na140\r\na141\r\na142\r\na143\r\na144\r\na145\r\na146\r\na147\r\na148\r\na149\r\na150\r\na151\r\na152\r\na153\r\na154\r\na155\r\na156\r\na157\r\na158\r\na159\r\na160\r\na161\r\na162\r\na163\r\na164\r\na165\r\na166\r\na167\r\na168\r\na169\r\na170\r\na171\r\na172\r\na173\r\na174\r\na175\r\na176\r\na177\r\na178\r\na179\r\na180\r\na181\r\na182\r\na183\r\na184\r\na185\r\na186\r\na187\r\na188\r\na189\r\na190\r\na191\r\na192\r\na193\r\na194\r\na195\r\na196\r\na197\r\na198\r\na199\r\n\e[?1049l' resize '20x60' row 0 row 48 row 53 cursor
+#       A screen half the ring leaves nothing to move back over and no room
+#       to give, so the alternate screen copies as a region does. Moving the
+#       shell's rows up behind it instead copied them forward onto rows not
+#       yet moved whenever the ring held less than two screens and the
+#       shell's, and gave the shell back []|[a39]|[a39] here, and an 80x24
+#       shell its three lines twice.
+same 'a tall screen on a small ring gives the shell back once' '[keep one]|[keep two]|[$ ]|[]|[]|[]|2,2' \
+                                                 80 24 in 'keep one\r\nkeep two\r\n$ \e[?1049h\e[H\e[2J\e[24;1Halt line 0\r\nalt line 1\r\nalt line 2\r\nalt line 3\r\nalt line 4\r\nalt line 5\r\nalt line 6\r\nalt line 7\r\nalt line 8\r\nalt line 9\r\nalt line 10\r\nalt line 11\r\nalt line 12\r\nalt line 13\r\nalt line 14\r\nalt line 15\r\nalt line 16\r\nalt line 17\r\nalt line 18\r\nalt line 19\r\nalt line 20\r\nalt line 21\r\nalt line 22\r\nalt line 23\r\nalt line 24\r\nalt line 25\r\nalt line 26\r\nalt line 27\r\nalt line 28\r\nalt line 29\r\nalt line 30\r\nalt line 31\r\nalt line 32\r\nalt line 33\r\nalt line 34\r\nalt line 35\r\nalt line 36\r\nalt line 37\r\nalt line 38\r\nalt line 39\r\n\e[?1049l' row 0 row 1 row 2 row 16 row 17 row 18 cursor
+cuts 'a screen half the ring copies' '[one]|[two]|[$ ]|2,2' \
+                                                 20 32 'one\r\ntwo\r\n$ \e[?1049h\e[32;1Ha0\r\na1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9\r\na10\r\na11\r\na12\r\na13\r\na14\r\na15\r\na16\r\na17\r\na18\r\na19\r\na20\r\na21\r\na22\r\na23\r\na24\r\na25\r\na26\r\na27\r\na28\r\na29\r\na30\r\na31\r\na32\r\na33\r\na34\r\na35\r\na36\r\na37\r\na38\r\na39\r\n\e[?1049l' row 0 row 1 row 2 cursor
 
 group reset
 #       RIS puts every one of them back.
@@ -6756,10 +6798,12 @@ same 'grown then left takes back history' '[m1]|[m2]|[m3]|2,2' \
 same 'own save inside' '0,2'                     20 3 in 'ab' in '\e[?1049h\e[3;3H\e7\e[H' \
                                                  in '\e[?1049l' cursor
 #       A program that scrolls there with line feeds, as less does paging a
-#       manual, moves on through the ring behind the shell's lines. What it
-#       scrolls over is the shell's history, oldest first, and then no more:
-#       a hundred lines on a ring of sixty four had given the shell back a
-#       screen of the program's lines, and a taller window took them in too.
+#       manual, moves on through the ring behind the shell's lines. A hundred
+#       lines on a ring of sixty four had given the shell back a screen of the
+#       program's lines, and a taller window took them in too. What the
+#       program scrolls over is its own and never history, and the shell's
+#       history is kept: tmux 3.7c gives l6 to l10 below, where this case had
+#       pinned the program spending it.
 scrolled=
 at=0
 while [ "$at" -lt 100 ]; do
@@ -6769,7 +6813,7 @@ done
 same 'a long scroll gives the screen back' '[one]|[two]|[three]' \
                                                  20 3 in 'one\r\ntwo\r\nthree' in '\e[?1049h\e[H' \
                                                  in "$scrolled" in '\e[?1049l' dump
-same 'what it scrolled over is not history' '[l8]|[l9]|[l10]|[]|[]' \
+same 'what it scrolled over is not history' '[l6]|[l7]|[l8]|[l9]|[l10]' \
                                                  20 3 in 'l1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6\r\nl7\r\nl8\r\nl9\r\nl10' \
                                                  in '\e[?1049h\e[H' in "$scrolled" in '\e[?1049l' \
                                                  resize '20x5' dump

@@ -83,6 +83,8 @@ static b32 origin_mode;
 // back when it goes (see alternate_enter).
 static b32 alternate;
 static unsigned int alternate_head, alternate_rows;
+// Whether this visit to the alternate screen has given up scrollback for room.
+static b32 alternate_conceded;
 
 // Lines that have scrolled off the top of the primary screen and are still in
 // the ring: what a taller window can take back in.
@@ -239,19 +241,12 @@ static fn cells_blank(unsigned int r, unsigned int first, unsigned int count)
         to come back to. This used to be a copy of every cell on the screen
         with the top row thrown away.
 */
-static COLD __attribute__((__noinline__)) fn alternate_advance();
-
-static fn ring_scroll()
+static fn SPARE ring_scroll()
 {
-        if (alternate)
-                alternate_advance();
-        else
-        {
-                window_scroll(window);
+        window_scroll(window);
 
-                if (history_lines + ROWS < window->history)
-                        history_lines++;
-        }
+        if (!alternate && history_lines + ROWS < window->history)
+                history_lines++;
 
         touch_all();
 }
@@ -358,6 +353,96 @@ static fn __attribute__((__noinline__)) region_scroll_kept(unsigned int count)
         touch_all();
 }
 
+/*
+        The alternate screen is the lines after alternate_head, in the same
+        ring as the primary screen and its scrollback, so it has only the
+        lines neither of those holds to move into. A pager scrolling on past
+        them wrote over the shell's screen: quitting less after a long page
+        left the page where the prompt had been.
+*/
+// The primary screen comes back alternate_rows tall and regridded to ROWS,
+// so it is kept as the taller of the two.
+static unsigned int alternate_room()
+{
+        unsigned int used = history_lines + max(alternate_rows, ROWS) +
+                            (window->head - alternate_head);
+
+        return used < window->history ? window->history - used : 0;
+}
+
+// Moving the ring anyway takes the oldest scrollback it overwrites.
+static fn alternate_claim()
+{
+        unsigned int taken = max(alternate_rows, ROWS) +
+                             (window->head - alternate_head);
+        unsigned int kept = taken < window->history ? window->history - taken : 0;
+
+        if (history_lines > kept)
+                history_lines = kept;
+}
+
+/*
+        The alternate screen moved back to just after alternate_head, which
+        gives it every line it has scrolled off since for room again: ROWS
+        rows copied once a ring's worth of room rather than every row of the
+        screen for every line. The rows are copied first into lines the screen
+        left long ago, and head moves after, in one store, so the compositor
+        reading head never shows a row before it is there. Only when there
+        are two screens of them, or the copy would land on rows being shown.
+*/
+static fn alternate_compact()
+{
+        unsigned int to = alternate_head % window->history;
+        unsigned int from = row_slot(0);
+
+        if (window->head - alternate_head < 2 * ROWS)
+                return;
+
+        for (unsigned int r = 0; r < ROWS; r++)
+                slot_copy(slot_after(to, r), slot_after(from, r));
+
+        __atomic_store_n(address_of window->head, alternate_head + ROWS,
+                         __ATOMIC_RELEASE);
+        touch_all();
+}
+
+/* The whole alternate screen scrolled: the ring's store while there is room
+   for it, the screen moved back once there is not, a screen of the oldest
+   scrollback once a visit when even that leaves none, and the copy a region
+   makes as the last of them. */
+static fn __attribute__((__noinline__)) alternate_scroll(unsigned int count)
+{
+        if (count > ROWS)
+                count = ROWS;
+
+        // Asked once a line while there is room, and again only as it runs out.
+        if (count > alternate_room())
+        {
+                alternate_compact();
+
+                if (count > alternate_room() && !alternate_conceded)
+                {
+                        history_lines -= min(history_lines, ROWS);
+                        alternate_conceded = true;
+                }
+
+                if (count > alternate_room())
+                {
+                        region_scroll(count, true);
+                        return;
+                }
+        }
+
+        for (unsigned int n = count; n; n--)
+                window_scroll(window);
+
+        touch_all();
+
+        if (paper)
+                for (unsigned int r = ROWS - count; r < ROWS; r++)
+                        row_blank(r);
+}
+
 static fn scroll_up(unsigned int count)
 {
         if (region_top == 0 && region_bottom == ROWS)
@@ -369,7 +454,21 @@ static fn scroll_up(unsigned int count)
                         count = ROWS;
 
                 for (unsigned int n = count; n; n--)
-                        ring_scroll();
+                {
+                        // Asked where ring_scroll asked it, once a line.
+                        if (alternate)
+                        {
+                                alternate_scroll(n);
+                                return;
+                        }
+
+                        window_scroll(window);
+
+                        if (history_lines + ROWS < window->history)
+                                history_lines++;
+
+                        touch_all();
+                }
 
                 if (paper)
                         for (unsigned int r = ROWS - count; r < ROWS; r++)
@@ -1176,47 +1275,6 @@ static bipolar primary_regrid(unsigned int at, unsigned int was_rows)
 }
 
 /*
-        A line handed out while the alternate screen is up.
-
-        The alternate screen is the lines after the primary one in the ring,
-        so a program that scrolls there with line feeds -- less paging a
-        manual a line at a time -- moves head on into the slots behind the
-        primary screen. The primary screen's scrollback goes first, oldest
-        line first, and history_lines says so, or a window made taller took
-        the program's lines back as the shell's. Once none is left the next
-        slot would be the primary screen's own top row, and five hundred
-        lines of a pager had put themselves where the shell's screen comes
-        back: its rows move up behind the alternate screen instead, over
-        lines the program has scrolled away, and alternate_head moves with
-        them. That is a copy of the primary screen once every ring's length
-        of scrolling, bounded by the rows it has.
-*/
-static COLD __attribute__((__noinline__)) fn alternate_advance()
-{
-        if (window->head - alternate_head + alternate_rows + history_lines >=
-            window->history)
-        {
-                if (history_lines)
-                        history_lines--;
-                else
-                {
-                        unsigned int to = window->head - ROWS - alternate_rows;
-                        unsigned int from = alternate_head - alternate_rows;
-
-                        // Forward, so a destination that starts before the
-                        // source only writes over rows already moved.
-                        for (unsigned int n = 0; n < alternate_rows; n++)
-                                slot_copy((to + n) % window->history,
-                                          (from + n) % window->history);
-
-                        alternate_head = window->head - ROWS;
-                }
-        }
-
-        window_scroll(window);
-}
-
-/*
         Only 1049 saves the cursor on the way in and puts it back on the way
         out, as DECSC and DECRC would; 47 and 1047 leave it where the program
         has it. None of them moves it: a program that wants the alternate
@@ -1232,11 +1290,13 @@ static fn alternate_enter(b32 save)
 
         alternate_head = window->head;
         alternate_rows = ROWS;
-        alternate = true;
+        alternate_conceded = false;
 
         for (unsigned int r = 0; r < ROWS; r++)
-                alternate_advance();
+                window_scroll(window);
 
+        alternate = true;
+        alternate_claim();
         touch_all();
 }
 
@@ -2674,6 +2734,9 @@ static fn line_show()
                    (line_anchor_column + caret) / COLUMNS >= window->head)
                 ring_scroll();
 
+        if (alternate)
+                alternate_claim();
+
         top = window->head - ROWS;
         anchor_row = (bipolar)line_anchor - (bipolar)top;
 
@@ -3490,7 +3553,9 @@ fn regrid(b32 master)
                 unsigned int added = 0;
 
                 for (; window->head - alternate_head < ROWS; added++)
-                        alternate_advance();
+                        window_scroll(window);
+
+                alternate_claim();
 
                 shift = (bipolar)ROWS - (bipolar)was_rows - (bipolar)added;
         }
