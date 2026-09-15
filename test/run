@@ -5292,6 +5292,9 @@ static bipolar shell_exec_file(string_address path,
 // Whether in hands its bytes over one at a time or as one read.
 static b32 feed_reads;
 
+// Where the next in is cut into two reads, when it is.
+static bipolar feed_cut = -1;
+
 static const struct
 {
         const char *name;
@@ -5417,7 +5420,15 @@ b32 main()
                                         continue;
                                 }
 
-                                if (feed_reads)
+                                if (feed_reads && feed_cut >= 0 &&
+                                    (positive)feed_cut <= n)
+                                {
+                                        term_bytes(feed, (positive)feed_cut);
+                                        term_bytes(feed + feed_cut,
+                                                   n - (positive)feed_cut);
+                                        feed_cut = -1;
+                                }
+                                else if (feed_reads)
                                         term_bytes(feed, n);
                                 else
                                         for (positive k = 0; k < n; k++)
@@ -5435,6 +5446,23 @@ b32 main()
                 }
                 else if (string_compare(verb, (string_address) "reads") == 0)
                         feed_reads = true;
+                else if (string_compare(verb, (string_address) "cut") == 0)
+                {
+                        feed_cut = (bipolar)number(argument);
+                        i++;
+                }
+                else if (string_compare(verb, (string_address) "length") == 0)
+                {
+                        positive at = 0;
+                        unsigned int n = 0;
+
+                        while (next_byte(argument, &at) >= 0)
+                                n++;
+
+                        say_number(n);
+                        say_byte('\n');
+                        i++;
+                }
                 else if (string_compare(verb, (string_address) "click") == 0 ||
                          string_compare(verb, (string_address) "release") == 0)
                 {
@@ -5810,6 +5838,42 @@ same()
 #       today. Written down rather than left out, so that closing the gap
 #       fails here and says so.
 differs() { same "$@"; }
+
+#       Every place a read can end inside the input. A byte at a time, and two
+#       reads cut after any of its bytes, have to leave the same cells, the
+#       same cursor and the same answers.
+cuts()
+{
+        name=$1
+        want=$2
+        columns=$3
+        rows=$4
+        input=$5
+        shift 5
+
+        got=$(term "$columns" "$rows" in "$input" "$@")
+
+        if [ "$want" != "$got" ]; then
+                lost "$name" "want [$want] got [$got]"
+                return 1
+        fi
+
+        length=$(term 1 1 length "$input")
+        at=0
+
+        while [ "$at" -le "$length" ]; do
+                got=$(term "$columns" "$rows" reads cut "$at" in "$input" "$@")
+
+                if [ "$want" != "$got" ]; then
+                        lost "$name" "cut after $at bytes: want [$want] got [$got]"
+                        return 1
+                fi
+
+                at=$((at + 1))
+        done
+
+        won
+}
 
 #
 #       Characters into cells.
@@ -6281,6 +6345,29 @@ same 'wide at a run end' '[abcde]|[<6f22>f]|1,3'  6 2 in 'abcde\xe6\xbc\xa2f' du
 same 'colours in a run' '1,0|0,1'                 6 2 in '\e[31mab\e[7mcd\e[m' attr 0,1 attr 0,3
 same 'bold in a run'  '9,0|0,9'                   6 2 in '\e[1;31mab\e[7mcd\e[m' attr 0,1 attr 0,3
 same 'c1 cut a run'   '[ab]|0,2'                  6 2 in 'a\xc2\x9bb' row 0 cursor
+
+group sequences
+#       A control sequence the read holds all of is taken in one pass, and
+#       everything that can interrupt one is left to the byte at a time. Each
+#       of these is cut into two reads after every one of its bytes as well:
+#       colons, the slots running out, saturation, a control, CAN, DEL and
+#       bytes past ASCII inside a sequence, ESC starting another, markers,
+#       intermediates, answers, and the text around them.
+cuts 'colon colours'  '232,0'  8 2 '\e[38:2::10:20:30mX\e[m' attr 0,0
+cuts 'semicolon colours' '196,21' 8 2 '\e[1;38;5;196;48;5;21mX' attr 0,0
+cuts 'past the last slot' '15,0' 8 2 '\e[1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;31mX' attr 0,0
+cuts 'saturating count' '0,8'  8 2 '\e[99999999999999Cx' cursor
+cuts 'control inside' '[abc x]|0,5' 8 2 'abc\e[2\bCx' row 0 cursor
+cuts 'cancel inside'  '[X]|0,1' 8 2 '\e[3;3\x18X' row 0 cursor
+cuts 'del and utf-8 inside' '15,0' 8 2 '\e[1\x7f;3\xc3\x81mX' attr 0,0
+cuts 'escape restarts' '0,4'   8 2 '\e[12\e[3Cx' cursor
+cuts 'markers and intermediates' '7,0|0|0,1' 8 2 '\e[>4;2mX\e[?u\e[4 q' attr 0,0 flags 0,0 cursor
+cuts 'answers'        '[\e[?25;1$y\e[0n]' 8 2 '\e[?25$p\e[5n' sent
+cuts 'empty parameters' '7,0'  8 2 '\e[31m\e[;mX' attr 0,0
+cuts 'no parameter'   '[abc]|0,3' 8 2 'abcdef\e[3D\e[K' row 0 cursor
+cuts 'after a title'  '0,3'    8 2 '\e]0;t\a\e[2Cx' cursor
+cuts 'after a cut character' '[<fffd>  x]|0,4' 8 2 '\xe6\xbc\e[2Cx' row 0 cursor
+cuts 'in line drawing' '[<2500>]|15,0' 8 2 '\e(0\e[1mq\e(B' row 0 attr 0,0
 
 group malformed
 #       Unicode 3.9, and the substitution of maximal subparts: a sequence
