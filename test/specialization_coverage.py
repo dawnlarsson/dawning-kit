@@ -64,7 +64,6 @@ COMPILER_MEMORY = ROOT / 'src/compiler_memory.c'
 DECLARATION_SOURCES = (
     'src/library.c',
     'src/platform/linux.inc',
-    'src/platform/syscall.inc',
 )
 
 Coverage = namedtuple('Coverage',

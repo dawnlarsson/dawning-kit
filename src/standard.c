@@ -112,7 +112,7 @@
         legacy name in terms of the *at call is therefore not a portability
         nicety, it is the only way the name exists on two of the three
         machines this must run on. rename is renameat2 rather than renameat
-        for the reason syscall.inc already records: riscv64 never had
+        for the reason library.c's syscall table already records: riscv64 never had
         renameat.
 */
 
@@ -120,7 +120,7 @@
         The numbers, which are the same on all three machines.
 
         Checked rather than assumed, because this tree has a scar from that
-        exact assumption -- syscall.inc once carried a riscv64 table with four
+        exact assumption -- library.c's syscall table once carried a riscv64 table with four
         wrong entries in it. The check was
 
             echo '#include <asm/errno.h>' | $CC -E -dM -x c - | grep '^#define E'
@@ -1137,7 +1137,7 @@ ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode),
 /*
         rename is renameat2 with no flags, not renameat.
 
-        syscall.inc records the reason and it is the one genuine divergence
+        library.c's syscall table records the reason and it is the one genuine divergence
         between arm64 and riscv64 in the whole asm-generic table: riscv never
         had renameat, so the number 38 that arm64 uses for it is something
         else or nothing there. renameat2 is 276 on both and does everything
@@ -1533,7 +1533,7 @@ ERROR_ENTRY(sync, b32, (void),
 
         FUTEX_WAIT is 0 and FUTEX_WAKE is 1 in the old multiplexed futex
         syscall, which is number 202 on x86_64 and 98 on the asm-generic
-        table that arm64 and riscv64 share. src/platform/syscall.inc also
+        table that arm64 and riscv64 share. library.c's syscall table also
         carries futex_wait and futex_wake as syscalls 455 and 454 -- those are
         the new unmultiplexed entries added in 6.7, and a kernel older than
         that answers them ENOSYS. The old one has been there since 2.6 and is
@@ -6503,7 +6503,7 @@ b32 system(string_address command)
         for clock_gettime through a syscall trap -- ktime_get is what it wants
         -- so there is nothing here it could use even if the names were free.
 
-        A no-platform build has had platform/syscall.inc compiled out from
+        A no-platform build has had library.c's syscall table compiled out from
         under it, so syscall(clock_gettime) is not a number and there is no
         kernel to ask the time of. The calendar arithmetic would still be
         valid there, but half a <time.h> that cannot say what o'clock it is
