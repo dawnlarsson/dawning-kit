@@ -84,12 +84,18 @@ static struct bowl_mount_point bowl_isolated_mounts[] = {
         /etc and /var stay Moonwater's, as do /home, /root, /tmp, /run, /dev,
         /proc and /sys. A later donor namespace skips the libc binds so a
         second glibc bowl cannot replace a shared Arch loader.
+
+        /usr/share/terminfo is the one data tree bound as well. ncurses run
+        as root ignores $TERMINFO and reads only the directory it was built
+        with, and Moonwater runs everything as root, so without the guest's
+        own database nano and every other curses program refused to start.
 */
 static struct bowl_layer bowl_fast_layers[] = {
     {"/lib", false},
     {"/lib64", false},
     {"/usr/lib", false},
     {"/usr/lib64", false},
+    {"/usr/share/terminfo", false},
     {null, false},
 };
 
@@ -98,6 +104,32 @@ static bipolar bowl_mkdir(string_address path)
         bipolar made = system_make_directory_at(AT_FDCWD, path, 0755);
 
         return made == -EEXIST ? 0 : made;
+}
+
+// A mount point below a directory Moonwater itself may not have.
+static bipolar bowl_mkdir_parents(string_address path)
+{
+        p8 prefix[BOWL_PATH_LIMIT];
+        positive length = string_length(path);
+
+        if (length >= sizeof(prefix))
+                return -ENAMETOOLONG;
+
+        for (positive i = 1; i < length; i++)
+        {
+                bipolar failed;
+
+                if (path[i] != '/')
+                        continue;
+
+                memory_copy(prefix, path, i);
+                prefix[i] = 0;
+                failed = bowl_mkdir((string_address)prefix);
+                if (failed < 0)
+                        return failed;
+        }
+
+        return bowl_mkdir(path);
 }
 
 static bool bowl_root_path(p8 address_to into, positive room,
@@ -671,7 +703,7 @@ static bipolar bowl_fast_enter(string_address root)
                         continue;
                 }
 
-                failed = bowl_mkdir(layer->path);
+                failed = bowl_mkdir_parents(layer->path);
                 if (failed < 0)
                         return failed;
 
