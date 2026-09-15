@@ -23813,6 +23813,100 @@ def harness_compression(argv):
                           made.returncode == unpacked.returncode == 0 and found == expected,
                           made.stderr.decode(errors='replace') + unpacked.stderr.decode(errors='replace'))
 
+            # The option parser: old-style keys, -f -, the last of repeated
+            # options, the exact refusals, and option state that must not
+            # outlive one run of tar inside one shell.
+            opt = root / ('tar-options-' + label)
+            shutil.copytree(tree / 'tree', opt / 'tree')
+            for path in [opt / 'tree', *(opt / 'tree').rglob('*')]:
+                os.utime(path, (1000000000, 1000000000))
+            archive = str(opt / 'a.tar')
+
+            def unpacks(at, magic):
+                place = Path(tempfile.mkdtemp(dir=opt))
+                data = Path(archive).read_bytes() if os.path.exists(archive) else b''
+                got = call([refs['tar'], '-xf', archive, '-C', str(place)])
+                return data[at:at + len(magic)] == magic and got.returncode == 0 and {
+                    str(p.relative_to(place / 'tree')): p.read_bytes()
+                    for p in (place / 'tree').rglob('*') if p.is_file()} == expected
+
+            tail = ['-C', str(opt), 'tree']
+            ustar = (257, b'ustar')
+            for cell, args, magic in (
+                    ('keys', ['cfC', archive, str(opt), 'tree'], ustar),
+                    ('keys-z', ['cvfz', archive] + tail, (0, b'\x1f\x8b')),
+                    ('dash-keys', ['-cvzf', archive] + tail, (0, b'\x1f\x8b')),
+                    ('long', ['--create', '--xz', '--file=' + archive, '--directory', str(opt), 'tree'],
+                     (0, b'\xfd7zXZ')),
+                    ('last-mode', ['-x', '-t', '-c', '-f', archive] + tail, ustar),
+                    ('last-pack', ['-cz', '--xz', '--zstd', '-f', archive] + tail, (0, b'\x28\xb5\x2f\xfd')),
+                    ('last-file', ['-cf', str(opt / 'unused.tar'), '-f', archive] + tail, ustar)):
+                Path(archive).unlink(missing_ok=True)
+                made = call(our_tar + args)
+                check(label + '/tar-options/' + cell,
+                      made.returncode == 0 and unpacks(*magic) and not (opt / 'unused.tar').exists(),
+                      made.stderr.decode(errors='replace'))
+
+            piped_out = call(our_tar + ['-cf', '-'] + tail)
+            (opt / 'stdin').mkdir()
+            piped_in = call(our_tar + ['-xf', '-', '-C', str(opt / 'stdin')], piped_out.stdout)
+            check(label + '/tar-options/f-dash',
+                  piped_out.returncode == piped_in.returncode == 0 and
+                  piped_out.stdout[257:262] == b'ustar' and
+                  (opt / 'stdin' / 'tree' / 'repeat').is_file() and
+                  (opt / 'stdin' / 'tree' / 'repeat').read_bytes() == expected['repeat'],
+                  (piped_out.stderr + piped_in.stderr).decode(errors='replace'))
+
+            mode = b"tar: you must specify one of the '-c', '-t', or '-x' options\n" \
+                   b"Try 'tar --help' for more information.\n"
+            for args, said in (
+                    (['-cf'], b"tar: option requires an argument -- 'f'\n"),
+                    (['cf'], b"tar: option requires an argument -- 'f'\n"),
+                    (['xfC', archive], b"tar: option requires an argument -- 'C'\n"),
+                    (['--file'], b"tar: option '--file' requires an argument\n"),
+                    (['-t', '--strip-components'], b"tar: option '--strip-components' requires an argument\n"),
+                    (['-tq'], b"tar: invalid option -- 'q'\n"),
+                    (['-I', 'zstd', '-tf', archive], b"tar: invalid option -- 'I'\n"),
+                    (['--bogus=1', '-tf', archive], b"tar: unrecognized option '--bogus=1'\n"),
+                    (['-tjf', archive], b'tar: bzip2 is not this tar\n'),
+                    (['--use-compress-program=zstd', '-tf', archive], b'tar: use-compress-program is not this tar\n'),
+                    (['-tf', archive, '--strip-components=1x'], b'tar: invalid number of components\n'),
+                    ([], mode),
+                    (['--', '-tf', archive], mode)):
+                refused = call(our_tar + args)
+                check(label + '/tar-options/refuse/' + ' '.join(args[:2]).replace(archive, 'a.tar'),
+                      refused.returncode == 2 and refused.stderr == said and not refused.stdout,
+                      '%r %r' % (refused.returncode, refused.stderr))
+
+            runs = opt / 'runs'
+            for name in ('touched', 'kept', 'stripped', 'whole'):
+                (runs / name).mkdir(parents=True)
+            place = {name: shlex.quote(str(runs / name)) for name in ('touched', 'kept', 'stripped', 'whole', 'z', 'p')}
+            quoted, source = shlex.quote(archive), shlex.quote(str(opt))
+            script = '\n'.join(line + '; echo $?' for line in (
+                'tar -cf %s -C %s tree' % (quoted, source),
+                'tar -xmf %s -C %s' % (quoted, place['touched']),
+                'tar -xf %s -C %s' % (quoted, place['kept']),
+                'tar -czf %s -C %s tree' % (place['z'], source),
+                'tar -cf %s -C %s tree' % (place['p'], source),
+                'tar -xf %s --strip-components=1 -C %s' % (quoted, place['stripped']),
+                'tar -xf %s -C %s' % (quoted, place['whole']),
+                'tar -q 2>/dev/null',
+                'tar -tf %s >/dev/null' % quoted))
+            ran = subprocess.run(runner + [dict(binaries)[label], '-c', script],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120,
+                                 env=dict(os.environ, PATH=str(farms[label]) + os.pathsep + os.environ.get('PATH', '')))
+            touched, kept = runs / 'touched' / 'tree' / 'repeat', runs / 'kept' / 'tree' / 'repeat'
+            check(label + '/tar-options/same-shell',
+                  ran.stdout == b'0\n0\n0\n0\n0\n0\n0\n2\n0\n' and
+                  touched.is_file() and touched.stat().st_mtime != 1000000000 and
+                  kept.is_file() and kept.stat().st_mtime == 1000000000 and
+                  (runs / 'z').read_bytes().startswith(b'\x1f\x8b') and
+                  (runs / 'p').read_bytes()[257:262] == b'ustar' and
+                  (runs / 'stripped' / 'repeat').is_file() and not (runs / 'stripped' / 'tree').exists() and
+                  (runs / 'whole' / 'tree' / 'repeat').is_file(),
+                  '%r %s' % (ran.stdout, ran.stderr.decode(errors='replace')))
+
             output_root = root / ('tar-output-' + label)
             output_root.mkdir()
             member = output_root / 'member'

@@ -3488,388 +3488,187 @@ static b32 tar_write_archive(struct tar_options address_to options)
         return tar_status;
 }
 
-static bool tar_compression_letter(p8 letter)
+/*
+        Every spelling tar takes and its arity.  Long-only options answer to
+        codes below any letter; long names match exactly, abbreviations are
+        not taken.
+*/
+enum
 {
-        return letter == 'z' || letter == 'j' || letter == 'J' ||
-               letter == 'Z' || letter == 'a';
-}
+        TAR_NO_SAME_PERMISSIONS = 1,
+        TAR_SAME_OWNER,
+        TAR_NUMERIC_OWNER,
+        TAR_ZSTD,
+        TAR_COMPRESS_PROGRAM,
+        TAR_STRIP_COMPONENTS,
+        TAR_HELP,
+        TAR_VERSION,
+};
 
-static bool tar_cluster_letter(p8 letter)
-{
-        return letter == 'x' || letter == 't' || letter == 'c' ||
-               letter == 'f' || letter == 'v' || letter == 'C' ||
-               letter == 'P' || letter == 'p' || letter == 'm' ||
-               letter == 'o' || tar_compression_letter(letter);
-}
+static const argument_option tar_option_rules[] = {
+    {"extract", 'x'},
+    {"list", 't'},
+    {"create", 'c'},
+    {"file", 'f', ARGUMENT_REQUIRED},
+    {"directory", 'C', ARGUMENT_REQUIRED},
+    {"strip-components", TAR_STRIP_COMPONENTS, ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"verbose", 'v'},
+    {"absolute-names", 'P'},
+    {"preserve-permissions", 'p'},
+    {"same-permissions", 'p'},
+    {"no-same-permissions", TAR_NO_SAME_PERMISSIONS, ARGUMENT_LONG_ONLY},
+    {"touch", 'm'},
+    {"no-same-owner", 'o'},
+    {"same-owner", TAR_SAME_OWNER, ARGUMENT_LONG_ONLY},
+    /* Owners are only ever restored by number. */
+    {"numeric-owner", TAR_NUMERIC_OWNER, ARGUMENT_LONG_ONLY},
+    {"gzip", 'z'},
+    {"gunzip", 'z'},
+    {"xz", 'J'},
+    {"zstd", TAR_ZSTD, ARGUMENT_LONG_ONLY},
+    {"auto-compress", 'a'},
+    {"bzip2", 'j'},
+    {"compress", 'Z'},
+    {"use-compress-program", TAR_COMPRESS_PROGRAM, ARGUMENT_LONG_ONLY},
+    {"help", TAR_HELP, ARGUMENT_LONG_ONLY},
+    {"version", TAR_VERSION, ARGUMENT_LONG_ONLY},
+    {null},
+};
 
+/* GNU's old-style keys: a first word of nothing but short option letters. */
 static bool tar_is_cluster(string_address word)
 {
-        if (!word || !*word || string_is(word, '-'))
+        if (!*word)
                 return false;
 
         for (; *word; word++)
-                if (!tar_cluster_letter(*word))
+        {
+                const argument_option address_to option =
+                    argument_option_short(tar_option_rules, *word);
+
+                if (!option || (option->mode & ARGUMENT_LONG_ONLY))
                         return false;
+        }
 
         return true;
 }
 
-static bool tar_take_letter(struct tar_options address_to options, p8 letter,
-                            string_address address_to arguments,
-                            positive count, positive address_to at)
+/* One option, in command-line order.  False stops the parse. */
+static bool tar_take(struct tar_options address_to options, p8 letter,
+                     string_address value)
 {
-        if (letter == 'x' || letter == 't' || letter == 'c')
+        positive used;
+
+        switch (letter)
         {
-                options->mode = letter;
-                return true;
-        }
-
-        if (letter == 'v')
-        {
-                options->verbose = true;
-                return true;
-        }
-
-        if (letter == 'P')
-        {
-                options->absolute = true;
-                return true;
-        }
-
-        if (letter == 'p')
-        {
-                options->permissions = 1;
-                return true;
-        }
-
-        if (letter == 'm')
-        {
-                options->touch = true;
-                return true;
-        }
-
-        if (letter == 'o')
-        {
-                options->owner = -1;
-                return true;
-        }
-
-        if (letter == 'z')
-        {
-                options->pack = TAR_PACK_GZIP;
-                return true;
-        }
-
-        if (letter == 'J')
-        {
-                options->pack = TAR_PACK_XZ;
-                return true;
-        }
-
-        if (letter == 'a')
-        {
-                options->pack = TAR_PACK_AUTO;
-                return true;
-        }
-
-        if (letter == 'j' || letter == 'Z')
-        {
-                tar_refuse(letter == 'j'
-                               ? "bzip2 is not this tar"
-                               : "compress is not this tar");
-                return false;
-        }
-
-        if (letter == 'f' || letter == 'C')
-        {
-                if (address_to at >= count)
-                {
-                        tar_refuse(letter == 'f' ? "option requires an argument -- 'f'"
-                                                 : "option requires an argument -- 'C'");
-                        return false;
-                }
-
-                if (letter == 'f')
-                        options->archive = arguments[address_to at];
-                else
-                        options->directory = arguments[address_to at];
-
-                address_to at += 1;
-                return true;
-        }
-
-        p8 shown[2];
-
-        shown[0] = letter;
-        shown[1] = end;
-        string_format(log_error, "tar: invalid option -- '%s'\n", shown);
-        tar_status = 2;
-        return false;
-}
-
-static bool tar_take_long(struct tar_options address_to options,
-                          string_address word, string_address address_to arguments,
-                          positive count, positive address_to at)
-{
-        string_address equal = string_first_of(word, '=');
-        string_address name = word + 2;
-        string_address value = equal ? equal + 1 : null;
-        positive name_length = equal ? (positive)(equal - name)
-                                     : string_length(name);
-
-        if (name_length == 4 && !memory_compare(name, "file", 4))
-        {
-                if (!value)
-                {
-                        if (address_to at >= count)
-                                return tar_refuse("option '--file' requires an argument"),
-                                       false;
-
-                        value = arguments[address_to at];
-                        address_to at += 1;
-                }
-
-                options->archive = value;
-                return true;
-        }
-
-        if (name_length == 9 && !memory_compare(name, "directory", 9))
-        {
-                if (!value)
-                {
-                        if (address_to at >= count)
-                                return tar_refuse("option '--directory' requires an argument"),
-                                       false;
-
-                        value = arguments[address_to at];
-                        address_to at += 1;
-                }
-
-                options->directory = value;
-                return true;
-        }
-
-        if (name_length == 16 && !memory_compare(name, "strip-components", 16))
-        {
-                positive used;
-
-                if (!value)
-                {
-                        if (address_to at >= count)
-                                return tar_refuse("option '--strip-components' requires an argument"),
-                                       false;
-
-                        value = arguments[address_to at];
-                        address_to at += 1;
-                }
-
+        case 'x': case 't': case 'c': options->mode = letter; break;
+        case 'f': options->archive = value; break;
+        case 'C': options->directory = value; break;
+        case 'v': options->verbose = true; break;
+        case 'P': options->absolute = true; break;
+        case 'p': options->permissions = 1; break;
+        case TAR_NO_SAME_PERMISSIONS: options->permissions = -1; break;
+        case 'm': options->touch = true; break;
+        case 'o': options->owner = -1; break;
+        case TAR_SAME_OWNER: options->owner = 1; break;
+        case 'z': options->pack = TAR_PACK_GZIP; break;
+        case 'J': options->pack = TAR_PACK_XZ; break;
+        case TAR_ZSTD: options->pack = TAR_PACK_ZSTD; break;
+        case 'a': options->pack = TAR_PACK_AUTO; break;
+        case 'j': return tar_refuse("bzip2 is not this tar"), false;
+        case 'Z': return tar_refuse("compress is not this tar"), false;
+        case TAR_COMPRESS_PROGRAM:
+                return tar_refuse("use-compress-program is not this tar"), false;
+        case TAR_STRIP_COMPONENTS:
                 options->strip = string_digits_max(value, positive_max,
                                                    address_of used);
                 if (!used || value[used])
                         return tar_refuse("invalid number of components"), false;
-
-                return true;
-        }
-
-        if (name_length == 7 && !memory_compare(name, "verbose", 7))
-        {
-                options->verbose = true;
-                return true;
-        }
-
-        if (name_length == 14 && !memory_compare(name, "absolute-names", 14))
-        {
-                options->absolute = true;
-                return true;
-        }
-
-        if ((name_length == 20 &&
-             !memory_compare(name, "preserve-permissions", 20)) ||
-            (name_length == 16 &&
-             !memory_compare(name, "same-permissions", 16)))
-        {
-                options->permissions = 1;
-                return true;
-        }
-
-        if (name_length == 19 &&
-            !memory_compare(name, "no-same-permissions", 19))
-        {
-                options->permissions = -1;
-                return true;
-        }
-
-        if (name_length == 5 && !memory_compare(name, "touch", 5))
-        {
-                options->touch = true;
-                return true;
-        }
-
-        if (name_length == 10 && !memory_compare(name, "same-owner", 10))
-        {
-                options->owner = 1;
-                return true;
-        }
-
-        if (name_length == 13 && !memory_compare(name, "no-same-owner", 13))
-        {
-                options->owner = -1;
-                return true;
-        }
-
-        /* Owners are only ever restored by number. */
-        if (name_length == 13 && !memory_compare(name, "numeric-owner", 13))
-                return true;
-
-        if ((name_length == 4 && !memory_compare(name, "gzip", 4)) ||
-            (name_length == 6 && !memory_compare(name, "gunzip", 6)))
-        {
-                options->pack = TAR_PACK_GZIP;
-                return true;
-        }
-
-        if (name_length == 2 && !memory_compare(name, "xz", 2))
-        {
-                options->pack = TAR_PACK_XZ;
-                return true;
-        }
-
-        if (name_length == 4 && !memory_compare(name, "zstd", 4))
-        {
-                options->pack = TAR_PACK_ZSTD;
-                return true;
-        }
-
-        if (name_length == 13 && !memory_compare(name, "auto-compress", 13))
-        {
-                options->pack = TAR_PACK_AUTO;
-                return true;
-        }
-
-        if ((name_length == 5 && !memory_compare(name, "bzip2", 5)) ||
-            (name_length == 8 && !memory_compare(name, "compress", 8)) ||
-            (name_length == 20 &&
-             !memory_compare(name, "use-compress-program", 20)))
-        {
-                tar_refuse(name_length == 5 ? "bzip2 is not this tar"
-                                            : name_length == 8
-                                                  ? "compress is not this tar"
-                                                  : "use-compress-program is not this tar");
-                return false;
-        }
-
-        if (name_length == 7 && !memory_compare(name, "extract", 7))
-        {
-                options->mode = TAR_EXTRACT;
-                return true;
-        }
-
-        if (name_length == 4 && !memory_compare(name, "list", 4))
-        {
-                options->mode = TAR_LIST;
-                return true;
-        }
-
-        if (name_length == 6 && !memory_compare(name, "create", 6))
-        {
-                options->mode = TAR_CREATE;
-                return true;
-        }
-
-        if ((name_length == 4 && !memory_compare(name, "help", 4)) ||
-            (name_length == 7 && !memory_compare(name, "version", 7)))
-        {
-                if (name_length == 4)
-                        string_format(log, "Usage: tar [-ctxzJa] [-f ARCHIVE] [-C DIR] [-p] "
-                                           "[--gzip] [--xz] [--zstd] [--strip-components N] "
-                                           "[FILE...]\n");
-                else
-                        string_format(log, "tar from dawning-kit\n");
-
+                break;
+        case TAR_HELP:
+                string_format(log, "Usage: tar [-ctxzJa] [-f ARCHIVE] [-C DIR] [-p] "
+                                   "[--gzip] [--xz] [--zstd] [--strip-components N] "
+                                   "[FILE...]\n");
                 log_flush();
                 options->mode = 'h';
-                return true;
+                break;
+        case TAR_VERSION:
+                string_format(log, "tar from dawning-kit\n");
+                log_flush();
+                options->mode = 'h';
+                break;
         }
 
-        string_format(log_error, "tar: unrecognized option '%s'\n", word);
-        tar_status = 2;
-        return false;
+        return true;
 }
 
 static bool tar_parse(struct tar_options address_to options)
 {
-        string_address address_to arguments = program_argument_list();
-        positive count = (positive)program_argument_count();
-        positive at = 1;
+        argument_cursor cursor = {.argc = (positive)program_argument_count(),
+                                  .argv = program_argument_list(), .at = 1};
+        string_address keys = cursor.argc > 1 && tar_is_cluster(cursor.argv[1])
+                                  ? cursor.argv[1] : (string_address)"";
+        argument_match match;
+        b32 taken;
 
         memory_fill(options, 0, sizeof(*options));
-        options->mode = 0;
+        cursor.at += *keys != end;
 
-        if (count > 1 && tar_is_cluster(arguments[1]))
+        for (;;)
         {
-                string_address cluster = arguments[1];
-
-                at = 2;
-                for (; *cluster; cluster++)
-                        if (!tar_take_letter(options, *cluster, arguments,
-                                             count, address_of at))
-                                return false;
-        }
-
-        while (at < count)
-        {
-                string_address word = arguments[at];
-
-                if (string_equals(word, "--"))
+                /* An old-style key takes its value from the words after the
+                   keys, in order, not from the letters that follow it. */
+                if (*keys)
                 {
-                        at++;
+                        bool valued = argument_option_mode(tar_option_rules, *keys) &
+                                      ARGUMENT_REQUIRED;
+
+                        match.letter = *keys++;
+                        match.value = valued ? argument_value(address_of cursor, true) : null;
+                        taken = valued && !match.value ? ARGUMENT_MISSING : match.letter;
+                }
+                else
+                        taken = argument_option_take(address_of cursor, tar_option_rules,
+                                                     false, address_of match);
+
+                if (taken == ARGUMENT_END)
+                        break;
+
+                if (taken == ARGUMENT_OPERAND)
+                {
+                        cursor.at--;
                         break;
                 }
 
-                if (string_length(word) > 2 && word[0] == '-' && word[1] == '-')
+                if (taken == ARGUMENT_UNKNOWN || taken == ARGUMENT_MISSING)
                 {
-                        at++;
-                        if (!tar_take_long(options, word, arguments, count,
-                                           address_of at))
-                                return false;
+                        p8 shown[2] = {match.letter, end};
 
-                        if (options->mode == 'h')
-                                return true;
-
-                        continue;
+                        tar_status = 2;
+                        if (taken == ARGUMENT_UNKNOWN && cursor.long_option)
+                                string_format(log_error, "tar: unrecognized option '%s'\n",
+                                              cursor.word);
+                        else if (taken == ARGUMENT_UNKNOWN)
+                                string_format(log_error, "tar: invalid option -- '%s'\n", shown);
+                        else if (cursor.long_option)
+                                string_format(log_error, "tar: option '%s' requires an argument\n",
+                                              cursor.word);
+                        else
+                                string_format(log_error, "tar: option requires an argument -- '%s'\n",
+                                              shown);
+                        return false;
                 }
 
-                if (word[0] == '-' && word[1])
-                {
-                        string_address letters = word + 1;
+                /* A valueless long option ignores a value attached to it
+                   (ARGUMENT_UNEXPECTED), as it always has here. */
+                if (!tar_take(options, match.letter, match.value))
+                        return false;
 
-                        at++;
-                        for (; *letters; letters++)
-                        {
-                                if ((*letters == 'f' || *letters == 'C') &&
-                                    letters[1])
-                                {
-                                        if (*letters == 'f')
-                                                options->archive = letters + 1;
-                                        else
-                                                options->directory = letters + 1;
-
-                                        break;
-                                }
-
-                                if (!tar_take_letter(options, *letters,
-                                                     arguments, count,
-                                                     address_of at))
-                                        return false;
-                        }
-
-                        continue;
-                }
-
-                break;
+                if (options->mode == 'h')
+                        return true;
         }
 
-        options->first = at;
+        options->first = cursor.at;
         if (!options->mode)
         {
                 tar_refuse("you must specify one of the '-c', '-t', or '-x' options");
