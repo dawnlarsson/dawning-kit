@@ -850,10 +850,28 @@ static void canvas_thread_start(void)
                 scheduler picks it before any normal task, which is the whole
                 of what this thread is for.
 
-                fifo_low rather than fifo: priority 1 is ahead of every
+                Priority 1, as sched_set_fifo_low gives: ahead of every
                 SCHED_OTHER task and behind anything the machine considers
                 more urgent than a cursor, which is the honest place for it.
+
+                And reset on fork, which sched_set_fifo_low does not ask for.
+                This thread starts programs -- Control-Shift-T's terminal is
+                user_mode_thread called from here -- and a task forked from a
+                FIFO task is FIFO unless the parent says otherwise. So every
+                terminal opened from the keyboard, its shell and whatever was
+                run in it were FIFO 1 beside this thread: a stress-ng --cpu 0
+                in one held every processor against the cursor, which FIFO
+                never timeslices at equal priority, and left the other
+                terminals and every kworker RT throttling's 5%. With the flag
+                the scheduler starts each child SCHED_OTHER at nice 0, by its
+                own rule and on every path a program can be started from.
         */
+        static const struct sched_attr canvas_policy = {
+                .size = sizeof(struct sched_attr),
+                .sched_policy = SCHED_FIFO,
+                .sched_priority = 1,
+                .sched_flags = SCHED_FLAG_RESET_ON_FORK,
+        };
         struct task_struct *thread;
 
         hrtimer_setup(&desktop.frame, desktop_frame, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -866,7 +884,7 @@ static void canvas_thread_start(void)
         }
 
         rcu_assign_pointer(canvas_thread, thread);
-        sched_set_fifo_low(thread);
+        WARN_ON_ONCE(sched_setattr_nocheck(thread, &canvas_policy));
 
         // 0 microseconds: no idle state whose exit can be measured.
         cpu_latency_qos_add_request(&pointer_qos, 0);
