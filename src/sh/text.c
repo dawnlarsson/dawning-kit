@@ -14721,11 +14721,19 @@ typedef struct grep_glob
 {
         struct grep_glob address_to next;
         string_address value;
+        // --include rather than --exclude or a line of --exclude-from.
+        bool include;
+        // Holds a ? * [ or ]: GNU matches such a glob with fnmatch and any
+        // other as a string, and the two try different suffixes of a name.
+        bool wild;
 } grep_glob;
 
-static grep_glob address_to grep_include;
-static grep_glob address_to grep_exclude;
+// --include, --exclude and --exclude-from in one list, newest first, since
+// which of them spoke last decides a name.
+static grep_glob address_to grep_file_globs;
 static grep_glob address_to grep_exclude_dir;
+// Whichever of -l and -L came later, for when both did.
+static p8 grep_list_last;
 
 /*
         All three option families are the same list operation. Values from an
@@ -14737,7 +14745,8 @@ static grep_glob address_to grep_exclude_dir;
         --exclude-dir=sub and --exclude-dir=sub/ name the same directory.
 */
 static bool grep_glob_add(grep_glob address_to address_to list,
-                          string_address value, positive length, bool directory)
+                          string_address value, positive length, bool directory,
+                          bool include)
 {
         if (directory)
                 while (length && value[length - 1] == '/')
@@ -14790,50 +14799,86 @@ static bool grep_glob_add(grep_glob address_to address_to list,
         }
 
         made->value = (string_address)room;
+        made->include = include;
+        made->wild = false;
+
+        for (positive at = 0; at < length; at++)
+        {
+                if (room[at] == '\\')
+                        at++;
+                else if (room[at] == '?' || room[at] == '*' ||
+                         room[at] == '[' || room[at] == ']')
+                        made->wild = true;
+        }
+
         made->next = *list;
         *list = made;
 
         return true;
 }
 
-static PURE bool grep_globs_have(grep_glob address_to list, string_address name)
+/*
+        Whether one glob takes a name. A walk hands over the entry's own name
+        and nothing more is tried. An operand is taken as written, and then
+        GNU tries each part of it that follows a slash: a literal glob at
+        every slash, a wildcard one only where the next byte is not another
+        slash. So --exclude=sub/y.txt skips tree/sub/y.txt named on the
+        command line, and not the same file met in a walk.
+*/
+static PURE bool grep_glob_takes(grep_glob address_to glob, string_address name,
+                                 bool operand)
 {
-        for (; list; list = list->next)
-                if (shell_match(list->value, name))
+        if (shell_match(glob->value, name))
+                return true;
+
+        if (!operand)
+                return false;
+
+        for (string_address at = name; at[0]; at++)
+                if (at[0] == '/' && !(glob->wild && at[1] == '/') &&
+                    shell_match(glob->value, at + 1))
                         return true;
 
         return false;
 }
 
+/*
+        GNU's one verdict over --include, --exclude and --exclude-from: the
+        latest glob that takes the name decides, and when none does the
+        earliest decides the other way. A list that opened with --include
+        keeps only what some glob took; one that opened with --exclude keeps
+        whatever no glob took.
+*/
+static PURE bool grep_wanted_name(string_address name, bool operand)
+{
+        for (grep_glob address_to glob = grep_file_globs; glob; glob = glob->next)
+        {
+                if (grep_glob_takes(glob, name, operand))
+                        return glob->include;
+
+                if (!glob->next)
+                        return !glob->include;
+        }
+
+        return true;
+}
+
 static PURE bool grep_wanted_file(string_address path)
 {
-        string_address name = file_last_component(path);
-
-        if (grep_include && !grep_globs_have(grep_include, name))
-                return false;
-
-        return !grep_globs_have(grep_exclude, name);
+        return grep_wanted_name(file_last_component(path), false);
 }
 
-static PURE bool grep_wanted_directory(string_address path)
+// A directory is held to --exclude-dir alone, whether a walk met it or it
+// was named, and never to --include or --exclude.
+static PURE bool grep_wanted_directory(string_address path, bool operand)
 {
-        return !grep_globs_have(grep_exclude_dir, file_last_component(path));
-}
+        string_address name = operand ? path : file_last_component(path);
 
-// The kernel's mode for a path, or zero when there is none to be had.
-static p32 text_path_mode(string_address path)
-{
-        file_facts facts;
-        bipolar handle = text_open_handle(path, FILE_READ, 0);
+        for (grep_glob address_to glob = grep_exclude_dir; glob; glob = glob->next)
+                if (grep_glob_takes(glob, name, operand))
+                        return false;
 
-        if (handle < 0)
-                return 0;
-
-        bool told = text_handle_facts((positive)handle, address_of facts);
-
-        system_close(handle);
-
-        return told ? facts.mode : 0;
+        return true;
 }
 
 static bool grep_path_add(string_address path)
@@ -14888,16 +14933,35 @@ enum
 // A symlink that points at a directory above it is a walk with no end, and -R
 // follows symlinks. The device and node of everything currently being walked
 // through stops that where it starts, and the depth stops what the pair
-// cannot -- a mount arranged to be its own child.
-#define GREP_DEPTH_MAX 64
+// cannot -- a mount arranged to be its own child. GNU has no such bound and
+// finds a file 300 directories down, so the bound sits where a frame of this
+// recursion per level still fits a default stack many times over.
+#define GREP_DEPTH_MAX 1024
 
 static positive grep_seen_device[GREP_DEPTH_MAX + 1];
 static positive grep_seen_node[GREP_DEPTH_MAX + 1];
+// Out of room for names: the one failure that ends every level of a walk.
+static bool grep_walk_halted;
+
+// A directory's records are all read before anything below it is walked, so
+// one buffer serves every level and stays out of the recursion's frames.
+static p8 grep_dirents[GREP_DIRENT_BYTES];
+
+/*
+        The names every directory on the way down is still to walk, as one
+        stack: a level puts its names on top, reads them back by offset -- the
+        stack moves when it grows -- and cuts back to where it found it. One
+        allocation for the whole walk, as deep as the path and never wider,
+        rather than one per directory for the allocator to keep.
+*/
+static p8 address_to grep_walk_names;
+static positive grep_walk_names_used;
+static positive grep_walk_names_room;
 
 static bool grep_walk(string_address path, b32 depth, bool quietly)
 {
         bipolar handle;
-        p8 entries[GREP_DIRENT_BYTES];
+        p8 address_to entries = grep_dirents;
         bool fine = true;
 
         // Too deep is nothing more down here rather than a failure: GNU says
@@ -14907,6 +14971,20 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
 
         handle = text_open_handle(path && path[0] ? path : (string_address) ".",
                                   FILE_READ, 0);
+
+        /*
+                A directory that will not open is searched like a file, so
+                the read that fails the same way reports it where it falls
+                among the files around it, as GNU's message does, and the
+                walk goes on beside it.
+        */
+        if (handle < 0 && path && path[0])
+        {
+                if (!grep_path_add(path))
+                        grep_walk_halted = true;
+
+                return !grep_walk_halted;
+        }
 
         if (handle < 0)
         {
@@ -14938,10 +15016,20 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
         positive have = 0, at = 0;
         bipolar error = 0;
         struct linux_dirent64 address_to entry;
+        positive base = grep_walk_names_used;
 
-        while (fine && (entry = file_directory_next(handle, entries,
-                              sizeof(entries), address_of have, address_of at,
-                              address_of error)))
+        /*
+                The names are read out and the directory closed before any of
+                them is walked, so a walk holds one descriptor however deep it
+                goes -- GNU's fts finds a file 300 directories down under a
+                limit of 256 -- and the names are still taken in readdir order.
+                They wait on the names stack as a kind byte and the name, and
+                become paths only when their turn comes, as they did when the
+                walk went down mid-read.
+        */
+        while ((entry = file_directory_next(handle, entries, GREP_DIRENT_BYTES,
+                                            address_of have, address_of at,
+                                            address_of error)))
         {
                 string_address name = (string_address)entry->d_name;
                 p8 kind = entry->d_type;
@@ -14952,29 +15040,75 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
                 if (kind == DIRENT_LINK && !grep_dereference)
                         continue;
 
-                string_address full = grep_path_join(path, name);
+                positive length = string_length(name) + 1;
+                positive used = grep_walk_names_used;
+
+                if (grep_walk_names_room - used < 1 + length)
+                {
+                        positive room = grep_walk_names_room ? grep_walk_names_room : 65536;
+
+                        while (room - used < 1 + length)
+                                room *= 2;
+
+                        p8 address_to grown = memory_resize(grep_walk_names, room);
+
+                        if (!grown)
+                        {
+                                grep_walk_halted = true;
+                                fine = false;
+                                break;
+                        }
+
+                        grep_walk_names = grown;
+                        grep_walk_names_room = room;
+                }
+
+                grep_walk_names[used] = kind;
+                memory_copy(grep_walk_names + used + 1, name, length);
+                grep_walk_names_used = used + 1 + length;
+        }
+
+        system_close(handle);
+
+        positive top = grep_walk_names_used;
+
+        // A directory below that cannot be read is reported and passed, as
+        // GNU does, and what is beside it is still walked; only running out
+        // of room for names stops the whole walk.
+        for (positive from = base; from < top && !grep_walk_halted;)
+        {
+                p8 kind = grep_walk_names[from];
+                string_address full = grep_path_join(
+                    path, (string_address)(grep_walk_names + from + 1));
+
+                from += 1 + string_length((string_address)(grep_walk_names + from + 1)) + 1;
 
                 if (!full)
                 {
+                        grep_walk_halted = true;
                         fine = false;
                         break;
                 }
 
+                // Asked of the name, not of an open: a directory nobody may
+                // read is still a directory, and is reported when it fails.
                 if (kind == DIRENT_UNKNOWN || kind == DIRENT_LINK)
                 {
-                        p32 mode = text_path_mode(full);
+                        file_facts facts;
 
-                        if (!mode)
+                        if (!file_look(AT_FDCWD, full, 0, address_of facts))
                                 continue;
 
-                        kind = (mode & 0170000) == 0040000 ? DIRENT_DIRECTORY
-                             : (mode & 0170000) == 0100000 ? DIRENT_FILE
-                                                           : DIRENT_OTHER;
+                        p32 mode = facts.mode & MODE_FORMAT;
+
+                        kind = mode == MODE_DIRECTORY ? DIRENT_DIRECTORY
+                             : mode == MODE_FILE      ? DIRENT_FILE
+                                                      : DIRENT_OTHER;
                 }
 
                 if (kind == DIRENT_DIRECTORY)
                 {
-                        if (grep_wanted_directory(full) &&
+                        if (grep_wanted_directory(full, false) &&
                             !grep_walk(full, depth + 1, quietly))
                                 fine = false;
 
@@ -14987,10 +15121,20 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
                         continue;
 
                 if (grep_wanted_file(full) && !grep_path_add(full))
+                {
+                        grep_walk_halted = true;
                         fine = false;
+                }
         }
 
-        system_close(handle);
+        grep_walk_names_used = base;
+
+        if (!depth && grep_walk_names)
+        {
+                memory_give(grep_walk_names);
+                grep_walk_names = null;
+                grep_walk_names_room = 0;
+        }
 
         if (error < 0)
         {
@@ -15200,22 +15344,24 @@ static bool grep_option_seen(p8 letter, string_address value)
                                  grep_extended);
                 grep_said_pattern = true;
         }
+        else if (letter == 'l' || letter == 'L')
+                grep_list_last = letter;
         else if (letter == 'Q')
         {
-                if (!grep_glob_add(address_of grep_include, value,
-                                   string_length(value), false))
+                if (!grep_glob_add(address_of grep_file_globs, value,
+                                   string_length(value), false, true))
                         return false;
         }
         else if (letter == 'S')
         {
-                if (!grep_glob_add(address_of grep_exclude, value,
-                                   string_length(value), false))
+                if (!grep_glob_add(address_of grep_file_globs, value,
+                                   string_length(value), false, false))
                         return false;
         }
         else if (letter == 'V')
         {
                 if (!grep_glob_add(address_of grep_exclude_dir, value,
-                                   string_length(value), true))
+                                   string_length(value), true, false))
                         return false;
         }
         else if (letter == 'X')
@@ -15224,9 +15370,9 @@ static bool grep_option_seen(p8 letter, string_address value)
                         return false;
 
                 while (text_line_next(text_line, 0))
-                        if (!grep_glob_add(address_of grep_exclude,
+                        if (!grep_glob_add(address_of grep_file_globs,
                                            (string_address)text_line,
-                                           text_line_length, false))
+                                           text_line_length, false, false))
                         {
                                 text_close();
                                 return false;
@@ -15865,9 +16011,10 @@ static b32 text_grep()
         grep_pattern_any = false;
         grep_pattern_empty = false;
         grep_pattern_groups = 0;
-        grep_include = null;
-        grep_exclude = null;
+        grep_file_globs = null;
         grep_exclude_dir = null;
+        grep_list_last = 0;
+        grep_walk_halted = false;
         grep_path_count = 0;
         grep_expanded = false;
         grep_skip_directories = false;
@@ -15901,6 +16048,14 @@ static b32 text_grep()
         bool counting = (flags & FILE_FLAG('c')) != 0;
         bool listing = (flags & FILE_FLAG('l')) != 0;
         bool listing_without = (flags & FILE_FLAG('L')) != 0;
+
+        // -l and -L are one setting in GNU, so the later of the two holds.
+        if (listing && listing_without)
+        {
+                listing = grep_list_last == 'l';
+                listing_without = !listing;
+        }
+
         bool quiet = (flags & FILE_FLAG('q')) != 0;
         bool no_names = (flags & FILE_FLAG('h')) != 0;
         bool with_names = (flags & FILE_FLAG('H')) != 0;
@@ -16127,38 +16282,62 @@ static b32 text_grep()
         {
                 string_address name = program_argument(text_files[i]);
 
-                // A bare - is standard input, which no walk descends into.
-                if (grep_recursive && string_equals(name, "-"))
+                // A bare - is standard input, which no walk descends into
+                // and no glob is asked about.
+                if (string_equals(name, "-"))
                 {
                         grep_path_add(name);
                         continue;
                 }
 
-                p32 mode = grep_recursive ? text_path_mode(name) : 0;
-
-                if (grep_recursive && !mode)
+                if (!grep_recursive && !grep_file_globs && !grep_exclude_dir)
                 {
-                        trouble = 2;
+                        grep_path_add(name);
+                        continue;
+                }
 
-                        if (!quietly)
-                                string_diagnostic(&text_diagnostic, 0, name, "No such file or directory");
+                /*
+                        GNU opens an operand before it asks the globs about
+                        it, so one that cannot be had is reported whatever
+                        they say, in its place among the others: it goes on
+                        the list and the read that fails says why. The globs
+                        are asked by what fstat found: a directory, named
+                        itself or through a link, answers to --exclude-dir
+                        and a file to --include and --exclude.
+                */
+                file_facts facts;
+
+                if (!file_look(AT_FDCWD, name, 0, address_of facts))
+                {
+                        grep_path_add(name);
+                        continue;
+                }
+
+                bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                if (directory ? !grep_wanted_directory(name, true)
+                              : !grep_wanted_name(name, true))
+                {
+                        bipolar handle = text_open_handle(name,
+                                                          FILE_READ | O_NONBLOCK, 0);
+
+                        if (handle < 0)
+                                grep_path_add(name);
+                        else
+                                system_close(handle);
 
                         continue;
                 }
 
-                if (grep_recursive && (mode & 0170000) == 0040000)
+                if (grep_recursive && directory)
                 {
-                        if (!grep_wanted_directory(name))
-                                continue;
-
                         grep_expanded = true;
                         if (!grep_walk(name, 0, quietly))
                                 trouble = 2;
                         continue;
                 }
 
-                if (grep_wanted_file(name))
-                        grep_path_add(name);
+                grep_path_add(name);
         }
 
         b32 inputs = from_stdin ? 1 : (b32)grep_path_count;
