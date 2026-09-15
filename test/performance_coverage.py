@@ -275,7 +275,7 @@ string_to_number_unsigned string_to_whole string_to_whole_wide
      'the hardware already has; each measured against what gcc emits from '
      'the obvious C, on each architecture')
 
-cover('static_leaf', 'src/platform/socket.inc', '''
+cover('static_leaf', 'src/library.c', '''
 bytes_reverse_16 bytes_reverse_32 network_load_16 network_load_32
 network_store_16 network_store_32 socket_accept socket_bind socket_close
 socket_connect socket_listen socket_name socket_new socket_option_get

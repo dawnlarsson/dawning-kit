@@ -3218,10 +3218,10 @@ python3 test/differential.py --harness native_extract "$lib" \
         string_digits_base_max \
         > "$work/input_bases.h" || exit 1
 
-#       Unaligned wire fields live in socket.inc rather than library.c itself.
-#       Lift the exact AArch64 bodies from there and cross every byte residue
-#       natively; the other two architectures are exercised by socket.c.
-python3 test/differential.py --harness native_extract src/platform/socket.inc \
+#       Unaligned wire fields, with the socket calls in library.c. Lift the
+#       exact AArch64 bodies and cross every byte residue natively; the other
+#       two architectures are exercised by socket.c.
+python3 test/differential.py --harness native_extract "$lib" \
         network_load_16 network_load_32 network_store_16 network_store_32 \
         > "$work/network.h" || exit 1
 

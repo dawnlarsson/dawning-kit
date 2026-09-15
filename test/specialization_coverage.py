@@ -65,7 +65,6 @@ DECLARATION_SOURCES = (
     'src/library.c',
     'src/platform/any.inc',
     'src/platform/linux.inc',
-    'src/platform/socket.inc',
     'src/platform/standard.inc',
     'src/platform/syscall.inc',
 )
