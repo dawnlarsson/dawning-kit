@@ -1108,12 +1108,6 @@ static bool host_partitions_wait(host_install address_to install)
         return false;
 }
 
-static fn host_version_four(p8 address_to guid, positive version_at)
-{
-        guid[version_at] = (guid[version_at] & 0x0f) | 0x40;
-        guid[8] = (guid[8] & 0x3f) | 0x80;
-}
-
 /*
         Refusals first, then one question, then the writes.
 
@@ -1236,13 +1230,13 @@ static b32 host_install_disk(string_address asked, bool removable)
         memory_zero(parts, sizeof(parts));
         memory_copy(identity.uuid, random, 16);
         memory_copy(identity.hash_seed, random + 16, 16);
-        host_version_four(identity.uuid, 6);
-        host_version_four(identity.hash_seed, 6);
-        host_version_four(random + 32, 7);
+        tools_uuid_version(identity.uuid, 6, 4);
+        tools_uuid_version(identity.hash_seed, 6, 4);
+        tools_uuid_version(random + 32, 7, 4);
         memory_copy(parts[0].unique, random + 48, 16);
         memory_copy(parts[1].unique, random + 64, 16);
-        host_version_four(parts[0].unique, 7);
-        host_version_four(parts[1].unique, 7);
+        tools_uuid_version(parts[0].unique, 7, 4);
+        tools_uuid_version(parts[1].unique, 7, 4);
         identity.time = (p32)(system_clock_ns(HOST_CLOCK_REALTIME) / 1000000000);
         identity.label = "moonwater";
 

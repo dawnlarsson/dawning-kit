@@ -8918,7 +8918,7 @@ static bool ul_swap_uuid(string_address text, tools_uuid address_to uuid,
         if (!file_random_seed(address_of random))
                 return false;
         tools_uuid_random_bytes(address_of random, uuid);
-        tools_uuid_version(uuid, 4);
+        tools_uuid_version(uuid->bytes, 6, 4);
         return true;
 }
 
