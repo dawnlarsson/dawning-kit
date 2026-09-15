@@ -40,6 +40,33 @@ read-only, so a package's install scripts cannot change the host. A bowl is
 not a security sandbox: its programs run as root and can reach the host's
 devices.
 
+## The terminal
+
+Canvas opens a terminal at boot and on Control-Shift-T. It answers as
+`xterm-256color`, and programs inside a bowl find the same entry in their own
+terminfo, so nano, vim, less, htop, btop and ncurses programs draw as they do
+in xterm or tmux.
+
+- 256 colours; a true-colour request is drawn in the nearest of them.
+- UTF-8 throughout: ideographs and emoji take two columns and combining marks
+  take none, so text lines up as programs count it. Characters the built-in
+  VGA font has no glyph for draw as a box.
+- Full-screen programs get their own screen, and quitting one gives back the
+  shell's screen and scrollback. Resizing keeps what is on screen where it
+  was, and lines scrolled away under a progress bar such as apt's stay in
+  scrollback.
+- Keys: Return sends carriage return, Control with a symbol sends the control
+  code xterm does (Control-\\, Control-], Control-^, Control-_ and Control-/,
+  and Control-Space for NUL), Shift-Tab and modified arrows carry their
+  modifiers. Mouse reporting, focus events, cursor shapes, synchronized
+  output, colour and mode queries and window size reports are answered.
+- A shell killed by a signal it was not sent by the window -- out of memory,
+  for instance -- leaves the window open with a line saying so; close it with
+  its button.
+
+Not there yet: pasting (there is no clipboard), true colour kept as true
+colour, and keyboard layouts other than US.
+
 ## The build tool
 
 The whole build path is one C program, `src/build/build.c`, built on this
