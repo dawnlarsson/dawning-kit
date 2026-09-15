@@ -740,6 +740,7 @@ static b32 in_escape, in_csi, in_string, escape_intermediate;
 
 // A string sequence ends at ST, and ST is two bytes with an ESC in front.
 static b32 string_escape;
+static p8 string_kind;
 static p8 osc_bytes[WINDOW_TITLE_MAX];
 static unsigned int osc_length;
 
@@ -787,6 +788,11 @@ static fn osc_finish(b32 bell)
         unsigned int i = 0;
         unsigned int command = 0;
         unsigned int n;
+
+        // DCS, SOS, PM and APC are read the same way and say nothing here:
+        // only an OSC names the window or asks for a colour.
+        if (string_kind != ']')
+                return;
 
         while (i < osc_length && osc_bytes[i] >= '0' && osc_bytes[i] <= '9')
                 command = command * 10 + (unsigned int)(osc_bytes[i++] - '0');
@@ -1306,12 +1312,54 @@ static fn full_reset()
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 }
 
+/*
+        A marker or an intermediate byte makes another sequence of the same
+        final. CSI > 4 ; 2 m is xterm's modifyOtherKeys and not an underline,
+        CSI ? u asks about the keyboard rather than restoring the cursor, and
+        CSI 2 SP @ scrolls sideways rather than inserting. A final that does
+        not take the marker or intermediate it came with is ignored, which is
+        what xterm does with a sequence it has never heard of.
+*/
+static b32 csi_known(unsigned int final)
+{
+        switch (csi_intermediate)
+        {
+        case 0:
+                break;
+        case ' ':
+                return final == 'q' && !terminal_csi.marker;
+        case '!':
+                return final == 'p' && !terminal_csi.marker;
+        case '$':
+                return final == 'p';
+        default:
+                return false;
+        }
+
+        switch (terminal_csi.marker)
+        {
+        case 0:
+                return true;
+        case '?':
+                return final == 'h' || final == 'l' || final == 'n' ||
+                       final == 'J' || final == 'K';
+        case '>':
+        case '=':
+                return final == 'c';
+        default:
+                return false;
+        }
+}
+
 static fn csi_final(unsigned int final)
 {
         unsigned int a = terminal_csi.count && terminal_csi.value[0]
                              ? terminal_csi.value[0] : 1;
         unsigned int b = terminal_csi.count > 1 && terminal_csi.value[1]
                              ? terminal_csi.value[1] : 1;
+
+        if (!csi_known(final))
+                return;
 
         switch (final)
         {
@@ -1454,21 +1502,27 @@ static fn csi_final(unsigned int final)
                 if (terminal_csi.count && terminal_csi.value[0] == 6)
                 {
                         emit_literal("\x1b[");
+                        if (terminal_csi.marker)
+                                emit('?');
                         positive_to_string(emit_bytes, row + 1);
                         emit(';');
                         positive_to_string(emit_bytes,
                                            column < COLUMNS ? column + 1 : COLUMNS);
                         emit('R');
                 }
-                else if (terminal_csi.count && terminal_csi.value[0] == 5)
+                else if (terminal_csi.count && terminal_csi.value[0] == 5 &&
+                         !terminal_csi.marker)
                         emit_literal("\x1b[0n");
                 break;
         case 'c':
                 // Primary DA names a VT100 with AVO, which is what xterm
                 // answers and what ncurses's u8 reads for. Secondary DA is
-                // the xterm version report.
+                // the xterm version report, and tertiary DA the unit's number,
+                // which xterm gives as zeros.
                 if (terminal_csi.marker == '>')
                         emit_literal("\x1b[>0;115;0c");
+                else if (terminal_csi.marker == '=')
+                        emit_literal("\x1bP!|00000000\x1b\\");
                 else
                         emit_literal("\x1b[?1;2c");
                 break;
@@ -1528,9 +1582,6 @@ static fn csi_final(unsigned int final)
                 unsigned int top;
                 unsigned int bottom;
 
-                if (terminal_csi.marker)
-                        break;
-
                 top = terminal_csi.count && terminal_csi.value[0]
                           ? terminal_csi.value[0] - 1 : 0;
                 bottom = terminal_csi.count > 1 && terminal_csi.value[1]
@@ -1584,8 +1635,12 @@ static fn utf8_byte(unsigned int c)
                 put(0xfffd);
                 result = memory_utf8_feed(address_of terminal_utf8, (p8)c);
         }
-        if (result)
-                put(result < 0 ? 0xfffd : terminal_utf8.value);
+        // A C1 control spelled in UTF-8 is a control nothing here acts on,
+        // not a character to draw.
+        if (result < 0)
+                put(0xfffd);
+        else if (result && terminal_utf8.value >= 0xa0)
+                put(terminal_utf8.value);
 }
 
 static fn line_forget();
@@ -1684,6 +1739,47 @@ static fn consume(unsigned int c)
                 return;
         }
 
+        /*
+                A control is done where it arrives, in the middle of a sequence
+                too: ESC [ BS C steps back and then forward, and ESC LF 7 is a
+                line feed and a save. Dropping them put what followed the
+                sequence a column or a line away from where it was sent. One
+                inside a UTF-8 character cuts it short like any other byte that
+                is not a continuation, and DEL is nothing anywhere.
+        */
+        if (c < ' ' || c == 127)
+        {
+                utf8_flush();
+
+                switch (c)
+                {
+                case '\n':
+                case 11:
+                case 12:
+                        line_feed();
+                        touch(row);
+                        break;
+                case '\r':
+                        column = 0;
+                        break;
+                case '\b':
+                        if (column)
+                                column--;
+                        break;
+                case '\t':
+                        tab_forward();
+                        break;
+                case 14:
+                        charset_gl = 1;
+                        break;
+                case 15:
+                        charset_gl = 0;
+                        break;
+                }
+
+                return;
+        }
+
         if (in_csi)
         {
                 if (c >= 0x20 && c <= 0x2f)
@@ -1716,6 +1812,7 @@ static fn consume(unsigned int c)
                 {
                         in_string = true;
                         string_escape = false;
+                        string_kind = (p8)c;
                         osc_length = 0;
                         return;
                 }
@@ -1772,47 +1869,12 @@ static fn consume(unsigned int c)
                 case 'c':
                         full_reset();
                         break;
-                case '=':
-                        application_keys = true;
-                        break;
-                case '>':
-                        application_keys = false;
-                        break;
+                // ESC = and ESC > are the keypad's modes, and the keypad
+                // sends the same in both. They are not DECCKM's arrows.
                 }
 
                 return;
         }
-
-        switch (c)
-        {
-        case '\n':
-        case 11:
-        case 12:
-                line_feed();
-                touch(row);
-                return;
-        case '\r':
-                column = 0;
-                return;
-        case '\b':
-                if (column)
-                        column--;
-                return;
-        case '\t':
-                tab_forward();
-                return;
-        case 7:
-                return;
-        case 14:
-                charset_gl = 1;
-                return;
-        case 15:
-                charset_gl = 0;
-                return;
-        }
-
-        if (c < ' ' || c == 127)
-                return;
 
         if (c < 128)
         {

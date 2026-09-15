@@ -5659,6 +5659,12 @@ b32 main()
                         say_number(region_bottom);
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "title") == 0)
+                {
+                        say_byte('[');
+                        tell(window->title);
+                        tell("]\n");
+                }
                 else if (string_compare(verb, (string_address) "sync") == 0)
                 {
                         say_number(synchronized_output != 0);
@@ -5819,6 +5825,8 @@ same 'cursor position three digits' '[\e[3;160R]' 200 5 in '\e[3;160H\e[6n' sent
 same 'device status'   '[\e[0n]'                 20 5 in '\e[5n' sent
 same 'device attributes' '[\e[?1;2c]'            20 5 in '\e[c' sent
 same 'secondary attributes' '[\e[>0;115;0c]'     20 5 in '\e[>c' sent
+same 'tertiary attributes' '[\eP!|00000000\e\]'  20 5 in '\e[=c' sent
+same 'cursor position asked privately' '[\e[?3;4R]' 20 5 in '\e[3;4H\e[?6n' sent
 #       DECRQM answers from the same list SM and RM change.
 same 'mode set'      '[\e[?7;1$y]'               20 5 in '\e[?7$p' sent
 same 'mode reset'    '[\e[?1049;2$y]'            20 5 in '\e[?1049$p' sent
@@ -6022,11 +6030,26 @@ same 'osc to st'     '[XY]'                      20 3 in '\e]0;a title\e\\XY' ro
 same 'dcs'           '[XY]'                      20 3 in '\ePq#0;2;0;0;0\e\\XY' row 0
 same 'apc'           '[XY]'                      20 3 in '\e_Gf=100,a=T\e\\XY' row 0
 same 'privacy message' '[XY]'                    20 3 in '\e^anything\e\\XY' row 0
+#       Only an OSC names the window. DCS, SOS, PM and APC are read the same
+#       way and say nothing to it.
+same 'osc names the window' '[a title]'          20 3 in '\e]0;a title\a' title
+same 'dcs does not'   '[]'                       20 3 in '\eP+q544e\e\\' title
 
 group private
 same 'bracketed paste' '[AB]'                    20 3 in '\e[?2004hA\e[?2004lB' row 0
 same 'a private final nobody has' '[AB]'         20 3 in 'A\e[?1000hB' row 0
 same 'modifier options'  '[AB]'                  20 3 in 'A\e[>4;2mB' row 0
+#       A marker or an intermediate makes another sequence of the same final,
+#       and one nothing here takes is ignored rather than run as the plain
+#       one: xterm's key options, the keyboard and graphics queries, scrolling
+#       sideways and attributes in a rectangle.
+same 'key options leave the text plain' '0'      20 3 in '\e[>4;2mab' flags 0,0
+same 'keyboard query is no restore' '2,1'        20 3 in '\e[2;3H\e7\e[3;1H\e[?ux' cursor
+same 'graphics query does not scroll' '[a]|[b]|[c]' 20 3 in 'a\r\nb\r\nc\e[?2;1;0S' dump
+same 'scroll left is no insert' '[abcdef]'       20 3 in 'abcdef\e[1G\e[2 @' row 0
+same 'a rectangle is no region' 'wrap=1 insert=0 alternate=0 cursor=1 region=0,3' \
+                                                 20 3 in '\e[1;2$r' mode
+same 'selective erase is an erase' '[]'          20 3 in 'abc\e[1G\e[?K' row 0
 same 'window ops'        '[AB]'                  20 3 in 'A\e[22;0;0tB' row 0
 #       A private marker is not a parameter: ESC[?25l is the cursor and
 #       ESC[25l is a mode number nobody uses. Reading the first as the second
@@ -6044,7 +6067,10 @@ same 'shift in'       '[<2500>x]'                8 2 in '\e)0\x0eq\x0fx' row 0
 same 'repeat'         '[aaaa]'                   8 2 in 'a\e[3b' row 0
 same 'screen alignment' '[XY]'                   20 3 in '\e#8XY' row 0
 same 'not a restore'  '[abXY]'                   20 3 in 'ab\e#8XY' row 0
-same 'nothing at all' '[XY]'                     20 3 in '\e\x7fXY' row 0
+same 'nothing at all' '[Y]'                      20 3 in '\e\x7fxY' row 0
+#       A control is done where it arrives, inside a sequence as well.
+same 'backspace in a sequence' '[abx]'           20 3 in 'ab\e[\bCx' row 0
+same 'line feed in an escape' '[]|[x]|[]'        20 3 in '\e\n7x' dump
 #       CAN and SUB abandon whatever was being parsed, which is what they are
 #       for.
 same 'cancelled'      '[X]'                      20 3 in '\e[3;3\x18X' row 0
@@ -6106,6 +6132,10 @@ same 'three bytes'    '[<2500>]'                 8 2 in '\xe2\x94\x80' row 0
 same 'four bytes'     '[<1f600>]'                8 2 in '\xf0\x9f\x98\x80' row 0
 same 'six hex digits' '[<10ffff>]'               8 2 in '\xf4\x8f\xbf\xbf' row 0
 same 'one cell each'  '0,3'                      8 2 in '\xc3\xa9\xc3\xa9\xc3\xa9' cursor
+#       A byte that is not a continuation cuts a character short, and a control
+#       is one. A C1 control spelled in UTF-8 is not drawn.
+same 'a control cuts a character' '[<fffd>]|[ <fffd><fffd>]' 8 2 in '\xe6\n\xbc\xa2' row 0 row 1
+same 'c1 in utf-8'    '[ab]'                     8 2 in 'a\xc2\x85b' row 0
 
 group width
 #       Programs count columns with wcwidth. An ideograph or an emoji takes
@@ -6153,6 +6183,7 @@ same 'alt character' '[\eb]'                     20 3 edit off keys '<a-b>' sent
 #       DECCKM sends the arrows as SS3 instead, which is what an application
 #       that asked for it is reading for.
 same 'application arrows' '[\eOA\eOD]'           20 3 edit off in '\e[?1h' keys '<up><left>' sent
+same 'keypad mode is not the arrows' '[\e[A]'    20 3 edit off in '\e=' keys '<up>' sent
 same 'and back again' '[\e[A]'                   20 3 edit off in '\e[?1h\e[?1l' keys '<up>' sent
 
 group writes
@@ -8192,7 +8223,7 @@ done
 
 group utf8
 same 'two bytes'       '[1 <00e9>]'     40 6 keys '\xc3\xa9' row 0
-same 'two byte minimum' '[1 <0080>]'    40 6 keys '\xc2\x80' row 0
+same 'two byte minimum' '0,2'           40 6 keys '\xc2\x80' carets
 same 'three byte minimum' '[1 <0800>]'  40 6 keys '\xe0\xa0\x80' row 0
 same 'four byte minimum' '[1 <10000>]'  40 6 keys '\xf0\x90\x80\x80' row 0
 same 'six hex digits'  '[1 <10ffff>]'   40 6 keys '\xf4\x8f\xbf\xbf' row 0
