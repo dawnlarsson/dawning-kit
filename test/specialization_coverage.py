@@ -608,6 +608,9 @@ md5_blocks sha1_blocks sha256_blocks sha512_blocks blake2b_blocks cpu_hash_detec
 p256_multiply p256_square p256_add p256_subtract p384_multiply p384_square p384_add p384_subtract memory_get64 zstd_bits_reload zstd_sequences_run
 ''', 'no argument, or an argument that is a pointer into memory the caller '
      'owns; nothing the compiler could know shortens the body')
+cover('nothing_to_fold', None, 'montgomery_multiply',
+     'the modulus, its inverse and the limb count come from a crypto_field or '
+     'an RSA key at run time; no call site holds a literal')
 cover('nothing_to_fold', None, '''
 file_close file_get_status file_load file_unload file_valid
 library_close library_get library_open

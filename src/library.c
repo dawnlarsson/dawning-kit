@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        316 routines (303 public, 13 local), 315 of them on all three and 1 local to one.
+        317 routines (304 public, 13 local), 316 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -224,6 +224,7 @@
           memory_translate               public  yes     yes     yes
           memory_utf8_span               public  yes     yes     yes
           memory_zero                    public  yes     yes     yes
+          montgomery_multiply            public  yes     yes     yes
           moonwater_cpu_detect           public  yes     yes     yes
           narrow_absolute                public  yes     yes     yes
           narrow_ceiling                 public  yes     yes     yes
@@ -9895,6 +9896,92 @@ __asm__(
     "pop %rbx\n"
     ASM_RET
     ASM_END(p384_subtract)
+
+    /* montgomery_multiply: Montgomery multiplication for any odd modulus of
+       one to 64 limbs -- the P-256 and P-384 group orders and RSA, which
+       have no reduction of their own the way p256_ and p384_ do -- and the
+       squares too, with a and b the same. One pass a row, the shape of
+       OpenSSL's bn_mul_mont: row i adds a b_i and q m together, q = (t0 +
+       a0 b_i) (-1/m0) mod 2^64, and writes each limb one place down, so the
+       product never exists at twice the width and the scratch is n + 1
+       limbs of stack. A limb's low product is added straight into the
+       register holding the last limb's high half, and its own high half
+       goes to a second register, so the limbs come two to a turn with the
+       registers trading places: r10/r11 for a b_i, r13/r14 for q m. An even
+       count starts a row at the turn's second limb. Indexes run from -n up
+       to zero against pointers one past each array. A row keeps t below 2m,
+       so the limb above t is 0 or 1 and one masked subtraction of m
+       finishes; d is written only then, which is what lets it alias a or b.
+       Branches and loads follow n alone, and the scratch is zeroed on the
+       way out.
+
+       On the 9950X, cycles a call, median of five alternating perf stat
+       runs of BENCH_montgomery, instructions in parentheses:
+
+           limbs   C multiply        this              C square
+             4       233 (1369)      106 (422)          257 (1523)
+             6       397 (2229)      181 (798)          406 (2347)
+            32      5991 (31593)    4095 (17334)       5009 (26875)
+            64     21569 (114144)  16213 (67382)      17364 (92338)
+
+       so 2.2, 2.2, 1.46 and 1.33 times the C multiply, and as a square
+       2.4, 2.2, 1.23 and 1.07 times the C square. A dedicated square -- the
+       cross products once, doubled, the diagonal, then n reduction rows --
+       made fewer instructions and more cycles at 32 and 64 limbs than this
+       multiply with a = b (284 against 257 and 296 against 250 million
+       cycles over the same runs): its rows add into memory, and nothing
+       here does. The two-a-turn rows cut 15 percent of the instructions of
+       one limb a turn and 3 to 4 percent of the cycles. */
+    ASM_FUNC(montgomery_multiply)
+    "lea -1(%r9), %rax\n   cmp $64, %rax\n   jae .Lmontgomery_x64_none\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $544, %rsp\n"
+    "mov %rdi, 528(%rsp)\n   mov %r8, 536(%rsp)\n"
+    "lea (%rsi,%r9,8), %rsi\n   lea (%rcx,%r9,8), %rcx\n   lea (%rsp,%r9,8), %r12\n"
+    "lea (%rdx,%r9,8), %rdi\n   mov %rdx, %r8\n   neg %r9\n"
+    "mov %r9, %r15\n   xor %eax, %eax\n"
+    ".Lmontgomery_x64_clear:\n"
+    "mov %rax, (%r12,%r15,8)\n   inc %r15\n   jle .Lmontgomery_x64_clear\n"
+    ".Lmontgomery_x64_row:\n"
+    "mov (%r8), %rbx\n"
+    "mov (%rsi,%r9,8), %rax\n   mul %rbx\n   add (%r12,%r9,8), %rax\n   adc $0, %rdx\n"
+    "mov %rdx, %r10\n   mov %rdx, %r11\n   mov %rax, %r15\n"
+    "imul 536(%rsp), %rax\n   mov %rax, %rbp\n"
+    "mulq (%rcx,%r9,8)\n   add %r15, %rax\n   adc $0, %rdx\n"
+    "mov %rdx, %r13\n   mov %rdx, %r14\n   mov %r9, %r15\n"
+    "test $1, %r15b\n   jz .Lmontgomery_x64_second\n"
+    "inc %r15\n   jz .Lmontgomery_x64_top\n"
+    ".Lmontgomery_x64_first:\n"
+    "mov (%rsi,%r15,8), %rax\n   mul %rbx\n   add %rax, %r10\n   adc $0, %rdx\n"
+    "add (%r12,%r15,8), %r10\n   adc $0, %rdx\n   mov %rdx, %r11\n"
+    "mov (%rcx,%r15,8), %rax\n   mul %rbp\n   add %rax, %r13\n   adc $0, %rdx\n"
+    "add %r10, %r13\n   adc $0, %rdx\n   mov %r13, -8(%r12,%r15,8)\n   mov %rdx, %r14\n"
+    ".Lmontgomery_x64_second:\n"
+    "mov 8(%rsi,%r15,8), %rax\n   mul %rbx\n   add %rax, %r11\n   adc $0, %rdx\n"
+    "add 8(%r12,%r15,8), %r11\n   adc $0, %rdx\n   mov %rdx, %r10\n"
+    "mov 8(%rcx,%r15,8), %rax\n   mul %rbp\n   add %rax, %r14\n   adc $0, %rdx\n"
+    "add %r11, %r14\n   adc $0, %rdx\n   mov %r14, (%r12,%r15,8)\n   mov %rdx, %r13\n"
+    "add $2, %r15\n   jnz .Lmontgomery_x64_first\n"
+    ".Lmontgomery_x64_top:\n"
+    "xor %edx, %edx\n   add %r10, %r13\n   adc $0, %rdx\n"
+    "add (%r12), %r13\n   adc $0, %rdx\n"
+    "mov %r13, -8(%r12)\n   mov %rdx, (%r12)\n"
+    "add $8, %r8\n   cmp %rdi, %r8\n   jb .Lmontgomery_x64_row\n"
+    "mov 528(%rsp), %rdi\n   mov %r9, %rax\n   neg %rax\n   lea (%rdi,%rax,8), %rdi\n"
+    "mov %r9, %r15\n   clc\n"
+    ".Lmontgomery_x64_subtract:\n"
+    "mov (%r12,%r15,8), %rax\n   sbb (%rcx,%r15,8), %rax\n   mov %rax, (%rdi,%r15,8)\n"
+    "inc %r15\n   jnz .Lmontgomery_x64_subtract\n"
+    "mov (%r12), %rax\n   sbb $0, %rax\n   sbb %rbx, %rbx\n   mov %r9, %r15\n"
+    ".Lmontgomery_x64_select:\n"
+    "mov (%r12,%r15,8), %rax\n   xor (%rdi,%r15,8), %rax\n   and %rbx, %rax\n"
+    "xor %rax, (%rdi,%r15,8)\n   movq $0, (%r12,%r15,8)\n"
+    "inc %r15\n   jnz .Lmontgomery_x64_select\n"
+    "movq $0, (%r12)\n   add $544, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    ".Lmontgomery_x64_none:\n"
+    ASM_RET
+    ASM_END(montgomery_multiply)
 
     /* A NUL-terminated name normally needs both of these answers. Returning
        them together keeps the bytes in one hardware-floor pass: hash in rax,
@@ -20617,6 +20704,60 @@ __asm__(
     "stp x7, x8, [x0, #32]\n"
     ASM_RET
     ASM_END(p384_subtract)
+
+    // montgomery_multiply: see the x86_64 body. mul and umulh leave the
+    // flags alone, so each product's carry is one adds and adc; x11 and x14
+    // carry the two high halves, and x16 = sp - 8 addresses the limb a row
+    // writes one place down. Under qemu, instructions a call at 4, 6, 32
+    // and 64 limbs: 453, 889, 20389 and 79653, against the C multiply's
+    // 1286, 2122, 31178 and 113330 and the C square's 1374, 2140, 25918 and
+    // 90438. qemu is not a floor, so these are shapes and not timings.
+    ASM_FUNC(montgomery_multiply)
+    "sub x6, x5, #1\n   cmp x6, #64\n   b.hs .Lmontgomery_arm64_none\n"
+    "sub sp, sp, #528\n"
+    "mov x6, xzr\n"
+    ".Lmontgomery_arm64_clear:\n"
+    "str xzr, [sp, x6, lsl #3]\n   add x6, x6, #1\n   cmp x6, x5\n   b.ls .Lmontgomery_arm64_clear\n"
+    "sub x16, sp, #8\n   mov x7, xzr\n"
+    ".Lmontgomery_arm64_row:\n"
+    "ldr x8, [x2, x7, lsl #3]\n"
+    "ldr x9, [x1]\n   mul x10, x9, x8\n   umulh x11, x9, x8\n"
+    "ldr x12, [sp]\n   adds x10, x10, x12\n   adc x11, x11, xzr\n"
+    "mul x13, x10, x4\n"
+    "ldr x9, [x3]\n   mul x12, x9, x13\n   umulh x14, x9, x13\n"
+    "adds x12, x12, x10\n   adc x14, x14, xzr\n"
+    "mov x6, #1\n   cmp x6, x5\n   b.hs .Lmontgomery_arm64_top\n"
+    ".Lmontgomery_arm64_inner:\n"
+    "ldr x9, [x1, x6, lsl #3]\n   mul x10, x9, x8\n   umulh x12, x9, x8\n"
+    "adds x10, x10, x11\n   adc x12, x12, xzr\n"
+    "ldr x9, [sp, x6, lsl #3]\n   adds x10, x10, x9\n   adc x11, x12, xzr\n"
+    "ldr x9, [x3, x6, lsl #3]\n   mul x12, x9, x13\n   umulh x15, x9, x13\n"
+    "adds x12, x12, x14\n   adc x15, x15, xzr\n"
+    "adds x12, x12, x10\n   adc x14, x15, xzr\n"
+    "str x12, [x16, x6, lsl #3]\n"
+    "add x6, x6, #1\n   cmp x6, x5\n   b.lo .Lmontgomery_arm64_inner\n"
+    ".Lmontgomery_arm64_top:\n"
+    "ldr x9, [sp, x5, lsl #3]\n"
+    "adds x14, x14, x11\n   adc x15, xzr, xzr\n"
+    "adds x14, x14, x9\n   adc x15, x15, xzr\n"
+    "str x14, [x16, x5, lsl #3]\n   str x15, [sp, x5, lsl #3]\n"
+    "add x7, x7, #1\n   cmp x7, x5\n   b.lo .Lmontgomery_arm64_row\n"
+    "mov x6, xzr\n   mov x7, x5\n   cmp xzr, xzr\n"
+    ".Lmontgomery_arm64_subtract:\n"
+    "ldr x9, [sp, x6, lsl #3]\n   ldr x10, [x3, x6, lsl #3]\n   sbcs x9, x9, x10\n"
+    "str x9, [x0, x6, lsl #3]\n   add x6, x6, #1\n   sub x7, x7, #1\n"
+    "cbnz x7, .Lmontgomery_arm64_subtract\n"
+    "ldr x9, [sp, x5, lsl #3]\n   sbcs x9, x9, xzr\n   csetm x11, lo\n"
+    "mov x6, xzr\n"
+    ".Lmontgomery_arm64_select:\n"
+    "ldr x9, [sp, x6, lsl #3]\n   ldr x10, [x0, x6, lsl #3]\n   eor x9, x9, x10\n"
+    "and x9, x9, x11\n   eor x10, x10, x9\n   str x10, [x0, x6, lsl #3]\n"
+    "str xzr, [sp, x6, lsl #3]\n   add x6, x6, #1\n   cmp x6, x5\n"
+    "b.lo .Lmontgomery_arm64_select\n"
+    "str xzr, [sp, x5, lsl #3]\n   add sp, sp, #528\n"
+    ".Lmontgomery_arm64_none:\n"
+    ASM_RET
+    ASM_END(montgomery_multiply)
 
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
@@ -32177,6 +32318,67 @@ __asm__(
     ASM_RET
     ASM_END(p384_subtract)
 
+    // montgomery_multiply: see the x86_64 body. Each carry is an sltu, and
+    // without indexed loads each array a row walks would cost a pointer
+    // step a limb, so a, m and the scratch are laid side by side on the
+    // stack, 24 bytes an entry, and one step walks all three: a copy of a
+    // at 0, of m at 8 and t at 16. t3 and t6 carry the two high halves and
+    // a6 is the entry past the last. The copies of a and t are zeroed on
+    // the way out. Under qemu, instructions a call at 4, 6, 32 and 64
+    // limbs: 536, 1048, 23719 and 92455, against the C multiply's 1152,
+    // 1963, 32890 and 122922 and the C square's 1214, 1954, 27226 and
+    // 98234; walking three pointers instead was 100273 at 64 limbs, above
+    // the C square.
+    ASM_FUNC(montgomery_multiply)
+    "addi t0, a5, -1\n   li t1, 64\n   bgeu t0, t1, .Lmontgomery_rv_none\n"
+    "addi sp, sp, -1568\n"
+    "slli a6, a5, 1\n   add a6, a6, a5\n   slli a6, a6, 3\n   add a6, a6, sp\n"
+    "mv t0, sp\n"
+    ".Lmontgomery_rv_lay:\n"
+    "ld t3, 0(a1)\n   sd t3, 0(t0)\n   ld t3, 0(a3)\n   sd t3, 8(t0)\n   sd zero, 16(t0)\n"
+    "addi a1, a1, 8\n   addi a3, a3, 8\n   addi t0, t0, 24\n   bltu t0, a6, .Lmontgomery_rv_lay\n"
+    "sd zero, 16(a6)\n"
+    "slli a7, a5, 3\n   add a7, a7, a2\n"
+    ".Lmontgomery_rv_row:\n"
+    "ld t1, 0(a2)\n"
+    "ld t0, 0(sp)\n   mul t2, t0, t1\n   mulhu t3, t0, t1\n"
+    "ld t0, 16(sp)\n   add t2, t2, t0\n   sltu t0, t2, t0\n   add t3, t3, t0\n"
+    "mul t4, t2, a4\n"
+    "ld t0, 8(sp)\n   mul t5, t0, t4\n   mulhu t6, t0, t4\n"
+    "add t5, t5, t2\n   sltu t0, t5, t2\n   add t6, t6, t0\n"
+    "addi a1, sp, 24\n"
+    "bgeu a1, a6, .Lmontgomery_rv_top\n"
+    ".Lmontgomery_rv_inner:\n"
+    "ld t0, 0(a1)\n   mul t2, t0, t1\n   mulhu t5, t0, t1\n"
+    "add t2, t2, t3\n   sltu t0, t2, t3\n   add t5, t5, t0\n"
+    "ld t0, 16(a1)\n   add t2, t2, t0\n   sltu t0, t2, t0\n   add t3, t5, t0\n"
+    "ld t0, 8(a1)\n   mul t5, t0, t4\n   mulhu a3, t0, t4\n"
+    "add t5, t5, t6\n   sltu t0, t5, t6\n   add a3, a3, t0\n"
+    "add t5, t5, t2\n   sltu t0, t5, t2\n   add t6, a3, t0\n"
+    "sd t5, -8(a1)\n"
+    "addi a1, a1, 24\n   bltu a1, a6, .Lmontgomery_rv_inner\n"
+    ".Lmontgomery_rv_top:\n"
+    "ld t0, 16(a6)\n"
+    "add t6, t6, t3\n   sltu t2, t6, t3\n"
+    "add t6, t6, t0\n   sltu t0, t6, t0\n   add t2, t2, t0\n"
+    "sd t6, -8(a6)\n   sd t2, 16(a6)\n"
+    "addi a2, a2, 8\n   bltu a2, a7, .Lmontgomery_rv_row\n"
+    "mv t1, zero\n   mv a1, sp\n   mv t6, a0\n"
+    ".Lmontgomery_rv_subtract:\n"
+    "ld t2, 16(a1)\n   ld t3, 8(a1)\n"
+    "sltu t4, t2, t3\n   sub t2, t2, t3\n   sltu t5, t2, t1\n   sub t2, t2, t1\n   or t1, t4, t5\n"
+    "sd t2, 0(t6)\n   addi t6, t6, 8\n   addi a1, a1, 24\n   bltu a1, a6, .Lmontgomery_rv_subtract\n"
+    "ld t2, 16(a6)\n   sltu t1, t2, t1\n   sub t1, zero, t1\n"
+    "mv a1, sp\n   mv t6, a0\n"
+    ".Lmontgomery_rv_select:\n"
+    "ld t2, 16(a1)\n   ld t3, 0(t6)\n   xor t2, t2, t3\n   and t2, t2, t1\n   xor t3, t3, t2\n"
+    "sd t3, 0(t6)\n   sd zero, 0(a1)\n   sd zero, 16(a1)\n"
+    "addi t6, t6, 8\n   addi a1, a1, 24\n   bltu a1, a6, .Lmontgomery_rv_select\n"
+    "sd zero, 16(a6)\n   addi sp, sp, 1568\n"
+    ".Lmontgomery_rv_none:\n"
+    ASM_RET
+    ASM_END(montgomery_multiply)
+
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
     "mv t0, a0\n   li a2, 5381\n   li a1, 0\n"
@@ -38197,6 +38399,14 @@ fn p384_square(p64 address_to d, const p64 address_to a);
 fn p384_add(p64 address_to d, const p64 address_to a, const p64 address_to b);
 fn p384_subtract(p64 address_to d, const p64 address_to a,
                  const p64 address_to b);
+/* Montgomery multiplication for any odd modulus m of n limbs, 1 <= n <=
+   64: d = a*b/R mod m with R = 2^(64n), for a and b below m, where inverse
+   is -1/m mod 2^64. A square is a and b the same. Little-endian 64-bit
+   limbs; d may alias a or b, never m. Any other n writes nothing. Branches
+   and loads follow n alone, never the values. */
+fn montgomery_multiply(p64 address_to d, const p64 address_to a,
+                       const p64 address_to b, const p64 address_to m,
+                       p64 inverse, positive n);
 PURE READS(1, 2) p32 memory_sum_bytes(address_any block, positive size);
 // Writes exactly 2*size lowercase hex bytes, without a terminator, and returns
 // that length. Source and destination must not overlap; size must fit when

@@ -376,6 +376,10 @@ p384_multiply p384_square p384_add p384_subtract
       'edges and aliasing included; timed against the same arithmetic '
       'compiled from C in test/hardware_floor.c, which test/run bench does '
       'not dispatch')
+cover('direct_benchmark', 'test/checks.c#BENCH_montgomery', 'montgomery_multiply',
+      'multiply and square at 4, 6, 32 and 64 limbs against the C Montgomery '
+      'arithmetic crypto.c ran (SHARED_montgomery_reference), and the ECDSA '
+      'and RSA verifies over it; differential at every limb count in CHECK_net')
 cover('correctness_only', 'test/checks.c#CHECK_net', 'ghash_blocks ghash_key ghash_integer aes128_ctr_blocks',
       'bit-serial differential over every body each machine has (feature '
       'bytes toggled); ghash_blocks timed against the carry-less multiply '
