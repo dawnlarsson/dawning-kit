@@ -10904,6 +10904,189 @@ fn check_translate()
         memory_free(tables, 3 * 4096);
 }
 
+/*
+        cells_from_ascii against the loop it stands for, on every body the
+        machine has. The bytes end on a guard page and so do the cells, so a
+        load past limit faults instead of passing; a run that leaves slack
+        after limit instead proves nothing past it is stored. Around each
+        stop the flags that are not stop's are set too, and cells past
+        guarded carry stop's own, which must decide nothing.
+*/
+static positive cells_ascii_reference(p64 address_to cells,
+                                      const p8 address_to bytes, positive limit,
+                                      positive guarded, p64 attribute, p64 stop)
+{
+        positive at = 0;
+
+        for (; at < limit; at++)
+        {
+                if ((unsigned int)bytes[at] - ' ' >= 95)
+                        break;
+                if (at < guarded && (cells[at] & stop))
+                        break;
+                cells[at] = attribute | bytes[at];
+        }
+
+        return at;
+}
+
+static p64 cells_ascii_random(p64 address_to state)
+{
+        p64 x = address_to state;
+
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        address_to state = x;
+        return x;
+}
+
+static positive cells_ascii_case(p8 address_to pages, p8 address_to rows,
+                                 p64 address_to want, positive limit,
+                                 positive slack, positive bad, positive dirty,
+                                 positive guarded, p64 attribute, p64 stop,
+                                 p64 address_to seed)
+{
+        static const p8 outside[] = {0x00, 0x1b, 0x1f, 0x7f, 0x80,
+                                     0x9b, 0xc2, 0xdf, 0xe0, 0xff};
+        p8 address_to bytes = pages + 8192 - limit - slack;
+        p64 address_to cells = (p64 address_to)(rows + 8192 - 8 * (limit + slack));
+        positive span = limit + slack, got, expected, wrong = 0;
+
+        for (positive at = 0; at < span; at++)
+        {
+                p64 flags = cells_ascii_random(seed) & ~stop & ((p64)0xffff << 32);
+
+                bytes[at] = (p8)(' ' + (at * 37 + limit) % 95);
+                cells[at] = flags | (cells_ascii_random(seed) & 0xffffffff);
+                if (at >= guarded && (at & 1))
+                        cells[at] |= stop;
+        }
+
+        if (bad < limit)
+                bytes[bad] = outside[(bad + limit) % array_count(outside)];
+        if (dirty < limit)
+        {
+                p64 lowest = stop & (~stop + 1);
+                p64 rest = stop & ~lowest;
+
+                cells[dirty] |= (dirty & 1) && rest ? rest : lowest;
+        }
+
+        for (positive at = 0; at < span; at++)
+                want[at] = cells[at];
+
+        expected = cells_ascii_reference(want, bytes, limit, guarded, attribute, stop);
+        got = cells_from_ascii(cells, bytes, limit, guarded, attribute, stop);
+
+        if (got != expected)
+                wrong++;
+        for (positive at = 0; at < span; at++)
+                if (cells[at] != want[at])
+                        wrong++;
+
+        return wrong != 0;
+}
+
+fn check_cells_from_ascii()
+{
+        static const positive long_limits[] = {63, 64, 65, 127, 180, 255,
+                                               256, 257, 479, 480};
+        static p64 want[512];
+        p64 stop = (p64)(128 | 256) << 48;
+        p64 attribute = (p64)0x0203 << 32 | (p64)0x05 << 48;
+        p8 address_to pages = memory(3 * 4096);
+        p8 address_to rows = memory(3 * 4096);
+        bool mapped = (bipolar)(positive)pages > 0 &&
+                      (bipolar)(positive)rows > 0;
+
+        same("cells_from_ascii", "guard mappings", mapped, 1);
+        if (!mapped)
+        {
+                if ((bipolar)(positive)pages > 0) memory_free(pages, 3 * 4096);
+                if ((bipolar)(positive)rows > 0) memory_free(rows, 3 * 4096);
+                return;
+        }
+        bool protected =
+            system_call_3(syscall(mprotect), (positive)pages, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)rows, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(rows + 8192), 4096, 0) == 0;
+        same("cells_from_ascii", "guard pages protected", protected, 1);
+        if (!protected)
+        {
+                memory_free(pages, 3 * 4096);
+                memory_free(rows, 3 * 4096);
+                return;
+        }
+#if X64
+        p8 avx2 = cpu_has_avx2, avx512 = cpu_has_avx512;
+        positive tiers = 3;
+#else
+        positive tiers = 1;
+#endif
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+                p64 seed = 0x9e3779b97f4a7c15 + tier;
+                positive short_wrong = 0, long_wrong = 0;
+#if X64
+                cpu_has_avx2 = tier < 2 ? avx2 : 0;
+                cpu_has_avx512 = tier < 1 ? avx512 : 0;
+#endif
+                //      Every stop and every guard around it, short runs.
+                for (positive limit = 0; limit <= 26; limit++)
+                        for (positive slack = 0; slack <= 5; slack += 5)
+                                for (positive bad = 0; bad <= limit; bad++)
+                                        for (positive dirty = 0; dirty <= limit; dirty++)
+                                        {
+                                                positive guards[] = {0, dirty, dirty + 1,
+                                                                     limit + 9};
+
+                                                for (positive g = 0; g < array_count(guards); g++)
+                                                        short_wrong += cells_ascii_case(
+                                                            pages, rows, want, limit, slack,
+                                                            bad, dirty, guards[g], attribute,
+                                                            stop, address_of seed);
+                                        }
+
+                //      Long runs, with a stop anywhere or nowhere, any guard,
+                //      any alignment and a different attribute and stop.
+                for (positive round = 0; round < 3000; round++)
+                {
+                        positive limit = long_limits[cells_ascii_random(address_of seed) %
+                                                     array_count(long_limits)];
+                        positive slack = cells_ascii_random(address_of seed) % 8;
+                        positive bad = cells_ascii_random(address_of seed) % (limit + limit / 3 + 1);
+                        positive dirty = cells_ascii_random(address_of seed) % (limit + limit / 3 + 1);
+                        positive guarded = cells_ascii_random(address_of seed) % (limit + 17);
+                        p64 other = cells_ascii_random(address_of seed);
+                        p64 mask = (other >> 48) ? (other >> 48) << 48 : stop;
+
+                        if (limit + slack > 480)
+                                slack = 480 - limit;
+                        long_wrong += cells_ascii_case(pages, rows, want, limit, slack, bad,
+                                                       dirty, guarded,
+                                                       other & ~(p64)0xffffffff, mask,
+                                                       address_of seed);
+                }
+
+                same("cells_from_ascii", tier + 1 < tiers ? tier ? "short runs, AVX2 body"
+                                                                : "short runs, widest body"
+                                                       : "short runs, word body",
+                     short_wrong, 0);
+                same("cells_from_ascii", tier + 1 < tiers ? tier ? "long runs, AVX2 body"
+                                                                : "long runs, widest body"
+                                                       : "long runs, word body",
+                     long_wrong, 0);
+        }
+#if X64
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+#endif
+        memory_free(pages, 3 * 4096);
+        memory_free(rows, 3 * 4096);
+}
+
 fn check_checksums()
 {
         same("memory_sum_bytes", "null zero-sized span",
@@ -20100,6 +20283,7 @@ b32 main()
         check_frob();
         check_reverse();
         check_translate();
+        check_cells_from_ascii();
         check_checksums();
         check_copy_match();
         check_move();
@@ -61534,6 +61718,388 @@ b32 main(void)
         log_flush();return 0;
 }
 #endif /* BENCH_span_byte */
+
+#ifdef BENCH_cells_ascii
+/*
+        Terminal cells from a printable run: the loop src/sh/term.c's
+        text_ascii ran before cells_from_ascii, against the loop it runs now,
+        in cycles and instructions a cell from the processor's own counters,
+        on every body the machine has. Both loops are here word for word, the
+        wide-pair test and unpair included, and they are checked against each
+        other over lines with pairs in them before anything is timed.
+
+        A fresh line is one the run extends, so there is no guard; a guarded
+        one is a line being written over, clean of pairs, so every cell pays
+        for the question. The calls go round sixteen lines: on one line, a
+        guard load lands on the stores of the call before it, which no
+        terminal's does -- the line it writes over was drawn frames ago. Under qemu the counters are the emulator's, which
+        is why `count SIDE TIER LENGTH GUARDED ROUNDS`, SIDE 0 for the old
+        loop and 1 for the new, runs one loop and
+        nothing else, for an instruction count taken from outside.
+*/
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 7
+#define BENCH_COLUMNS 180
+#define BENCH_TARGET_CELLS (1u << 22)
+#define BENCH_WIDE 128
+#define BENCH_WIDE_RIGHT 256
+
+struct bench_cell
+{
+        unsigned int character;
+        unsigned char ink, paper;
+        unsigned short flags;
+};
+
+#define BENCH_LINES 16
+static struct bench_cell bench_lines[BENCH_LINES][BENCH_COLUMNS];
+static p8 bench_text[BENCH_COLUMNS + 64];
+static volatile positive sink;
+
+static fn former_unpair(struct bench_cell address_to cells, unsigned int length,
+                        unsigned int at)
+{
+        if (at >= length)
+                return;
+
+        if ((cells[at].flags & BENCH_WIDE) && at + 1 < length)
+        {
+                cells[at + 1].character = ' ';
+                cells[at + 1].flags &= (unsigned short)~BENCH_WIDE_RIGHT;
+        }
+
+        if ((cells[at].flags & BENCH_WIDE_RIGHT) && at)
+        {
+                cells[at - 1].character = ' ';
+                cells[at - 1].flags &= (unsigned short)~BENCH_WIDE;
+        }
+}
+
+NOT_INLINED static positive former_cells(struct bench_cell address_to cells,
+                                         const p8 address_to bytes, positive count,
+                                         unsigned int first, unsigned int had,
+                                         positive attribute)
+{
+        positive room = BENCH_COLUMNS - first, n = 0;
+
+        for (;;)
+        {
+                unsigned int at = first + (unsigned int)n;
+                positive word = attribute | bytes[n];
+
+                if (at < had &&
+                    (cells[at].flags & (BENCH_WIDE | BENCH_WIDE_RIGHT)))
+                        former_unpair(cells, had, at);
+
+                memory_copy(cells + at, address_of word, sizeof(word));
+                n++;
+
+                if (n == count || n == room || (unsigned int)bytes[n] - ' ' >= 95)
+                        break;
+        }
+
+        return n;
+}
+
+NOT_INLINED static positive library_cells(struct bench_cell address_to cells,
+                                          const p8 address_to bytes, positive count,
+                                          unsigned int first, unsigned int had,
+                                          positive attribute)
+{
+        positive room = BENCH_COLUMNS - first, n = 0;
+        positive limit = count < room ? count : room, guarded = had - first;
+
+        for (;;)
+        {
+                unsigned int at = first + (unsigned int)n;
+                positive word = attribute | bytes[n];
+
+                if (at < had &&
+                    (cells[at].flags & (BENCH_WIDE | BENCH_WIDE_RIGHT)))
+                        former_unpair(cells, had, at);
+
+                memory_copy(cells + at, address_of word, sizeof(word));
+                n++;
+
+                if (n == limit || (unsigned int)bytes[n] - ' ' >= 95)
+                        break;
+
+                n += cells_from_ascii(cells + first + n, (address_any)(bytes + n),
+                                      limit - n, guarded > n ? guarded - n : 0,
+                                      attribute,
+                                      (p64)(BENCH_WIDE | BENCH_WIDE_RIGHT) << 48);
+
+                if (n == limit || (unsigned int)bytes[n] - ' ' >= 95)
+                        break;
+        }
+
+        return n;
+}
+
+typedef positive (*cells_call)(struct bench_cell address_to, const p8 address_to,
+                               positive, unsigned int, unsigned int, positive);
+static cells_call volatile cells_calls[2] = {former_cells, library_cells};
+
+#if X64
+static const_string tier_names[] = {"widest", "AVX2", "word"};
+static positive tier_count = 3;
+static p8 saved_avx2, saved_avx512;
+#else
+static const_string tier_names[] = {"word"};
+static positive tier_count = 1;
+#endif
+
+static fn tier_set(positive tier)
+{
+#if X64
+        cpu_has_avx2 = tier < 2 ? saved_avx2 : 0;
+        cpu_has_avx512 = tier < 1 ? saved_avx512 : 0;
+#else
+        (void)tier;
+#endif
+}
+
+static p64 random_state = 0x2545f4914f6cdd1d;
+
+static p64 random_next(void)
+{
+        random_state ^= random_state << 13;
+        random_state ^= random_state >> 7;
+        random_state ^= random_state << 17;
+        return random_state;
+}
+
+/* The two loops leave every line the same, pairs and all. */
+static bool correctness(void)
+{
+        static struct bench_cell start[BENCH_COLUMNS], after[BENCH_COLUMNS];
+
+        for (positive tier = 0; tier < tier_count; tier++)
+        {
+                tier_set(tier);
+                for (positive round = 0; round < 60000; round++)
+                {
+                        unsigned int first = (unsigned int)(random_next() % BENCH_COLUMNS);
+                        unsigned int had = first + (unsigned int)(random_next() %
+                                                                  (BENCH_COLUMNS - first + 1));
+                        positive length = random_next() % (BENCH_COLUMNS + 20) + 1;
+                        positive count = random_next() % 3 ? sizeof(bench_text)
+                                                           : random_next() % 200 + 1;
+                        positive attribute = (random_next() & 0x3fff) << 32;
+                        positive density = random_next() % 4;
+
+                        if (count > sizeof(bench_text))
+                                count = sizeof(bench_text);
+                        for (positive at = 0; at < sizeof(bench_text); at++)
+                                bench_text[at] = (p8)(' ' + random_next() % 95);
+                        if (length < sizeof(bench_text))
+                                bench_text[length] = (p8)(random_next() % 32);
+
+                        for (unsigned int at = 0; at < BENCH_COLUMNS; at++)
+                        {
+                                start[at].character = (unsigned int)('a' + at % 26);
+                                start[at].ink = (unsigned char)at;
+                                start[at].paper = 0;
+                                start[at].flags = (unsigned short)(random_next() & 0x60);
+                        }
+                        for (unsigned int at = 0; at + 1 < BENCH_COLUMNS; at++)
+                                if (density && random_next() % (4 << density) == 0)
+                                {
+                                        start[at].flags |= BENCH_WIDE;
+                                        start[at + 1].flags |= BENCH_WIDE_RIGHT;
+                                        at++;
+                                }
+                        if (random_next() % 8 == 0)
+                                start[random_next() % BENCH_COLUMNS].flags |=
+                                    random_next() & 1 ? BENCH_WIDE : BENCH_WIDE_RIGHT;
+
+                        memory_copy(bench_lines[0], start, sizeof(start));
+                        positive want = former_cells(bench_lines[0], bench_text, count, first, had,
+                                                     attribute);
+                        memory_copy(after, bench_lines[0], sizeof(after));
+                        memory_copy(bench_lines[0], start, sizeof(start));
+                        positive got = library_cells(bench_lines[0], bench_text, count, first, had,
+                                                     attribute);
+
+                        if (got != want || memory_compare(after, bench_lines[0], sizeof(after)))
+                        {
+                                string_format(log, "  %s body: first %p had %p length %p count %p: %p against %p\n",
+                                              tier_names[tier], (positive)first, (positive)had,
+                                              length, count, got, want);
+                                tier_set(0);
+                                return false;
+                        }
+                }
+        }
+        tier_set(0);
+        return true;
+}
+
+static fn shape(positive length, positive guarded)
+{
+        for (positive at = 0; at < sizeof(bench_text); at++)
+                bench_text[at] = (p8)(' ' + (at * 37) % 95);
+        if (length < sizeof(bench_text))
+                bench_text[length] = 0x1b;
+        memory_fill(bench_lines, 0, sizeof(bench_lines));
+        (void)guarded;
+}
+
+static fn run(positive side, positive length, positive guarded, positive rounds)
+{
+        unsigned int had = guarded ? BENCH_COLUMNS : 0;
+
+        while (rounds--)
+                sink += cells_calls[side](bench_lines[rounds & (BENCH_LINES - 1)],
+                                          bench_text, sizeof(bench_text), 0, had,
+                                          (positive)0x0701 << 32);
+}
+
+static bipolar counter_open(p64 config)
+{
+        struct
+        {
+                unsigned int type, size;
+                p64 config, period, sample_type, read_format, flags;
+                unsigned int wakeup, breakpoint_type;
+                p64 breakpoint_address;
+        } attributes;
+
+        memory_fill(address_of attributes, 0, sizeof(attributes));
+        attributes.size = sizeof(attributes);
+        attributes.config = config;
+        attributes.flags = (1u << 5) | (1u << 6);   // user space only
+
+        return system_call_5(syscall(perf_event_open), (positive)address_of attributes,
+                             0, (positive)-1, (positive)-1, 0);
+}
+
+static p64 counter_read(bipolar counter)
+{
+        p64 value = 0;
+
+        if (counter >= 0)
+                system_call_3(syscall(read), (positive)counter,
+                              (positive)address_of value, sizeof(value));
+        return value;
+}
+
+static bipolar cycles_counter = -1, instructions_counter = -1;
+
+static fn thousandths(p64 value)
+{
+        p8 fraction[4];
+
+        positive_into_padded(fraction, (positive)(value % 1000), 3, '0');
+        fraction[3] = end;
+        string_format(log, "%p.%s", (positive)(value / 1000), fraction);
+}
+
+static fn row(positive tier, positive length, positive guarded)
+{
+        static const_string sides[] = {"C", "term.c"};
+        positive rounds = max(BENCH_TARGET_CELLS / length, (positive)64);
+        p64 cycles[2][TRIES], instructions[2][TRIES], ticks[2][TRIES];
+        p64 cells = (p64)rounds * length;
+
+        tier_set(tier);
+        shape(length, guarded);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+                for (positive i = 0; i < 2; i++)
+                {
+                        positive side = (i + trial) % 2;
+                        p64 c0 = counter_read(cycles_counter);
+                        p64 i0 = counter_read(instructions_counter);
+                        p64 t0 = get_cpu_time();
+
+                        run(side, length, guarded, rounds);
+                        ticks[side][trial] = get_cpu_time() - t0;
+                        instructions[side][trial] = (counter_read(instructions_counter) - i0) * 1000 / cells;
+                        cycles[side][trial] = (counter_read(cycles_counter) - c0) * 1000 / cells;
+                }
+
+        for (positive side = 0; side < 2; side++)
+        {
+                order(cycles[side], TRIES);
+                order(instructions[side], TRIES);
+                order(ticks[side], TRIES);
+        }
+
+        string_format(log, "  %s %s %p", tier_names[tier],
+                      guarded ? "guarded" : "fresh  ", length);
+        for (positive side = 0; side < 2; side++)
+        {
+                string_format(log, "  %s ", sides[side]);
+                thousandths(cycles[side][TRIES / 2]);
+                string_format(log, " cyc ");
+                thousandths(instructions[side][TRIES / 2]);
+                string_format(log, " ins");
+        }
+        string_format(log, "  time against C %p%%\n",
+                      (positive)(ticks[1][TRIES / 2] * 100 /
+                                 max(ticks[0][TRIES / 2], (p64)1)));
+        tier_set(0);
+}
+
+static positive number(string_address text)
+{
+        positive value = 0;
+
+        while (*text >= '0' && *text <= '9')
+                value = value * 10 + (positive)(*text++ - '0');
+        return value;
+}
+
+b32 main(void)
+{
+        static const positive lengths[] = {2, 4, 8, 16, 32, 64, 180};
+        string_address address_to arguments = program_argument_list();
+
+#if X64
+        saved_avx2 = cpu_has_avx2;
+        saved_avx512 = cpu_has_avx512;
+#endif
+        if (program_argument_count() == 7 && arguments[1][0] == 'c')
+        {
+                positive side = number(arguments[2]) & 1;
+                positive tier = number(arguments[3]);
+                positive length = number(arguments[4]);
+                positive guarded = number(arguments[5]);
+
+                tier_set(tier < tier_count ? tier : 0);
+                shape(length, guarded);
+                run(side, length, guarded, number(arguments[6]));
+                return 0;
+        }
+
+        if (!correctness())
+        {
+                string_format(log, "cells_from_ascii: the two loops disagree\n");
+                log_flush();
+                return 1;
+        }
+
+        cycles_counter = counter_open(0);
+        instructions_counter = counter_open(1);
+        string_format(log, "cells_from_ascii against term.c's loop, per cell, median of %p%s\n",
+                      (positive)TRIES,
+                      cycles_counter < 0 ? " (no counters here: the cycle and instruction columns are zero)" : "");
+
+        for (positive tier = 0; tier < tier_count; tier++)
+                for (positive guarded = 0; guarded < 2; guarded++)
+                        for (positive i = 0; i < array_count(lengths); i++)
+                                row(tier, lengths[i], guarded);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_cells_ascii */
 
 #ifdef BENCH_fill_u32
 /* 32-bit span fill: the shared Canvas/window primitive against its two floors. */

@@ -351,6 +351,11 @@ thread_wait thread_wake
 cover('nothing_to_fold', None, 'memory_give',
       'a pointer into memory the caller owns, and a shelf number read back '
       'out of the block rather than handed over by the call site')
+cover('nothing_to_fold', None, 'cells_from_ascii',
+      'pointers into a row and a read the caller owns, a limit and a guard from '
+      'the cursor and the line, and an attribute from the terminal state; stop '
+      'is a literal at the one call site, but it is only ever tested against a '
+      'loaded cell, and knowing it shortens nothing')
 cover('folds_already', 'magnitude', 'narrow_with_sign decimal_with_sign',
       'a sign copy: one and or one bit insert')
 

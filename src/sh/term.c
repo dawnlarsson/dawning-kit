@@ -2176,6 +2176,23 @@ static inline INLINE b32 text_ground()
                (charset_gl ? charset_g1 : charset_g0) == CHARSET_ASCII;
 }
 
+/* One cell of a printable run, as put() would leave it. Half of a wide
+   character among the cells written over makes put() blank its other half,
+   and that half can be a cell of this same run or the one before it. Only a
+   cell inside the line can be one, and unpairing a cell that is not one does
+   nothing, so it is asked only of those -- still before the store, in put()'s
+   own order. */
+static inline INLINE fn text_cell(struct window_cell address_to cells,
+                                  unsigned int had, unsigned int at,
+                                  positive word)
+{
+        if (at < had &&
+            (cells[at].flags & (WINDOW_CELL_WIDE | WINDOW_CELL_WIDE_RIGHT)))
+                unpair(cells, had, at);
+
+        memory_copy(cells + at, address_of word, sizeof(word));
+}
+
 /* Printable ASCII from the first byte, as far as the row has room, left as
    put() a character at a time would leave it. Answers the bytes taken. */
 static positive text_ascii(const p8 address_to bytes, positive count)
@@ -2183,7 +2200,7 @@ static positive text_ascii(const p8 address_to bytes, positive count)
         struct window_cell address_to cells;
         unsigned int address_to length;
         unsigned int first, had, slot;
-        positive room, attribute, n = 0;
+        positive room, limit, guarded, attribute, n = 0;
 
         // put_cells' wrap, for a character one column wide.
         if (column + 1 > COLUMNS)
@@ -2210,6 +2227,8 @@ static positive text_ascii(const p8 address_to bytes, positive count)
         }
 
         had = address_to length;
+        limit = count < room ? count : room;
+        guarded = had - first;
 
         // A cell as BLANK_CELL_WORD lays one out: the character in the low
         // half, the colours and flags above it.
@@ -2218,26 +2237,27 @@ static positive text_ascii(const p8 address_to bytes, positive count)
                     ((positive)style << 48);
 
         /*
-                Half of a wide character among the cells written over makes
-                put() blank its other half, and that half can be a cell of
-                this same run or the one before it. Only a cell inside the
-                line can be one, and unpairing a cell that is not one does
-                nothing, so it is asked only of those -- still before the
-                store, in put()'s own order.
+                The first cell is put here, and the rest of the run, if there
+                is a rest, is the library's cells_from_ascii eight cells at a
+                time. A run of one, which is most of what a colour a character
+                draws, never makes the call. The library stops in front of a
+                cell of the line that is half of a pair, and that one comes
+                round to be unpaired and put here before the run goes on.
         */
         for (;;)
         {
-                unsigned int at = first + (unsigned int)n;
-                positive word = attribute | bytes[n];
-
-                if (at < had &&
-                    (cells[at].flags & (WINDOW_CELL_WIDE | WINDOW_CELL_WIDE_RIGHT)))
-                        unpair(cells, had, at);
-
-                memory_copy(cells + at, address_of word, sizeof(word));
+                text_cell(cells, had, first + (unsigned int)n, attribute | bytes[n]);
                 n++;
 
-                if (n == count || n == room || (unsigned int)bytes[n] - ' ' >= 95)
+                if (n == limit || (unsigned int)bytes[n] - ' ' >= 95)
+                        break;
+
+                n += cells_from_ascii(
+                    cells + first + n, (address_any)(bytes + n), limit - n,
+                    guarded > n ? guarded - n : 0, attribute,
+                    (positive)(WINDOW_CELL_WIDE | WINDOW_CELL_WIDE_RIGHT) << 48);
+
+                if (n == limit || (unsigned int)bytes[n] - ' ' >= 95)
                         break;
         }
 
