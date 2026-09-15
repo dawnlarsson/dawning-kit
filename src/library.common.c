@@ -3789,7 +3789,17 @@ static positive allocator_chunk_next;
 //      address where a tag should be is past every band it recognises, so a
 //      second free of a chain's first block does nothing, as it does for any
 //      other freed block.
+//
+//      A shelf refilled from a chunk while other threads exist takes a few
+//      blocks ahead with it, so a thread making many small ones takes the
+//      lock once for several: at most ALLOCATOR_BATCH of them, and at most
+//      ALLOCATOR_BATCH_BYTES. The bytes bound the big shelves, because a
+//      thread that makes what another thread frees never takes the spares
+//      back off its own shelf. Eight blocks ahead at every refill of a
+//      quarter megabyte shelf left 42 to 48 MiB on the workers of a grep -r
+//      at sixteen threads.
 #define ALLOCATOR_BATCH 8
+#define ALLOCATOR_BATCH_BYTES (16u << 10)
 static lock allocator_lock;
 static address_any allocator_depot[ALLOCATOR_CLASSES];
 
@@ -4038,7 +4048,10 @@ allocator_take_shared(b32 class, bool address_to fresh)
         if (block && threads_live)
         {
                 positive size = allocator_class_size[class];
-                positive more = ALLOCATOR_BATCH;
+                positive more = ALLOCATOR_BATCH_BYTES / size;
+
+                if (more > ALLOCATOR_BATCH)
+                        more = ALLOCATOR_BATCH;
 
                 while (more-- && allocator_bump_left >= size)
                 {

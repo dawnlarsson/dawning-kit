@@ -8221,7 +8221,13 @@ MISC_UTILITIES = (
                    ("-a", "blake2b", "-l", "256", "--tag", "a.txt"), ("-a", "blake2b", "-c", "sums.b2sum"),
                    ("-c", "sums.b2sum.tagged", "sums.sha384sum.tagged"), ("-a", "bsd", "--raw", "edge_65537"),
                    ("-a", "sysv", "--raw", "long"), ("-a", "crc32b", "--raw", "blob"),
-                   ("-a", "sysv", "-z", "a.txt", "binary"), ("-a", "crc32b", "--debug", "a.txt", "b.txt")),
+                   ("-a", "sysv", "-z", "a.txt", "binary"), ("-a", "crc32b", "--debug", "a.txt", "b.txt"),
+                   # The CRCs over inputs long enough for every fold: a
+                   # block of 256 bytes and more, the 16-byte folds and the
+                   # table tail, and a length folded in over three bytes.
+                   ("-a", "crc", "edge_65535", "edge_65537", "long", "binary"),
+                   ("--algorithm=crc", "--raw", "edge_65536"),
+                   ("-a", "crc32b", "edge_65535", "long", "binary")),
             stdin=("text", "empty", "misc_sums_sha256sum", "edge_65535", "edge_65536", "edge_65537", "long", "nul",
                    "high", "nonl", "many_lines"),
             fixture="misc", stderr="exact"),
@@ -18942,6 +18948,7 @@ def harness_native_extract(argv):
         # and Mach-O name the read-only section differently, and ASM_SECTION is a
         # C macro that does not come along with the literal lines being lifted.
         line = line.replace('.section .rodata', '.section __TEXT,__const')
+        line = line.replace('.pushsection .rodata', '.pushsection __TEXT,__const')
         if line.strip() == 'ASM_SECTION':
             return '    ".text\\n"'
 

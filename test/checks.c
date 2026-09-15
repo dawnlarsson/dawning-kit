@@ -5070,6 +5070,180 @@ BENCH_NOT_INLINED string_address reference_first_of(string_address source,
 
 #undef BENCH_NOT_INLINED
 #endif
+#elif defined(SHARED_montgomery_reference)
+/*
+        The generic Montgomery multiply and square crypto.c ran in C for the
+        group orders and RSA, kept here as it was written -- the schoolbook
+        product or the doubled triangle, word-by-word reduction, a masked
+        final subtraction and the volatile wipes -- so CHECK_net can hold
+        the assembly to it and BENCH_montgomery can time the two against
+        each other. Include it after crypto.c.
+*/
+
+#ifndef DAWNING_MONTGOMERY_REFERENCE_C
+#define DAWNING_MONTGOMERY_REFERENCE_C
+
+#define MONTGOMERY_REFERENCE_LIMBS 64
+
+typedef unsigned __int128 montgomery_reference_wide;
+
+static fn montgomery_reference_forget(address_any secret, positive length)
+{
+        volatile p8 address_to at = secret;
+
+        while (length)
+        {
+                *at++ = 0;
+                length--;
+        }
+}
+
+static p64 montgomery_reference_subtract(p64 address_to d,
+                                         const p64 address_to a,
+                                         const p64 address_to b, positive n)
+{
+        montgomery_reference_wide borrow = 0;
+
+        for (positive i = 0; i < n; i++)
+        {
+                montgomery_reference_wide value =
+                    (montgomery_reference_wide)a[i] - b[i] - borrow;
+
+                d[i] = (p64)value;
+                borrow = (value >> 64) & 1;
+        }
+
+        return (p64)borrow;
+}
+
+static fn montgomery_reference_select(p64 address_to d, const p64 address_to a,
+                                      const p64 address_to b, positive n,
+                                      p64 choose_b)
+{
+        p64 mask = 0 - choose_b;
+
+        for (positive i = 0; i < n; i++)
+                d[i] = (a[i] & ~mask) | (b[i] & mask);
+
+        montgomery_reference_forget(address_of mask, sizeof mask);
+}
+
+static fn montgomery_reference_reduce(p64 address_to d, p64 address_to t,
+                                      const p64 address_to m, p64 inverse,
+                                      positive n)
+{
+        p64 reduced[MONTGOMERY_REFERENCE_LIMBS];
+        p64 top = 0;
+        p64 borrow;
+
+        for (positive i = 0; i < n; i++)
+        {
+                p64 q = t[i] * inverse;
+                montgomery_reference_wide carry = 0;
+
+                for (positive j = 0; j < n; j++)
+                {
+                        carry += (montgomery_reference_wide)t[i + j] +
+                                 (montgomery_reference_wide)q * m[j];
+                        t[i + j] = (p64)carry;
+                        carry >>= 64;
+                }
+                carry += (montgomery_reference_wide)t[i + n] + top;
+                t[i + n] = (p64)carry;
+                top = (p64)(carry >> 64);
+        }
+
+        borrow = montgomery_reference_subtract(reduced, t + n, m, n);
+        montgomery_reference_select(d, t + n, reduced, n, top | (borrow ^ 1));
+        montgomery_reference_forget(reduced, n * 8);
+        montgomery_reference_forget(address_of top, sizeof top);
+        montgomery_reference_forget(address_of borrow, sizeof borrow);
+}
+
+static fn montgomery_reference_multiply(p64 address_to d,
+                                        const p64 address_to a,
+                                        const p64 address_to b,
+                                        const p64 address_to m, p64 inverse,
+                                        positive n)
+{
+        p64 t[MONTGOMERY_REFERENCE_LIMBS * 2];
+
+        if (n > MONTGOMERY_REFERENCE_LIMBS)
+                return;
+
+        memory_fill(t, 0, n * 2 * 8);
+        for (positive i = 0; i < n; i++)
+        {
+                montgomery_reference_wide carry = 0;
+
+                for (positive j = 0; j < n; j++)
+                {
+                        carry += (montgomery_reference_wide)t[i + j] +
+                                 (montgomery_reference_wide)a[i] * b[j];
+                        t[i + j] = (p64)carry;
+                        carry >>= 64;
+                }
+                t[i + n] = (p64)carry;
+        }
+
+        montgomery_reference_reduce(d, t, m, inverse, n);
+        montgomery_reference_forget(t, n * 2 * 8);
+}
+
+static fn montgomery_reference_square(p64 address_to d, const p64 address_to a,
+                                      const p64 address_to m, p64 inverse,
+                                      positive n)
+{
+        p64 t[MONTGOMERY_REFERENCE_LIMBS * 2];
+        montgomery_reference_wide carry = 0;
+
+        if (n > MONTGOMERY_REFERENCE_LIMBS)
+                return;
+
+        memory_fill(t, 0, n * 2 * 8);
+        for (positive i = 0; i < n; i++)
+        {
+                carry = 0;
+                for (positive j = i + 1; j < n; j++)
+                {
+                        carry += (montgomery_reference_wide)t[i + j] +
+                                 (montgomery_reference_wide)a[i] * a[j];
+                        t[i + j] = (p64)carry;
+                        carry >>= 64;
+                }
+                t[i + n] = (p64)carry;
+        }
+
+        carry = 0;
+        for (positive i = 0; i < n * 2; i++)
+        {
+                p64 limb = t[i];
+
+                t[i] = (limb << 1) | (p64)carry;
+                carry = limb >> 63;
+        }
+
+        carry = 0;
+        for (positive i = 0; i < n; i++)
+        {
+                montgomery_reference_wide square =
+                    (montgomery_reference_wide)a[i] * a[i];
+
+                carry += (montgomery_reference_wide)t[i * 2] + (p64)square;
+                t[i * 2] = (p64)carry;
+                carry >>= 64;
+                carry += (montgomery_reference_wide)t[i * 2 + 1] +
+                         (p64)(square >> 64);
+                t[i * 2 + 1] = (p64)carry;
+                carry >>= 64;
+        }
+
+        montgomery_reference_reduce(d, t, m, inverse, n);
+        montgomery_reference_forget(t, n * 2 * 8);
+        montgomery_reference_forget(address_of carry, sizeof carry);
+}
+
+#endif
 #elif defined(SHARED_native)
 /*
         What the native sections share: the references the hunts are held
@@ -47777,14 +47951,21 @@ static fn crypto_floor_aes_ctr(void)
               wrong == 0);
 }
 
+#define SHARED_montgomery_reference
+#include "checks.c"
+#undef SHARED_montgomery_reference
+
 /*
         p256_multiply, p256_square, p256_add, p256_subtract, p384_multiply,
         p384_square, p384_add and p384_subtract against the C Montgomery
         arithmetic.
 
         crypto_fe_mul, sqr, add and sub hand the two NIST field primes to
-        library.c; a copy of the same crypto_field at another address takes
-        the C path, which is the reference. Operands are the edges -- zero,
+        library.c; a copy of the same crypto_field at another address adds
+        and subtracts in crypto.c's C, which is the reference there, and
+        multiplies and squares are held to the C Montgomery multiply and
+        square crypto.c ran before montgomery_multiply
+        (SHARED_montgomery_reference). Operands are the edges -- zero,
         one, p - 1, p - 2 and R mod p -- then seeded values with limbs of all
         ones and zeros sprinkled in, reduced below p; each routine also runs
         with its output aliasing an operand. Two fixed answers pin the
@@ -47848,7 +48029,7 @@ static positive field_check_wrong(const crypto_field address_to f,
         unit[0] = 1;
         crypto_fe_mul(x, f->square, unit, f);
         wrong += memory_compare(x, f->one, n * 8) != 0;
-        crypto_fe_mul(x, f->one, f->one, address_of reference);
+        montgomery_reference_multiply(x, f->one, f->one, f->m, f->inverse, n);
         wrong += memory_compare(x, f->one, n * 8) != 0;
 
         for (positive round = 0; round < rounds; round++)
@@ -47860,10 +48041,10 @@ static positive field_check_wrong(const crypto_field address_to f,
                 field_check_operand(b, f, round < 40 ? round / 5 % 8 : 5);
 
                 crypto_fe_mul(x, a, b, f);
-                crypto_fe_mul(y, a, b, address_of reference);
+                montgomery_reference_multiply(y, a, b, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 crypto_fe_sqr(x, a, f);
-                crypto_fe_sqr(y, a, address_of reference);
+                montgomery_reference_square(y, a, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 crypto_fe_add(x, a, b, f);
                 crypto_fe_add(y, a, b, address_of reference);
@@ -47874,14 +48055,14 @@ static positive field_check_wrong(const crypto_field address_to f,
 
                 memory_copy(x, a, n * 8);
                 crypto_fe_mul(x, x, b, f);
-                crypto_fe_mul(y, a, b, address_of reference);
+                montgomery_reference_multiply(y, a, b, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 memory_copy(x, b, n * 8);
                 crypto_fe_mul(x, a, x, f);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 memory_copy(x, a, n * 8);
                 crypto_fe_sqr(x, x, f);
-                crypto_fe_sqr(y, a, address_of reference);
+                montgomery_reference_square(y, a, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 memory_copy(x, a, n * 8);
                 crypto_fe_add(x, x, b, f);
@@ -47902,6 +48083,194 @@ static fn crypto_floor_field(void)
               field_check_wrong(address_of crypto_p256_field, 3000) == 0);
         check("p384_ field routines agree with the C Montgomery arithmetic",
               field_check_wrong(address_of crypto_p384_field, 3000) == 0);
+}
+
+/*
+        montgomery_multiply against the Montgomery multiply crypto.c ran in
+        C -- the SHARED_montgomery_reference copy -- at every limb count from
+        1 to 64; the group orders use 4 and 6 and RSA 32 and 64.
+
+        Each count takes four odd moduli, their top limb all ones, exactly
+        2^63, one and drawn, with limbs of all ones and of zeros sprinkled
+        below. Operands are the edges -- zero, one, m - 1 and m - 2 -- and
+        then drawn values below m with the same sprinkling. Every product is
+        taken into its own output, over a and over b, and every square as a
+        and b the same over its operand against the reference's own square,
+        so the aliasing crypto.c relies on is held to the same answer. Two
+        fixed answers pin both: R^2 times plain 1 is R under each group
+        order, and so is R times R. A count outside 1..64 writes nothing.
+*/
+static p64 montgomery_check_seed = 0x2545f4914f6cdd1dull;
+
+static p64 montgomery_check_next(void)
+{
+        montgomery_check_seed ^= montgomery_check_seed << 13;
+        montgomery_check_seed ^= montgomery_check_seed >> 7;
+        montgomery_check_seed ^= montgomery_check_seed << 17;
+        return montgomery_check_seed;
+}
+
+static p64 montgomery_check_limb(void)
+{
+        p64 pick = montgomery_check_next() & 7;
+
+        return pick == 0 ? ~0ull : pick == 1 ? 0 : montgomery_check_next();
+}
+
+static p64 montgomery_check_inverse(const p64 address_to m)
+{
+        p64 inverse = m[0];
+
+        for (positive i = 0; i < 5; i++)
+                inverse *= 2 - m[0] * inverse;
+        return 0 - inverse;
+}
+
+static fn montgomery_check_modulus(p64 address_to m, positive n, positive kind)
+{
+        memory_fill(m, 0, 64 * 8);
+        for (positive i = 0; i < n; i++)
+                m[i] = montgomery_check_limb();
+        m[n - 1] = kind == 0   ? ~0ull
+                   : kind == 1 ? 1ull << 63
+                   : kind == 2 ? 1
+                               : montgomery_check_next() | 1;
+        m[0] |= 1;
+}
+
+static fn montgomery_check_operand(p64 address_to x, const p64 address_to m,
+                                   positive n, positive kind)
+{
+        p64 small[64];
+        p64 reduced[64];
+
+        memory_fill(x, 0, 64 * 8);
+        memory_fill(small, 0, sizeof small);
+        if (kind < 4)
+        {
+                if (kind == 0)
+                        return;
+                if (kind == 1)
+                {
+                        x[0] = 1;
+                        small[0] = 1;
+                        memory_copy(reduced, m, n * 8);
+                }
+                else
+                {
+                        small[0] = kind - 1;
+                        memory_copy(x, m, n * 8);
+                        memory_copy(reduced, small, n * 8);
+                }
+                //      one below m or m minus one or two; nothing when m is
+                //      too small to hold it.
+                if (kind == 1 ? montgomery_reference_subtract(small, small, m, n) == 0
+                              : montgomery_reference_subtract(x, x, reduced, n) != 0)
+                        memory_fill(x, 0, 64 * 8);
+                return;
+        }
+
+        for (positive i = 0; i < n; i++)
+                x[i] = montgomery_check_limb();
+        if (m[n - 1] != ~0ull)
+                x[n - 1] %= m[n - 1] + 1;
+        if (!montgomery_reference_subtract(reduced, x, m, n))
+                memory_copy(x, reduced, n * 8);
+}
+
+static positive montgomery_check_wrong(void)
+{
+        static const positive edges[8][2] = {
+            {0, 4}, {1, 3}, {2, 2}, {3, 3}, {2, 1}, {4, 2}, {3, 4}, {4, 4}};
+        p64 m[64];
+        p64 a[64];
+        p64 b[64];
+        p64 x[64];
+        p64 y[64];
+        positive wrong = 0;
+
+        for (positive n = 1; n <= 64; n++)
+                for (positive kind = 0; kind < 4; kind++)
+                {
+                        p64 inverse;
+
+                        montgomery_check_modulus(m, n, kind);
+                        inverse = montgomery_check_inverse(m);
+                        for (positive round = 0; round < 12; round++)
+                        {
+                                montgomery_check_operand(
+                                    a, m, n, round < 8 ? edges[round][0] : 4);
+                                montgomery_check_operand(
+                                    b, m, n, round < 8 ? edges[round][1] : 4);
+
+                                montgomery_reference_multiply(y, a, b, m,
+                                                              inverse, n);
+                                montgomery_multiply(x, a, b, m, inverse, n);
+                                wrong += memory_compare(x, y, n * 8) != 0;
+                                memory_copy(x, a, n * 8);
+                                montgomery_multiply(x, x, b, m, inverse, n);
+                                wrong += memory_compare(x, y, n * 8) != 0;
+                                memory_copy(x, b, n * 8);
+                                montgomery_multiply(x, a, x, m, inverse, n);
+                                wrong += memory_compare(x, y, n * 8) != 0;
+
+                                montgomery_reference_square(y, a, m, inverse,
+                                                            n);
+                                montgomery_multiply(x, a, a, m, inverse, n);
+                                wrong += memory_compare(x, y, n * 8) != 0;
+                                memory_copy(x, a, n * 8);
+                                montgomery_multiply(x, x, x, m, inverse, n);
+                                wrong += memory_compare(x, y, n * 8) != 0;
+                        }
+                }
+
+        return wrong;
+}
+
+static fn crypto_floor_montgomery(void)
+{
+        const crypto_field address_to orders[2] = {
+            address_of crypto_p256_order, address_of crypto_p384_order};
+        p64 unit[64];
+        p64 m[64];
+        p64 x[64];
+        p64 y[64];
+        positive pinned = 0;
+        positive untouched = 0;
+
+        memory_fill(unit, 0, sizeof unit);
+        unit[0] = 1;
+        for (positive i = 0; i < 2; i++)
+        {
+                const crypto_field address_to f = orders[i];
+
+                pinned += f->inverse == montgomery_check_inverse(f->m);
+                montgomery_multiply(x, f->square, unit, f->m, f->inverse,
+                                    f->n);
+                pinned += memory_compare(x, f->one, f->n * 8) == 0;
+                montgomery_reference_multiply(y, f->square, unit, f->m,
+                                              f->inverse, f->n);
+                pinned += memory_compare(y, f->one, f->n * 8) == 0;
+                montgomery_multiply(x, f->one, f->one, f->m, f->inverse, f->n);
+                pinned += memory_compare(x, f->one, f->n * 8) == 0;
+        }
+        check("montgomery_multiply takes R^2 to R and R times R to R under "
+              "both group orders",
+              pinned == 8);
+
+        montgomery_check_modulus(m, 64, 3);
+        memory_fill(x, 0xa5, sizeof x);
+        memory_copy(y, x, sizeof x);
+        montgomery_multiply(x, unit, unit, m, montgomery_check_inverse(m), 0);
+        untouched += memory_compare(x, y, sizeof x) == 0;
+        montgomery_multiply(x, unit, unit, m, montgomery_check_inverse(m), 65);
+        untouched += memory_compare(x, y, sizeof x) == 0;
+        check("montgomery_multiply writes nothing for 0 or 65 limbs",
+              untouched == 2);
+
+        check("montgomery_multiply agrees with the C Montgomery multiply and "
+              "square at 1 to 64 limbs, aliased or not",
+              montgomery_check_wrong() == 0);
 }
 
 static fn crypto_floor_aes(void)
@@ -49808,6 +50177,7 @@ b32 main(void)
         crypto_floor();
         crypto_floor_ghash();
         crypto_floor_field();
+        crypto_floor_montgomery();
         crypto_floor_aes();
         crypto_rsa_served_sizes();
         tls_trust_anchor_chains();
@@ -55662,7 +56032,7 @@ static p32 crc_model(p8 address_to bytes, positive length, p32 crc)
                 crc ^= (p32)*bytes++ << 24;
                 for (positive bit = 0; bit < 8; bit++)
                         crc = (crc << 1) ^
-                              (crc >> 31 ? CKSUM_POLYNOMIAL : 0);
+                              (crc >> 31 ? 0x04c11db7u : 0);
         }
         return crc;
 }
@@ -56161,6 +56531,115 @@ static fn hash_check_all(p8 address_to limit)
         check("streaming digests give the known answers at every split", streams == 0);
 }
 
+/*
+        hash_crc32_msb, cksum's CRC, against the bit-at-a-time model above:
+        its table slice by slice, then every size to 300 at 32 alignments,
+        runs that end on the protected page, and random lengths at random
+        alignments, each whole and in three pieces, under every feature
+        subset this machine has -- the braided table floor, the PCLMULQDQ
+        or PMULL folds, and on x86_64 the VPCLMULQDQ zmm folds -- written
+        down one tier at a time and put back.
+*/
+static p32 crc_swap32(p32 value)
+{
+        return value >> 24 | (value >> 8 & 0xff00) | (value << 8 & 0xff0000) |
+               value << 24;
+}
+
+static positive crc_check_case(p8 address_to at, positive size, p32 seed,
+                               positive split)
+{
+        p32 want = crc_model(at, size, seed);
+        positive rest = (size - split) / 2;
+        positive bad = 0;
+        p8 pclmul = cpu_has_pclmul;
+#if X64
+        p8 vpclmul = cpu_has_vpclmul;
+        p8 avx512 = cpu_has_avx512;
+        positive tiers = 4;
+#else
+        positive tiers = 2;
+#endif
+
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+                cpu_has_pclmul = tier >= 1 ? pclmul : 0;
+#if X64
+                cpu_has_vpclmul = tier >= 2 ? vpclmul : 0;
+                cpu_has_avx512 = tier >= 3 ? avx512 : 0;
+#endif
+                bad += hash_crc32_msb(seed, at, size) != want;
+
+                p32 crc = hash_crc32_msb(seed, at, split);
+                crc = hash_crc32_msb(crc, at + split, rest);
+                crc = hash_crc32_msb(crc, at + split + rest, size - split - rest);
+                bad += crc != want;
+        }
+
+        cpu_has_pclmul = pclmul;
+#if X64
+        cpu_has_vpclmul = vpclmul;
+        cpu_has_avx512 = avx512;
+#endif
+        return bad;
+}
+
+static fn crc_check_all(p8 address_to bytes)
+{
+        static const p8 zero = 0;
+        positive table = 0;
+
+        for (positive slice = 0; slice < 16; slice++)
+                for (positive value = 0; value < 256; value++)
+                {
+                        p8 byte = (p8)value;
+                        p32 entry = crc_model(address_of byte, 1, 0);
+
+                        for (positive at = 0; at < (slice < 8 ? slice : slice + 16); at++)
+                                entry = crc_model((p8 address_to)address_of zero, 1, entry);
+                        table += hash_crc32_msb_tab[slice * 256 + value] !=
+                                 crc_swap32(entry);
+                }
+
+        positive aligned = 0;
+        positive tails = 0;
+        positive draws = 0;
+
+        for (positive size = 0; size <= 300; size++)
+                for (positive offset = 0; offset < 32; offset++)
+                        aligned += crc_check_case(bytes + offset, size,
+                                                  (p32)(size * 0x9e3779b9u + offset),
+                                                  size / 3);
+        for (positive size = 0; size <= 8192; size += size < 300 ? 1 : 127)
+                tails += crc_check_case(bytes + 8192 - size, size, 0xdeadbeef,
+                                        size / 3);
+
+        p32 random = 0x2545f491u;
+        for (positive draw = 0; draw < 400; draw++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                positive offset = random % 64;
+                p32 seed = random;
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                positive size = random % (8192 - offset + 1);
+                draws += crc_check_case(bytes + offset, size, seed,
+                                        (random >> 7) % (size + 1));
+        }
+
+        check("the MSB CRC table is the model's, slice by slice", table == 0);
+        check("hash_crc32_msb is the model at every size to 300 and 32 alignments",
+              aligned == 0);
+        check("hash_crc32_msb runs that end on a protected page", tails == 0);
+        check("hash_crc32_msb at random lengths, alignments and splits",
+              draws == 0);
+        check("hash_crc32_msb of nothing is the crc",
+              hash_crc32_msb(0x12345678u, null, 0) == 0x12345678u);
+}
+
 b32 main(void)
 {
         positive page = system_page_size();
@@ -56173,42 +56652,508 @@ b32 main(void)
         for (positive at = 0; at < 8192; at++)
                 bytes[at] = (p8)((at * 73) ^ (at >> 3));
         hash_check_all(bytes + 8192);
-        cksum_crc_prepare();
-        positive modes = 1;
-#if X64
-        modes = cksum_crc_hardware();
-#endif
-        for (positive mode = 1; mode <= modes; mode++)
-        {
-#if X64
-                cksum_crc_pclmul_state = (p8)mode;
-#endif
-                for (positive size = 0; size <= 257; size++)
-                        for (positive offset = 0; offset < 64; offset++)
-                        {
-                                p32 seed = (p32)(size * 0x9e3779b9u + offset);
-                                p8 address_to at = bytes + offset;
-                                check("CRC alignment and arbitrary seed",
-                                      cksum_crc_block(at, size, seed) ==
-                                          crc_model(at, size, seed));
-                        }
-                for (positive size = 0; size <= 8192; size += size < 257 ? 1 : 127)
-                {
-                        p8 address_to at = bytes + 8192 - size;
-                        p32 seed = 0xdeadbeef;
-                        p32 want = crc_model(at, size, seed);
-                        check("CRC protected tail",
-                              cksum_crc_block(at, size, seed) == want);
-                        positive split = size / 3;
-                        p32 first = cksum_crc_block(at, split, seed);
-                        check("CRC incremental split",
-                              cksum_crc_block(at + split, size - split,
-                                               first) == want);
-                }
-        }
+        crc_check_all(bytes);
         return test_report(null);
 }
 #endif /* CHECK_checksum_crc */
+
+#ifdef BENCH_cksum_crc
+/*
+        cksum's CRC over its own read blocks, tier for tier: the C that
+        src/sh/cksum.c carried until hash_crc32_msb -- slice tables built at
+        run time, four table streams joined by GF(2) shifts, SSE and
+        AVX-512 folds 64 bytes a turn -- copied here unchanged under a
+        former_ prefix, against the assembly with its feature bytes written
+        down to the same tier. Tier 1 is the table, 2 the PCLMULQDQ folds
+        (PMULL on arm64), 3 the VPCLMULQDQ zmm folds; a tier this machine
+        lacks runs the best one below it.
+
+        With no arguments it prints best-of-seven ticks a byte over 64 MiB
+        in 4 KiB and 128 KiB blocks. `former|assembly <tier> <block>
+        [<MiB>]` runs one body once and prints its crc, so perf stat or an
+        emulator's instruction count sees one body a process; the former
+        body pays its table preparation as the applet did. `none` exits
+        after the block is filled, for the fixed cost.
+*/
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define FORMER_CRC_POLYNOMIAL 0x04c11db7u
+#define FORMER_CRC_SLICES 8
+
+static p32 former_crc_table[FORMER_CRC_SLICES][256];
+static p32 former_crc_shift_power[positive_bits];
+static bool former_crc_table_ready;
+#if X64
+/* 0 is unprobed, 1 is unavailable, 2 is PCLMUL, 3 is VPCLMUL. A shell should
+   not serialize itself with CPUID again on every cksum call on an older CPU. */
+static p8 former_crc_pclmul_state;
+#endif
+
+/* Multiplication in the same GF(2) field as the byte recurrence. It is cold:
+   table preparation uses it once, and a full shared input block needs only
+   three combines. */
+static p32 former_crc_multiply(p32 left, p32 right)
+{
+        p32 result = 0;
+
+        for (positive bit = 0; bit < 32; bit++)
+        {
+                if (right & 1)
+                        result ^= left;
+
+                right >>= 1;
+                left = (left << 1) ^
+                       ((left & 0x80000000u) ? FORMER_CRC_POLYNOMIAL : 0);
+        }
+
+        return result;
+}
+
+static fn former_crc_prepare()
+{
+        if (former_crc_table_ready)
+                return;
+
+        for (positive value = 0; value < 256; value++)
+        {
+                p32 crc = (p32)value << 24;
+
+                for (positive bit = 0; bit < 8; bit++)
+                        crc = (crc << 1) ^
+                              ((crc & 0x80000000u) ? FORMER_CRC_POLYNOMIAL : 0);
+
+                former_crc_table[0][value] = crc;
+        }
+
+        for (positive slice = 1; slice < FORMER_CRC_SLICES; slice++)
+                for (positive value = 0; value < 256; value++)
+                {
+                        p32 crc = former_crc_table[slice - 1][value];
+
+                        former_crc_table[slice][value] =
+                            (crc << 8) ^ former_crc_table[0][crc >> 24];
+                }
+
+        former_crc_shift_power[0] = 0x100;
+        for (positive bit = 1; bit < positive_bits; bit++)
+                former_crc_shift_power[bit] = former_crc_multiply(
+                    former_crc_shift_power[bit - 1],
+                    former_crc_shift_power[bit - 1]);
+
+        former_crc_table_ready = true;
+}
+
+static inline INLINE p32 former_crc_word(p64 word, p32 crc)
+{
+        return former_crc_table[7][((crc >> 24) ^ word) & 255] ^
+               former_crc_table[6][((crc >> 16) ^ (word >> 8)) & 255] ^
+               former_crc_table[5][((crc >> 8) ^ (word >> 16)) & 255] ^
+               former_crc_table[4][(crc ^ (word >> 24)) & 255] ^
+               former_crc_table[3][(word >> 32) & 255] ^
+               former_crc_table[2][(word >> 40) & 255] ^
+               former_crc_table[1][(word >> 48) & 255] ^
+               former_crc_table[0][word >> 56];
+}
+
+static p32 former_crc_serial(p8 address_to bytes, positive length, p32 crc)
+{
+        while (length >= 8)
+        {
+                p64 word = memory_load_unaligned(p64, bytes);
+
+                crc = former_crc_word(word, crc);
+                bytes += 8;
+                length -= 8;
+        }
+
+        while (length--)
+                crc = (crc << 8) ^
+                      former_crc_table[0][(crc >> 24) ^ *bytes++];
+
+        return crc;
+}
+
+#if X64
+/* SSE's carry-less multiply evaluates the same polynomial 128 bytes at a
+   time. The constants are x^128 and x^512 reduced modulo 0x104c11db7, from
+   Intel's generic-polynomial CRC construction. SSSE3 reverses each vector
+   because POSIX CRC is the non-reflected, most-significant-bit-first form.
+   The table floor remains authoritative for the final folded vector and for
+   every processor without both instructions. */
+typedef p64 former_crc_vector
+    __attribute__((vector_size(16), aligned(1), may_alias));
+typedef long long former_crc_vector_signed __attribute__((vector_size(16)));
+typedef char former_crc_bytes_signed __attribute__((vector_size(16)));
+
+static p8 former_crc_hardware()
+{
+        p32 leaf = 1;
+        p32 ebx;
+        p32 features = 0;
+        p32 edx;
+
+        __asm__ volatile("cpuid"
+                         : "+a"(leaf), "=b"(ebx), "+c"(features), "=d"(edx));
+        (void)ebx;
+        (void)edx;
+        if (!(features & ((p32)1 << 1)) || !(features & ((p32)1 << 9)))
+                return 1;
+        if (cpu_has_avx512)
+        {
+                leaf = 7;
+                features = 0;
+                __asm__ volatile("cpuid"
+                                 : "+a"(leaf), "=b"(ebx), "+c"(features),
+                                   "=d"(edx));
+                if (features & ((p32)1 << 10))
+                        return 3;
+        }
+        return 2;
+}
+
+static __attribute__((target("pclmul,ssse3"))) former_crc_vector
+former_crc_reverse(former_crc_vector value)
+{
+        const former_crc_vector mask = {
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull};
+
+        return (former_crc_vector)__builtin_ia32_pshufb128(
+            (former_crc_bytes_signed)value,
+            (former_crc_bytes_signed)mask);
+}
+
+static __attribute__((target("pclmul,ssse3"))) former_crc_vector
+former_crc_fold(former_crc_vector value, former_crc_vector constant,
+               former_crc_vector following)
+{
+        former_crc_vector low =
+            (former_crc_vector)__builtin_ia32_pclmulqdq128(
+                (former_crc_vector_signed)value,
+                (former_crc_vector_signed)constant, 0x00);
+        former_crc_vector high =
+            (former_crc_vector)__builtin_ia32_pclmulqdq128(
+                (former_crc_vector_signed)value,
+                (former_crc_vector_signed)constant, 0x11);
+
+        return low ^ high ^ following;
+}
+
+static __attribute__((target("pclmul,ssse3"))) p32
+former_crc_pclmul(p8 address_to bytes, positive length, p32 crc)
+{
+        const former_crc_vector four = {0xe6228b11ull, 0x8833794cull};
+        const former_crc_vector one = {0xe8a45605ull, 0xc5b9cd4cull};
+        former_crc_vector first = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes));
+        former_crc_vector second = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes + 16));
+        former_crc_vector third = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes + 32));
+        former_crc_vector fourth = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes + 48));
+        const former_crc_vector initial = {0, (p64)crc << 32};
+
+        first ^= initial;
+        bytes += 64;
+        length -= 64;
+
+        while (length >= 64)
+        {
+                first = former_crc_fold(
+                    first, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes)));
+                second = former_crc_fold(
+                    second, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes + 16)));
+                third = former_crc_fold(
+                    third, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes + 32)));
+                fourth = former_crc_fold(
+                    fourth, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes + 48)));
+                bytes += 64;
+                length -= 64;
+        }
+
+        first = former_crc_fold(first, one, second);
+        first = former_crc_fold(first, one, third);
+        first = former_crc_fold(first, one, fourth);
+        first = former_crc_reverse(first);
+        crc = former_crc_serial((p8 address_to)address_of first, 16, 0);
+        return former_crc_serial(bytes, length, crc);
+}
+
+/* The same four polynomial chains as the SSE path, packed into one ZMM.
+   Only the lane width changes; final reduction stays in the shared floor.
+   Dispatch requires both OS-enabled AVX-512 and the separate VPCLMUL bit. */
+typedef p64 former_crc_wide
+    __attribute__((vector_size(64), aligned(1), may_alias));
+typedef long long former_crc_wide_signed __attribute__((vector_size(64)));
+typedef char former_crc_wide_bytes __attribute__((vector_size(64)));
+
+static __attribute__((target("avx512f,avx512bw,vpclmulqdq,pclmul,ssse3"))) p32
+former_crc_vpclmul(p8 address_to bytes, positive length, p32 crc)
+{
+        const former_crc_wide four = {
+            0xe6228b11ull, 0x8833794cull, 0xe6228b11ull, 0x8833794cull,
+            0xe6228b11ull, 0x8833794cull, 0xe6228b11ull, 0x8833794cull};
+        const former_crc_wide mask = {
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull};
+        former_crc_wide value = {0, (p64)crc << 32, 0, 0, 0, 0, 0, 0};
+        bool first = true;
+
+        do
+        {
+                former_crc_wide next = (former_crc_wide)
+                    __builtin_ia32_pshufb512_mask(
+                        (former_crc_wide_bytes)*(former_crc_wide address_to)bytes,
+                        (former_crc_wide_bytes)mask,
+                        (former_crc_wide_bytes){0}, (p64)-1);
+                if (!first)
+                {
+                        former_crc_wide low = (former_crc_wide)
+                            __builtin_ia32_vpclmulqdq_v8di(
+                                (former_crc_wide_signed)value,
+                                (former_crc_wide_signed)four, 0x00);
+                        former_crc_wide high = (former_crc_wide)
+                            __builtin_ia32_vpclmulqdq_v8di(
+                                (former_crc_wide_signed)value,
+                                (former_crc_wide_signed)four, 0x11);
+                        value = low ^ high;
+                }
+                value ^= next;
+                first = false;
+                bytes += 64;
+                length -= 64;
+        } while (length >= 64);
+
+        const former_crc_vector one = {0xe8a45605ull, 0xc5b9cd4cull};
+        former_crc_vector folded = {value[0], value[1]};
+        folded = former_crc_fold(folded, one,
+                                (former_crc_vector){value[2], value[3]});
+        folded = former_crc_fold(folded, one,
+                                (former_crc_vector){value[4], value[5]});
+        folded = former_crc_fold(folded, one,
+                                (former_crc_vector){value[6], value[7]});
+        folded = former_crc_reverse(folded);
+        crc = former_crc_serial((p8 address_to)address_of folded, 16, 0);
+        return former_crc_serial(bytes, length, crc);
+}
+#endif
+
+static p32 former_crc_shift(p32 crc, p64 bytes)
+{
+        positive bit = 0;
+
+        while (bytes)
+        {
+                if (bytes & 1)
+                        crc = former_crc_multiply(
+                            crc, former_crc_shift_power[bit]);
+
+                bytes >>= 1;
+                bit++;
+        }
+
+        return crc;
+}
+
+static HOT __attribute__((noinline)) p32 former_crc_block(
+    p8 address_to bytes, positive length, p32 crc)
+{
+#if X64
+        if (length >= 128 && former_crc_pclmul_state == 3)
+                return former_crc_vpclmul(bytes, length, crc);
+        if (length >= 128 && former_crc_pclmul_state == 2)
+                return former_crc_pclmul(bytes, length, crc);
+#endif
+
+        positive span = (length >> 2) & ~(positive)7;
+
+        if (span < 256)
+                return former_crc_serial(bytes, length, crc);
+
+        p8 address_to second = bytes + span;
+        p8 address_to third = second + span;
+        p8 address_to fourth = third + span;
+        p32 first_crc = crc;
+        p32 second_crc = 0;
+        p32 third_crc = 0;
+        p32 fourth_crc = 0;
+
+        for (positive at = 0; at < span; at += 8)
+        {
+                first_crc = former_crc_word(
+                    memory_load_unaligned(p64, bytes + at), first_crc);
+                second_crc = former_crc_word(
+                    memory_load_unaligned(p64, second + at), second_crc);
+                third_crc = former_crc_word(
+                    memory_load_unaligned(p64, third + at), third_crc);
+                fourth_crc = former_crc_word(
+                    memory_load_unaligned(p64, fourth + at), fourth_crc);
+        }
+
+        positive fourth_length = length - span * 3;
+        fourth_crc = former_crc_serial(fourth + span,
+                                      fourth_length - span, fourth_crc);
+        crc = former_crc_shift(first_crc, span) ^ second_crc;
+        crc = former_crc_shift(crc, span) ^ third_crc;
+        return former_crc_shift(crc, fourth_length) ^ fourth_crc;
+}
+
+#define CKSUM_BENCH_LARGEST (128u << 10)
+
+static p8 cksum_bench_block[CKSUM_BENCH_LARGEST] __attribute__((aligned(64)));
+static positive cksum_bench_size;
+static positive cksum_bench_total = 64u << 20;
+static volatile p32 cksum_bench_sink;
+static p32 (*volatile cksum_bench_call)(p32, address_any, positive) = hash_crc32_msb;
+static p8 cksum_bench_pclmul;
+#if X64
+static p8 cksum_bench_vpclmul;
+static p8 cksum_bench_avx512;
+#endif
+
+static fn cksum_bench_former(void)
+{
+        p32 crc = 0;
+
+        for (positive done = 0; done < cksum_bench_total; done += cksum_bench_size)
+                crc = former_crc_block(cksum_bench_block, cksum_bench_size, crc);
+        cksum_bench_sink = crc;
+}
+
+static fn cksum_bench_assembly(void)
+{
+        p32 crc = 0;
+
+        for (positive done = 0; done < cksum_bench_total; done += cksum_bench_size)
+                crc = cksum_bench_call(crc, cksum_bench_block, cksum_bench_size);
+        cksum_bench_sink = crc;
+}
+
+static fn cksum_bench_tier(positive tier, bool former)
+{
+        cpu_has_pclmul = tier >= 2 ? cksum_bench_pclmul : 0;
+#if X64
+        cpu_has_vpclmul = tier >= 3 ? cksum_bench_vpclmul : 0;
+        cpu_has_avx512 = tier >= 3 ? cksum_bench_avx512 : 0;
+        if (former)
+        {
+                p8 hardware = former_crc_hardware();
+
+                former_crc_pclmul_state = (p8)(tier < hardware ? tier : hardware);
+        }
+#else
+        (void)former;
+#endif
+}
+
+static positive cksum_bench_number(string_address text, positive otherwise)
+{
+        positive value = 0;
+
+        if (!text)
+                return otherwise;
+        while (*text >= '0' && *text <= '9')
+                value = value * 10 + (positive)(*text++ - '0');
+        return value;
+}
+
+b32 main(void)
+{
+        p32 random = 0x7433291u;
+
+        for (positive at = 0; at < sizeof(cksum_bench_block); at++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                cksum_bench_block[at] = (p8)random;
+        }
+
+        cksum_bench_pclmul = cpu_has_pclmul;
+#if X64
+        cksum_bench_vpclmul = cpu_has_vpclmul;
+        cksum_bench_avx512 = cpu_has_avx512;
+#endif
+
+        string_address body = program_argument(1);
+
+        if (body)
+        {
+                positive tier = cksum_bench_number(program_argument(2), 3);
+
+                cksum_bench_size = cksum_bench_number(program_argument(3), 4096);
+                cksum_bench_total = cksum_bench_number(program_argument(4), 64) << 20;
+                if (!cksum_bench_size || cksum_bench_size > CKSUM_BENCH_LARGEST)
+                        return 2;
+                if (string_equals(body, "none"))
+                        return 0;
+                if (string_equals(body, "former"))
+                {
+                        former_crc_prepare();
+                        cksum_bench_tier(tier, true);
+                        cksum_bench_former();
+                }
+                else if (string_equals(body, "assembly"))
+                {
+                        cksum_bench_tier(tier, false);
+                        cksum_bench_assembly();
+                }
+                else
+                        return 2;
+                string_format(log, "%p\n", (positive)cksum_bench_sink);
+                return 0;
+        }
+
+#if X64
+        positive tiers = 3;
+#elif ARM64
+        positive tiers = 2;
+#else
+        positive tiers = 1;
+#endif
+        static const positive sizes[] = {4096, CKSUM_BENCH_LARGEST};
+        static const string_address former_names[] = {
+            "tier 1 former C", "tier 2 former C", "tier 3 former C"};
+        static const string_address assembly_names[] = {
+            "tier 1 assembly", "tier 2 assembly", "tier 3 assembly"};
+        bool agree = true;
+
+        former_crc_prepare();
+        for (positive which = 0; which < array_count(sizes); which++)
+        {
+                cksum_bench_size = sizes[which];
+                string_format(log, "  64 MiB in %p-byte blocks:\n", cksum_bench_size);
+                for (positive tier = 1; tier <= tiers; tier++)
+                {
+                        cksum_bench_tier(tier, true);
+                        bench_report(former_names[tier - 1], cksum_bench_former, 7,
+                                     cksum_bench_total, "byte");
+                        p32 former = cksum_bench_sink;
+
+                        bench_report(assembly_names[tier - 1], cksum_bench_assembly, 7,
+                                     cksum_bench_total, "byte");
+                        agree = agree && former == cksum_bench_sink;
+                }
+        }
+        cksum_bench_tier(3, false);
+        if (!agree)
+                string_format(log, "  the former C and the assembly disagree\n");
+        return agree ? 0 : 1;
+}
+#endif /* BENCH_cksum_crc */
 
 #ifdef CHECK_spark_entry
 #include "../src/compiler_memory.c"
@@ -66391,6 +67336,349 @@ b32 main(void)
         return 0;
 }
 #endif /* BENCH_random */
+
+#ifdef BENCH_montgomery
+/*
+        The generic Montgomery multiply and square against the C crypto.c
+        ran them in, at the limb counts that reach them: 4 and 6 for the
+        P-256 and P-384 group orders inside ECDSA verification, 32 and 64
+        for RSA-2048 and RSA-4096. Then the verifies around them, through
+        crypto.c as it stands.
+
+            sh test/run bench montgomery
+            sh test/run bench montgomery -- multiply-c 32 200000
+
+        A row named on the command line runs alone for that many rounds and
+        prints nothing, which is what perf stat -e instructions:u,cycles:u
+        is pointed at: multiply-c, multiply, square-c and square take a limb
+        count, and ecdsa-p256, ecdsa-p384, rsa-2048 and rsa-4096 take only
+        the rounds. The RSA rows are the public operation a verify runs,
+        crypto_rsa_modexp with e = 65537, over a fixed odd modulus whose top
+        bit is set; the ECDSA rows verify real signatures, RFC 6979's P-256
+        "sample" and a P-384 one made once with openssl.
+*/
+#include "../src/compiler_memory.c"
+#include "../src/net/netlink.c"
+#include "../src/net/dns.c"
+#include "../src/net/http.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+#define SHARED_montgomery_reference
+#include "checks.c"
+#undef SHARED_montgomery_reference
+
+#define MONTGOMERY_BENCH_TRIES 7
+
+typedef fn (*montgomery_bench_multiply_body)(p64 address_to,
+                                             const p64 address_to,
+                                             const p64 address_to,
+                                             const p64 address_to, p64,
+                                             positive);
+typedef fn (*montgomery_bench_square_body)(p64 address_to,
+                                           const p64 address_to,
+                                           const p64 address_to, p64,
+                                           positive);
+
+static montgomery_bench_multiply_body volatile montgomery_bench_multiply_c =
+    montgomery_reference_multiply;
+static montgomery_bench_square_body volatile montgomery_bench_square_c =
+    montgomery_reference_square;
+static montgomery_bench_multiply_body volatile montgomery_bench_multiply_asm =
+    montgomery_multiply;
+
+static volatile p64 montgomery_bench_sink;
+static p64 montgomery_bench_m[64];
+static p64 montgomery_bench_a[64];
+static p64 montgomery_bench_b[64];
+static p64 montgomery_bench_d[64];
+static p64 montgomery_bench_inverse;
+static positive montgomery_bench_n = 4;
+static positive montgomery_bench_rounds = 1;
+
+static const p8 montgomery_bench_p256_qx[32] = {
+    0x60, 0xfe, 0xd4, 0xba, 0x25, 0x5a, 0x9d, 0x31, 0xc9, 0x61, 0xeb,
+    0x74, 0xc6, 0x35, 0x6d, 0x68, 0xc0, 0x49, 0xb8, 0x92, 0x3b, 0x61,
+    0xfa, 0x6c, 0xe6, 0x69, 0x62, 0x2e, 0x60, 0xf2, 0x9f, 0xb6};
+static const p8 montgomery_bench_p256_qy[32] = {
+    0x79, 0x03, 0xfe, 0x10, 0x08, 0xb8, 0xbc, 0x99, 0xa4, 0x1a, 0xe9,
+    0xe9, 0x56, 0x28, 0xbc, 0x64, 0xf2, 0xf1, 0xb2, 0x0c, 0x2d, 0x7e,
+    0x9f, 0x51, 0x77, 0xa3, 0xc2, 0x94, 0xd4, 0x46, 0x22, 0x99};
+static const p8 montgomery_bench_p256_r[32] = {
+    0xef, 0xd4, 0x8b, 0x2a, 0xac, 0xb6, 0xa8, 0xfd, 0x11, 0x40, 0xdd,
+    0x9c, 0xd4, 0x5e, 0x81, 0xd6, 0x9d, 0x2c, 0x87, 0x7b, 0x56, 0xaa,
+    0xf9, 0x91, 0xc3, 0x4d, 0x0e, 0xa8, 0x4e, 0xaf, 0x37, 0x16};
+static const p8 montgomery_bench_p256_s[32] = {
+    0xf7, 0xcb, 0x1c, 0x94, 0x2d, 0x65, 0x7c, 0x41, 0xd4, 0x36, 0xc7,
+    0xa1, 0xb6, 0xe2, 0x9f, 0x65, 0xf3, 0xe9, 0x00, 0xdb, 0xb9, 0xaf,
+    0xf4, 0x06, 0x4d, 0xc4, 0xab, 0x2f, 0x84, 0x3a, 0xcd, 0xa8};
+static const char montgomery_bench_p384_hex[] =
+    /* the public point x, y */
+    "ea8636cba0d1352aae4e9ecde992fd91bdb010ddf67e6aef0b91cb218fdc9c13"
+    "3e8c81a4632080fe9583d00817f677c9ca5f0368605d161b3410f3ac507279c1"
+    "99834c9ab12289010a7f8c0d1c0edb6c9d494b34892b26979bfc07fb2bd1e654"
+    /* r, s */
+    "bf0437db6a0149c023aedd2005b069a2fc1a0e14c8b8177c77d27b2ac66c0e04"
+    "dc8309648e4fa734103e48ddfe3409880d8f773f442ce89ba14fae047ee04e48"
+    "3022e03b7a9215b8876eec9dcc0e3711448d2adbe7aac19a74c7d7b11268c8b8"
+    /* SHA-384 of "sample" */
+    "9a9083505bc92276aec4be312696ef7bf3bf603f4bbd381196a029f340585312"
+    "313bca4a9b5b890efee42c77b1ee25fe";
+static p8 montgomery_bench_p256_digest[32];
+static p8 montgomery_bench_p384[48 * 5];
+
+static p64 montgomery_bench_draw(p64 address_to state)
+{
+        address_to state ^= address_to state << 13;
+        address_to state ^= address_to state >> 7;
+        address_to state ^= address_to state << 17;
+        return address_to state;
+}
+
+//      The modulus and operands for n limbs: the group order at 4 and 6,
+//      otherwise a drawn odd modulus with its top bit set. Operands have
+//      their top bit clear, so both sit below the modulus.
+static fn montgomery_bench_operands(positive n)
+{
+        p64 state = 0x9e3779b97f4a7c15ull ^ n;
+        p64 inverse;
+
+        for (positive i = 0; i < 64; i++)
+        {
+                montgomery_bench_m[i] = montgomery_bench_draw(address_of state);
+                montgomery_bench_a[i] = montgomery_bench_draw(address_of state);
+                montgomery_bench_b[i] = montgomery_bench_draw(address_of state);
+        }
+        if (n == 4)
+                memory_copy(montgomery_bench_m, crypto_p256_n, 4 * 8);
+        else if (n == 6)
+                memory_copy(montgomery_bench_m, crypto_p384_n, 6 * 8);
+        montgomery_bench_m[n - 1] |= 1ull << 63;
+        montgomery_bench_m[0] |= 1;
+        montgomery_bench_a[n - 1] >>= 1;
+        montgomery_bench_b[n - 1] >>= 1;
+
+        inverse = montgomery_bench_m[0];
+        for (positive i = 0; i < 5; i++)
+                inverse *= 2 - montgomery_bench_m[0] * inverse;
+        montgomery_bench_inverse = 0 - inverse;
+        montgomery_bench_n = n;
+}
+
+static fn montgomery_bench_multiply_c_row(void)
+{
+        for (positive i = 0; i < montgomery_bench_rounds; i++)
+        {
+                montgomery_bench_multiply_c(
+                    montgomery_bench_d, montgomery_bench_a, montgomery_bench_b,
+                    montgomery_bench_m, montgomery_bench_inverse,
+                    montgomery_bench_n);
+                montgomery_bench_sink += montgomery_bench_d[0];
+        }
+}
+
+static fn montgomery_bench_square_c_row(void)
+{
+        for (positive i = 0; i < montgomery_bench_rounds; i++)
+        {
+                montgomery_bench_square_c(montgomery_bench_d, montgomery_bench_a,
+                                          montgomery_bench_m,
+                                          montgomery_bench_inverse,
+                                          montgomery_bench_n);
+                montgomery_bench_sink += montgomery_bench_d[0];
+        }
+}
+
+static fn montgomery_bench_multiply_row(void)
+{
+        for (positive i = 0; i < montgomery_bench_rounds; i++)
+        {
+                montgomery_bench_multiply_asm(
+                    montgomery_bench_d, montgomery_bench_a, montgomery_bench_b,
+                    montgomery_bench_m, montgomery_bench_inverse,
+                    montgomery_bench_n);
+                montgomery_bench_sink += montgomery_bench_d[0];
+        }
+}
+
+static fn montgomery_bench_square_row(void)
+{
+        for (positive i = 0; i < montgomery_bench_rounds; i++)
+        {
+                montgomery_bench_multiply_asm(
+                    montgomery_bench_d, montgomery_bench_a, montgomery_bench_a,
+                    montgomery_bench_m, montgomery_bench_inverse,
+                    montgomery_bench_n);
+                montgomery_bench_sink += montgomery_bench_d[0];
+        }
+}
+
+static fn montgomery_bench_ecdsa_p256_row(void)
+{
+        for (positive i = 0; i < montgomery_bench_rounds; i++)
+                montgomery_bench_sink += crypto_ecdsa_p256(
+                    montgomery_bench_p256_digest, 32,
+                    (p8 address_to)montgomery_bench_p256_r, 32,
+                    (p8 address_to)montgomery_bench_p256_s, 32,
+                    (p8 address_to)montgomery_bench_p256_qx,
+                    (p8 address_to)montgomery_bench_p256_qy);
+}
+
+static fn montgomery_bench_ecdsa_p384_row(void)
+{
+        p8 address_to v = montgomery_bench_p384;
+
+        for (positive i = 0; i < montgomery_bench_rounds; i++)
+                montgomery_bench_sink += crypto_ecdsa_p384(
+                    v + 48 * 4, 48, v + 48 * 2, 48, v + 48 * 3, 48, v,
+                    v + 48);
+}
+
+static fn montgomery_bench_rsa_row(void)
+{
+        for (positive i = 0; i < montgomery_bench_rounds; i++)
+        {
+                crypto_rsa_modexp(montgomery_bench_d, montgomery_bench_a,
+                                  65537, montgomery_bench_m,
+                                  montgomery_bench_n);
+                montgomery_bench_sink += montgomery_bench_d[0];
+        }
+}
+
+static positive montgomery_bench_number(string_address text)
+{
+        positive value = 0;
+
+        while (address_to text >= '0' && address_to text <= '9')
+                value = value * 10 + (positive)(address_to text++ - '0');
+        return value;
+}
+
+static fn montgomery_bench_report(string_address name, bench_work work,
+                                  positive rounds, string_address unit)
+{
+        montgomery_bench_rounds = rounds;
+        bench_report(name, work, MONTGOMERY_BENCH_TRIES, rounds, unit);
+}
+
+b32 main(void)
+{
+        static const positive limbs[] = {4, 6, 32, 64};
+        positive arguments = program_argument_count();
+
+        crypto_sha256_of((p8 address_to)"sample", 6,
+                         montgomery_bench_p256_digest);
+        for (positive i = 0; i < sizeof montgomery_bench_p384; i++)
+        {
+                p8 high = (p8)montgomery_bench_p384_hex[i * 2];
+                p8 low = (p8)montgomery_bench_p384_hex[i * 2 + 1];
+
+                high = (p8)(high <= '9' ? high - '0' : high - 'a' + 10);
+                low = (p8)(low <= '9' ? low - '0' : low - 'a' + 10);
+                montgomery_bench_p384[i] = (p8)(high << 4 | low);
+        }
+        montgomery_bench_operands(4);
+
+        if (arguments > 1)
+        {
+                string_address row = program_argument(1);
+                positive first =
+                    arguments > 2 ? montgomery_bench_number(program_argument(2))
+                                  : 0;
+                positive second =
+                    arguments > 3 ? montgomery_bench_number(program_argument(3))
+                                  : 0;
+                bench_work work = null;
+
+                if (string_compare(row, (string_address)"multiply-c") == 0)
+                        work = montgomery_bench_multiply_c_row;
+                else if (string_compare(row, (string_address)"multiply") == 0)
+                        work = montgomery_bench_multiply_row;
+                else if (string_compare(row, (string_address)"square") == 0)
+                        work = montgomery_bench_square_row;
+                else if (string_compare(row, (string_address)"square-c") == 0)
+                        work = montgomery_bench_square_c_row;
+
+                if (work)
+                {
+                        if (first != 4 && first != 6 && first != 32 &&
+                            first != 64)
+                                return 2;
+                        montgomery_bench_operands(first);
+                        montgomery_bench_rounds = second ? second : 1;
+                        work();
+                        return 0;
+                }
+
+                montgomery_bench_rounds = first ? first : 1;
+                if (string_compare(row, (string_address)"ecdsa-p256") == 0)
+                        work = montgomery_bench_ecdsa_p256_row;
+                else if (string_compare(row, (string_address)"ecdsa-p384") == 0)
+                        work = montgomery_bench_ecdsa_p384_row;
+                else if (string_compare(row, (string_address)"rsa-2048") == 0)
+                {
+                        montgomery_bench_operands(32);
+                        work = montgomery_bench_rsa_row;
+                }
+                else if (string_compare(row, (string_address)"rsa-4096") == 0)
+                {
+                        montgomery_bench_operands(64);
+                        work = montgomery_bench_rsa_row;
+                }
+                if (is_null(work))
+                        return 2;
+                work();
+                return 0;
+        }
+
+        string_format(log, "Montgomery arithmetic, best of %p\n",
+                      (positive)MONTGOMERY_BENCH_TRIES);
+        montgomery_bench_sink = 0;
+        montgomery_bench_rounds = 1;
+        montgomery_bench_ecdsa_p256_row();
+        montgomery_bench_ecdsa_p384_row();
+        if (montgomery_bench_sink != 2)
+                string_format(log, " the ECDSA signatures do not verify\n");
+        for (positive at = 0; at < sizeof limbs / sizeof limbs[0]; at++)
+        {
+                positive n = limbs[at];
+                positive rounds = (1u << 22) / (n * n);
+
+                montgomery_bench_operands(n);
+                string_format(log, " %p limbs, %p calls a try\n", n, rounds);
+                montgomery_bench_report((string_address)"multiply, C     ",
+                                        montgomery_bench_multiply_c_row,
+                                        rounds, (string_address)"call");
+                montgomery_bench_report((string_address)"multiply, asm   ",
+                                        montgomery_bench_multiply_row,
+                                        rounds, (string_address)"call");
+                montgomery_bench_report((string_address)"square, C       ",
+                                        montgomery_bench_square_c_row,
+                                        rounds, (string_address)"call");
+                montgomery_bench_report((string_address)"square, asm     ",
+                                        montgomery_bench_square_row,
+                                        rounds, (string_address)"call");
+        }
+
+        string_format(log, " verifies through crypto.c\n");
+        montgomery_bench_report((string_address)"ECDSA P-256", 
+                                montgomery_bench_ecdsa_p256_row, 64,
+                                (string_address)"verify");
+        montgomery_bench_report((string_address)"ECDSA P-384",
+                                montgomery_bench_ecdsa_p384_row, 32,
+                                (string_address)"verify");
+        montgomery_bench_operands(32);
+        montgomery_bench_report((string_address)"RSA-2048 public",
+                                montgomery_bench_rsa_row, 256,
+                                (string_address)"verify");
+        montgomery_bench_operands(64);
+        montgomery_bench_report((string_address)"RSA-4096 public",
+                                montgomery_bench_rsa_row, 64,
+                                (string_address)"verify");
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_montgomery */
 
 #ifdef BENCH_allocator
 /* malloc/free class fast path against its call and free-list traffic floors.

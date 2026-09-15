@@ -50,7 +50,8 @@
 #define TLS_HS_FINISHED 20
 
 /* One trust anchor from anchors.inc: hashes that find candidates, then the
-   key itself (curve 1 P-256, 2 P-384, 3 RSA). */
+   key itself (curve 1 P-256, 2 P-384, 3 RSA), key_length raw bytes at key_at
+   in tls_anchor_keys. */
 typedef struct
 {
         p8 name[8];
@@ -58,12 +59,10 @@ typedef struct
         p8 curve;
         p32 exponent;
         p16 key_length;
-        string_address key;
+        p32 key_at;
 } tls_anchor;
 
-static const tls_anchor tls_anchors[] = {
 #include "anchors.inc"
-};
 
 static const p8 tls_oid_ec[7] = {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01};
 static const p8 tls_oid_p256[8] = {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
@@ -1264,57 +1263,19 @@ static bipolar tls_parse_cert(p8 address_to der, positive length,
         return tls_parse_extensions(der, tbs_stop, spki_stop, cert, host);
 }
 
-/* The standard base64 alphabet without line breaks; the byte count, or 0
-   for any other character or more than room bytes. */
-static positive tls_base64_decode(p8 address_to out, positive room,
-                                  string_address text)
-{
-        p32 bits = 0;
-        positive have = 0;
-        positive count = 0;
-
-        for (; *text && *text != '='; text++)
-        {
-                p8 c = (p8)*text;
-                p32 value;
-
-                if (c >= 'A' && c <= 'Z')
-                        value = c - 'A';
-                else if (c >= 'a' && c <= 'z')
-                        value = c - 'a' + 26;
-                else if (c >= '0' && c <= '9')
-                        value = c - '0' + 52;
-                else if (c == '+')
-                        value = 62;
-                else if (c == '/')
-                        value = 63;
-                else
-                        return 0;
-                bits = (bits << 6) | value;
-                have += 6;
-                if (have >= 8)
-                {
-                        have -= 8;
-                        if (count == room)
-                                return 0;
-                        out[count++] = (p8)(bits >> have);
-                }
-        }
-
-        return count;
-}
-
 /* An anchor's key laid out the way tls_parse_cert lays out a served one. */
 static bool tls_anchor_key(const tls_anchor address_to anchor,
                            tls_cert address_to root)
 {
-        p8 key[512];
-        positive length = tls_base64_decode(key, sizeof key, anchor->key);
+        positive length = anchor->key_length;
         positive coord = length / 2;
+        const p8 address_to key;
 
         memory_fill(root, 0, sizeof(*root));
-        if (!length || length != anchor->key_length)
+        if (!length || length > sizeof root->modulus ||
+            anchor->key_at + length > sizeof tls_anchor_keys)
                 return false;
+        key = tls_anchor_keys + anchor->key_at;
         root->curve = anchor->curve;
         if (anchor->curve == 3)
         {

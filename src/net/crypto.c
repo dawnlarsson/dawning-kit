@@ -994,9 +994,11 @@ static bool crypto_fe_is_zero(const p64 address_to a, positive n)
         return crypto_fe_zero_bit(a, n) != 0;
 }
 
-/* The two NIST field primes run on library.c's p256_ and p384_ routines;
-   the C below serves any other modulus, and a crypto_field copied to
-   another address, which is how CHECK_net compares the two. */
+/* The two NIST field primes run on library.c's p256_ and p384_ routines.
+   Any other modulus -- the group orders -- and a crypto_field copied to
+   another address add and subtract in the C below and multiply in
+   library.c's montgomery_multiply, which is how CHECK_net compares the
+   field routines against the generic path. */
 static fn crypto_fe_add(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const crypto_field address_to f)
 {
@@ -1069,125 +1071,6 @@ static fn crypto_fe_sub(p64 address_to d, const p64 address_to a,
         crypto_forget(address_of carry, sizeof carry);
 }
 
-/* Montgomery reduction of the 2n-limb t, which it overwrites: d = t/R mod m.
-   With t below mR the quotient left in the top half is below 2m, so one
-   masked subtraction finishes it.  Every limb is visited whatever the
-   values, and d may be an operand of the product t was made from. */
-static fn crypto_montgomery_reduce(p64 address_to d, p64 address_to t,
-                                   const p64 address_to m, p64 inverse,
-                                   positive n)
-{
-        p64 reduced[CRYPTO_RSA_LIMBS];
-        p64 top = 0;
-        p64 borrow;
-
-        for (positive i = 0; i < n; i++)
-        {
-                p64 q = t[i] * inverse;
-                crypto_wide carry = 0;
-
-                for (positive j = 0; j < n; j++)
-                {
-                        carry += (crypto_wide)t[i + j] + (crypto_wide)q * m[j];
-                        t[i + j] = (p64)carry;
-                        carry >>= 64;
-                }
-                carry += (crypto_wide)t[i + n] + top;
-                t[i + n] = (p64)carry;
-                top = (p64)(carry >> 64);
-        }
-
-        borrow = crypto_fe_subtract_raw(reduced, t + n, m, n);
-        crypto_fe_select(d, t + n, reduced, n, top | (borrow ^ 1));
-        crypto_forget(reduced, n * 8);
-        crypto_forget(address_of top, sizeof top);
-        crypto_forget(address_of borrow, sizeof borrow);
-}
-
-/* d = a*b/R mod m for a and b below m; d may alias either. */
-static fn crypto_montgomery_multiply(p64 address_to d, const p64 address_to a,
-                                     const p64 address_to b,
-                                     const p64 address_to m, p64 inverse,
-                                     positive n)
-{
-        p64 t[CRYPTO_RSA_LIMBS * 2];
-
-        if (n > CRYPTO_RSA_LIMBS)
-                return;
-
-        memory_fill(t, 0, n * 2 * 8);
-        for (positive i = 0; i < n; i++)
-        {
-                crypto_wide carry = 0;
-
-                for (positive j = 0; j < n; j++)
-                {
-                        carry += (crypto_wide)t[i + j] +
-                                 (crypto_wide)a[i] * b[j];
-                        t[i + j] = (p64)carry;
-                        carry >>= 64;
-                }
-                t[i + n] = (p64)carry;
-        }
-
-        crypto_montgomery_reduce(d, t, m, inverse, n);
-        crypto_forget(t, n * 2 * 8);
-}
-
-/* d = a*a/R mod m.  Each cross product is made once and doubled with a
-   shift before the diagonal squares are added, n(n-1)/2 multiplies fewer
-   than the general product. */
-static fn crypto_montgomery_square(p64 address_to d, const p64 address_to a,
-                                   const p64 address_to m, p64 inverse,
-                                   positive n)
-{
-        p64 t[CRYPTO_RSA_LIMBS * 2];
-        crypto_wide carry = 0;
-
-        if (n > CRYPTO_RSA_LIMBS)
-                return;
-
-        memory_fill(t, 0, n * 2 * 8);
-        for (positive i = 0; i < n; i++)
-        {
-                carry = 0;
-                for (positive j = i + 1; j < n; j++)
-                {
-                        carry += (crypto_wide)t[i + j] +
-                                 (crypto_wide)a[i] * a[j];
-                        t[i + j] = (p64)carry;
-                        carry >>= 64;
-                }
-                t[i + n] = (p64)carry;
-        }
-
-        carry = 0;
-        for (positive i = 0; i < n * 2; i++)
-        {
-                p64 limb = t[i];
-
-                t[i] = (limb << 1) | (p64)carry;
-                carry = limb >> 63;
-        }
-
-        carry = 0;
-        for (positive i = 0; i < n; i++)
-        {
-                crypto_wide square = (crypto_wide)a[i] * a[i];
-
-                carry += (crypto_wide)t[i * 2] + (p64)square;
-                t[i * 2] = (p64)carry;
-                carry >>= 64;
-                carry += (crypto_wide)t[i * 2 + 1] + (p64)(square >> 64);
-                t[i * 2 + 1] = (p64)carry;
-                carry >>= 64;
-        }
-
-        crypto_montgomery_reduce(d, t, m, inverse, n);
-        crypto_forget(t, n * 2 * 8);
-        crypto_forget(address_of carry, sizeof carry);
-}
-
 static fn crypto_fe_mul(p64 address_to d, const p64 address_to a,
                         const p64 address_to b, const crypto_field address_to f)
 {
@@ -1196,7 +1079,7 @@ static fn crypto_fe_mul(p64 address_to d, const p64 address_to a,
         else if (f == address_of crypto_p384_field)
                 p384_multiply(d, a, b);
         else
-                crypto_montgomery_multiply(d, a, b, f->m, f->inverse, f->n);
+                montgomery_multiply(d, a, b, f->m, f->inverse, f->n);
 }
 
 static fn crypto_fe_sqr(p64 address_to d, const p64 address_to a,
@@ -1207,7 +1090,7 @@ static fn crypto_fe_sqr(p64 address_to d, const p64 address_to a,
         else if (f == address_of crypto_p384_field)
                 p384_square(d, a);
         else
-                crypto_montgomery_square(d, a, f->m, f->inverse, f->n);
+                montgomery_multiply(d, a, a, f->m, f->inverse, f->n);
 }
 
 /* d = 1/a in Montgomery form, by Fermat: a^(m-2).  The exponent is the
@@ -2091,9 +1974,9 @@ static fn crypto_rsa_modexp(p64 address_to out, p64 address_to base, p64 exp,
         for (at = 0; at < k; at++)
                 crypto_rsa_double(square, mod, n);
         for (at = 0; at < s; at++)
-                crypto_montgomery_square(square, square, mod, inverse, n);
+                montgomery_multiply(square, square, square, mod, inverse, n);
 
-        crypto_montgomery_multiply(b, base, square, mod, inverse, n);
+        montgomery_multiply(b, base, square, mod, inverse, n);
         top = 63;
         while (!((exp >> top) & 1))
                 top--;
@@ -2101,15 +1984,14 @@ static fn crypto_rsa_modexp(p64 address_to out, p64 address_to base, p64 exp,
         while (top)
         {
                 top--;
-                crypto_montgomery_square(result, result, mod, inverse, n);
+                montgomery_multiply(result, result, result, mod, inverse, n);
                 if ((exp >> top) & 1)
-                        crypto_montgomery_multiply(result, result, b, mod,
-                                                   inverse, n);
+                        montgomery_multiply(result, result, b, mod, inverse, n);
         }
 
         memory_fill(unit, 0, n * 8);
         unit[0] = 1;
-        crypto_montgomery_multiply(out, result, unit, mod, inverse, n);
+        montgomery_multiply(out, result, unit, mod, inverse, n);
 }
 
 /* Decode the public operation once for both RSA signature encodings.  The

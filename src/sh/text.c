@@ -14606,11 +14606,12 @@ static fn grep_group_gap(bool grouped, string_address separator,
         address_to split = false;
 }
 
-static fn grep_head(string_address name, p8 separator, positive number, positive offset)
+static fn grep_head(string_address name, positive name_length, p8 separator,
+                    positive number, positive offset, positive column)
 {
         if (grep_names)
         {
-                grep_color_field(name, string_length(name), (string_address) "fn",
+                grep_color_field(name, name_length, (string_address) "fn",
                                  (string_address) "35");
 
                 if (grep_null_name)
@@ -14621,16 +14622,17 @@ static fn grep_head(string_address name, p8 separator, positive number, positive
 
         if (grep_numbered)
         {
-                file_color_span color = grep_color_value((string_address) "ln",
-                                                         (string_address) "32");
+                file_color_span color =
+                    grep_coloring ? grep_color_value((string_address) "ln",
+                                                     (string_address) "32")
+                                  : (file_color_span){null, 0};
 
-                if (grep_coloring && color.length)
+                if (color.length)
                         grep_color_start(color);
 
-                positive_to_padded(text_put, number, grep_tabbed ? grep_column : 1,
-                                   ' ', 0);
+                positive_to_padded(text_put, number, grep_tabbed ? column : 1, ' ', 0);
 
-                if (grep_coloring && color.length)
+                if (color.length)
                         grep_color_stop();
 
                 grep_color_separator(separator);
@@ -14638,16 +14640,17 @@ static fn grep_head(string_address name, p8 separator, positive number, positive
 
         if (grep_offsets)
         {
-                file_color_span color = grep_color_value((string_address) "bn",
-                                                         (string_address) "32");
+                file_color_span color =
+                    grep_coloring ? grep_color_value((string_address) "bn",
+                                                     (string_address) "32")
+                                  : (file_color_span){null, 0};
 
-                if (grep_coloring && color.length)
+                if (color.length)
                         grep_color_start(color);
 
-                positive_to_padded(text_put, offset, grep_tabbed ? grep_column : 1,
-                                   ' ', 0);
+                positive_to_padded(text_put, offset, grep_tabbed ? column : 1, ' ', 0);
 
-                if (grep_coloring && color.length)
+                if (color.length)
                         grep_color_stop();
 
                 grep_color_separator(separator);
@@ -14743,6 +14746,9 @@ static fn grep_color_line(string_address line, positive length, bool context,
 
 static string_address address_to grep_paths;
 static positive grep_path_count;
+// Which of grep_paths are directories for grep_tree to walk when their turn
+// comes; null where every walk has already put its files on the list.
+static p8 address_to grep_path_walks;
 static positive grep_paths_room;
 static bool grep_recursive;
 static bool grep_dereference;
@@ -14926,6 +14932,16 @@ static PURE bool grep_wanted_directory(string_address path, bool operand)
                         return false;
 
         return true;
+}
+
+static bool grep_path_add(string_address path);
+
+static fn grep_path_walk(string_address path)
+{
+        if (grep_path_count < grep_paths_room)
+                grep_path_walks[grep_path_count] = 1;
+
+        (void)grep_path_add(path);
 }
 
 static bool grep_path_add(string_address path)
@@ -15781,7 +15797,7 @@ static fn grep_binary_zap(p8 address_to at, positive size)
 
 // Whether a regular file has a hole anywhere past where reading begins.
 static bool grep_binary_holes(const grep_binary address_to binary,
-                              const file_facts address_to facts)
+                              const file_facts address_to facts, positive handle)
 {
         // Blocks enough for every byte leave no room for one, and asking
         // costs two seeks.
@@ -15789,10 +15805,9 @@ static bool grep_binary_holes(const grep_binary address_to binary,
                 return false;
 
         // SEEK_HOLE, then back with SEEK_SET.
-        bipolar hole = system_call_3(syscall(lseek), text_input.handle,
-                                     binary->origin, 4);
+        bipolar hole = system_call_3(syscall(lseek), handle, binary->origin, 4);
 
-        system_call_3(syscall(lseek), text_input.handle, binary->origin, 0);
+        system_call_3(syscall(lseek), handle, binary->origin, 0);
 
         return hole >= 0 && (positive)hole < facts->size;
 }
@@ -15816,6 +15831,9 @@ typedef struct
         // In a UTF-8 locale, a line holding a byte that is no character is
         // kept from the output, as GNU keeps it.
         bool check_encoding;
+        // Every line handed over whole, however long, as a walk's job hands
+        // them: a string's hit in one is the answer at any length.
+        bool whole;
         // A count of a string in a file nobody looks at for NULs first:
         // since no string holds a NUL, the ends a NUL makes move the count
         // only in a span that counted a line, so that span alone is looked
@@ -15827,6 +15845,11 @@ typedef struct
 {
         rx_match address_to match;
         string_address name;
+        positive name_length;
+        // Where printed lines go: the output a walk's job writes into, or
+        // standard output when null. -T's width goes with them.
+        parallel_output address_to output;
+        positive column;
         // Where the span began, and how far `number` has counted into it.
         string_address span, counted;
         positive matches, number, offset;
@@ -15928,7 +15951,7 @@ static bool grep_line_matches(const grep_plan address_to plan,
 {
         // A line the hunt landed in holds the string; a string that is the
         // whole program is then the whole answer.
-        if (plan->literal_proves && length < TEXT_LINE_MAX)
+        if (plan->literal_proves && (plan->whole || length < TEXT_LINE_MAX))
                 return plan->boundary == REGEX_BOUNDARY_NONE ||
                        grep_literal_bounded(plan, line, length,
                                             (string_address)plan->literal->literal,
@@ -15936,7 +15959,7 @@ static bool grep_line_matches(const grep_plan address_to plan,
                                             plan->literal->literal_anchors);
 
         // The same for a set: the machine would try each branch in turn.
-        if (plan->set && length < TEXT_LINE_MAX)
+        if (plan->set && (plan->whole || length < TEXT_LINE_MAX))
         {
                 const grep_set address_to set = plan->set;
 
@@ -15977,6 +16000,84 @@ static bool grep_line_matches(const grep_plan address_to plan,
         return result == RX_MATCH;
 }
 
+static inline INLINE fn grep_put(parallel_output address_to output,
+                                 address_any data, positive length)
+{
+        if (!output)
+        {
+                text_put(data, length);
+                return;
+        }
+
+        (void)parallel_write(output, data, length);
+}
+
+/*
+        A selected line with what grep_head puts before it, written into a
+        job's output in one piece. No colour: a job prints lines only where
+        none was asked for.
+*/
+static fn grep_line_into(grep_state address_to state, string_address line,
+                         positive length, positive offset)
+{
+        p8 number[64];
+        p8 place[64];
+        positive width = grep_tabbed ? state->column : 1;
+        positive number_digits =
+            grep_numbered ? positive_into_base(number, state->number + 1, 10, false) : 0;
+        positive place_digits =
+            grep_offsets ? positive_into_base(place, offset, 10, false) : 0;
+        positive number_pad = width > number_digits ? width - number_digits : 0;
+        positive place_pad = width > place_digits ? width - place_digits : 0;
+        positive total = length + 1;
+
+        if (grep_names)
+                total += state->name_length + 1;
+
+        if (grep_numbered)
+                total += number_pad + number_digits + 1;
+
+        if (grep_offsets)
+                total += place_pad + place_digits + 1;
+
+        if (grep_tabbed && (grep_names || grep_numbered || grep_offsets))
+                total++;
+
+        p8 address_to at = parallel_reserve(state->output, total);
+
+        if (!at)
+        {
+                state->done = true;
+                return;
+        }
+
+        if (grep_names)
+        {
+                at = memory_copy_end(at, state->name, state->name_length);
+                *at++ = grep_null_name ? '\0' : ':';
+        }
+
+        if (grep_numbered)
+        {
+                memory_fill(at, ' ', number_pad);
+                at = memory_copy_end(at + number_pad, number, number_digits);
+                *at++ = ':';
+        }
+
+        if (grep_offsets)
+        {
+                memory_fill(at, ' ', place_pad);
+                at = memory_copy_end(at + place_pad, place, place_digits);
+                *at++ = ':';
+        }
+
+        if (grep_tabbed && (grep_names || grep_numbered || grep_offsets))
+                *at++ = '\t';
+
+        at = memory_copy_end(at, line, length);
+        *at = text_delimiter;
+}
+
 // One selected line. False once the input needs nothing more.
 static fn grep_line_selected(const grep_plan address_to plan,
                              grep_state address_to state,
@@ -15993,7 +16094,7 @@ static fn grep_line_selected(const grep_plan address_to plan,
 
         if (plan->plain)
         {
-                text_put(line, length + 1);
+                grep_put(state->output, line, length + 1);
                 return;
         }
 
@@ -16011,8 +16112,16 @@ static fn grep_line_selected(const grep_plan address_to plan,
                 return;
         }
 
-        grep_head(state->name, ':', state->number + 1,
-                  state->offset + (positive)(line - state->span));
+        positive offset = state->offset + (positive)(line - state->span);
+
+        if (state->output)
+        {
+                grep_line_into(state, line, length, offset);
+                return;
+        }
+
+        grep_head(state->name, state->name_length, ':', state->number + 1, offset,
+                  state->column);
         text_put(line, length);
         text_put_character(text_delimiter);
 }
@@ -16043,7 +16152,7 @@ static fn grep_lines_selected(const grep_plan address_to plan,
         {
                 // Printing needs only that something was selected, not how
                 // many lines: the count is for -c, which is not here.
-                text_put(run, size);
+                grep_put(state->output, run, size);
                 state->matches++;
                 return;
         }
@@ -16524,6 +16633,1880 @@ static bool grep_hold_valid(positive slot)
         return grep_text_valid((string_address)grep_hold_color, length);
 }
 
+/*
+        What text_grep settles before it reads a file, for grep_one and the
+        walk's jobs, and what the files have come to so far.
+*/
+typedef struct
+{
+        const rx_hints address_to literal;
+        string_address label;
+        string_address separator;
+        positive limit, before, after;
+        file_facts output_facts;
+        bool never, icase, invert, counting, listing, listing_without, quiet,
+             quietly, whole_line, whole_word, only, null_data, literal_proves,
+             literal_set, machine, grouped, discarded, refuse_output;
+        bool found_any, shown_any;
+        // -q has its answer, and nothing more is read.
+        bool quit;
+        b32 trouble;
+} grep_run;
+
+/*
+        One input, read and answered: a named file, standard input when name
+        is null, or a file a walk's job handed back. False when -q has its
+        answer.
+*/
+static bool grep_one(grep_run address_to run, string_address name)
+{
+        const rx_hints address_to literal = run->literal;
+        string_address label = run->label;
+        string_address separator = run->separator;
+        positive limit = run->limit;
+        positive before = run->before;
+        positive after = run->after;
+        bool never = run->never;
+        bool icase = run->icase;
+        bool invert = run->invert;
+        bool counting = run->counting;
+        bool listing = run->listing;
+        bool listing_without = run->listing_without;
+        bool quiet = run->quiet;
+        bool quietly = run->quietly;
+        bool whole_line = run->whole_line;
+        bool whole_word = run->whole_word;
+        bool only = run->only;
+        bool null_data = run->null_data;
+        bool literal_proves = run->literal_proves;
+        bool literal_set = run->literal_set;
+        bool machine = run->machine;
+        bool grouped = run->grouped;
+        bool discarded = run->discarded;
+        bool refuse_output = run->refuse_output;
+        positive matches = 0;
+        positive number = 0;
+        positive offset = 0;
+        positive pending = 0;
+        positive shown = 0;
+        bool split = run->shown_any;
+        bool found_before = run->found_any;
+
+        if (!text_open(name))
+        {
+                run->trouble = 2;
+
+                if (quietly)
+                        text_status = 0;
+
+                return true;
+        }
+
+        file_facts input_facts;
+        bool input_known = text_handle_facts(text_input.handle,
+                                             address_of input_facts);
+
+        // A directory reads as EISDIR rather than as bytes, which is
+        // where GNU's message comes from and why -d skip and -s each
+        // have one to suppress. What is left is a file with no lines
+        // in it: -L names it and -c counts nought for it.
+        bool directory = name && input_known &&
+                         (input_facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        if (directory)
+        {
+                text_close();
+
+                if (grep_skip_directories)
+                        return true;
+
+                if (!quietly)
+                        string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
+
+                run->trouble = 2;
+        }
+
+        // GNU labels standard input, and -H on a pipe is the one way
+        // to see it: the name is a real string everywhere below, so
+        // nothing has to remember that it might not be.
+        // Standard input is named, however it was asked for: a
+        // bare - is the same input as no operand at all.
+        string_address shown_name =
+            name && !string_equals(name, "-")
+                ? name
+                : (label ? label : (string_address) "(standard input)");
+        positive shown_length = string_length(shown_name);
+
+        if (refuse_output && input_known &&
+            (input_facts.mode & MODE_FORMAT) == MODE_FILE &&
+            file_same_identity(address_of input_facts,
+                               address_of run->output_facts))
+        {
+                text_close();
+
+                if (!quietly)
+                        string_diagnostic(&text_diagnostic, 0, shown_name,
+                                          "input file is also the output");
+
+                run->trouble = 2;
+                return true;
+        }
+
+        if (grep_tabbed)
+        {
+                positive size = 0;
+
+                grep_column = 19;
+
+                if (text_regular_size(text_input.handle, address_of size))
+                        grep_column = positive_digits(size);
+        }
+
+        grep_hold_clear();
+
+        /* Only independently opened regular files may stop at a
+           match. Keep stdin (including '-') and pipe/device inputs
+           on their draining path so a producer never gains SIGPIPE
+           merely because the consumer's output was redirected. */
+        bool discard_file = discarded && text_input.opened && input_known &&
+                            (input_facts.mode & MODE_FORMAT) == MODE_FILE;
+
+        /*
+                A NUL makes the file binary as GNU reads it (see
+                grep_binary), in every mode: a count counts the lines
+                its NULs end. -a reads it as text, and -z makes the NUL
+                the end of a line and so no sign of anything. Apart
+                from NULs, in a UTF-8 locale a line holding a byte that
+                is no character is kept from the output, and the file
+                says so the same way.
+        */
+        bool printing = !counting && !listing && !listing_without &&
+                        !quiet && !discard_file;
+        /*
+                What no NUL can change is not looked at for one. No
+                string holds a NUL, so whether a file holds a string
+                with nothing around it is the same question with NULs
+                ending lines or not, and a count of one moves only
+                where a counted line holds a NUL (plan.zap_hits). A
+                print mode, -v, -x, -w, an expression and -I all look.
+        */
+        bool first_mode = quiet || listing || listing_without || discard_file;
+        bool literal_only = (literal_proves || literal_set) && !invert &&
+                            regex_boundary == REGEX_BOUNDARY_NONE;
+        bool zap_hits = counting && !first_mode && literal_only &&
+                        literal_proves && literal->literal_length && !icase &&
+                        limit == TEXT_UNSET &&
+                        grep_binary_files == GREP_BINARY_DETECT &&
+                        !null_data && !directory;
+        bool binary_watch = grep_binary_files != GREP_BINARY_TEXT &&
+                            !null_data && !directory &&
+                            (printing || grep_binary_files == GREP_BINARY_WITHOUT ||
+                             !((first_mode && literal_only) || zap_hits));
+        /*
+                Where a line is printed, or -I may find nothing, which
+                lines come before the region holding the first NUL
+                decides the answer, so regions are checked ahead of the
+                lines in them. A count or a listing that looks reads
+                every NUL as an end of line from the first byte, which
+                is the same answer, since no NUL comes before the first.
+        */
+        bool binary_regions = binary_watch &&
+                              (printing || grep_binary_files == GREP_BINARY_WITHOUT);
+        grep_binary binary = {.from = positive_max, .size = positive_max};
+        // Binary from the first byte, for a file read that way.
+        grep_binary zap_all = {.from = 0, .size = positive_max};
+        bool binary_zapping = binary_watch && !binary_regions;
+        bool binary_tail = false;
+        bool binary_matched = false;
+        positive binary_before = 0;
+        bool unprintable = false;
+        bool check_encoding = grep_utf8 && printing &&
+                              grep_binary_files != GREP_BINARY_TEXT;
+
+        if (binary_regions && input_known &&
+            (input_facts.mode & MODE_FORMAT) == MODE_FILE)
+        {
+                bipolar begun = text_input.opened
+                                    ? 0
+                                    : system_call_3(syscall(lseek),
+                                                    text_input.handle, 0, 1);
+
+                binary.seekable = begun >= 0;
+                binary.origin = begun > 0 ? (positive)begun : 0;
+                binary.size = input_facts.size > binary.origin
+                                  ? input_facts.size - binary.origin
+                                  : 0;
+
+                if (binary.seekable &&
+                    grep_binary_holes(address_of binary, address_of input_facts,
+                                      text_input.handle))
+                        binary.from = 0;
+        }
+
+        // -v wants the lines that do not match and the context flags
+        // want the ones around them, so neither can have any line go
+        // by unread.
+        bool skipping = literal && literal->literal_length && !invert && !before && !after;
+        bool direct_counting = counting && skipping && literal_proves && !whole_line &&
+                               !whole_word && !listing &&
+                               !listing_without && !quiet && !discard_file &&
+                               !binary_watch;
+        bool fused_counting = direct_counting && !icase &&
+                              limit == TEXT_UNSET;
+        bool plain_output = !grouped && !grep_names &&
+                            !grep_numbered && !grep_offsets &&
+                            !grep_coloring && !check_encoding;
+
+        /*
+                Everything without context, -o or colour is a span at a
+                time: the whole lines in the reader, then the one line
+                that runs past its end, carried across the refill by
+                the line reader as before. A count, a listing and a
+                question are spans whatever those flags say, since none
+                of the three changes what they answer -- measured
+                against GNU, colour paints only a listed name.
+        */
+        bool spanning = ((!grouped && !only && !grep_coloring) || !printing) &&
+                        !never && !directory;
+
+        if (spanning)
+        {
+                grep_plan plan = {
+                    .program = address_of regex_current,
+                    .literal = literal->literal_length ? literal : null,
+                    .set = literal_set ? address_of grep_literals : null,
+                    .dfa = machine ? address_of grep_dfa_cache : null,
+                    .limit = limit,
+                    .mode = quiet || listing || listing_without || discard_file
+                                ? GREP_SPAN_FIRST
+                            : counting ? GREP_SPAN_COUNT
+                                       : GREP_SPAN_PRINT,
+                    .boundary = regex_boundary,
+                    .literal_proves = literal_proves,
+                    .icase = icase,
+                    .invert = invert,
+                    .plain = plain_output,
+                    .numbered = grep_numbered,
+                    .check_encoding = check_encoding,
+                    .binary = binary_regions &&
+                                      grep_binary_files != GREP_BINARY_WITHOUT
+                                  ? address_of binary
+                              : binary_zapping || zap_hits ? address_of zap_all
+                                                           : null,
+                    .zap_hits = zap_hits,
+                };
+                grep_state state = {.match = address_of regex_match,
+                                    .name = shown_name,
+                                    .name_length = shown_length,
+                                    .column = grep_column};
+                // Where a selected line's region has to be known before
+                // the line is taken: it is printed, or under -I a
+                // listing or a question stops at it.
+                bool settles = printing ||
+                               (grep_binary_files == GREP_BINARY_WITHOUT && first_mode);
+
+                while (!state.done && text_fill())
+                {
+                        p8 address_to at = text_input.buffer + text_input.position;
+                        positive left = text_input.filled - text_input.position;
+                        bool probing = false;
+                        bool spanned = false;
+
+                        /*
+                                The lines ending before the region that
+                                holds the first NUL are read as text, so
+                                where it matters the span stops at the
+                                last line known to. Lines of a region
+                                not yet seen whole are probed. From the
+                                first line of a region with a NUL, -I
+                                has found nothing in the file and a
+                                print mode asks only whether one more
+                                line is selected.
+                        */
+                        if (binary_regions && !binary_tail)
+                        {
+                                grep_binary_scan(address_of binary, state.offset);
+
+                                positive certain = grep_binary_certain(address_of binary);
+
+                                if (certain < state.offset + left &&
+                                    (binary.from != positive_max || settles))
+                                {
+                                        positive clean = certain > state.offset
+                                                             ? certain - state.offset
+                                                             : 0;
+                                        p8 address_to edge =
+                                            clean ? memory_last_of(at, text_delimiter, clean)
+                                                  : null;
+
+                                        if (edge)
+                                                left = (positive)(edge - at) + 1;
+                                        else if (binary.from == positive_max)
+                                                probing = true;
+                                        else if (grep_binary_files == GREP_BINARY_WITHOUT)
+                                        {
+                                                state.matches = 0;
+                                                break;
+                                        }
+                                        else
+                                        {
+                                                binary_tail = true;
+                                                binary_before = state.matches;
+                                                plan.mode = GREP_SPAN_FIRST;
+                                                binary_zapping = !literal_only;
+                                                plan.binary = literal_only ? null : plan.binary;
+                                        }
+                                }
+                        }
+
+                        if (binary_zapping)
+                                grep_binary_zap(at, left);
+
+                        p8 address_to last = memory_last_of(at, text_delimiter, left);
+                        p8 address_to line = at;
+                        positive size;
+
+                        if (last)
+                        {
+                                size = (positive)(last - at) + 1;
+
+                                if (probing)
+                                {
+                                        if (grep_span_probe(address_of plan, address_of state,
+                                                            line, size))
+                                        {
+                                                grep_binary_settle(
+                                                    address_of binary,
+                                                    grep_binary_certain(address_of binary));
+                                                continue;
+                                        }
+
+                                        spanned = true;
+                                }
+
+                                text_input.position += size;
+                        }
+                        else if (plan.mode != GREP_SPAN_PRINT &&
+                                 grep_binary_files != GREP_BINARY_WITHOUT &&
+                                 (plan.literal_proves || plan.set) &&
+                                 plan.boundary == REGEX_BOUNDARY_NONE)
+                        {
+                                grep_record_stream(address_of plan,
+                                                   address_of state);
+                                continue;
+                        }
+                        else if (binary_watch)
+                        {
+                                positive length;
+
+                                if (!grep_binary_line(binary_regions ? address_of binary
+                                                                     : address_of zap_all,
+                                                      state.offset,
+                                                      address_of line, address_of length))
+                                        break;
+
+                                size = length + 1;
+
+                                // A line the reads it ran into decide, as
+                                // the lines of one read are decided above.
+                                if (binary_regions && !binary_tail)
+                                {
+                                        positive line_end = state.offset + length;
+
+                                        if (settles && !grep_binary_clean(address_of binary, line_end))
+                                        {
+                                                if (grep_span_probe(address_of plan,
+                                                                    address_of state, line, size))
+                                                        grep_binary_settle(address_of binary, line_end);
+                                                else
+                                                        spanned = true;
+                                        }
+
+                                        if (!spanned && binary.from != positive_max &&
+                                            line_end >= binary.from)
+                                        {
+                                                if (grep_binary_files == GREP_BINARY_WITHOUT)
+                                                {
+                                                        state.matches = 0;
+                                                        break;
+                                                }
+
+                                                binary_tail = true;
+                                                binary_before = state.matches;
+                                                plan.mode = GREP_SPAN_FIRST;
+                                                binary_zapping = !literal_only;
+                                                plan.binary = literal_only ? null : plan.binary;
+
+                                                if (binary_zapping)
+                                                        grep_binary_zap(line, length);
+                                        }
+                                }
+                        }
+                        else
+                        {
+                                if (!text_line_view(address_of line,
+                                                    address_of text_line_length,
+                                                    null, 0, null))
+                                        break;
+
+                                size = text_line_length + 1;
+                        }
+
+                        if (!spanned)
+                                grep_span(address_of plan, address_of state, line, size);
+
+                        for (; state.complex; state.complex--)
+                        {
+                                string_diagnostic(&text_diagnostic, 0, null,
+                                                  "regular expression too complex");
+                                text_status = 2;
+                        }
+                }
+
+                matches = state.matches;
+                binary_matched = binary_tail && matches > binary_before;
+                unprintable = state.unprintable;
+                run->found_any = run->found_any || matches;
+
+                if (quiet && matches)
+                {
+                        text_close();
+                        run->quit = true;
+                        return false;
+                }
+        }
+
+        for (; !spanning && !directory;)
+        {
+                // The line skipping stopped on holds the fixed string
+                // already, and asking the machine again would be the
+                // same search a second time -- unless -x or -w put
+                // something around it, or the line was too long to
+                // arrive whole.
+                bool sure = false;
+
+                /*
+                        The fixed, case-sensitive count is one scan,
+                        not one prepared search plus one newline hunt
+                        per matching record. Only whole records are
+                        handed to the library. The trailing partial
+                        one stays for the line reader, which carries
+                        it across a refill.
+                */
+                if (fused_counting && text_fill())
+                {
+                        p8 address_to at = text_input.buffer +
+                                           text_input.position;
+                        positive left = text_input.filled -
+                                        text_input.position;
+                        p8 address_to last = memory_last_of(
+                            at, text_delimiter, left);
+
+                        if (last)
+                        {
+                                positive take = (positive)(last - at) + 1;
+                                positive got =
+                                    memory_count_records_with_prepared(
+                                        at, take, (address_any)literal->literal,
+                                        literal->literal_length,
+                                        literal->literal_anchors.x,
+                                        literal->literal_anchors.y,
+                                        text_delimiter);
+
+                                matches += got;
+                                run->found_any = run->found_any || got;
+                                text_input.position += take;
+                                continue;
+                        }
+                }
+
+                if (direct_counting && grep_skip(null, null, literal, icase))
+                {
+                        if (!grep_discard_line())
+                                break;
+
+                        matches++;
+                        run->found_any = true;
+
+                        if (limit != TEXT_UNSET && matches >= limit)
+                                break;
+
+                        continue;
+                }
+
+                if (skipping && !direct_counting)
+                {
+                        positive jumped = 0;
+
+                        sure = grep_skip(address_of number, address_of jumped, literal, icase) && literal_proves &&
+                               !whole_line && !whole_word;
+                        offset += jumped;
+                }
+
+                p8 address_to line = text_input.buffer + text_input.position;
+                // The rest of a binary file begins where the next line
+                // would, and no line is taken from it here.
+                bool unread = false;
+
+                /*
+                        In a file looked at for NULs, what the reader
+                        holds is looked at before a line is taken from
+                        it, as GNU looks at a buffer before its lines.
+                        From the region with the first NUL on, the rest
+                        is asked about from here without a line read;
+                        before it, a line ends at a NUL once one is
+                        known, so no binary record is taken whole past
+                        the ceiling of a line.
+                */
+                if (binary_watch)
+                {
+                        grep_binary_scan(address_of binary, offset);
+
+                        if (binary.from != positive_max && binary.from <= offset)
+                        {
+                                unread = true;
+                                text_line_length = 0;
+                                text_line_ended = false;
+                        }
+                        else
+                        {
+                                positive left = text_input.filled - text_input.position;
+
+                                if (binary.from != positive_max)
+                                        grep_binary_zap(line, left);
+
+                                p8 address_to stop = memory_first_of(line, text_delimiter, left);
+
+                                if (stop)
+                                {
+                                        text_line_length = (positive)(stop - line);
+                                        text_line_ended = true;
+                                        text_input.position += text_line_length + 1;
+                                }
+                                else
+                                {
+                                        positive length;
+
+                                        if (!grep_binary_line(address_of binary, offset,
+                                                              address_of line, address_of length))
+                                                break;
+                                }
+                        }
+                }
+                else if (!text_line_view(address_of line,
+                                         address_of text_line_length,
+                                         null, 0, null))
+                        break;
+
+                number++;
+
+                positive at = offset;
+
+                offset += text_line_length + (text_line_ended ? 1 : 0);
+
+                bool hit = !never &&
+                           ((sure && text_line_length < TEXT_LINE_MAX) ||
+                            regex_find(REGEX_FIRST, line, text_line_length, 0));
+
+                /*
+                        As the spans do: from the line ending in or
+                        past the region holding the first NUL, -I has
+                        found nothing in the file, and otherwise only
+                        whether a line of the rest is selected is left
+                        to learn, with its NULs ending lines. Only a
+                        line that would be printed -- selected, or
+                        context owed -- has its region read to its end
+                        when that is not yet known; one held for -B is
+                        decided with the line that prints it.
+                */
+                if (binary_watch)
+                {
+                        positive line_end = at + text_line_length;
+
+                        grep_binary_scan(address_of binary, offset);
+
+                        if ((hit != invert || pending) &&
+                            !grep_binary_clean(address_of binary, line_end))
+                                grep_binary_settle(address_of binary, line_end);
+
+                        if (binary.from != positive_max && line_end >= binary.from)
+                        {
+                                if (grep_binary_files == GREP_BINARY_WITHOUT)
+                                {
+                                        matches = 0;
+                                        run->found_any = found_before;
+                                        break;
+                                }
+
+                                grep_plan rest = {
+                                    .program = address_of regex_current,
+                                    .literal = literal->literal_length ? literal : null,
+                                    .set = literal_set ? address_of grep_literals : null,
+                                    .dfa = machine ? address_of grep_dfa_cache : null,
+                                    .limit = TEXT_UNSET,
+                                    .mode = GREP_SPAN_FIRST,
+                                    .boundary = regex_boundary,
+                                    .literal_proves = literal_proves,
+                                    .icase = icase,
+                                    .invert = invert,
+                                };
+                                positive complex = 0;
+
+                                if (!literal_only)
+                                        grep_binary_zap(line, text_line_length);
+
+                                binary_matched =
+                                    never ? invert
+                                          : grep_binary_rest(address_of rest,
+                                                             address_of binary, line,
+                                                             unread ? 0 : text_line_length + 1,
+                                                             offset, !literal_only,
+                                                             address_of complex);
+
+                                for (; complex; complex--)
+                                {
+                                        string_diagnostic(&text_diagnostic, 0, null,
+                                                          "regular expression too complex");
+                                        text_status = 2;
+                                }
+
+                                if (binary_matched)
+                                {
+                                        matches++;
+                                        run->found_any = true;
+                                }
+
+                                break;
+                        }
+                }
+
+                if (hit == invert)
+                {
+                        if (pending)
+                        {
+                                grep_group_gap(grouped, separator,
+                                               address_of split, shown,
+                                               number);
+
+                                if (check_encoding &&
+                                    !grep_text_valid(line, text_line_length))
+                                        unprintable = true;
+                                else
+                                {
+                                        grep_head(shown_name, shown_length, '-', number, at, grep_column);
+                                        grep_color_line(line, text_line_length,
+                                                        true, invert);
+                                        text_put_character(text_delimiter);
+                                }
+
+                                shown = number;
+                                run->shown_any = true;
+                                pending--;
+                        }
+                        else if (before)
+                        {
+                                if (!grep_hold_put(line, text_line_length,
+                                                   number))
+                                {
+                                        run->trouble = 2;
+                                        break;
+                                }
+                        }
+
+                        if (limit != TEXT_UNSET && matches >= limit && !pending)
+                                break;
+
+                        continue;
+                }
+
+                matches++;
+                run->found_any = true;
+
+                if (quiet)
+                {
+                        text_close();
+                        run->quit = true;
+                        return false;
+                }
+
+                if (listing || listing_without || discard_file)
+                        break;
+
+                if (counting)
+                {
+                        if (limit != TEXT_UNSET && matches >= limit)
+                                break;
+
+                        continue;
+                }
+
+                if (before)
+                {
+                        positive want = number > before ? number - before : 1;
+
+                        for (positive k = 0; k < grep_hold_count; k++)
+                        {
+                                positive slot = (grep_hold_first + k) % grep_hold_slots;
+                                positive n = grep_hold_number[slot];
+
+                                if (n < want || (shown && n <= shown))
+                                        continue;
+
+                                grep_group_gap(grouped, separator,
+                                               address_of split, shown,
+                                               n);
+
+                                if (check_encoding && !grep_hold_valid(slot))
+                                        unprintable = true;
+                                else
+                                {
+                                        grep_head(shown_name, shown_length, '-', n, 0, grep_column);
+                                        grep_hold_say(slot, invert);
+                                        text_put_character(text_delimiter);
+                                }
+
+                                shown = n;
+                                run->shown_any = true;
+                        }
+                }
+
+                if (only)
+                {
+                        positive from = 0;
+
+                        while (from <= text_line_length &&
+                               regex_find(REGEX_LONGEST, line, text_line_length, from))
+                        {
+                                positive begin = regex_slots[0];
+                                positive stop = regex_slots[1];
+
+                                if (stop == begin)
+                                {
+                                        // An empty word match leaves its
+                                        // separator for the next search.
+                                        positive next =
+                                            regex_boundary == REGEX_BOUNDARY_WORD &&
+                                                    stop < text_line_length
+                                                ? stop
+                                                : begin + 1;
+
+                                        from = next > from ? next
+                                                           : from + 1;
+                                        continue;
+                                }
+
+                                if (!invert && check_encoding &&
+                                    !grep_text_valid(line + begin, stop - begin))
+                                        unprintable = true;
+                                else if (!invert)
+                                {
+                                        grep_head(shown_name, shown_length, ':', number, at + begin, grep_column);
+                                        grep_color_field(
+                                            line + begin, stop - begin,
+                                            (string_address) "ms",
+                                            (string_address) "01;31");
+                                        text_put_character(text_delimiter);
+                                }
+
+                                from = stop;
+                        }
+
+                        shown = number;
+                        run->shown_any = true;
+                        pending = after;
+
+                        if (limit != TEXT_UNSET && matches >= limit && !pending)
+                                break;
+
+                        continue;
+                }
+
+                if (plain_output)
+                        text_put(line, text_line_length + 1);
+                else
+                {
+                        grep_group_gap(grouped, separator, address_of split,
+                                       shown, number);
+
+                        if (check_encoding &&
+                            !grep_text_valid(line, text_line_length))
+                                unprintable = true;
+                        else
+                        {
+                                grep_head(shown_name, shown_length, ':', number, at, grep_column);
+                                grep_color_line(line, text_line_length, false,
+                                                !invert);
+                                text_put_character(text_delimiter);
+                        }
+                }
+
+                shown = number;
+                run->shown_any = true;
+                pending = after;
+
+                if (limit != TEXT_UNSET && matches >= limit && !pending)
+                        break;
+        }
+
+        text_close();
+
+        // Said whatever -s asks, as GNU says it; -I keeps a line of
+        // no characters from the output without a word.
+        if (binary_matched ||
+            (unprintable && grep_binary_files == GREP_BINARY_DETECT))
+                string_diagnostic(&text_diagnostic, 0, shown_name,
+                                  "binary file matches");
+
+        // GNU puts a group's separator after anything it selected, and a
+        // binary file's line it only said matched is one of those.
+        if (binary_matched)
+                run->shown_any = true;
+
+        if (listing || listing_without)
+        {
+                if ((matches != 0) == listing && !quiet)
+                {
+                        grep_color_field(shown_name,
+                                         shown_length,
+                                         (string_address) "fn",
+                                         (string_address) "35");
+                        text_put_character(grep_null_name ? '\0' : '\n');
+                }
+
+                return true;
+        }
+
+        if (counting && !quiet)
+        {
+                if (grep_names)
+                {
+                        grep_color_field(shown_name,
+                                         shown_length,
+                                         (string_address) "fn",
+                                         (string_address) "35");
+
+                        if (grep_null_name)
+                                text_put_character('\0');
+                        else
+                                grep_color_separator(':');
+                }
+
+                positive_to_string(text_put, matches);
+                text_put_character('\n');
+        }
+
+        return true;
+}
+
+/*
+        grep -r on every core.
+
+        The walk is parallel_tree's. A job reads each directory and makes a
+        child of every directory in it and a leaf of every few files beside
+        one another, and each leaf's files are searched by a job of its own
+        into an output of its own, a record to a file, which the caller
+        writes out in the order the walk a file at a time writes it. A leaf
+        to a file would be a node for the caller to take back for every
+        file, and most files are a few kilobytes: at sixteen threads the
+        taking back was the walk's time. Only a run the span loop answers is walked here -- nothing that
+        paints or surrounds a printed line -- and a leaf that meets anything
+        out of the ordinary drops what it wrote and hands the file back, for
+        the caller to search itself with grep_one: a file that will not open
+        or read, a line longer than a leaf's buffer holds, an expression the
+        machine gives up on, a file that is the output. Every answer that is
+        not the plain one is the serial one, word for word. A line of any
+        length is a leaf's, as it is GNU's: the buffer grows to hold it.
+
+        A leaf reads from the file's first byte whole regions of GNU's binary
+        rule at a time, so every region it has read it has read whole: where
+        the first NUL is is known before any line of its region is taken, and
+        nothing is read ahead or probed.
+*/
+#define GREP_TREE_READ 32768
+#ifndef GREP_BATCH_FILES
+#define GREP_BATCH_FILES 16
+#endif
+#define GREP_LEAF_READ (4 * GREP_BINARY_REGION)
+#define GREP_LEAF_CARRY (TEXT_LINE_MAX / 2)
+#define GREP_LEAF_BYTES (GREP_LEAF_READ + GREP_LEAF_CARRY + 1)
+// A slot's leaf store past this is given back after its leaf.
+#define GREP_LEAF_OUT_KEPT (4 * TEXT_LINE_MAX)
+// Past this a line is the serial reader's to refuse.
+#define GREP_LEAF_LONGEST (256 * TEXT_LINE_MAX)
+#define GREP_MATCH_BYTES                                                       \
+        (sizeof(rx_match) +                                                    \
+         REGEX_SCRATCH_MAX * (sizeof(rx_frame) + sizeof(rx_choice) + sizeof(rx_undo)))
+
+/*
+        A directory, whose path is path, or a leaf, whose path holds its
+        files one after another: where the last name begins, the path's
+        length, and the path with its NUL.
+*/
+typedef struct grep_node
+{
+        struct grep_node address_to parent;
+        // What fstat said of a directory, for -R's loops: known says it did.
+        positive device;
+        positive inode;
+        positive depth;
+        // A directory's path's length, or the bytes of a leaf's files.
+        positive length;
+        positive room;
+        positive count;
+        bool known;
+        bool leaf;
+        p8 path[];
+} grep_node;
+
+#define GREP_ENTRY_HEAD (2 * sizeof(positive))
+
+enum
+{
+        GREP_RECORD_DONE,
+        GREP_RECORD_DEFER,
+        GREP_RECORD_UNREAD,
+};
+
+typedef struct
+{
+        p8 kind;
+        // "binary file matches", said after the bytes.
+        bool message;
+        b32 error;
+        positive matches;
+        // The bytes after this for standard output.
+        positive length;
+        // Where the file is among its leaf's.
+        positive entry;
+} grep_record;
+
+// A slot's own scratch, each written only by the thread in that slot and
+// made the first time that slot needs it.
+typedef struct
+{
+        p8 address_to buffer;
+        positive bytes;
+        rx_match address_to match;
+        rx_dfa_cache address_to dfa;
+        // A leaf's records, written here and handed to the node's output in
+        // one piece: grown once to the slot's largest leaf, where the node's
+        // own would grow and be thrown away a leaf at a time.
+        parallel_output out;
+} grep_slot;
+
+static grep_slot address_to grep_slots;
+static positive grep_slots_room;
+static positive grep_slots_have;
+static positive grep_slots_work_limit;
+
+static bool grep_slots_prepare(void)
+{
+        positive wanted = parallel_slots();
+
+        grep_slots_work_limit = regex_match.work_limit;
+
+        if (wanted <= grep_slots_have)
+                return true;
+
+        if (!array_store_reserve(grep_slots, grep_slots_room, grep_slots_have,
+                                 wanted, 16))
+                return false;
+
+        memory_fill(grep_slots + grep_slots_have, 0,
+                    (wanted - grep_slots_have) * sizeof(grep_slot));
+        grep_slots_have = wanted;
+        return true;
+}
+
+static fn grep_slots_release(void)
+{
+        for (positive slot = 0; slot < grep_slots_have; slot++)
+        {
+                grep_slot address_to scratch = grep_slots + slot;
+
+                if (scratch->buffer)
+                        memory_free(scratch->buffer, scratch->bytes);
+
+                if (scratch->match)
+                        memory_free(scratch->match, GREP_MATCH_BYTES);
+
+                if (scratch->dfa)
+                        memory_free(scratch->dfa, sizeof(rx_dfa_cache));
+
+                if (scratch->out.bytes)
+                        memory_release((address_any address_to)address_of scratch->out.bytes,
+                                       address_of scratch->out.room,
+                                       address_of scratch->out.used, 1);
+
+                memory_fill(scratch, 0, sizeof(grep_slot));
+        }
+}
+
+static address_any grep_slot_memory(positive bytes)
+{
+        address_any made = memory(bytes);
+
+        return made && !system_failed(made) ? made : null;
+}
+
+static grep_slot address_to grep_slot_take(void)
+{
+        positive slot = parallel_slot();
+
+        if (slot >= grep_slots_have)
+                return null;
+
+        grep_slot address_to scratch = grep_slots + slot;
+
+        if (!scratch->buffer)
+        {
+                scratch->buffer = grep_slot_memory(GREP_LEAF_BYTES);
+                scratch->bytes = GREP_LEAF_BYTES;
+        }
+
+        return scratch->buffer ? scratch : null;
+}
+
+// The caller's slot has grep_one's own, which never runs beside its jobs.
+static rx_match address_to grep_slot_match(grep_slot address_to scratch)
+{
+        if (scratch == grep_slots)
+                return address_of regex_match;
+
+        if (!scratch->match)
+        {
+                rx_match address_to match = grep_slot_memory(GREP_MATCH_BYTES);
+
+                if (!match)
+                        return null;
+
+                p8 address_to after = (p8 address_to)(match + 1);
+
+                match->frames = (rx_frame address_to)after;
+                after += REGEX_SCRATCH_MAX * sizeof(rx_frame);
+                match->choices = (rx_choice address_to)after;
+                after += REGEX_SCRATCH_MAX * sizeof(rx_choice);
+                match->undo = (rx_undo address_to)after;
+                match->frame_capacity = REGEX_SCRATCH_MAX;
+                match->choice_capacity = REGEX_SCRATCH_MAX;
+                match->undo_capacity = REGEX_SCRATCH_MAX;
+                match->work_limit = grep_slots_work_limit;
+                scratch->match = match;
+        }
+
+        return scratch->match;
+}
+
+// The machine is one and read only; each slot keeps the states it has built.
+static rx_dfa_cache address_to grep_slot_dfa(grep_slot address_to scratch)
+{
+        if (scratch == grep_slots)
+                return address_of grep_dfa_cache;
+
+        if (!scratch->dfa)
+        {
+                rx_dfa_cache address_to dfa = grep_slot_memory(sizeof(rx_dfa_cache));
+
+                if (!dfa)
+                        return null;
+
+                rx_dfa_attach(dfa, address_of grep_dfa);
+                scratch->dfa = dfa;
+        }
+
+        return scratch->dfa;
+}
+
+/*
+        One more file in the leaf being filled while a directory is read, its
+        path the way grep_path_join makes it: the leaf is made and grown by
+        the job reading, and is the caller's to free once handed over.
+*/
+static bool grep_leaf_add(grep_node address_to directory,
+                          grep_node address_to address_to filling,
+                          string_address name, positive name_length)
+{
+        string_address above = (string_address)directory->path;
+        positive have = directory->length;
+
+        while (have > 1 && above[have - 1] == '/')
+                have--;
+
+        if (have == 1 && above[0] == '/')
+                have = 0;
+
+        positive slash = have || above[0] == '/';
+        positive length = have + slash + name_length;
+        positive need = GREP_ENTRY_HEAD + length + 1;
+        grep_node address_to leaf = address_to filling;
+
+        if (!leaf || leaf->room - leaf->length < need)
+        {
+                positive used = leaf ? leaf->length : 0;
+                positive room = leaf ? leaf->room * 2 : GREP_BATCH_FILES * 96;
+
+                if (room < used + need)
+                        room = used + need;
+
+                grep_node address_to grown = memory_resize(leaf, sizeof(grep_node) + room);
+
+                if (!grown)
+                        return false;
+
+                if (!leaf)
+                {
+                        memory_fill(grown, 0, sizeof(grep_node));
+                        grown->parent = directory;
+                        grown->depth = directory->depth + 1;
+                        grown->leaf = true;
+                }
+
+                grown->room = room;
+                leaf = address_to filling = grown;
+        }
+
+        p8 address_to at = leaf->path + leaf->length;
+        positive name_at = have + slash;
+
+        memory_copy(at, address_of name_at, sizeof(positive));
+        memory_copy(at + sizeof(positive), address_of length, sizeof(positive));
+        at += GREP_ENTRY_HEAD;
+        memory_copy(at, above, have);
+
+        if (slash)
+                at[have] = '/';
+
+        memory_copy(at + have + slash, name, name_length);
+        at[length] = '\0';
+        leaf->length += need;
+        leaf->count++;
+        return true;
+}
+
+// A child's path the way grep_path_join makes it.
+static grep_node address_to grep_node_new(grep_node address_to parent,
+                                         string_address name,
+                                         positive name_length)
+{
+        string_address above = (string_address)parent->path;
+        positive have = parent->length;
+
+        while (have > 1 && above[have - 1] == '/')
+                have--;
+
+        if (have == 1 && above[0] == '/')
+                have = 0;
+
+        positive slash = have || above[0] == '/';
+        positive length = have + slash + name_length;
+        grep_node address_to node = memory_take(sizeof(grep_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(grep_node));
+        node->parent = parent;
+        node->depth = parent->depth + 1;
+        node->length = length;
+        memory_copy(node->path, above, have);
+
+        if (slash)
+                node->path[have] = '/';
+
+        memory_copy(node->path + have + slash, name, name_length);
+        node->path[length] = '\0';
+        return node;
+}
+
+// A name and its colour, as grep_color_field writes them.
+static fn grep_field_into(parallel_output address_to output, address_any data,
+                          positive length, string_address key,
+                          string_address fallback)
+{
+        file_color_span color = grep_coloring ? grep_color_value(key, fallback)
+                                              : (file_color_span){null, 0};
+
+        if (color.length)
+        {
+                (void)parallel_write(output, (address_any) "\033[", 2);
+                (void)parallel_write(output, (address_any)color.text, color.length);
+                (void)parallel_write(output, (address_any) "m", 1);
+
+                if (!grep_color_ne)
+                        (void)parallel_write(output, (address_any) "\033[K", 3);
+        }
+
+        (void)parallel_write(output, data, length);
+
+        if (color.length)
+        {
+                (void)parallel_write(output, (address_any) "\033[m", 3);
+
+                if (!grep_color_ne)
+                        (void)parallel_write(output, (address_any) "\033[K", 3);
+        }
+}
+
+/*
+        One file of the walk, as grep_one reads a regular file it opened
+        itself, from its span loop to its last word. False hands it back.
+*/
+static bool grep_leaf_file(grep_run address_to run, string_address path,
+                           positive path_length,
+                           grep_slot address_to scratch, positive handle,
+                           parallel_output address_to output,
+                           grep_record address_to record)
+{
+        file_facts facts;
+
+        if (!text_handle_facts(handle, address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_FILE ||
+            (run->refuse_output &&
+             file_same_identity(address_of facts, address_of run->output_facts)))
+                return false;
+
+        const rx_hints address_to literal = run->literal;
+        bool counting = run->counting;
+        bool listing = run->listing;
+        bool listing_without = run->listing_without;
+        bool quiet = run->quiet;
+        bool invert = run->invert;
+        positive limit = run->limit;
+        bool discard_file = run->discarded;
+        bool printing = !counting && !listing && !listing_without && !quiet &&
+                        !discard_file;
+        bool first_mode = quiet || listing || listing_without || discard_file;
+        bool literal_only = (run->literal_proves || run->literal_set) && !invert &&
+                            regex_boundary == REGEX_BOUNDARY_NONE;
+        bool zap_hits = counting && !first_mode && literal_only &&
+                        run->literal_proves && literal->literal_length &&
+                        !run->icase && limit == TEXT_UNSET &&
+                        grep_binary_files == GREP_BINARY_DETECT && !run->null_data;
+        bool binary_watch = grep_binary_files != GREP_BINARY_TEXT &&
+                            !run->null_data &&
+                            (printing || grep_binary_files == GREP_BINARY_WITHOUT ||
+                             !((first_mode && literal_only) || zap_hits));
+        bool binary_regions = binary_watch &&
+                              (printing || grep_binary_files == GREP_BINARY_WITHOUT);
+        bool check_encoding = grep_utf8 && printing &&
+                              grep_binary_files != GREP_BINARY_TEXT;
+        grep_binary binary = {.from = positive_max, .size = facts.size,
+                              .seekable = true};
+        positive column = 19;
+        positive size = 0;
+
+        if (grep_tabbed && text_regular_size(handle, address_of size))
+                column = positive_digits(size);
+
+        if (binary_regions &&
+            grep_binary_holes(address_of binary, address_of facts, handle))
+                binary.from = 0;
+
+        grep_plan plan = {
+            .program = address_of regex_current,
+            .literal = literal->literal_length ? literal : null,
+            .set = run->literal_set ? address_of grep_literals : null,
+            .dfa = run->machine ? grep_slot_dfa(scratch) : null,
+            .limit = limit,
+            .mode = first_mode ? GREP_SPAN_FIRST
+                  : counting   ? GREP_SPAN_COUNT
+                               : GREP_SPAN_PRINT,
+            .boundary = regex_boundary,
+            .literal_proves = run->literal_proves,
+            .icase = run->icase,
+            .invert = invert,
+            .plain = !run->grouped && !grep_names && !grep_numbered &&
+                     !grep_offsets && !grep_coloring && !check_encoding,
+            .numbered = grep_numbered,
+            .check_encoding = check_encoding,
+            .whole = true,
+            .zap_hits = zap_hits,
+        };
+        // A string or a set that is the whole program never asks the graph.
+        bool graph = !run->literal_proves && !run->literal_set;
+        grep_state state = {
+            .match = graph ? grep_slot_match(scratch) : null,
+            .name = path,
+            .name_length = path_length,
+            .output = output,
+            .column = column,
+        };
+
+        if ((run->machine && !plan.dfa) || (graph && !state.match))
+                return false;
+
+        positive longest = plan.literal ? plan.literal->literal_length : 0;
+
+        for (positive i = 0; plan.set && i < plan.set->count; i++)
+                if (plan.set->size[i] > longest)
+                        longest = plan.set->size[i];
+
+        // Where the rest of a binary file is only whether it holds a string,
+        // what is kept between reads is where one could cross them.
+        positive window = longest ? longest - 1 : 0;
+        p8 address_to buffer = scratch->buffer;
+        positive kept = 0;
+        positive read_to = 0;
+        positive tail_before = 0;
+        bool ended = false;
+        bool tail = false;
+        bool zapping = binary_watch && !binary_regions;
+
+        while (!state.done && !ended)
+        {
+                positive got = 0;
+
+                // Room for a read beside the line begun before it, and its end.
+                if (scratch->bytes < kept + GREP_LEAF_READ + 1)
+                {
+                        positive room = scratch->bytes * 2;
+                        p8 address_to grown;
+
+                        if (room < kept + GREP_LEAF_READ + 1)
+                                room = kept + GREP_LEAF_READ + 1;
+
+                        if (kept > GREP_LEAF_LONGEST || !(grown = grep_slot_memory(room)))
+                                return false;
+
+                        memory_copy(grown, buffer, kept);
+                        memory_free(buffer, scratch->bytes);
+                        scratch->buffer = buffer = grown;
+                        scratch->bytes = room;
+                }
+
+                // Every read but the last ends on the edge of a region.
+                while (got < GREP_LEAF_READ)
+                {
+                        bipolar count = system_read_retry(handle, buffer + kept + got,
+                                                          GREP_LEAF_READ - got);
+
+                        if (count < 0)
+                                return false;
+
+                        got += (positive)count;
+
+                        // Short of what was asked at the size fstat gave is the
+                        // end, without a read more to hear nothing.
+                        if (!count || (got < GREP_LEAF_READ && facts.size &&
+                                       read_to + got >= facts.size))
+                        {
+                                ended = true;
+                                break;
+                        }
+                }
+
+                positive start = read_to - kept;
+                positive fill = kept + got;
+
+                if (binary_regions && binary.from == positive_max && got)
+                {
+                        p8 address_to zero = memory_first_of(buffer + kept, 0, got);
+
+                        if (zero)
+                        {
+                                positive nul = read_to + (positive)(zero - (buffer + kept));
+
+                                binary.from = nul - nul % GREP_BINARY_REGION;
+                        }
+                }
+
+                read_to += got;
+
+                if (zapping)
+                        grep_binary_zap(buffer + kept, got);
+
+                if (tail && literal_only)
+                {
+                        if (grep_bytes_hold(address_of plan, (string_address)buffer, fill))
+                        {
+                                grep_line_selected(address_of plan, address_of state, null, 0);
+                                break;
+                        }
+
+                        kept = fill < window ? fill : window;
+                        memory_copy(buffer, buffer + fill - kept, kept);
+                        continue;
+                }
+
+                p8 address_to last = fill ? memory_last_of(buffer, text_delimiter, fill) : null;
+                positive whole = last ? (positive)(last - buffer) + 1 : 0;
+
+                // The last line has no end, and is given one as the line
+                // reader gives it.
+                if (ended && whole < fill)
+                {
+                        buffer[fill] = text_delimiter;
+                        whole = fill + 1;
+                }
+
+                positive taken = 0;
+
+                if (!tail)
+                {
+                        positive text = whole;
+
+                        // Only lines ending before the region with the first NUL.
+                        if (binary.from != positive_max && binary.from < start + whole)
+                        {
+                                positive clean = binary.from > start ? binary.from - start : 0;
+                                p8 address_to edge =
+                                    clean ? memory_last_of(buffer, text_delimiter, clean) : null;
+
+                                text = edge ? (positive)(edge - buffer) + 1 : 0;
+                        }
+
+                        if (text)
+                                grep_span(address_of plan, address_of state,
+                                          (string_address)buffer, text);
+
+                        taken = text;
+
+                        if (!state.done && binary.from != positive_max &&
+                            binary.from < start + fill)
+                        {
+                                if (grep_binary_files == GREP_BINARY_WITHOUT)
+                                {
+                                        state.matches = 0;
+                                        break;
+                                }
+
+                                tail = true;
+                                tail_before = state.matches;
+                                plan.mode = GREP_SPAN_FIRST;
+
+                                if (literal_only)
+                                {
+                                        if (grep_bytes_hold(address_of plan,
+                                                            (string_address)buffer + taken,
+                                                            fill - taken))
+                                        {
+                                                grep_line_selected(address_of plan,
+                                                                   address_of state, null, 0);
+                                                break;
+                                        }
+
+                                        if (ended)
+                                                break;
+
+                                        kept = fill - taken < window ? fill - taken : window;
+                                        memory_copy(buffer, buffer + fill - kept, kept);
+                                        continue;
+                                }
+
+                                zapping = true;
+                                grep_binary_zap(buffer + taken, fill - taken);
+
+                                if (!ended)
+                                {
+                                        last = memory_last_of(buffer + taken, text_delimiter,
+                                                              fill - taken);
+                                        whole = last ? (positive)(last - buffer) + 1 : taken;
+                                }
+                        }
+                }
+
+                if (tail && !state.done && whole > taken)
+                        grep_span(address_of plan, address_of state,
+                                  (string_address)buffer + taken, whole - taken);
+
+                if (ended || state.done)
+                        break;
+
+                kept = fill - whole;
+                memory_copy(buffer, buffer + whole, kept);
+        }
+
+        if (state.complex)
+                return false;
+
+        record->matches = state.matches;
+        record->message = (tail && state.matches > tail_before) ||
+                          (state.unprintable &&
+                           grep_binary_files == GREP_BINARY_DETECT);
+
+        if (listing || listing_without)
+        {
+                if ((state.matches != 0) == listing && !quiet)
+                {
+                        p8 ending = grep_null_name ? '\0' : '\n';
+
+                        grep_field_into(output, path, path_length,
+                                        (string_address) "fn", (string_address) "35");
+                        (void)parallel_write(output, address_of ending, 1);
+                }
+
+                return true;
+        }
+
+        if (counting && !quiet)
+        {
+                p8 digits[64];
+
+                if (grep_names)
+                {
+                        grep_field_into(output, path, path_length,
+                                        (string_address) "fn", (string_address) "35");
+
+                        if (grep_null_name)
+                                (void)parallel_write(output, (address_any) "", 1);
+                        else
+                                grep_field_into(output, (address_any) ":", 1,
+                                                (string_address) "se",
+                                                (string_address) "36");
+                }
+
+                positive count = positive_into_base(digits, state.matches, 10, false);
+
+                digits[count] = '\n';
+                (void)parallel_write(output, digits, count + 1);
+        }
+
+        return true;
+}
+
+static fn grep_tree_leaf(address_any context, address_any node_address,
+                         bipolar directory, parallel_output address_to output)
+{
+        grep_node address_to leaf = node_address;
+        grep_slot address_to scratch = directory >= 0 ? grep_slot_take() : null;
+        parallel_output address_to into = scratch ? address_of scratch->out : output;
+
+        if (scratch)
+                scratch->out.used = 0;
+
+        for (positive entry = 0; entry < leaf->length;)
+        {
+                positive name_at;
+                positive length;
+                positive begin = into->used;
+                string_address path = (string_address)leaf->path + entry + GREP_ENTRY_HEAD;
+                grep_record record = {.kind = GREP_RECORD_DEFER, .entry = entry};
+
+                memory_copy(address_of name_at, leaf->path + entry, sizeof(positive));
+                memory_copy(address_of length, leaf->path + entry + sizeof(positive),
+                            sizeof(positive));
+                entry += GREP_ENTRY_HEAD + length + 1;
+
+                if (!parallel_reserve(into, sizeof(record)))
+                        return;
+
+                bipolar handle = scratch && scratch->buffer
+                                     ? system_open_at(directory, path + name_at,
+                                                      FILE_READ | O_CLOEXEC)
+                                     : -1;
+
+                if (handle >= 0)
+                {
+                        if (grep_leaf_file(context, path, length, scratch, (positive)handle,
+                                           into, address_of record))
+                                record.kind = GREP_RECORD_DONE;
+
+                        system_close(handle);
+                }
+
+                // Handed back whole: the caller reads it again from its first byte.
+                if (record.kind == GREP_RECORD_DEFER)
+                {
+                        into->used = begin + sizeof(record);
+                        record.matches = 0;
+                        record.message = false;
+                }
+
+                record.length = into->used - begin - sizeof(record);
+                memory_copy(into->bytes + begin, address_of record, sizeof(record));
+
+                // A buffer grown for one long line goes back to its size, so a
+                // slot holds only what the file it is reading needs.
+                if (scratch && scratch->bytes > GREP_LEAF_BYTES)
+                {
+                        memory_free(scratch->buffer, scratch->bytes);
+                        scratch->buffer = grep_slot_memory(GREP_LEAF_BYTES);
+                        scratch->bytes = scratch->buffer ? GREP_LEAF_BYTES : 0;
+                }
+        }
+
+        if (scratch && scratch->out.used)
+                (void)parallel_write(output, scratch->out.bytes, scratch->out.used);
+
+        // A store grown past a few megabytes by one leaf goes back, as the
+        // read buffer does, so sixteen slots do not each keep their largest.
+        if (scratch && scratch->out.room > GREP_LEAF_OUT_KEPT)
+                memory_release((address_any address_to)address_of scratch->out.bytes,
+                               address_of scratch->out.room, address_of scratch->out.used, 1);
+}
+
+// The leaf being filled, handed to the pool in its place among the children.
+static bool grep_leaf_hand(parallel_output address_to output,
+                           grep_node address_to address_to filling)
+{
+        if (!parallel_leaf(output, grep_tree_leaf, address_to filling))
+                return false;
+
+        address_to filling = null;
+        return true;
+}
+
+static bool grep_tree_record(parallel_output address_to output, p8 kind, b32 error)
+{
+        grep_record record;
+
+        memory_fill(address_of record, 0, sizeof(record));
+        record.kind = kind;
+        record.error = error;
+        return parallel_write(output, address_of record, sizeof(record));
+}
+
+static fn grep_tree_enter(address_any context, address_any node_address,
+                          bipolar directory, parallel_output address_to output)
+{
+        grep_node address_to node = node_address;
+        p8 entries[GREP_TREE_READ];
+        positive have = 0;
+        positive at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to entry;
+        file_facts facts;
+        grep_node address_to filling = null;
+
+        (void)context;
+
+        // A directory that will not open is searched as a file where it
+        // falls, and the read that fails the same way says why.
+        if (directory < 0)
+        {
+                (void)grep_tree_record(output, GREP_RECORD_DEFER, 0);
+                return;
+        }
+
+        if (text_handle_facts((positive)directory, address_of facts))
+        {
+                positive device = file_device_key(facts.device_major,
+                                                  facts.device_minor);
+
+                for (grep_node address_to up = node->parent; up; up = up->parent)
+                        if (up->known && up->device == device && up->inode == facts.inode)
+                                return;
+
+                node->device = device;
+                node->inode = facts.inode;
+                node->known = true;
+        }
+
+        while ((entry = file_directory_next(directory, entries, GREP_TREE_READ,
+                                            address_of have, address_of at,
+                                            address_of error)))
+        {
+                string_address name = (string_address)entry->d_name;
+                p8 kind = entry->d_type;
+
+                if (file_is_dot(name))
+                        continue;
+
+                if (kind == DIRENT_LINK && !grep_dereference)
+                        continue;
+
+                if (kind == DIRENT_UNKNOWN || kind == DIRENT_LINK)
+                {
+                        file_facts look;
+
+                        if (!file_look(directory, name, 0, address_of look))
+                                continue;
+
+                        p32 mode = look.mode & MODE_FORMAT;
+
+                        kind = mode == MODE_DIRECTORY ? DIRENT_DIRECTORY
+                             : mode == MODE_FILE      ? DIRENT_FILE
+                                                      : DIRENT_OTHER;
+                }
+
+                bool below = kind == DIRENT_DIRECTORY;
+
+                // Too deep is nothing more down there, and a device is not read.
+                if (below ? node->depth >= GREP_DEPTH_MAX ||
+                                !grep_wanted_directory(name, false)
+                          : kind != DIRENT_FILE || !grep_wanted_name(name, false))
+                        continue;
+
+                positive name_length = string_length(name);
+
+                if (!below)
+                {
+                        if (!grep_leaf_add(node, address_of filling, name, name_length) ||
+                            (filling->count >= GREP_BATCH_FILES &&
+                             !grep_leaf_hand(output, address_of filling)))
+                                break;
+
+                        continue;
+                }
+
+                // A directory comes after the files read before it.
+                if (filling && !grep_leaf_hand(output, address_of filling))
+                        break;
+
+                grep_node address_to child = grep_node_new(node, name, name_length);
+
+                if (!child || !parallel_child(output, name, child))
+                {
+                        if (child)
+                                memory_give(child);
+
+                        break;
+                }
+        }
+
+        // Out of room, which ends the walk; the leaf not handed over is ours.
+        if (entry || (filling && !grep_leaf_hand(output, address_of filling)))
+        {
+                if (filling)
+                        memory_give(filling);
+
+                parallel_stop();
+                return;
+        }
+
+        if (error < 0)
+                (void)grep_tree_record(output, GREP_RECORD_UNREAD, (b32)error);
+}
+
+static bool grep_tree_sink(address_any context, address_any node_address,
+                           address_any data, positive length, bool finished)
+{
+        grep_run address_to run = context;
+        grep_node address_to node = node_address;
+        p8 address_to bytes = data;
+
+        /*
+                The node's output was cut by the job's thread and is given
+                back on this one, where it would pile up on this thread's
+                shelves and leave the jobs cutting fresh memory: the walk's
+                peak grew with its whole output. Handed to the depot at
+                every node, the jobs take it back.
+        */
+        if (finished)
+        {
+                memory_give(node);
+                allocator_shelves_share();
+                return true;
+        }
+
+        for (positive at = 0; at < length;)
+        {
+                grep_record record;
+
+                memory_copy(address_of record, bytes + at, sizeof(record));
+
+                p8 address_to said = bytes + at + sizeof(record);
+                string_address path =
+                    node->leaf ? (string_address)node->path + record.entry + GREP_ENTRY_HEAD
+                               : (string_address)node->path;
+
+                at += sizeof(record) + record.length;
+
+                if (record.kind == GREP_RECORD_DEFER)
+                {
+                        if (!grep_one(run, path))
+                                return false;
+
+                        continue;
+                }
+
+                if (record.kind == GREP_RECORD_UNREAD)
+                {
+                        if (!run->quietly)
+                                string_diagnostic(&text_diagnostic, 0,
+                                                  (string_address)node->path,
+                                                  file_reason(record.error));
+
+                        run->trouble = 2;
+                        continue;
+                }
+
+                if (record.length)
+                        text_put(said, record.length);
+
+                if (record.message)
+                        string_diagnostic(&text_diagnostic, 0, path, "binary file matches");
+
+                if (record.matches)
+                {
+                        run->found_any = true;
+
+                        if (run->quiet)
+                        {
+                                run->quit = true;
+                                return false;
+                        }
+                }
+        }
+
+        return true;
+}
+
+// GNU gives up the whole run when it runs out, and says so.
+static bool grep_exhausted(grep_run address_to run)
+{
+        string_diagnostic(&text_diagnostic, 0, null, "memory exhausted");
+        run->trouble = 2;
+        return false;
+}
+
+// One directory named, or none, walked on the pool. False when the run is over.
+static bool grep_tree(grep_run address_to run, string_address path)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path[0] ? path : (string_address) ".",
+                                        FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        if (handle < 0 && path[0])
+                return grep_one(run, path);
+
+        if (handle < 0)
+        {
+                if (!run->quietly)
+                        string_diagnostic(&text_diagnostic, 0, path, file_reason(handle));
+
+                run->trouble = 2;
+                return true;
+        }
+
+        positive length = string_length(path);
+        grep_node address_to root = memory_take(sizeof(grep_node) + length + 1);
+
+        if (!root || !grep_slots_prepare())
+        {
+                if (root)
+                        memory_give(root);
+
+                system_close(handle);
+                return grep_exhausted(run);
+        }
+
+        memory_fill(root, 0, sizeof(grep_node));
+        root->length = length;
+        memory_copy(root->path, path, length + 1);
+
+        // The locale the globs read is asked here once, so no job is the
+        // first to ask and write down the answer; a match declared pure has
+        // its answer kept, or the call would not be made.
+        if (grep_file_globs || grep_exclude_dir)
+        {
+                volatile bool asked = shell_match((string_address) "?",
+                                                  (string_address) "\xc3\xa9");
+
+                (void)asked;
+        }
+
+        bool whole = parallel_tree(grep_tree_enter, null, grep_tree_sink, run, handle,
+                                   root, 0);
+
+        system_close(handle);
+        grep_slots_release();
+
+        if (!whole && !run->quit)
+                return grep_exhausted(run);
+
+        return whole;
+}
+
 static b32 text_grep()
 {
         file_taking taking = {
@@ -16561,6 +18544,7 @@ static b32 text_grep()
         grep_utf8 = text_locale_utf8();
         grep_walk_halted = false;
         grep_path_count = 0;
+        grep_path_walks = null;
         grep_expanded = false;
         grep_skip_directories = false;
         grep_coloring = false;
@@ -16784,22 +18768,33 @@ static b32 text_grep()
                 nothing of the lines is written -- -c, -l, -L and -q -- or at
                 most one line can be, which is -m 1.
         */
-        file_facts output_facts;
+        file_facts output_facts = {0};
         bool output_regular = text_handle_facts(text_out_handle,
                                                  address_of output_facts) &&
                               (output_facts.mode & MODE_FORMAT) == MODE_FILE;
         bool refuse_output = output_regular && !counting && !quiet &&
                              !listing && !listing_without && !limit_negative &&
                              limit > 1;
-        bool found_any = false;
-        bool shown_any = false;
         b32 trouble = 0;
+
+        /*
+                Where every file a walk finds is read the way the span loop
+                reads it, the walk is grep_tree's, on every core, and each
+                directory named waits its turn on the list whole. Context, -o
+                and colour on a printed line are the line loop's, and that walk
+                is the one before it, a file at a time.
+        */
+        bool walk_printing = !counting && !listing && !listing_without && !quiet &&
+                             !discarded;
+        bool threaded = grep_recursive && !never &&
+                        ((!grouped && !only && !grep_coloring) || !walk_printing);
 
         // Room for what was named, and for a walk's worth of names when -r
         // asked for one: nothing at all when the input is standard input,
         // which is the arena never being touched by the usual grep.
-        grep_paths_room = grep_recursive ? GREP_PATHS_MAX
-                                         : (positive)text_files_count;
+        grep_paths_room = grep_recursive && !threaded
+                              ? GREP_PATHS_MAX
+                              : (positive)text_files_count + (grep_recursive ? 1 : 0);
 
         if (grep_paths_room)
         {
@@ -16810,10 +18805,23 @@ static b32 text_grep()
                         return text_done(2);
         }
 
+        if (threaded)
+        {
+                grep_path_walks = (p8 address_to)utility_arena_take(grep_paths_room);
+
+                if (!grep_path_walks)
+                        return text_done(2);
+
+                memory_fill(grep_path_walks, 0, grep_paths_room);
+        }
+
         if (grep_recursive && !text_files_count)
         {
                 grep_expanded = true;
-                if (!grep_walk((string_address) "", 0, quietly))
+
+                if (threaded)
+                        grep_path_walk((string_address) "");
+                else if (!grep_walk((string_address) "", 0, quietly))
                         trouble = 2;
         }
 
@@ -16871,8 +18879,12 @@ static b32 text_grep()
                 if (grep_recursive && directory)
                 {
                         grep_expanded = true;
-                        if (!grep_walk(name, 0, quietly))
+
+                        if (threaded)
+                                grep_path_walk(name);
+                        else if (!grep_walk(name, 0, quietly))
                                 trouble = 2;
+
                         continue;
                 }
 
@@ -16886,816 +18898,52 @@ static b32 text_grep()
         // decided which files it is going to read.
         grep_names = (text_files_count > 1 || with_names || grep_expanded) && !no_names;
 
+        grep_run run = {
+            .literal = literal,
+            .label = label,
+            .separator = separator,
+            .limit = limit,
+            .before = before,
+            .after = after,
+            .output_facts = output_facts,
+            .never = never,
+            .icase = icase,
+            .invert = invert,
+            .counting = counting,
+            .listing = listing,
+            .listing_without = listing_without,
+            .quiet = quiet,
+            .quietly = quietly,
+            .whole_line = whole_line,
+            .whole_word = whole_word,
+            .only = only,
+            .null_data = null_data,
+            .literal_proves = literal_proves,
+            .literal_set = literal_set,
+            .machine = machine,
+            .grouped = grouped,
+            .discarded = discarded,
+            .refuse_output = refuse_output,
+            .trouble = trouble,
+        };
+
         for (b32 i = 0; i < inputs; i++)
         {
                 string_address name = from_stdin ? null : grep_paths[i];
-                positive matches = 0;
-                positive number = 0;
-                positive offset = 0;
-                positive pending = 0;
-                positive shown = 0;
-                bool split = shown_any;
-                bool found_before = found_any;
-
-                if (!text_open(name))
-                {
-                        trouble = 2;
-
-                        if (quietly)
-                                text_status = 0;
-
-                        continue;
-                }
-
-                file_facts input_facts;
-                bool input_known = text_handle_facts(text_input.handle,
-                                                     address_of input_facts);
-
-                // A directory reads as EISDIR rather than as bytes, which is
-                // where GNU's message comes from and why -d skip and -s each
-                // have one to suppress. What is left is a file with no lines
-                // in it: -L names it and -c counts nought for it.
-                bool directory = name && input_known &&
-                                 (input_facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
-
-                if (directory)
-                {
-                        text_close();
-
-                        if (grep_skip_directories)
-                                continue;
-
-                        if (!quietly)
-                                string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
-
-                        trouble = 2;
-                }
-
-                // GNU labels standard input, and -H on a pipe is the one way
-                // to see it: the name is a real string everywhere below, so
-                // nothing has to remember that it might not be.
-                // Standard input is named, however it was asked for: a
-                // bare - is the same input as no operand at all.
-                string_address shown_name =
-                    name && !string_equals(name, "-")
-                        ? name
-                        : (label ? label : (string_address) "(standard input)");
-
-                if (refuse_output && input_known &&
-                    (input_facts.mode & MODE_FORMAT) == MODE_FILE &&
-                    file_same_identity(address_of input_facts,
-                                       address_of output_facts))
-                {
-                        text_close();
-
-                        if (!quietly)
-                                string_diagnostic(&text_diagnostic, 0, shown_name,
-                                                  "input file is also the output");
-
-                        trouble = 2;
-                        continue;
-                }
-
-                if (grep_tabbed)
-                {
-                        positive size = 0;
-
-                        grep_column = 19;
-
-                        if (text_regular_size(text_input.handle, address_of size))
-                                grep_column = positive_digits(size);
-                }
-
-                grep_hold_clear();
-
-                /* Only independently opened regular files may stop at a
-                   match. Keep stdin (including '-') and pipe/device inputs
-                   on their draining path so a producer never gains SIGPIPE
-                   merely because the consumer's output was redirected. */
-                bool discard_file = discarded && text_input.opened && input_known &&
-                                    (input_facts.mode & MODE_FORMAT) == MODE_FILE;
-
-                /*
-                        A NUL makes the file binary as GNU reads it (see
-                        grep_binary), in every mode: a count counts the lines
-                        its NULs end. -a reads it as text, and -z makes the NUL
-                        the end of a line and so no sign of anything. Apart
-                        from NULs, in a UTF-8 locale a line holding a byte that
-                        is no character is kept from the output, and the file
-                        says so the same way.
-                */
-                bool printing = !counting && !listing && !listing_without &&
-                                !quiet && !discard_file;
-                /*
-                        What no NUL can change is not looked at for one. No
-                        string holds a NUL, so whether a file holds a string
-                        with nothing around it is the same question with NULs
-                        ending lines or not, and a count of one moves only
-                        where a counted line holds a NUL (plan.zap_hits). A
-                        print mode, -v, -x, -w, an expression and -I all look.
-                */
-                bool first_mode = quiet || listing || listing_without || discard_file;
-                bool literal_only = (literal_proves || literal_set) && !invert &&
-                                    regex_boundary == REGEX_BOUNDARY_NONE;
-                bool zap_hits = counting && !first_mode && literal_only &&
-                                literal_proves && literal->literal_length && !icase &&
-                                limit == TEXT_UNSET &&
-                                grep_binary_files == GREP_BINARY_DETECT &&
-                                !null_data && !directory;
-                bool binary_watch = grep_binary_files != GREP_BINARY_TEXT &&
-                                    !null_data && !directory &&
-                                    (printing || grep_binary_files == GREP_BINARY_WITHOUT ||
-                                     !((first_mode && literal_only) || zap_hits));
-                /*
-                        Where a line is printed, or -I may find nothing, which
-                        lines come before the region holding the first NUL
-                        decides the answer, so regions are checked ahead of the
-                        lines in them. A count or a listing that looks reads
-                        every NUL as an end of line from the first byte, which
-                        is the same answer, since no NUL comes before the first.
-                */
-                bool binary_regions = binary_watch &&
-                                      (printing || grep_binary_files == GREP_BINARY_WITHOUT);
-                grep_binary binary = {.from = positive_max, .size = positive_max};
-                // Binary from the first byte, for a file read that way.
-                grep_binary zap_all = {.from = 0, .size = positive_max};
-                bool binary_zapping = binary_watch && !binary_regions;
-                bool binary_tail = false;
-                bool binary_matched = false;
-                positive binary_before = 0;
-                bool unprintable = false;
-                bool check_encoding = grep_utf8 && printing &&
-                                      grep_binary_files != GREP_BINARY_TEXT;
-
-                if (binary_regions && input_known &&
-                    (input_facts.mode & MODE_FORMAT) == MODE_FILE)
-                {
-                        bipolar begun = text_input.opened
-                                            ? 0
-                                            : system_call_3(syscall(lseek),
-                                                            text_input.handle, 0, 1);
-
-                        binary.seekable = begun >= 0;
-                        binary.origin = begun > 0 ? (positive)begun : 0;
-                        binary.size = input_facts.size > binary.origin
-                                          ? input_facts.size - binary.origin
-                                          : 0;
-
-                        if (binary.seekable &&
-                            grep_binary_holes(address_of binary, address_of input_facts))
-                                binary.from = 0;
-                }
-
-                // -v wants the lines that do not match and the context flags
-                // want the ones around them, so neither can have any line go
-                // by unread.
-                bool skipping = literal && literal->literal_length && !invert && !before && !after;
-                bool direct_counting = counting && skipping && literal_proves && !whole_line &&
-                                       !whole_word && !listing &&
-                                       !listing_without && !quiet && !discard_file &&
-                                       !binary_watch;
-                bool fused_counting = direct_counting && !icase &&
-                                      limit == TEXT_UNSET;
-                bool plain_output = !grouped && !grep_names &&
-                                    !grep_numbered && !grep_offsets &&
-                                    !grep_coloring && !check_encoding;
-
-                /*
-                        Everything without context, -o or colour is a span at a
-                        time: the whole lines in the reader, then the one line
-                        that runs past its end, carried across the refill by
-                        the line reader as before. A count, a listing and a
-                        question are spans whatever those flags say, since none
-                        of the three changes what they answer -- measured
-                        against GNU, colour paints only a listed name.
-                */
-                bool spanning = ((!grouped && !only && !grep_coloring) || !printing) &&
-                                !never && !directory;
-
-                if (spanning)
-                {
-                        grep_plan plan = {
-                            .program = address_of regex_current,
-                            .literal = literal->literal_length ? literal : null,
-                            .set = literal_set ? address_of grep_literals : null,
-                            .dfa = machine ? address_of grep_dfa_cache : null,
-                            .limit = limit,
-                            .mode = quiet || listing || listing_without || discard_file
-                                        ? GREP_SPAN_FIRST
-                                    : counting ? GREP_SPAN_COUNT
-                                               : GREP_SPAN_PRINT,
-                            .boundary = regex_boundary,
-                            .literal_proves = literal_proves,
-                            .icase = icase,
-                            .invert = invert,
-                            .plain = plain_output,
-                            .numbered = grep_numbered,
-                            .check_encoding = check_encoding,
-                            .binary = binary_regions &&
-                                              grep_binary_files != GREP_BINARY_WITHOUT
-                                          ? address_of binary
-                                      : binary_zapping || zap_hits ? address_of zap_all
-                                                                   : null,
-                            .zap_hits = zap_hits,
-                        };
-                        grep_state state = {.match = address_of regex_match,
-                                            .name = shown_name};
-                        // Where a selected line's region has to be known before
-                        // the line is taken: it is printed, or under -I a
-                        // listing or a question stops at it.
-                        bool settles = printing ||
-                                       (grep_binary_files == GREP_BINARY_WITHOUT && first_mode);
-
-                        while (!state.done && text_fill())
-                        {
-                                p8 address_to at = text_input.buffer + text_input.position;
-                                positive left = text_input.filled - text_input.position;
-                                bool probing = false;
-                                bool spanned = false;
-
-                                /*
-                                        The lines ending before the region that
-                                        holds the first NUL are read as text, so
-                                        where it matters the span stops at the
-                                        last line known to. Lines of a region
-                                        not yet seen whole are probed. From the
-                                        first line of a region with a NUL, -I
-                                        has found nothing in the file and a
-                                        print mode asks only whether one more
-                                        line is selected.
-                                */
-                                if (binary_regions && !binary_tail)
-                                {
-                                        grep_binary_scan(address_of binary, state.offset);
-
-                                        positive certain = grep_binary_certain(address_of binary);
-
-                                        if (certain < state.offset + left &&
-                                            (binary.from != positive_max || settles))
-                                        {
-                                                positive clean = certain > state.offset
-                                                                     ? certain - state.offset
-                                                                     : 0;
-                                                p8 address_to edge =
-                                                    clean ? memory_last_of(at, text_delimiter, clean)
-                                                          : null;
-
-                                                if (edge)
-                                                        left = (positive)(edge - at) + 1;
-                                                else if (binary.from == positive_max)
-                                                        probing = true;
-                                                else if (grep_binary_files == GREP_BINARY_WITHOUT)
-                                                {
-                                                        state.matches = 0;
-                                                        break;
-                                                }
-                                                else
-                                                {
-                                                        binary_tail = true;
-                                                        binary_before = state.matches;
-                                                        plan.mode = GREP_SPAN_FIRST;
-                                                        binary_zapping = !literal_only;
-                                                        plan.binary = literal_only ? null : plan.binary;
-                                                }
-                                        }
-                                }
-
-                                if (binary_zapping)
-                                        grep_binary_zap(at, left);
-
-                                p8 address_to last = memory_last_of(at, text_delimiter, left);
-                                p8 address_to line = at;
-                                positive size;
-
-                                if (last)
-                                {
-                                        size = (positive)(last - at) + 1;
-
-                                        if (probing)
-                                        {
-                                                if (grep_span_probe(address_of plan, address_of state,
-                                                                    line, size))
-                                                {
-                                                        grep_binary_settle(
-                                                            address_of binary,
-                                                            grep_binary_certain(address_of binary));
-                                                        continue;
-                                                }
-
-                                                spanned = true;
-                                        }
-
-                                        text_input.position += size;
-                                }
-                                else if (plan.mode != GREP_SPAN_PRINT &&
-                                         grep_binary_files != GREP_BINARY_WITHOUT &&
-                                         (plan.literal_proves || plan.set) &&
-                                         plan.boundary == REGEX_BOUNDARY_NONE)
-                                {
-                                        grep_record_stream(address_of plan,
-                                                           address_of state);
-                                        continue;
-                                }
-                                else if (binary_watch)
-                                {
-                                        positive length;
-
-                                        if (!grep_binary_line(binary_regions ? address_of binary
-                                                                             : address_of zap_all,
-                                                              state.offset,
-                                                              address_of line, address_of length))
-                                                break;
-
-                                        size = length + 1;
-
-                                        // A line the reads it ran into decide, as
-                                        // the lines of one read are decided above.
-                                        if (binary_regions && !binary_tail)
-                                        {
-                                                positive line_end = state.offset + length;
-
-                                                if (settles && !grep_binary_clean(address_of binary, line_end))
-                                                {
-                                                        if (grep_span_probe(address_of plan,
-                                                                            address_of state, line, size))
-                                                                grep_binary_settle(address_of binary, line_end);
-                                                        else
-                                                                spanned = true;
-                                                }
-
-                                                if (!spanned && binary.from != positive_max &&
-                                                    line_end >= binary.from)
-                                                {
-                                                        if (grep_binary_files == GREP_BINARY_WITHOUT)
-                                                        {
-                                                                state.matches = 0;
-                                                                break;
-                                                        }
-
-                                                        binary_tail = true;
-                                                        binary_before = state.matches;
-                                                        plan.mode = GREP_SPAN_FIRST;
-                                                        binary_zapping = !literal_only;
-                                                        plan.binary = literal_only ? null : plan.binary;
-
-                                                        if (binary_zapping)
-                                                                grep_binary_zap(line, length);
-                                                }
-                                        }
-                                }
-                                else
-                                {
-                                        if (!text_line_view(address_of line,
-                                                            address_of text_line_length,
-                                                            null, 0, null))
-                                                break;
-
-                                        size = text_line_length + 1;
-                                }
-
-                                if (!spanned)
-                                        grep_span(address_of plan, address_of state, line, size);
-
-                                for (; state.complex; state.complex--)
-                                {
-                                        string_diagnostic(&text_diagnostic, 0, null,
-                                                          "regular expression too complex");
-                                        text_status = 2;
-                                }
-                        }
-
-                        matches = state.matches;
-                        binary_matched = binary_tail && matches > binary_before;
-                        unprintable = state.unprintable;
-                        found_any = found_any || matches;
-
-                        if (quiet && matches)
-                        {
-                                text_close();
-                                return text_done(0);
-                        }
-                }
-
-                for (; !spanning && !directory;)
-                {
-                        // The line skipping stopped on holds the fixed string
-                        // already, and asking the machine again would be the
-                        // same search a second time -- unless -x or -w put
-                        // something around it, or the line was too long to
-                        // arrive whole.
-                        bool sure = false;
-
-                        /*
-                                The fixed, case-sensitive count is one scan,
-                                not one prepared search plus one newline hunt
-                                per matching record. Only whole records are
-                                handed to the library. The trailing partial
-                                one stays for the line reader, which carries
-                                it across a refill.
-                        */
-                        if (fused_counting && text_fill())
-                        {
-                                p8 address_to at = text_input.buffer +
-                                                   text_input.position;
-                                positive left = text_input.filled -
-                                                text_input.position;
-                                p8 address_to last = memory_last_of(
-                                    at, text_delimiter, left);
-
-                                if (last)
-                                {
-                                        positive take = (positive)(last - at) + 1;
-                                        positive got =
-                                            memory_count_records_with_prepared(
-                                                at, take, (address_any)literal->literal,
-                                                literal->literal_length,
-                                                literal->literal_anchors.x,
-                                                literal->literal_anchors.y,
-                                                text_delimiter);
-
-                                        matches += got;
-                                        found_any = found_any || got;
-                                        text_input.position += take;
-                                        continue;
-                                }
-                        }
-
-                        if (direct_counting && grep_skip(null, null, literal, icase))
-                        {
-                                if (!grep_discard_line())
-                                        break;
-
-                                matches++;
-                                found_any = true;
-
-                                if (limit != TEXT_UNSET && matches >= limit)
-                                        break;
-
-                                continue;
-                        }
-
-                        if (skipping && !direct_counting)
-                        {
-                                positive jumped = 0;
-
-                                sure = grep_skip(address_of number, address_of jumped, literal, icase) && literal_proves &&
-                                       !whole_line && !whole_word;
-                                offset += jumped;
-                        }
-
-                        p8 address_to line = text_input.buffer + text_input.position;
-                        // The rest of a binary file begins where the next line
-                        // would, and no line is taken from it here.
-                        bool unread = false;
-
-                        /*
-                                In a file looked at for NULs, what the reader
-                                holds is looked at before a line is taken from
-                                it, as GNU looks at a buffer before its lines.
-                                From the region with the first NUL on, the rest
-                                is asked about from here without a line read;
-                                before it, a line ends at a NUL once one is
-                                known, so no binary record is taken whole past
-                                the ceiling of a line.
-                        */
-                        if (binary_watch)
-                        {
-                                grep_binary_scan(address_of binary, offset);
-
-                                if (binary.from != positive_max && binary.from <= offset)
-                                {
-                                        unread = true;
-                                        text_line_length = 0;
-                                        text_line_ended = false;
-                                }
-                                else
-                                {
-                                        positive left = text_input.filled - text_input.position;
-
-                                        if (binary.from != positive_max)
-                                                grep_binary_zap(line, left);
-
-                                        p8 address_to stop = memory_first_of(line, text_delimiter, left);
-
-                                        if (stop)
-                                        {
-                                                text_line_length = (positive)(stop - line);
-                                                text_line_ended = true;
-                                                text_input.position += text_line_length + 1;
-                                        }
-                                        else
-                                        {
-                                                positive length;
-
-                                                if (!grep_binary_line(address_of binary, offset,
-                                                                      address_of line, address_of length))
-                                                        break;
-                                        }
-                                }
-                        }
-                        else if (!text_line_view(address_of line,
-                                                 address_of text_line_length,
-                                                 null, 0, null))
-                                break;
-
-                        number++;
-
-                        positive at = offset;
-
-                        offset += text_line_length + (text_line_ended ? 1 : 0);
-
-                        bool hit = !never &&
-                                   ((sure && text_line_length < TEXT_LINE_MAX) ||
-                                    regex_find(REGEX_FIRST, line, text_line_length, 0));
-
-                        /*
-                                As the spans do: from the line ending in or
-                                past the region holding the first NUL, -I has
-                                found nothing in the file, and otherwise only
-                                whether a line of the rest is selected is left
-                                to learn, with its NULs ending lines. Only a
-                                line that would be printed -- selected, or
-                                context owed -- has its region read to its end
-                                when that is not yet known; one held for -B is
-                                decided with the line that prints it.
-                        */
-                        if (binary_watch)
-                        {
-                                positive line_end = at + text_line_length;
-
-                                grep_binary_scan(address_of binary, offset);
-
-                                if ((hit != invert || pending) &&
-                                    !grep_binary_clean(address_of binary, line_end))
-                                        grep_binary_settle(address_of binary, line_end);
-
-                                if (binary.from != positive_max && line_end >= binary.from)
-                                {
-                                        if (grep_binary_files == GREP_BINARY_WITHOUT)
-                                        {
-                                                matches = 0;
-                                                found_any = found_before;
-                                                break;
-                                        }
-
-                                        grep_plan rest = {
-                                            .program = address_of regex_current,
-                                            .literal = literal->literal_length ? literal : null,
-                                            .set = literal_set ? address_of grep_literals : null,
-                                            .dfa = machine ? address_of grep_dfa_cache : null,
-                                            .limit = TEXT_UNSET,
-                                            .mode = GREP_SPAN_FIRST,
-                                            .boundary = regex_boundary,
-                                            .literal_proves = literal_proves,
-                                            .icase = icase,
-                                            .invert = invert,
-                                        };
-                                        positive complex = 0;
-
-                                        if (!literal_only)
-                                                grep_binary_zap(line, text_line_length);
-
-                                        binary_matched =
-                                            never ? invert
-                                                  : grep_binary_rest(address_of rest,
-                                                                     address_of binary, line,
-                                                                     unread ? 0 : text_line_length + 1,
-                                                                     offset, !literal_only,
-                                                                     address_of complex);
-
-                                        for (; complex; complex--)
-                                        {
-                                                string_diagnostic(&text_diagnostic, 0, null,
-                                                                  "regular expression too complex");
-                                                text_status = 2;
-                                        }
-
-                                        if (binary_matched)
-                                        {
-                                                matches++;
-                                                found_any = true;
-                                        }
-
-                                        break;
-                                }
-                        }
-
-                        if (hit == invert)
-                        {
-                                if (pending)
-                                {
-                                        grep_group_gap(grouped, separator,
-                                                       address_of split, shown,
-                                                       number);
-
-                                        if (check_encoding &&
-                                            !grep_text_valid(line, text_line_length))
-                                                unprintable = true;
-                                        else
-                                        {
-                                                grep_head(shown_name, '-', number, at);
-                                                grep_color_line(line, text_line_length,
-                                                                true, invert);
-                                                text_put_character(text_delimiter);
-                                        }
-
-                                        shown = number;
-                                        shown_any = true;
-                                        pending--;
-                                }
-                                else if (before)
-                                {
-                                        if (!grep_hold_put(line, text_line_length,
-                                                           number))
-                                        {
-                                                trouble = 2;
-                                                break;
-                                        }
-                                }
-
-                                if (limit != TEXT_UNSET && matches >= limit && !pending)
-                                        break;
-
-                                continue;
-                        }
-
-                        matches++;
-                        found_any = true;
-
-                        if (quiet)
-                        {
-                                text_close();
-                                return text_done(0);
-                        }
-
-                        if (listing || listing_without || discard_file)
-                                break;
-
-                        if (counting)
-                        {
-                                if (limit != TEXT_UNSET && matches >= limit)
-                                        break;
-
-                                continue;
-                        }
-
-                        if (before)
-                        {
-                                positive want = number > before ? number - before : 1;
-
-                                for (positive k = 0; k < grep_hold_count; k++)
-                                {
-                                        positive slot = (grep_hold_first + k) % grep_hold_slots;
-                                        positive n = grep_hold_number[slot];
-
-                                        if (n < want || (shown && n <= shown))
-                                                continue;
-
-                                        grep_group_gap(grouped, separator,
-                                                       address_of split, shown,
-                                                       n);
-
-                                        if (check_encoding && !grep_hold_valid(slot))
-                                                unprintable = true;
-                                        else
-                                        {
-                                                grep_head(shown_name, '-', n, 0);
-                                                grep_hold_say(slot, invert);
-                                                text_put_character(text_delimiter);
-                                        }
-
-                                        shown = n;
-                                        shown_any = true;
-                                }
-                        }
-
-                        if (only)
-                        {
-                                positive from = 0;
-
-                                while (from <= text_line_length &&
-                                       regex_find(REGEX_LONGEST, line, text_line_length, from))
-                                {
-                                        positive begin = regex_slots[0];
-                                        positive stop = regex_slots[1];
-
-                                        if (stop == begin)
-                                        {
-                                                // An empty word match leaves its
-                                                // separator for the next search.
-                                                positive next =
-                                                    regex_boundary == REGEX_BOUNDARY_WORD &&
-                                                            stop < text_line_length
-                                                        ? stop
-                                                        : begin + 1;
-
-                                                from = next > from ? next
-                                                                   : from + 1;
-                                                continue;
-                                        }
-
-                                        if (!invert && check_encoding &&
-                                            !grep_text_valid(line + begin, stop - begin))
-                                                unprintable = true;
-                                        else if (!invert)
-                                        {
-                                                grep_head(shown_name, ':', number, at + begin);
-                                                grep_color_field(
-                                                    line + begin, stop - begin,
-                                                    (string_address) "ms",
-                                                    (string_address) "01;31");
-                                                text_put_character(text_delimiter);
-                                        }
-
-                                        from = stop;
-                                }
-
-                                shown = number;
-                                shown_any = true;
-                                pending = after;
-
-                                if (limit != TEXT_UNSET && matches >= limit && !pending)
-                                        break;
-
-                                continue;
-                        }
-
-                        if (plain_output)
-                                text_put(line, text_line_length + 1);
-                        else
-                        {
-                                grep_group_gap(grouped, separator, address_of split,
-                                               shown, number);
-
-                                if (check_encoding &&
-                                    !grep_text_valid(line, text_line_length))
-                                        unprintable = true;
-                                else
-                                {
-                                        grep_head(shown_name, ':', number, at);
-                                        grep_color_line(line, text_line_length, false,
-                                                        !invert);
-                                        text_put_character(text_delimiter);
-                                }
-                        }
-
-                        shown = number;
-                        shown_any = true;
-                        pending = after;
-
-                        if (limit != TEXT_UNSET && matches >= limit && !pending)
-                                break;
-                }
-
-                text_close();
-
-                // Said whatever -s asks, as GNU says it; -I keeps a line of
-                // no characters from the output without a word.
-                if (binary_matched ||
-                    (unprintable && grep_binary_files == GREP_BINARY_DETECT))
-                        string_diagnostic(&text_diagnostic, 0, shown_name,
-                                          "binary file matches");
-
-                if (listing || listing_without)
-                {
-                        if ((matches != 0) == listing && !quiet)
-                        {
-                                grep_color_field(shown_name,
-                                                 string_length(shown_name),
-                                                 (string_address) "fn",
-                                                 (string_address) "35");
-                                text_put_character(grep_null_name ? '\0' : '\n');
-                        }
-
-                        continue;
-                }
-
-                if (counting && !quiet)
-                {
-                        if (grep_names)
-                        {
-                                grep_color_field(shown_name,
-                                                 string_length(shown_name),
-                                                 (string_address) "fn",
-                                                 (string_address) "35");
-
-                                if (grep_null_name)
-                                        text_put_character('\0');
-                                else
-                                        grep_color_separator(':');
-                        }
-
-                        positive_to_string(text_put, matches);
-                        text_put_character('\n');
-                }
+                bool going = grep_path_walks && grep_path_walks[i]
+                                 ? grep_tree(address_of run, name)
+                                 : grep_one(address_of run, name);
+
+                if (!going)
+                        return text_done(run.quit ? 0 : 2);
         }
 
         // Two for any trouble, including a read that failed or an expression
         // the matcher gave up on, as the reference grep answers.
-        if (trouble || text_status)
+        if (run.trouble || text_status)
                 return text_done(2);
 
-        return text_done(found_any ? 0 : 1);
+        return text_done(run.found_any ? 0 : 1);
 }
 
 /*

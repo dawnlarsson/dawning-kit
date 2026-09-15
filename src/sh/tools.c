@@ -6414,10 +6414,14 @@ static fn tools_uuid_random_bytes(file_random_state address_to random,
         shred_random_fill(random, uuid->bytes, sizeof(uuid->bytes));
 }
 
-static fn tools_uuid_version(tools_uuid address_to uuid, p8 version)
+/* The version nibble sits in byte 6 of a UUID as written, and in byte 7 of a
+   GPT GUID, whose first three fields are stored little-endian; the RFC
+   variant bits are in byte 8 either way. */
+static fn tools_uuid_version(p8 address_to bytes, positive version_at,
+                             p8 version)
 {
-        uuid->bytes[6] = (p8)((uuid->bytes[6] & 0x0f) | (version << 4));
-        uuid->bytes[8] = (p8)((uuid->bytes[8] & 0x3f) | 0x80);
+        bytes[version_at] = (p8)((bytes[version_at] & 0x0f) | (version << 4));
+        bytes[8] = (p8)((bytes[8] & 0x3f) | 0x80);
 }
 
 static p64 tools_uuid_gregorian_now(p64 seconds, p64 nanoseconds)
@@ -6434,7 +6438,7 @@ static fn tools_uuid_time_one(tools_uuid address_to uuid, p64 timestamp,
         network_store_16(uuid->bytes + 6, (p16)((timestamp >> 48) & 0x0fff));
         network_store_16(uuid->bytes + 8, (p16)((sequence & 0x3fff) | 0x8000));
         memory_copy(uuid->bytes + 10, node, 6);
-        tools_uuid_version(uuid, 1);
+        tools_uuid_version(uuid->bytes, 6, 1);
 }
 
 static fn tools_uuid_time_six(tools_uuid address_to uuid, p64 timestamp,
@@ -6444,7 +6448,7 @@ static fn tools_uuid_time_six(tools_uuid address_to uuid, p64 timestamp,
         network_store_32(uuid->bytes, (p32)(timestamp >> 28));
         network_store_16(uuid->bytes + 4, (p16)(timestamp >> 12));
         network_store_16(uuid->bytes + 6, (p16)(timestamp & 0x0fff));
-        tools_uuid_version(uuid, 6);
+        tools_uuid_version(uuid->bytes, 6, 6);
 }
 
 static fn tools_uuid_time_seven(tools_uuid address_to uuid, p64 milliseconds,
@@ -6453,7 +6457,7 @@ static fn tools_uuid_time_seven(tools_uuid address_to uuid, p64 milliseconds,
         tools_uuid_random_bytes(random, uuid);
         for (positive at = 0; at < 6; at++)
                 uuid->bytes[5 - at] = (p8)(milliseconds >> (at * 8));
-        tools_uuid_version(uuid, 7);
+        tools_uuid_version(uuid->bytes, 6, 7);
 }
 
 /* Name-based UUIDs (RFC 9562 versions 3 and 5): the digest of the
@@ -6471,7 +6475,7 @@ static fn tools_uuid_name(tools_uuid address_to space, p8 address_to name,
         digest_write(address_of digest, name, name_length);
         digest_close(address_of digest, sum);
         memory_copy(uuid->bytes, sum, sizeof(uuid->bytes));
-        tools_uuid_version(uuid, sha1 ? 5 : 3);
+        tools_uuid_version(uuid->bytes, 6, sha1 ? 5 : 3);
 }
 
 static const argument_option tools_uuidgen_options[] = {
@@ -6645,7 +6649,7 @@ static b32 tools_uuidgen()
                 {
                         tools_uuid_random_bytes(address_of random,
                                                 address_of uuid);
-                        tools_uuid_version(address_of uuid, 4);
+                        tools_uuid_version(uuid.bytes, 6, 4);
                 }
 
                 tools_uuid_put(address_of uuid);
@@ -8562,33 +8566,26 @@ static p8 dump_od_number(string_address text, positive address_to out)
         }
 
         p8 suffix = string_get(at);
+        positive power = size_suffix_power(suffix, false);
+        /* b, or the shared exponent letters through Y with only k and m in
+           lower case. */
+        bool letter = suffix == 'b' ||
+                      (power && power <= 8 && (suffix < 'a' || power <= 2));
 
         /* A word that is only a suffix counts as one of that unit. */
         if (!digits)
         {
-                if (!suffix || !string_first_of("bEGKkMmPTYZ0", suffix))
+                if (!letter)
                         return DUMP_OD_NUMBER_INVALID;
                 value = 1;
         }
 
         if (suffix)
         {
-                positive multiple = 0;
-                positive power = 0;
+                positive multiple = 512;
 
-                switch (suffix)
-                {
-                case 'b': multiple = 512; break;
-                case 'K': case 'k': power = 1; break;
-                case 'M': case 'm': power = 2; break;
-                case 'G': power = 3; break;
-                case 'T': power = 4; break;
-                case 'P': power = 5; break;
-                case 'E': power = 6; break;
-                case 'Z': power = 7; break;
-                case 'Y': power = 8; break;
-                default: return DUMP_OD_NUMBER_SUFFIX;
-                }
+                if (!letter)
+                        return DUMP_OD_NUMBER_SUFFIX;
 
                 at++;
 

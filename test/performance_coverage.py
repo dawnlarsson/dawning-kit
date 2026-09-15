@@ -346,6 +346,9 @@ cover('direct_benchmark', 'test/checks.c#BENCH_compression_floor', '''
 hash_crc32 hash_crc64 huffman_encode_back lzma_range_encode
 ''', 'bounded native CRC, backwards Huffman and range-tree timing, with scalar '
       'CRC/range references; copy traffic is a proxy, not an entropy floor')
+cover('direct_benchmark', 'test/checks.c#BENCH_cksum_crc', 'hash_crc32_msb',
+      "cksum's CRC over 4 KiB and 128 KiB blocks at every feature tier, "
+      'against the former cksum.c C copied into the section')
 cover('benchmark_context', 'test/checks.c#BENCH_compression_floor', 'lzma_range_shift',
       'carry flushing inside the measured range-tree work; not isolated')
 cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'lzma_decode_span',
@@ -379,6 +382,10 @@ p384_multiply p384_square p384_add p384_subtract
       'edges and aliasing included; timed against the same arithmetic '
       'compiled from C in test/hardware_floor.c, which test/run bench does '
       'not dispatch')
+cover('direct_benchmark', 'test/checks.c#BENCH_montgomery', 'montgomery_multiply',
+      'multiply and square at 4, 6, 32 and 64 limbs against the C Montgomery '
+      'arithmetic crypto.c ran (SHARED_montgomery_reference), and the ECDSA '
+      'and RSA verifies over it; differential at every limb count in CHECK_net')
 cover('correctness_only', 'test/checks.c#CHECK_net', 'ghash_blocks ghash_key ghash_integer aes128_ctr_blocks',
       'bit-serial differential over every body each machine has (feature '
       'bytes toggled); ghash_blocks timed against the carry-less multiply '

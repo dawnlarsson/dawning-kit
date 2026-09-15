@@ -1272,6 +1272,9 @@ static fn storage_partition_value(storage_identity address_to identity,
         }
 }
 
+static inline INLINE p8 address_to storage_line_next(
+    p8 address_to address_to cursor, p8 address_to limit);
+
 static fn storage_probe_partition(string_address path,
                                   storage_identity address_to identity)
 {
@@ -1301,28 +1304,23 @@ static fn storage_probe_partition(string_address path,
                 return;
 
         {
-                p8 address_to line = text;
-                p8 address_to limit = text + got;
+                /* The slurp leaves text[got] terminated, so even a last line
+                   with no newline ends in a NUL. */
+                p8 address_to cursor = text;
+                p8 address_to line;
 
-                while (line < limit)
+                while ((line = storage_line_next(address_of cursor, text + got)))
                 {
-                        p8 address_to newline = (p8 address_to)memory_first_of(
-                            line, '\n', (positive)(limit - line));
-                        p8 address_to line_end = newline ? newline : limit;
-                        p8 address_to equal = (p8 address_to)memory_first_of(
-                            line, '=', (positive)(line_end - line));
+                        p8 address_to equal = (p8 address_to)string_first_of(
+                            line, '=');
 
                         if (equal && equal > line)
                         {
-                                p8 saved = *equal;
-
                                 *equal = end;
                                 storage_partition_value(
                                     identity, line, equal + 1,
-                                    (positive)(line_end - equal - 1));
-                                *equal = saved;
+                                    string_length(equal + 1));
                         }
-                        line = newline ? newline + 1 : limit;
                 }
         }
 }
