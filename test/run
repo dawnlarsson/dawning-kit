@@ -5966,6 +5966,13 @@ same 'device attributes' '[\e[?1;2c]'            20 5 in '\e[c' sent
 same 'secondary attributes' '[\e[>0;115;0c]'     20 5 in '\e[>c' sent
 same 'tertiary attributes' '[\eP!|00000000\e\]'  20 5 in '\e[=c' sent
 same 'cursor position asked privately' '[\e[?3;4R]' 20 5 in '\e[3;4H\e[?6n' sent
+#       XTWINOPS reports the text area in cells and pixels, a cell and the
+#       screen; the operations that move or stack things are not answered.
+same 'text area in cells' '[\e[8;5;20t]'         20 5 in '\e[18t' sent
+same 'text area in pixels' '[\e[4;80;160t]'      20 5 in '\e[14t' sent
+same 'a cell'        '[\e[6;16;8t]'              20 5 in '\e[16t' sent
+same 'the screen'    '[\e[9;5;20t]'              20 5 in '\e[19t' sent
+same 'title stack'   '[]'                        20 5 in '\e[22;0;0t\e[23;0;0t' sent
 #       DECRQM answers from the same list SM and RM change.
 same 'mode set'      '[\e[?7;1$y]'               20 5 in '\e[?7$p' sent
 same 'mode reset'    '[\e[?1049;2$y]'            20 5 in '\e[?1049$p' sent
@@ -6251,8 +6258,8 @@ same 'newline and tab symbols' '[<2424><240b>]'  8 2 in '\e(0hi\e(B' row 0
 same 'arrows and a block' '[<2192><2190><2191><2193><2588>]' 8 2 in '\e(0+,-.0\e(B' row 0
 same 'shift in'       '[<2500>x]'                8 2 in '\e)0\x0eq\x0fx' row 0
 same 'repeat'         '[aaaa]'                   8 2 in 'a\e[3b' row 0
-same 'screen alignment' '[XY]'                   20 3 in '\e#8XY' row 0
-same 'not a restore'  '[abXY]'                   20 3 in 'ab\e#8XY' row 0
+same 'screen alignment' '[XYEEEEEEEEEEEEEEEEEE]|[EEEEEEEEEEEEEEEEEEEE]|0,2' 20 3 in '\e[2;3r\e#8XY' row 0 row 2 cursor
+same 'not a restore'  '[XYEEEEEEEEEEEEEEEEEE]'   20 3 in 'ab\e#8XY' row 0
 same 'nothing at all' '[Y]'                      20 3 in '\e\x7fxY' row 0
 #       A control is done where it arrives, inside a sequence as well.
 same 'backspace in a sequence' '[abx]'           20 3 in 'ab\e[\bCx' row 0
@@ -6650,12 +6657,17 @@ group grid
 same 'wider'         '[hello]'                   10 3 in 'hello' resize '20x3' row 0
 same 'the cursor comes with it' '[c]|[d]|[e]|2,1' \
                                                  20 5 in 'a\r\nb\r\nc\r\nd\r\ne' resize '20x3' dump cursor
-#       The rows are the last lines of the ring however many there are of
-#       them, so a window made shorter while the cursor is at the top of it
-#       leaves what was on screen above the screen -- there to scroll back
-#       to, and not where it was. The cursor is nearly always at the bottom,
-#       which is why this has never been seen.
-differs 'shrunk from the top' '[]|0,5'           20 5 in 'hello' resize '20x3' row 0 cursor
+#       A shorter window gives up the blank rows below the cursor before any
+#       line it holds, and a taller one takes back only the lines that did
+#       scroll off the top, with blank ones below for the rest: what was on
+#       the screen stays where it was, as tmux keeps it.
+same 'shrunk from the top' '[hello]|0,5'         20 5 in 'hello' resize '20x3' row 0 cursor
+same 'shrunk past the blank rows' '[b]|[c]|1,1'  20 5 in 'a\r\nb\r\nc' resize '20x2' dump cursor
+same 'grown fresh'   '[ab]|[cd]|[]|[]|[]|[]|1,2' 10 3 in 'ab\r\ncd' resize '10x6' dump cursor
+same 'grown takes back history' '[a]|[b]|[c]|[d]|[e]|4,1' \
+                                                 20 3 in 'a\r\nb\r\nc\r\nd\r\ne' resize '20x5' dump cursor
+same 'shrunk and grown back' '[a]|[b]|[c]|[]|[]|2,1' \
+                                                 20 5 in 'a\r\nb\r\nc' resize '20x2' resize '20x5' dump cursor
 #       A window narrower or shorter than one cell is not a grid, and every
 #       wrap and scroll divides by these: no rows at all had put wrapping
 #       forever looking for a row to land on.

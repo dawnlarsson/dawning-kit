@@ -79,6 +79,15 @@ static b32 mouse_sgr;
 static b32 focus_events;
 static b32 origin_mode;
 
+// Whether the alternate screen is up, and the head that hands the primary one
+// back when it goes (see alternate_enter).
+static b32 alternate;
+static unsigned int alternate_head;
+
+// Lines that have scrolled off the top of the primary screen and are still in
+// the ring: what a taller window can take back in.
+static unsigned int history_lines;
+
 #define CHARSET_ASCII 0
 #define CHARSET_ACS 1
 static unsigned char charset_g0;
@@ -233,6 +242,10 @@ static fn cells_blank(unsigned int r, unsigned int first, unsigned int count)
 static fn ring_scroll()
 {
         window_scroll(window);
+
+        if (!alternate && history_lines + ROWS < window->history)
+                history_lines++;
+
         touch_all();
 }
 
@@ -270,6 +283,33 @@ static fn row_blank(unsigned int r)
         only then is what leaves the top kept. A narrower region is a copy and
         what leaves it is gone, which is what a region means.
 */
+/*
+        A region scrolled count rows up or down. The rows that stay are copied
+        along -- a region is the screen not moving as one, so the ring cannot
+        move for it -- and the rows given out are blank.
+*/
+static fn region_scroll(unsigned int count, b32 up)
+{
+        unsigned int height = region_bottom - region_top;
+        unsigned int top = row_slot(0);
+
+        if (count > height)
+                count = height;
+
+        for (unsigned int n = 0; n + count < height; n++)
+        {
+                unsigned int to = up ? region_top + n : region_bottom - 1 - n;
+
+                slot_copy(slot_after(top, to),
+                          slot_after(top, up ? to + count : to - count));
+        }
+
+        for (unsigned int n = 0; n < count; n++)
+                row_blank(up ? region_bottom - 1 - n : region_top + n);
+
+        touch_all();
+}
+
 static fn scroll_up(unsigned int count)
 {
         if (region_top == 0 && region_bottom == ROWS)
@@ -290,34 +330,7 @@ static fn scroll_up(unsigned int count)
                 return;
         }
 
-        if (count > region_bottom - region_top)
-                count = region_bottom - region_top;
-
-        unsigned int top = row_slot(0);
-
-        for (unsigned int r = region_top; r + count < region_bottom; r++)
-                slot_copy(slot_after(top, r), slot_after(top, r + count));
-
-        for (unsigned int r = region_bottom - count; r < region_bottom; r++)
-                row_blank(r);
-
-        touch_all();
-}
-
-static fn scroll_down(unsigned int count)
-{
-        if (count > region_bottom - region_top)
-                count = region_bottom - region_top;
-
-        unsigned int top = row_slot(0);
-
-        for (unsigned int r = region_bottom; r-- > region_top + count;)
-                slot_copy(slot_after(top, r), slot_after(top, r - count));
-
-        for (unsigned int r = region_top; r < region_top + count; r++)
-                row_blank(r);
-
-        touch_all();
+        region_scroll(count, true);
 }
 
 // One line down, and the bottom of the region is where that scrolls.
@@ -1202,8 +1215,6 @@ static fn sgr()
         blank lines and leaves the old ones behind it, and moving head back is
         the hand back. There is no second buffer and nothing is copied.
 */
-static b32 alternate;
-static unsigned int alternate_head;
 
 static fn cursor_save(struct cursor_state address_to into)
 {
@@ -1428,6 +1439,8 @@ static fn history_clear()
                 slot = slot ? slot - 1 : window->history - 1;
                 address_to slot_length(slot) = 0;
         }
+
+        history_lines = 0;
 }
 
 /*
@@ -1570,7 +1583,7 @@ static fn csi_final(unsigned int final)
                         region_top = row;
 
                         if (final == 'L')
-                                scroll_down(a);
+                                region_scroll(a, false);
                         else
                                 scroll_up(a);
 
@@ -1623,7 +1636,7 @@ static fn csi_final(unsigned int final)
                 scroll_up(a);
                 break;
         case 'T':
-                scroll_down(a);
+                region_scroll(a, false);
                 break;
         case 'g':
                 if (terminal_csi.count && terminal_csi.value[0] == 3)
@@ -1721,8 +1734,32 @@ static fn csi_final(unsigned int final)
                         emit_literal("$y");
                 }
                 break;
+        /*
+                XTWINOPS, only the reports: the text area in cells (18) and in
+                pixels (14), a cell (16) and the screen (19). Image viewers and
+                notcurses ask before they size a picture; moving, raising and
+                the title stack are the compositor's business, and ignored.
+        */
         case 't':
+        {
+                unsigned int op = terminal_csi.value[0];
+                unsigned int high = op == 14 ? ROWS * WINDOW_CELL_H
+                                  : op == 16 ? WINDOW_CELL_H : ROWS;
+                unsigned int wide = op == 14 ? COLUMNS * WINDOW_CELL_W
+                                  : op == 16 ? WINDOW_CELL_W : COLUMNS;
+
+                if (op != 14 && op != 16 && op != 18 && op != 19)
+                        break;
+
+                emit_literal("\x1b[");
+                emit('0' + op - 10);
+                emit(';');
+                positive_to_string(emit_bytes, high);
+                emit(';');
+                positive_to_string(emit_bytes, wide);
+                emit('t');
                 break;
+        }
         case 'r':
         {
                 unsigned int top;
@@ -1800,6 +1837,27 @@ static fn utf8_flush()
 
         terminal_utf8.left = 0;
         put(0xfffd);
+}
+
+/*
+        DECALN fills the screen with E, the letter a VT100 was lined up by and
+        what vttest draws its frames against, with the margins gone and the
+        cursor home.
+*/
+static fn screen_align()
+{
+        region_top = 0;
+        region_bottom = ROWS;
+        row = 0;
+        column = 0;
+
+        for (unsigned int r = 0; r < ROWS; r++)
+        {
+                memory_fill_u64_aligned(row_cells(r), COLUMNS,
+                                        (positive)'E' | (positive)7 << 32);
+                address_to row_length(r) = COLUMNS;
+                touch(r);
+        }
 }
 
 static fn consume(unsigned int c)
@@ -1983,6 +2041,8 @@ static fn consume(unsigned int c)
                                 charset_g0 = c == '0' ? CHARSET_ACS : CHARSET_ASCII;
                         else if (escape_kind == ')')
                                 charset_g1 = c == '0' ? CHARSET_ACS : CHARSET_ASCII;
+                        else if (escape_kind == '#' && c == '8')
+                                screen_align();
                         escape_intermediate = false;
                         return;
                 }
@@ -2004,7 +2064,7 @@ static fn consume(unsigned int c)
                         break;
                 case 'M':
                         if (row == region_top)
-                                scroll_down(1);
+                                region_scroll(1, false);
                         else if (row)
                                 row--;
                         break;
@@ -3345,28 +3405,25 @@ static fn grid_tell(b32 master)
 }
 #endif
 
-// Where a row of the screen is once it is ROWS tall instead of was_rows:
-// anchored at the bottom, with added blank lines below everything it held.
-static unsigned int regrid_row(unsigned int at, unsigned int was_rows,
-                               unsigned int added)
+// Where a row of the screen is once its lines have stayed where they are in
+// the ring and the top of the screen has moved up by shift rows.
+static unsigned int regrid_row(unsigned int at, bipolar shift)
 {
-        if (ROWS >= was_rows)
-                at += ROWS - was_rows - added;
-        else if (at >= was_rows - ROWS)
-                at -= was_rows - ROWS;
-        else
-                at = 0;
+        bipolar to = (bipolar)at + shift;
 
-        return at < ROWS ? at : ROWS - 1;
+        return to < 0 ? 0 : to < (bipolar)ROWS ? (unsigned int)to : ROWS - 1;
 }
 
 /*
         The window was resized.
 
-        Nothing is copied and nothing moves. The rows are the last lines of the
-        ring whatever there are of them, so a window made taller takes in the
-        lines that had scrolled off the top rather than blank ones, and the
-        cursor is still on the line it was on -- that many rows further down.
+        Nothing is copied. The rows are the last lines of the ring, so all a
+        resize decides is where head goes, and the cursor stays on the line it
+        was on. A window made taller takes back the lines that scrolled off
+        the top, as many as did, with blank ones below for the rest; one made
+        shorter gives up blank rows below the cursor before it pushes anything
+        off the top. That keeps what was on the screen where it was, as tmux
+        does.
 
         What was on the screen stays on it. Lines are not moved or shortened
         here: the compositor folds a stored line at the width it is drawn in,
@@ -3377,7 +3434,8 @@ static unsigned int regrid_row(unsigned int at, unsigned int was_rows,
 fn regrid(b32 master)
 {
         unsigned int was_rows = ROWS;
-        unsigned int added = 0;
+        unsigned int head_was = window->head;
+        bipolar shift;
 #ifndef KERNEL_MODE
         b32 cursor_was_shown = shown;
 #endif
@@ -3409,16 +3467,39 @@ fn regrid(b32 master)
         */
         if (alternate)
                 while (window->head - alternate_head < ROWS)
-                {
                         window_scroll(window);
-                        added++;
-                }
+        else if (ROWS < was_rows)
+        {
+                unsigned int blank = 0;
 
-        row = regrid_row(row, was_rows, added);
-        cursor_saved.row = regrid_row(cursor_saved.row, was_rows, added);
+                while (blank < was_rows - ROWS && row + blank + 1 < was_rows &&
+                       !address_to slot_length((window->head - 1 - blank) %
+                                               window->history))
+                        blank++;
+
+                __atomic_store_n(address_of window->head, window->head - blank,
+                                 __ATOMIC_RELEASE);
+                history_lines = min(history_lines + (was_rows - ROWS - blank),
+                                    window->history - ROWS);
+        }
+        else
+        {
+                unsigned int back = min(ROWS - was_rows, history_lines);
+
+                for (unsigned int n = ROWS - was_rows - back; n; n--)
+                        window_scroll(window);
+
+                history_lines -= back;
+        }
+
+        shift = (bipolar)ROWS - (bipolar)was_rows -
+                ((bipolar)window->head - (bipolar)head_was);
+        row = regrid_row(row, shift);
+        cursor_saved.row = regrid_row(cursor_saved.row, shift);
 
         if (alternate)
-                cursor_primary.row = regrid_row(cursor_primary.row, was_rows, 0);
+                cursor_primary.row = regrid_row(cursor_primary.row,
+                                                (bipolar)ROWS - (bipolar)was_rows);
 
         if (column >= COLUMNS)
                 column = COLUMNS - 1;
