@@ -42169,10 +42169,17 @@ static volatile positive pool_jobs_run = 0;
 static volatile positive pool_stop_index = positive_max;
 static volatile b32 pool_stopped_word = 0;
 
+static volatile positive pool_slot_out_of_range = 0;
+
 static fn pool_note_slot(void)
 {
         positive slot = parallel_slot();
         positive seen = atomic_load(address_of pool_highest_slot);
+
+        //      Per-slot scratch is sized by parallel_slots(); a slot at or past
+        //      it would index past every utility's array.
+        if (slot >= parallel_slots())
+                atomic_add(address_of pool_slot_out_of_range, 1);
 
         while (slot > seen &&
                !atomic_compare_exchange(address_of pool_highest_slot, seen, slot))
@@ -42470,6 +42477,7 @@ static fn lock_pool(bool emulated)
         check("no more than two outputs a thread ever waited", bounded);
         check("nested calls ran inline and answered", pool_nested_bad == 0);
         check("every job kept its own errno", pool_errno_bad == 0);
+        check("every job's slot was below parallel_slots()", pool_slot_out_of_range == 0);
 
         //      Stopping, at width 8.
         parallel_reset(8);
@@ -42536,6 +42544,8 @@ static fn lock_pool(bool emulated)
                 check("every item the beside job made arrived once",
                       sum == (positive)POOL_BESIDE_ITEMS * (POOL_BESIDE_ITEMS + 1) / 2);
                 check("the beside thread is slot width", pool_beside_slot == 8);
+                check("the beside thread's slot is below parallel_slots()",
+                      pool_beside_slot < parallel_slots());
 
                 check("a stopping beside job starts", parallel_beside(pool_beside_stopper, null));
                 check("a stopped beside job joins false", !parallel_beside_wait());

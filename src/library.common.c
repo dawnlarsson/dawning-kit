@@ -4600,6 +4600,10 @@ pub address_any memalign(positive alignment, positive bytes)
         The caller counts as one: width - 1 workers are started, slots 1 up,
         and the caller is slot 0. A beside job's thread is slot width.
 
+        Every parallel_slot() is below parallel_slots(), the beside thread's
+        included. Per-slot scratch is sized by that, never by arithmetic on
+        the width: which threads the pool keeps beside the caller may change.
+
         WHEN IT RUNS INLINE
 
         count below two, bytes below PARALLEL_MINIMUM_BYTES, a width of one,
@@ -4755,6 +4759,12 @@ pub positive parallel_width(void)
 pub positive parallel_slot(void)
 {
         return thread_self()->slot;
+}
+
+//      The bound every parallel_slot() stays below; see WIDTH.
+pub positive parallel_slots(void)
+{
+        return parallel_width() + 1;
 }
 
 static fn parallel_run_stop(parallel_run address_to run)
