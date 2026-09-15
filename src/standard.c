@@ -1711,9 +1711,6 @@ static b32 lock_state(lock address_to it)
 #endif // STANDARD_MODERN_C_STANDARD_LOCK
 #endif // STANDARD_SKIP_LOCK
 
-//      _exit stays out of stdlib: the umbrella owns the shim.
-#define STANDARD_NO_UNDERSCORE_EXIT
-
 #ifndef STANDARD_SKIP_NUMBERS
 /* ---- numbers.c ---- */
 /*
@@ -5758,19 +5755,6 @@ DEAD_END fn quick_exit(b32 code)
 
         __builtin_unreachable();
 }
-
-#ifndef STANDARD_NO_UNDERSCORE_EXIT
-DEAD_END fn _Exit(b32 code)
-{
-        exit(code);
-
-        __builtin_unreachable();
-}
-#endif
-
-#ifndef STANDARD_NO_UNDERSCORE_EXIT
-DEAD_END fn _exit(b32 code) __attribute__((alias("_Exit")));
-#endif
 
 /*
         abort, which has to win.
