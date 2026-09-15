@@ -907,7 +907,7 @@ static inline INLINE address_any fill_running(address_any destination,
 //      bzero is the fill with the byte already chosen; the same small run.
 //      It reaches the long path through memory_fill and not memory_zero for
 //      the reason zero_known does the same: memory_zero is declared in
-//      platform/standard.inc, which a no-platform build compiles out, while
+//      library.c's standard-names block, which a no-platform build compiles out, while
 //      memory_fill is declared above that guard and is always there.
 static inline INLINE fn zero_running(address_any destination, positive size)
 {

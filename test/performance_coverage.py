@@ -255,7 +255,7 @@ cover('benchmark_context', 'test/checks.c#BENCH_span_byte', 'memory_span_byte_wi
 # "hardware floor" assertion without measured evidence.
 cover('static_leaf', 'src/platform/linux.inc', '_start exit sleep',
       'startup or direct Linux syscall ABI body; statically reviewed only')
-cover('static_leaf', 'src/platform/standard.inc', '''
+cover('static_leaf', 'src/library.c', '''
 byte_is_alnum byte_is_alpha byte_is_digit byte_is_hexadecimal
 byte_is_lower byte_is_space byte_is_upper absolute_whole absolute_wide
 absolute square_root bits_counted bits_first_set bits_first_set_wide

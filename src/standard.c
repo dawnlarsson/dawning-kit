@@ -1739,7 +1739,7 @@ static b32 lock_state(lock address_to it)
 /*
         THE EXISTING INTEGER ENGINE, AND THE STANDARD WRAPPERS
 
-        src/platform/standard.inc holds the integer scanners as assembly at
+        library.c holds the integer scanners as assembly at
         three-architecture parity, and attaches the names that cannot report
         an error with ASM_ALIAS:
 
@@ -4770,7 +4770,7 @@ NUMBERS_TO(string_to_extended, f128, numbers_extended_shape, numbers_extended,
         One line wrappers rather than macros, for the reason math.c gives:
         a program can take the address of one, and a local variable called
         strtod does not silently become a call. atof is here rather than in
-        standard.inc beside atoi because it is strtod with the end pointer
+        library.c beside atoi because it is strtod with the end pointer
         thrown away, and strtod is C.
 */
 //      The end pointer is a char ** and not a string_address address_to,
@@ -8778,7 +8778,7 @@ fn tzset(void)
 /*
         This is ordinary C, and it has to be.
 
-        src/platform/standard.inc already holds the half of <math.h> that is
+        library.c already holds the half of <math.h> that is
         an instruction: sqrt, fabs, trunc, floor, ceil, round, fmin, fmax,
         fma and copysign are one opcode on at least two of the three machines
         and the assembly there is the floor. Nothing below is like that.
@@ -8791,7 +8791,7 @@ fn tzset(void)
         src/compiler_memory.c, which is deliberately outside library.c's
         graph, in the way src/net/netlink.c holds the netlink wire layer.
 
-        It depends on library.c alone, through standard.inc: square_root,
+        It depends on library.c alone, through its standard names: square_root,
         absolute, decimal_floor, decimal_truncated, decimal_rounded,
         decimal_with_sign and decimal_multiply_add. Every one of those is a
         single instruction on the machines that have it, so reaching for them
@@ -8881,7 +8881,7 @@ fn tzset(void)
 /*
         Everything here takes or returns a decimal, and a decimal in a
         signature is refused by the arm64 kernel build whether or not
-        anything calls it -- the same reason standard.inc guards its own
+        anything calls it -- the same reason library.c guards its own
         floating point half. Kernel code may not touch the floating point
         registers without asking first, so this is right anyway.
 
@@ -8929,7 +8929,7 @@ typedef union
         isnan, isinf, isfinite, isnormal, signbit and fpclassify.
 
         The question that had to be answered before writing these was whether
-        they belong beside square_root in standard.inc as assembly. They do
+        they belong beside square_root in library.c as assembly. They do
         not, and the reason is that the C library does not define them as
         functions in the first place: they are macros, and a macro is what
         makes them free. isnan of a value already in a register is one move
@@ -11719,7 +11719,7 @@ static decimal hyperbolic_tangent(decimal value)
         There is no `log`. The library's `log` is the writer, and the natural
         logarithm is `logarithm`, or `ln` for short.
 
-        Also absent, because standard.inc already has them under prose names:
+        Also absent, because library.c already has them under prose names:
         sqrt is square_root, fabs is absolute, trunc floor ceil round and
         nearbyint are the decimal_ roundings, copysign is decimal_with_sign,
         fmin and fmax are decimal_smaller and decimal_larger, fdim is

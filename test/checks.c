@@ -8414,7 +8414,7 @@ test(string_to_number_reads_a_narrow_base)
 #endif
 
 /*      And the case() lines, which go in the #if LINUX group beside
-        case(absolute_value), where the rest of standard.inc's coverage sits:
+        case(absolute_value), where the rest of the standard-names block's coverage sits:
 
 #if X64 || ARM64
 #endif
@@ -31303,7 +31303,7 @@ static int number_widest_limbs;
 
         THE INTEGER NAMES ARE CHECKED BY BEING CALLED. abs, labs, llabs, atoi,
         atol, atoll, strtol, strtoll, strtoul, strtoull, imaxabs, strtoimax
-        and strtoumax are assembly in src/platform/standard.inc with no C
+        and strtoumax are assembly in src/library.c with no C
         declaration in front of them, which meant that until numbers.c every
         one of those call sites was a compile error in a file that linked
         perfectly. So the first group is a call to each of them with an answer
