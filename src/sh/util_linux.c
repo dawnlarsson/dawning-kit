@@ -3864,11 +3864,10 @@ static bool ul_lsclock_offsets(p8 address_to monotonic,
                 return false;
         data[got] = end;
         monotonic[0] = boottime[0] = end;
-        string_address line = data;
-        while (string_get(line))
+        p8 address_to cursor = data;
+        p8 address_to line;
+        while ((line = storage_line_next(address_of cursor, data + got)))
         {
-                string_address next = string_first_of(line, '\n');
-                if (next) address_to next = end;
                 string_address space = string_first_of(line, ' ');
                 if (space)
                 {
@@ -3886,8 +3885,6 @@ static bool ul_lsclock_offsets(p8 address_to monotonic,
                                 if (destination) memory_copy_apart_end(destination, value, length);
                         }
                 }
-                if (!next) break;
-                line = next + 1;
         }
         return string_get(monotonic) && string_get(boottime);
 }
@@ -9348,34 +9345,27 @@ static fn ul_lscpu_info_read()
         if (got <= 0)
                 return;
 
-        positive at = 0;
-        while (at < (positive)got)
+        /* file_slurp terminates at got, so the last line has a NUL too. */
+        p8 address_to cursor = ul_lscpu_cpuinfo;
+        p8 address_to key;
+        while ((key = storage_line_next(address_of cursor,
+                                        ul_lscpu_cpuinfo + got)))
         {
-                positive start = at;
-                at += memory_span_without_byte(ul_lscpu_cpuinfo + at, '\n',
-                                                (positive)got - at);
-                positive finish = at;
-                if (at < (positive)got)
-                        ul_lscpu_cpuinfo[at++] = end;
-                while (finish > start &&
-                       byte_is_space(ul_lscpu_cpuinfo[finish - 1]))
-                        ul_lscpu_cpuinfo[--finish] = end;
-                if (finish == start)
+                positive finish = string_length(key);
+                while (finish && byte_is_space(key[finish - 1]))
+                        key[--finish] = end;
+                if (!finish)
                         break;
 
-                p8 address_to colon = memory_first_of(
-                    ul_lscpu_cpuinfo + start, ':', finish - start);
+                p8 address_to colon = memory_first_of(key, ':', finish);
                 if (!colon)
                         continue;
-                positive key_length =
-                    (positive)(colon - (ul_lscpu_cpuinfo + start));
-                while (key_length &&
-                       byte_is_space(ul_lscpu_cpuinfo[start + key_length - 1]))
+                positive key_length = (positive)(colon - key);
+                while (key_length && byte_is_space(key[key_length - 1]))
                         key_length--;
                 p8 address_to value = colon + 1;
                 while (byte_is_space(*value))
                         value++;
-                p8 address_to key = ul_lscpu_cpuinfo + start;
 
 #define UL_LSCPU_INFO(member, spelling)                                     \
                 if (!info->member &&                                        \
