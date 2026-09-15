@@ -5753,9 +5753,11 @@ same 'cursor stays'    '0,0'                     20 3 in 'abcdef\e[1G\e[3X' curs
 group background
 #       Erasing takes the background in force. Without it a program that
 #       paints a coloured panel by clearing to the end of a line gets a black
-#       hole instead.
+#       hole instead. Moving over cells that were never written is not an
+#       erase: xterm and tmux leave them in the default colours, and painting
+#       them put stray colour behind every gap a program stepped across.
 same 'erase in colour' '7,1'                     8 2 in '\e[41m\e[2Jx' attr 0,1
-same 'blank in colour' '7,2'                     8 2 in '\e[42m\e[5Cx' attr 0,0
+same 'stepped over'    '7,0'                     8 2 in '\e[42m\e[5Cx' attr 0,0
 
 #
 #       Lines and characters put in and taken out.
@@ -6251,6 +6253,38 @@ same 'cursor follows repeats' '0,7|0,7|0,7|1,1' \
                                                  resize '2x3' show attr '1,1' \
                                                  resize '10x3' show attr '0,3' \
                                                  resize '2x3' show attr '1,1' cursor
+
+group alternate
+#       The alternate screen is the lines after the shell's in the ring. A
+#       taller window must not reach back into the shell's lines above a
+#       full-screen program's picture, and leaving gives the shell its screen
+#       and its cursor where they were, however the window changed meanwhile.
+same 'grown is blank below' '[a1]|[a2]|[]|1,2' \
+                                                 20 2 in 'm1\r\nm2' in '\e[?1049h\e[H' \
+                                                 in 'a1\r\na2' resize '20x3' dump cursor
+same 'grown then left' '[]|[m1]|[m2]|2,2' \
+                                                 20 2 in 'm1\r\nm2' in '\e[?1049h\e[H' \
+                                                 in 'a1\r\na2' resize '20x3' in '\e[?1049l' \
+                                                 dump cursor
+same 'shrunk then left' '[m2]|[m3]' \
+                                                 20 3 in 'm1\r\nm2\r\nm3' in '\e[?1049h\e[H' \
+                                                 in 'a1\r\na2\r\na3' resize '20x2' in '\e[?1049l' dump
+#       A program saving its own cursor on the alternate screen does not take
+#       the shell's with it.
+same 'own save inside' '0,2'                     20 3 in 'ab' in '\e[?1049h\e[3;3H\e7\e[H' \
+                                                 in '\e[?1049l' cursor
+
+group narrowed
+#       An erase that reaches the edge of a narrower window takes the stored
+#       tail with it. Left there, Canvas folded it onto the next row, and a
+#       program redrawing after the resize came back to the old picture.
+same 'cleared'       '[ab]|[]'                   20 2 in 'xxxxxxxxxxxxxxxxxxxx' resize '10x2' \
+                                                 in '\e[2J\e[Hab' dump
+same 'line erased'   '[xx]|[]'                   20 2 in 'xxxxxxxxxxxxxxxxxxxx' resize '10x2' \
+                                                 in '\e[1;3H\e[K' dump
+same 'erased in colour' '[          ]|7,4' \
+                                                 20 2 in 'xxxxxxxxxxxxxxxxxxxx' resize '10x2' \
+                                                 in '\e[H\e[44m\e[K' row 0 attr '0,9'
 
 section ""
 

@@ -91,10 +91,19 @@ static p8 csi_intermediate;
 static unsigned int shown_row, shown_column;
 static b32 shown;
 
-static unsigned int saved_row, saved_column;
-static unsigned char saved_ink = 7, saved_paper = 0;
-static unsigned short saved_style;
-static b32 saved_reverse;
+/* A cursor with the colours it writes in: one saved by ESC 7 and CSI s, one
+   kept for the primary screen while the alternate one is up. They are two, or
+   a program saving its own cursor lost the shell's when it ended. */
+struct cursor_state
+{
+        unsigned int row, column;
+        unsigned char ink, paper;
+        unsigned short style;
+        b32 reverse;
+};
+
+static struct cursor_state cursor_saved = {0, 0, 7, 0, 0, false};
+static struct cursor_state cursor_primary = {0, 0, 7, 0, 0, false};
 
 // Tab stops, one byte a column, which is what makes HTS and TBC mean
 // anything. Wide enough for a column of pixels on any screen this runs on.
@@ -134,6 +143,8 @@ static fn touch_all()
         fill contract, including on RV64 implementations that trap unaligned
         doubleword stores.
 */
+#define BLANK_CELL_WORD ((positive)' ' | ((positive)7 << 32))
+
 static PURE positive blank_cell_word()
 {
         positive clear_ink = reverse ? paper : ink;
@@ -150,6 +161,18 @@ static fn cells_clear(unsigned int r, unsigned int first, unsigned int count)
 
         memory_fill_u64_aligned(row_cells(r) + first, count,
                                 blank_cell_word());
+        touch(r);
+}
+
+/* Cells never written, which are blank in the colours a reset gives them:
+   the colours in force belong to what an erase clears, not to what a tab or
+   a cursor movement steps over. */
+static fn cells_blank(unsigned int r, unsigned int first, unsigned int count)
+{
+        if (!count)
+                return;
+
+        memory_fill_u64_aligned(row_cells(r) + first, count, BLANK_CELL_WORD);
         touch(r);
 }
 
@@ -257,7 +280,7 @@ static fn reach(unsigned int r, unsigned int to)
 
         if (address_to length < to)
         {
-                cells_clear(r, address_to length, to - address_to length);
+                cells_blank(r, address_to length, to - address_to length);
                 address_to length = to;
         }
 }
@@ -492,28 +515,60 @@ static fn osc_finish()
 static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int to_row, unsigned int to_column)
 {
+        b32 coloured = blank_cell_word() != BLANK_CELL_WORD;
         unsigned int r;
 
         for (r = from_row; r <= to_row && r < ROWS; r++)
         {
                 unsigned int first = r == from_row ? from_column : 0;
                 unsigned int last = r == to_row ? to_column : COLUMNS - 1;
+                unsigned int past = min(last + 1, COLUMNS);
                 unsigned int address_to length = row_length(r);
 
-                if (first < COLUMNS)
-                {
-                        unsigned int past = min(last + 1, COLUMNS);
+                /*
+                        An erase that reaches the end of a line, or the edge
+                        of the window, is the line getting shorter. That is
+                        cheaper than the cells it would have written, and a
+                        line stored wider than a window that has since
+                        narrowed would otherwise keep a hidden tail for the
+                        compositor to fold onto the next row: a full-screen
+                        program redrawing after a resize came back to that.
 
-                        if (past > first)
+                        A coloured erase is drawn, so it fills to the edge in
+                        blank cells of that colour and still drops the tail.
+                */
+                if (!coloured)
+                {
+                        if (first >= address_to length)
+                                continue;
+
+                        if (past >= address_to length || past == COLUMNS)
+                        {
+                                address_to length = first;
+                                touch(r);
+                        }
+                        else
                                 cells_clear(r, first, past - first);
+
+                        continue;
                 }
 
-                // An erase that reaches the end of a line is the line getting
-                // shorter, which is cheaper than the cells it would have
-                // written and is what stops the width of a window deciding how
-                // much of it is blanked.
-                if (last + 1 >= address_to length && first < address_to length)
-                        address_to length = first;
+                if (first >= past)
+                {
+                        if (address_to length > COLUMNS)
+                        {
+                                address_to length = COLUMNS;
+                                touch(r);
+                        }
+
+                        continue;
+                }
+
+                reach(r, first);
+                cells_clear(r, first, past - first);
+
+                if (past == COLUMNS || address_to length < past)
+                        address_to length = past;
         }
 }
 
@@ -718,24 +773,20 @@ static fn sgr()
 static b32 alternate;
 static unsigned int alternate_head;
 
-static fn cursor_save()
+static fn cursor_save(struct cursor_state address_to into)
 {
-        saved_row = row;
-        saved_column = column;
-        saved_ink = ink;
-        saved_paper = paper;
-        saved_style = style;
-        saved_reverse = reverse;
+        address_to into = (struct cursor_state){row, column, ink, paper,
+                                                style, reverse};
 }
 
-static fn cursor_restore()
+static fn cursor_restore(const struct cursor_state address_to from)
 {
-        row = saved_row < ROWS ? saved_row : ROWS - 1;
-        column = saved_column < COLUMNS ? saved_column : COLUMNS - 1;
-        ink = saved_ink;
-        paper = saved_paper;
-        style = saved_style;
-        reverse = saved_reverse;
+        row = from->row < ROWS ? from->row : ROWS - 1;
+        column = from->column < COLUMNS ? from->column : COLUMNS - 1;
+        ink = from->ink;
+        paper = from->paper;
+        style = from->style;
+        reverse = from->reverse;
 }
 
 static fn alternate_enter()
@@ -743,7 +794,7 @@ static fn alternate_enter()
         if (alternate)
                 return;
 
-        cursor_save();
+        cursor_save(address_of cursor_primary);
         alternate_head = window->head;
 
         for (unsigned int r = 0; r < ROWS; r++)
@@ -763,7 +814,7 @@ static fn alternate_leave()
         __atomic_store_n(address_of window->head, alternate_head, __ATOMIC_RELEASE);
 
         alternate = false;
-        cursor_restore();
+        cursor_restore(address_of cursor_primary);
         touch_all();
 }
 
@@ -860,12 +911,7 @@ static fn soft_reset()
         region_bottom = ROWS;
         row = 0;
         column = 0;
-        saved_row = 0;
-        saved_column = 0;
-        saved_ink = 7;
-        saved_paper = 0;
-        saved_style = 0;
-        saved_reverse = false;
+        cursor_saved = (struct cursor_state){0, 0, 7, 0, 0, false};
 }
 
 static fn full_reset()
@@ -1097,10 +1143,10 @@ static fn csi_final(unsigned int final)
                 break;
         }
         case 's':
-                cursor_save();
+                cursor_save(address_of cursor_saved);
                 break;
         case 'u':
-                cursor_restore();
+                cursor_restore(address_of cursor_saved);
                 break;
         }
 }
@@ -1290,10 +1336,10 @@ static fn consume(unsigned int c)
                 switch (c)
                 {
                 case '7':
-                        cursor_save();
+                        cursor_save(address_of cursor_saved);
                         break;
                 case '8':
-                        cursor_restore();
+                        cursor_restore(address_of cursor_saved);
                         break;
                 case 'D':
                         line_feed();
@@ -2246,6 +2292,21 @@ fn claim_standard_descriptors()
 
 #endif
 
+// Where a row of the screen is once it is ROWS tall instead of was_rows:
+// anchored at the bottom, with added blank lines below everything it held.
+static unsigned int regrid_row(unsigned int at, unsigned int was_rows,
+                               unsigned int added)
+{
+        if (ROWS >= was_rows)
+                at += ROWS - was_rows - added;
+        else if (at >= was_rows - ROWS)
+                at -= was_rows - ROWS;
+        else
+                at = 0;
+
+        return at < ROWS ? at : ROWS - 1;
+}
+
 /*
         The window was resized.
 
@@ -2265,6 +2326,7 @@ fn regrid(b32 master)
         unsigned int was_rows = ROWS;
         unsigned int columns = window->columns;
         unsigned int rows = window->rows;
+        unsigned int added = 0;
 #ifndef KERNEL_MODE
         b32 cursor_was_shown = shown;
 #endif
@@ -2293,15 +2355,26 @@ fn regrid(b32 master)
         if (COLUMNS > window->stride)
                 COLUMNS = window->stride;
 
-        if (ROWS >= was_rows)
-                row += ROWS - was_rows;
-        else if (row >= was_rows - ROWS)
-                row -= was_rows - ROWS;
-        else
-                row = 0;
+        /*
+                The alternate screen is the lines after alternate_head, and a
+                taller window must not reach back past it into the primary
+                screen it keeps: that put the shell's last lines above a
+                full-screen program's picture, and left the picture on the
+                shell's screen once the program ended. The new rows are blank
+                lines at the bottom, and the cursor does not move for them.
+        */
+        if (alternate)
+                while (window->head - alternate_head < ROWS)
+                {
+                        window_scroll(window);
+                        added++;
+                }
 
-        if (row >= ROWS)
-                row = ROWS - 1;
+        row = regrid_row(row, was_rows, added);
+        cursor_saved.row = regrid_row(cursor_saved.row, was_rows, added);
+
+        if (alternate)
+                cursor_primary.row = regrid_row(cursor_primary.row, was_rows, 0);
 
         if (column >= COLUMNS)
                 column = COLUMNS - 1;
