@@ -17209,6 +17209,7 @@ static struct {
     atomic_t frame_pending;
     int lock;
     _Bool suspended;
+    _Bool awake;
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
 static unsigned wakes,wheel_cas,drain_race;
@@ -17314,6 +17315,7 @@ static _Bool mock_taken;
 static unsigned mock_resumes;
 static _Bool desktop_taken(void) { assert(desktop.lock);return mock_taken; }
 static void desktop_resume(void) { assert(desktop.lock);mock_resumes++;desktop.suspended=0; }
+static void desktop_set_awake(_Bool awake) { assert(desktop.lock);desktop.awake=awake; }
 """
     source += section(pointer, "#define CANVAS_SUSPENDED_POLL_MS", "static void canvas_flush_wake")
     # The power button's handler and the work it queues, against a mocked
@@ -17610,9 +17612,11 @@ static void suspend_pending(void) {
 // A program that took the display heard every key Canvas did.
 static void check_input_suspension(void) {
     memset(&desktop,0,sizeof(desktop));
-    suspend_pending();mock_taken=1;mock_resumes=0;
+    suspend_pending();mock_taken=1;mock_resumes=0;desktop.awake=1;
     check(canvas_suspend_check() && desktop.suspended && !desktop.lock,
           "a card another program is master of suspends Canvas");
+    check(!desktop.awake,
+          "a suspension stops the frame timer, which would otherwise wake Canvas every frame");
     check(!desktop.button_changed && !desktop.client_changed && !desktop.motion_pending &&
           !desktop.wheel && !desktop.focus_steps && !desktop.focus_commit &&
           !desktop.minimize && !desktop.spawn && !desktop.frame_pending,
@@ -17623,6 +17627,8 @@ static void check_input_suspension(void) {
     suspend_pending();mock_taken=0;
     check(!canvas_suspend_check() && !desktop.suspended && mock_resumes==1,
           "a card given back resumes the desktop once");
+    check(!desktop.awake,
+          "the resume leaves re-arming the frame timer to the first commit after it");
     check(desktop.spawn && desktop.key_tail==3 && desktop.motion_pending,
           "input arriving after the card is given back is delivered");
     check(!canvas_suspend_check() && mock_resumes==1,

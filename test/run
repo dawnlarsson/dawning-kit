@@ -12030,6 +12030,15 @@ holder = subprocess.run(["cc", "-O2", "-static", "-o", stick + "/drmhold",
                          work + "/drmhold.c"],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
+#       The same holder, with a count of how often the canvas thread wakes
+#       while it keeps the card: its voluntary switches from 2 s after the
+#       start to 6 s, a second at a time.
+open(stick + "/holdwake", "w").write(r'''p=$(grep -l '^moonwater/canva' /proc/[0-9]*/comm | head -n 1 | cut -d/ -f3)
+count() { sed -n 's/^voluntary_ctxt_switches:[^0-9]*//p' /proc/$p/status; }
+( sleep 2; a=$(count); sleep 4; b=$(count); echo "wakes-$(( (b - a) / 4 ))-per-second" ) &
+exec /mnt/drmhold "$@"
+''')
+
 leak_qmp = work + "/leak-qmp"
 leak_mon = work + "/leak-mon"
 leak_guest = subprocess.Popen([
@@ -12140,8 +12149,8 @@ def typed_to_serial(word):
     chord("shift", "s")
     type_text("0\n")
 
-def run_holder(arguments):
-    type_text("/mnt/drmhold " + arguments + " ")
+def run_holder(arguments, program="/mnt/drmhold"):
+    type_text(program + " " + arguments + " ")
     chord("shift", "dot")
     type_text(" /dev/tty")
     chord("shift", "s")
@@ -12207,17 +12216,43 @@ if switcher and holder:
     #   the card, so nothing tells Canvas; it has to notice on its own.
     run_holder("3 1 8")
     dropped = serial_wait(b"DRMHOLD dropped", 20)
+    quiet = "no drop"
     if dropped:
+        #   Nothing is typed or moved in this second and the holder writes
+        #   only to the serial port, so no key, pointer or terminal output
+        #   wakes Canvas: its desktop replaces the holder's white fill only
+        #   if the suspended loop looks at the card again by itself.
         time.sleep(1)
+        shot("dropped-quiet", 0.5)
+        quiet_w, quiet_h, quiet_px = load("dropped-quiet")
+        grid = [(y * quiet_w + x) * 3 for y in range(0, quiet_h, 8) for x in range(0, quiet_w, 8)]
+        white = sum(1 for at in grid if quiet_px[at:at + 3] == b"\xff\xff\xff")
+        quiet = "yes" if white * 2 < len(grid) else "%d of %d sampled pixels still white" % (white, len(grid))
         typed_to_serial("dropped")
         time.sleep(2)
     serial_now = open(work + "/leak-serial", "rb").read()
     out.append(("a program that gives master back and stays is noticed",
                 "yes" if dropped and serial_now.count(b"DRMHOLD done") == 1 else "no", "yes"))
+    out.append(("and the desktop is back within a second with nothing typed or moved", quiet, "yes"))
     out.append(("and typing reaches Canvas while it still runs",
                 str(len(re.findall(rb"dropped-(\d+)", serial_now))), "1"))
     serial_wait(b"DRMHOLD done\r\nDRMHOLD", 0)
     time.sleep(8)
+
+    #   How often a suspended Canvas wakes with nothing happening. The look
+    #   it takes at the card is four a second; a frame timer left running
+    #   while the card is taken is one a frame.
+    run_holder("7 0 0", "/shell /mnt/holdwake")
+    serial_wait(b"-per-second", 15)
+    rate = re.findall(rb"wakes-(\d+)-per-second", open(work + "/leak-serial", "rb").read())
+    out.append(("a suspended Canvas wakes fewer than 20 times a second",
+                "yes" if rate and int(rate[-1]) < 20
+                else ("%s a second" % rate[-1].decode() if rate else "no count"), "yes"))
+    for _ in range(60):
+        if open(work + "/leak-serial", "rb").read().count(b"DRMHOLD done") >= 3:
+            break
+        time.sleep(0.2)
+    time.sleep(2)
 else:
     for name, want in (("a program takes the display", "yes"),
                        ("keys typed at it never reach a Canvas window", "0"),
@@ -12226,7 +12261,9 @@ else:
                        ("the cursor is drawn again where it was", "yes"),
                        ("the cursor is back at a new generation", "yes"),
                        ("a program that gives master back and stays is noticed", "yes"),
-                       ("and typing reaches Canvas while it still runs", "1")):
+                       ("and the desktop is back within a second with nothing typed or moved", "yes"),
+                       ("and typing reaches Canvas while it still runs", "1"),
+                       ("a suspended Canvas wakes fewer than 20 times a second", "yes")):
         out.append((name, "not run: no static cc for the helpers", want))
 
 #       And the power button with Canvas up, which has its own input handler

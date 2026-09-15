@@ -957,7 +957,18 @@ static _Bool canvas_suspend_check(void)
 
         taken = desktop_taken();
         if (taken)
+        {
                 desktop.suspended = true;
+
+                // No frame drawn now would land, so none is worth a timer: left
+                // awake, desktop_frame wakes this thread every frame for as long
+                // as the other program keeps the card. Programs make their call
+                // again, which answers at once while the card is taken; the
+                // resume redraws every pane, and the first commit after it
+                // re-arms the timer through desktop_watch.
+                if (desktop.awake)
+                        desktop_set_awake(false);
+        }
         else if (desktop.suspended)
                 desktop_resume();
 
