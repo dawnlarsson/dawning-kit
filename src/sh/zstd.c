@@ -4654,7 +4654,7 @@ static b32 zstd_jobs_open(const zstd_params address_to p)
                                : p->strategy >= ZSTD_LAZY2  ? 7
                                                             : 6;
         positive const job = (positive)1 << job_log;
-        positive const slots = parallel_width() + 1;
+        positive const slots = parallel_slots();
         positive per_round = ZSTD_JOBS_BUDGET / job;
         positive room;
 
