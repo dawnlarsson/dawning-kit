@@ -1139,15 +1139,15 @@ static fn soft_reset()
         cursor_saved = (struct cursor_state){0, 0, 7, 0, 0, false};
 }
 
+/*
+        RIS: DECSTR's resets, on the primary screen, with the tab stops back
+        and the page blank. Leaving the alternate screen comes first: it puts
+        back the cursor the shell had, and a reset is the cursor at home.
+*/
 static fn full_reset()
 {
-        attributes_reset();
-        last_character = 0;
-        row = 0;
-        column = 0;
-        region_top = 0;
-        region_bottom = ROWS;
         alternate_leave();
+        soft_reset();
         tabs_reset();
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 }
