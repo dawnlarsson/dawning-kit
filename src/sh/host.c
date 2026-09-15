@@ -2920,30 +2920,41 @@ static bipolar host_canvas_request(positive request,
         return failed;
 }
 
-static fn host_canvas_say(struct canvas_control address_to control)
+static fn host_canvas_write(string_address prefix,
+                            struct canvas_control address_to control)
 {
         if (!control->running)
         {
-                string_format(log, host_label "Canvas is off; moonwater canvas on starts it\n");
-                log_flush();
+                string_format(log, "%sCanvas is off; moonwater canvas on starts it\n",
+                              prefix);
                 return;
         }
 
-        string_format(log, host_label "Canvas is on: %s, %p window%s\n",
+        string_format(log, "%sCanvas is on: %s, %p window%s\n", prefix,
                       (string_address)control->driver, (positive)control->windows,
                       control->windows == 1 ? "" : "s");
 
         for (positive at = 0; at < control->output_count && at < SPARK_CANVAS_OUTPUTS; at++)
-                string_format(log, host_label "  %s: %p by %p, %p Hz\n",
+                string_format(log, "%s  %s: %p by %p, %p Hz\n", prefix,
                               (string_address)control->output[at].connector,
                               (positive)control->output[at].width,
                               (positive)control->output[at].height,
                               (positive)control->output[at].refresh);
 
-        if (control->suspended)
-                string_format(log, host_label "another program holds the display; "
-                                              "Canvas ignores input until it lets go\n");
+        if (control->detached)
+                string_format(log, "%s%p window%s still open off the desktop\n", prefix,
+                              (positive)control->detached,
+                              control->detached == 1 ? "" : "s");
 
+        if (control->suspended)
+                string_format(log, "%sanother program holds the display; "
+                                   "Canvas ignores input until it lets go\n",
+                              prefix);
+}
+
+static fn host_canvas_say(struct canvas_control address_to control)
+{
+        host_canvas_write(host_label, control);
         log_flush();
 }
 
@@ -3072,30 +3083,110 @@ static b32 host_canvas(string_address address_to arguments, positive count)
 
 // The command ---------------------------------------------------
 
+static fn host_title(writer out)
+{
+        string_format(out, TERM_BOLD "Moonwater" TERM_RESET "\n\n");
+}
+
+/*
+        One list as it is typed, then what it does. Status, help and a
+        wrong argument share it, so the picture and the usage read as the
+        same page.
+*/
+static fn host_usage_write(writer out)
+{
+        string_format(out,
+                      TERM_BOLD "  status" TERM_RESET
+                      "                      " TERM_DIM "this picture" TERM_RESET "\n"
+                      TERM_BOLD "  install DISK [--removable]" TERM_RESET
+                      "  " TERM_DIM "put Moonwater on a disk" TERM_RESET "\n"
+                      TERM_BOLD "  use [DISK]" TERM_RESET
+                      "                  " TERM_DIM "keep that disk this session" TERM_RESET "\n"
+                      TERM_BOLD "  update [DISK]" TERM_RESET
+                      "               " TERM_DIM "write this build onto a disk" TERM_RESET "\n"
+                      TERM_BOLD "  live" TERM_RESET
+                      "                        " TERM_DIM "leave the disks alone" TERM_RESET "\n"
+                      TERM_BOLD "  init [add|remove ...]" TERM_RESET
+                      "       " TERM_DIM "what runs at boot" TERM_RESET "\n"
+                      TERM_BOLD "  init mount [on|off]" TERM_RESET
+                      "         " TERM_DIM "mount kept disks at boot" TERM_RESET "\n"
+                      TERM_BOLD "  exit [add|remove ...]" TERM_RESET
+                      "       " TERM_DIM "what runs when the machine stops" TERM_RESET "\n"
+                      TERM_BOLD "  canvas [on|off]" TERM_RESET
+                      "             " TERM_DIM "the desktop" TERM_RESET "\n"
+                      TERM_BOLD "  button power [COMMAND]" TERM_RESET
+                      "      " TERM_DIM "what the power button runs" TERM_RESET "\n"
+                      "\n"
+                      TERM_DIM "  Settings stay in the image this session started from.\n"
+                      "  install takes this session's; update keeps the disk's.\n" TERM_RESET);
+        log_flush();
+}
+
+static b32 host_usage(void)
+{
+        host_title(log_error);
+        host_usage_write(log_error);
+        return 2;
+}
+
+static fn host_status_events(host_settings address_to settings, positive which)
+{
+        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+        host_setting setting;
+        positive at = 0;
+        positive shown = 0;
+
+        while (host_settings_next(settings, address_of at, address_of setting))
+        {
+                if (setting.entry.list != host_lists[which].list)
+                        continue;
+
+                if (!shown)
+                        string_format(log, "  %s:\n", host_lists[which].verb);
+
+                host_settings_text(text, address_of setting);
+                string_format(log, "    %p  %s\n", (positive)setting.entry.id, text);
+                shown++;
+        }
+
+        if (!shown)
+                string_format(log, "  %s: %s\n", host_lists[which].verb,
+                              host_lists[which].empty);
+}
+
+/*
+        This session as one page: the build, the disks, Canvas, the power
+        button, init and exit, then the commands. Nothing is a log line;
+        the words that name each fact stay as they are.
+*/
 static b32 host_status(void)
 {
         p8 running[HOST_BUILD_ROOM];
         p8 verdict[HOST_NAME_ROOM + 16];
         host_census census;
         host_medium_search search;
+        host_settings settings;
+        struct canvas_control canvas;
+        struct power_button_control power;
 
         host_state_ready();
+        host_title(log);
 
         if (host_running_build(running, sizeof(running)))
-                string_format(log, host_label "this is %s\n", running);
+                string_format(log, "  this is %s\n", running);
         else
-                string_format(log, host_label "this build's version cannot be read\n");
+                string_format(log, "  this build's version cannot be read\n");
 
         host_read_text(HOST_VERDICT, verdict, sizeof(verdict));
         if (host_starts(verdict, "disk "))
-                string_format(log, host_label "kept on %s: %s /root /home\n",
+                string_format(log, "  kept on %s: %s /root /home\n",
                               verdict + 5, BOWL_ROOT_DIRECTORY);
         else if (host_starts(verdict, "ask "))
-                string_format(log, host_label "waiting: %s has another build; "
-                                              "moonwater use, update or live\n",
+                string_format(log, "  waiting: %s has another build; "
+                                   "moonwater use, update or live\n",
                               verdict + 4);
         else
-                string_format(log, host_label "live: nothing is kept after power off\n");
+                string_format(log, "  live: nothing is kept after power off\n");
 
         host_census_take(address_of census);
         for (positive at = 0; at < census.count; at++)
@@ -3104,62 +3195,48 @@ static b32 host_status(void)
 
                 host_install_read(install);
                 if (!install->readable)
-                        string_format(log, host_label "installed on %s, image unreadable\n",
+                        string_format(log, "  installed on %s, image unreadable\n",
                                       install->disk);
                 else if (string_equals(install->build, running))
-                        string_format(log, host_label "installed on %s, this build\n",
+                        string_format(log, "  installed on %s, this build\n",
                                       install->disk);
                 else
-                        string_format(log, host_label "installed on %s, another build: %s\n",
+                        string_format(log, "  installed on %s, another build: %s\n",
                                       install->disk, install->build);
         }
 
         if (!census.count)
-                string_format(log, host_label "not installed on any disk here\n");
+                string_format(log, "  not installed on any disk here\n");
 
         if (running[0] && host_medium_find(address_of search, running, null))
         {
-                string_format(log, host_label "this image is on %s\n", search.name);
+                string_format(log, "  this image is on %s\n", search.name);
                 host_unmount(HOST_MEDIUM);
         }
 
-        {
-                struct canvas_control control;
+        string_format(log, "\n");
 
-                if (host_canvas_request(SPARK_CANVAS_STATUS, address_of control) >= 0)
-                        host_canvas_say(address_of control);
+        if (host_canvas_request(SPARK_CANVAS_STATUS, address_of canvas) >= 0)
+                host_canvas_write("  ", address_of canvas);
+
+        if (host_power_button_request(null, address_of power) >= 0)
+        {
+                if (!power.command[0])
+                        string_format(log, "  the power button is ignored\n");
+                else
+                        string_format(log, "  the power button runs: %s\n",
+                                      (string_address)power.command);
         }
 
-        log_flush();
+        host_settings_session(address_of settings);
+        host_status_events(address_of settings, 0);
+        string_format(log, "  init mount is %s\n",
+                      settings.flags & SPARK_SETTINGS_MOUNT_OFF ? "off" : "on");
+        host_status_events(address_of settings, 1);
+
+        string_format(log, "\n");
+        host_usage_write(log);
         return 0;
-}
-
-static fn host_usage_write(writer out)
-{
-        string_format(out,
-                      host_label "usage: moonwater [-h]\n"
-                      host_label "       moonwater status\n"
-                      host_label "       moonwater install DISK [--removable]\n"
-                      host_label "       moonwater use [DISK]\n"
-                      host_label "       moonwater update [DISK]\n"
-                      host_label "       moonwater live\n"
-                      host_label "       moonwater init                     what runs at boot\n"
-                      host_label "       moonwater init add \"command\"\n"
-                      host_label "       moonwater init remove ID|\"command\"\n"
-                      host_label "       moonwater init mount [on|off]\n"
-                      host_label "       moonwater exit                     what runs when the machine stops\n"
-                      host_label "       moonwater exit add|remove ...\n"
-                      host_label "       moonwater canvas [on|off]\n"
-                      host_label "       moonwater button power [COMMAND]\n"
-                      host_label "Settings are kept in the image this session started from.\n"
-                      host_label "install takes this session's; update keeps the disk's.\n");
-        log_flush();
-}
-
-static b32 host_usage(void)
-{
-        host_usage_write(log_error);
-        return 2;
 }
 
 /* use and update: the named install, the one boot asked about, or the only one. */
@@ -3227,6 +3304,7 @@ static b32 host_main()
                 if (count > 2)
                         return host_usage();
 
+                host_title(log);
                 host_usage_write(log);
                 return 0;
         }
