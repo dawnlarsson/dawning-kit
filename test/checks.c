@@ -47767,14 +47767,21 @@ static fn crypto_floor_aes_ctr(void)
               wrong == 0);
 }
 
+#define SHARED_montgomery_reference
+#include "checks.c"
+#undef SHARED_montgomery_reference
+
 /*
         p256_multiply, p256_square, p256_add, p256_subtract, p384_multiply,
         p384_square, p384_add and p384_subtract against the C Montgomery
         arithmetic.
 
         crypto_fe_mul, sqr, add and sub hand the two NIST field primes to
-        library.c; a copy of the same crypto_field at another address takes
-        the C path, which is the reference. Operands are the edges -- zero,
+        library.c; a copy of the same crypto_field at another address adds
+        and subtracts in crypto.c's C, which is the reference there, and
+        multiplies and squares are held to the C Montgomery multiply and
+        square crypto.c ran before montgomery_multiply
+        (SHARED_montgomery_reference). Operands are the edges -- zero,
         one, p - 1, p - 2 and R mod p -- then seeded values with limbs of all
         ones and zeros sprinkled in, reduced below p; each routine also runs
         with its output aliasing an operand. Two fixed answers pin the
@@ -47838,7 +47845,7 @@ static positive field_check_wrong(const crypto_field address_to f,
         unit[0] = 1;
         crypto_fe_mul(x, f->square, unit, f);
         wrong += memory_compare(x, f->one, n * 8) != 0;
-        crypto_fe_mul(x, f->one, f->one, address_of reference);
+        montgomery_reference_multiply(x, f->one, f->one, f->m, f->inverse, n);
         wrong += memory_compare(x, f->one, n * 8) != 0;
 
         for (positive round = 0; round < rounds; round++)
@@ -47850,10 +47857,10 @@ static positive field_check_wrong(const crypto_field address_to f,
                 field_check_operand(b, f, round < 40 ? round / 5 % 8 : 5);
 
                 crypto_fe_mul(x, a, b, f);
-                crypto_fe_mul(y, a, b, address_of reference);
+                montgomery_reference_multiply(y, a, b, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 crypto_fe_sqr(x, a, f);
-                crypto_fe_sqr(y, a, address_of reference);
+                montgomery_reference_square(y, a, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 crypto_fe_add(x, a, b, f);
                 crypto_fe_add(y, a, b, address_of reference);
@@ -47864,14 +47871,14 @@ static positive field_check_wrong(const crypto_field address_to f,
 
                 memory_copy(x, a, n * 8);
                 crypto_fe_mul(x, x, b, f);
-                crypto_fe_mul(y, a, b, address_of reference);
+                montgomery_reference_multiply(y, a, b, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 memory_copy(x, b, n * 8);
                 crypto_fe_mul(x, a, x, f);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 memory_copy(x, a, n * 8);
                 crypto_fe_sqr(x, x, f);
-                crypto_fe_sqr(y, a, address_of reference);
+                montgomery_reference_square(y, a, f->m, f->inverse, n);
                 wrong += memory_compare(x, y, n * 8) != 0;
                 memory_copy(x, a, n * 8);
                 crypto_fe_add(x, x, b, f);
@@ -47909,10 +47916,6 @@ static fn crypto_floor_field(void)
         fixed answers pin both: R^2 times plain 1 is R under each group
         order, and so is R times R. A count outside 1..64 writes nothing.
 */
-#define SHARED_montgomery_reference
-#include "checks.c"
-#undef SHARED_montgomery_reference
-
 static p64 montgomery_check_seed = 0x2545f4914f6cdd1dull;
 
 static p64 montgomery_check_next(void)
