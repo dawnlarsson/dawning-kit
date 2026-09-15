@@ -9381,7 +9381,8 @@ rm -f /tmp/fl-parser-bare-fifo
 #
 rm -f /tmp/fl-parser-reader /tmp/fl-parser-script
 mkfifo /tmp/fl-parser-script
-/bin/bash -c 'ulimit -n 1024; /bin/bash /tmp/fl-parser-script' >/dev/null 2>&1 &
+#       Only stderr is dropped: the first line's answer has to reach the console.
+/bin/bash -c 'ulimit -n 1024; /bin/bash /tmp/fl-parser-script' 2>/dev/null &
 fl_parser_child=$!
 printf '%s\n' \
 'printf '\''fl-fifo-compatible-%s\n'\'' ready | rev' \
@@ -9462,19 +9463,28 @@ printf 'txet%s\n' $? | rev
 #       same denied image directly and through a #! line.  Starting it before
 #       the write keeps this test independent of the parent's cached report;
 #       using printf pieces keeps the successful marker out of console echo.
+#       "Before" is a handshake, not an ampersand: the child's exec is its own,
+#       and when it lands after the write the child is refused, nobody ever
+#       opens the gate, and the parent hangs there until the boot times out.
 #
 printf '%s\n' '#!/bin/dirname' > /tmp/floodlight-entry
 chmod +x /tmp/floodlight-entry
-mkfifo /tmp/floodlight-gate
-/bin/bash -c 'read gate < /tmp/floodlight-gate; /bin/dirname /tmp/direct >/dev/null 2>&1; direct=$?; /tmp/floodlight-entry >/dev/null 2>&1; script=$?; printf "fl-policy-%s-%s\n" "$direct" "$script"' &
+mkfifo /tmp/floodlight-gate /tmp/floodlight-started
+/bin/bash -c ': > /tmp/floodlight-started; read gate < /tmp/floodlight-gate; /bin/dirname /tmp/direct >/dev/null 2>&1; direct=$?; /tmp/floodlight-entry >/dev/null 2>&1; script=$?; printf "fl-policy-%s-%s\n" "$direct" "$script"' &
 floodlight_child=$!
+read started < /tmp/floodlight-started
 printf '%s\n' '/shell run deny' > /dev/floodlight
 printf '%s\n' go > /tmp/floodlight-gate
 wait "$floodlight_child"
 poweroff
 COMMANDS
 
+#       A display the terminal fits on. A guest takes seventy percent of the
+#       mode its EDID prefers, and QEMU's default EDID leaves it 640x480,
+#       which holds 78 columns: the terminal opens, as 78x24, and the check
+#       below cannot see it. 1600x1200 gives 1024x768.
 timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu Nehalem \
+        -vga none -device VGA,xres=1600,yres=1200 \
         -kernel "$image" -no-reboot -display none -serial stdio \
         -append "console=ttyS0 drm_client_lib.active=" \
         < "$work/commands" > "$work/transcript" 2>&1 || true
@@ -9554,7 +9564,10 @@ says transcript 'the spark device'    'kraps/ved/'
 says transcript 'the shell on disk'   'llehs/'
 says transcript 'a file written'      'nettirw'
 says transcript 'and measured'        'bytes8'
-says transcript 'empty init environment' 'bootenv-unset-unset'
+#       The shell defaults HOME to /root as it does PATH and LANG, and only
+#       when nothing gave it one; the kernel's HOME=/ and TERM=linux are what
+#       must not arrive.
+says transcript 'empty init environment' 'bootenv-/root-unset'
 says transcript 'cached environment'   'cache-first'
 says transcript 'changed environment'  'cache-second'
 says transcript 'cache process owner'  'owner-parent'
@@ -10052,7 +10065,10 @@ if os.access("/dev/kvm", os.R_OK | os.W_OK):
 
 guest = subprocess.Popen([
     "qemu-system-x86_64", "-m", "2G", "-smp", "2"] + processor + [
-    "-kernel", image, "-vga", "none", "-device", "virtio-gpu-pci",
+    # W and H above are the guest's screen: seventy percent of the preferred
+    # mode, so the EDID has to prefer 3658x1543. QEMU's default EDID gives
+    # 640x480, where the log fills the width and no window is found.
+    "-kernel", image, "-vga", "none", "-device", "virtio-gpu-pci,xres=3658,yres=1543",
     "-device", "qemu-xhci", "-device", "usb-tablet", "-device", "usb-kbd",
     # A relative mouse on each kind of controller a desktop has. The tablet
     # proves absolute motion; a real mouse is REL_X and REL_Y through usbhid,
@@ -10173,7 +10189,18 @@ for x in range(w):
             runs.append((start, x - 1))
         start = None
 
+# A window that reaches the right edge is a run too.
+if start is not None and w - start > 40:
+    runs.append((start, w - 1))
+
 out.append(("windows", str(len(runs)), "2"))
+
+#       Every check below needs the windows it measures. Without them they
+#       used to be skipped without a word, and a display too small for the
+#       layout hid twenty seven of them behind one failing count: a check that
+#       cannot run fails, by name.
+if not runs:
+    out.append(("the log window's checks", "not run: no window found", "run"))
 
 if len(runs) >= 1:
     left, right = runs[0]
@@ -10343,6 +10370,9 @@ if len(runs) >= 1:
 
 
 #       A click on a titlebar takes the focus, which the titlebar says.
+if len(runs) < 2:
+    out.append(("the checks between two windows", "not run: %d windows" % len(runs), "run"))
+
 if len(runs) >= 2:
     a_left, a_right = runs[0]
     b_left, b_right = runs[1]
@@ -10832,6 +10862,9 @@ try:
     serial = open(work + "/serial", "rb").read().lower()
 except OSError:
     serial = b""
+
+if not runs:
+    out.append(("the USB mouse checks", "not run: no window found", "run"))
 
 #       A USB mouse moves the cursor. The arrow's fill is 55 pixels of pure
 #       white, which nothing else on the desktop uses, so counting them at the
