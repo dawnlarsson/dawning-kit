@@ -5938,6 +5938,13 @@ same 'huge move clamps'   '[a      Z]'             8 2 in 'a\e[4294967297CZ' row
 same 'cha'          '2,6'                        20 5 in '\e[3;3H\e[7G' cursor
 same 'vpa'          '3,2'                        20 5 in '\e[3;3H\e[4d' cursor
 same 'cnl cpl'      '2,0'                        20 5 in '\e[1;5H\e[3E\e[1F' cursor
+#       Up and down stop at the margin of a region the cursor is in or past,
+#       and a pending wrap is gone once the cursor has moved.
+same 'up stops at the margin' '1,0'              10 5 in '\e[2;4r\e[3;1H\e[5A' cursor
+same 'up from below the region' '1,0'            10 6 in '\e[2;4r\e[6;1H\e[9A' cursor
+same 'down stops at the margin' '3,0'            10 5 in '\e[2;4r\e[2;1H\e[9B' cursor
+same 'down from below the region' '5,0'          10 6 in '\e[2;4r\e[5;1H\e[9B' cursor
+same 'up takes the pending wrap away' '[         Y]|[xxxxxxxxxx]' 10 3 in '\e[2;1Hxxxxxxxxxx\e[AY' row 0 row 1
 
 group save
 #       DECSC and DECRC keep the colours with the position, which is what
@@ -5945,6 +5952,9 @@ group save
 same 'dec save'     '[abcX]|[def]|[]'            20 3 in 'abc\e7\r\ndef\e8X' dump
 same 'dec colours'  '1,0'                        20 3 in '\e[31m\e7\e[32m\e8x' attr 0,0
 same 'ansi save'    '[abcX]|[def]|[]'            20 3 in 'abc\e[s\r\ndef\e[uX' dump
+#       DECSC keeps the character sets and origin mode along with the cursor.
+same 'save keeps the character set' '[<2500>]'   8 2 in '\e(0\e7\e(B\e8q' row 0
+same 'save keeps origin mode' '1,1'              20 5 in '\e[2;4r\e[?6h\e7\e[?6l\e8\e[Hx' cursor
 
 group report
 #       DSR with a parameter of 6 is answered with CPR, one based, which is
@@ -6161,13 +6171,18 @@ group alternate
 #       what was underneath still there. The ring already holds what was
 #       underneath, so entering is head moved on by a screenful and leaving
 #       is head moved back: there is no second buffer and nothing is copied.
-same 'covers'        '[gone]|[]|[]'              20 3 in 'keep\r\n\e[?1049hgone' dump
+same 'covers'        '[]|[gone]|[]'              20 3 in 'keep\r\n\e[?1049hgone' dump
 same 'gives back'    '[keep]|[]|[]'              20 3 in 'keep\r\n\e[?1049hgone\e[?1049l' dump
 same 'the old screen is still there' '[keep]|[]|[]' \
                                                  20 3 in 'keep\r\n\e[?1049hgone' back 3
 same 'the shell leaving one it never entered' '[hi]' \
                                                  20 3 in '\e[?1049lhi' row 0
-same 'the older spelling' '[gone]|[]|[]'         20 3 in 'keep\r\n\e[?47hgone' dump
+same 'the older spelling' '[]|[gone]|[]'         20 3 in 'keep\r\n\e[?47hgone' dump
+#       None of them moves the cursor, and only 1049 saves it on the way in
+#       and gives it back on the way out.
+same 'entering keeps the cursor' '0,2'           20 3 in 'ab\e[?1049h' cursor
+same 'leaving 47 keeps the cursor' '2,4'         20 3 in '\e[2;3H\e[?47h\e[3;5H\e[?47l' cursor
+same 'leaving 1049 gives it back' '1,2'          20 3 in '\e[2;3H\e[?1049h\e[3;5H\e[?1049l' cursor
 
 group reset
 #       RIS puts every one of them back.
@@ -6177,6 +6192,12 @@ same 'ris clears'    '[]|[]|[]|[]'               20 4 in 'abc\r\ndef\ec' dump
 same 'decstr keeps'  '[ab]|[]|[]|[]'             20 4 in 'ab\e[4h\e[!p' dump
 same 'decstr modes'  'wrap=1 insert=0 alternate=0 cursor=1 region=0,4' \
                                                  20 4 in '\e[4h\e[?25l\e[!p' mode
+#       DECSTR leaves the cursor where it is, as xterm does; RIS homes it, and
+#       from the alternate screen it comes back to a primary one in the
+#       colours a reset gives.
+same 'decstr keeps the cursor' '2,3'             20 4 in '\e[3;4H\e[!p' cursor
+same 'ris homes'     '0,0'                       20 4 in '\e[3;4H\ec' cursor
+same 'ris from the alternate screen' '[X]|7,0|0,1' 20 4 in '\e[3;4H\e[44m\e[?1049h\ecX' row 0 attr 0,0 cursor
 
 #
 #       Sequences nobody here answers.
@@ -6226,6 +6247,8 @@ group escape
 #       DECRC hiding behind a hash.
 same 'character set'  '[XY]'                     20 3 in '\e(BXY' row 0
 same 'line drawing'   '[<2500>]'                 8 2 in '\e(0q\e(B' row 0
+same 'newline and tab symbols' '[<2424><240b>]'  8 2 in '\e(0hi\e(B' row 0
+same 'arrows and a block' '[<2192><2190><2191><2193><2588>]' 8 2 in '\e(0+,-.0\e(B' row 0
 same 'shift in'       '[<2500>x]'                8 2 in '\e)0\x0eq\x0fx' row 0
 same 'repeat'         '[aaaa]'                   8 2 in 'a\e[3b' row 0
 same 'screen alignment' '[XY]'                   20 3 in '\e#8XY' row 0
@@ -6592,6 +6615,7 @@ group off
 #       line at a time would be handing it nothing at all until Enter.
 same 'passes through' '[a\e[D]'                  20 3 edit off keys 'a<left>' sent
 same 'shift is encoded' '[\e[1;2D]'              20 3 edit off keys '<s-left>' sent
+same 'shift tab is kcbt' '[\e[Z]'                 20 3 edit off keys '<s-	>' sent
 same 'control tilde encoded' '[\e[5;5~]'         20 3 edit off keys '<c-pgup>' sent
 same 'and back on'    '[a]|[]'                   20 3 edit off keys 'a' sent edit on keys 'b' sent
 same 'the line goes with it' '[ab ]|[x]'         20 3 edit on keys 'abc\x7f' row 0 edit off keys 'x' sent

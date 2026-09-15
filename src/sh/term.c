@@ -106,6 +106,8 @@ struct cursor_state
         unsigned char ink, paper;
         unsigned short style;
         b32 reverse;
+        unsigned char charset_g0, charset_g1, charset_gl;
+        b32 origin_mode;
 };
 
 static struct cursor_state cursor_saved = {0, 0, 7, 0, 0, false};
@@ -798,10 +800,18 @@ static CONST unsigned int acs_character(unsigned int c)
 {
         static const unsigned int map[] = {
             0x25c6, 0x2592, 0x2409, 0x240c, 0x240d, 0x240a, 0x00b0, 0x00b1,
-            0x2592, 0x2603, 0x2518, 0x2510, 0x250c, 0x2514, 0x253c, 0x23ba,
+            0x2424, 0x240b, 0x2518, 0x2510, 0x250c, 0x2514, 0x253c, 0x23ba,
             0x23bb, 0x2500, 0x23bc, 0x23bd, 0x251c, 0x2524, 0x2534, 0x252c,
             0x2502, 0x2264, 0x2265, 0x03c0, 0x2260, 0x00a3, 0x00b7,
         };
+
+        // The arrows and the block were never the VT100's, but ncurses's acsc
+        // asks for them by these letters, and xterm and tmux draw them.
+        static const unsigned int arrows[] = {0x2192, 0x2190, 0x2191, 0x2193,
+                                              '/', 0x2588};
+
+        if (c >= '+' && c <= '0')
+                return arrows[c - '+'];
 
         if (c < 0x60 || c > 0x7e)
                 return c;
@@ -1198,7 +1208,8 @@ static unsigned int alternate_head;
 static fn cursor_save(struct cursor_state address_to into)
 {
         address_to into = (struct cursor_state){row, column, ink, paper,
-                                                style, reverse};
+                                                style, reverse, charset_g0,
+                                                charset_g1, charset_gl, origin_mode};
 }
 
 static fn cursor_restore(const struct cursor_state address_to from)
@@ -1209,26 +1220,36 @@ static fn cursor_restore(const struct cursor_state address_to from)
         paper = from->paper;
         style = from->style;
         reverse = from->reverse;
+        charset_g0 = from->charset_g0;
+        charset_g1 = from->charset_g1;
+        charset_gl = from->charset_gl;
+        origin_mode = from->origin_mode;
 }
 
-static fn alternate_enter()
+/*
+        Only 1049 saves the cursor on the way in and puts it back on the way
+        out, as DECSC and DECRC would; 47 and 1047 leave it where the program
+        has it. None of them moves it: a program that wants the alternate
+        screen from its top left says so.
+*/
+static fn alternate_enter(b32 save)
 {
         if (alternate)
                 return;
 
-        cursor_save(address_of cursor_primary);
+        if (save)
+                cursor_save(address_of cursor_primary);
+
         alternate_head = window->head;
 
         for (unsigned int r = 0; r < ROWS; r++)
                 window_scroll(window);
 
-        row = 0;
-        column = 0;
         alternate = true;
         touch_all();
 }
 
-static fn alternate_leave()
+static fn alternate_leave(b32 restore)
 {
         if (!alternate)
                 return;
@@ -1236,7 +1257,8 @@ static fn alternate_leave()
         __atomic_store_n(address_of window->head, alternate_head, __ATOMIC_RELEASE);
 
         alternate = false;
-        cursor_restore(address_of cursor_primary);
+        if (restore)
+                cursor_restore(address_of cursor_primary);
         touch_all();
 }
 
@@ -1290,9 +1312,9 @@ static unsigned int mode(unsigned int p, b32 change, b32 on)
         case 1047:
         case 1049:
                 if (change && on)
-                        alternate_enter();
+                        alternate_enter(p == 1049);
                 else if (change)
-                        alternate_leave();
+                        alternate_leave(p == 1049);
                 now = alternate;
                 break;
         case 1000:
@@ -1357,7 +1379,8 @@ static fn attributes_reset()
 }
 
 /*
-        DECSTR, which is what is2 sends. The screen stays; the modes do not.
+        DECSTR, which is what is2 sends. The screen and the cursor stay; the
+        modes do not.
         RIS is the one that blanks the page, and folding the two together
         made every ncurses init wipe a dashboard that had just drawn.
 */
@@ -1367,8 +1390,6 @@ static fn soft_reset()
         last_character = 0;
         region_top = 0;
         region_bottom = ROWS;
-        row = 0;
-        column = 0;
         cursor_saved = (struct cursor_state){0, 0, 7, 0, 0, false};
 }
 
@@ -1379,8 +1400,10 @@ static fn soft_reset()
 */
 static fn full_reset()
 {
-        alternate_leave();
+        alternate_leave(false);
         soft_reset();
+        row = 0;
+        column = 0;
         cursor_shape = 0;
         tabs_reset();
         erase(0, 0, ROWS - 1, COLUMNS - 1);
@@ -1469,28 +1492,38 @@ static fn csi_final(unsigned int final)
                 column = b - 1 < COLUMNS ? b - 1 : COLUMNS - 1;
                 break;
         }
+        /*
+                Up and down stop at the margin of a region the cursor is in or
+                past, and at the edge of the page from the other side of it, as
+                xterm and tmux do. A count is compared with the room left, since
+                a hostile one wraps row + a, and a pending wrap is gone once the
+                cursor has moved.
+        */
         case 'A':
-                row = row > a ? row - a : 0;
+        case 'F':
+        {
+                unsigned int limit = row >= region_top ? region_top : 0;
+
+                row = row - limit > a ? row - a : limit;
+                column = final == 'F' ? 0 : min(column, COLUMNS - 1);
                 break;
-        /* Compare against room left: a hostile CSI count can wrap row + a. */
+        }
         case 'B':
         case 'e':
-                row = a < ROWS - row ? row + a : ROWS - 1;
+        case 'E':
+        {
+                unsigned int limit = row < region_bottom ? region_bottom - 1 : ROWS - 1;
+
+                row = limit - row > a ? row + a : limit;
+                column = final == 'E' ? 0 : min(column, COLUMNS - 1);
                 break;
+        }
         case 'C':
         case 'a':
                 column = a < COLUMNS - column ? column + a : COLUMNS - 1;
                 break;
         case 'D':
                 column = column > a ? column - a : 0;
-                break;
-        case 'E':
-                row = a < ROWS - row ? row + a : ROWS - 1;
-                column = 0;
-                break;
-        case 'F':
-                row = row > a ? row - a : 0;
-                column = 0;
                 break;
         case 'G':
         case '`':
@@ -3110,6 +3143,14 @@ static fn SPARE term_key_modified(unsigned int character, unsigned int code,
 
         if (character)
         {
+                // Shift+Tab is a key of its own, kcbt, and sending a tab left
+                // the far end nothing to tell the two apart by.
+                if (character == '\t' && (held & WINDOW_KEY_SHIFT))
+                {
+                        emit_literal("\x1b[Z");
+                        return;
+                }
+
                 if (held & WINDOW_KEY_ALT)
                         emit(27);
 
