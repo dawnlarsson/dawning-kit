@@ -4012,7 +4012,7 @@ static bool xz_par_decode(bipolar in, bipolar out)
                 return xz_fail("xz cannot map the decoder");
         r->in = in;
         r->out = out;
-        r->slot_count = parallel_width();
+        r->slot_count = parallel_slots();
         r->slots = (address_any address_to)memory(r->slot_count * sizeof(address_any));
 
         bool ok = false;
