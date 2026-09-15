@@ -11232,6 +11232,23 @@ if len(runs) >= 1:
     out.append(("the second one cascades", "%d px across" % grew,
                 "%d px across" % dropped if dropped > 0 else "a step down"))
 
+    #   What a terminal the compositor starts runs at.
+    #
+    #   The compositor's thread is SCHED_FIFO, and a task forked from a FIFO
+    #   task stays FIFO unless its parent asked for a reset. Control-Shift-T's
+    #   terminal is started from that thread, so without the reset its shell
+    #   and everything run in it were FIFO 1 beside the cursor, and a busy
+    #   loop typed there held every processor against the desktop. Asked of
+    #   the kernel from inside the new window, which has the keyboard: cat
+    #   writes its own stat, whose 41st field is the policy, to the serial
+    #   line, and is read back below with the rest of the transcript.
+    type_text("cat /proc/self/stat ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0\n")
+    time.sleep(1.0)
+
     #   The X in the titlebar, which is the only thing on a window that ends
     #   a program rather than moving it. Aimed at the glyph the compositor
     #   actually drew -- the rightmost title-coloured text in the new
@@ -11803,6 +11820,16 @@ if len(runs) >= 1:
 
 # The kernel names them "QEMU QEMU USB Mouse"; the serial log is lower case.
 out.append(("pointer lists the mice", str(serial.count(b"usb mouse: ")), "2"))
+
+#       The policy cat read for itself in the Control-Shift-T terminal: the
+#       41st field of /proc/self/stat, 0 for SCHED_OTHER and 1 for FIFO. Found
+#       by its shape and not its name, because cat is resident in the shell
+#       and runs in a forked child that is still called shell. A comm has no
+#       spaces here, so the state and the fields after it split on whitespace.
+stat = re.search(rb"\d+ \([a-z0-9_./-]+\) ([a-z] (?:-?\d+ ){40,}-?\d+)", serial)
+fields = stat.group(1).split() if stat else []
+out.append(("a terminal from the keyboard is not real time",
+            fields[38].decode() if len(fields) > 38 else "no stat line", "0"))
 
 #       A terminal's line ring is cut once and never grows, so the size it is
 #       cut for decides the largest that window can ever become. Cutting it
