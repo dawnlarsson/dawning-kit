@@ -1339,6 +1339,32 @@ static CONST bool edit_is_word(p8 character)
                character >= 0x80;
 }
 
+static PURE positive edit_step_forward(positive line, positive column);
+
+//      The cells the character at a byte offset takes, as term.c will draw
+//      it: unicode_width for the terminal, two for an ideograph and nought for
+//      a combining mark, and one for bytes that are no character, which the
+//      terminal draws as U+FFFD. A tab is the caller's.
+static PURE positive edit_cells_at(positive line, positive column)
+{
+        struct edit_line address_to text = edit_lines + line;
+        positive next = edit_step_forward(line, column);
+        memory_utf8_state state = {0, 0, 0};
+        b32 result = 0;
+
+        for (positive at = column; at < next && !result; at++)
+                result = memory_utf8_feed(address_of state, text->text[at]);
+
+        // A C1 control spelled in UTF-8 is dropped by the terminal and takes
+        // no cell there, whatever width the table gives it.
+        if (result == 1 && state.value >= 0x80 && state.value < 0xa0)
+                return 0;
+
+        return result == 1
+                   ? unicode_width(state.value, UNICODE_WIDTH_TERMINAL)
+                   : 1;
+}
+
 static PURE positive edit_display_column(positive line, positive column)
 {
         struct edit_line address_to text = edit_lines + line;
@@ -1347,12 +1373,12 @@ static PURE positive edit_display_column(positive line, positive column)
         if (column > text->length)
                 column = text->length;
 
-        for (positive at = 0; at < column; at++)
+        for (positive at = 0; at < column; at = edit_step_forward(line, at))
         {
                 if (text->text[at] == '\t')
                         width += EDIT_TAB - width % EDIT_TAB;
-                else if (!edit_is_continuation(text->text[at]))
-                        width++;
+                else
+                        width += edit_cells_at(line, at);
         }
 
         return width;
@@ -1360,21 +1386,23 @@ static PURE positive edit_display_column(positive line, positive column)
 
 //      The byte offset a wanted screen column lands on, which is the first
 //      offset at or past it. Landing inside a tab puts the caret after it,
-//      which is what a tab being one thing means.
+//      which is what a tab being one thing means, and landing on a mark puts
+//      it after the mark, which belongs to the character before it.
 static PURE positive edit_column_at_display(positive line, positive wanted)
 {
         struct edit_line address_to text = edit_lines + line;
         positive width = 0;
 
-        for (positive at = 0; at < text->length; at++)
+        for (positive at = 0; at < text->length; at = edit_step_forward(line, at))
         {
-                if (width >= wanted)
+                positive cells = text->text[at] == '\t'
+                                     ? EDIT_TAB - width % EDIT_TAB
+                                     : edit_cells_at(line, at);
+
+                if (width >= wanted && cells)
                         return at;
 
-                if (text->text[at] == '\t')
-                        width += EDIT_TAB - width % EDIT_TAB;
-                else if (!edit_is_continuation(text->text[at]))
-                        width++;
+                width += cells;
         }
 
         return text->length;
@@ -1670,6 +1698,8 @@ static fn edit_row_build(positive screen_row)
                 }
                 else if (character == '\t')
                         cells = EDIT_TAB - display % EDIT_TAB;
+                else
+                        cells = edit_cells_at(line, at);
 
                 if (wanted != marked)
                 {
@@ -1678,6 +1708,39 @@ static fn edit_row_build(positive screen_row)
                         else
                                 edit_row_put_literal(TERM_RESET);
                         marked = wanted;
+                }
+
+                if (at < edit_lines[line].length && character != '\t' &&
+                    cells != 1)
+                {
+                        positive next = edit_step_forward(line, at);
+
+                        // A mark goes out with the character it sits on. A wide
+                        // character goes out whole where it fits and as blanks
+                        // where the view's edge cuts it, so the terminal's
+                        // cursor and the drawn count never part.
+                        if (!cells)
+                        {
+                                if (drawn && display > edit_left)
+                                        edit_row_put(edit_lines[line].text + at,
+                                                     next - at);
+                        }
+                        else if (display >= edit_left && drawn + cells <= width)
+                        {
+                                edit_row_put(edit_lines[line].text + at, next - at);
+                                drawn += cells;
+                        }
+                        else
+                                for (positive cell = 0; cell < cells && drawn < width; cell++)
+                                        if (display + cell >= edit_left)
+                                        {
+                                                edit_row_put((string_address)" ", 1);
+                                                drawn++;
+                                        }
+
+                        display += cells;
+                        at = next;
+                        continue;
                 }
 
                 for (positive cell = 0; cell < cells; cell++)

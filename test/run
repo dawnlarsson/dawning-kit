@@ -8507,6 +8507,20 @@ same 'alt pending four' '1'              40 6 keys '\e\xf0\x90\x80' alt_pending
 same 'alt interrupted' 'x'               40 6 keys '\e\xc3x' buffer
 same 'alt malformed'   'x'               40 6 keys '\e\xc0\xafx' buffer
 same 'alt idle reset'  'x'               40 6 keys '\e\xc3' idle keys 'x' buffer
+#       Columns are the terminal's: an ideograph takes two, a combining mark and
+#       a C1 control spelled in UTF-8 take none, so the caret is drawn where the
+#       text it follows ends. Carets still count bytes.
+same 'ideographs take two'  '0,7'       40 6 keys '\xe6\xbc\xa2\xe5\xad\x97x' cursor
+same 'ideographs drawn'  '[1 <6f22><5b57>x]' 40 6 keys '\xe6\xbc\xa2\xe5\xad\x97x' row 0
+same 'caret before an ideograph' '0,4'  40 6 keys '\xe6\xbc\xa2x<left>' cursor
+same 'a mark takes none' '0,4'          40 6 keys 'e\xcc\x81x' cursor
+same 'c1 takes none'   '0,3'            40 6 keys '\xc2\x85x' cursor
+#       An ideograph the view's edge cuts in two is drawn as blanks, never as
+#       half a glyph, so the terminal's cursor and the columns drawn agree.
+same 'wide cut at the right edge' '[1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]|0,2' \
+                                        40 6 text 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xe6\xbc\xa2c' keys '<home>' row 0 cursor
+same 'wide cut at the left edge' '[1  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]|0,39' \
+                                        40 6 text 'a\xe6\xbc\xa2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' keys '<end>' row 0 cursor
 same 'out of range ignored' ''           40 6 keys '\xf4\x90\x80\x80' buffer
 same 'csi u surrogate ignored' ''         40 6 keys '\e[55296u\e[57343u' buffer
 same 'csi u scalar boundaries' '[1 <d7ff><e000><10ffff>]' 40 6 keys '\e[55295u\e[57344u\e[1114111u' row 0
