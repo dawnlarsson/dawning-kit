@@ -52899,7 +52899,7 @@ static fn blocks(void)
                 positive stored = 0;
 
                 all = xz_block_decode(d, packed + starts[k], lengths[k], sizes[k],
-                                      back + offsets[k], check_type, check_bytes);
+                                      back + offsets[k], check_type, check_bytes, null);
                 memory_copy_apart(address_of stored, packed + starts[k] + lengths[k] -
                                   (check_type == XZ_CHECK_CRC64 ? 8 : 4),
                                   check_type == XZ_CHECK_CRC64 ? 8 : 4);
@@ -52911,17 +52911,17 @@ static fn blocks(void)
         {
                 check("a block one byte longer than its data is refused by name",
                       !xz_block_decode(d, packed + starts[0], lengths[0], sizes[0] + 1,
-                                       back, check_type, null) &&
+                                       back, check_type, null, null) &&
                       xz_pull_error(d) != null);
                 packed[starts[1] + lengths[1] - 1] ^= 1;
                 check("a block whose check fails is refused by name",
                       !xz_block_decode(d, packed + starts[1], lengths[1], sizes[1],
-                                       back + offsets[1], check_type, null) &&
+                                       back + offsets[1], check_type, null, null) &&
                       xz_pull_error(d) != null);
                 packed[starts[1] + lengths[1] - 1] ^= 1;
                 check("the decoder recovers for the next block",
                       xz_block_decode(d, packed + starts[1], lengths[1], sizes[1],
-                                      back + offsets[1], check_type, null) &&
+                                      back + offsets[1], check_type, null, null) &&
                       !memory_compare(back + offsets[1], src + offsets[1], sizes[1]));
 
                 /* Less room than the block's data, cut inside each of the
@@ -52939,7 +52939,7 @@ static fn blocks(void)
                                 memory_fill(back + room, 0xa5, 512);
 
                                 bool refused = !xz_block_decode(d, packed + starts[0], lengths[0],
-                                                                room, back, check_type, null) &&
+                                                                room, back, check_type, null, null) &&
                                                xz_pull_error(d) != null;
 
                                 for (positive i = 0; i < 512; i++)
@@ -52964,7 +52964,7 @@ static fn blocks(void)
                 check("a block shorter than its dictionary decodes alone",
                       records == 1 && size == 1048576 + 17 &&
                       xz_block_decode(d, packed + 12, (unpadded + 3) & ~(positive)3,
-                                      size, back, type, null) &&
+                                      size, back, type, null, null) &&
                       !memory_compare(back, src, size));
         }
         check("block decoder closes", xz_pull_close(d));
@@ -53001,14 +53001,135 @@ static fn sha256_checks(void)
         check("a SHA-256 block decodes alone",
               d && n > 0 &&
               xz_block_decode(d, xz_sha_text_py + 12, index - 12, (p64)n, out,
-                              XZ_CHECK_SHA256, got) &&
+                              XZ_CHECK_SHA256, got, null) &&
               !memory_compare(out, into, (positive)n) &&
               !memory_compare(got, stored, 32));
         check("a SHA-256 block with a flipped check is refused by name",
               d && !xz_block_decode(d, flipped + 12, index - 12, (p64)n, out,
-                                    XZ_CHECK_SHA256, null) &&
+                                    XZ_CHECK_SHA256, null, null) &&
               xz_pull_error(d) != null);
         xz_pull_close(d);
+}
+
+/* Write n bytes to handle and pull them back through a reader until it
+   stops: what it handed out lands in into, last is its final return. */
+static positive xz_salvage_pull(bipolar handle, p8 address_to bytes, positive n,
+                                p8 address_to into, positive room, bipolar address_to last)
+{
+        positive got = 0;
+        address_any d;
+
+        address_to last = -2;
+        if (system_seek(handle, 0, FILE_SEEK_SET) != 0 ||
+            system_truncate_handle(handle, 0) != 0 ||
+            system_write_all(handle, bytes, n) != (bipolar)n ||
+            system_seek(handle, 0, FILE_SEEK_SET) != 0)
+                return 0;
+        d = xz_pull_open(handle, null, 0);
+        if (!d)
+                return 0;
+        for (;;)
+        {
+                positive want = room - got < 65536 ? room - got : 65536;
+
+                address_to last = want ? xz_pull_read(d, into + got, want) : 0;
+                if (address_to last <= 0)
+                        break;
+                got += (positive)address_to last;
+        }
+        xz_pull_close(d);
+        return got;
+}
+
+/* What a damaged stream still yields, by liblzma's rules, through the pull
+   reader and through a block decode alike: a block whose check fails is
+   handed out whole, a cut input every packet its bytes complete, and a
+   chunk that claims a byte less than its packets make exactly that many
+   bytes, its last match cut at the new end. */
+static fn salvaged(void)
+{
+        static p8 src[1048576 + 333];
+        static p8 packed[2 * 1048576];
+        static p8 damaged[2 * 1048576];
+        static p8 back[1048576 + 333 + 65536];
+        static p8 out[1048576 + 333];
+        bipolar handle;
+        bipolar last;
+        positive written;
+
+        xz_fixture(src, sizeof(src), 0x0badf00du);
+
+        bipolar n = xz_deflate_mem(src, sizeof(src), packed, sizeof(packed), 6);
+
+        handle = system_call_2(syscall(memfd_create), (positive)"xz-salvage", 0);
+        check("salvage fixture encodes into one block", n > 64 && handle >= 0);
+        if (n <= 64 || handle < 0)
+                return;
+
+        p8 type = packed[7] & 15;
+        positive backward = ((positive)memory_load_unaligned(p32, packed + n - 8) + 1) * 4;
+        positive index = (positive)n - 12 - backward;
+        positive block_len = index - 12;
+        positive header = ((positive)packed[12] + 1) * 4;
+        address_any d = xz_block_decoder();
+
+        check("salvage decoder", d != null);
+        if (!d)
+                return;
+
+        memory_copy_apart(damaged, packed, (positive)n);
+        damaged[index - 1] ^= 1;
+        positive got = xz_salvage_pull(handle, damaged, (positive)n, back, sizeof(back), address_of last);
+        bool refused = !xz_block_decode(d, damaged + 12, block_len, sizeof(src), out, type,
+                                        null, address_of written);
+
+        check("a block whose check fails is handed out whole before the failure",
+              type == XZ_CHECK_NONE ||
+              (got == sizeof(src) && last < 0 && !memory_compare(back, src, sizeof(src)) &&
+               refused && written == sizeof(src) && !memory_compare(out, src, sizeof(src))));
+
+        positive before = 0;
+        bool cut_ok = true;
+
+        for (positive part = 1; part <= 9; part += 2)
+        {
+                positive cut = block_len * part / 10;
+
+                got = xz_salvage_pull(handle, packed, 12 + cut, back, sizeof(back), address_of last);
+                refused = !xz_block_decode(d, packed + 12, cut, sizeof(src), out, type,
+                                           null, address_of written);
+                cut_ok = cut_ok && last < 0 && refused && got == written && got >= before &&
+                         got < sizeof(src) && !memory_compare(back, src, got) &&
+                         !memory_compare(out, src, written);
+                before = got;
+        }
+        check("a cut input yields the same completed packets by pull and by block", cut_ok && before);
+
+        positive at = 12 + header;
+        p8 control = packed[at];
+
+        if (control >= 0xe0)
+        {
+                positive claimed = (((positive)control & 0x1f) << 16 |
+                                    (positive)packed[at + 1] << 8 | packed[at + 2]) + 1;
+                positive less = claimed - 2;
+
+                memory_copy_apart(damaged, packed, (positive)n);
+                damaged[at] = (p8)((control & 0xe0) | (less >> 16));
+                damaged[at + 1] = (p8)(less >> 8);
+                damaged[at + 2] = (p8)less;
+                got = xz_salvage_pull(handle, damaged, (positive)n, back, sizeof(back), address_of last);
+                refused = !xz_block_decode(d, damaged + 12, block_len, sizeof(src), out, type,
+                                           null, address_of written);
+                check("a chunk one byte short yields exactly its claimed bytes",
+                      claimed > 1 && got == claimed - 1 && last < 0 &&
+                      !memory_compare(back, src, got) && refused && written == got &&
+                      !memory_compare(out, src, written));
+        }
+        else
+                check("salvage fixture starts with an LZMA chunk", false);
+        xz_pull_close(d);
+        system_call_1(syscall(close), handle);
 }
 
 b32 main(void)
@@ -53021,6 +53142,7 @@ b32 main(void)
         pulled();
         blocks();
         sha256_checks();
+        salvaged();
         return test_report(null);
 }
 #endif /* CHECK_xz */

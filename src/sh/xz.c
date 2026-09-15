@@ -127,11 +127,22 @@ static positive xz_dict_from_prop(p8 prop)
         The kernel runs every packet. Before the input ends the window keeps
         48 bytes of lookahead; at the end, 64 zero bytes follow the data and a
         kernel read into them is a truncated stream.
+
+        A damaged stream yields what liblzma 5.8 yields before it fails, so
+        xz -dc of a broken file writes GNU's bytes: every packet before one
+        the kernel refuses, a match cut by its chunk's end or the output's
+        end copied up to that end, at the end of the input every packet its
+        bytes complete, and a block whose check fails whole. The descriptor
+        path writes the window out before it reports the failure, the pull
+        reader hands it out before it returns -1, and xz_block_decode says
+        how much of its output holds decoded bytes.
 */
 
 #define XZ_DEC_IN 65536
 #define XZ_IN_PAD 64
 #define XZ_PACKET_IN 48
+/* The most input one packet consumes: liblzma's LZMA_IN_REQUIRED. */
+#define XZ_PACKET_READ 20
 #define XZ_MIRROR 288
 #define XZ_DICT_START (2 * XZ_MIRROR)
 #define XZ_DICT_SLACK (XZ_MATCH_MAX + 64)
@@ -490,7 +501,43 @@ static fn xz_dec_first(xz_decoder address_to d)
         }
 }
 
-/* One LZMA2 chunk's packets, a kernel span at a time. */
+/*
+        The kernel refused the packet at out. A match whose source is valid
+        was refused for running past out_end, and liblzma copies such a match
+        up to that end before the stream fails: so is it here.
+*/
+static fn xz_dec_cut(xz_decoder address_to d)
+{
+        xz_decode_job address_to job = address_of d->job;
+        positive rep0 = job->rep[0];
+        positive src = (positive)job->out - rep0;
+
+        if ((bipolar)(src - (positive)job->lo) < 0)
+        {
+                if (rep0 > job->dmax)
+                        return;
+                if ((bipolar)(src - (positive)job->bottom) < 0)
+                {
+                        if (!job->wrap)
+                                return;
+                        src += job->wrap;
+                }
+        }
+
+        p8 address_to from = (p8 address_to)src;
+
+        d->chunk_left -= (positive)(job->out_end - job->out);
+        while (job->out < job->out_end)
+                address_to job->out++ = address_to from++;
+}
+
+/*
+        One LZMA2 chunk's packets, a kernel span at a time. No packet starts
+        past the chunk's last compressed byte. At the end of the input a span
+        runs only packets that cannot read past it and the last few run one
+        at a time, so a packet that reads into the padding is dropped whole,
+        where liblzma stops holding its bits.
+*/
 static bool xz_dec_lzma(xz_decoder address_to d)
 {
         xz_decode_job address_to job = address_of d->job;
@@ -513,14 +560,20 @@ static bool xz_dec_lzma(xz_decoder address_to d)
 
                 p8 address_to at = d->in_buf + d->input.at;
                 p8 address_to top = d->dict + d->dict_size;
+                positive pack_left = (positive)(d->pack_want - (d->in_abs - d->pack_from));
+                bool tail = d->input.eof && have < XZ_PACKET_READ;
 
                 job->next = at;
-                job->in_stop = at + have - (XZ_PACKET_IN - 1);
-                if (d->input.eof)
+                if (!d->input.eof)
+                        job->in_stop = at + have - (XZ_PACKET_IN - 1);
+                else
                 {
                         memory_fill(at + have, 0, XZ_IN_PAD);
-                        job->in_stop = at + have + XZ_IN_PAD - (XZ_PACKET_IN - 1);
+                        job->in_stop = tail ? at + have + XZ_IN_PAD - (XZ_PACKET_IN - 1)
+                                            : at + have - (XZ_PACKET_READ - 1);
                 }
+                if ((positive)(job->in_stop - at) > pack_left + 1)
+                        job->in_stop = at + pack_left + 1;
                 job->out_end = job->out + d->chunk_left;
                 /* A linear output ends at its room: a chunk that claims more
                    fails on the match that would cross it. */
@@ -552,6 +605,8 @@ static bool xz_dec_lzma(xz_decoder address_to d)
                             (positive)(job->out_stop - d->dict) > d->dict_limit)
                                 job->lo = job->out_stop - d->dict_limit;
                 }
+                if (tail)
+                        job->out_stop = job->out + 1;
 
                 p8 address_to before = job->out;
 
@@ -562,13 +617,19 @@ static bool xz_dec_lzma(xz_decoder address_to d)
 
                 positive used = (positive)(job->next - at);
 
-                d->chunk_left -= (positive)(job->out - before);
-                if (job->error)
-                        return xz_dec_fail(d, "xz distance or chunk length");
                 if (used > have)
+                {
+                        job->out = before;
                         return xz_dec_fail(d, "xz truncated LZMA");
+                }
+                d->chunk_left -= (positive)(job->out - before);
                 d->input.at += used;
                 d->in_abs += used;
+                if (job->error)
+                {
+                        xz_dec_cut(d);
+                        return xz_dec_fail(d, "xz distance or chunk length");
+                }
                 if (d->in_abs - d->pack_from > d->pack_want)
                         return xz_dec_fail(d, "xz LZMA2 compressed size");
         }
@@ -576,18 +637,24 @@ static bool xz_dec_lzma(xz_decoder address_to d)
         return true;
 }
 
+/* The end of an LZMA chunk as liblzma checks it: the byte a last
+   normalization wants is read, then the code must be zero and every
+   compressed byte used. */
 static bool xz_dec_lzma_finish(xz_decoder address_to d)
 {
-        p64 used = d->in_abs - d->pack_from;
-
-        if (used > d->pack_want)
-                return xz_dec_fail(d, "xz LZMA2 compressed size");
-        while (used < d->pack_want)
+        if (d->job.range < (1u << 24))
         {
-                if (xz_dec_byte(d) < 0)
+                bipolar byte = xz_dec_byte(d);
+
+                if (byte < 0)
                         return xz_dec_fail(d, "xz truncated LZMA2");
-                used++;
+                d->job.range <<= 8;
+                d->job.code = (d->job.code << 8) | (p8)byte;
         }
+        if (d->job.code)
+                return xz_dec_fail(d, "xz LZMA2 chunk end");
+        if (d->in_abs - d->pack_from != d->pack_want)
+                return xz_dec_fail(d, "xz LZMA2 compressed size");
         return true;
 }
 
@@ -1024,6 +1091,18 @@ static fn xz_dec_free(xz_decoder address_to d)
         memory_free(d, sizeof(xz_decoder));
 }
 
+/* A failure on the descriptor path: what the window holds goes out first,
+   as xz writes what it decoded from a damaged file. */
+static bool xz_dec_salvage(xz_decoder address_to d)
+{
+        positive n = (positive)(d->job.out - d->emitted);
+
+        if (n && !d->linear && !d->pull && d->out_fd >= 0 &&
+            system_write_all((positive)d->out_fd, d->emitted, n) == (bipolar)n)
+                d->emitted = d->job.out;
+        return false;
+}
+
 /* Every stream on the input, delivered to the descriptor or kept in a
    linear output. */
 static bool xz_dec_run(xz_decoder address_to d)
@@ -1033,11 +1112,11 @@ static bool xz_dec_run(xz_decoder address_to d)
         while (xz_dec_more(d))
         {
                 if (!xz_dec_stream(d))
-                        return false;
+                        return xz_dec_salvage(d);
                 any = true;
         }
         if (d->why)
-                return false;
+                return xz_dec_salvage(d);
         if (!any)
                 return xz_dec_fail(d, "xz empty input");
         return xz_dec_drain(d);
@@ -1071,9 +1150,12 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
         One block, with nothing but its own decoder touched: the block header
         through its check, exactly block_len bytes at block, decoding to
         exactly uncompressed_len bytes at out, which is written only there
-        (matches in its last 32 bytes copy exactly). check_type is the
-        stream's (none, CRC32, CRC64 or SHA-256), and check, when not null,
-        receives the stored check field zero-extended to 32 bytes. Decoders from
+        (matches in its last 32 bytes copy exactly). block_len may stop short
+        of the block when the input was cut. check_type is the stream's
+        (none, CRC32, CRC64 or SHA-256), and check, when not null, receives
+        the stored check field zero-extended to 32 bytes. written, when not
+        null, receives how many bytes at out hold decoded data, on success
+        and on failure alike, by liblzma's rules above. Decoders from
         xz_block_decoder on different threads may each run blocks at the
         same time; xz_pull_error names a failure and xz_pull_close frees
         one.
@@ -1081,10 +1163,12 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
 static bool xz_block_decode(address_any state, p8 address_to block,
                             positive block_len, p64 uncompressed_len,
                             p8 address_to out, p8 check_type,
-                            p8 address_to check)
+                            p8 address_to check, positive address_to written)
 {
         xz_decoder address_to d = state;
 
+        if (written)
+                address_to written = 0;
         xz_dec_open(d);
         if (d->dict)
                 xz_dec_dict_close(d);
@@ -1100,7 +1184,12 @@ static bool xz_block_decode(address_any state, p8 address_to block,
         d->check = check_type;
         memory_fill(d->check_bytes, 0, sizeof(d->check_bytes));
         d->hdr_done = true;
-        if (!xz_dec_block(d))
+
+        bool ok = xz_dec_block(d);
+
+        if (written)
+                address_to written = (positive)(d->job.out - out);
+        if (!ok)
                 return false;
         if (check)
                 memory_copy_apart(check, d->check_bytes, sizeof(d->check_bytes));
@@ -1160,7 +1249,8 @@ static bipolar xz_pull_more(xz_decoder address_to d)
                         return 0;
                 }
                 d->paused = false;
-                if (!xz_dec_stream(d))
+                /* A failure hands out what the window holds before -1. */
+                if (!xz_dec_stream(d) && d->job.out == d->emitted)
                         return -1;
         }
 }
@@ -1188,7 +1278,7 @@ static bipolar xz_pull_read(address_any state, p8 address_to into, positive n)
                 bipolar left = xz_pull_more(d);
 
                 if (left < 0)
-                        return -1;
+                        return copied ? (bipolar)copied : -1;
                 if (!left)
                         break;
 
@@ -3624,8 +3714,10 @@ static string_address xz_par_block_decode(xz_par address_to r, positive slot,
                 r->slots[slot] = xz_block_decoder();
         if (!r->slots[slot])
                 return "xz cannot map a decoder";
+        positive written;
+
         if (!xz_block_decode(r->slots[slot], bytes, total, uncompressed, into,
-                             r->check, null))
+                             r->check, null, address_of written))
         {
                 string_address why = xz_pull_error(r->slots[slot]);
 
