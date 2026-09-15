@@ -81,39 +81,6 @@
         (LIBRARY_INLINE_##family && LIBRARY_SIZE_OK((size), (cap)))
 
 /*
-        Legacy source-generating conveniences remain opt-in compiler policy.
-        The shared varargs entry macro lives in library.common.c. None belongs
-        in library.c's assembly-only include graph.
-*/
-#define var_list_iter(list, count, type, action)              \
-        do                                                    \
-        {                                                     \
-                for (int _i = 0; _i < (count); _i++)          \
-                {                                             \
-                        type _arg = var_list_get(list, type);  \
-                        action;                               \
-                }                                             \
-        } while (0)
-
-#ifdef LIBRARY_API
-
-#define api_function(name, returned_type, default, args...) \
-        WEAK pub returned_type name(args) { return default; }
-
-#define api_type(name, type, default) \
-        WEAK pub type name = default;
-
-#else
-
-#define api_function(name, returned_type, default, args...) \
-        pub returned_type name(args)
-
-#define api_type(name, type, default) \
-        pub type name = default;
-
-#endif // LIBRARY_API
-
-/*
         Sizes that are known where the call is written.
 
         Most copies in a program are a sizeof: a structure, a fixed buffer, a
@@ -2866,7 +2833,6 @@ static inline INLINE b32 known_first_set(b32 value)
 //====================================================================
 //      fill-and-until
 //====================================================================
-//      Goes in src/compiler_memory.c, immediately after `fill_known` and before the comment block beginning "A macro names itself in its own replacement".
 
 /*
         A byte that is known where the call is written, and the routines that
