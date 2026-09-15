@@ -6097,6 +6097,14 @@ same 'ctrl d deletes'          '[b ]'            20 3 edit on keys 'ab^A^D' row 
 same 'ctrl c sends'  '[\x03]'                    20 3 edit on in '$ ' keys 'rubbish^C' sent
 same 'ctrl c leaves it' '[$ rubbish]'            20 3 edit on in '$ ' keys 'rubbish^C' row 0
 same 'ctrl c moves on'  '1,0'                    20 3 edit on in '$ ' keys 'rubbish^C' cursor
+#       A control character with no binding is nothing. It was sent, and the
+#       line discipline kept it in front of the line being edited, so a stray
+#       Control-X turned the next command into one that was not found. The
+#       signals still go, and a tab is part of the line.
+same 'unbound control' '[abc\x0a]'               20 3 edit on keys 'ab^Xc\r' sent
+same 'escape alone'  '[abc\x0a]'                 20 3 edit on keys 'ab\ec\r' sent
+same 'ctrl z still goes' '[\x1a]'                20 3 edit on keys 'ab^Z' sent
+same 'tab in the line' '[a\x09b\x0a]'           20 3 edit on keys 'a\tb\r' sent
 
 group screen
 #       Ctrl-L clears the screen and puts the prompt back. What is to the

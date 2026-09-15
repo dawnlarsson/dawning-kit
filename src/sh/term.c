@@ -2282,9 +2282,24 @@ static b32 line_key(unsigned int character, unsigned int code)
                 return true;
         }
 
+        /*
+                A control character the editor has no binding for is nothing.
+
+                It used to be sent, and the line discipline kept it in front of
+                the line still being edited, so a stray Control-X made the next
+                command one that was not found. The two the discipline turns
+                into signals still go, and a tab is part of the line.
+        */
+        if (character == '\t')
+        {
+                line_insert(character);
+                return true;
+        }
+
         if (character < ' ')
         {
-                emit(character);
+                if (character == 26 || character == 28)
+                        emit(character);
                 return true;
         }
 
