@@ -181,6 +181,62 @@ static struct canvas *canvas_take_over(struct drm_device *dev)
 // nothing and lose the late sibling it is here for.
 #define CANVAS_SETTLE 100
 
+/*
+        What turning Canvas on needs from a card before it is claimed.
+*/
+#include <drm/drm_auth.h>
+#include <drm/drm_file.h>
+
+/* Every in-kernel client on a card but Canvas's, as drm_client_dev_unregister takes them. */
+static void canvas_clients_clear(struct drm_device *dev)
+{
+        struct drm_client_dev *client, *next;
+
+        mutex_lock(&dev->clientlist_mutex);
+        list_for_each_entry_safe(client, next, &dev->clientlist, list)
+        {
+                if (client->funcs == &client_funcs)
+                        continue;
+
+                // Unregistering consumes and frees the client.
+                list_del(&client->list);
+                if (client->funcs && client->funcs->unregister)
+                        client->funcs->unregister(client);
+                else
+                        drm_client_release(client);
+        }
+        mutex_unlock(&dev->clientlist_mutex);
+}
+
+/* Which program is master of a card, for a refusal to say. */
+static int canvas_master_holder(struct drm_device *dev, char *command, size_t room)
+{
+        struct drm_file *file;
+        int holder = 0;
+
+        mutex_lock(&dev->filelist_mutex);
+        list_for_each_entry(file, &dev->filelist, lhead)
+        {
+                struct task_struct *task;
+
+                if (!drm_is_current_master(file))
+                        continue;
+
+                rcu_read_lock();
+                task = pid_task(rcu_dereference(file->pid), PIDTYPE_TGID);
+                if (task)
+                {
+                        holder = task_tgid_nr(task);
+                        strscpy(command, task->comm, room);
+                }
+                rcu_read_unlock();
+                break;
+        }
+        mutex_unlock(&dev->filelist_mutex);
+
+        return holder;
+}
+
 static struct delayed_work canvas_probe_work;
 static unsigned int canvas_attempts;
 static unsigned int canvas_settled_at;
@@ -199,7 +255,8 @@ static unsigned int canvas_settled_at;
 */
 static u64 canvas_claimed;
 
-static int canvas_claim(const char *path, unsigned int minor)
+static int canvas_claim(const char *path, unsigned int minor,
+                        struct canvas_control *on)
 {
         struct file *filp;
         struct drm_file *file_priv;
@@ -218,6 +275,30 @@ static int canvas_claim(const char *path, unsigned int minor)
         {
                 filp_close(filp, NULL);
                 return -ENODEV;
+        }
+
+        /*
+                Turned on from userspace, a card is taken only from nobody.
+
+                This open is the card's master unless another program already
+                is, and a Canvas started behind that program would only sit
+                suspended, so the refusal names it instead. The kernel
+                console's client, which off left on the card, goes while this
+                file is still the master, so the close below restores nothing.
+        */
+        if (on && drm_core_check_feature(file_priv->minor->dev, DRIVER_MODESET))
+        {
+                if (!drm_is_current_master(file_priv))
+                {
+                        if (!on->master_pid && !on->master_command[0])
+                                on->master_pid = canvas_master_holder(
+                                    file_priv->minor->dev, on->master_command,
+                                    sizeof(on->master_command));
+                        filp_close(filp, NULL);
+                        return -EACCES;
+                }
+
+                canvas_clients_clear(file_priv->minor->dev);
         }
 
         canvas = canvas_take_over(file_priv->minor->dev);
@@ -254,7 +335,8 @@ static int canvas_claim(const char *path, unsigned int minor)
         would be missed by a scan that stopped at the first gap. The whole
         minor space is cheap to try: an absent node fails in filp_open.
 */
-static unsigned int canvas_claim_all(void)
+static unsigned int canvas_claim_all(struct canvas_control *on,
+                                     unsigned int *refused)
 {
         char path[24];
         unsigned int minor, taken = 0;
@@ -269,8 +351,16 @@ static unsigned int canvas_claim_all(void)
                                          sizeof("/dev/dri/card") - 1),
                     minor);
 
-                if (canvas_claim(path, minor) == 0)
+                switch (canvas_claim(path, minor, on))
+                {
+                case 0:
                         taken++;
+                        break;
+                case -EACCES:
+                        if (refused)
+                                (*refused)++;
+                        break;
+                }
         }
 
         return taken;
@@ -278,7 +368,7 @@ static unsigned int canvas_claim_all(void)
 
 static COLD void canvas_probe(struct work_struct *work)
 {
-        canvas_claim_all();
+        canvas_claim_all(NULL, NULL);
         canvas_attempts++;
 
         if (!canvas_settled_at && !list_empty(&canvas_list))
@@ -301,3 +391,253 @@ static void __maybe_unused canvas_start_probing(void)
         INIT_DELAYED_WORK(&canvas_probe_work, canvas_probe);
         schedule_delayed_work(&canvas_probe_work, 0);
 }
+
+/*
+        Canvas, off and on, from userspace.
+
+        Off undoes what attaching did, in this order: printk stops reaching
+        cells; the input handler and the thread go, which gives every console
+        its keyboard back; every program's window is asked to close and taken
+        off the desktop; each card's client is released; and the kernel's own
+        framebuffer console is set up on each card, which
+        drm_client_lib.active= kept from ever having one. On claims the cards
+        again the way the boot does, and canvas_start opens the kernel log
+        and a terminal as it does at boot.
+
+        Lock order: canvas_control_lock, then a card's clientlist_mutex, then
+        canvas_list_lock, then desktop.lock, then a card's master_mutex.
+        canvas_thread_stop joins a thread that takes desktop.lock, so it is
+        called under canvas_list_lock and never under desktop.lock.
+*/
+#ifndef MODULE
+#include <../drivers/gpu/drm/clients/drm_client_internal.h>
+#endif
+
+static DEFINE_MUTEX(canvas_control_lock);
+
+static _Bool canvas_is_on(void)
+{
+        _Bool on;
+
+        mutex_lock(&canvas_list_lock);
+        on = !list_empty(&canvas_list);
+        mutex_unlock(&canvas_list_lock);
+
+        return on;
+}
+
+/* The desktop's own pointers into a pane, as pane_free clears them. */
+static void pane_forget(struct pane *pane)
+{
+        struct pane **held[] = {
+                &desktop.dragging, &desktop.resizing, &desktop.barring,
+                &desktop.press_pane, &desktop.focused,
+        };
+
+        for (unsigned int i = 0; i < ARRAY_SIZE(held); i++)
+                if (*held[i] == pane)
+                        *held[i] = NULL;
+}
+
+/*
+        Every program's window asked to close and taken off the desktop.
+
+        Nothing is freed: a pane goes when its program closes the file, and
+        a program still writing to its pages keeps them. One that never
+        closes stays on the detached list, drawn by nothing. Under
+        desktop.lock.
+*/
+static void desktop_detach_windows(void)
+{
+        struct pane *pane, *next;
+
+        list_for_each_entry_safe(pane, next, &desktop.windows, link)
+        {
+                if (!pane->shared)
+                        continue;
+
+                pane_close_request(pane);
+                pane_forget(pane);
+                list_move_tail(&pane->link, &desktop.detached);
+        }
+}
+
+/*
+        One card's client off DRM's list and released, unless the card is
+        going away at this moment and its own unregister already has it.
+*/
+static void canvas_client_drop(struct canvas *canvas, struct drm_device *dev)
+{
+        struct drm_client_dev *client;
+
+        mutex_lock(&dev->clientlist_mutex);
+        list_for_each_entry(client, &dev->clientlist, list)
+        {
+                if (client == &canvas->client)
+                {
+                        list_del(&client->list);
+                        client_unregister(client);
+                        break;
+                }
+        }
+        mutex_unlock(&dev->clientlist_mutex);
+}
+
+static long canvas_turn_off(void)
+{
+        struct drm_device *released[8];
+        unsigned int count = 0;
+
+        mutex_lock(&canvas_control_lock);
+
+        if (!canvas_is_on())
+        {
+                mutex_unlock(&canvas_control_lock);
+                return -EALREADY;
+        }
+
+#ifdef CONFIG_MOONWATER_CANVAS_AUTOSTART
+        cancel_delayed_work_sync(&canvas_probe_work);
+#endif
+
+        // printk first: nothing may write to the log's cells once they go.
+        console_stop();
+
+        // Input and the thread before any window or output goes, so no key
+        // lands in a pane being detached and nothing composes against an
+        // output being released.
+        mutex_lock(&canvas_list_lock);
+        canvas_thread_stop();
+        mutex_unlock(&canvas_list_lock);
+
+        rt_mutex_lock(&desktop.lock);
+        desktop.off = true;
+        desktop_detach_windows();
+        desktop.terminal = false;
+        desktop.suspended = false;
+        rt_mutex_unlock(&desktop.lock);
+
+        put_pid(xchg(&canvas_spawned, NULL));
+
+        for (;;)
+        {
+                struct canvas *canvas;
+                struct drm_device *dev = NULL;
+
+                mutex_lock(&canvas_list_lock);
+                canvas = list_first_entry_or_null(&canvas_list, struct canvas, link);
+                if (canvas)
+                {
+                        dev = canvas->client.dev;
+                        drm_dev_get(dev);
+                }
+                mutex_unlock(&canvas_list_lock);
+
+                if (!canvas)
+                        break;
+
+                canvas_client_drop(canvas, dev);
+
+                if (count < ARRAY_SIZE(released))
+                        released[count++] = dev;
+                else
+                        drm_dev_put(dev);
+        }
+
+        canvas_claimed = 0;
+
+        // The kernel's console takes each screen back.
+        for (unsigned int i = 0; i < count; i++)
+        {
+#ifndef MODULE
+                if (released[i]->registered && !released[i]->fb_helper)
+                        drm_fbdev_client_setup(released[i], NULL);
+#endif
+                drm_dev_put(released[i]);
+        }
+
+        pr_info("[moonwater canvas] " "off: %u card(s) given back to the console\n", count);
+
+        mutex_unlock(&canvas_control_lock);
+        return 0;
+}
+
+static long canvas_turn_on(struct canvas_control *answer)
+{
+        unsigned int taken, refused = 0;
+
+        mutex_lock(&canvas_control_lock);
+
+        if (canvas_is_on())
+        {
+                mutex_unlock(&canvas_control_lock);
+                return -EALREADY;
+        }
+
+#ifdef CONFIG_MOONWATER_CANVAS_AUTOSTART
+        cancel_delayed_work_sync(&canvas_probe_work);
+#endif
+
+        rt_mutex_lock(&desktop.lock);
+        desktop.off = false;
+        rt_mutex_unlock(&desktop.lock);
+
+        taken = canvas_claim_all(answer, &refused);
+
+        mutex_unlock(&canvas_control_lock);
+
+        if (taken)
+                return 0;
+
+        return refused ? -EBUSY : -ENODEV;
+}
+
+/* What Canvas holds, for `moonwater canvas`. */
+static void canvas_state(struct canvas_control *answer)
+{
+        struct canvas *canvas;
+        struct output *output;
+        struct pane *pane;
+
+        mutex_lock(&canvas_list_lock);
+        list_for_each_entry(canvas, &canvas_list, link)
+                if (!answer->cards++)
+                        strscpy(answer->driver, canvas->client.dev->driver->name,
+                                sizeof(answer->driver));
+        mutex_unlock(&canvas_list_lock);
+
+        answer->running = answer->cards != 0;
+
+        rt_mutex_lock(&desktop.lock);
+
+        answer->suspended = desktop.suspended;
+
+        list_for_each_entry(pane, &desktop.windows, link)
+                if (pane->shared)
+                        answer->windows++;
+
+        list_for_each_entry(pane, &desktop.detached, link)
+                answer->detached++;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                struct canvas_output_state *state;
+                struct drm_mode_set *set = output->mode_set;
+
+                if (answer->output_count == SPARK_CANVAS_OUTPUTS)
+                        break;
+
+                state = &answer->output[answer->output_count++];
+                state->width = output->width;
+                state->height = output->height;
+
+                if (set && set->mode)
+                        state->refresh = drm_mode_vrefresh(set->mode);
+                if (set && set->num_connectors && set->connectors[0])
+                        strscpy(state->connector, set->connectors[0]->name,
+                                sizeof(state->connector));
+        }
+
+        rt_mutex_unlock(&desktop.lock);
+}
+

@@ -327,13 +327,57 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
         The request numbers, in one place, because more than one change adds
         them at once: 1 spawn, 2 stats, 3 input stats, 4 window create
         (window.c), 5 window commit (window.c), 6 cursor stats, 7 input
-        devices, 9 snapshot, 10 reserved for the Canvas on/off request, 11
+        devices, 9 snapshot, 10 Canvas on and off, 11
         the power button, 12 and 13 reading and setting the boot settings.
         8 was never used and stays that way. The next request takes the next
         free number past the highest, 14 at the time of writing, and a gap is
         never filled: an old program sending an old number must never reach a
         new request that happens to share it.
 */
+
+/*
+        Canvas, on and off.
+
+        Off gives the display back: every program's window is asked to close,
+        the compositor's input handler and thread stop, its DRM clients are
+        released, every console gets its keyboard back, and the kernel's
+        framebuffer console takes each screen. On takes the cards again and
+        opens the kernel log and a terminal; it refuses while another program
+        is master of a card, and names that program.
+
+        The state below comes back whatever the request answers. Reading it
+        needs nothing; on and off need CAP_SYS_ADMIN.
+*/
+#define SPARK_CANVAS_STATUS 0u
+#define SPARK_CANVAS_ON 1u
+#define SPARK_CANVAS_OFF 2u
+#define SPARK_CANVAS_OUTPUTS 4u
+
+struct canvas_output_state {
+        char connector[16];
+        unsigned int width, height, refresh;
+        unsigned int reserved;
+};
+
+struct canvas_control {
+        unsigned int request;      // SPARK_CANVAS_*
+        unsigned int running;      // 1 while Canvas holds a card
+        unsigned int cards;        // cards Canvas holds
+        unsigned int windows;      // programs' windows on the desktop
+        unsigned int detached;     // windows off closed that are still open
+        unsigned int suspended;    // 1 while another program is a card's master
+        int master_pid;            // who held a card on refused, 0 for nobody
+        unsigned int output_count; // outputs below, at most SPARK_CANVAS_OUTPUTS
+        char master_command[16];
+        char driver[16];           // the first card's driver
+        struct canvas_output_state output[SPARK_CANVAS_OUTPUTS];
+};
+
+_Static_assert(sizeof(struct canvas_output_state) == 32, "spark canvas output ABI");
+_Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI");
+
+// _IOWR('s', 10, struct canvas_control)
+#define SPARK_IOCTL_CANVAS 0xc0c0730au
 
 /*
         The power button, and the command line it runs.

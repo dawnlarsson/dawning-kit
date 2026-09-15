@@ -1192,6 +1192,45 @@ REPORT_CANVAS(report_input, input_stats, canvas_input_stats)
 REPORT_CANVAS(report_cursor, cursor_stats, canvas_cursor_stats)
 REPORT_CANVAS(report_devices, input_devices, canvas_input_devices)
 #undef REPORT_CANVAS
+
+/*
+        Canvas off and on, and what it holds.
+
+        The state is copied back whatever the request answers, so a refused on
+        can name the program that holds the display. Reading needs nothing;
+        on and off stop and start the desktop everyone at the machine is
+        using, so they need CAP_SYS_ADMIN.
+*/
+static long report_canvas(struct canvas_control __user *out)
+{
+        struct canvas_control control;
+        unsigned int request;
+        long answer = 0;
+
+        if (copy_from_user(&control, out, sizeof(control)))
+                return -EFAULT;
+
+        request = control.request;
+        if (request > SPARK_CANVAS_OFF)
+                return -EINVAL;
+        if (request != SPARK_CANVAS_STATUS && !capable(CAP_SYS_ADMIN))
+                return -EPERM;
+
+        memset(&control, 0, sizeof(control));
+        control.request = request;
+
+        if (request == SPARK_CANVAS_ON)
+                answer = canvas_turn_on(&control);
+        else if (request == SPARK_CANVAS_OFF)
+                answer = canvas_turn_off();
+
+        canvas_state(&control);
+
+        if (copy_to_user(out, &control, sizeof(control)))
+                return -EFAULT;
+
+        return answer;
+}
 #endif
 
 /*
@@ -1559,6 +1598,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 return report_cursor((struct cursor_stats __user *)arg);
         case SPARK_IOCTL_INPUT_DEVICES:
                 return report_devices((struct input_devices __user *)arg);
+        case SPARK_IOCTL_CANVAS:
+                return report_canvas((struct canvas_control __user *)arg);
         case WINDOW_IOCTL_CREATE:
                 return window_ioctl_create(file, arg);
         case WINDOW_IOCTL_COMMIT:

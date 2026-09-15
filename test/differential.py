@@ -17362,6 +17362,20 @@ static void orderly_reboot(void) { power_reboots++; }
     source += "#define CAP_SYS_ADMIN 21\n#define CAP_SYS_BOOT 22\nstatic _Bool power_capable=1,power_admin=1;\n"
     source += "static _Bool capable(int cap) { return cap==CAP_SYS_BOOT ? power_capable : cap==CAP_SYS_ADMIN && power_admin; }\n"
     source += section(core, "static long report_power_button", "#ifdef CONFIG_MOONWATER_CANVAS\n#define REPORT_CANVAS")
+    # moonwater canvas on and off: what the request decides before Canvas
+    # is touched, with Canvas itself mocked.
+    source += r'''
+static long canvas_on_answer,canvas_off_answer;
+static unsigned canvas_ons,canvas_offs,canvas_states;
+static long canvas_turn_on(struct canvas_control *answer) {
+    canvas_ons++;answer->master_pid=77;
+    snprintf(answer->master_command,sizeof(answer->master_command),"weston");
+    return canvas_on_answer;
+}
+static long canvas_turn_off(void) { canvas_offs++; return canvas_off_answer; }
+static void canvas_state(struct canvas_control *answer) { canvas_states++;answer->running=1;answer->cards=1; }
+'''
+    source += section(core, "static long report_canvas", "#endif\n\n/*\n        Typed system state")
     # Here rather than beside the geometry it reshapes: resize_move reads the
     # drag state off desktop, and desktop is the mock declared just above.
     source += r'''
@@ -17648,6 +17662,37 @@ static void check_settings_sum(void) {
     check(spark_settings_sum(&slot) == 0x3f693c1fu, "a slot with an entry sums as zlib sums it");
     slot.sum = spark_settings_sum(&slot);
     check(spark_settings_check(&slot) == 1, "and checks");
+}
+
+// moonwater canvas on and off: who may, and what comes back.
+static void check_canvas_control(void) {
+    struct canvas_control control;
+    power_capable=0;power_admin=0;canvas_ons=canvas_offs=canvas_states=0;
+    memset(&control,0,sizeof(control));control.windows=99;
+    check(!report_canvas(&control) && canvas_states==1 && !canvas_ons && !canvas_offs &&
+          control.running==1 && !control.windows,
+          "reading Canvas's state needs no capability and answers only what the kernel filled in");
+    memset(&control,0,sizeof(control));control.request=SPARK_CANVAS_ON;
+    check(report_canvas(&control)==-EPERM && !canvas_ons && canvas_states==1,
+          "turning Canvas on without CAP_SYS_ADMIN is refused before anything happens");
+    power_capable=1;
+    memset(&control,0,sizeof(control));control.request=SPARK_CANVAS_OFF;
+    check(report_canvas(&control)==-EPERM && !canvas_offs,
+          "CAP_SYS_BOOT is not enough to turn Canvas off");
+    power_admin=1;
+    memset(&control,0,sizeof(control));control.request=3;
+    check(report_canvas(&control)==-EINVAL && !canvas_ons && !canvas_offs,
+          "an unknown Canvas request is refused");
+    canvas_on_answer=-EBUSY;
+    memset(&control,0,sizeof(control));control.request=SPARK_CANVAS_ON;
+    check(report_canvas(&control)==-EBUSY && canvas_ons==1 && control.master_pid==77 &&
+          !strcmp(control.master_command,"weston") && control.running==1,
+          "a refused on still copies back who holds the display, and the state");
+    canvas_off_answer=0;
+    memset(&control,0,sizeof(control));control.request=SPARK_CANVAS_OFF;
+    check(!report_canvas(&control) && canvas_offs==1 && control.request==SPARK_CANVAS_OFF,
+          "off with CAP_SYS_ADMIN turns Canvas off and answers what that answered");
+    power_capable=1;power_admin=1;canvas_on_answer=0;
 }
 
 static void check_power_button(void) {
@@ -18201,6 +18246,7 @@ int main(void) {
     check_keyboard_state();
     check_console_keyboard();
     check_power_button();
+    check_canvas_control();
     check_settings_sum();
     check_input_suspension();
     free(output);

@@ -12039,6 +12039,14 @@ count() { sed -n 's/^voluntary_ctxt_switches:[^0-9]*//p' /proc/$p/status; }
 exec /mnt/drmhold "$@"
 ''')
 
+#       Two more a shell runs from the stick: what `moonwater canvas` says,
+#       and whether the kernel has warned about anything since it booted.
+open(stick + "/state", "w").write('''moonwater canvas > /tmp/canvas-state 2>&1
+echo "canvas-on-$(grep -c 'Canvas is on' /tmp/canvas-state)-off-$(grep -c 'Canvas is off' /tmp/canvas-state)" > /dev/ttyS0
+''')
+open(stick + "/kcheck", "w").write('''echo "kernel-warnings-$(dmesg | grep -c -E 'WARNING|BUG:|Oops|circular locking|possible recursive')" > /dev/ttyS0
+''')
+
 leak_qmp = work + "/leak-qmp"
 leak_mon = work + "/leak-mon"
 leak_guest = subprocess.Popen([
@@ -12264,6 +12272,97 @@ else:
                        ("and the desktop is back within a second with nothing typed or moved", "yes"),
                        ("and typing reaches Canvas while it still runs", "1"),
                        ("a suspended Canvas wakes fewer than 20 times a second", "yes")):
+        out.append((name, "not run: no static cc for the helpers", want))
+
+#       Canvas off from its own terminal, then the kernel's console: a shell
+#       answers on it, a program takes the display from it and gives it back,
+#       Canvas comes back on with a terminal, and goes off and on twice more
+#       from the console with a terminal still answering afterwards.
+def vga_share(name):
+    width, height, data = load(name)
+    grid = [(y * width + x) * 3 for y in range(0, height, 8) for x in range(0, width, 8)]
+    levels = (0, 0x55, 0xaa, 0xff)
+    vga = sum(1 for at in grid if data[at] in levels and data[at + 1] in levels and data[at + 2] in levels)
+    white = sum(1 for at in grid if data[at:at + 3] == b"\xff\xff\xff")
+    return vga * 100 // len(grid), white * 100 // len(grid)
+
+def serial_count(pattern):
+    return len(re.findall(pattern, open(work + "/leak-serial", "rb").read()))
+
+def type_line_with_semicolons(line):
+    for piece_at, piece in enumerate(line.split(";")):
+        if piece_at:
+            key("semicolon")
+        type_text(piece)
+    type_text("\n")
+
+if switcher and holder:
+    type_text("moonwater canvas off\n")
+    time.sleep(8)
+    shot("canvas-off", 0.5)
+    vga, white = vga_share("canvas-off")
+    out.append(("canvas off leaves the kernel's text console on the screen",
+                "yes" if vga >= 98 else "%d%% of the screen in console colours" % vga, "yes"))
+    typed_to_serial("tui")
+    time.sleep(3)
+    out.append(("and a shell there answers the keyboard", str(serial_count(rb"tui-(\d+)")), "1"))
+    type_text("/shell /mnt/state\n")
+    time.sleep(3)
+    out.append(("and moonwater canvas says it is off",
+                str(serial_count(rb"canvas-on-0-off-1")), "1"))
+
+    masters = serial_count(rb"DRMHOLD master")
+    type_text("/mnt/drmhold 2 0 0 ")
+    chord("shift", "dot")
+    type_text(" /dev/tty")
+    chord("shift", "s")
+    type_text("0\n")
+    time.sleep(7)
+    out.append(("another program takes the display from the console",
+                str(serial_count(rb"DRMHOLD master") - masters), "1"))
+    shot("console-back", 0.5)
+    vga, white = vga_share("console-back")
+    out.append(("and the console has it again once that program exits",
+                "yes" if vga >= 98 and white < 50 else "%d%% console colours, %d%% white" % (vga, white), "yes"))
+
+    type_text("moonwater canvas on\n")
+    time.sleep(10)
+    shot("canvas-on", 0.5)
+    vga, white = vga_share("canvas-on")
+    out.append(("canvas on brings the desktop back",
+                "yes" if vga < 80 else "%d%% of the screen in console colours" % vga, "yes"))
+    typed_to_serial("back")
+    time.sleep(3)
+    out.append(("with a terminal that has the keyboard", str(serial_count(rb"back-(\d+)")), "1"))
+
+    type_text("moonwater canvas off\n")
+    time.sleep(8)
+    type_line_with_semicolons("moonwater canvas on; sleep 6; moonwater canvas off; sleep 6; moonwater canvas on")
+    time.sleep(24)
+    typed_to_serial("again")
+    time.sleep(3)
+    out.append(("off and on twice more, and a terminal still answers",
+                str(serial_count(rb"again-(\d+)")), "1"))
+    type_text("/shell /mnt/state\n")
+    time.sleep(3)
+    out.append(("and moonwater canvas says it is on",
+                str(serial_count(rb"canvas-on-1-off-0")), "1"))
+    type_text("/shell /mnt/kcheck\n")
+    time.sleep(3)
+    warned = re.findall(rb"kernel-warnings-(\d+)", open(work + "/leak-serial", "rb").read())
+    out.append(("and the kernel warned about nothing on the way",
+                warned[-1].decode() if warned else "no answer", "0"))
+else:
+    for name, want in (("canvas off leaves the kernel's text console on the screen", "yes"),
+                       ("and a shell there answers the keyboard", "1"),
+                       ("and moonwater canvas says it is off", "1"),
+                       ("another program takes the display from the console", "1"),
+                       ("and the console has it again once that program exits", "yes"),
+                       ("canvas on brings the desktop back", "yes"),
+                       ("with a terminal that has the keyboard", "1"),
+                       ("off and on twice more, and a terminal still answers", "1"),
+                       ("and moonwater canvas says it is on", "1"),
+                       ("and the kernel warned about nothing on the way", "0")):
         out.append((name, "not run: no static cc for the helpers", want))
 
 #       And the power button with Canvas up, which has its own input handler

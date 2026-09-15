@@ -257,6 +257,14 @@ static struct desktop
         struct list_head outputs;
         struct list_head windows;
 
+        /*
+                Windows `moonwater canvas off` asked to close whose programs
+                have not closed them yet. Off from the desktop, never drawn
+                again, and freed by window_release like any other window: a
+                mapping holds the file, and the file holds the pane.
+        */
+        struct list_head detached;
+
         int cursor_x, cursor_y;
         int drawn_x, drawn_y;
 
@@ -341,6 +349,9 @@ static struct desktop
         _Bool awake;
         _Bool started;
         _Bool terminal;
+
+        // Turned off from userspace: no window may be created until it is on.
+        _Bool off;
 
         /*
                 Another program is master of a card Canvas draws on. Input is
@@ -431,6 +442,7 @@ static struct desktop
     .flush_idle = __WAIT_QUEUE_HEAD_INITIALIZER(desktop.flush_idle),
     .outputs = LIST_HEAD_INIT(desktop.outputs),
     .windows = LIST_HEAD_INIT(desktop.windows),
+    .detached = LIST_HEAD_INIT(desktop.detached),
     .scale = 1,
 };
 

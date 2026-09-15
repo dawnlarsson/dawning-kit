@@ -2890,6 +2890,185 @@ fn host_exit_run(void)
         }
 }
 
+/*
+        Canvas, off and on.
+
+        Reading needs nothing; the kernel decides who may turn it off or on.
+        Off is usually typed into a Canvas terminal, which closes under it, so
+        the way back is said first and the hangup that closing sends is
+        ignored. Where the kernel console is not a screen -- console=ttyS0,
+        with init's shell on the serial line -- the text console off leaves
+        would have no shell, so one is started on tty1.
+*/
+static bipolar host_canvas_request(positive request,
+                                   struct canvas_control address_to control)
+{
+        bipolar device;
+        bipolar failed;
+
+        memory_zero(control, sizeof(address_to control));
+        control->request = (unsigned int)request;
+
+        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
+        if (device < 0)
+                return device;
+
+        failed = system_control(device, SPARK_IOCTL_CANVAS, control);
+        system_close(device);
+
+        return failed;
+}
+
+static fn host_canvas_say(struct canvas_control address_to control)
+{
+        if (!control->running)
+        {
+                string_format(log, host_label "Canvas is off; moonwater canvas on starts it\n");
+                log_flush();
+                return;
+        }
+
+        string_format(log, host_label "Canvas is on: %s, %p window%s\n",
+                      (string_address)control->driver, (positive)control->windows,
+                      control->windows == 1 ? "" : "s");
+
+        for (positive at = 0; at < control->output_count && at < SPARK_CANVAS_OUTPUTS; at++)
+                string_format(log, host_label "  %s: %p by %p, %p Hz\n",
+                              (string_address)control->output[at].connector,
+                              (positive)control->output[at].width,
+                              (positive)control->output[at].height,
+                              (positive)control->output[at].refresh);
+
+        if (control->suspended)
+                string_format(log, host_label "another program holds the display; "
+                                              "Canvas ignores input until it lets go\n");
+
+        log_flush();
+}
+
+/* Whether the kernel console is a screen, where init's shell is on tty1. */
+static bool host_console_is_screen(void)
+{
+        p8 active[128];
+
+        if (host_read_text("/sys/class/tty/console/active", active, sizeof(active)) <= 0)
+                return true;
+
+        for (string_address at = (string_address)active; *at;)
+        {
+                if (at[0] == 't' && at[1] == 't' && at[2] == 'y' &&
+                    at[3] >= '0' && at[3] <= '9')
+                        return true;
+
+                while (*at && *at != ' ')
+                        at++;
+                while (*at == ' ')
+                        at++;
+        }
+
+        return false;
+}
+
+/* A shell on tty1, in a session of its own, for a console that has none. */
+static fn host_tty1_shell(void)
+{
+        bipolar child = system_fork();
+
+        if (child)
+                return;
+
+        {
+                string_address argv[] = {HOST_EVENT_SHELL, null};
+                bipolar tty;
+
+                system_call(syscall(setsid));
+                tty = system_open_at(AT_FDCWD, "/dev/tty1", FILE_READ_WRITE);
+                if (tty < 3)
+                        system_call_1(syscall(exit), 126);
+
+                for (positive at = 0; at < 3; at++)
+                        system_call_3(syscall(dup3), (positive)tty, at, 0);
+
+                system_call_1(syscall(chdir), (positive)(string_address)"/root");
+                (void)shell_exec_file(HOST_EVENT_SHELL, argv, 1, host_event_environment);
+                system_call_1(syscall(exit), 127);
+        }
+}
+
+/* moonwater canvas [on|off] */
+static b32 host_canvas(string_address address_to arguments, positive count)
+{
+        struct canvas_control control;
+        bipolar failed;
+
+        if (count > 3)
+                return host_usage();
+
+        if (count < 3)
+        {
+                failed = host_canvas_request(SPARK_CANVAS_STATUS, address_of control);
+                if (failed < 0)
+                        return host_fail(SPARK_DEVICE, failed);
+
+                host_canvas_say(address_of control);
+                return 0;
+        }
+
+        if (string_equals(arguments[2], "off"))
+        {
+                string_format(log, host_label "Canvas off: every window closes, this one too. "
+                                              "On the text console, moonwater canvas on "
+                                              "brings the desktop back.\n");
+                log_flush();
+
+                system_signal_install(1, 1, 0, 0, null);
+
+                failed = host_canvas_request(SPARK_CANVAS_OFF, address_of control);
+                if (failed == -EPERM)
+                        return host_refuse("turning Canvas off needs root (CAP_SYS_ADMIN)%s\n", "");
+                if (failed == -EALREADY)
+                        return host_refuse("Canvas is already off%s\n", "");
+                if (failed < 0)
+                        return host_fail("canvas off", failed);
+
+                if (!host_console_is_screen())
+                        host_tty1_shell();
+
+                return 0;
+        }
+
+        if (string_equals(arguments[2], "on"))
+        {
+                failed = host_canvas_request(SPARK_CANVAS_ON, address_of control);
+                if (failed == -EPERM)
+                        return host_refuse("turning Canvas on needs root (CAP_SYS_ADMIN)%s\n", "");
+                if (failed == -EALREADY)
+                        return host_refuse("Canvas is already on%s\n", "");
+                if (failed == -EBUSY)
+                {
+                        if (control.master_command[0])
+                                string_format(log_error, host_label "%s (pid %p) holds the display; "
+                                                                    "Canvas stays off until it lets go\n",
+                                              (string_address)control.master_command,
+                                              (positive)control.master_pid);
+                        else
+                                string_format(log_error, host_label "another program holds the display; "
+                                                                    "Canvas stays off until it lets go\n");
+                        log_flush();
+                        return 1;
+                }
+                if (failed == -ENODEV)
+                        return host_refuse("there is no display for Canvas to start on%s\n", "");
+                if (failed < 0)
+                        return host_fail("canvas on", failed);
+
+                host_canvas_say(address_of control);
+                return 0;
+        }
+
+        return host_usage();
+}
+
 // The command ---------------------------------------------------
 
 static b32 host_status(void)
@@ -2961,6 +3140,7 @@ static b32 host_usage(void)
                       host_label "       moonwater init mount [on|off]\n"
                       host_label "       moonwater exit                     what runs when the machine stops\n"
                       host_label "       moonwater exit add|remove ...\n"
+                      host_label "       moonwater canvas [on|off]\n"
                       host_label "       moonwater button power [COMMAND]\n"
                       host_label "Settings are kept in the image this session started from.\n"
                       host_label "install takes this session's; update keeps the disk's.\n");
@@ -3035,6 +3215,9 @@ static b32 host_main()
         // decides who may set it.
         if (string_equals(verb, "button"))
                 return host_button(arguments, count);
+
+        if (string_equals(verb, "canvas"))
+                return host_canvas(arguments, count);
 
         if (string_equals(verb, "init") || string_equals(verb, "exit"))
                 return host_settings_command(arguments, count);

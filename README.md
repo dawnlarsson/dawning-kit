@@ -28,6 +28,9 @@ moonwater exit                         list what runs when the machine powers of
 moonwater exit add "command"           run a command before the disks go read-only
 moonwater exit remove ID|"command"
 
+moonwater canvas                       whether the desktop is on, and on which screens
+moonwater canvas on|off                start or stop the desktop [on]
+
 moonwater button power                 show what the power button runs
 moonwater button power "command"       run a command when it is pressed [poweroff]
 ```
@@ -42,6 +45,12 @@ own. On a read-only stick a change lasts only for the session.
 
 Canvas, the desktop, is part of the kernel: a compositor that draws with the CPU
 through DRM, so it works on any display the kernel can drive.
+
+`moonwater canvas off` closes every window, the one it was typed in too, and leaves
+the kernel's text console with a shell on it; type `moonwater canvas on` there to
+get the desktop back. From that console another display server, Weston say, can
+take the screen. While another program holds the display, Canvas ignores the
+keyboard and mouse until it lets go.
 
 ## Bowl
 

@@ -1382,7 +1382,7 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
                 return -EBUSY;
         }
 
-        if (list_empty(&desktop.outputs))
+        if (list_empty(&desktop.outputs) || desktop.off)
         {
                 rt_mutex_unlock(&desktop.lock);
                 return -ENODEV;
