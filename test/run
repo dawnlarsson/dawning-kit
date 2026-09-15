@@ -5852,16 +5852,22 @@ same 'to the end'   '[ab]|[]|[]'                 20 3 in 'abc\r\ndef\e[1;3H\e[J'
 #       of the page reaches the active position inclusive.
 same 'to the start' '[]|[   gh]|[]'              20 3 in 'abc\r\ndefgh\e[2;3H\e[1J' dump
 same 'all of it'    '[]|[]|[]'                   20 3 in 'abc\r\ndef\e[2J' dump
+#       ED 3 forgets the lines scrolled off the top and leaves the screen, and
+#       a number nobody has defined erases nothing.
+same 'history only'  '[abc]|[def]|[]'            20 3 in 'abc\r\ndef\e[3J' dump
+same 'past three'    '[abc]'                     20 3 in 'abc\e[4J' row 0
 
 group el
 same 'line to end'   '[ab]'                      20 3 in 'abcdef\e[1;3H\e[K' row 0
 same 'line to start' '[    ef]'                  20 3 in 'abcdef\e[1;4H\e[1K' row 0
 same 'whole line'    '[]'                        20 3 in 'abcdef\e[2K' row 0
+same 'past two'      '[abc]'                     20 3 in 'abc\e[1G\e[3K' row 0
 
 group ech
 #       ECH blanks in place and does not move the cursor or shorten the line.
 same 'erases in place' '[   def]'                20 3 in 'abcdef\e[1G\e[3X' row 0
 same 'cursor stays'    '0,0'                     20 3 in 'abcdef\e[1G\e[3X' cursor
+same 'in colour past the end' '[ab     ]|7,4'    20 3 in 'ab\e[44m\e[5X' row 0 attr 0,6
 
 group background
 #       Erasing takes the background in force. Without it a program that
@@ -5871,6 +5877,10 @@ group background
 #       them put stray colour behind every gap a program stepped across.
 same 'erase in colour' '7,1'                     8 2 in '\e[41m\e[2Jx' attr 0,1
 same 'stepped over'    '7,0'                     8 2 in '\e[42m\e[5Cx' attr 0,0
+#       An erase takes the background and nothing else: under reverse video it
+#       took the ink as well and painted the line white.
+same 'reverse erase'   '[]|[]'                   8 2 in '\e[7mab\e[2J' dump
+same 'reverse erase in colour' '7,4'             8 2 in '\e[44;7m\e[2J' attr 1,0
 
 #
 #       Lines and characters put in and taken out.
@@ -5887,6 +5897,8 @@ same 'insert at edge' '[  ab]'                   4 3 in 'abcd\e[1G\e[2@' row 0
 same 'delete past end' '[abc]'                   20 3 in 'abc\e[1;9H\e[5P' row 0
 same 'insert mode'   '[XYabc]'                   20 3 in 'abc\e[1G\e[4hXY' row 0
 same 'insert mode off' '[XYc]'                   20 3 in 'abc\e[1G\e[4h\e[4lXY' row 0
+#       In colour what DCH pulls in at the right margin is that colour.
+same 'delete in colour' '[def     ]|7,0|7,4'     8 3 in 'abcdef\e[1G\e[44m\e[3P' row 0 attr 0,3 attr 0,5
 
 group lines
 #       IL and DL move the rest of the region and never the rows above the
@@ -5897,6 +5909,10 @@ same 'insert below'  '[a]|[]|[b]|[c]'            20 4 in 'a\r\nb\r\nc\e[2;1H\e[L
 same 'line attributes move' '1,4'                 20 4 in 'a\r\nb\r\n\e[31;44mX\e[0m\e[2;1H\e[M' attr 1,0
 same 'scroll up'     '[b]|[c]|[]|[]'             20 4 in 'a\r\nb\r\nc\e[S' dump
 same 'scroll down'   '[]|[a]|[b]|[c]'            20 4 in 'a\r\nb\r\nc\e[T' dump
+#       Lines scrolled or put in take the background in force.
+same 'scrolled in colour' '7,4'                  8 3 in 'a\r\nb\r\nc\e[44m\n' attr 2,0
+same 'inserted in colour' '7,4'                  8 3 in 'a\r\nb\e[44m\e[1;1H\e[L' attr 0,0
+same 'region scrolled in colour' '7,4'           8 4 in '\e[2;3r\e[3;1H\e[44m\n' attr 2,0
 
 group region
 #       DECSTBM names the rows a scroll happens between. The VT100 manual
@@ -6169,6 +6185,10 @@ same 'wraps whole'    '[abc]|[<6f22>]|1,2'       4 2 in 'abc\xe6\xbc\xa2' dump c
 same 'right half hit' '[ x]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;2Hx' row 0
 same 'left half hit'  '[x ]'                     10 2 in '\xe6\xbc\xa2' in '\e[1;1Hx' row 0
 same 'pinned at the edge' '[ab<6f22>]|0,4'       4 2 in '\e[?7l' in 'abc\xe6\xbc\xa2' row 0 cursor
+#       Erasing half of a double-width character erases the other half too,
+#       so what is written over the pair afterwards stands whole.
+same 'erasing the left half' '[ab]'              8 2 in '\xe6\xbc\xa2\e[1;1H\e[Xab' row 0
+same 'erasing the right half' '[ ]'              8 2 in '\xe6\xbc\xa2\e[1;2H\e[X' row 0
 
 group malformed
 #       Unicode 3.9, and the substitution of maximal subparts: a sequence

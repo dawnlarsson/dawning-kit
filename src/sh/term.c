@@ -187,12 +187,14 @@ static PURE unsigned char ink_drawn()
         return (style & WINDOW_CELL_BOLD) && ink < 8 ? (unsigned char)(ink | 8) : ink;
 }
 
+/*
+        What an erase leaves: a blank in the background in force, and only
+        that. Reverse video and the ink are what text is written in, and an
+        erase that took them painted the line white.
+*/
 static PURE positive blank_cell_word()
 {
-        positive clear_ink = reverse ? paper : ink_drawn();
-        positive clear_paper = reverse ? ink_drawn() : paper;
-
-        return (positive)' ' | (clear_ink << 32) | (clear_paper << 40);
+        return BLANK_CELL_WORD | (positive)paper << 40;
 }
 
 /* Erase in the colours in force, so a program can clear a coloured panel. */
@@ -246,6 +248,15 @@ static fn slot_copy(unsigned int to, unsigned int from)
 
 static fn row_blank(unsigned int r)
 {
+        // A line given out blank takes the background in force, the way an
+        // erase does: nano scrolls and inserts its blue title bar's rows.
+        if (paper)
+        {
+                cells_clear(r, 0, COLUMNS);
+                address_to row_length(r) = COLUMNS;
+                return;
+        }
+
         address_to row_length(r) = 0;
         touch(r);
 }
@@ -267,8 +278,12 @@ static fn scroll_up(unsigned int count)
                 if (count > ROWS)
                         count = ROWS;
 
-                while (count--)
+                for (unsigned int n = count; n; n--)
                         ring_scroll();
+
+                if (paper)
+                        for (unsigned int r = ROWS - count; r < ROWS; r++)
+                                row_blank(r);
 
                 return;
         }
@@ -887,7 +902,7 @@ static fn osc_finish(b32 bell)
 static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int to_row, unsigned int to_column)
 {
-        b32 coloured = blank_cell_word() != BLANK_CELL_WORD;
+        b32 coloured = paper != 0;
         unsigned int r;
 
         for (r = from_row; r <= to_row && r < ROWS; r++)
@@ -895,7 +910,16 @@ static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int first = r == from_row ? from_column : 0;
                 unsigned int last = r == to_row ? to_column : COLUMNS - 1;
                 unsigned int past = min(last + 1, COLUMNS);
-                unsigned int address_to length = row_length(r);
+                unsigned int slot = row_slot(r);
+                unsigned int address_to length = slot_length(slot);
+
+                // Half of a double-width character cannot stand alone, so an
+                // erase that takes one half takes the other with it.
+                if (first < past)
+                {
+                        unpair(slot_cells(slot), address_to length, first);
+                        unpair(slot_cells(slot), address_to length, past - 1);
+                }
 
                 /*
                         An erase that reaches the end of a line, or the edge
@@ -1352,6 +1376,27 @@ static fn full_reset()
 }
 
 /*
+        ED 3 is xterm's: the lines scrolled off the top are forgotten and the
+        screen stays as it is. clear sends it after ED 2, and it blanked the
+        screen a second time and kept the history. The alternate screen has no
+        history, and the lines behind it are the primary screen waiting to
+        come back.
+*/
+static fn history_clear()
+{
+        unsigned int slot = row_slot(0);
+
+        if (alternate)
+                return;
+
+        for (unsigned int n = ROWS; n < window->history; n++)
+        {
+                slot = slot ? slot - 1 : window->history - 1;
+                address_to slot_length(slot) = 0;
+        }
+}
+
+/*
         A marker or an intermediate byte makes another sequence of the same
         final. CSI > 4 ; 2 m is xterm's modifyOtherKeys and not an underline,
         CSI ? u asks about the keyboard rather than restoring the cursor, and
@@ -1449,21 +1494,25 @@ static fn csi_final(unsigned int final)
                 row = r < bottom ? r : (bottom ? bottom - 1 : 0);
                 break;
         }
+        // A reset parameter slot is 0, so no parameter is ED 0 and EL 0, and
+        // a number nobody has defined erases nothing.
         case 'J':
-                if (terminal_csi.count && terminal_csi.value[0] == 1)
-                        erase(0, 0, row, column);
-                else if (terminal_csi.count && terminal_csi.value[0] >= 2)
-                        erase(0, 0, ROWS - 1, COLUMNS - 1);
-                else
+                if (terminal_csi.value[0] == 0)
                         erase(row, column, ROWS - 1, COLUMNS - 1);
+                else if (terminal_csi.value[0] == 1)
+                        erase(0, 0, row, column);
+                else if (terminal_csi.value[0] == 2)
+                        erase(0, 0, ROWS - 1, COLUMNS - 1);
+                else if (terminal_csi.value[0] == 3)
+                        history_clear();
                 break;
         case 'K':
-                if (terminal_csi.count && terminal_csi.value[0] == 1)
-                        erase(row, 0, row, column);
-                else if (terminal_csi.count && terminal_csi.value[0] == 2)
-                        erase(row, 0, row, COLUMNS - 1);
-                else
+                if (terminal_csi.value[0] == 0)
                         erase(row, column, row, COLUMNS - 1);
+                else if (terminal_csi.value[0] == 1)
+                        erase(row, 0, row, column);
+                else if (terminal_csi.value[0] == 2)
+                        erase(row, 0, row, COLUMNS - 1);
                 break;
         case 'L':
         case 'M':
@@ -1486,10 +1535,19 @@ static fn csi_final(unsigned int final)
                 break;
         case 'P':
         {
-                unsigned int address_to length = row_length(row);
-                struct window_cell address_to cells = row_cells(row);
-                unsigned int last = address_to length;
+                unsigned int address_to length;
+                struct window_cell address_to cells;
+                unsigned int last;
                 unsigned int gone;
+
+                // In colour the line is drawn to the edge, and what DCH pulls
+                // in at the right margin is that colour.
+                if (paper && column < COLUMNS)
+                        reach(row, COLUMNS);
+
+                length = row_length(row);
+                cells = row_cells(row);
+                last = address_to length;
 
                 if (column >= last)
                         break;
@@ -1500,7 +1558,11 @@ static fn csi_final(unsigned int final)
                             (positive)(last - column - gone) *
                                 sizeof(struct window_cell));
 
-                address_to length = last - gone;
+                if (paper)
+                        cells_clear(row, last - gone, gone);
+                else
+                        address_to length = last - gone;
+
                 touch(row);
                 break;
         }
@@ -1508,9 +1570,10 @@ static fn csi_final(unsigned int final)
                 open_gap(column, a);
                 break;
         case 'X':
-                reach(row, column);
-
-                cells_clear(row, column, min(a, COLUMNS - column));
+                // An erase like the others, so one in colour past the end of
+                // the line is drawn there.
+                if (column < COLUMNS)
+                        erase(row, column, row, column + min(a, COLUMNS - column) - 1);
                 break;
         case 'S':
                 scroll_up(a);
