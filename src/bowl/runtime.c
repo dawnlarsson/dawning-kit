@@ -881,6 +881,228 @@ static string_address address_to bowl_environment(
         return mixed;
 }
 
+/*
+        Room on the filesystem that holds a bowl.
+
+        A live session keeps /bowls on its root, a tmpfs cut to half of memory,
+        and a bowl that fills it fails part way through a download, an unpack
+        or a package manager's run with a message that names a file and not the
+        reason. What is left is said, and what it is kept in: a tmpfs is memory
+        as well as a size, and runs out of whichever is smaller.
+*/
+#define BOWL_TMPFS_MAGIC 0x01021994
+#define BOWL_RAMFS_MAGIC 0x858458f6
+#define BOWL_MEBIBYTE ((p64)1024 * 1024)
+
+typedef struct
+{
+        p64 free;
+        p64 total;
+        p64 memory;
+        bool in_memory;
+} bowl_room;
+
+// One figure from /proc/meminfo in bytes, or none when it is not there.
+static p64 bowl_meminfo_bytes(string_address text, string_address name)
+{
+        positive length = string_length(name);
+
+        for (positive at = 0; text[at]; at++)
+        {
+                p64 kilobytes = 0;
+
+                if ((at && text[at - 1] != '\n') ||
+                    string_compare_max(text + at, name, length))
+                        continue;
+
+                for (at += length; text[at] == ' '; at++)
+                        ;
+                for (; text[at] >= '0' && text[at] <= '9'; at++)
+                        kilobytes = kilobytes * 10 + (p64)(text[at] - '0');
+
+                return kilobytes * 1024;
+        }
+
+        return 0;
+}
+
+/*
+        Asked through a descriptor rather than a path. An isolated guest's
+        pivot_root moves the root of every process in its mount namespace, and
+        bowl forked it inside that namespace, so after the pivot /bowls/NAME
+        named nothing from here and the room could not be asked at all.
+*/
+#define BOWL_ROOM_OPEN (O_PATH | O_DIRECTORY | O_CLOEXEC)
+
+static bool bowl_room_of(bipolar handle, bowl_room address_to room)
+{
+        file_mount_facts facts;
+        p8 text[4096];
+
+        memory_fill(room, 0, sizeof(*room));
+        if (system_call_2(syscall(fstatfs), (positive)handle,
+                          (positive)address_of facts) < 0)
+                return false;
+
+        p64 unit = (p64)(facts.fragment_size ? facts.fragment_size
+                                             : facts.block_size);
+
+        room->total = facts.blocks * unit;
+        room->free = facts.blocks_available * unit;
+        room->memory = (p64)-1;
+        room->in_memory = facts.type == BOWL_TMPFS_MAGIC ||
+                          facts.type == BOWL_RAMFS_MAGIC;
+
+        // Memory can be given back by swapping, so swap counts as room too.
+        if (room->in_memory &&
+            file_slurp_once_at(AT_FDCWD, (string_address) "/proc/meminfo",
+                               text, sizeof(text)) > 0)
+                room->memory = bowl_meminfo_bytes(text, "MemAvailable:") +
+                               bowl_meminfo_bytes(text, "SwapFree:");
+
+        // ramfs has no size of its own: memory is all the room it has.
+        if (room->in_memory && !facts.blocks)
+                room->free = room->total = room->memory;
+
+        return true;
+}
+
+static bool bowl_room_at(string_address path, bowl_room address_to room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, BOWL_ROOM_OPEN);
+        bool known;
+
+        if (handle < 0)
+                return false;
+
+        known = bowl_room_of(handle, room);
+        system_close(handle);
+        return known;
+}
+
+static fn bowl_room_hint(bowl_room address_to room)
+{
+        if (room->in_memory)
+                string_format(log, bowl_label "/bowls is kept in memory, as a live "
+                                              "session keeps it; moonwater install "
+                                              "DISK puts bowls on the disk's data "
+                                              "partition\n");
+}
+
+/*
+        After a step failed: when what is left is a sixteenth of the filesystem
+        or less, capped at 256 MiB, space is the likely reason, and how much is
+        said. The numbers are the filesystem's own; nothing is guessed but
+        whether they are worth a line.
+*/
+static p64 bowl_room_low(bowl_room address_to room)
+{
+        return room->total / 16 < 256 * BOWL_MEBIBYTE ? room->total / 16
+                                                      : 256 * BOWL_MEBIBYTE;
+}
+
+static fn bowl_room_say_low_of(bipolar handle, string_address path)
+{
+        bowl_room room;
+
+        if (!bowl_room_of(handle, address_of room) ||
+            room.free > bowl_room_low(address_of room))
+                return;
+
+        string_format(log, bowl_label "%s has %p MiB free of %p MiB\n", path,
+                      (positive)(room.free / BOWL_MEBIBYTE),
+                      (positive)(room.total / BOWL_MEBIBYTE));
+        bowl_room_hint(address_of room);
+        log_flush();
+}
+
+static fn bowl_room_say_low(string_address path)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, BOWL_ROOM_OPEN);
+
+        if (handle < 0)
+                return;
+
+        bowl_room_say_low_of(handle, path);
+        system_close(handle);
+}
+
+/*
+        How low the room got while a guest ran.
+
+        A package manager that fails for want of room has tidied up by the time
+        it returns: on a 1 GB live root dpkg stopped at "No space left on
+        device" and apt exited with 218 MiB free again, so what is free
+        afterwards says nothing. The filesystem is looked at while the guest
+        runs instead -- a statfs ten times a second, from a poll on the child's
+        pidfd so that a quick command is not held up by it. The moment a write
+        fails is too short to be seen, but the filling that leads to it takes
+        seconds, so the lowest it saw is what is kept. The root is the
+        descriptor opened before the guest pivoted.
+*/
+static p64 bowl_wait_watching(bipolar child, bipolar root)
+{
+        p64 lowest = (p64)-1;
+        bipolar watch = system_call_2(syscall(pidfd_open), (positive)child, 0);
+
+        while (watch >= 0)
+        {
+                file_mount_facts facts;
+                system_poll_descriptor wanted = {(b32)watch, SYSTEM_POLL_READ, 0};
+                timespec tenth = {0, 100000000};
+                bipolar ready;
+
+                if (system_call_2(syscall(fstatfs), (positive)root,
+                                  (positive)address_of facts) >= 0 &&
+                    facts.blocks)
+                {
+                        p64 unit = (p64)(facts.fragment_size ? facts.fragment_size
+                                                             : facts.block_size);
+
+                        if (facts.blocks_available * unit < lowest)
+                                lowest = facts.blocks_available * unit;
+                }
+
+                ready = system_poll_wait(address_of wanted, 1, address_of tenth,
+                                         null);
+                if (ready != 0 && ready != -EINTR)
+                        break;
+        }
+
+        if (watch >= 0)
+                system_close(watch);
+        return lowest;
+}
+
+/*
+        After a guest failed: how low the room got while it ran, when that was
+        low, or how low it is now. Both are the filesystem's own numbers, and a
+        run that never came near filling it says nothing.
+*/
+static fn bowl_room_after(bipolar handle, string_address root, p64 lowest)
+{
+        bowl_room room;
+
+        if (!bowl_room_of(handle, address_of room))
+                return;
+
+        p64 low = bowl_room_low(address_of room);
+
+        if (lowest > low || lowest >= room.free)
+        {
+                bowl_room_say_low_of(handle, root);
+                return;
+        }
+
+        string_format(log, bowl_label "%s was down to %p MiB free of %p MiB while "
+                                      "this ran, and has %p MiB now\n", root,
+                      (positive)(lowest / BOWL_MEBIBYTE),
+                      (positive)(room.total / BOWL_MEBIBYTE),
+                      (positive)(room.free / BOWL_MEBIBYTE));
+        bowl_room_hint(address_of room);
+        log_flush();
+}
+
 static b32 bowl_launch(string_address root, string_address program,
                        string_address address_to arguments,
                        bool isolated)
@@ -932,10 +1154,17 @@ static b32 bowl_launch(string_address root, string_address program,
                 bowl_inside(root, program, arguments, environment,
                             native_shell, false);
 
+        // Opened before the guest pivots this namespace's root away from it.
+        bipolar room = system_open_at(AT_FDCWD, root, BOWL_ROOM_OPEN);
+
         /* CLONE_NEWPID places the next child, not this caller, in the view. */
         child = system_fork();
         if (child < 0)
+        {
+                if (room >= 0)
+                        system_close(room);
                 return bowl_launch_failed(native_shell, "cannot start", child);
+        }
 
         if (child == 0)
                 bowl_inside(root, program, arguments, environment,
@@ -944,8 +1173,18 @@ static b32 bowl_launch(string_address root, string_address program,
         if (native_shell >= 0)
                 system_close(native_shell);
 
+        p64 lowest = room >= 0 ? bowl_wait_watching(child, room) : (p64)-1;
+
         failed = system_wait4_retry(child, address_of status, 0, null);
-        return failed < 0 ? 1 : wait_status_code(status);
+
+        // apt says a file could not be written; this says the root was full.
+        b32 code = failed < 0 ? 1 : wait_status_code(status);
+
+        if (failed >= 0 && code && room >= 0)
+                bowl_room_after(room, root, lowest);
+        if (room >= 0)
+                system_close(room);
+        return code;
 }
 
 #include "unpack.c"

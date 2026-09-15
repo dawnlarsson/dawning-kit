@@ -1760,9 +1760,37 @@ static bool tar_rewind_unread(bipolar handle)
         return true;
 }
 
+/*
+        Why the last member's bytes could not be written, for the line that
+        names it: a full filesystem is "No space left on device", not an
+        input/output error. Zero when every byte went.
+*/
+static bipolar tar_write_failure;
+
+static bipolar tar_write_reason(bipolar out, const p8 address_to bytes,
+                                positive count)
+{
+        while (count)
+        {
+                bipolar wrote = system_write_once((positive)out, bytes, count);
+
+                if (wrote == -EINTR)
+                        continue;
+                if (wrote <= 0)
+                        return wrote < 0 ? wrote : -ENOSPC;
+
+                bytes += wrote;
+                count -= (positive)wrote;
+        }
+
+        return 0;
+}
+
 static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
 {
         p64 left = size;
+
+        tar_write_failure = 0;
 
         while (left)
         {
@@ -1778,11 +1806,16 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
                         if (out < 0 && !tar_skip(archive, left, seekable))
                                 return false;
 
-                        return true;
+                        return !tar_write_failure;
                 }
 
+                /* An archive that ends early stops here whatever was written:
+                   nothing is left to read past, and a failed write before it
+                   must not send the caller on to skip padding that is not
+                   there. */
                 if (tar_at >= tar_have && tar_fill(archive) <= 0)
                 {
+                        tar_write_failure = 0;
                         tar_refuse("unexpected EOF in archive");
                         return false;
                 }
@@ -1790,27 +1823,43 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
                 have = tar_have - tar_at;
                 if (!have)
                 {
+                        tar_write_failure = 0;
                         tar_refuse("unexpected EOF in archive");
                         return false;
                 }
 
                 take = have > left ? (positive)left : have;
-                if (out >= 0 &&
-                    system_write_all((positive)out, tar_record + tar_at,
-                                     take) != take)
-                        return false;
+                if (out >= 0)
+                {
+                        bipolar wrote = tar_write_reason(out, tar_record + tar_at,
+                                                         take);
+
+                        // The rest of the member is read past rather than
+                        // written, so the next header is where it should be.
+                        if (wrote < 0)
+                        {
+                                tar_write_failure = wrote;
+                                out = -1;
+                        }
+                }
 
                 tar_at += take;
                 left -= take;
         }
 
-        return true;
+        return !tar_write_failure;
 }
 
 static bool tar_deliver(bipolar archive, bipolar out, p64 size, bool seekable)
 {
-        return tar_copy_n(archive, out, size, seekable) &&
-               tar_skip(archive, tar_padded(size) - size, seekable);
+        bool copied = tar_copy_n(archive, out, size, seekable);
+
+        // A member that could not be written was still read to its end, and
+        // its padding goes as well; one that could not be read stops here.
+        if (!copied && !tar_write_failure)
+                return false;
+
+        return tar_skip(archive, tar_padded(size) - size, seekable) && copied;
 }
 
 static bool tar_write_zeros(bipolar out, p64 size)
@@ -2209,7 +2258,8 @@ static bool tar_extract_regular_staged(bipolar archive, bipolar directory,
                     address_of protected, directory, leaf, made,
                     -ERROR_INPUT_OUTPUT, false,
                     replaced_known ? address_of replaced : null, 0);
-                tar_fail(path, -ERROR_INPUT_OUTPUT);
+                tar_fail(path, tar_write_failure ? tar_write_failure
+                                                 : -ERROR_INPUT_OUTPUT);
                 return false;
         }
 
@@ -2273,7 +2323,8 @@ static bool tar_extract_regular(bipolar archive, bipolar directory,
         {
                 (void)system_path_remove_opened_at(directory, leaf, made, 0);
                 (void)system_close(made);
-                tar_fail(path, -ERROR_INPUT_OUTPUT);
+                tar_fail(path, tar_write_failure ? tar_write_failure
+                                                 : -ERROR_INPUT_OUTPUT);
                 return false;
         }
 

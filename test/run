@@ -4100,6 +4100,33 @@ lane_files()
                 files_failed=1
         fi
 
+        #       A member that cannot be written says why -- a full bowl root
+        #       said "Input/output error" and then "invalid header checksum" --
+        #       and the member after it still lands. The write limit stands in
+        #       for a full filesystem: the same short write, answered EFBIG.
+        write_place="$work/cp-mode-regression/tar-write"
+        mkdir -p "$write_place/in" "$write_place/out"
+        head -c 1048576 /dev/zero > "$write_place/in/big"
+        printf 'small member\n' > "$write_place/in/small"
+        (cd "$write_place/in" && "$farm/tar" -cf ../members.tar big small) &&
+                "$farm/gzip" -c "$write_place/members.tar" > "$write_place/members.tar.gz"
+        (
+                ulimit -f 256
+                trap '' 25
+                "$farm/tar" -xf "$write_place/members.tar.gz" -C "$write_place/out"
+        ) 2> "$write_place/error"
+        write_status=$?
+        write_said=$(cat "$write_place/error")
+        write_small=$(cat "$write_place/out/small" 2>/dev/null || printf missing)
+        if [ "$write_status" != 0 ] && [ "$write_said" = 'tar: big: File too large' ] &&
+                [ "$write_small" = 'small member' ] && [ ! -e "$write_place/out/big" ]; then
+                tally tar-write-failure-says-why 1 1
+        else
+                tally tar-write-failure-says-why 0 1
+                note "tar under a write limit returned $write_status, said [$write_said], small [$write_small]"
+                files_failed=1
+        fi
+
         printf 'old text\n' > "$work/cp-mode-regression/sed"
         chmod 4755 "$work/cp-mode-regression/sed"
         "$farm/sed" -i s/old/new/ "$work/cp-mode-regression/sed"

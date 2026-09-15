@@ -32,6 +32,9 @@ struct bowl_distro
         string_address next;
         string_address refuse;
         p64 floor;
+        // What the download and the tree it unpacks to took, measured.
+        p64 archive_bytes;
+        p64 tree_bytes;
         p8 prime;
         string_address address_to expose;
 };
@@ -100,6 +103,8 @@ static b32 bowl_setup_download(string_address dest, string_address url,
 
         if (bowl_setup_run(self, argv, "download failed\n"))
         {
+                // Asked while the part that filled it is still there.
+                bowl_room_say_low(BOWL_ROOT_DIRECTORY);
                 system_remove_at(AT_FDCWD, part, 0);
                 return 1;
         }
@@ -304,23 +309,32 @@ static string_address bowl_alpine_expose[] = {"/sbin/apk", null};
 static string_address bowl_debian_expose[] = {
     "/usr/bin/apt-get", "/usr/bin/apt", null};
 
+/*
+        The sizes are what each download and its unpacked tree took on a
+        4 KiB-page tmpfs on 2026-09-15, with nothing added, so a setup that
+        fits is never refused: Arch 126,491,574 bytes unpacking to 607,944,704,
+        Alpine 3,698,422 to 8,675,328, Debian 49,337,828 to 130,928,640. A
+        release that has grown since is what the check after the download is
+        for, and a failure part way still says how much room is left.
+*/
 static const struct bowl_distro bowl_distros[] = {
     {"arch", "Arch", BOWL_ROOT_PREFIX "arch",
      BOWL_ROOT_PREFIX "archlinux-bootstrap-x86_64.tar.zst", BOWL_ARCH_URL,
      "/usr/bin/pacman", "pacman -Syu", null, (p64)32 * 1024 * 1024,
-     BOWL_PRIME_ARCH, bowl_arch_expose},
+     126491574, 607944704, BOWL_PRIME_ARCH, bowl_arch_expose},
     {"alpine", "Alpine", BOWL_ROOT_PREFIX "alpine",
      BOWL_ROOT_PREFIX "alpine-minirootfs-x86_64.tar.gz", BOWL_ALPINE_URL, "/sbin/apk",
-     "apk update", null, (p64)1024 * 1024, BOWL_PRIME_NONE,
+     "apk update", null, (p64)1024 * 1024, 3698422, 8675328, BOWL_PRIME_NONE,
      bowl_alpine_expose},
     {"debian", "Debian", BOWL_ROOT_PREFIX "debian", BOWL_ROOT_PREFIX "debian-rootfs-amd64.tar.gz",
      BOWL_DEBIAN_URL, "/usr/bin/apt-get", "apt-get update", null,
-     (p64)8 * 1024 * 1024, BOWL_PRIME_NONE, bowl_debian_expose},
+     (p64)8 * 1024 * 1024, 49337828, 130928640, BOWL_PRIME_NONE,
+     bowl_debian_expose},
     {"fedora", "Fedora", BOWL_ROOT_PREFIX "fedora", null, null, "/usr/bin/dnf",
-     null, "fedora is an OCI image, not a rootfs tarball\n", 0,
+     null, "fedora is an OCI image, not a rootfs tarball\n", 0, 0, 0,
      BOWL_PRIME_NONE, null},
     {"nix", "Nix", BOWL_ROOT_PREFIX "nix", null, null, "/bin/nix", null,
-     "nix is a /nix store, not a distro root\n", 0, BOWL_PRIME_NONE, null},
+     "nix is a /nix store, not a distro root\n", 0, 0, 0, BOWL_PRIME_NONE, null},
 };
 
 static const struct bowl_distro address_to bowl_find_distro(string_address name)
@@ -334,6 +348,36 @@ static const struct bowl_distro address_to bowl_find_distro(string_address name)
         return null;
 }
 
+/*
+        Refused before anything is written when the room is not there: the
+        download and its tree are on the filesystem together until the download
+        is removed. Which of the filesystem and memory is short is the one said.
+*/
+static b32 bowl_room_short(const struct bowl_distro address_to distro, p64 need)
+{
+        bowl_room room;
+
+        if (!need || !bowl_room_at(BOWL_ROOT_DIRECTORY, address_of room))
+                return 0;
+
+        bool memory = room.in_memory && room.memory < room.free;
+        p64 have = memory ? room.memory : room.free;
+
+        if (have >= need)
+                return 0;
+
+        string_format(log, bowl_label "%s needs %p MiB in " BOWL_ROOT_DIRECTORY
+                                      " and %s %p MiB %s\n",
+                      distro->label,
+                      (positive)((need + BOWL_MEBIBYTE - 1) / BOWL_MEBIBYTE),
+                      memory ? "memory has" : "it has",
+                      (positive)(have / BOWL_MEBIBYTE),
+                      memory ? "available" : "free");
+        bowl_room_hint(address_of room);
+        log_flush();
+        return 1;
+}
+
 static b32 bowl_setup_distro(const struct bowl_distro address_to distro)
 {
         b32 failed = 0;
@@ -345,13 +389,26 @@ static b32 bowl_setup_distro(const struct bowl_distro address_to distro)
 
         if (!bowl_has(distro->root, distro->marker))
         {
-                if (!bowl_archive_usable(distro->store, distro->floor))
+                bool kept = bowl_archive_usable(distro->store, distro->floor);
+
+                if (bowl_room_short(distro, distro->tree_bytes +
+                                                (kept ? 0 : distro->archive_bytes)))
+                        return 1;
+
+                if (!kept)
                 {
                         system_remove_at(AT_FDCWD, distro->store, 0);
                         failed = bowl_setup_download(distro->store, distro->url,
                                                      distro->floor);
                         if (failed)
                                 return failed;
+
+                        // The download is in place now and its tree is not.
+                        if (bowl_room_short(distro, distro->tree_bytes))
+                        {
+                                system_remove_at(AT_FDCWD, distro->store, 0);
+                                return 1;
+                        }
                 }
 
                 string_format(log, bowl_label "landing %s at %s\n",

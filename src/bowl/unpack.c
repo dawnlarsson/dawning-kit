@@ -769,6 +769,9 @@ static b32 bowl_land(string_address archive, string_address root,
                                 failed = bowl_flatten(root, marker);
                         if (failed)
                         {
+                                // Asked before the half-landed tree is taken
+                                // away, while a full filesystem is still full.
+                                bowl_room_say_low(BOWL_ROOT_DIRECTORY);
                                 bowl_reset_root(root);
                                 return failed;
                         }

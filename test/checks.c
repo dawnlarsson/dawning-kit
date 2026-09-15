@@ -51029,6 +51029,8 @@ static fn kernel_settings(void)
         if (!sysfs)
                 return;
 
+        positive user = (positive)system_call(syscall(getuid));
+        positive group = (positive)system_call(syscall(getgid));
         bipolar child = system_fork();
 
         if (child == 0)
@@ -51036,6 +51038,36 @@ static fn kernel_settings(void)
                 if (system_call_1(syscall(unshare), CLONE_NEWUSER | CLONE_NEWNS |
                                                         CLONE_NEWNET | CLONE_NEWPID) < 0)
                         exit(77);
+
+                /* Root inside, as the check's own user outside: without a
+                   mapping a file created on the tmpfs below has no owner the
+                   kernel can store, and its creation fails. */
+                static const struct { string_address path; bool id; bool of_group; } maps[] = {
+                    {"/proc/self/setgroups", false, false},
+                    {"/proc/self/gid_map", true, true},
+                    {"/proc/self/uid_map", true, false}};
+
+                for (positive at = 0; at < array_count(maps); at++)
+                {
+                        p8 line[64] = "deny\n";
+                        positive length = 5;
+                        bipolar handle = system_open_at(AT_FDCWD, maps[at].path,
+                                                        FILE_WRITE | O_CLOEXEC);
+
+                        if (maps[at].id)
+                        {
+                                memory_copy(line, "0 ", 2);
+                                length = 2 + positive_into_string(
+                                                 line + 2, maps[at].of_group ? group : user);
+                                memory_copy(line + length, " 1\n", 3);
+                                length += 3;
+                        }
+
+                        if (handle < 0 ||
+                            system_write_all((positive)handle, line, length) != length)
+                                exit(77);
+                        system_close(handle);
+                }
 
                 bipolar inside = system_fork();
 
@@ -51051,12 +51083,64 @@ static fn kernel_settings(void)
                         if (bowl_kernel_settings_seal())
                                 exit(1);
 
-                        exit(kernel_settings_read_only("/proc/sys/kernel") &&
-                                     kernel_settings_read_only("/proc/sysrq-trigger") &&
-                                     kernel_settings_read_only("/sys/kernel") &&
-                                     !kernel_settings_read_only("/proc/self")
-                                 ? 0
-                                 : 2);
+                        b32 wrong = kernel_settings_read_only("/proc/sys/kernel") &&
+                                            kernel_settings_read_only("/proc/sysrq-trigger") &&
+                                            kernel_settings_read_only("/sys/kernel") &&
+                                            !kernel_settings_read_only("/proc/self")
+                                        ? 0
+                                        : 2;
+
+                        /* The watch on a guest: a child that fills a 4 MiB
+                           tmpfs, holds it a moment and takes it all back is
+                           seen full; one that writes nothing is not. The
+                           watcher asks by descriptor from a root that no
+                           longer holds the path, as bowl is after its guest
+                           pivots, and the writer fills through a descriptor
+                           it inherited. */
+                        if (system_mount("tmpfs", "/tmp", "tmpfs", 0, "size=4m"))
+                                exit(wrong | 16);
+
+                        bipolar watched = system_open_at(AT_FDCWD, "/tmp", BOWL_ROOM_OPEN);
+                        bipolar fill = system_open_at_mode(AT_FDCWD, "/tmp/fill",
+                                                           FILE_WRITE | O_CLOEXEC, 0600);
+
+                        if (watched < 0 || fill < 0 ||
+                            system_change_directory("/proc") ||
+                            system_call_1(syscall(chroot), (positive)"."))
+                                exit(wrong | 16);
+
+                        for (positive filling = 0; filling < 2; filling++)
+                        {
+                                bipolar writer = system_fork();
+
+                                if (writer == 0)
+                                {
+                                        static p8 block[65536];
+                                        timespec hold = {0, 600000000};
+
+                                        while (filling &&
+                                               system_write_once((positive)fill, block,
+                                                                 sizeof(block)) > 0)
+                                                ;
+                                        system_call_2(syscall(nanosleep),
+                                                      (positive)address_of hold, 0);
+                                        system_call_2(syscall(ftruncate), (positive)fill, 0);
+                                        exit(1);
+                                }
+
+                                p64 lowest = writer > 0
+                                                 ? bowl_wait_watching(writer, watched)
+                                                 : 0;
+                                positive ignored = 0;
+
+                                if (writer > 0)
+                                        system_wait4_retry(writer, address_of ignored, 0, null);
+                                if (filling ? lowest >= BOWL_MEBIBYTE
+                                            : lowest < BOWL_MEBIBYTE)
+                                        wrong |= filling ? 4 : 8;
+                        }
+
+                        exit(wrong);
                 }
 
                 positive status = 0;
@@ -51073,9 +51157,48 @@ static fn kernel_settings(void)
                        ? wait_status_code(status)
                        : 77;
 
-        if (code != 77)
-                check("Bowl binds the host kernel's settings read-only in a view",
-                      code == 0);
+        if (code == 77)
+                return;
+
+        check("Bowl binds the host kernel's settings read-only in a view",
+              code != 1 && !(code & 2));
+        check("Bowl sees a filesystem a guest filled and emptied again",
+              code != 1 && !(code & (4 | 16)));
+        check("Bowl does not see a full filesystem where there was none",
+              code != 1 && !(code & (8 | 16)));
+}
+
+/*
+        Room for a bowl: /proc/meminfo's figures read as bytes, only at the
+        start of a line and only under their own name, and a filesystem's room
+        answered in bytes that fit inside it. A setup needing more than any
+        filesystem holds is refused and one needing nothing is not.
+*/
+static fn room(void)
+{
+        static const struct { string_address text; string_address name; p64 bytes; } figures[] = {
+            {"MemTotal:        2037804 kB\nMemAvailable:    1922780 kB\n", "MemAvailable:", 1922780 * (p64)1024},
+            {"MemAvailable: 7 kB\nSwapFree: 12 kB\n", "SwapFree:", 12 * 1024},
+            {"XMemAvailable: 9 kB\n", "MemAvailable:", 0},
+            {"MemAvailable:\n", "MemAvailable:", 0},
+            {"", "MemAvailable:", 0},
+            {"Shmem: 4 kB\nMemAvailable: 1 kB", "MemAvailable:", 1024},
+        };
+        struct bowl_distro huge = {.label = "Huge"};
+        bowl_room here;
+
+        for (positive at = 0; at < array_count(figures); at++)
+                check("Bowl reads a meminfo figure as bytes",
+                      bowl_meminfo_bytes(figures[at].text, figures[at].name) ==
+                          figures[at].bytes);
+
+        check("Bowl measures the room a filesystem has",
+              bowl_room_at("/", address_of here) && here.free <= here.total &&
+                  (!here.in_memory || here.memory));
+        check("Bowl refuses a setup no filesystem holds",
+              bowl_room_short(address_of huge, (p64)1 << 62) == 1);
+        check("Bowl lets a setup that needs nothing through",
+              bowl_room_short(address_of huge, 0) == 0);
 }
 
 b32 main(void)
@@ -51084,6 +51207,7 @@ b32 main(void)
         launchers();
         isolation();
         kernel_settings();
+        room();
         return test_report(null);
 }
 #endif /* CHECK_bowl */
