@@ -1733,7 +1733,8 @@ static bool tar_skip(bipolar handle, p64 bytes, bool seekable)
         return true;
 }
 
-static bool tar_copy_out(bipolar in, bipolar out, p64 size)
+static bool tar_copy_out(bipolar in, bipolar out, p64 size,
+                         file_copy_stop address_to stopped)
 {
         bool range_copy = true;
         bool send_copy = true;
@@ -1742,7 +1743,7 @@ static bool tar_copy_out(bipolar in, bipolar out, p64 size)
                 return true;
 
         return file_copy_stream(in, out, size, true, address_of range_copy,
-                                address_of send_copy, null);
+                                address_of send_copy, null, stopped);
 }
 
 static bool tar_rewind_unread(bipolar handle)
@@ -1800,8 +1801,22 @@ static bool tar_copy_n(bipolar archive, bipolar out, p64 size, bool seekable)
                 if (left >= TAR_RECORD && !tar_packed() &&
                     tar_rewind_unread(archive))
                 {
-                        if (out >= 0 && !tar_copy_out(archive, out, left))
+                        file_copy_stop stopped = {0};
+
+                        // A member that could not be written says why, and
+                        // the rest of it is passed over so the next header
+                        // is where it should be; one that could not be
+                        // read, or ran out, stops here as before.
+                        if (out >= 0 &&
+                            !tar_copy_out(archive, out, left,
+                                          address_of stopped))
+                        {
+                                if (stopped.failure &&
+                                    tar_skip(archive, stopped.unmoved,
+                                             seekable))
+                                        tar_write_failure = stopped.failure;
                                 return false;
+                        }
 
                         if (out < 0 && !tar_skip(archive, left, seekable))
                                 return false;
@@ -2085,7 +2100,8 @@ static bool tar_put_file(bipolar archive, bipolar in, p64 size)
         if (size >= TAR_RECORD && !tar_packed())
         {
                 tar_advise(in);
-                if (!tar_flush(archive) || !tar_copy_out(in, archive, size))
+                if (!tar_flush(archive) ||
+                    !tar_copy_out(in, archive, size, null))
                         return false;
 
                 return tar_write_padding(archive, size);

@@ -24446,6 +24446,56 @@ def harness_compression(argv):
                   not list(output_root.glob('.moonwater-stage-*')),
                   limited.stderr.decode(errors='replace'))
 
+            # A member the write limit cuts off names its errno and the member
+            # after it still lands, as GNU tar lands it: a plain archive is
+            # seekable and copies through copy_file_range, which said
+            # "Input/output error" and lost the next header, and a packed one
+            # streams. GNU says "Wrote only N of 10240 bytes" and keeps the
+            # part; ours removes it, so only status and the next member compare.
+            limit_source = output_root / 'write-limit'
+            limit_source.mkdir()
+            (limit_source / 'big').write_bytes(bytes(range(256)) * 4096)
+            (limit_source / 'small').write_bytes(b'small member\n')
+            limit_tar = output_root / 'write-limit.tar'
+            made = call([refs['tar'], '--format=ustar', '-cf', str(limit_tar),
+                         '-C', str(limit_source), 'big', 'small'])
+            (output_root / 'write-limit.tar.gz').write_bytes(
+                gzip.compress(limit_tar.read_bytes()))
+
+            def limit_member_output():
+                signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+                resource.setrlimit(resource.RLIMIT_FSIZE, (131072, 131072))
+
+            # tar-stdin is the plain archive on a pipe: no kernel copy takes
+            # it, so the buffered copy under the same path is the one that fails.
+            for suffix in ('tar', 'tar-stdin', 'tar.gz'):
+                ran = {}
+                piped = suffix == 'tar-stdin'
+                archive_path = output_root / ('write-limit.' + ('tar' if piped else suffix))
+                for who, exe in (('ours', our_tar), ('reference', [refs['tar']])):
+                    into = output_root / ('write-limit-' + who + '-' + suffix)
+                    into.mkdir()
+                    ran[who] = (into, subprocess.run(
+                        exe + ['-xf', '-' if piped else str(archive_path),
+                               '-C', str(into)],
+                        input=archive_path.read_bytes() if piped else None,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        timeout=120, preexec_fn=limit_member_output))
+                ours_into, ours = ran['ours']
+                reference_into, reference = ran['reference']
+                check(label + '/tar-extract/write-limit-' + suffix,
+                      made.returncode == 0 and
+                      ours.returncode == reference.returncode == 2 and
+                      ours.stderr == b'tar: big: File too large\n' and
+                      (ours_into / 'small').is_file() and
+                      (ours_into / 'small').read_bytes() ==
+                      (reference_into / 'small').read_bytes() ==
+                      b'small member\n' and
+                      not (ours_into / 'big').exists() and
+                      not list(ours_into.glob('.moonwater-stage-*')),
+                  '%d %d %r %r' % (ours.returncode, reference.returncode,
+                                   ours.stderr, reference.stderr))
+
             streamed = call(our_tar + ['-cf', '-', '-C', str(output_root),
                                        member.name])
             listed = call([refs['tar'], '-tf', '-'], streamed.stdout)

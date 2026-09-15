@@ -4054,13 +4054,24 @@ static bool file_copy_range_fallback(bipolar result)
                result == -ERROR_NOT_SUPPORTED;
 }
 
+/* Where a bounded copy stopped when a write failed for a reason no
+   fallback takes -- ENOSPC or EFBIG from a destination that is full -- as
+   that errno and the bytes of the length it never took from the input, so
+   a caller can read past the rest. A failed read leaves it untouched. A
+   caller that passes null pays nothing for it. */
+typedef struct
+{
+        bipolar failure;
+        p64 unmoved;
+} file_copy_stop;
+
 /* cp and split share the kernel-copy cascade. Sparse extents supply explicit
    source/destination offsets; streams use the current descriptor positions.
    Capability bits persist across pieces so each unavailable floor is tried once. */
 static inline INLINE bool file_copy_stream(
     bipolar in, bipolar out, p64 length, bool bounded,
     bool address_to range_copy, bool address_to send_copy,
-    p64 address_to offsets)
+    p64 address_to offsets, file_copy_stop address_to stopped)
 {
         for (positive stage = 0; stage < 2; stage++)
         {
@@ -4089,7 +4100,14 @@ static inline INLINE bool file_copy_stream(
                         if (copied == -4)
                                 continue;
                         if (!file_copy_range_fallback(copied))
+                        {
+                                if (stopped)
+                                {
+                                        stopped->failure = copied;
+                                        stopped->unmoved = length;
+                                }
                                 return false;
+                        }
 
                         *enabled = false;
                 }
@@ -4116,9 +4134,22 @@ static inline INLINE bool file_copy_stream(
                         return false;
                 if (!taken)
                         return !bounded;
-                if (system_write_all((positive)out, transfer,
-                                     (positive)taken) != (positive)taken)
+
+                system_write_result written = system_write_all_checked(
+                    (positive)out, transfer, (positive)taken);
+
+                if (written.bytes != (positive)taken)
+                {
+                        //      The chunk that failed was read whole.
+                        if (stopped && bounded)
+                        {
+                                stopped->failure = written.error < 0
+                                                       ? written.error
+                                                       : -ENOSPC;
+                                stopped->unmoved = length - (positive)taken;
+                        }
                         return false;
+                }
 
                 if (bounded)
                         length -= (positive)taken;
@@ -4135,7 +4166,7 @@ static bool file_copy_extent(bipolar in, bipolar out, p64 start,
 {
         p64 offsets[2] = {start, start};
         return file_copy_stream(in, out, length, true, range_copy, send_copy,
-                                offsets);
+                                offsets, null);
 }
 
 /*
@@ -4245,7 +4276,7 @@ static bool file_copy_handles_known(bipolar in, bipolar out,
                 bool send_copy = true;
                 complete = file_copy_stream(in, out, 0, false,
                                             address_of range_copy,
-                                            address_of send_copy, null);
+                                            address_of send_copy, null, null);
         }
         return complete;
 }
@@ -18091,7 +18122,7 @@ static bool split_fixed(bipolar in, p64 length, positive measure,
                                 : file_copy_stream(in, output->stage.handle,
                                                    here, true,
                                                    address_of range_copy,
-                                                   address_of send_copy, null))) ||
+                                                   address_of send_copy, null, null))) ||
                     !split_output_close(output))
                 {
                         if (!bytes)
