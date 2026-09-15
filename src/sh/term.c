@@ -139,9 +139,35 @@ static fn touch_all()
         long as a resize takes to be answered, and a row addressed at the
         compositor's count while the cells are still laid out at this one is a
         line taken from somewhere else entirely.
+
+        Which line a row is, is a remainder by the ring's length, and that
+        length is read out of the shared page, so every lookup is a division.
+        A character paid four of them, and a scrolled region two a row. The
+        paths that touch a row more than once find its slot once and hand the
+        slot down.
 */
-#define row_cells(row) window_line(window, window->head - ROWS + (row))
-#define row_length(row) window_length(window, window->head - ROWS + (row))
+static inline INLINE unsigned int row_slot(unsigned int r)
+{
+        return (window->head - ROWS + r) % window->history;
+}
+
+// The slot count lines further on, without dividing again while that is
+// less than a lap of the ring past the first.
+static inline INLINE unsigned int slot_after(unsigned int slot, unsigned int count)
+{
+        unsigned int after = slot + count;
+
+        if (after < window->history)
+                return after;
+
+        after -= window->history;
+        return after < window->history ? after : after % window->history;
+}
+
+#define slot_cells(slot) (window_cells(window) + (slot) * window->stride)
+#define slot_length(slot) (window_lengths(window) + (slot))
+#define row_cells(row) slot_cells(row_slot(row))
+#define row_length(row) slot_length(row_slot(row))
 
 /*
         A cell is eight bytes and the ring begins 4096 bytes into its
@@ -196,16 +222,16 @@ static fn ring_scroll()
         touch_all();
 }
 
-static fn row_copy(unsigned int to, unsigned int from)
+static fn slot_copy(unsigned int to, unsigned int from)
 {
-        struct window_cell address_to source = row_cells(from);
-        struct window_cell address_to target = row_cells(to);
-        unsigned int length = address_to row_length(from);
+        struct window_cell address_to source = slot_cells(from);
+        struct window_cell address_to target = slot_cells(to);
+        unsigned int length = address_to slot_length(from);
 
         memory_copy(target, source,
                     (positive)length * sizeof(struct window_cell));
 
-        address_to row_length(to) = length;
+        address_to slot_length(to) = length;
 }
 
 static fn row_blank(unsigned int r)
@@ -240,8 +266,10 @@ static fn scroll_up(unsigned int count)
         if (count > region_bottom - region_top)
                 count = region_bottom - region_top;
 
+        unsigned int top = row_slot(0);
+
         for (unsigned int r = region_top; r + count < region_bottom; r++)
-                row_copy(r, r + count);
+                slot_copy(slot_after(top, r), slot_after(top, r + count));
 
         for (unsigned int r = region_bottom - count; r < region_bottom; r++)
                 row_blank(r);
@@ -254,8 +282,10 @@ static fn scroll_down(unsigned int count)
         if (count > region_bottom - region_top)
                 count = region_bottom - region_top;
 
+        unsigned int top = row_slot(0);
+
         for (unsigned int r = region_bottom; r-- > region_top + count;)
-                row_copy(r, r - count);
+                slot_copy(slot_after(top, r), slot_after(top, r - count));
 
         for (unsigned int r = region_top; r < region_top + count; r++)
                 row_blank(r);
@@ -502,11 +532,9 @@ static PURE unsigned int character_width(unsigned int c)
         A cell about to be written may be half of a double-width character,
         and the other half cannot stand alone: it becomes a blank.
 */
-static fn unpair(unsigned int at)
+static fn unpair(struct window_cell address_to cells, unsigned int length,
+                 unsigned int at)
 {
-        struct window_cell address_to cells = row_cells(row);
-        unsigned int length = address_to row_length(row);
-
         if (at >= length)
                 return;
 
@@ -525,8 +553,10 @@ static fn unpair(unsigned int at)
 
 static fn put_cells(unsigned int character, unsigned int width)
 {
+        struct window_cell address_to cells;
         struct window_cell address_to cell;
         unsigned int address_to length;
+        unsigned int slot;
 
         if (width > COLUMNS)
                 width = 1;
@@ -547,16 +577,25 @@ static fn put_cells(unsigned int character, unsigned int width)
                 }
         }
 
-        reach(row, column);
+        // The row's slot, once: nothing below moves head.
+        slot = row_slot(row);
+        cells = slot_cells(slot);
+        length = slot_length(slot);
+
+        if (address_to length < column)
+        {
+                cells_blank(row, address_to length, column - address_to length);
+                address_to length = column;
+        }
 
         if (insert_mode)
                 open_gap(column, width);
 
-        unpair(column);
+        unpair(cells, address_to length, column);
         if (width == 2)
-                unpair(column + 1);
+                unpair(cells, address_to length, column + 1);
 
-        cell = row_cells(row) + column;
+        cell = cells + column;
         cell->character = character;
         cell->ink = reverse ? paper : ink;
         cell->paper = reverse ? ink : paper;
@@ -573,8 +612,6 @@ static fn put_cells(unsigned int character, unsigned int width)
 
         touch(row);
         column += width;
-
-        length = row_length(row);
 
         if (address_to length < column)
                 address_to length = column;
