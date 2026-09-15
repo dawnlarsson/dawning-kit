@@ -5654,6 +5654,47 @@ static bool numfmt_option_seen(p8 letter, string_address value)
         return true;
 }
 
+/*
+        The tools here that write through text.c's checked writer, stopped by
+        the first write the kernel refuses and worded as the reference words
+        it. Said here rather than in text_done, whose wording belongs to the
+        tools text.c stands for.
+
+        GNU's factor and numfmt say write error and the reason. util-linux's
+        hexdump learns of it from stdio: at its flush at exit when all it
+        wrote fit stdio's page, where a closed descriptor or a reader gone is
+        no error at all, and otherwise from the stream's error flag, which
+        keeps no reason (measured on /dev/full, a closed descriptor, one open
+        for reading, a file-size limit and a pipe whose reader has gone).
+*/
+static b32 tools_text_done(b32 code)
+{
+        text_flush();
+
+        if (!text_out_failed)
+                return text_done(code);
+
+        bipolar reason = text_out_error ? text_out_error : -ERROR_INPUT_OUTPUT;
+
+        if (string_equals(text_name, "hexdump"))
+        {
+                positive buffer = text_out_error_buffer ? text_out_error_buffer
+                                                        : TEXT_STDIO_PAGE;
+
+                if (text_out_error_offered >= buffer)
+                        return string_diagnostic(&text_diagnostic, 1, null,
+                                                 "write error");
+
+                if (reason == -ERROR_BAD_DESCRIPTOR ||
+                    reason == -ERROR_BROKEN_PIPE)
+                        return code;
+        }
+
+        string_diagnostic(&text_diagnostic, 0, (string_address) "write error",
+                          file_reason(reason));
+        return 1;
+}
+
 static b32 tools_numfmt()
 {
         file_operands_begin();
@@ -5799,7 +5840,8 @@ static b32 tools_numfmt()
         if (file_operand_count)
         {
                 // Each operand is a record: fields and their padding apply.
-                for (positive at = 0; at < file_operand_count && !numfmt.stop; at++)
+                for (positive at = 0; at < file_operand_count && !numfmt.stop &&
+                                      !text_out_failed; at++)
                 {
                         string_address word = file_operand_at(at);
                         numfmt_record((p8 address_to)word, string_length(word));
@@ -5811,7 +5853,8 @@ static b32 tools_numfmt()
         {
                 positive records = 0;
 
-                while (!numfmt.stop && text_line_next(text_line, 0))
+                while (!numfmt.stop && !text_out_failed &&
+                       text_line_next(text_line, 0))
                 {
                         // A newline inside a NUL-delimited record is blank
                         // space between fields, and GNU rewrites it as one.
@@ -5839,7 +5882,7 @@ static b32 tools_numfmt()
                 writer_stderr("numfmt: failed to convert some of the input numbers\n", 0);
         }
 
-        return text_done(numfmt.failed ? 2 : text_status);
+        return tools_text_done(numfmt.failed ? 2 : text_status);
 }
 
 // factor ----------------------------------------------------
@@ -6303,7 +6346,7 @@ static b32 tools_factor()
 
         if (file_operand_count)
         {
-                for (positive at = 0; at < file_operand_count; at++)
+                for (positive at = 0; at < file_operand_count && !text_out_failed; at++)
                 {
                         string_address word = file_operand_at(at);
                         if (!factor_number(word, string_length(word), exponents))
@@ -6321,7 +6364,9 @@ static b32 tools_factor()
                 positive length = 0;
                 bool excess = false;
 
-                while (text_reader_fill(address_of input))
+                // A refused write ends the run, as GNU's does: a pipe that
+                // never ends would otherwise be factored for ever.
+                while (!text_out_failed && text_reader_fill(address_of input))
                 {
                         p8 byte = input.buffer[input.position++];
 
@@ -6347,7 +6392,7 @@ static b32 tools_factor()
                                 excess = true;
                 }
 
-                if (length || excess)
+                if ((length || excess) && !text_out_failed)
                 {
                         if (excess || !factor_number(token, length, exponents))
                         {
@@ -6362,7 +6407,7 @@ static b32 tools_factor()
                 text_close_handle(address_of input.opened, input.handle);
         }
 
-        return text_done(failed ? 1 : 0);
+        return tools_text_done(failed ? 1 : 0);
 }
 
 // UUID identities: uuidgen, uuidparse and mcookie -----------------
@@ -9576,7 +9621,7 @@ static b32 dump_run(positive first, positive count)
                         break;
                 }
 
-                while (!skip && left && text_fill())
+                while (!skip && left && !text_out_failed && text_fill())
                 {
                         positive available = text_input.filled - text_input.position;
 
@@ -9674,7 +9719,9 @@ static b32 dump_run(positive first, positive count)
                 }
         }
 
-        return text_done(text_status);
+        // od's wording is text_done's; hexdump says what util-linux's does.
+        return dump_arguments.od ? text_done(text_status)
+                                 : tools_text_done(text_status);
 }
 
 #define DUMP_STRING_MAX 65536
@@ -9735,7 +9782,7 @@ static b32 dump_strings(positive first, positive count, positive minimum)
                         address += taken;
                 }
 
-                while (!skip && !done && text_fill())
+                while (!skip && !done && !text_out_failed && text_fill())
                 {
                         positive available = text_input.filled - text_input.position;
 

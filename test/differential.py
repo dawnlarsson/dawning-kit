@@ -7961,9 +7961,53 @@ def misc_checksum(name, variable_length=False):
         fixture="misc", stderr="exact")
 
 
+#       Output the kernel refuses, for the programs here that read on for as
+#       long as their input lasts and write through text.c's checked writer:
+#       factor and numfmt from a pipe that never closes, hexdump from a file
+#       larger than the room it is given, and each with an answer small enough
+#       to wait for the flush at exit. The targets are text's write_errors
+#       targets; GNU's factor and numfmt stop at the first refusal and say
+#       write error and the reason, and a candidate that reads on times out
+#       instead of passing. util-linux's hexdump reads on, but says write
+#       error with the reason only for output that waited for its flush at
+#       exit, and nothing then of a closed descriptor. The words are the
+#       program, where its input comes from, where its output goes, and then
+#       its own words.
+_MISC_WRITE_SOURCES = {
+    "endless": "env yes 12 | run {words} {target}",
+    "words": "run {words} {target}",
+    "file": "run {words} source {target}",
+    "small": "run {words} small {target}",
+}
+_MISC_WRITE_CASES = (
+    ("factor", "endless", "full"), ("factor", "endless", "tmpfs"), ("factor", "endless", "closed"),
+    ("factor", "endless", "limit"), ("factor", "words", "full", "12"), ("factor", "words", "reading", "12"),
+    ("numfmt", "endless", "full"), ("numfmt", "endless", "tmpfs", "--to=si"),
+    ("numfmt", "endless", "closed"), ("numfmt", "words", "full", "1"), ("numfmt", "words", "filled", "1"),
+    ("hexdump", "file", "tmpfs"), ("hexdump", "file", "full", "-C"), ("hexdump", "file", "closed"),
+    ("hexdump", "file", "limit", "-v"), ("hexdump", "file", "gone"), ("hexdump", "small", "full"),
+    ("hexdump", "small", "full", "-C"), ("hexdump", "small", "closed"), ("hexdump", "small", "reading"),
+    ("hexdump", "small", "filled"),
+)
+
+
+def _misc_write_valid(argv):
+    return (len(argv) >= 3 and argv[0] in ("factor", "numfmt", "hexdump") and
+            argv[1] in _MISC_WRITE_SOURCES and argv[2] in _TEXT_WRITE_TARGETS)
+
+
+def _misc_write_script(argv, stdin_name):
+    setup, redirect, after = _TEXT_WRITE_TARGETS[argv[2]]
+    command = _MISC_WRITE_SOURCES[argv[1]].format(words=ul_words(argv[3:]), target=redirect)
+    body = _TEXT_WRITE_PROLOGUE + setup + command + "\nstatus=$?\n" + after + "exit $status\n"
+    return ul_live(argv[0], body, wrap="unshare -Urm")
+
+
 MISC_UTILITIES = (
+    Utility("write_errors", operands=_MISC_WRITE_CASES, stdin=("empty",), fixture="misc",
+            stderr="exact", modes=("bash",), script=_misc_write_script, valid=_misc_write_valid),
     # -- coreutils: copying, comparing, dumping, arithmetic ------------------
-    Utility("hostid", operands=((), ("x",), ("--",), ("--", "x")), stdin=("empty",),
+    Utility("hostid",operands=((), ("x",), ("--",), ("--", "x")), stdin=("empty",),
             fixture="misc", stderr="exact"),
 
     Utility("dd",

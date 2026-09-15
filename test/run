@@ -4290,6 +4290,23 @@ lane_misc()
                 misc_failed=1
         fi
 
+        #       hexdump from /dev/zero into /dev/full. util-linux's hexdump
+        #       reads on after a refused write, for ever, so the misc grammar
+        #       has no reference for it; ours stops at the first refusal and
+        #       says what util-linux's says at exit of output that did not
+        #       wait for it there: write error, with no reason.
+        timeout 10 "$farm/hexdump" -v /dev/zero > /dev/full \
+                2> "$work/hexdump-full.err"
+        hexdump_status=$?
+        if [ "$hexdump_status" = 1 ] &&
+                [ "$(cat "$work/hexdump-full.err")" = "hexdump: write error" ]; then
+                tally hexdump-stops-at-refused-write 1 1
+        else
+                tally hexdump-stops-at-refused-write 0 1
+                note "hexdump -v /dev/zero > /dev/full: status $hexdump_status, $(head -c 200 "$work/hexdump-full.err")"
+                misc_failed=1
+        fi
+
         differential_domain misc "$policy_farm" || misc_failed=1
         return "$misc_failed"
 }
