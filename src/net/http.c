@@ -45,6 +45,7 @@
 #define HTTP_REDIRECTS (-8)
 #define HTTP_DOWNGRADE (-9)
 #define HTTP_STATUS (-10)
+#define HTTP_WRITE (-11)
 
 typedef byte_store http_buffer;
 #define http_forget(buffer) byte_store_release(buffer)
@@ -841,6 +842,14 @@ typedef struct
 
 #define HTTP_WRITE_SPANS 64
 
+/*
+        Why the last body write failed, for the line that names it: a full
+        disk is "No space left on device", not a server that stopped
+        answering. Set only where a write fails, and zero when the failure
+        was a count no write can return.
+*/
+static bipolar http_write_failure;
+
 /* Write every span, resuming after partial progress; as with
    system_write_all, a zero or negative result ends it. */
 static bool http_write_spans(bipolar dest, http_span address_to spans,
@@ -852,7 +861,11 @@ static bool http_write_spans(bipolar dest, http_span address_to spans,
                     syscall(writev), (positive)dest, (positive)spans, count);
 
                 if (wrote <= 0 || (positive)wrote > total)
+                {
+                        http_write_failure = wrote < 0 ? wrote
+                                             : wrote ? 0 : -ENOSPC;
                         return false;
+                }
                 total -= (positive)wrote;
                 while (count && (positive)wrote >= spans->length)
                 {
@@ -936,7 +949,8 @@ static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
                                 total += more_got;
                         }
                         if (!http_write_spans(dest, spans, count, total))
-                                return HTTP_NO_REPLY;
+                                return http_write_failure ? HTTP_WRITE
+                                                          : HTTP_NO_REPLY;
                         got = total;
                 }
                 want -= got;

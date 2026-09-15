@@ -46883,6 +46883,36 @@ static fn http_header_deadlines(void)
         }
 }
 
+/* A body that cannot be written is the disk's failure, not the server's:
+   /dev/full answers every write ENOSPC, which wget named "no reply from"
+   the host. The copy says HTTP_WRITE and keeps the errno for the line. */
+static fn http_body_write_failure(void)
+{
+        static p8 bytes[] = "body bytes that have nowhere to go";
+        bipolar full = system_open_at(AT_FDCWD, (string_address)"/dev/full",
+                                      FILE_WRITE | O_CLOEXEC);
+
+        check("the full device opens for writing", full >= 0);
+        if (full < 0)
+                return;
+
+        http_body exact = {.stash = bytes, .stash_used = sizeof bytes - 1};
+        http_write_failure = 0;
+        check("an exact body the disk refuses is a write failure",
+              http_copy(address_of exact, full, sizeof bytes - 1, true) ==
+                  HTTP_WRITE);
+        check("the write failure keeps the disk's errno",
+              http_write_failure == -ENOSPC);
+
+        http_body closed = {.stash = bytes, .stash_used = sizeof bytes - 1};
+        http_write_failure = 0;
+        check("a close-delimited body the disk refuses is a write failure",
+              http_copy(address_of closed, full, positive_max, false) ==
+                      HTTP_WRITE &&
+                  http_write_failure == -ENOSPC);
+        system_close(full);
+}
+
 static fn network_stream_sigpipe(void)
 {
         b32 pair[2];
@@ -50892,6 +50922,7 @@ b32 main(void)
         network_stream_timeouts();
         network_stream_send_timeout();
         http_header_deadlines();
+        http_body_write_failure();
         network_stream_sigpipe();
         tls_closure_boundaries();
         tls_sensitive_state_erasure();

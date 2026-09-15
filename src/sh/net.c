@@ -811,6 +811,11 @@ static b32 net_wget(void)
                                       "wget: refused an HTTPS to HTTP redirect\n");
                 else if (status == HTTP_REDIRECTS)
                         string_format(log_error, "wget: too many redirects\n");
+                //      GNU wget's own line, and its file I/O status below.
+                else if (status == HTTP_WRITE)
+                        string_format(log_error, "Cannot write to '%w' (%s).\n",
+                                      writer_terminal_quoted_name, output,
+                                      file_reason(http_write_failure));
                 else if (status == HTTP_NO_REPLY)
                         string_format(log_error, "wget: no reply from %w\n",
                                       writer_terminal_quoted_name, name);
@@ -819,7 +824,7 @@ static b32 net_wget(void)
                                       (positive)code);
                 else
                         string_format(log_error, "wget: download failed\n");
-                return 1;
+                return status == HTTP_WRITE ? 3 : 1;
         }
 
         if (own_file && net_staged_name_publish(address_of staged) < 0)

@@ -5246,6 +5246,105 @@ PY
                 builtins_failed=1
         fi
 
+        #       wget names a body it could not write as GNU wget does and
+        #       exits 3, GNU's file I/O status, where a full disk said "no
+        #       reply from 127.0.0.1" and exited 1: standard output on
+        #       /dev/full, and a named file under a write limit, which
+        #       publishes nothing. GNU wget, where installed, ends on the
+        #       same line with the same status.
+        cat > "$work/wget-write-server.py" <<'PY'
+import socket
+import sys
+
+body = bytes(range(256)) * 4096
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", 0))
+server.listen(8)
+with open(sys.argv[1], "w", encoding="ascii") as port:
+    port.write(str(server.getsockname()[1]))
+while True:
+    connection, _ = server.accept()
+    with connection:
+        request = b""
+        while b"\r\n\r\n" not in request:
+            part = connection.recv(4096)
+            if not part:
+                break
+            request += part
+        try:
+            connection.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: %d\r\n"
+                               b"Connection: close\r\n\r\n" % len(body) + body)
+        except OSError:
+            pass
+PY
+        wget_place="$work/wget-write"
+        mkdir -p "$wget_place/ours" "$wget_place/gnu"
+        rm -f "$wget_place/port"
+        python3 "$work/wget-write-server.py" "$wget_place/port" &
+        wget_server=$!
+        wget_wait=0
+        while [ ! -s "$wget_place/port" ] && [ "$wget_wait" -lt 200 ]; do
+                sleep 0.01
+                wget_wait=$((wget_wait + 1))
+        done
+        wget_url="http://127.0.0.1:$(cat "$wget_place/port" 2>/dev/null)/payload"
+        #       wget_run WGET DIR NAME [OPTION...]: -O - onto /dev/full, then
+        #       -O out in DIR under a 256-block write limit; both statuses,
+        #       then each last line.
+        wget_run()
+        {
+                wget_program=$1
+                wget_dir=$2
+                wget_name=$3
+                shift 3
+                timeout 10 "$wget_program" "$@" -O - "$wget_url" \
+                        > /dev/full 2> "$wget_place/$wget_name-stdout.err"
+                printf '%s ' "$?"
+                (
+                        cd "$wget_dir" || exit 125
+                        ulimit -f 256
+                        trap '' 25
+                        exec timeout 10 "$wget_program" "$@" -O out "$wget_url"
+                ) 2> "$wget_place/$wget_name-file.err"
+                printf '%s\n' "$?"
+                tail -n 1 "$wget_place/$wget_name-stdout.err"
+                tail -n 1 "$wget_place/$wget_name-file.err"
+        }
+        if [ -s "$wget_place/port" ]; then
+                wget_ours=$(wget_run "$farm/wget" "$wget_place/ours" ours)
+        else
+                wget_ours=server-failed
+        fi
+        wget_expected="3 3
+Cannot write to '-' (No space left on device).
+Cannot write to 'out' (File too large)."
+        if [ "$wget_ours" = "$wget_expected" ] &&
+                [ -z "$(ls -A "$wget_place/ours")" ]; then
+                tally wget-write-failure-says-why 1 1
+        else
+                tally wget-write-failure-says-why 0 1
+                note "wget onto a full disk said [$wget_ours], left [$(ls -A "$wget_place/ours")]"
+                builtins_failed=1
+        fi
+        wget_gnu=$(PATH=/usr/local/bin:/usr/bin:/bin command -v wget)
+        if [ -n "$wget_gnu" ] && [ -s "$wget_place/port" ] &&
+                "$wget_gnu" --version 2>/dev/null | head -n 1 | grep -q '^GNU Wget'; then
+                wget_gnu_said=$(wget_run "$wget_gnu" "$wget_place/gnu" gnu \
+                        --no-config --no-proxy --no-hsts)
+                if [ "$wget_gnu_said" = "$wget_ours" ]; then
+                        tally wget-write-failure-matches-gnu 1 1
+                else
+                        tally wget-write-failure-matches-gnu 0 1
+                        note "GNU wget said [$wget_gnu_said] where ours said [$wget_ours]"
+                        builtins_failed=1
+                fi
+        else
+                note "wget write failure against GNU wget: NOT RUN -- no GNU wget"
+        fi
+        kill "$wget_server" 2>/dev/null || :
+        wait "$wget_server" 2>/dev/null || :
+
         differential_domain builtins || builtins_failed=1
         return "$builtins_failed"
 }
