@@ -17073,6 +17073,21 @@ static unsigned long int_sqrt(unsigned long value) {
     }
     return root;
 }
+// The console keyboard Canvas turns off while it has the keys: four consoles,
+// each with the mode vt_do_kdskbmode last gave it, and a count of the sets.
+#define CONFIG_VT 1
+#define K_XLATE 0x01
+#define K_UNICODE 0x03
+#define K_OFF 0x04
+#ifndef READ_ONCE
+#define READ_ONCE(x) (x)
+#endif
+static int fg_console,vt_modes[4];
+static unsigned vt_sets;
+static int vt_do_kdgkbmode(unsigned int console) { assert(console<4);return vt_modes[console]; }
+static int vt_do_kdskbmode(unsigned int console,unsigned int mode) {
+    assert(console<4);vt_modes[console]=(int)mode;vt_sets++;return 0;
+}
 '''
     source += section(keys, "#define KEY_TABLE", "// Under desktop.lock")
     source += section(pointer, "static inline struct pointer_handle *pointer_handle_of", "static HOT void pointer_event")
@@ -17276,6 +17291,33 @@ static void check_keyboard_state(void) {
         check(key->character=='a' && key->flags==WINDOW_KEY_DOWN,"reconnected keyboard has no stale modifiers");
         pointer_disconnect(&a->handle);
     }
+}
+// Every key reached the console's tty as well as Canvas, and init's shell
+// reads that tty on a machine booted without console=.
+static void check_console_keyboard(void) {
+    fg_console=0;vt_modes[0]=vt_modes[1]=K_UNICODE;vt_sets=0;canvas_vt_muted=-1;
+    canvas_keyboard_take();
+    check(vt_modes[0]==K_OFF && vt_modes[1]==K_UNICODE,
+          "taking the keys turns only the foreground console's keyboard off");
+    canvas_keyboard_take();
+    check(vt_sets==1,"taking the keys twice turns the keyboard off once");
+    fg_console=1;
+    canvas_keyboard_give();
+    check(vt_modes[0]==K_UNICODE && vt_modes[1]==K_UNICODE && vt_sets==2,
+          "the console muted is given back, whichever console is in front");
+    canvas_keyboard_give();
+    check(vt_sets==2,"giving the keys back twice restores once");
+    fg_console=0;vt_modes[0]=K_XLATE;
+    canvas_keyboard_take();canvas_keyboard_give();
+    check(vt_modes[0]==K_XLATE,"the mode the console had is the mode it gets back");
+    canvas_keyboard_take();vt_modes[0]=K_UNICODE;vt_sets=0;canvas_keyboard_give();
+    check(vt_modes[0]==K_UNICODE && !vt_sets,
+          "a mode set by somebody else while Canvas had the keys is left alone");
+    vt_modes[0]=K_OFF;vt_sets=0;
+    canvas_keyboard_take();canvas_keyboard_give();
+    check(vt_modes[0]==K_OFF && !vt_sets,
+          "a console that was already off is not Canvas's to turn on");
+    vt_modes[0]=K_UNICODE;canvas_vt_muted=-1;
 }
 static int reference_int(s64 value) {
     return value<INT_MIN?INT_MIN:value>INT_MAX?INT_MAX:(int)value;
@@ -17764,6 +17806,7 @@ int main(void) {
     check_resize_anchor();
     check_key_typed();
     check_keyboard_state();
+    check_console_keyboard();
     free(output);
     printf("  core-state %u of %u\n",checks-failures,checks);
     const char *tally=getenv("TEST_TALLY");

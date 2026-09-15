@@ -656,6 +656,63 @@ static COLD void pointer_disconnect(struct input_handle *handle)
         kfree(pointer);
 }
 
+/*
+        The console's keyboard, off while Canvas has the keys.
+
+        The input core hands every key to every handler, and the VT's keyboard
+        is one of them: it turns keys into input on the foreground console's
+        tty. A machine booted without console= -- every real install -- points
+        /dev/console at that tty, and init's shell reads it. So every line
+        typed into a window here was typed a second time, unseen, into a root
+        shell on tty1, and ran there too.
+
+        K_OFF stops the VT turning keys into tty input and nothing else. evdev
+        readers and sysrq are handlers of their own and still hear every key,
+        which an exclusive grab would have taken from them, and the shell on
+        tty1 stays where it is for whoever is at the console once Canvas lets
+        go. Switching consoles from the keyboard is off with it, as it is under
+        any display server that sets K_OFF.
+
+        The console muted is remembered with the mode it had, and that one is
+        given back, whichever console is in front by then. A mode somebody
+        else set in the meantime is theirs and is left alone, and so is a
+        console that was already off when Canvas arrived.
+*/
+#ifdef CONFIG_VT
+static int canvas_vt_muted = -1;
+static int canvas_vt_mode;
+
+static void canvas_keyboard_take(void)
+{
+        int console = READ_ONCE(fg_console);
+        int mode;
+
+        if (canvas_vt_muted >= 0)
+                return;
+
+        mode = vt_do_kdgkbmode(console);
+        if (mode == K_OFF || vt_do_kdskbmode(console, K_OFF))
+                return;
+
+        canvas_vt_mode = mode;
+        canvas_vt_muted = console;
+}
+
+static void canvas_keyboard_give(void)
+{
+        if (canvas_vt_muted < 0)
+                return;
+
+        if (vt_do_kdgkbmode(canvas_vt_muted) == K_OFF)
+                vt_do_kdskbmode(canvas_vt_muted, canvas_vt_mode);
+
+        canvas_vt_muted = -1;
+}
+#else
+#define canvas_keyboard_take() ((void)0)
+#define canvas_keyboard_give() ((void)0)
+#endif
+
 static void canvas_input_devices(struct input_devices *out)
 {
         struct pointer_handle *pointer;
@@ -724,6 +781,10 @@ static void canvas_thread_stop(void)
                 input_unregister_handler(&pointer_handler);
                 pointer_handler_registered = false;
         }
+
+        // Only once no key can reach the handler: from here the console's
+        // keyboard is the only one again.
+        canvas_keyboard_give();
         cpu_latency_qos_remove_request(&pointer_qos);
 
         mutex_lock(&desktop.lock);
@@ -889,8 +950,14 @@ static void canvas_thread_start(void)
         // 0 microseconds: no idle state whose exit can be measured.
         cpu_latency_qos_add_request(&pointer_qos, 0);
 
+        // Before the handler, so no key is ever delivered to both.
+        canvas_keyboard_take();
+
         if (input_register_handler(&pointer_handler))
+        {
                 pr_info("[moonwater canvas] " "could not register the input handler\n");
+                canvas_keyboard_give();
+        }
         else
                 pointer_handler_registered = true;
 }

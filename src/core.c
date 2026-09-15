@@ -54,6 +54,11 @@
 #include <drm/drm_modeset_lock.h>
 #include <drm/drm_plane.h>
 #include <drm/drm_print.h>
+// The console keyboard's mode, which Canvas turns off while it has the keys.
+#ifdef CONFIG_VT
+#include <linux/kd.h>
+#include <linux/vt_kern.h>
+#endif
 #endif
 
 #define STANDARD_MODERN_C_KERNEL

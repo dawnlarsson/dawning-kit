@@ -11160,6 +11160,64 @@ try:
 except Exception:
     guest.kill()
 
+#       The machine as it boots off a stick: no console= at all, so
+#       /dev/console is tty1 and init's shell reads it. Every other lane names
+#       ttyS0 and moves that shell off the VT, which is exactly why none of
+#       them could see keys typed into a window reach it as well -- every line
+#       ran twice, once as root where nobody could see. A line typed into the
+#       boot terminal must reach one shell, so it arrives on the serial port
+#       once; the port is still there with no console on it.
+leak_qmp = work + "/leak-qmp"
+leak_mon = work + "/leak-mon"
+leak_guest = subprocess.Popen([
+    "qemu-system-x86_64", "-m", "2G", "-smp", "2"] + processor + [
+    "-kernel", image, "-vga", "none", "-device", "virtio-gpu-pci,xres=3658,yres=1543",
+    "-device", "qemu-xhci", "-device", "usb-tablet", "-device", "usb-kbd",
+    "-no-reboot", "-display", "none", "-serial", "file:" + work + "/leak-serial",
+    "-qmp", "unix:" + leak_qmp + ",server,nowait",
+    "-monitor", "unix:" + leak_mon + ",server,nowait",
+    "-append", "drm_client_lib.active= " + os.environ.get("CANVAS_APPEND", "")],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+for _ in range(200):
+    if os.path.exists(leak_qmp) and os.path.exists(leak_mon):
+        break
+    time.sleep(0.2)
+
+qs = socket.socket(socket.AF_UNIX)
+qs.connect(leak_qmp)
+qs.settimeout(20)
+qf = qs.makefile("rwb")
+qf.readline()
+qcmd({"execute": "qmp_capabilities"})
+hs = socket.socket(socket.AF_UNIX)
+hs.connect(leak_mon)
+hf = hs.makefile("rwb")
+
+time.sleep(25)
+type_text("echo leak-")
+chord("shift", "4")
+chord("shift", "4")
+type_text(" ")
+chord("shift", "dot")
+type_text(" /dev/tty")
+chord("shift", "s")
+type_text("0\n")
+time.sleep(3)
+
+leak_serial = open(work + "/leak-serial", "rb").read()
+leaks = re.findall(rb"leak-(\d+)", leak_serial)
+out.append(("a typed line runs in one shell", str(len(leaks)), "1"))
+
+hf.write(b"quit\n")
+hf.flush()
+time.sleep(1)
+leak_guest.terminate()
+try:
+    leak_guest.wait(10)
+except Exception:
+    leak_guest.kill()
+
 for name, got, want in out:
     print("%s|%s|%s" % (name, got, want))
 PY
