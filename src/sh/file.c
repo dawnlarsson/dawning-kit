@@ -4946,7 +4946,7 @@ static bipolar file_make_directories_open(
     fn(address_to told)(string_address),
     p8 address_to failed, bool address_to created,
     bipolar address_to leaf_parent, p8 address_to leaf_name,
-    positive leaf_touched)
+    positive leaf_touched, bool leaf_ancestor)
 {
         p8 work[FILE_PATH_MAX];
         p8 component[SYSTEM_PATH_LEAF_ROOM];
@@ -4976,6 +4976,7 @@ static bipolar file_make_directories_open(
                 return held;
 
         positive at = 0;
+        positive held_stop = 0;
         while (at < length && work[at] == '/')
                 at++;
 
@@ -5014,6 +5015,7 @@ static bipolar file_make_directories_open(
 
                 bipolar next = system_open_at(held, component, flags);
                 bool made_here = false;
+                positive blamed = 0;
 
                 if (next < 0)
                 {
@@ -5036,7 +5038,7 @@ static bipolar file_make_directories_open(
                                    when it dangles, the look's errno when
                                    that fails otherwise, and not a
                                    directory even when it reaches one. */
-                                if (last)
+                                if (last && !leaf_ancestor)
                                         next = -ERROR_EXISTS;
                                 else if (parents &&
                                          (entry.mode & MODE_FORMAT) ==
@@ -5055,7 +5057,16 @@ static bipolar file_make_directories_open(
                                 }
                         }
                         else if (found != -ERROR_NO_ENTRY)
+                        {
+                                /* A look refused inside a held directory
+                                   means it cannot be searched.  GNU's -p
+                                   changes into each ancestor, so it names
+                                   that directory rather than this entry. */
                                 next = found;
+                                if (parents && found == -ERROR_ACCESS &&
+                                    held_stop)
+                                        blamed = held_stop;
+                        }
                         else if (!last && !parents)
                                 next = -ERROR_NO_ENTRY;
                         else if (!system_path_parent_cleanup_safe(held))
@@ -5120,12 +5131,30 @@ static bipolar file_make_directories_open(
                         }
                 }
 
+                /* A leaf walked as an ancestor is changed into by GNU's
+                   install -D, so one that cannot be searched fails here. */
+                if (next >= 0 && last && leaf_ancestor && !made_here)
+                {
+                        bipolar searched = system_open_at(
+                            next, (string_address)".",
+                            O_PATH | O_DIRECTORY | O_CLOEXEC);
+                        if (searched < 0)
+                        {
+                                system_close(next);
+                                next = searched;
+                        }
+                        else
+                                system_close(searched);
+                }
+
                 if (next < 0 || (last && !parents && !made_here))
                 {
                         bipolar answer = next < 0 ? next : -ERROR_EXISTS;
                         if (failed)
                                 memory_copy_apart_end(failed, work,
-                                                      last ? length : stop);
+                                                      blamed ? blamed
+                                                      : last ? length
+                                                             : stop);
                         if (next >= 0)
                                 system_close(next);
                         system_close(held);
@@ -5160,6 +5189,7 @@ static bipolar file_make_directories_open(
                 }
                 system_close(held);
                 held = next;
+                held_stop = stop;
         }
 
         system_close(held);
@@ -15467,7 +15497,7 @@ static b32 file_mkdir()
                 bipolar made = file_make_directories_open(
                     path, parent_mode, mode, given_mode, parents,
                     loud ? mkdir_told : null, parents ? failed : null, null,
-                    null, null, given_mode ? touched : 0);
+                    null, null, given_mode ? touched : 0, false);
 
                 if (made < 0)
                 {
@@ -22298,10 +22328,13 @@ static bool install_identity(string_address text, bool group,
 /* -D returns the parent descriptor produced by the same no-symlink walk that
    created it.  The destination is never resolved a second time after its
    leading path has been authorized. */
+static fn install_directory_told(string_address path);
+
 static bipolar install_leading(string_address destination,
                                p8 address_to leaf)
 {
         p8 parent[FILE_PATH_MAX];
+        p8 failing[FILE_PATH_MAX];
         positive length = string_length(destination);
 
         if (!length || length >= FILE_PATH_MAX)
@@ -22309,11 +22342,20 @@ static bipolar install_leading(string_address destination,
 
         path_head_copy(parent, FILE_PATH_MAX, destination);
         path_tail_copy(leaf, FILE_PATH_MAX, destination);
+        //      GNU walks every directory of the destination as an ancestor
+        //      and names the one that failed, with its reason.
         bipolar directory = file_make_directories_open(
             parent, 0755, 0755, true, true,
-            null, null, null, null, null, 0);
+            install_loud ? install_directory_told : null,
+            failing, null, null, null, 0, true);
         if (directory >= 0)
                 return directory;
+
+        string_format(log_error, "install: cannot create directory '%w': %s\n",
+                      writer_terminal_quoted_name,
+                      string_get(failing) ? failing : parent,
+                      file_reason(directory));
+        return -ERROR_INVALID;
 
 failed:
         string_format(log_error,
@@ -22538,7 +22580,7 @@ static fn install_pair(string_address source, string_address destination)
         {
                 system_close(destination_directory);
                 system_close(source_handle);
-                string_format(log_error, "install: cannot create staging file for '%w': %s\n",
+                string_format(log_error, "install: cannot create regular file '%w': %s\n",
                               writer_terminal_quoted_name, destination,
                               file_reason(destination_handle));
                 install_status = 1;
@@ -22625,11 +22667,12 @@ static b32 file_install()
                 {
                         string_address path = program_argument((b32)at);
                         p8 leaf[FILE_PATH_MAX];
+                        p8 failing[FILE_PATH_MAX];
                         bipolar parent = -1;
                         bipolar exact = file_make_directories_open(
                             path, 0755, 0700, true, true,
                             install_loud ? install_directory_told : null,
-                            null, null, address_of parent, leaf, 0);
+                            failing, null, address_of parent, leaf, 0, false);
                         bool bootstrapped = false;
                         positive old_mode = 0;
                         bipolar handle = exact < 0
@@ -22654,7 +22697,15 @@ static b32 file_install()
                                 system_close(exact);
                         if (parent >= 0)
                                 system_close(parent);
-                        if (!attributed)
+                        if (exact < 0)
+                        {
+                                string_format(log_error, "install: cannot create directory '%w': %s\n",
+                                              writer_terminal_quoted_name,
+                                              string_get(failing) ? failing : path,
+                                              file_reason(exact));
+                                install_status = 1;
+                        }
+                        else if (!attributed)
                         {
                                 string_format(log_error, "install: cannot create directory '%w'\n",
                                               writer_terminal_quoted_name, path);
