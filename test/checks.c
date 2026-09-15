@@ -50993,11 +50993,97 @@ static fn isolation(void)
         }
 }
 
+/* statfs reports the mount's flags, and read-only is the first of them. */
+static bool kernel_settings_read_only(string_address path)
+{
+        file_mount_facts facts;
+
+        return system_call_2(syscall(statfs), (positive)path,
+                             (positive)address_of facts) >= 0 &&
+               (facts.flags & MS_RDONLY) != 0;
+}
+
+/*
+        The host kernel's settings stay the host's: sysfs is mounted read-only
+        and /proc/sys, with the rest of its list, is bound read-only over
+        itself. Made real in a user, mount, network and pid namespace of the
+        check's own, where the calls bowl makes as root can be made by anyone;
+        where no such namespace can be made -- a hardened host, or qemu-user,
+        which is threaded -- the tables are what is checked.
+*/
+static fn kernel_settings(void)
+{
+        struct bowl_mount_point address_to sysfs = null;
+        bool trigger = false;
+
+        for (positive at = 0; bowl_isolated_mounts[at].target; at++)
+                if (string_equals(bowl_isolated_mounts[at].target, "/sys"))
+                        sysfs = bowl_isolated_mounts + at;
+        for (positive at = 0; bowl_kernel_settings[at]; at++)
+                trigger |= string_equals(bowl_kernel_settings[at], "/proc/sysrq-trigger");
+
+        check("Bowl mounts sysfs read-only",
+              sysfs && (sysfs->flags & MS_RDONLY) != 0);
+        check("Bowl binds /proc/sys and /proc/sysrq-trigger read-only",
+              string_equals(bowl_kernel_settings[0], "/proc/sys") && trigger);
+        if (!sysfs)
+                return;
+
+        bipolar child = system_fork();
+
+        if (child == 0)
+        {
+                if (system_call_1(syscall(unshare), CLONE_NEWUSER | CLONE_NEWNS |
+                                                        CLONE_NEWNET | CLONE_NEWPID) < 0)
+                        exit(77);
+
+                bipolar inside = system_fork();
+
+                if (inside == 0)
+                {
+                        if (system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0) ||
+                            system_mount("proc", "/proc", "proc",
+                                         MS_NOSUID | MS_NOEXEC | MS_NODEV, 0) ||
+                            system_mount(sysfs->source, sysfs->target,
+                                         sysfs->filesystem, sysfs->flags, 0))
+                                exit(77);
+
+                        if (bowl_kernel_settings_seal())
+                                exit(1);
+
+                        exit(kernel_settings_read_only("/proc/sys/kernel") &&
+                                     kernel_settings_read_only("/proc/sysrq-trigger") &&
+                                     kernel_settings_read_only("/sys/kernel") &&
+                                     !kernel_settings_read_only("/proc/self")
+                                 ? 0
+                                 : 2);
+                }
+
+                positive status = 0;
+
+                if (inside < 0 ||
+                    system_wait4_retry(inside, address_of status, 0, null) < 0)
+                        exit(77);
+                exit(wait_status_code(status));
+        }
+
+        positive status = 0;
+        b32 code = child >= 0 &&
+                           system_wait4_retry(child, address_of status, 0, null) >= 0
+                       ? wait_status_code(status)
+                       : 77;
+
+        if (code != 77)
+                check("Bowl binds the host kernel's settings read-only in a view",
+                      code == 0);
+}
+
 b32 main(void)
 {
         names();
         launchers();
         isolation();
+        kernel_settings();
         return test_report(null);
 }
 #endif /* CHECK_bowl */

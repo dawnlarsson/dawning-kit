@@ -60,10 +60,16 @@ struct bowl_layer
         bool required;
 };
 
-/* Filesystems expected by a complete isolated root. */
+/*
+        Filesystems expected by a complete isolated root.
+
+        sysfs is read-only: a guest reads what devices there are and changes
+        nothing about them, and the kernel's own knobs under /sys/kernel,
+        /sys/power and /sys/module are the host's.
+*/
 static struct bowl_mount_point bowl_isolated_mounts[] = {
     {"proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV},
-    {"sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV},
+    {"sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV | MS_RDONLY},
     {"devtmpfs", "/dev", "devtmpfs", MS_NOSUID},
     {"devpts", "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC},
     {"tmpfs", "/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV},
@@ -600,6 +606,53 @@ static bipolar bowl_dev_link(string_address target, string_address name)
         return (failed < 0 && failed != -EEXIST) ? failed : 0;
 }
 
+/*
+        The host kernel's settings, which a fresh proc shows a guest exactly as
+        the host sees them.
+
+        A pid namespace gives the guest its own processes and nothing else, so
+        /proc/sys is the running kernel's: procps's postinst runs
+        sysctl --system inside the bowl and rewrote the host's core_pattern,
+        sysrq, fs.protected_* and rp_filter with Debian's defaults. Each is
+        bound over itself read-only, which is what a container runtime does
+        with the same list; a write answers EROFS and sysctl says it could not
+        set the key. /proc/sys is always there; the rest only when the kernel
+        was built with what makes them.
+
+        This keeps package scripts off the host. It is not a wall against a
+        guest that means to get through: the bowl is root with every
+        capability and could remount any of these.
+*/
+static string_address bowl_kernel_settings[] = {
+    "/proc/sys", "/proc/sysrq-trigger", "/proc/irq", "/proc/bus", "/proc/fs",
+    null};
+
+static bipolar bowl_kernel_settings_seal(void)
+{
+        for (positive i = 0; bowl_kernel_settings[i]; i++)
+        {
+                string_address path = bowl_kernel_settings[i];
+                bipolar failed = system_mount(path, path, 0, MS_BIND, 0);
+
+                if (failed == -ENOENT && i)
+                        continue;
+
+                if (!failed)
+                        failed = system_mount(0, path, 0,
+                                              MS_BIND | MS_REMOUNT | MS_RDONLY |
+                                                  MS_NOSUID | MS_NOEXEC | MS_NODEV,
+                                              0);
+
+                if (failed)
+                {
+                        bowl_fail(path, failed);
+                        return failed;
+                }
+        }
+
+        return 0;
+}
+
 static bipolar bowl_isolated_populate(void)
 {
         bipolar failed = 0;
@@ -620,6 +673,10 @@ static bipolar bowl_isolated_populate(void)
                         return failed;
                 }
         }
+
+        failed = bowl_kernel_settings_seal();
+        if (failed)
+                return failed;
 
         /*
                 bash process substitution opens /dev/fd/N. devtmpfs does not
