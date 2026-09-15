@@ -5837,6 +5837,13 @@ same 'device attributes' '[\e[?1;2c]'            20 5 in '\e[c' sent
 same 'secondary attributes' '[\e[>0;115;0c]'     20 5 in '\e[>c' sent
 same 'tertiary attributes' '[\eP!|00000000\e\]'  20 5 in '\e[=c' sent
 same 'cursor position asked privately' '[\e[?3;4R]' 20 5 in '\e[3;4H\e[?6n' sent
+#       XTWINOPS reports the text area in cells and pixels, a cell and the
+#       screen; the operations that move or stack things are not answered.
+same 'text area in cells' '[\e[8;5;20t]'         20 5 in '\e[18t' sent
+same 'text area in pixels' '[\e[4;80;160t]'      20 5 in '\e[14t' sent
+same 'a cell'        '[\e[6;16;8t]'              20 5 in '\e[16t' sent
+same 'the screen'    '[\e[9;5;20t]'              20 5 in '\e[19t' sent
+same 'title stack'   '[]'                        20 5 in '\e[22;0;0t\e[23;0;0t' sent
 #       DECRQM answers from the same list SM and RM change.
 same 'mode set'      '[\e[?7;1$y]'               20 5 in '\e[?7$p' sent
 same 'mode reset'    '[\e[?1049;2$y]'            20 5 in '\e[?1049$p' sent

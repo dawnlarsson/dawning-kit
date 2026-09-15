@@ -1723,8 +1723,32 @@ static fn csi_final(unsigned int final)
                         emit_literal("$y");
                 }
                 break;
+        /*
+                XTWINOPS, only the reports: the text area in cells (18) and in
+                pixels (14), a cell (16) and the screen (19). Image viewers and
+                notcurses ask before they size a picture; moving, raising and
+                the title stack are the compositor's business, and ignored.
+        */
         case 't':
+        {
+                unsigned int op = terminal_csi.value[0];
+                unsigned int high = op == 14 ? ROWS * WINDOW_CELL_H
+                                  : op == 16 ? WINDOW_CELL_H : ROWS;
+                unsigned int wide = op == 14 ? COLUMNS * WINDOW_CELL_W
+                                  : op == 16 ? WINDOW_CELL_W : COLUMNS;
+
+                if (op != 14 && op != 16 && op != 18 && op != 19)
+                        break;
+
+                emit_literal("\x1b[");
+                emit('0' + op - 10);
+                emit(';');
+                positive_to_string(emit_bytes, high);
+                emit(';');
+                positive_to_string(emit_bytes, wide);
+                emit('t');
                 break;
+        }
         case 'r':
         {
                 unsigned int top;
