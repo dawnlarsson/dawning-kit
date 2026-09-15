@@ -17877,6 +17877,9 @@ static bool sed_reader_open[SED_FILES_MAX];
 static b32 sed_reader_count;
 static p8 sed_line_scratch[TEXT_PATH_MAX];
 
+// What R appends is a whole line of its file, as long as any line may be.
+static p8 sed_reader_line[TEXT_LINE_MAX];
+
 // Where w or R keeps a name: found among the names before it, or added.
 static b32 sed_name_of(b32 address_to names, b32 address_to count,
                        p8 address_to name, positive length)
@@ -17931,7 +17934,7 @@ static fn sed_put_reader_line(b32 which)
         positive length = 0;
         bool ended = false;
 
-        bool spilled = text_reader_spill(reader, '\n', sed_line_scratch,
+        bool spilled = text_reader_spill(reader, '\n', sed_reader_line,
                                          address_of length, address_of ended, null);
 
         text_quiet_read = false;
@@ -17940,7 +17943,7 @@ static fn sed_put_reader_line(b32 which)
                 return;
 
         sed_output_start();
-        text_put(sed_line_scratch, length);
+        text_put(sed_reader_line, length);
         text_put_character('\n');
 }
 
