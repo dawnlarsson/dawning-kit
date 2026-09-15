@@ -41,36 +41,55 @@ static PURE unsigned int output_mode_count(struct drm_connector *connector)
 }
 
 /*
-        Highest resolution, and at that size the highest refresh, among the
-        modes that carry every bit of type; a type of 0 is every mode.
+        The best mode a connector lists among those that pass: every bit of
+        type set, a type of 0 being any, and when width is not 0 a size equal
+        to width by height or, unless exact, one that fits under it. Of those:
+        a refresh equal to prefer_refresh first when it is positive, then the
+        most pixels, then the highest refresh.
 
         Same size at 60 Hz and 120 Hz is the 120 Hz entry: that is what a
-        Mac's virtio EDID actually offers, and what the cursor needs.
+        Mac's virtio EDID actually offers, and what the cursor needs. A guest
+        cap of seventy percent of a 120 Hz panel often still lists a larger
+        60 Hz established timing under that cap; pixels first would take it
+        and throw the refresh away, so the screen's rate comes first.
 */
-static struct drm_display_mode *output_largest_mode(struct drm_connector *connector,
-                                                    unsigned int type)
+static struct drm_display_mode *output_pick_mode(struct drm_connector *connector,
+                                                 unsigned int type, int width,
+                                                 int height, _Bool exact,
+                                                 int prefer_refresh)
 {
         struct drm_display_mode *mode, *best = NULL;
         int best_score = 0, best_refresh = 0;
+        _Bool best_preferred = false;
 
         list_for_each_entry(mode, &connector->modes, head)
         {
                 int score, refresh;
+                _Bool preferred;
 
                 if ((mode->type & type) != type)
+                        continue;
+                if (width && (exact ? mode->hdisplay != width ||
+                                          mode->vdisplay != height
+                                    : mode->hdisplay > width ||
+                                          mode->vdisplay > height))
                         continue;
                 if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
                         continue;
 
                 refresh = drm_mode_vrefresh(mode);
                 score = mode->hdisplay * mode->vdisplay;
-                if (best && (score < best_score ||
-                             (score == best_score && refresh <= best_refresh)))
+                preferred = prefer_refresh > 0 && refresh == prefer_refresh;
+                if (best && (preferred < best_preferred ||
+                             (preferred == best_preferred &&
+                              (score < best_score ||
+                               (score == best_score && refresh <= best_refresh)))))
                         continue;
 
                 best = mode;
                 best_score = score;
                 best_refresh = refresh;
+                best_preferred = preferred;
         }
 
         return best;
@@ -82,90 +101,11 @@ static struct drm_display_mode *output_largest_mode(struct drm_connector *connec
 */
 static struct drm_display_mode *output_screen_mode(struct drm_connector *connector)
 {
-        struct drm_display_mode *preferred =
-            output_largest_mode(connector, DRM_MODE_TYPE_PREFERRED);
+        struct drm_display_mode *preferred = output_pick_mode(
+            connector, DRM_MODE_TYPE_PREFERRED, 0, 0, false, 0);
 
-        return preferred ? preferred : output_largest_mode(connector, 0);
-}
-
-/*
-        The same size, at the highest refresh that size lists.
-
-        Restoring a running size used to take the first match, which on a
-        120 Hz EDID is often the 60 Hz established timing of the same
-        width and height.
-*/
-static struct drm_display_mode *output_mode_wh(struct drm_connector *connector,
-                                               unsigned int width,
-                                               unsigned int height)
-{
-        struct drm_display_mode *mode, *best = NULL;
-        int best_refresh = -1;
-
-        list_for_each_entry(mode, &connector->modes, head)
-        {
-                int refresh;
-
-                if (mode->hdisplay != (int)width || mode->vdisplay != (int)height)
-                        continue;
-                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
-                        continue;
-
-                refresh = drm_mode_vrefresh(mode);
-                if (best && refresh <= best_refresh)
-                        continue;
-
-                best = mode;
-                best_refresh = refresh;
-        }
-
-        return best;
-}
-
-/*
-        Largest mode that still fits, preferring prefer_refresh when it is
-        positive.
-
-        A guest cap of seventy percent of a 120 Hz panel often still lists a
-        larger 60 Hz established timing under that cap. Pixels first would
-        take it and throw the refresh away; matching the screen's rate first
-        keeps the cursor on the panel's clock.
-*/
-static struct drm_display_mode *output_mode_under(struct drm_connector *connector,
-                                                  int width, int height,
-                                                  int prefer_refresh)
-{
-        struct drm_display_mode *mode, *best = NULL;
-        int best_score = 0, best_refresh = 0;
-        _Bool best_preferred = false;
-
-        list_for_each_entry(mode, &connector->modes, head)
-        {
-                int score, refresh;
-                _Bool preferred;
-
-                if (mode->hdisplay > width || mode->vdisplay > height)
-                        continue;
-                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
-                        continue;
-
-                refresh = drm_mode_vrefresh(mode);
-                score = mode->hdisplay * mode->vdisplay;
-                preferred = prefer_refresh > 0 && refresh == prefer_refresh;
-                if (best && preferred == best_preferred &&
-                    (score < best_score ||
-                     (score == best_score && refresh <= best_refresh)))
-                        continue;
-                if (best && preferred != best_preferred && !preferred)
-                        continue;
-
-                best = mode;
-                best_score = score;
-                best_refresh = refresh;
-                best_preferred = preferred;
-        }
-
-        return best;
+        return preferred ? preferred
+                         : output_pick_mode(connector, 0, 0, 0, false, 0);
 }
 
 /*
@@ -232,11 +172,11 @@ static struct drm_display_mode *output_guest_mode(struct drm_device *dev,
         if (h < 2)
                 h = 2;
 
-        listed = output_mode_wh(connector, (unsigned int)w, (unsigned int)h);
+        listed = output_pick_mode(connector, 0, w, h, true, 0);
         if (listed)
                 return output_mode_take(dev, listed);
 
-        listed = output_mode_under(connector, w, h, drm_mode_vrefresh(screen));
+        listed = output_pick_mode(connector, 0, w, h, false, drm_mode_vrefresh(screen));
         if (listed)
                 return output_mode_take(dev, listed);
 
@@ -291,10 +231,11 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
                 }
                 else
                 {
-                        want = biggest ? output_largest_mode(connector, 0)
-                                       : output_mode_wh(connector,
-                                                        (unsigned int)mode_set->mode->hdisplay,
-                                                        (unsigned int)mode_set->mode->vdisplay);
+                        want = biggest ? output_pick_mode(connector, 0, 0, 0, false, 0)
+                                       : output_pick_mode(connector, 0,
+                                                          mode_set->mode->hdisplay,
+                                                          mode_set->mode->vdisplay,
+                                                          true, 0);
                         if (!want || drm_mode_equal(want, mode_set->mode))
                                 continue;
                         taken = output_mode_take(dev, want);
@@ -362,7 +303,8 @@ static void output_attach(struct output *output)
                 return;
 
         mutex_lock(&dev->mode_config.mutex);
-        want = output_mode_wh(connector, output->width, output->height);
+        want = output_pick_mode(connector, 0, (int)output->width,
+                                (int)output->height, true, 0);
         taken = output_mode_take(dev, want);
         mutex_unlock(&dev->mode_config.mutex);
 
