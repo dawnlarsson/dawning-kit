@@ -494,9 +494,12 @@ static fn put_cells(unsigned int character, unsigned int width)
         column away from where the program meant it. The columns are
         library.c's unicode_width for the terminal: Unicode 16's East Asian
         Wide and Fullwidth take two, marks and format characters take none,
-        and everything below U+0300 takes one. That last is asked here, before
-        the call: a byte at a time, the ASCII consume() hands put() costs a
-        compare and not a call.
+        and everything below U+0300 takes one -- and where glibc prints what
+        Unicode 16 does not, glibc's width, because the programs in a bowl
+        size their text with glibc's wcwidth and tmux counts the same: an
+        Arabic number sign takes one and U+1FA8A two. Below U+0300 is asked
+        here, before the call: a byte at a time, the ASCII consume() hands
+        put() costs a compare and not a call.
 */
 static fn put(unsigned int character)
 {
