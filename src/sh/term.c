@@ -1177,9 +1177,11 @@ static fn csi_final(unsigned int final)
                 break;
         /* Compare against room left: a hostile CSI count can wrap row + a. */
         case 'B':
+        case 'e':
                 row = a < ROWS - row ? row + a : ROWS - 1;
                 break;
         case 'C':
+        case 'a':
                 column = a < COLUMNS - column ? column + a : COLUMNS - 1;
                 break;
         case 'D':
@@ -1316,8 +1318,17 @@ static fn csi_final(unsigned int final)
                 else
                         emit_literal("\x1b[?1;2c");
                 break;
+        /*
+                A count saturates at four billion rather than wrapping, and
+                this runs in the kernel console with interrupts off: no count
+                of tab stops can go further than the width has stops.
+        */
+        case 'I':
+                for (a = a < COLUMNS ? a : COLUMNS; a; a--)
+                        tab_forward();
+                break;
         case 'Z':
-                while (a--)
+                for (a = a < COLUMNS ? a : COLUMNS; a; a--)
                         tab_backward();
                 break;
         case 'b':
@@ -1325,7 +1336,9 @@ static fn csi_final(unsigned int final)
                 {
                         unsigned int n;
 
-                        for (n = 0; n < a; n++)
+                        // Every cell of the screen once is all a repeat can
+                        // show, and the count is as hostile as the tabs'.
+                        for (n = 0; n < a && n < ROWS * COLUMNS; n++)
                                 put(last_character);
                 }
                 break;

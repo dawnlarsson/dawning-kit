@@ -6048,6 +6048,20 @@ same 'ind'            '[a]|[ b]|[]'              20 3 in 'a\eDb' dump
 same 'nel'            '[a]|[b]|[]'               20 3 in 'a\eEb' dump
 same 'ri'             '[ X]|[a]|[b]'             20 3 in 'a\r\nb\eM\eMX' dump
 
+group counts
+#       HPR and VPR are CUF and CUD by other names, and CHT is the tab key a
+#       count of times. A count saturates at four billion rather than wrapping,
+#       and the emulator also draws the kernel console with interrupts off, so
+#       every loop a count drives stops where the screen does: a repeat of four
+#       billion spent minutes writing one cell.
+same 'hpr'           '0,7'                       20 3 in 'ab\e[5a' cursor
+same 'vpr'           '2,2'                       20 3 in 'ab\e[2e' cursor
+same 'cht'           '0,16'                      20 3 in '\e[2I' cursor
+same 'cht past the edge' '0,19'                  20 3 in '\e[4294967295I' cursor
+same 'cbt past the start' '0,0'                  20 3 in 'abcdefghijk\e[4294967295Z' cursor
+same 'rep of a screen' '[xxxxxxxxxxxxxxxxxxxx]|[xxxxxxxxxxxxxxxxxxxx]|[x]|2,1' \
+                                                 20 3 in 'x\e[4294967295b' dump cursor
+
 #
 #       Bytes into characters.
 #
