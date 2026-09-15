@@ -1484,29 +1484,54 @@ static b32 awk_reader_count;
 static awk_writer awk_standard_out;
 static bool awk_write_failed;
 
-static fn awk_writer_flush(awk_writer address_to which)
+static bool awk_writer_flush(awk_writer address_to which)
 {
-        if (!buffered_flush((positive)which->handle, which->buffer,
-                            address_of which->used))
-                awk_write_failed = true;
+        if (buffered_flush((positive)which->handle, which->buffer,
+                           address_of which->used))
+                return true;
+
+        awk_write_failed = true;
+        return false;
 }
 
-static fn awk_writer_put(awk_writer address_to which, string_address data, positive length)
+static bool awk_writer_put(awk_writer address_to which, string_address data, positive length)
 {
         if (which->handle == 2)
         {
                 awk_writer_flush(address_of awk_standard_out);
 
-                if (system_write_all(2, (address_any)data, length) != length)
-                        awk_write_failed = true;
+                if (system_write_all(2, (address_any)data, length) == length)
+                        return true;
 
-                return;
+                awk_write_failed = true;
+                return false;
         }
 
-        if (!buffered_write((positive)which->handle, which->buffer,
-                            sizeof(which->buffer), address_of which->used,
-                            (address_any)data, length))
-                awk_write_failed = true;
+        if (buffered_write((positive)which->handle, which->buffer,
+                           sizeof(which->buffer), address_of which->used,
+                           (address_any)data, length))
+                return true;
+
+        awk_write_failed = true;
+        return false;
+}
+
+static DEAD_END fn awk_leave(b32 code);
+
+/*
+        A print or printf the kernel refused is the end of the program, as it
+        is for the reference awk: a loop printing into a full disk, a closed
+        descriptor or a pipe nobody reads would otherwise print for ever.
+*/
+static DEAD_END fn awk_write_refused(awk_writer address_to which,
+                                     string_address verb)
+{
+        string_address name = which == address_of awk_standard_out
+                                  ? (string_address) "standard output"
+                                  : which->name->text;
+
+        awk_leave(string_report(writer_stderr, 2, "%s: %s to \"%s\" failed\n",
+                                text_name, verb, name));
 }
 
 static fn awk_flush_everything()
@@ -5678,7 +5703,8 @@ static fn awk_do_print(awk_node address_to node)
         ors = awk_separator(awk_where_ors, address_of ors_length);
         awk_builder_put(address_of build, ors, ors_length);
         where = awk_output_of(node);
-        awk_writer_put(where, build.data, build.used);
+        if (!awk_writer_put(where, build.data, build.used))
+                awk_write_refused(where, "print");
 
         if (build.heap)
                 memory_give(build.data);
@@ -5731,7 +5757,8 @@ static fn awk_do_printf(awk_node address_to node)
             format, node->a->next, node->count > 1 ? node->count - 1 : 0);
 
         where = awk_output_of(node);
-        awk_writer_put(where, made->text, made->length);
+        if (!awk_writer_put(where, made->text, made->length))
+                awk_write_refused(where, "printf");
         awk_text_drop(made);
         awk_text_drop(format);
 }
@@ -6248,9 +6275,12 @@ static b32 awk_run_rules()
                                 string_address ors = awk_separator(awk_where_ors,
                                                                    address_of length);
 
-                                awk_writer_put(address_of awk_standard_out, line->text,
-                                               line->length);
-                                awk_writer_put(address_of awk_standard_out, ors, length);
+                                if (!awk_writer_put(address_of awk_standard_out,
+                                                    line->text, line->length) ||
+                                    !awk_writer_put(address_of awk_standard_out, ors,
+                                                    length))
+                                        awk_write_refused(address_of awk_standard_out,
+                                                          "print");
                                 continue;
                         }
 

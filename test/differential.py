@@ -3756,6 +3756,17 @@ def awk_refusals():
     )
 
 
+#       Prints the kernel refuses, in a loop that never ends: the reference
+#       awk stops at the first with a fatal error and status 2, and one that
+#       prints on times out instead of passing.
+AWK_WRITE_REFUSALS = (
+    ("BEGIN { while (1) print \"x\" > \"/dev/full\" }",),
+    ("BEGIN { while (1) printf \"%s\", \"x\" > \"/dev/full\" }",),
+    ("BEGIN { while (1) print \"x\" >> \"/dev/full\" }",),
+    ("{ while (1) print > \"/dev/full\" }",),
+)
+
+
 AWK_REFUSED_OPTIONS = (
     ("-b", "BEGIN { print 1 }"), ("-c", "BEGIN { print 1 }"), ("-C",), ("-d", "BEGIN { print 1 }"),
     ("-D", "BEGIN { print 1 }"), ("-e", "BEGIN { print 1 }"), ("-E", "p_print.awk", "one"),
@@ -3806,6 +3817,7 @@ def awk_extra():
     rows.extend(awk_audit())
     rows.extend(awk_refusals())
     rows.extend(AWK_REFUSED_OPTIONS)
+    rows.extend(AWK_WRITE_REFUSALS)
     seen = set()
     unique = []
     for row in rows:
