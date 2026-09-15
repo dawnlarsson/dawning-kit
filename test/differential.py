@@ -14261,12 +14261,79 @@ _TEXT_TAB_OPERANDS = ((), ("tabs",), ("a.txt",), ("tabs_part", "tabs"), ("missin
 _TEXT_TAB_STDIN = ("tabs", "text_tabs", "spaces", "empty", "nonl", "controls", "crlf",
                    "text_tabs_wide", "text", "edge_65535", "edge_65536", "edge_65537")
 
+#       Output the kernel refuses, for the tools that copy. A tmpfs sixteen
+#       pages wide stands for a full disk -- empty, so the copy fills it, or
+#       filled first, so the first write is refused -- /dev/full for a device
+#       that is never anything else, a closed descriptor and one open for
+#       reading for a bad one, a file-size limit with SIGXFSZ ignored, and a
+#       pipe whose reader has gone with SIGPIPE ignored. GNU stops at the first
+#       refusal and names its reason: cat as a write error, head and tail as an
+#       error writing standard output, or as a write error when the output was
+#       small enough to wait for the flush at exit. /dev/zero never ends, so a
+#       copy that does not stop there times out instead of passing. The words
+#       are the tool, where its input comes from, where its output goes, and
+#       then its own options; each case runs in a mount namespace of its own.
+_TEXT_WRITE_PROLOGUE = ("env mkdir m && env mount -t tmpfs -o size=64k tmpfs m || "
+                        "{ echo 'no tmpfs here'; exit 0; }\n"
+                        "env yes 'the quick brown fox' | env head -c 300000 > source\n"
+                        "env head -c 100 source > small\n")
+_TEXT_WRITE_SOURCES = {
+    "file": "run {words} source {target}",
+    "pipe": "env cat source | run {words} {target}",
+    "zero": "run {words} /dev/zero {target}",
+    "small": "run {words} small {target}",
+    "twice": "run {words} source source {target}",
+}
+_TEXT_WRITE_TARGETS = {
+    "tmpfs": ("", "> m/f", 'echo "wrote $(env wc -c < m/f)"\n'),
+    "filled": ("env head -c 1M /dev/zero > m/pad 2> /dev/null\n", "> m/f",
+               'echo "wrote $(env wc -c < m/f)"\n'),
+    "full": ("", "> /dev/full", ""),
+    "closed": ("", ">&-", ""),
+    "reading": ("", "1< /dev/null", ""),
+    "limit": ("env prlimit --pid $$ --fsize=20000:20000\ntrap '' XFSZ\n", "> out",
+              'echo "wrote $(env wc -c < out)"\n'),
+    "gone": ("trap '' PIPE\nenv mkfifo p\nenv head -c 1 p > /dev/null &\n", "> p", "wait\n"),
+}
+_TEXT_WRITE_CASES = (
+    ("cat", "file", "tmpfs"), ("cat", "pipe", "tmpfs"), ("cat", "zero", "tmpfs"),
+    ("cat", "twice", "tmpfs"), ("cat", "small", "filled"), ("cat", "zero", "tmpfs", "-n"),
+    ("cat", "file", "full", "-n"), ("cat", "zero", "full"), ("cat", "file", "full"),
+    ("cat", "small", "closed"), ("cat", "small", "reading"), ("cat", "file", "limit"),
+    ("cat", "zero", "gone"),
+    ("head", "file", "tmpfs", "-c", "200000"), ("head", "pipe", "tmpfs", "-c", "200000"),
+    ("head", "zero", "tmpfs", "-c", "200000"), ("head", "file", "tmpfs", "-n", "20000"),
+    ("head", "pipe", "tmpfs", "-n", "20000"), ("head", "pipe", "tmpfs", "-c", "-1000"),
+    ("head", "twice", "tmpfs", "-c", "200000"), ("head", "file", "filled", "-c", "100"),
+    ("head", "file", "filled", "-c", "5000"), ("head", "file", "closed", "-c", "5000"),
+    ("head", "file", "reading", "-n", "2"), ("head", "file", "full", "-c", "200000"),
+    ("head", "file", "limit", "-c", "200000"), ("head", "zero", "gone", "-c", "200000"),
+    ("tail", "file", "tmpfs", "-c", "200000"), ("tail", "pipe", "tmpfs", "-c", "200000"),
+    ("tail", "zero", "tmpfs", "-n", "+1"), ("tail", "pipe", "tmpfs", "-n", "+1"),
+    ("tail", "file", "tmpfs", "-n", "20000"), ("tail", "file", "filled", "-n", "2"),
+    ("tail", "file", "full", "-c", "200000"), ("tail", "file", "closed", "-n", "2"),
+)
+
+
+def _text_write_valid(argv):
+    return (len(argv) >= 3 and argv[0] in ("cat", "head", "tail") and
+            argv[1] in _TEXT_WRITE_SOURCES and argv[2] in _TEXT_WRITE_TARGETS)
+
+
+def _text_write_script(argv, stdin_name):
+    setup, redirect, after = _TEXT_WRITE_TARGETS[argv[2]]
+    command = _TEXT_WRITE_SOURCES[argv[1]].format(words=ul_words(argv[3:]), target=redirect)
+    body = _TEXT_WRITE_PROLOGUE + setup + command + "\nstatus=$?\n" + after + "exit $status\n"
+    return ul_live(argv[0], body, wrap="unshare -Urm")
+
 
 # ----------------------------------------------------------------------------
 #       The programs.
 # ----------------------------------------------------------------------------
 
 TEXT_UTILITIES = (
+    Utility("write_errors", operands=_TEXT_WRITE_CASES, stdin=("empty",), fixture="text",
+            stderr="exact", modes=BASH, script=_text_write_script, valid=_text_write_valid),
     Utility("base64", options=_TEXT_ENCODING_OPTIONS, operands=_TEXT_ENCODING_OPERANDS,
             stdin=_TEXT_ENCODING_STDIN, fixture="text",
             extra=(("--nosuchflag",), ("-Q",), ("-d", "-w", "0"), ("-di",))),

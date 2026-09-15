@@ -51,12 +51,69 @@ static positive text_out_handle = 1;
 static string_address text_name = "text";
 static b32 text_status;
 static bool text_out_failed;
+// Whether cat could look at its output at all: text_done words a failure
+// there the way GNU's look at standard output does.
+static bool cat_output_known;
+
+/*
+        The first write the kernel refused -- its reason, and how many bytes
+        had been offered to the kernel by the end of that write -- for the
+        diagnostic GNU prints and the stop it makes there.
+
+        The library's buffered writers clear what they held when a write
+        fails and keep no reason, so the writer lives here. A span that fits
+        behind what is held is copied in with no call at all; the rest spill
+        through the checked loop at the library's own flush points -- a span
+        that does not fit flushes first, and one wider than the buffer then
+        goes straight out -- so the kernel is asked for the same writes as
+        before. Inline, the common span also made nl on 256 MiB 116 ms to 92.
+
+        head and tail word the failure by where GNU notices it: a write made
+        while copying is an error writing standard output, and output small
+        enough to wait in stdio's page-sized buffer for the flush at exit is a
+        write error. Measured: head -c 100 and tail -n 2 into a full tmpfs are
+        write errors; head -c 5000 there, or to a closed descriptor, is an
+        error writing.
+*/
+#define TEXT_STDIO_BUFFER 4096
+
+static bipolar text_out_error;
+static positive text_out_offered;
+static positive text_out_error_offered;
+
+static bool text_write_out(address_any data, positive length)
+{
+        system_write_result wrote =
+            system_write_all_checked(text_out_handle, data, length);
+
+        text_out_offered += length;
+
+        if (wrote.bytes == length)
+                return true;
+
+        if (!text_out_error)
+        {
+                text_out_error = wrote.error ? wrote.error : -ERROR_INPUT_OUTPUT;
+                text_out_error_offered = text_out_offered;
+        }
+
+        text_out_failed = true;
+        return false;
+}
+
+// Always empties the buffer, as the library's flush does, so a failure is
+// reported once rather than written again.
+static bool text_flush_out()
+{
+        positive used = text_out_used;
+
+        text_out_used = 0;
+        return !used || text_write_out(text_out_buffer, used);
+}
 
 static fn text_flush()
 {
-        if (!buffered_flush(text_out_handle, text_out_buffer,
-                            address_of text_out_used))
-                text_out_failed = true;
+        text_flush_out();
 }
 
 // Changing where output goes has to empty what was written for the old one.
@@ -69,33 +126,81 @@ static fn text_out_to(positive handle)
         text_out_handle = handle;
 }
 
-static fn text_put(address_any data, positive length)
+// A span that does not fit behind what the buffer holds: flushed first, as
+// the library's writer would, then kept or sent straight out.
+static COLD fn text_put_spill(address_any data, positive length)
 {
-        if (!buffered_write_deferred_equal(text_out_handle, text_out_buffer,
-                                           TEXT_OUT_MAX, address_of text_out_used,
-                                           data, length))
+        if (!text_flush_out())
+                return;
+
+        if (length > TEXT_OUT_MAX)
+        {
+                text_write_out(data, length);
+                return;
+        }
+
+        memory_copy(text_out_buffer, data, length);
+        text_out_used = length;
+}
+
+static COLD p8 address_to text_reserve_spill(positive length)
+{
+        if (length > TEXT_OUT_MAX)
+        {
                 text_out_failed = true;
+                return null;
+        }
+
+        if (!text_flush_out())
+                return null;
+
+        text_out_used = length;
+        return text_out_buffer;
+}
+
+static COLD fn text_put_character_spill(p8 character)
+{
+        if (!text_flush_out())
+                return;
+
+        text_out_buffer[0] = character;
+        text_out_used = 1;
+}
+
+static inline INLINE fn text_put(address_any data, positive length)
+{
+        if (unlikely(length > TEXT_OUT_MAX - text_out_used))
+        {
+                text_put_spill(data, length);
+                return;
+        }
+
+        memory_copy(text_out_buffer + text_out_used, data, length);
+        text_out_used += length;
 }
 
 // Callers use this only for a span proven to fit TEXT_OUT_MAX and fill every
 // byte before making another output call.
-static p8 address_to text_reserve(positive length)
+static inline INLINE p8 address_to text_reserve(positive length)
 {
-        p8 address_to at = buffered_reserve(
-            text_out_handle, text_out_buffer, TEXT_OUT_MAX,
-            address_of text_out_used, length);
+        if (unlikely(length > TEXT_OUT_MAX - text_out_used))
+                return text_reserve_spill(length);
 
-        if (!at)
-                text_out_failed = true;
+        p8 address_to at = text_out_buffer + text_out_used;
 
+        text_out_used += length;
         return at;
 }
 
-static fn text_put_character(p8 character)
+static inline INLINE fn text_put_character(p8 character)
 {
-        if (!buffered_write_byte(text_out_handle, text_out_buffer, TEXT_OUT_MAX,
-                                 address_of text_out_used, character))
-                text_out_failed = true;
+        if (unlikely(text_out_used >= TEXT_OUT_MAX))
+        {
+                text_put_character_spill(character);
+                return;
+        }
+
+        text_out_buffer[text_out_used++] = character;
 }
 
 static inline INLINE fn text_put_string(string_address value)
@@ -198,10 +303,25 @@ static b32 text_done(b32 code)
                 if (string_equals(text_name, "sed"))
                         return 4;
 
+                bipolar reason = text_out_error ? text_out_error
+                                                : -ERROR_INPUT_OUTPUT;
+
+                // GNU cat looks at standard output before it reads and names
+                // it when it cannot; after that a refused write is a write
+                // error. head and tail are worded at TEXT_STDIO_BUFFER.
                 if (string_equals(text_name, "cat"))
                         string_diagnostic(&text_diagnostic, 0,
-                                          (string_address) "standard output",
-                                          file_reason(-ERROR_BAD_DESCRIPTOR));
+                                          cat_output_known
+                                              ? (string_address) "write error"
+                                              : (string_address) "standard output",
+                                          file_reason(reason));
+                else if (string_equals(text_name, "head") ||
+                         string_equals(text_name, "tail"))
+                        string_diagnostic(&text_diagnostic, 0,
+                                          text_out_error_offered < TEXT_STDIO_BUFFER
+                                              ? (string_address) "write error"
+                                              : (string_address) "error writing 'standard output'",
+                                          file_reason(reason));
 
                 return 1;
         }
@@ -575,10 +695,12 @@ static fn text_put_line()
 
 // Whatever is left of the input, straight out, without looking at any of it.
 // This is what cat is doing nearly every time it is run, and what head and
-// tail do once they have seeked to where their answer starts.
+// tail do once they have seeked to where their answer starts. It stops at the
+// first write the kernel refuses, as GNU does: /dev/zero into a full disk
+// would otherwise be read for ever.
 static fn text_put_rest()
 {
-        while (text_fill())
+        while (!text_out_failed && text_fill())
         {
                 text_put(text_input.buffer + text_input.position,
                          text_input.filled - text_input.position);
@@ -653,6 +775,9 @@ static fn text_begin(string_address name)
         text_quiet_read = false;
         text_out_handle = 1;
         text_out_failed = false;
+        text_out_error = 0;
+        text_out_offered = 0;
+        text_out_error_offered = 0;
         text_status = 0;
         text_name = name;
         text_argument_count = program_argument_count();
@@ -3226,20 +3351,17 @@ static fn cat_walked()
             ((cat_flags & CAT_SHOW) ? 4 : 0) | ((cat_flags & CAT_TABS) ? 2 : 0) |
             ((cat_flags & (CAT_NUMBER | CAT_NUMBER_FULL | CAT_SQUEEZE | CAT_ENDS)) != 0)];
 
-        while (text_fill())
+        while (!text_out_failed && text_fill())
         {
                 // Room for a line number, its tab and the widest byte -v
                 // writes with its terminator. A reservation fails only when
-                // output already has, and what is left is then read past.
+                // output has, and that is where GNU stops.
                 positive room = TEXT_OUT_MAX - text_out_used;
                 if (room < positive_char_max + 6)
                         room = TEXT_OUT_MAX;
-                p8 address_to field = text_out_failed ? null : text_reserve(room);
+                p8 address_to field = text_reserve(room);
                 if (!field)
-                {
-                        text_input.position = text_input.filled;
-                        continue;
-                }
+                        break;
                 p8 address_to at = text_input.buffer + text_input.position;
                 p8 address_to stop = text_input.buffer + text_input.filled;
                 p8 address_to into = field;
@@ -3326,7 +3448,6 @@ static fn cat_walked()
 #define CAT_INTERRUPTED (-4)
 
 static file_facts cat_output;
-static bool cat_output_known;
 static bool cat_output_append;
 
 static bool cat_splice_all(positive input)
@@ -3586,7 +3707,7 @@ static b32 text_cat()
                 return text_done(text_status);
         }
 
-        for (b32 i = first; i < text_argument_count; i++)
+        for (b32 i = first; i < text_argument_count && !text_out_failed; i++)
         {
                 string_address name = program_argument(i);
 
@@ -5017,7 +5138,7 @@ static positive text_tail_start(positive handle, positive size, positive count,
 // the copy stopped -- where GNU leaves it for the command after head.
 static fn text_stream_count(positive left)
 {
-        while (left && text_fill_amount(left))
+        while (left && !text_out_failed && text_fill_amount(left))
         {
                 positive have = text_input.filled - text_input.position;
                 positive take = min(have, left);
@@ -5185,7 +5306,12 @@ static bool text_window(positive count, bool by_bytes, bool front)
                                                    count, by_bytes);
 
                 if (front)
+                {
                         text_put(window.bytes, start);
+
+                        if (text_out_failed)
+                                break;
+                }
 
                 memory_copy(window.bytes, window.bytes + start, window.used - start);
                 window.used -= start;
@@ -5194,7 +5320,7 @@ static bool text_window(positive count, bool by_bytes, bool front)
                         limit = window.used * 2;
         }
 
-        if (okay)
+        if (okay && !text_out_failed)
         {
                 positive start = text_window_start(window.bytes, window.used,
                                                    count, by_bytes);
@@ -5257,7 +5383,7 @@ static fn text_stream_skip(positive skip, bool by_bytes)
 */
 static fn text_head_records(positive count)
 {
-        while (count && text_fill())
+        while (count && !text_out_failed && text_fill())
         {
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
@@ -5527,7 +5653,7 @@ static inline INLINE b32 text_head_tail(bool tail)
         b32 inputs = text_input_count();
         bool headers = (text_files_count > 1 || loud) && !quiet;
 
-        for (b32 i = 0; i < inputs; i++)
+        for (b32 i = 0; i < inputs && !text_out_failed; i++)
         {
                 if (!text_open(text_file_name(i)))
                         continue;
