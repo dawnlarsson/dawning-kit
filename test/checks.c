@@ -55848,7 +55848,7 @@ static p32 crc_model(p8 address_to bytes, positive length, p32 crc)
                 crc ^= (p32)*bytes++ << 24;
                 for (positive bit = 0; bit < 8; bit++)
                         crc = (crc << 1) ^
-                              (crc >> 31 ? CKSUM_POLYNOMIAL : 0);
+                              (crc >> 31 ? 0x04c11db7u : 0);
         }
         return crc;
 }
@@ -56347,6 +56347,115 @@ static fn hash_check_all(p8 address_to limit)
         check("streaming digests give the known answers at every split", streams == 0);
 }
 
+/*
+        hash_crc32_msb, cksum's CRC, against the bit-at-a-time model above:
+        its table slice by slice, then every size to 300 at 32 alignments,
+        runs that end on the protected page, and random lengths at random
+        alignments, each whole and in three pieces, under every feature
+        subset this machine has -- the braided table floor, the PCLMULQDQ
+        or PMULL folds, and on x86_64 the VPCLMULQDQ zmm folds -- written
+        down one tier at a time and put back.
+*/
+static p32 crc_swap32(p32 value)
+{
+        return value >> 24 | (value >> 8 & 0xff00) | (value << 8 & 0xff0000) |
+               value << 24;
+}
+
+static positive crc_check_case(p8 address_to at, positive size, p32 seed,
+                               positive split)
+{
+        p32 want = crc_model(at, size, seed);
+        positive rest = (size - split) / 2;
+        positive bad = 0;
+        p8 pclmul = cpu_has_pclmul;
+#if X64
+        p8 vpclmul = cpu_has_vpclmul;
+        p8 avx512 = cpu_has_avx512;
+        positive tiers = 4;
+#else
+        positive tiers = 2;
+#endif
+
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+                cpu_has_pclmul = tier >= 1 ? pclmul : 0;
+#if X64
+                cpu_has_vpclmul = tier >= 2 ? vpclmul : 0;
+                cpu_has_avx512 = tier >= 3 ? avx512 : 0;
+#endif
+                bad += hash_crc32_msb(seed, at, size) != want;
+
+                p32 crc = hash_crc32_msb(seed, at, split);
+                crc = hash_crc32_msb(crc, at + split, rest);
+                crc = hash_crc32_msb(crc, at + split + rest, size - split - rest);
+                bad += crc != want;
+        }
+
+        cpu_has_pclmul = pclmul;
+#if X64
+        cpu_has_vpclmul = vpclmul;
+        cpu_has_avx512 = avx512;
+#endif
+        return bad;
+}
+
+static fn crc_check_all(p8 address_to bytes)
+{
+        static const p8 zero = 0;
+        positive table = 0;
+
+        for (positive slice = 0; slice < 16; slice++)
+                for (positive value = 0; value < 256; value++)
+                {
+                        p8 byte = (p8)value;
+                        p32 entry = crc_model(address_of byte, 1, 0);
+
+                        for (positive at = 0; at < (slice < 8 ? slice : slice + 16); at++)
+                                entry = crc_model((p8 address_to)address_of zero, 1, entry);
+                        table += hash_crc32_msb_tab[slice * 256 + value] !=
+                                 crc_swap32(entry);
+                }
+
+        positive aligned = 0;
+        positive tails = 0;
+        positive draws = 0;
+
+        for (positive size = 0; size <= 300; size++)
+                for (positive offset = 0; offset < 32; offset++)
+                        aligned += crc_check_case(bytes + offset, size,
+                                                  (p32)(size * 0x9e3779b9u + offset),
+                                                  size / 3);
+        for (positive size = 0; size <= 8192; size += size < 300 ? 1 : 127)
+                tails += crc_check_case(bytes + 8192 - size, size, 0xdeadbeef,
+                                        size / 3);
+
+        p32 random = 0x2545f491u;
+        for (positive draw = 0; draw < 400; draw++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                positive offset = random % 64;
+                p32 seed = random;
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                positive size = random % (8192 - offset + 1);
+                draws += crc_check_case(bytes + offset, size, seed,
+                                        (random >> 7) % (size + 1));
+        }
+
+        check("the MSB CRC table is the model's, slice by slice", table == 0);
+        check("hash_crc32_msb is the model at every size to 300 and 32 alignments",
+              aligned == 0);
+        check("hash_crc32_msb runs that end on a protected page", tails == 0);
+        check("hash_crc32_msb at random lengths, alignments and splits",
+              draws == 0);
+        check("hash_crc32_msb of nothing is the crc",
+              hash_crc32_msb(0x12345678u, null, 0) == 0x12345678u);
+}
+
 b32 main(void)
 {
         positive page = system_page_size();
@@ -56359,42 +56468,508 @@ b32 main(void)
         for (positive at = 0; at < 8192; at++)
                 bytes[at] = (p8)((at * 73) ^ (at >> 3));
         hash_check_all(bytes + 8192);
-        cksum_crc_prepare();
-        positive modes = 1;
-#if X64
-        modes = cksum_crc_hardware();
-#endif
-        for (positive mode = 1; mode <= modes; mode++)
-        {
-#if X64
-                cksum_crc_pclmul_state = (p8)mode;
-#endif
-                for (positive size = 0; size <= 257; size++)
-                        for (positive offset = 0; offset < 64; offset++)
-                        {
-                                p32 seed = (p32)(size * 0x9e3779b9u + offset);
-                                p8 address_to at = bytes + offset;
-                                check("CRC alignment and arbitrary seed",
-                                      cksum_crc_block(at, size, seed) ==
-                                          crc_model(at, size, seed));
-                        }
-                for (positive size = 0; size <= 8192; size += size < 257 ? 1 : 127)
-                {
-                        p8 address_to at = bytes + 8192 - size;
-                        p32 seed = 0xdeadbeef;
-                        p32 want = crc_model(at, size, seed);
-                        check("CRC protected tail",
-                              cksum_crc_block(at, size, seed) == want);
-                        positive split = size / 3;
-                        p32 first = cksum_crc_block(at, split, seed);
-                        check("CRC incremental split",
-                              cksum_crc_block(at + split, size - split,
-                                               first) == want);
-                }
-        }
+        crc_check_all(bytes);
         return test_report(null);
 }
 #endif /* CHECK_checksum_crc */
+
+#ifdef BENCH_cksum_crc
+/*
+        cksum's CRC over its own read blocks, tier for tier: the C that
+        src/sh/cksum.c carried until hash_crc32_msb -- slice tables built at
+        run time, four table streams joined by GF(2) shifts, SSE and
+        AVX-512 folds 64 bytes a turn -- copied here unchanged under a
+        former_ prefix, against the assembly with its feature bytes written
+        down to the same tier. Tier 1 is the table, 2 the PCLMULQDQ folds
+        (PMULL on arm64), 3 the VPCLMULQDQ zmm folds; a tier this machine
+        lacks runs the best one below it.
+
+        With no arguments it prints best-of-seven ticks a byte over 64 MiB
+        in 4 KiB and 128 KiB blocks. `former|assembly <tier> <block>
+        [<MiB>]` runs one body once and prints its crc, so perf stat or an
+        emulator's instruction count sees one body a process; the former
+        body pays its table preparation as the applet did. `none` exits
+        after the block is filled, for the fixed cost.
+*/
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define FORMER_CRC_POLYNOMIAL 0x04c11db7u
+#define FORMER_CRC_SLICES 8
+
+static p32 former_crc_table[FORMER_CRC_SLICES][256];
+static p32 former_crc_shift_power[positive_bits];
+static bool former_crc_table_ready;
+#if X64
+/* 0 is unprobed, 1 is unavailable, 2 is PCLMUL, 3 is VPCLMUL. A shell should
+   not serialize itself with CPUID again on every cksum call on an older CPU. */
+static p8 former_crc_pclmul_state;
+#endif
+
+/* Multiplication in the same GF(2) field as the byte recurrence. It is cold:
+   table preparation uses it once, and a full shared input block needs only
+   three combines. */
+static p32 former_crc_multiply(p32 left, p32 right)
+{
+        p32 result = 0;
+
+        for (positive bit = 0; bit < 32; bit++)
+        {
+                if (right & 1)
+                        result ^= left;
+
+                right >>= 1;
+                left = (left << 1) ^
+                       ((left & 0x80000000u) ? FORMER_CRC_POLYNOMIAL : 0);
+        }
+
+        return result;
+}
+
+static fn former_crc_prepare()
+{
+        if (former_crc_table_ready)
+                return;
+
+        for (positive value = 0; value < 256; value++)
+        {
+                p32 crc = (p32)value << 24;
+
+                for (positive bit = 0; bit < 8; bit++)
+                        crc = (crc << 1) ^
+                              ((crc & 0x80000000u) ? FORMER_CRC_POLYNOMIAL : 0);
+
+                former_crc_table[0][value] = crc;
+        }
+
+        for (positive slice = 1; slice < FORMER_CRC_SLICES; slice++)
+                for (positive value = 0; value < 256; value++)
+                {
+                        p32 crc = former_crc_table[slice - 1][value];
+
+                        former_crc_table[slice][value] =
+                            (crc << 8) ^ former_crc_table[0][crc >> 24];
+                }
+
+        former_crc_shift_power[0] = 0x100;
+        for (positive bit = 1; bit < positive_bits; bit++)
+                former_crc_shift_power[bit] = former_crc_multiply(
+                    former_crc_shift_power[bit - 1],
+                    former_crc_shift_power[bit - 1]);
+
+        former_crc_table_ready = true;
+}
+
+static inline INLINE p32 former_crc_word(p64 word, p32 crc)
+{
+        return former_crc_table[7][((crc >> 24) ^ word) & 255] ^
+               former_crc_table[6][((crc >> 16) ^ (word >> 8)) & 255] ^
+               former_crc_table[5][((crc >> 8) ^ (word >> 16)) & 255] ^
+               former_crc_table[4][(crc ^ (word >> 24)) & 255] ^
+               former_crc_table[3][(word >> 32) & 255] ^
+               former_crc_table[2][(word >> 40) & 255] ^
+               former_crc_table[1][(word >> 48) & 255] ^
+               former_crc_table[0][word >> 56];
+}
+
+static p32 former_crc_serial(p8 address_to bytes, positive length, p32 crc)
+{
+        while (length >= 8)
+        {
+                p64 word = memory_load_unaligned(p64, bytes);
+
+                crc = former_crc_word(word, crc);
+                bytes += 8;
+                length -= 8;
+        }
+
+        while (length--)
+                crc = (crc << 8) ^
+                      former_crc_table[0][(crc >> 24) ^ *bytes++];
+
+        return crc;
+}
+
+#if X64
+/* SSE's carry-less multiply evaluates the same polynomial 128 bytes at a
+   time. The constants are x^128 and x^512 reduced modulo 0x104c11db7, from
+   Intel's generic-polynomial CRC construction. SSSE3 reverses each vector
+   because POSIX CRC is the non-reflected, most-significant-bit-first form.
+   The table floor remains authoritative for the final folded vector and for
+   every processor without both instructions. */
+typedef p64 former_crc_vector
+    __attribute__((vector_size(16), aligned(1), may_alias));
+typedef long long former_crc_vector_signed __attribute__((vector_size(16)));
+typedef char former_crc_bytes_signed __attribute__((vector_size(16)));
+
+static p8 former_crc_hardware()
+{
+        p32 leaf = 1;
+        p32 ebx;
+        p32 features = 0;
+        p32 edx;
+
+        __asm__ volatile("cpuid"
+                         : "+a"(leaf), "=b"(ebx), "+c"(features), "=d"(edx));
+        (void)ebx;
+        (void)edx;
+        if (!(features & ((p32)1 << 1)) || !(features & ((p32)1 << 9)))
+                return 1;
+        if (cpu_has_avx512)
+        {
+                leaf = 7;
+                features = 0;
+                __asm__ volatile("cpuid"
+                                 : "+a"(leaf), "=b"(ebx), "+c"(features),
+                                   "=d"(edx));
+                if (features & ((p32)1 << 10))
+                        return 3;
+        }
+        return 2;
+}
+
+static __attribute__((target("pclmul,ssse3"))) former_crc_vector
+former_crc_reverse(former_crc_vector value)
+{
+        const former_crc_vector mask = {
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull};
+
+        return (former_crc_vector)__builtin_ia32_pshufb128(
+            (former_crc_bytes_signed)value,
+            (former_crc_bytes_signed)mask);
+}
+
+static __attribute__((target("pclmul,ssse3"))) former_crc_vector
+former_crc_fold(former_crc_vector value, former_crc_vector constant,
+               former_crc_vector following)
+{
+        former_crc_vector low =
+            (former_crc_vector)__builtin_ia32_pclmulqdq128(
+                (former_crc_vector_signed)value,
+                (former_crc_vector_signed)constant, 0x00);
+        former_crc_vector high =
+            (former_crc_vector)__builtin_ia32_pclmulqdq128(
+                (former_crc_vector_signed)value,
+                (former_crc_vector_signed)constant, 0x11);
+
+        return low ^ high ^ following;
+}
+
+static __attribute__((target("pclmul,ssse3"))) p32
+former_crc_pclmul(p8 address_to bytes, positive length, p32 crc)
+{
+        const former_crc_vector four = {0xe6228b11ull, 0x8833794cull};
+        const former_crc_vector one = {0xe8a45605ull, 0xc5b9cd4cull};
+        former_crc_vector first = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes));
+        former_crc_vector second = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes + 16));
+        former_crc_vector third = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes + 32));
+        former_crc_vector fourth = former_crc_reverse(
+            *(former_crc_vector address_to)(bytes + 48));
+        const former_crc_vector initial = {0, (p64)crc << 32};
+
+        first ^= initial;
+        bytes += 64;
+        length -= 64;
+
+        while (length >= 64)
+        {
+                first = former_crc_fold(
+                    first, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes)));
+                second = former_crc_fold(
+                    second, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes + 16)));
+                third = former_crc_fold(
+                    third, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes + 32)));
+                fourth = former_crc_fold(
+                    fourth, four,
+                    former_crc_reverse(
+                        *(former_crc_vector address_to)(bytes + 48)));
+                bytes += 64;
+                length -= 64;
+        }
+
+        first = former_crc_fold(first, one, second);
+        first = former_crc_fold(first, one, third);
+        first = former_crc_fold(first, one, fourth);
+        first = former_crc_reverse(first);
+        crc = former_crc_serial((p8 address_to)address_of first, 16, 0);
+        return former_crc_serial(bytes, length, crc);
+}
+
+/* The same four polynomial chains as the SSE path, packed into one ZMM.
+   Only the lane width changes; final reduction stays in the shared floor.
+   Dispatch requires both OS-enabled AVX-512 and the separate VPCLMUL bit. */
+typedef p64 former_crc_wide
+    __attribute__((vector_size(64), aligned(1), may_alias));
+typedef long long former_crc_wide_signed __attribute__((vector_size(64)));
+typedef char former_crc_wide_bytes __attribute__((vector_size(64)));
+
+static __attribute__((target("avx512f,avx512bw,vpclmulqdq,pclmul,ssse3"))) p32
+former_crc_vpclmul(p8 address_to bytes, positive length, p32 crc)
+{
+        const former_crc_wide four = {
+            0xe6228b11ull, 0x8833794cull, 0xe6228b11ull, 0x8833794cull,
+            0xe6228b11ull, 0x8833794cull, 0xe6228b11ull, 0x8833794cull};
+        const former_crc_wide mask = {
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull};
+        former_crc_wide value = {0, (p64)crc << 32, 0, 0, 0, 0, 0, 0};
+        bool first = true;
+
+        do
+        {
+                former_crc_wide next = (former_crc_wide)
+                    __builtin_ia32_pshufb512_mask(
+                        (former_crc_wide_bytes)*(former_crc_wide address_to)bytes,
+                        (former_crc_wide_bytes)mask,
+                        (former_crc_wide_bytes){0}, (p64)-1);
+                if (!first)
+                {
+                        former_crc_wide low = (former_crc_wide)
+                            __builtin_ia32_vpclmulqdq_v8di(
+                                (former_crc_wide_signed)value,
+                                (former_crc_wide_signed)four, 0x00);
+                        former_crc_wide high = (former_crc_wide)
+                            __builtin_ia32_vpclmulqdq_v8di(
+                                (former_crc_wide_signed)value,
+                                (former_crc_wide_signed)four, 0x11);
+                        value = low ^ high;
+                }
+                value ^= next;
+                first = false;
+                bytes += 64;
+                length -= 64;
+        } while (length >= 64);
+
+        const former_crc_vector one = {0xe8a45605ull, 0xc5b9cd4cull};
+        former_crc_vector folded = {value[0], value[1]};
+        folded = former_crc_fold(folded, one,
+                                (former_crc_vector){value[2], value[3]});
+        folded = former_crc_fold(folded, one,
+                                (former_crc_vector){value[4], value[5]});
+        folded = former_crc_fold(folded, one,
+                                (former_crc_vector){value[6], value[7]});
+        folded = former_crc_reverse(folded);
+        crc = former_crc_serial((p8 address_to)address_of folded, 16, 0);
+        return former_crc_serial(bytes, length, crc);
+}
+#endif
+
+static p32 former_crc_shift(p32 crc, p64 bytes)
+{
+        positive bit = 0;
+
+        while (bytes)
+        {
+                if (bytes & 1)
+                        crc = former_crc_multiply(
+                            crc, former_crc_shift_power[bit]);
+
+                bytes >>= 1;
+                bit++;
+        }
+
+        return crc;
+}
+
+static HOT __attribute__((noinline)) p32 former_crc_block(
+    p8 address_to bytes, positive length, p32 crc)
+{
+#if X64
+        if (length >= 128 && former_crc_pclmul_state == 3)
+                return former_crc_vpclmul(bytes, length, crc);
+        if (length >= 128 && former_crc_pclmul_state == 2)
+                return former_crc_pclmul(bytes, length, crc);
+#endif
+
+        positive span = (length >> 2) & ~(positive)7;
+
+        if (span < 256)
+                return former_crc_serial(bytes, length, crc);
+
+        p8 address_to second = bytes + span;
+        p8 address_to third = second + span;
+        p8 address_to fourth = third + span;
+        p32 first_crc = crc;
+        p32 second_crc = 0;
+        p32 third_crc = 0;
+        p32 fourth_crc = 0;
+
+        for (positive at = 0; at < span; at += 8)
+        {
+                first_crc = former_crc_word(
+                    memory_load_unaligned(p64, bytes + at), first_crc);
+                second_crc = former_crc_word(
+                    memory_load_unaligned(p64, second + at), second_crc);
+                third_crc = former_crc_word(
+                    memory_load_unaligned(p64, third + at), third_crc);
+                fourth_crc = former_crc_word(
+                    memory_load_unaligned(p64, fourth + at), fourth_crc);
+        }
+
+        positive fourth_length = length - span * 3;
+        fourth_crc = former_crc_serial(fourth + span,
+                                      fourth_length - span, fourth_crc);
+        crc = former_crc_shift(first_crc, span) ^ second_crc;
+        crc = former_crc_shift(crc, span) ^ third_crc;
+        return former_crc_shift(crc, fourth_length) ^ fourth_crc;
+}
+
+#define CKSUM_BENCH_LARGEST (128u << 10)
+
+static p8 cksum_bench_block[CKSUM_BENCH_LARGEST] __attribute__((aligned(64)));
+static positive cksum_bench_size;
+static positive cksum_bench_total = 64u << 20;
+static volatile p32 cksum_bench_sink;
+static p32 (*volatile cksum_bench_call)(p32, address_any, positive) = hash_crc32_msb;
+static p8 cksum_bench_pclmul;
+#if X64
+static p8 cksum_bench_vpclmul;
+static p8 cksum_bench_avx512;
+#endif
+
+static fn cksum_bench_former(void)
+{
+        p32 crc = 0;
+
+        for (positive done = 0; done < cksum_bench_total; done += cksum_bench_size)
+                crc = former_crc_block(cksum_bench_block, cksum_bench_size, crc);
+        cksum_bench_sink = crc;
+}
+
+static fn cksum_bench_assembly(void)
+{
+        p32 crc = 0;
+
+        for (positive done = 0; done < cksum_bench_total; done += cksum_bench_size)
+                crc = cksum_bench_call(crc, cksum_bench_block, cksum_bench_size);
+        cksum_bench_sink = crc;
+}
+
+static fn cksum_bench_tier(positive tier, bool former)
+{
+        cpu_has_pclmul = tier >= 2 ? cksum_bench_pclmul : 0;
+#if X64
+        cpu_has_vpclmul = tier >= 3 ? cksum_bench_vpclmul : 0;
+        cpu_has_avx512 = tier >= 3 ? cksum_bench_avx512 : 0;
+        if (former)
+        {
+                p8 hardware = former_crc_hardware();
+
+                former_crc_pclmul_state = (p8)(tier < hardware ? tier : hardware);
+        }
+#else
+        (void)former;
+#endif
+}
+
+static positive cksum_bench_number(string_address text, positive otherwise)
+{
+        positive value = 0;
+
+        if (!text)
+                return otherwise;
+        while (*text >= '0' && *text <= '9')
+                value = value * 10 + (positive)(*text++ - '0');
+        return value;
+}
+
+b32 main(void)
+{
+        p32 random = 0x7433291u;
+
+        for (positive at = 0; at < sizeof(cksum_bench_block); at++)
+        {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                cksum_bench_block[at] = (p8)random;
+        }
+
+        cksum_bench_pclmul = cpu_has_pclmul;
+#if X64
+        cksum_bench_vpclmul = cpu_has_vpclmul;
+        cksum_bench_avx512 = cpu_has_avx512;
+#endif
+
+        string_address body = program_argument(1);
+
+        if (body)
+        {
+                positive tier = cksum_bench_number(program_argument(2), 3);
+
+                cksum_bench_size = cksum_bench_number(program_argument(3), 4096);
+                cksum_bench_total = cksum_bench_number(program_argument(4), 64) << 20;
+                if (!cksum_bench_size || cksum_bench_size > CKSUM_BENCH_LARGEST)
+                        return 2;
+                if (string_equals(body, "none"))
+                        return 0;
+                if (string_equals(body, "former"))
+                {
+                        former_crc_prepare();
+                        cksum_bench_tier(tier, true);
+                        cksum_bench_former();
+                }
+                else if (string_equals(body, "assembly"))
+                {
+                        cksum_bench_tier(tier, false);
+                        cksum_bench_assembly();
+                }
+                else
+                        return 2;
+                string_format(log, "%p\n", (positive)cksum_bench_sink);
+                return 0;
+        }
+
+#if X64
+        positive tiers = 3;
+#elif ARM64
+        positive tiers = 2;
+#else
+        positive tiers = 1;
+#endif
+        static const positive sizes[] = {4096, CKSUM_BENCH_LARGEST};
+        static const string_address former_names[] = {
+            "tier 1 former C", "tier 2 former C", "tier 3 former C"};
+        static const string_address assembly_names[] = {
+            "tier 1 assembly", "tier 2 assembly", "tier 3 assembly"};
+        bool agree = true;
+
+        former_crc_prepare();
+        for (positive which = 0; which < array_count(sizes); which++)
+        {
+                cksum_bench_size = sizes[which];
+                string_format(log, "  64 MiB in %p-byte blocks:\n", cksum_bench_size);
+                for (positive tier = 1; tier <= tiers; tier++)
+                {
+                        cksum_bench_tier(tier, true);
+                        bench_report(former_names[tier - 1], cksum_bench_former, 7,
+                                     cksum_bench_total, "byte");
+                        p32 former = cksum_bench_sink;
+
+                        bench_report(assembly_names[tier - 1], cksum_bench_assembly, 7,
+                                     cksum_bench_total, "byte");
+                        agree = agree && former == cksum_bench_sink;
+                }
+        }
+        cksum_bench_tier(3, false);
+        if (!agree)
+                string_format(log, "  the former C and the assembly disagree\n");
+        return agree ? 0 : 1;
+}
+#endif /* BENCH_cksum_crc */
 
 #ifdef CHECK_spark_entry
 #include "../src/compiler_memory.c"

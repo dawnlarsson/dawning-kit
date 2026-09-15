@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        317 routines (304 public, 13 local), 316 of them on all three and 1 local to one.
+        318 routines (305 public, 13 local), 317 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -144,6 +144,7 @@
           ghash_integer                  local   yes     yes     yes
           ghash_key                      public  yes     yes     yes
           hash_crc32                     public  yes     yes     yes
+          hash_crc32_msb                 public  yes     yes     yes
           hash_crc64                     public  yes     yes     yes
           hash_xxh64                     public  yes     yes     yes
           hash_xxh64_add                 public  yes     yes     yes
@@ -1867,6 +1868,55 @@ __asm__(
     ASM_OBJECT_END(hash_crc64_tab)
 );
 
+/* POSIX cksum's CRC-32 (poly 0x04C11DB7, most significant bit first) for
+   hash_crc32_msb. Slice s maps a byte b to b * x^(8s+32) mod P: slices 0-7
+   run eight bytes against the crc, slices 24-31 carry a byte 32 bytes ahead
+   for the four braided streams. Every entry is stored byte swapped, so a
+   body keeps the crc swapped and its step is the reflected one: a
+   little-endian word takes the crc in its low four bytes and a byte shifts
+   out to the right. The bases start at bit 24 and shift left; the
+   assembler's 64-bit arithmetic never sees a negative value. */
+extern const p32 hash_crc32_msb_tab[16 * 256];
+
+#define ASM_CRC_MSB_BASIS(bit)                                               \
+    "(-((.Lcrc_byte >> " #bit ") & 1) & .Lcrc_swap" #bit ")"
+#define ASM_CRC_MSB_BYTE                                                     \
+    ".rept 8\n"                                                             \
+    ".irp bit, 0,1,2,3,4,5,6,7\n"                                            \
+    ".set .Lcrc_basis\\bit, ((.Lcrc_basis\\bit << 1) & 0xffffffff) ^ "       \
+        "(-((.Lcrc_basis\\bit >> 31) & 1) & 0x04c11db7)\n"                   \
+    ".endr\n.endr\n"
+#define ASM_CRC_MSB_SLICE                                                    \
+    ASM_CRC_MSB_BYTE                                                        \
+    ".irp bit, 0,1,2,3,4,5,6,7\n"                                            \
+    ".set .Lcrc_swap\\bit, ((.Lcrc_basis\\bit >> 24) & 0xff) | "             \
+        "((.Lcrc_basis\\bit >> 8) & 0xff00) | "                              \
+        "((.Lcrc_basis\\bit << 8) & 0xff0000) | "                            \
+        "((.Lcrc_basis\\bit << 24) & 0xff000000)\n"                          \
+    ".endr\n"                                                               \
+    ".set .Lcrc_byte, 0\n"                                                   \
+    ".rept 256\n"                                                           \
+    ".long " ASM_CRC_MSB_BASIS(0) " ^ " ASM_CRC_MSB_BASIS(1) " ^ "          \
+             ASM_CRC_MSB_BASIS(2) " ^ " ASM_CRC_MSB_BASIS(3) " ^ "          \
+             ASM_CRC_MSB_BASIS(4) " ^ " ASM_CRC_MSB_BASIS(5) " ^ "          \
+             ASM_CRC_MSB_BASIS(6) " ^ " ASM_CRC_MSB_BASIS(7) "\n"           \
+    ".set .Lcrc_byte, .Lcrc_byte + 1\n"                                      \
+    ".endr\n"
+
+__asm__(
+    ASM_RODATA_OBJECT_BEGIN(hash_crc32_msb_tab, 16)
+    ".irp bit, 0,1,2,3,4,5,6,7\n"
+    ".set .Lcrc_basis\\bit, 1 << (\\bit + 24)\n"
+    ".endr\n"
+    ".rept 8\n" ASM_CRC_MSB_SLICE ".endr\n"
+    ".rept 16\n" ASM_CRC_MSB_BYTE ".endr\n"
+    ".rept 8\n" ASM_CRC_MSB_SLICE ".endr\n"
+    ASM_OBJECT_END(hash_crc32_msb_tab)
+);
+
+#undef ASM_CRC_MSB_SLICE
+#undef ASM_CRC_MSB_BYTE
+#undef ASM_CRC_MSB_BASIS
 #undef ASM_CRC_TABLE
 #undef ASM_CRC_BASIS
 
@@ -6807,6 +6857,169 @@ __asm__(
     ".quad 0xe05dd497ca393ae4, 0xdabe95afc7875f40\n"
 #endif
     ASM_END(hash_crc64)
+
+    /* POSIX cksum's CRC-32, most significant bit first. crc in edi, bytes
+       in rsi, n in rdx. The crc is byte swapped on entry and back on
+       return, so the table step is hash_crc32's (see hash_crc32_msb_tab).
+
+       The floor braids four streams, one word each, 32 bytes a turn. A
+       word's lookups in slices 31-24 are what it contributes 32 bytes on,
+       so each stream's carry goes into its own next word and the four
+       chains of table loads never wait on each other. The last turn runs
+       the four words serially with the carries folded in, which leaves the
+       crc where one stream would have. The C this replaced ran four streams
+       too, and joined them by GF(2) shifts it prepared at run time.
+
+       From 128 bytes PCLMULQDQ folds 128-bit lanes, each reversed by
+       pshufb (no processor has PCLMULQDQ without SSSE3) and moved on by
+       x^d and x^(d+64) mod P: four lanes 64 bytes a turn in xmm, or from
+       256 bytes with VPCLMULQDQ and AVX-512 sixteen lanes 256 bytes a turn
+       in four zmm registers, folded down to four. Then 16 bytes at a time,
+       and the last lane's sixteen bytes and the tail go through the table.
+       XMM and ZMM use stay out of kernels. */
+#define CRC32_MSB_X64_WORD(load, wide, narrow, top)                          \
+    load "xor %" wide ", %r9\n"                                              \
+    "movzbl %r9b, %ecx\n   mov " top "(%r8,%rcx,4), %" narrow "\n"           \
+    "shr $8, %r9\n   movzbl %r9b, %ecx\n   xor " top "-1024(%r8,%rcx,4), %" narrow "\n" \
+    "shr $8, %r9\n   movzbl %r9b, %ecx\n   xor " top "-2048(%r8,%rcx,4), %" narrow "\n" \
+    "shr $8, %r9\n   movzbl %r9b, %ecx\n   xor " top "-3072(%r8,%rcx,4), %" narrow "\n" \
+    "shr $8, %r9\n   movzbl %r9b, %ecx\n   xor " top "-4096(%r8,%rcx,4), %" narrow "\n" \
+    "shr $8, %r9\n   movzbl %r9b, %ecx\n   xor " top "-5120(%r8,%rcx,4), %" narrow "\n" \
+    "shr $8, %r9\n   movzbl %r9b, %ecx\n   xor " top "-6144(%r8,%rcx,4), %" narrow "\n" \
+    "shr $8, %r9\n   xor " top "-7168(%r8,%r9,4), %" narrow "\n"
+#define CRC32_MSB_X64_FOLD(lane)                                              \
+    "movdqa %" lane ", %xmm4\n   pclmulqdq $0x00, %xmm7, %" lane "\n"        \
+    "pclmulqdq $0x11, %xmm7, %xmm4\n   pxor %xmm4, %" lane "\n"
+#define CRC32_MSB_X64_LANE(lane, at)                                          \
+    CRC32_MSB_X64_FOLD(lane)                                                  \
+    "movdqu " at "(%rsi), %xmm8\n   pshufb %xmm6, %xmm8\n   pxor %xmm8, %" lane "\n"
+#define CRC32_MSB_X64_ZFOLD(lane, into)                                       \
+    "vpclmulqdq $0x00, %zmm7, %" lane ", %zmm4\n"                             \
+    "vpclmulqdq $0x11, %zmm7, %" lane ", %" lane "\n"                         \
+    "vpternlogq $0x96, %zmm4, %" lane ", %" into "\n"
+#define CRC32_MSB_X64_ZLANE(lane, at)                                         \
+    "vpclmulqdq $0x00, %zmm7, %" lane ", %zmm4\n"                             \
+    "vpclmulqdq $0x11, %zmm7, %" lane ", %" lane "\n"                         \
+    "vmovdqu64 " at "(%rsi), %zmm5\n   vpshufb %zmm6, %zmm5, %zmm5\n"         \
+    "vpternlogq $0x96, %zmm5, %zmm4, %" lane "\n"
+    ASM_FUNC(hash_crc32_msb)
+    "mov %edi, %eax\n   bswap %eax\n"
+#ifndef KERNEL_MODE
+    "cmp $128, %rdx\n   jb .Lcrc32_msb_x64_floor\n"
+    "cmpb $0, cpu_has_pclmul(%rip)\n   jne .Lcrc32_msb_x64_fold\n"
+    ".Lcrc32_msb_x64_floor:\n"
+#endif
+    "lea hash_crc32_msb_tab(%rip), %r8\n"
+    "cmp $64, %rdx\n   jb .Lcrc32_msb_x64_serial\n"
+    "xor %edi, %edi\n   xor %r10d, %r10d\n   xor %r11d, %r11d\n"
+    ".balign 16\n"
+    ".Lcrc32_msb_x64_braid:\n"
+    CRC32_MSB_X64_WORD("mov (%rsi), %r9\n", "rax", "eax", "15360")
+    CRC32_MSB_X64_WORD("mov 8(%rsi), %r9\n", "rdi", "edi", "15360")
+    CRC32_MSB_X64_WORD("mov 16(%rsi), %r9\n", "r10", "r10d", "15360")
+    CRC32_MSB_X64_WORD("mov 24(%rsi), %r9\n", "r11", "r11d", "15360")
+    "add $32, %rsi\n   sub $32, %rdx\n   cmp $64, %rdx\n   jae .Lcrc32_msb_x64_braid\n"
+    CRC32_MSB_X64_WORD("mov (%rsi), %r9\n", "rax", "eax", "7168")
+    "xor %edi, %eax\n"
+    CRC32_MSB_X64_WORD("mov 8(%rsi), %r9\n", "rax", "eax", "7168")
+    "xor %r10d, %eax\n"
+    CRC32_MSB_X64_WORD("mov 16(%rsi), %r9\n", "rax", "eax", "7168")
+    "xor %r11d, %eax\n"
+    CRC32_MSB_X64_WORD("mov 24(%rsi), %r9\n", "rax", "eax", "7168")
+    "add $32, %rsi\n   sub $32, %rdx\n"
+    ".Lcrc32_msb_x64_serial:\n"
+    "cmp $8, %rdx\n   jb .Lcrc32_msb_x64_tail\n"
+    ".Lcrc32_msb_x64_eight:\n"
+    CRC32_MSB_X64_WORD("mov (%rsi), %r9\n", "rax", "eax", "7168")
+    "add $8, %rsi\n   sub $8, %rdx\n   cmp $8, %rdx\n   jae .Lcrc32_msb_x64_eight\n"
+    ".Lcrc32_msb_x64_tail:\n"
+    "test %rdx, %rdx\n   jz .Lcrc32_msb_x64_done\n"
+    ".Lcrc32_msb_x64_byte:\n"
+    "xor (%rsi), %al\n   movzbl %al, %ecx\n   shr $8, %eax\n   xor (%r8,%rcx,4), %eax\n"
+    "inc %rsi\n   dec %rdx\n   jnz .Lcrc32_msb_x64_byte\n"
+    ".Lcrc32_msb_x64_done:\n"
+    "bswap %eax\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".Lcrc32_msb_x64_fold:\n"
+    "cmp $256, %rdx\n   jb .Lcrc32_msb_x64_xmm\n"
+    "cmpb $0, cpu_has_vpclmul(%rip)\n   je .Lcrc32_msb_x64_xmm\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne .Lcrc32_msb_x64_zmm\n"
+    ".Lcrc32_msb_x64_xmm:\n"
+    "movdqa .Lcrc32_msb_x64_reverse(%rip), %xmm6\n"
+    "movdqa .Lcrc32_msb_x64_k512(%rip), %xmm7\n"
+    "movd %eax, %xmm5\n"
+    "movdqu (%rsi), %xmm0\n   pxor %xmm5, %xmm0\n   pshufb %xmm6, %xmm0\n"
+    "movdqu 16(%rsi), %xmm1\n   pshufb %xmm6, %xmm1\n"
+    "movdqu 32(%rsi), %xmm2\n   pshufb %xmm6, %xmm2\n"
+    "movdqu 48(%rsi), %xmm3\n   pshufb %xmm6, %xmm3\n"
+    "add $64, %rsi\n   sub $64, %rdx\n"
+    "cmp $64, %rdx\n   jb .Lcrc32_msb_x64_four\n"
+    ".balign 16\n"
+    ".Lcrc32_msb_x64_xmm_turn:\n"
+    CRC32_MSB_X64_LANE("xmm0", "0")
+    CRC32_MSB_X64_LANE("xmm1", "16")
+    CRC32_MSB_X64_LANE("xmm2", "32")
+    CRC32_MSB_X64_LANE("xmm3", "48")
+    "add $64, %rsi\n   sub $64, %rdx\n   cmp $64, %rdx\n   jae .Lcrc32_msb_x64_xmm_turn\n"
+    ".Lcrc32_msb_x64_four:\n"
+    "movdqa .Lcrc32_msb_x64_k128(%rip), %xmm7\n"
+    CRC32_MSB_X64_FOLD("xmm0") "pxor %xmm1, %xmm0\n"
+    CRC32_MSB_X64_FOLD("xmm0") "pxor %xmm2, %xmm0\n"
+    CRC32_MSB_X64_FOLD("xmm0") "pxor %xmm3, %xmm0\n"
+    "cmp $16, %rdx\n   jb .Lcrc32_msb_x64_reduce\n"
+    ".Lcrc32_msb_x64_sixteen:\n"
+    CRC32_MSB_X64_LANE("xmm0", "0")
+    "add $16, %rsi\n   sub $16, %rdx\n   cmp $16, %rdx\n   jae .Lcrc32_msb_x64_sixteen\n"
+    // The last lane back in message order: its high word first.
+    ".Lcrc32_msb_x64_reduce:\n"
+    "pshufb %xmm6, %xmm0\n   movq %xmm0, %r9\n   psrldq $8, %xmm0\n   movq %xmm0, %r10\n"
+    "lea hash_crc32_msb_tab(%rip), %r8\n   xor %eax, %eax\n"
+    CRC32_MSB_X64_WORD("", "rax", "eax", "7168")
+    CRC32_MSB_X64_WORD("mov %r10, %r9\n", "rax", "eax", "7168")
+    "jmp .Lcrc32_msb_x64_serial\n"
+    //  Each zmm register is four lanes; the fold distance is 256 bytes.
+    //  Folding zmm0 into zmm1 and on by 64 bytes leaves the last four lanes
+    //  in zmm3, and vzeroupper leaves their low halves for the xmm tail.
+    ".Lcrc32_msb_x64_zmm:\n"
+    "vbroadcasti32x4 .Lcrc32_msb_x64_reverse(%rip), %zmm6\n"
+    "vbroadcasti32x4 .Lcrc32_msb_x64_k2048(%rip), %zmm7\n"
+    "vmovd %eax, %xmm5\n"
+    "vmovdqu64 (%rsi), %zmm0\n   vpxorq %zmm5, %zmm0, %zmm0\n   vpshufb %zmm6, %zmm0, %zmm0\n"
+    "vmovdqu64 64(%rsi), %zmm1\n   vpshufb %zmm6, %zmm1, %zmm1\n"
+    "vmovdqu64 128(%rsi), %zmm2\n   vpshufb %zmm6, %zmm2, %zmm2\n"
+    "vmovdqu64 192(%rsi), %zmm3\n   vpshufb %zmm6, %zmm3, %zmm3\n"
+    "add $256, %rsi\n   sub $256, %rdx\n"
+    "cmp $256, %rdx\n   jb .Lcrc32_msb_x64_zmm_down\n"
+    ".balign 16\n"
+    ".Lcrc32_msb_x64_zmm_turn:\n"
+    CRC32_MSB_X64_ZLANE("zmm0", "0")
+    CRC32_MSB_X64_ZLANE("zmm1", "64")
+    CRC32_MSB_X64_ZLANE("zmm2", "128")
+    CRC32_MSB_X64_ZLANE("zmm3", "192")
+    "add $256, %rsi\n   sub $256, %rdx\n   cmp $256, %rdx\n   jae .Lcrc32_msb_x64_zmm_turn\n"
+    ".Lcrc32_msb_x64_zmm_down:\n"
+    "vbroadcasti32x4 .Lcrc32_msb_x64_k512(%rip), %zmm7\n"
+    CRC32_MSB_X64_ZFOLD("zmm0", "zmm1")
+    CRC32_MSB_X64_ZFOLD("zmm1", "zmm2")
+    CRC32_MSB_X64_ZFOLD("zmm2", "zmm3")
+    "vmovdqa %xmm3, %xmm0\n   vextracti32x4 $1, %zmm3, %xmm1\n"
+    "vextracti32x4 $2, %zmm3, %xmm2\n   vextracti32x4 $3, %zmm3, %xmm3\n"
+    "vzeroupper\n"
+    "jmp .Lcrc32_msb_x64_four\n"
+    ".pushsection .rodata\n   .balign 16\n"
+    ".Lcrc32_msb_x64_reverse:\n   .quad 0x08090a0b0c0d0e0f, 0x0001020304050607\n"
+    ".Lcrc32_msb_x64_k128:\n   .quad 0xe8a45605, 0xc5b9cd4c\n"
+    ".Lcrc32_msb_x64_k512:\n   .quad 0xe6228b11, 0x8833794c\n"
+    ".Lcrc32_msb_x64_k2048:\n   .quad 0x88fe2237, 0xcbcf3bcb\n"
+    ".popsection\n"
+#endif
+    ASM_END(hash_crc32_msb)
+#undef CRC32_MSB_X64_ZLANE
+#undef CRC32_MSB_X64_ZFOLD
+#undef CRC32_MSB_X64_LANE
+#undef CRC32_MSB_X64_FOLD
+#undef CRC32_MSB_X64_WORD
 
     // Four bytes at once shorten DJB2's multiply dependency chain: 33^4 is
     // 1185921 and the four byte weights are 33^3, 33^2, 33 and one.
@@ -17723,6 +17936,135 @@ __asm__(
     ASM_RET
     ASM_END(hash_crc32)
 
+    /* See the x86_64 body. A slice's base sits in its own register, x8 for
+       a word's first byte to x15 for its last; the braid's slices are the
+       serial ones 8192 bytes on. PMULL folds the lanes in reflected order:
+       rbit turns every byte round, so a loaded register is its lane bit
+       reversed, and pmull and pmull2 against x^(d+63) and x^(d-1), each
+       reversed across 64 bits, leave the product in that same order with
+       no shift and no swap -- five instructions a lane where rev64 would
+       need an ext as well. Vector use stays out of kernels. */
+#define CRC32_MSB_ARM64_WORD(load, wide, narrow)                              \
+    load "eor x7, x7, " wide "\n"                                            \
+    "and x16, x7, #255\n   ldr " narrow ", [x8, x16, lsl #2]\n"               \
+    "ubfx x16, x7, #8, #8\n   ldr w17, [x9, x16, lsl #2]\n   eor " narrow ", " narrow ", w17\n"  \
+    "ubfx x16, x7, #16, #8\n   ldr w17, [x10, x16, lsl #2]\n   eor " narrow ", " narrow ", w17\n" \
+    "ubfx x16, x7, #24, #8\n   ldr w17, [x11, x16, lsl #2]\n   eor " narrow ", " narrow ", w17\n" \
+    "ubfx x16, x7, #32, #8\n   ldr w17, [x12, x16, lsl #2]\n   eor " narrow ", " narrow ", w17\n" \
+    "ubfx x16, x7, #40, #8\n   ldr w17, [x13, x16, lsl #2]\n   eor " narrow ", " narrow ", w17\n" \
+    "ubfx x16, x7, #48, #8\n   ldr w17, [x14, x16, lsl #2]\n   eor " narrow ", " narrow ", w17\n" \
+    "lsr x16, x7, #56\n   ldr w17, [x15, x16, lsl #2]\n   eor " narrow ", " narrow ", w17\n"
+#define CRC32_MSB_ARM64_BASES                                                 \
+    "add x14, x15, #1024\n   add x13, x14, #1024\n   add x12, x13, #1024\n"   \
+    "add x11, x12, #1024\n   add x10, x11, #1024\n   add x9, x10, #1024\n"    \
+    "add x8, x9, #1024\n"
+#define CRC32_MSB_ARM64_FOLD(lane)                                            \
+    "pmull v6.1q, " lane ".1d, v16.1d\n   pmull2 v7.1q, " lane ".2d, v16.2d\n" \
+    "eor " lane ".16b, v6.16b, v7.16b\n"
+#define CRC32_MSB_ARM64_LANE(lane, data)                                      \
+    CRC32_MSB_ARM64_FOLD(lane)                                                \
+    "rbit " data ".16b, " data ".16b\n   eor " lane ".16b, " lane ".16b, " data ".16b\n"
+    ASM_FUNC(hash_crc32_msb)
+    "rev w0, w0\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #128\n   b.lo .Lcrc32_msb_arm64_floor\n"
+    "adrp x9, cpu_has_pclmul\n   ldrb w9, [x9, :lo12:cpu_has_pclmul]\n"
+    "cbnz w9, .Lcrc32_msb_arm64_fold\n"
+    ".Lcrc32_msb_arm64_floor:\n"
+#endif
+    "adrp x3, hash_crc32_msb_tab\n   add x3, x3, :lo12:hash_crc32_msb_tab\n"
+    "cmp x2, #64\n   b.lo .Lcrc32_msb_arm64_short\n"
+    "add x15, x3, #2, lsl #12\n"
+    CRC32_MSB_ARM64_BASES
+    "mov w4, #0\n   mov w5, #0\n   mov w6, #0\n"
+    ".balign 16\n"
+    ".Lcrc32_msb_arm64_braid:\n"
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1]\n", "x0", "w0")
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1, #8]\n", "x4", "w4")
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1, #16]\n", "x5", "w5")
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1, #24]\n", "x6", "w6")
+    "add x1, x1, #32\n   sub x2, x2, #32\n   cmp x2, #64\n   b.hs .Lcrc32_msb_arm64_braid\n"
+    "sub x8, x8, #2, lsl #12\n   sub x9, x9, #2, lsl #12\n   sub x10, x10, #2, lsl #12\n"
+    "sub x11, x11, #2, lsl #12\n   sub x12, x12, #2, lsl #12\n   sub x13, x13, #2, lsl #12\n"
+    "sub x14, x14, #2, lsl #12\n   sub x15, x15, #2, lsl #12\n"
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1]\n", "x0", "w0")
+    "eor w0, w0, w4\n"
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1, #8]\n", "x0", "w0")
+    "eor w0, w0, w5\n"
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1, #16]\n", "x0", "w0")
+    "eor w0, w0, w6\n"
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1, #24]\n", "x0", "w0")
+    "add x1, x1, #32\n   sub x2, x2, #32\n"
+    "b .Lcrc32_msb_arm64_serial\n"
+    ".Lcrc32_msb_arm64_short:\n"
+    "mov x15, x3\n   cmp x2, #8\n   b.lo .Lcrc32_msb_arm64_tail\n"
+    CRC32_MSB_ARM64_BASES
+    ".Lcrc32_msb_arm64_serial:\n"
+    "cmp x2, #8\n   b.lo .Lcrc32_msb_arm64_tail\n"
+    ".Lcrc32_msb_arm64_eight:\n"
+    CRC32_MSB_ARM64_WORD("ldr x7, [x1], #8\n", "x0", "w0")
+    "sub x2, x2, #8\n   cmp x2, #8\n   b.hs .Lcrc32_msb_arm64_eight\n"
+    ".Lcrc32_msb_arm64_tail:\n"
+    "cbz x2, .Lcrc32_msb_arm64_done\n"
+    ".Lcrc32_msb_arm64_byte:\n"
+    "ldrb w16, [x1], #1\n   eor w16, w16, w0\n   and w16, w16, #255\n"
+    "ldr w17, [x15, x16, lsl #2]\n   eor w0, w17, w0, lsr #8\n"
+    "subs x2, x2, #1\n   b.ne .Lcrc32_msb_arm64_byte\n"
+    ".Lcrc32_msb_arm64_done:\n"
+    "rev w0, w0\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".Lcrc32_msb_arm64_fold:\n"
+    ".arch_extension crypto\n"
+    //  rev64(x^575) and rev64(x^511) mod P: the fold across 64 bytes.
+    "movz x9, #0x653d, lsl #48\n   movk x9, #0x9822, lsl #32\n"
+    "movz x10, #0xcad3, lsl #48\n   movk x10, #0x8e8f, lsl #32\n"
+    "fmov d16, x9\n   mov v16.d[1], x10\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "fmov d5, x0\n   eor v0.16b, v0.16b, v5.16b\n"
+    "rbit v0.16b, v0.16b\n   rbit v1.16b, v1.16b\n"
+    "rbit v2.16b, v2.16b\n   rbit v3.16b, v3.16b\n"
+    "add x1, x1, #64\n   sub x2, x2, #64\n"
+    "cmp x2, #64\n   b.lo .Lcrc32_msb_arm64_four\n"
+    ".balign 16\n"
+    ".Lcrc32_msb_arm64_turn:\n"
+    "ldp q4, q5, [x1]\n   ldp q18, q19, [x1, #32]\n"
+    CRC32_MSB_ARM64_LANE("v0", "v4")
+    CRC32_MSB_ARM64_LANE("v1", "v5")
+    CRC32_MSB_ARM64_LANE("v2", "v18")
+    CRC32_MSB_ARM64_LANE("v3", "v19")
+    "add x1, x1, #64\n   sub x2, x2, #64\n   cmp x2, #64\n   b.hs .Lcrc32_msb_arm64_turn\n"
+    //  rev64(x^191) and rev64(x^127): the fold across 16 bytes.
+    ".Lcrc32_msb_arm64_four:\n"
+    "movz x9, #0x6567, lsl #48\n   movk x9, #0x3b46, lsl #32\n"
+    "movz x10, #0x9ba5, lsl #48\n   movk x10, #0x4c6f, lsl #32\n"
+    "fmov d16, x9\n   mov v16.d[1], x10\n"
+    CRC32_MSB_ARM64_FOLD("v0") "eor v0.16b, v0.16b, v1.16b\n"
+    CRC32_MSB_ARM64_FOLD("v0") "eor v0.16b, v0.16b, v2.16b\n"
+    CRC32_MSB_ARM64_FOLD("v0") "eor v0.16b, v0.16b, v3.16b\n"
+    "cmp x2, #16\n   b.lo .Lcrc32_msb_arm64_reduce\n"
+    ".Lcrc32_msb_arm64_sixteen:\n"
+    "ldr q4, [x1], #16\n"
+    CRC32_MSB_ARM64_LANE("v0", "v4")
+    "sub x2, x2, #16\n   cmp x2, #16\n   b.hs .Lcrc32_msb_arm64_sixteen\n"
+    //  The last lane back in message order, then through the table.
+    ".Lcrc32_msb_arm64_reduce:\n"
+    "rbit v0.16b, v0.16b\n   fmov x7, d0\n   mov x4, v0.d[1]\n"
+    "adrp x3, hash_crc32_msb_tab\n   add x3, x3, :lo12:hash_crc32_msb_tab\n"
+    "mov x15, x3\n"
+    CRC32_MSB_ARM64_BASES
+    "mov w0, #0\n"
+    CRC32_MSB_ARM64_WORD("", "x0", "w0")
+    CRC32_MSB_ARM64_WORD("mov x7, x4\n", "x0", "w0")
+    "b .Lcrc32_msb_arm64_serial\n"
+    ".arch_extension nocrypto\n"
+#endif
+    ASM_END(hash_crc32_msb)
+#undef CRC32_MSB_ARM64_LANE
+#undef CRC32_MSB_ARM64_FOLD
+#undef CRC32_MSB_ARM64_BASES
+#undef CRC32_MSB_ARM64_WORD
+
     ASM_FUNC(hash_crc64)
     "cbz x2, .Lcrc64_arm64_done\n"
     "adrp x4, hash_crc64_tab\n"
@@ -26784,6 +27126,83 @@ __asm__(
     "sext.w a0, a0\n"
     ASM_RET
     ASM_END(hash_crc32)
+
+    /* See the x86_64 body. Without Zbb the crc is swapped a byte at a time
+       on entry and on return, and the RV64 ABI wants the return
+       sign-extended again. Loads peel to natural alignment first, as
+       hash_crc32's do. Two bases reach the eight slices a word uses, four
+       each at -2048, -1024, 0 and 1024, and a byte comes out already
+       shifted for its index: the word shifted right by 8k-2, masked with
+       1020. There is no Zbc body: without Zbb a lane would still come in a
+       byte at a time. */
+#define CRC32_MSB_RISCV_SWAP                                                  \
+    "andi t3, a0, 255\n   slli t3, t3, 24\n"                                  \
+    "srli t4, a0, 8\n   andi t4, t4, 255\n   slli t4, t4, 16\n   or t3, t3, t4\n" \
+    "srli t4, a0, 16\n   andi t4, t4, 255\n   slli t4, t4, 8\n   or t3, t3, t4\n" \
+    "srli t4, a0, 24\n   andi t4, t4, 255\n   or a0, t3, t4\n"
+#define CRC32_MSB_RISCV_LOOKUP(narrow, base, at)                              \
+    "add t4, t4, " base "\n   lwu t4, " at "(t4)\n   xor " narrow ", " narrow ", t4\n"
+#define CRC32_MSB_RISCV_WORD(load, acc)                                       \
+    load "xor t3, t3, " acc "\n"                                             \
+    "andi t4, t3, 255\n   slli t4, t4, 2\n   add t4, t4, t2\n   lwu " acc ", 1024(t4)\n" \
+    "srli t4, t3, 6\n   andi t4, t4, 1020\n"  CRC32_MSB_RISCV_LOOKUP(acc, "t2", "0")     \
+    "srli t4, t3, 14\n   andi t4, t4, 1020\n" CRC32_MSB_RISCV_LOOKUP(acc, "t2", "-1024") \
+    "srli t4, t3, 22\n   andi t4, t4, 1020\n" CRC32_MSB_RISCV_LOOKUP(acc, "t2", "-2048") \
+    "srli t4, t3, 30\n   andi t4, t4, 1020\n" CRC32_MSB_RISCV_LOOKUP(acc, "t1", "1024")  \
+    "srli t4, t3, 38\n   andi t4, t4, 1020\n" CRC32_MSB_RISCV_LOOKUP(acc, "t1", "0")     \
+    "srli t4, t3, 46\n   andi t4, t4, 1020\n" CRC32_MSB_RISCV_LOOKUP(acc, "t1", "-1024") \
+    "srli t4, t3, 54\n   andi t4, t4, 1020\n" CRC32_MSB_RISCV_LOOKUP(acc, "t1", "-2048")
+#define CRC32_MSB_RISCV_BYTE                                                  \
+    "lbu t4, 0(a1)\n   xor t4, t4, a0\n   andi t4, t4, 255\n   slli t4, t4, 2\n" \
+    "add t4, t4, t1\n   lwu t4, -2048(t4)\n   srli a0, a0, 8\n   xor a0, a0, t4\n" \
+    "addi a1, a1, 1\n   addi a2, a2, -1\n"
+    ASM_FUNC(hash_crc32_msb)
+    CRC32_MSB_RISCV_SWAP
+    "lla t0, hash_crc32_msb_tab\n"
+    "li t5, 2048\n   add t1, t0, t5\n   li t5, 6144\n   add t2, t0, t5\n"
+    ".Lcrc32_msb_rv_peel:\n"
+    "beqz a2, .Lcrc32_msb_rv_done\n"
+    "andi t5, a1, 7\n   beqz t5, .Lcrc32_msb_rv_aligned\n"
+    CRC32_MSB_RISCV_BYTE
+    "j .Lcrc32_msb_rv_peel\n"
+    ".Lcrc32_msb_rv_aligned:\n"
+    "li t6, 64\n   bltu a2, t6, .Lcrc32_msb_rv_serial\n"
+    "li t5, 8192\n   add t1, t1, t5\n   add t2, t2, t5\n"
+    "li a3, 0\n   li a4, 0\n   li a5, 0\n"
+    ".Lcrc32_msb_rv_braid:\n"
+    CRC32_MSB_RISCV_WORD("ld t3, 0(a1)\n", "a0")
+    CRC32_MSB_RISCV_WORD("ld t3, 8(a1)\n", "a3")
+    CRC32_MSB_RISCV_WORD("ld t3, 16(a1)\n", "a4")
+    CRC32_MSB_RISCV_WORD("ld t3, 24(a1)\n", "a5")
+    "addi a1, a1, 32\n   addi a2, a2, -32\n   bgeu a2, t6, .Lcrc32_msb_rv_braid\n"
+    "sub t1, t1, t5\n   sub t2, t2, t5\n"
+    CRC32_MSB_RISCV_WORD("ld t3, 0(a1)\n", "a0")
+    "xor a0, a0, a3\n"
+    CRC32_MSB_RISCV_WORD("ld t3, 8(a1)\n", "a0")
+    "xor a0, a0, a4\n"
+    CRC32_MSB_RISCV_WORD("ld t3, 16(a1)\n", "a0")
+    "xor a0, a0, a5\n"
+    CRC32_MSB_RISCV_WORD("ld t3, 24(a1)\n", "a0")
+    "addi a1, a1, 32\n   addi a2, a2, -32\n"
+    ".Lcrc32_msb_rv_serial:\n"
+    "li t6, 8\n   bltu a2, t6, .Lcrc32_msb_rv_tail\n"
+    ".Lcrc32_msb_rv_eight:\n"
+    CRC32_MSB_RISCV_WORD("ld t3, 0(a1)\n", "a0")
+    "addi a1, a1, 8\n   addi a2, a2, -8\n   bgeu a2, t6, .Lcrc32_msb_rv_eight\n"
+    ".Lcrc32_msb_rv_tail:\n"
+    "beqz a2, .Lcrc32_msb_rv_done\n"
+    ".Lcrc32_msb_rv_byte:\n"
+    CRC32_MSB_RISCV_BYTE
+    "bnez a2, .Lcrc32_msb_rv_byte\n"
+    ".Lcrc32_msb_rv_done:\n"
+    CRC32_MSB_RISCV_SWAP
+    "sext.w a0, a0\n"
+    ASM_RET
+    ASM_END(hash_crc32_msb)
+#undef CRC32_MSB_RISCV_BYTE
+#undef CRC32_MSB_RISCV_WORD
+#undef CRC32_MSB_RISCV_LOOKUP
+#undef CRC32_MSB_RISCV_SWAP
 
     ASM_FUNC(hash_crc64)
     "beqz a2, .Lcrc64_rv_done\n"
@@ -38437,6 +38856,10 @@ PURE READS(1) p64 hash_xxh64_finish(address_any state);
 PURE READS(2, 3) p32 hash_crc32(p32 crc, address_any data, positive size);
 /* ECMA-182 CRC-64 (poly 0xC96C5795D7870F42, reflected). xz Check. */
 PURE READS(2, 3) p64 hash_crc64(p64 crc, address_any data, positive size);
+/* POSIX cksum's CRC-32 (poly 0x04C11DB7, most significant bit first). No
+   init, no invert and no length: cksum keeps those. Zero size is crc
+   unchanged and permits a null block. */
+PURE READS(2, 3) p32 hash_crc32_msb(p32 crc, address_any data, positive size);
 /* Little-endian 64-bit load. Unaligned is the contract. */
 PURE READS(1) p64 memory_get64(address_any source);
 /* Backward bitstream. state is 48 bytes: bits, consumed, ptr, start,

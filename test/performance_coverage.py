@@ -343,6 +343,9 @@ cover('direct_benchmark', 'test/checks.c#BENCH_compression_floor', '''
 hash_crc32 hash_crc64 huffman_encode_back lzma_range_encode
 ''', 'bounded native CRC, backwards Huffman and range-tree timing, with scalar '
       'CRC/range references; copy traffic is a proxy, not an entropy floor')
+cover('direct_benchmark', 'test/checks.c#BENCH_cksum_crc', 'hash_crc32_msb',
+      "cksum's CRC over 4 KiB and 128 KiB blocks at every feature tier, "
+      'against the former cksum.c C copied into the section')
 cover('benchmark_context', 'test/checks.c#BENCH_compression_floor', 'lzma_range_shift',
       'carry flushing inside the measured range-tree work; not isolated')
 cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'lzma_decode_span',
