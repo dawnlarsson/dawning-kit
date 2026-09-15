@@ -79,6 +79,15 @@ static b32 mouse_sgr;
 static b32 focus_events;
 static b32 origin_mode;
 
+// Whether the alternate screen is up, and the head that hands the primary one
+// back when it goes (see alternate_enter).
+static b32 alternate;
+static unsigned int alternate_head;
+
+// Lines that have scrolled off the top of the primary screen and are still in
+// the ring: what a taller window can take back in.
+static unsigned int history_lines;
+
 #define CHARSET_ASCII 0
 #define CHARSET_ACS 1
 static unsigned char charset_g0;
@@ -233,6 +242,10 @@ static fn cells_blank(unsigned int r, unsigned int first, unsigned int count)
 static fn ring_scroll()
 {
         window_scroll(window);
+
+        if (!alternate && history_lines + ROWS < window->history)
+                history_lines++;
+
         touch_all();
 }
 
@@ -1191,8 +1204,6 @@ static fn sgr()
         blank lines and leaves the old ones behind it, and moving head back is
         the hand back. There is no second buffer and nothing is copied.
 */
-static b32 alternate;
-static unsigned int alternate_head;
 
 static fn cursor_save(struct cursor_state address_to into)
 {
@@ -1417,6 +1428,8 @@ static fn history_clear()
                 slot = slot ? slot - 1 : window->history - 1;
                 address_to slot_length(slot) = 0;
         }
+
+        history_lines = 0;
 }
 
 /*
@@ -2972,28 +2985,25 @@ static fn grid_tell(b32 master)
 }
 #endif
 
-// Where a row of the screen is once it is ROWS tall instead of was_rows:
-// anchored at the bottom, with added blank lines below everything it held.
-static unsigned int regrid_row(unsigned int at, unsigned int was_rows,
-                               unsigned int added)
+// Where a row of the screen is once its lines have stayed where they are in
+// the ring and the top of the screen has moved up by shift rows.
+static unsigned int regrid_row(unsigned int at, bipolar shift)
 {
-        if (ROWS >= was_rows)
-                at += ROWS - was_rows - added;
-        else if (at >= was_rows - ROWS)
-                at -= was_rows - ROWS;
-        else
-                at = 0;
+        bipolar to = (bipolar)at + shift;
 
-        return at < ROWS ? at : ROWS - 1;
+        return to < 0 ? 0 : to < (bipolar)ROWS ? (unsigned int)to : ROWS - 1;
 }
 
 /*
         The window was resized.
 
-        Nothing is copied and nothing moves. The rows are the last lines of the
-        ring whatever there are of them, so a window made taller takes in the
-        lines that had scrolled off the top rather than blank ones, and the
-        cursor is still on the line it was on -- that many rows further down.
+        Nothing is copied. The rows are the last lines of the ring, so all a
+        resize decides is where head goes, and the cursor stays on the line it
+        was on. A window made taller takes back the lines that scrolled off
+        the top, as many as did, with blank ones below for the rest; one made
+        shorter gives up blank rows below the cursor before it pushes anything
+        off the top. That keeps what was on the screen where it was, as tmux
+        does.
 
         What was on the screen stays on it. Lines are not moved or shortened
         here: the compositor folds a stored line at the width it is drawn in,
@@ -3004,7 +3014,8 @@ static unsigned int regrid_row(unsigned int at, unsigned int was_rows,
 fn regrid(b32 master)
 {
         unsigned int was_rows = ROWS;
-        unsigned int added = 0;
+        unsigned int head_was = window->head;
+        bipolar shift;
 #ifndef KERNEL_MODE
         b32 cursor_was_shown = shown;
 #endif
@@ -3036,16 +3047,39 @@ fn regrid(b32 master)
         */
         if (alternate)
                 while (window->head - alternate_head < ROWS)
-                {
                         window_scroll(window);
-                        added++;
-                }
+        else if (ROWS < was_rows)
+        {
+                unsigned int blank = 0;
 
-        row = regrid_row(row, was_rows, added);
-        cursor_saved.row = regrid_row(cursor_saved.row, was_rows, added);
+                while (blank < was_rows - ROWS && row + blank + 1 < was_rows &&
+                       !address_to slot_length((window->head - 1 - blank) %
+                                               window->history))
+                        blank++;
+
+                __atomic_store_n(address_of window->head, window->head - blank,
+                                 __ATOMIC_RELEASE);
+                history_lines = min(history_lines + (was_rows - ROWS - blank),
+                                    window->history - ROWS);
+        }
+        else
+        {
+                unsigned int back = min(ROWS - was_rows, history_lines);
+
+                for (unsigned int n = ROWS - was_rows - back; n; n--)
+                        window_scroll(window);
+
+                history_lines -= back;
+        }
+
+        shift = (bipolar)ROWS - (bipolar)was_rows -
+                ((bipolar)window->head - (bipolar)head_was);
+        row = regrid_row(row, shift);
+        cursor_saved.row = regrid_row(cursor_saved.row, shift);
 
         if (alternate)
-                cursor_primary.row = regrid_row(cursor_primary.row, was_rows, 0);
+                cursor_primary.row = regrid_row(cursor_primary.row,
+                                                (bipolar)ROWS - (bipolar)was_rows);
 
         if (column >= COLUMNS)
                 column = COLUMNS - 1;
