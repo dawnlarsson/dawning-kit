@@ -29,6 +29,17 @@ in other words, your software can be installed from multiple places on one syste
 accelerated by Moonwaters native and very fast coreutils, 
 util-linux, and Moonwater Shell (supports all of bash, dash)
 
+`bowl setup` checks there is room before it downloads anything and says how
+much it needs. On a live USB session bowls are kept in memory, so a large
+install can run out of room; `moonwater install DISK` puts bowls on a data
+partition instead. If a setup or package install still runs out of space,
+bowl says how low free space went.
+
+An `--isolated` bowl sees the host's kernel settings (`/proc/sys`, `/sys`)
+read-only, so a package's install scripts cannot change the host. A bowl is
+not a security sandbox: its programs run as root and can reach the host's
+devices.
+
 ## The build tool
 
 The whole build path is one C program, `src/build/build.c`, built on this
