@@ -63,7 +63,6 @@ COMPILER_MEMORY = ROOT / 'src/compiler_memory.c'
 #       be findable in one of these.
 DECLARATION_SOURCES = (
     'src/library.c',
-    'src/platform/any.inc',
     'src/platform/linux.inc',
     'src/platform/standard.inc',
     'src/platform/syscall.inc',

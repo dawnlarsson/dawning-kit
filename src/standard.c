@@ -5617,7 +5617,7 @@ fn(address_to stdlib_exit_flush_hook)(void) = null;
         not to a stream, and every consumer that would pay the four percent is
         hypothetical.
 
-        The log buffer in any.inc is coarser, because it has to be. It is
+        The log buffer in library.c is coarser, because it has to be. It is
         assembly, and library.c holds assembly and declarations and nothing
         else, so there is nowhere in it to keep a stamp and no C to keep one
         from. What is available is the identity recorded at startup, which
@@ -12755,7 +12755,7 @@ fn free(address_any block);
         and a different numbering would silently turn "unbuffered" into
         "fully buffered". BUFSIZ is 4096 rather than glibc's 8192: a page is
         the unit every read and write here ends up costing, and MAX_INPUT
-        beside it in any.inc is the same number.
+        beside it in library.c is the same number.
 
         A dynamically attached default is eight bytes smaller. malloc puts
         its tag in the same allocation, so asking it for a 4096-byte payload
@@ -13082,7 +13082,7 @@ static fn stream_ready(stream address_to handle)
         Push what is staged at the kernel, and forget it either way.
 
         Forgetting it on failure is deliberate and is what buffered_flush in
-        any.inc does for the same reason: a caller that reports the failure
+        library.c does for the same reason: a caller that reports the failure
         and then flushes again -- or simply exits through a path that flushes
         -- must not write the same prefix a second time. The bytes are lost,
         the error indicator is set, and ferror is how anyone finds out.
@@ -20795,7 +20795,7 @@ static PURE b32 fileno_unlocked(stream address_to handle)
 
 /*
         The d_type values. DT_DIR, DT_REG, DT_LNK, DT_FIFO, DT_SOCK, DT_CHR
-        and DT_BLK are already in src/platform/any.inc and are not repeated;
+        and DT_BLK are already in src/library.c and are not repeated;
         the two it does not carry are added here, guarded the same way, so
         that a program switching on d_type has the whole set.
 */

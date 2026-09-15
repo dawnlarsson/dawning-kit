@@ -29425,7 +29425,7 @@ DEAD_END static fn stdlib_test_child(b32 which)
         //      forked child the two buffers answer differently and this is a
         //      forked child. A stream records which process filled it and this
         //      one filled its own, so exit writes it out; the log buffer lives
-        //      in any.inc where there is nowhere to keep that, so an implicit
+        //      in library.c where there is nowhere to keep that, so an implicit
         //      flush leaves it alone in any child at all. The block above
         //      stdlib_buffers_are_ours says why, and CHECK_leaving has
         //      both halves under test.
@@ -30958,7 +30958,7 @@ test(a_forked_childs_log_flush_is_not_doubled_by_a_fork)
         both has to be able to predict which arrives first.
 
         They are independent all the way down: the stream buffer is stream.c's
-        and the log buffer is any.inc's, they are flushed by different code and
+        and the log buffer is library.c's, they are flushed by different code and
         they reach descriptor one by different calls. So a hand flush of the
         log goes out immediately and a printf still waiting in the stream
         buffer goes out later, whatever order the two calls were written in.

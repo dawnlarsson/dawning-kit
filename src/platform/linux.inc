@@ -179,7 +179,7 @@ bipolar thread_wake(b32 address_to word, b32 count);
         First thread only, by the same rule glibc gives its non-reentrant
         interfaces -- one shared cell each, and no lock:
           - log, log_error, log_flush, string_format(log, ...) and the
-            diagnostics built on them (log_writer_buffer in any.inc);
+            diagnostics built on them (log_writer_buffer in library.c);
           - buffered_write, buffered_reserve and buffered_flush on a buffer
             more than one thread can reach (a job's own buffer is fine);
           - working_directory and its setters, and text_token_place, the
