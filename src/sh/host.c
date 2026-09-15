@@ -1573,7 +1573,8 @@ static b32 host_power_button_tell(string_address command)
             address_of control);
 
         if (failed == -EPERM)
-                return host_refuse("setting what the power button runs needs root%s\n", "");
+                return host_refuse("setting what the power button runs needs root "
+                                   "(CAP_SYS_ADMIN and CAP_SYS_BOOT)%s\n", "");
         if (failed == -ENAMETOOLONG)
                 return host_refuse("that command is longer than the %s a power button holds\n",
                                    "255 bytes");

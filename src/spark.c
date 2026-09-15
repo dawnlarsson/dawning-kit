@@ -345,8 +345,9 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
         ignored. The kernel holds the line while it is up and nothing longer;
         keeping it across a boot belongs to whoever sets it at boot.
 
-        Reading needs nothing. Setting needs CAP_SYS_BOOT, because a button
-        that runs a command is a way to run one as root.
+        Reading needs nothing. Setting needs CAP_SYS_BOOT and CAP_SYS_ADMIN:
+        the line runs as root with every capability on the next press, so a
+        process allowed only to stop the machine must not choose what runs.
 */
 #define SPARK_POWER_COMMAND_MAX 256u
 

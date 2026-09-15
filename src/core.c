@@ -1158,7 +1158,10 @@ static long report_power_button(struct power_button_control __user *out)
 
         if (request.set)
         {
-                if (!capable(CAP_SYS_BOOT))
+                // The line runs with every capability on the next press, so
+                // choosing it is running a command as root, not only stopping
+                // the machine: CAP_SYS_BOOT alone must not reach CAP_SYS_ADMIN.
+                if (!capable(CAP_SYS_BOOT) || !capable(CAP_SYS_ADMIN))
                         return -EPERM;
                 if (!memchr(request.command, 0, sizeof(request.command)))
                         return -ENAMETOOLONG;

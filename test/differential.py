@@ -17357,8 +17357,8 @@ static void orderly_poweroff(_Bool force) { power_offs++;power_forced=force; }
 static void orderly_reboot(void) { power_reboots++; }
 """
     source += section(core, "#define POWER_COMMAND_DEFAULT", "static int power_connect")
-    source += "#define CAP_SYS_BOOT 22\nstatic _Bool power_capable=1;\n"
-    source += "static _Bool capable(int cap) { return cap==CAP_SYS_BOOT && power_capable; }\n"
+    source += "#define CAP_SYS_ADMIN 21\n#define CAP_SYS_BOOT 22\nstatic _Bool power_capable=1,power_admin=1;\n"
+    source += "static _Bool capable(int cap) { return cap==CAP_SYS_BOOT ? power_capable : cap==CAP_SYS_ADMIN && power_admin; }\n"
     source += section(core, "static long report_power_button", "#ifdef CONFIG_MOONWATER_CANVAS\n#define REPORT_CANVAS")
     # Here rather than beside the geometry it reshapes: resize_move reads the
     # drag state off desktop, and desktop is the mock declared just above.
@@ -17685,6 +17685,12 @@ static void check_power_button(void) {
     request.set=1;snprintf(request.command,sizeof(request.command),"reboot");
     check(report_power_button(&request)==-EPERM && !strcmp(power_command,"echo set"),
           "setting the line without CAP_SYS_BOOT is refused and changes nothing");
+    power_capable=1;power_admin=0;
+    memset(&request,0,sizeof(request));
+    request.set=1;snprintf(request.command,sizeof(request.command),"reboot");
+    check(report_power_button(&request)==-EPERM && !strcmp(power_command,"echo set"),
+          "setting the line with CAP_SYS_BOOT but not CAP_SYS_ADMIN is refused: it runs with every capability");
+    power_capable=0;power_admin=1;
     memset(&request,0,sizeof(request));
     check(!report_power_button(&request) && !strcmp(request.command,"echo set"),
           "reading the line needs no capability");

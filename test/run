@@ -10106,9 +10106,43 @@ qmp = work + "/power-qmp"
 console = work + "/power-console"
 out = []
 
+#       Root holding CAP_SYS_BOOT and nothing else. The image's setpriv refuses
+#       every capability change on purpose, so a helper that keeps that one
+#       bit and runs the rest of its line rides in on a read-only stick.
+stick = work + "/power-stick"
+os.makedirs(stick, exist_ok=True)
+open(work + "/capboot.c", "w").write(r'''
+#include <linux/capability.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+int main(int argc, char **argv)
+{
+        struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
+        struct __user_cap_data_struct data[2] = {{0}};
+
+        for (int cap = 0; cap < 64; cap++)
+                if (cap != CAP_SYS_BOOT)
+                        prctl(PR_CAPBSET_DROP, cap, 0, 0, 0);
+
+        data[0].effective = data[0].permitted = 1u << CAP_SYS_BOOT;
+        if (argc < 2 || syscall(SYS_capset, &header, data))
+                return 125;
+
+        execvp(argv[1], argv + 1);
+        return 127;
+}
+''')
+capboot = subprocess.run(["cc", "-O2", "-static", "-o", stick + "/capboot", work + "/capboot.c"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
 guest = subprocess.Popen([
     "qemu-system-x86_64", "-m", "1G", "-smp", "2", "-cpu", "host", "-enable-kvm",
     "-kernel", image, "-vga", "none", "-no-reboot", "-display", "none",
+    "-device", "qemu-xhci,id=xhci",
+    "-drive", "if=none,id=stick,format=raw,file=fat:ro:" + stick + ",readonly=on",
+    "-device", "usb-storage,bus=xhci.0,drive=stick,removable=on",
     "-chardev", "socket,id=console,path=" + console + ",server=on,wait=off",
     "-serial", "chardev:console",
     "-qmp", "unix:" + qmp + ",server,nowait",
@@ -10196,6 +10230,16 @@ asked("the power button runs poweroff by default",
 asked("a user without CAP_SYS_BOOT cannot set it",
       "setpriv --reuid=65534 --regid=65534 --clear-groups moonwater button power true 2>&1 | grep -c 'needs root' | sed 's/^/toorn-/' | rev",
       b"1-nroot")
+#       Three counts in one answer: the helper left CAP_SYS_BOOT alone in the
+#       effective set, the kernel refused the line, and the button still runs
+#       poweroff afterwards.
+if capboot:
+    asked("root with only CAP_SYS_BOOT cannot set it, since it runs with every capability",
+          "mkdir -p /mnt; mount -r -t vfat /dev/sda1 /mnt; { /mnt/capboot grep -c 'CapEff:.0000000000400000$' /proc/self/status; /mnt/capboot moonwater button power true 2>&1 | grep -c 'needs root'; moonwater button power | grep -c 'runs: poweroff'; } | tr -d '\\n' | sed 's/^/toob-/' | rev",
+          b"111-boot")
+else:
+    out.append(("root with only CAP_SYS_BOOT cannot set it, since it runs with every capability",
+                "not run: the helper did not build", "yes"))
 asked("a command longer than the button holds is refused",
       "moonwater button power \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
       b"1-long")
