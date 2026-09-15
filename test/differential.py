@@ -1992,9 +1992,17 @@ def self_test():
             #      reverted, and what stopped was the line in test/run. So the
             #      allowance stays available and stops being silent -- a
             #      harness no lane runs has to be named here, by someone who
-            #      meant it. The list is empty, and every registered harness
-            #      is asked for by a lane.
-            BY_HAND = set()
+            #      meant it.
+            #
+            #      https_bench is one. It builds its own shell with
+            #      -DTLS_BENCH_ANCHOR naming a root it generates with openssl,
+            #      forks a loopback TLS server on 127.0.0.1 and 127.0.0.2, and
+            #      exists to measure wget's download path by hand; its --matrix
+            #      mode is the hand-run correctness check, every framing with
+            #      and without the redirect hop, byte-compared. Measured on the
+            #      box as an ordinary user: 66 of 66 in 84 s, 78 s of it the
+            #      anchored build, which no lane should pay on every run.
+            BY_HAND = {"https_bench"}
 
             unrun = sorted(set(registered) - asked - BY_HAND)
             self.assertEqual(unrun, [],
