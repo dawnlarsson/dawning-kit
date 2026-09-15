@@ -22411,7 +22411,7 @@ static bool sort_line_record(positive stop)
         return true;
 }
 
-static bool sort_split()
+static bool sort_split_serial()
 {
         p8 address_to at = sort_text + sort_scanned;
         p8 address_to stop = sort_text + sort_text_used;
@@ -22436,6 +22436,140 @@ static bool sort_split()
 }
 
 /*
+        What has been read and not yet cut into lines, cut on the pool: the
+        delimiters of every megabyte counted by one job, the counts summed
+        into each block's first record, and each block's records written by
+        another. A block's first line starts after the delimiter before it,
+        found walking back from its own delimiter, so no job reads a record
+        another writes. Blocks are fixed megabytes, and where a batch ends
+        follows the budget, so the records are the same at any width.
+*/
+enum
+{
+        SORT_SPLIT_BLOCK = 1 << 20,
+        SORT_SPLIT_BATCH = 16 << 20,
+};
+
+typedef struct
+{
+        positive from;
+        positive to;
+        positive line_start;
+} sort_split_region;
+
+static positive address_to sort_split_counts;
+static positive sort_split_counts_room;
+
+static fn sort_lines_count_job(address_any context, positive index)
+{
+        sort_split_region address_to region = context;
+        positive from = region->from + index * SORT_SPLIT_BLOCK;
+        positive to = min(from + SORT_SPLIT_BLOCK, region->to);
+
+        sort_split_counts[index] = memory_count(sort_text + from, to - from,
+                                                text_delimiter);
+}
+
+static fn sort_lines_fill_job(address_any context, positive index)
+{
+        sort_split_region address_to region = context;
+        positive from = region->from + index * SORT_SPLIT_BLOCK;
+        positive to = min(from + SORT_SPLIT_BLOCK, region->to);
+        positive record = sort_split_counts[index];
+        p8 address_to at = sort_text + from;
+        p8 address_to stop = sort_text + to;
+        positive start = positive_max;
+
+        while (at < stop)
+        {
+                p8 address_to found = memory_first_of(at, text_delimiter,
+                                                      (positive)(stop - at));
+
+                if (!found)
+                        break;
+
+                positive close = (positive)(found - sort_text);
+
+                if (start == positive_max)
+                {
+                        start = close;
+
+                        while (start > region->from &&
+                               sort_text[start - 1] != text_delimiter)
+                                start--;
+
+                        if (start == region->from)
+                                start = region->line_start;
+                }
+
+                sort_lines[record].at = start;
+                sort_lines[record].length = close - start;
+                record++;
+                start = close + 1;
+                at = found + 1;
+        }
+}
+
+static bool sort_split()
+{
+        positive bytes = sort_text_used - sort_scanned;
+        positive blocks = (bytes + SORT_SPLIT_BLOCK - 1) / SORT_SPLIT_BLOCK;
+
+        if (blocks < 2 || sort_alone)
+                return sort_split_serial();
+
+        sort_split_region region = {sort_scanned, sort_text_used, sort_line_start};
+        positive total = 0;
+
+        if (!array_store_reserve(sort_split_counts, sort_split_counts_room, 0, blocks, 64))
+        {
+                sort_failed = true;
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        }
+
+        parallel_for(sort_lines_count_job, address_of region, blocks, bytes);
+
+        for (positive block = 0; block < blocks; block++)
+        {
+                positive here = sort_split_counts[block];
+
+                sort_split_counts[block] = sort_lines_count + total;
+                total += here;
+        }
+
+        if (!array_store_reserve(sort_lines, sort_lines_room, sort_lines_count,
+                                 sort_lines_count + total + 1, 65536))
+        {
+                sort_failed = true;
+                return string_diagnostic(&text_diagnostic, 0, null, "out of memory");
+        }
+
+        parallel_for(sort_lines_fill_job, address_of region, blocks, bytes);
+
+        if (total)
+        {
+                sort_line address_to last = sort_lines + sort_lines_count + total - 1;
+
+                sort_line_start = last->at + last->length + 1;
+        }
+
+        sort_lines_count += total;
+        sort_scanned = sort_text_used;
+        return true;
+}
+
+// How much is read before it is cut: a batch whose every byte could be a
+// line still costs no more records than the budget holds.
+static inline INLINE positive sort_split_batch()
+{
+        positive batch = sort_budget / 64;
+
+        return batch < SORT_READ ? SORT_READ
+               : batch > SORT_SPLIT_BATCH ? SORT_SPLIT_BATCH
+                                          : batch;
+}
+
+/*
         One input read straight into the text, a megabyte at a time, and cut
         into lines as it arrives. A read error is said and ends that input,
         and the sort goes on with the rest, as it always has here.
@@ -22444,7 +22578,19 @@ static bool sort_gather(positive handle, string_address name)
 {
         for (;;)
         {
-                positive cost = sort_text_used + sort_lines_count * sort_line_cost;
+                // Text not yet cut is counted at a line every eight bytes, and
+                // cut before a spill is decided, so a run holds all it can.
+                positive unsplit = sort_text_used - sort_scanned;
+                positive cost = sort_text_used +
+                                (sort_lines_count + unsplit / 8) * sort_line_cost;
+
+                if (unsplit && cost >= sort_budget)
+                {
+                        if (!sort_split())
+                                return false;
+
+                        continue;
+                }
 
                 if (sort_lines_count &&
                     (cost >= sort_budget || sort_lines_count > 0xf0000000u))
@@ -22462,6 +22608,14 @@ static bool sort_gather(positive handle, string_address name)
                                                  sort_text_used + SORT_READ + SORT_SLACK,
                                                  4 * SORT_READ))
                         {
+                                if (unsplit)
+                                {
+                                        if (!sort_split())
+                                                return false;
+
+                                        continue;
+                                }
+
                                 if (sort_lines_count)
                                 {
                                         if (!sort_spill())
@@ -22495,9 +22649,12 @@ static bool sort_gather(positive handle, string_address name)
 
                 sort_text_used += (positive)got;
 
-                if (!sort_split())
+                if (sort_text_used - sort_scanned >= sort_split_batch() && !sort_split())
                         return false;
         }
+
+        if (!sort_split())
+                return false;
 
         if (sort_line_start < sort_text_used && !sort_line_record(sort_text_used))
                 return false;
@@ -22654,6 +22811,7 @@ static fn sort_release()
         array_store_release(sort_bounds, sort_bounds_room, none);
         array_store_release(sort_piece_errors, sort_piece_errors_room, none);
         array_store_release(sort_sizes, sort_sizes_room, none);
+        array_store_release(sort_split_counts, sort_split_counts_room, none);
         array_store_release(sort_scan, sort_scan_room, none);
 
         sort_scratches_count = 0;
