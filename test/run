@@ -1381,7 +1381,7 @@ x86_kernel_vector_audit()
                 -mno-mmx -msoft-float -ffreestanding -fno-builtin -nostdlib \
                 -I"$work/x86-kernel-include" \
                 -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
-                -c src/library.c -o "$work/x86-kernel.o" \
+                -DCONFIG_MOONWATER_CANVAS -c src/library.c -o "$work/x86-kernel.o" \
                 2> "$work/x86-kernel.err"
         then
                 note "the standalone x86 KERNEL_MODE library did not compile:"
@@ -1488,7 +1488,7 @@ arm64_kernel_vector_audit()
                 -march=armv8-a -mgeneral-regs-only -mno-outline-atomics \
                 -ffreestanding -fno-builtin \
                 -nostdlib -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
-                -c src/library.c -o "$work/arm64-kernel.o" \
+                -DCONFIG_MOONWATER_CANVAS -c src/library.c -o "$work/arm64-kernel.o" \
                 2> "$work/arm64-kernel.err"
         then
                 note "the standalone ARM64 KERNEL_MODE library did not compile:"

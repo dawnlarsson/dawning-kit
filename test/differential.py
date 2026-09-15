@@ -16475,6 +16475,9 @@ def canvas_assembly(library, arch):
     comments. The strings are decoded rather than transcribed, so what the
     check runs is the text library.c holds, and anything else in a body stops
     the lift instead of being guessed at.
+
+    Each body is emitted after .balign 16, which need not be where the kernel
+    build places it: the lift is for correctness, never the timing reference.
     """
     block = {"x86_64": "X64", "amd64": "X64", "aarch64": "ARM64",
              "arm64": "ARM64", "riscv64": "RISCV64"}.get(arch)
