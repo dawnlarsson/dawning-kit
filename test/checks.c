@@ -51016,6 +51016,141 @@ static fn bits(void)
               zstd_bits_open(address_of b, eight, sizeof(eight)) == 0);
 }
 
+/* The backward reader against a C model of its state, the reader zstd.c
+   kept before it called the library: every length to 40 bytes at every
+   pointer alignment, starting on a mapping's first page and ending on a
+   hole, through gets of 0 to 16 bits and reloads until one overflows. */
+static p64 bits_model_load(p8 address_to at, positive count)
+{
+        p64 value = 0;
+
+        for (positive i = 0; i < count; i++)
+                value |= (p64)at[i] << (8 * i);
+        return value;
+}
+
+static bool bits_model_open(zstd_bits address_to b, p8 address_to src, positive size)
+{
+        positive high = 7;
+
+        if (!size || !src[size - 1])
+                return false;
+        while (!(src[size - 1] >> high))
+                high--;
+        b->start = src;
+        b->last = src + size;
+        b->limit = src + 8;
+        b->ptr = size >= 8 ? src + size - 8 : src;
+        b->bits = bits_model_load(b->ptr, size >= 8 ? 8 : size);
+        b->consumed = (size >= 8 ? 0 : (8 - size) * 8) + 8 - high;
+        return true;
+}
+
+static p64 bits_model_get(zstd_bits address_to b, positive n)
+{
+        p64 const value = !n || b->consumed >= 64 ? 0 : (b->bits << b->consumed) >> (64 - n);
+
+        b->consumed += n;
+        return value;
+}
+
+static bool bits_model_reload(zstd_bits address_to b)
+{
+        positive bytes;
+        positive have;
+
+        if (b->consumed > 64)
+                return false;
+        if (b->ptr >= b->limit)
+        {
+                b->ptr -= b->consumed >> 3;
+                b->consumed &= 7;
+                b->bits = bits_model_load(b->ptr, 8);
+                return true;
+        }
+        if (b->ptr == b->start)
+                return true;
+        bytes = b->consumed >> 3;
+        if ((positive)(b->ptr - b->start) < bytes)
+                bytes = (positive)(b->ptr - b->start);
+        b->ptr -= bytes;
+        b->consumed -= bytes * 8;
+        have = (positive)(b->last - b->ptr);
+        b->bits = bits_model_load(b->ptr, have < 8 ? have : 8);
+        return true;
+}
+
+static fn bits_model(void)
+{
+        positive const page = 4096;
+        p8 address_to const map = memory(3 * page);
+        p32 random = 0x1b873593u;
+        positive streams = 0;
+        bool same = true;
+
+        if (!map || system_failed(map))
+        {
+                check("the reader model maps its pages", false);
+                return;
+        }
+        memory_free(map + 2 * page, page);
+        for (positive size = 1; size <= 40; size++)
+                for (positive place = 0; place < 3; place++)
+                        for (positive shift = 0; shift < 8; shift++)
+                        {
+                                p8 address_to const src = place == 0   ? map + shift
+                                                          : place == 1 ? map + 2 * page - shift - size
+                                                                       : map + page / 2 + shift;
+                                zstd_bits ours;
+                                zstd_bits model;
+                                bool opened;
+
+                                for (positive i = 0; i < size; i++)
+                                {
+                                        random ^= random << 13;
+                                        random ^= random >> 17;
+                                        random ^= random << 5;
+                                        src[i] = (p8)(random >> 11);
+                                }
+                                if (!src[size - 1] && (random & 7))
+                                        src[size - 1] = (p8)(1 << (random >> 3) % 8);
+                                memory_fill(address_of ours, 0, sizeof(ours));
+                                memory_fill(address_of model, 0, sizeof(model));
+                                opened = bits_model_open(address_of model, src, size);
+                                same &= (zstd_bits_open(address_of ours, src, size) == 0) == opened;
+                                if (!opened)
+                                        continue;
+                                same &= !memory_compare(address_of ours, address_of model, sizeof(ours));
+                                streams++;
+                                for (positive step = 0; step < 96; step++)
+                                {
+                                        random ^= random << 13;
+                                        random ^= random >> 17;
+                                        random ^= random << 5;
+                                        if (random & 3)
+                                        {
+                                                positive const n = (random >> 8) % 17;
+
+                                                same &= zstd_bits_get(address_of ours, n) ==
+                                                        bits_model_get(address_of model, n);
+                                        }
+                                        else
+                                        {
+                                                bool const live = bits_model_reload(address_of model);
+
+                                                same &= (zstd_bits_reload(address_of ours) == 0) == live;
+                                                if (!live)
+                                                        break;
+                                        }
+                                        same &= !memory_compare(address_of ours, address_of model,
+                                                                sizeof(ours));
+                                }
+                        }
+        memory_free(map, 2 * page);
+        check("the backward reader is its model at every alignment and mapping edge",
+              same && streams > 900);
+}
+
 /* A single RLE sequence expands a five-byte match from one prior byte.  The
    sequence walker must reject it before writing when only three bytes remain,
    and the identical job must retain its ordinary result with enough room. */
@@ -51360,6 +51495,7 @@ b32 main(void)
         literal_codebooks();
         frames();
         bits();
+        bits_model();
         sequence_capacity();
         huffman_exact_end();
         roundtrip();
