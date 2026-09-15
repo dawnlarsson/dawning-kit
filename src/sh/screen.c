@@ -98,13 +98,7 @@ static b32 screen_term()
         // one and two untitled terminals are a guessing game.
         string_copy((string_address)window->title, (string_address) "shell");
 
-        // A window narrower or shorter than one cell is not a grid, and every
-        // wrap and scroll divides by these.
-        COLUMNS = window->columns ? window->columns : 1;
-        ROWS = window->rows ? window->rows : 1;
-
-        if (COLUMNS > window->stride)
-                COLUMNS = window->stride;
+        grid_take();
 
         full_reset();
 
@@ -137,11 +131,7 @@ static b32 screen_term()
                 return 1;
         }
 
-        winsize size = {(unsigned short)ROWS, (unsigned short)COLUMNS,
-                        (unsigned short)(COLUMNS * WINDOW_CELL_W),
-                        (unsigned short)(ROWS * WINDOW_CELL_H)};
-
-        system_control(master, TIOCSWINSZ, address_of size);
+        grid_tell(master);
 
         terminal_terminfo_install();
 

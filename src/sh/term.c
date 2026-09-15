@@ -2533,6 +2533,31 @@ fn claim_standard_descriptors()
 
 #endif
 
+// The grid the window has room for. A window narrower or shorter than one
+// cell is not a grid, and every wrap and scroll divides by these: zero rows had
+// put wrapped forever looking for a row to land on.
+static fn grid_take()
+{
+        COLUMNS = window->columns ? window->columns : 1;
+        ROWS = window->rows ? window->rows : 1;
+
+        if (COLUMNS > window->stride)
+                COLUMNS = window->stride;
+}
+
+#ifndef KERNEL_MODE
+// The pty is told the grid, so a program that asks has the size it is drawn
+// in, and a resize reaches it as SIGWINCH.
+static fn grid_tell(b32 master)
+{
+        winsize size = {(unsigned short)ROWS, (unsigned short)COLUMNS,
+                        (unsigned short)(COLUMNS * WINDOW_CELL_W),
+                        (unsigned short)(ROWS * WINDOW_CELL_H)};
+
+        system_control(master, TIOCSWINSZ, address_of size);
+}
+#endif
+
 // Where a row of the screen is once it is ROWS tall instead of was_rows:
 // anchored at the bottom, with added blank lines below everything it held.
 static unsigned int regrid_row(unsigned int at, unsigned int was_rows,
@@ -2565,8 +2590,6 @@ static unsigned int regrid_row(unsigned int at, unsigned int was_rows,
 fn regrid(b32 master)
 {
         unsigned int was_rows = ROWS;
-        unsigned int columns = window->columns;
-        unsigned int rows = window->rows;
         unsigned int added = 0;
 #ifndef KERNEL_MODE
         b32 cursor_was_shown = shown;
@@ -2587,14 +2610,7 @@ fn regrid(b32 master)
                 line_erase(true);
 #endif
 
-        // A window narrower or shorter than one cell is not a grid, and every
-        // wrap and scroll below divides by these: zero rows had put wrapped
-        // forever looking for a row to land on.
-        COLUMNS = columns ? columns : 1;
-        ROWS = rows ? rows : 1;
-
-        if (COLUMNS > window->stride)
-                COLUMNS = window->stride;
+        grid_take();
 
         /*
                 The alternate screen is the lines after alternate_head, and a
@@ -2677,13 +2693,6 @@ fn regrid(b32 master)
 #endif
 
 #ifndef KERNEL_MODE
-        winsize size;
-
-        size.rows = (unsigned short)ROWS;
-        size.columns = (unsigned short)COLUMNS;
-        size.x_pixels = (unsigned short)(COLUMNS * WINDOW_CELL_W);
-        size.y_pixels = (unsigned short)(ROWS * WINDOW_CELL_H);
-
-        system_control(master, TIOCSWINSZ, address_of size);
+        grid_tell(master);
 #endif
 }
