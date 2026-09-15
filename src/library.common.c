@@ -4611,7 +4611,10 @@ pub address_any memalign(positive alignment, positive bytes)
 
         The CPUs sched_getaffinity grants at first use, so taskset decides it.
         The caller counts as one: width - 1 workers are started, slots 1 up,
-        and the caller is slot 0. A beside job's thread is slot width.
+        and the caller is slot 0. A beside job's thread is slot width. One
+        more worker, slot width + 1, joins ordered runs only: there the caller
+        runs no job but the one it is waiting to emit, and this keeps width
+        threads claiming beside it.
 
         Every parallel_slot() is below parallel_slots(), the beside thread's
         included. Per-slot scratch is sized by that, never by arithmetic on
@@ -4647,8 +4650,11 @@ pub address_any memalign(positive alignment, positive bytes)
         entry is never reused before its last owner was emitted. That bound
         is the memory bound and the backpressure: a worker that runs ahead
         sleeps on limit_word until the caller emits. The caller emits
-        whenever the next entry is done, runs a job itself when it can claim
-        one, and otherwise sleeps on finished_word.
+        whenever the next entry is done, runs the job for that entry itself
+        when nobody has claimed it, and otherwise sleeps on finished_word. It
+        claims nothing further ahead: a long job taken there held every
+        output that finished meanwhile back from the sink, so a sink that
+        writes to a file got its bytes in one burst at the end.
 
         STOPPING
 
@@ -4723,7 +4729,7 @@ static struct
         b32 busy;
         b32 quit;
         parallel_run address_to run;
-        thread address_to worker[PARALLEL_WORKERS_MAX];
+        thread address_to worker[PARALLEL_WORKERS_MAX + 1];
 } parallel_pool;
 
 static struct
@@ -4777,7 +4783,7 @@ pub positive parallel_slot(void)
 //      The bound every parallel_slot() stays below; see WIDTH.
 pub positive parallel_slots(void)
 {
-        return parallel_width() + 1;
+        return parallel_width() + 2;
 }
 
 static fn parallel_run_stop(parallel_run address_to run)
@@ -4974,9 +4980,14 @@ static fn parallel_worker(address_any argument)
                 {
                         self->run = run;
 
+                        //      The worker past the beside slot is for ordered
+                        //      runs, where the caller does not claim.
                         if (run->work)
-                                run->work(run);
-                        else
+                        {
+                                if (self->slot < parallel_pool.width)
+                                        run->work(run);
+                        }
+                        else if (run->ring || self->slot < parallel_pool.width)
                                 parallel_participate(run);
 
                         self->run = null;
@@ -5022,6 +5033,15 @@ static bool parallel_ready(void)
                         break;
 
                 parallel_pool.worker[parallel_pool.workers++] = handle;
+        }
+
+        if (parallel_width() > 1 && parallel_pool.workers == parallel_width() - 1)
+        {
+                thread address_to handle =
+                        thread_start(parallel_worker, (address_any)(parallel_width() + 1));
+
+                if (handle)
+                        parallel_pool.worker[parallel_pool.workers++] = handle;
         }
 
         return parallel_pool.workers != 0;
@@ -5160,7 +5180,6 @@ pub bool parallel_ordered(parallel_emit_job job, parallel_sink sink,
         while (emitted < count)
         {
                 parallel_entry address_to entry = address_of run.ring[emitted % run.window];
-                positive index;
                 b32 word;
 
                 if (atomic_load(address_of entry->done))
@@ -5185,9 +5204,12 @@ pub bool parallel_ordered(parallel_emit_job job, parallel_sink sink,
                 if (atomic_load(address_of run.stop))
                         break;
 
-                if (parallel_claim(address_of run, address_of index, false))
+                //      Only the entry to emit next, and only if nobody took it.
+                //      Once the claim fails, someone holds it and will wake us.
+                if (!atomic_load(address_of run.stop) &&
+                    atomic_compare_exchange(address_of run.next, emitted, emitted + 1))
                 {
-                        parallel_run_one(address_of run, index);
+                        parallel_run_one(address_of run, emitted);
                         continue;
                 }
 
