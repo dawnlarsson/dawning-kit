@@ -370,12 +370,17 @@ fn file_mode_letters(p8 address_to into, positive mode)
         the mask was before the command, so "u=rw,g+u" gives the group all
         three bits there, and the caller says which it wants.
 */
-static bool file_mode_adjust(string_address specification, positive current,
-                             bool directory, positive unnamed,
-                             bool copies_original, positive address_to result)
+//      touched, when asked for, is every bit a clause set, cleared or
+//      assigned -- GNU's mode_bits, which mkdir -m reads to decide what to
+//      bring back after the kernel made the directory.
+static bool file_mode_clauses(string_address specification, positive current,
+                              bool directory, positive unnamed,
+                              bool copies_original, positive address_to result,
+                              positive address_to touched)
 {
         positive mode = current & 07777;
         positive kept = directory ? 06000 : 0;
+        positive changed = 0;
 
         if (string_get(specification) >= '0' && string_get(specification) <= '7')
         {
@@ -390,6 +395,8 @@ static bool file_mode_adjust(string_address specification, positive current,
                 positive mentioned = step - specification < 5 ? value & 06000 : 06000;
 
                 address_to result = value | (mode & kept & ~mentioned);
+                if (touched)
+                        address_to touched = 07777 & ~(kept & ~mentioned);
                 return true;
         }
 
@@ -470,6 +477,9 @@ static bool file_mode_adjust(string_address specification, positive current,
                         positive omit = kept & ~mentioned;
 
                         bits &= who & ~omit;
+                        changed |= action == '='
+                                       ? (named ? who : 07777) & ~omit
+                                       : bits;
 
                         if (action == '+')
                                 mode |= bits;
@@ -488,8 +498,18 @@ static bool file_mode_adjust(string_address specification, positive current,
         }
 
         address_to result = mode & 07777;
+        if (touched)
+                address_to touched = changed & 07777;
 
         return true;
+}
+
+static bool file_mode_adjust(string_address specification, positive current,
+                             bool directory, positive unnamed,
+                             bool copies_original, positive address_to result)
+{
+        return file_mode_clauses(specification, current, directory, unnamed,
+                                 copies_original, result, null);
 }
 
 bool file_mode_of(string_address specification, positive current, bool directory,
@@ -518,10 +538,12 @@ static positive file_umask()
 // umask: chmod, and mkdir, mkfifo and mknod when -m names a mode.
 static bool file_mode_masked(string_address specification, positive current,
                              bool directory, positive mask,
-                             positive address_to result)
+                             positive address_to result,
+                             positive address_to touched)
 {
-        return file_mode_adjust(specification, current, directory,
-                                07000 | (0777 & ~mask), false, result);
+        return file_mode_clauses(specification, current, directory,
+                                 07000 | (0777 & ~mask), false, result,
+                                 touched);
 }
 
 // Looking at files ------------------------------------------
@@ -3301,6 +3323,10 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         }
 }
 
+//      A walk of the tool's own for everything under an operand of -R, when
+//      it has one; the serial walk below otherwise.
+static fn(address_to file_change_tree)(string_address path);
+
 // The operand list those three read, which is the same list every time: each
 // name is visited, and under -R so is everything under it.
 static fn file_change_paths(positive first, positive count, bool recursive,
@@ -3324,7 +3350,9 @@ static fn file_change_paths(positive first, positive count, bool recursive,
                         continue;
                 }
 
-                if (recursive)
+                if (recursive && file_change_tree)
+                        file_change_tree(path);
+                else if (recursive)
                         file_change_walk_as(AT_FDCWD, path, path, FILE_MAX_DEPTH,
                                             program, status, visit, false, 0,
                                             false);
@@ -4861,9 +4889,13 @@ static bipolar file_created_open_at(bipolar directory, string_address name,
 /* Linux applies the permission bits passed to mkdirat but may discard
    requested set-ID bits.  Complete those bits through a real descriptor and
    preserve setgid inherited from the parent, matching mkdir's directory
-   inheritance contract without returning to the public pathname. */
+   inheritance contract without returning to the public pathname.  With
+   touched, mkdir -m's reading: only the bits the mode names are brought back
+   in line over what the kernel made, so a leaf made without group and other
+   write for o+t stays that way, as GNU's does. */
 static bipolar file_created_directory_mode_at(
-    bipolar directory, string_address name, bipolar exact, positive mode)
+    bipolar directory, string_address name, bipolar exact, positive mode,
+    positive touched)
 {
         file_facts facts;
         bipolar looked = file_look_code(
@@ -4872,9 +4904,13 @@ static bipolar file_created_directory_mode_at(
             (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
                 return looked < 0 ? looked : -ERROR_INPUT_OUTPUT;
 
-        positive wanted = (mode & 07777) |
-                          (facts.mode & MODE_SET_GROUP);
-        if ((facts.mode & 07777) == wanted)
+        positive actual = facts.mode & 07777;
+        positive wanted = !touched
+                              ? (mode & 07777) | (facts.mode & MODE_SET_GROUP)
+                          : touched & (actual ^ mode) & 07777
+                              ? (mode | (actual & ~touched)) & 07777
+                              : actual;
+        if (actual == wanted)
                 return 0;
 
         bool prepared;
@@ -4915,7 +4951,8 @@ static bipolar file_make_directories_open(
     bool leaf_exact, bool parents,
     fn(address_to told)(string_address),
     p8 address_to failed, bool address_to created,
-    bipolar address_to leaf_parent, p8 address_to leaf_name)
+    bipolar address_to leaf_parent, p8 address_to leaf_name,
+    positive leaf_touched, bool leaf_ancestor)
 {
         p8 work[FILE_PATH_MAX];
         p8 component[SYSTEM_PATH_LEAF_ROOM];
@@ -4945,6 +4982,7 @@ static bipolar file_make_directories_open(
                 return held;
 
         positive at = 0;
+        positive held_stop = 0;
         while (at < length && work[at] == '/')
                 at++;
 
@@ -4983,6 +5021,7 @@ static bipolar file_make_directories_open(
 
                 bipolar next = system_open_at(held, component, flags);
                 bool made_here = false;
+                positive blamed = 0;
 
                 if (next < 0)
                 {
@@ -5005,7 +5044,7 @@ static bipolar file_make_directories_open(
                                    when it dangles, the look's errno when
                                    that fails otherwise, and not a
                                    directory even when it reaches one. */
-                                if (last)
+                                if (last && !leaf_ancestor)
                                         next = -ERROR_EXISTS;
                                 else if (parents &&
                                          (entry.mode & MODE_FORMAT) ==
@@ -5024,7 +5063,16 @@ static bipolar file_make_directories_open(
                                 }
                         }
                         else if (found != -ERROR_NO_ENTRY)
+                        {
+                                /* A look refused inside a held directory
+                                   means it cannot be searched.  GNU's -p
+                                   changes into each ancestor, so it names
+                                   that directory rather than this entry. */
                                 next = found;
+                                if (parents && found == -ERROR_ACCESS &&
+                                    held_stop)
+                                        blamed = held_stop;
+                        }
                         else if (!last && !parents)
                                 next = -ERROR_NO_ENTRY;
                         else if (!system_path_parent_cleanup_safe(held))
@@ -5034,6 +5082,15 @@ static bipolar file_make_directories_open(
                                 positive wanted = last ? leaf_mode
                                                        : parent_mode;
                                 bool exact = !last || leaf_exact;
+
+                                /* mkdir -m asking for a special bit makes
+                                   the leaf without group and other write
+                                   first, the way GNU's does, and the bits
+                                   the mode names are restored after. */
+                                if (last && exact && leaf_touched &&
+                                    ((leaf_touched & 06000) ||
+                                     (leaf_mode & 01000)))
+                                        wanted &= ~(positive)0022;
                                 bipolar made = exact
                                                    ? system_make_directory_exact_at(
                                                          held, component,
@@ -5056,7 +5113,7 @@ static bipolar file_make_directories_open(
                                                 bipolar completed =
                                                     file_created_directory_mode_at(
                                                         held, component, next,
-                                                        wanted);
+                                                        leaf_mode, leaf_touched);
                                                 if (completed < 0)
                                                 {
                                                         (void)system_path_remove_opened_at(
@@ -5080,12 +5137,30 @@ static bipolar file_make_directories_open(
                         }
                 }
 
+                /* A leaf walked as an ancestor is changed into by GNU's
+                   install -D, so one that cannot be searched fails here. */
+                if (next >= 0 && last && leaf_ancestor && !made_here)
+                {
+                        bipolar searched = system_open_at(
+                            next, (string_address)".",
+                            O_PATH | O_DIRECTORY | O_CLOEXEC);
+                        if (searched < 0)
+                        {
+                                system_close(next);
+                                next = searched;
+                        }
+                        else
+                                system_close(searched);
+                }
+
                 if (next < 0 || (last && !parents && !made_here))
                 {
                         bipolar answer = next < 0 ? next : -ERROR_EXISTS;
                         if (failed)
                                 memory_copy_apart_end(failed, work,
-                                                      last ? length : stop);
+                                                      blamed ? blamed
+                                                      : last ? length
+                                                             : stop);
                         if (next >= 0)
                                 system_close(next);
                         system_close(held);
@@ -5120,6 +5195,7 @@ static bipolar file_make_directories_open(
                 }
                 system_close(held);
                 held = next;
+                held_stop = stop;
         }
 
         system_close(held);
@@ -11643,8 +11719,9 @@ static bool du_separate;
 static bool du_one_system;
 static bool du_count_links;
 static bool du_follow;
+static bool du_hash_all;
 static positive du_unit = 1024;
-static positive du_maximum = FILE_MAX_DEPTH;
+static positive du_maximum = positive_max;
 static b32 du_status;
 static p64 du_grand;
 static p64 du_device;
@@ -11718,11 +11795,13 @@ static fn du_report(p64 bytes, string_address path)
         per depth keeps what the directory itself costs with what is under it,
         and, for -S, what of that is under its subdirectories.
 */
+#if !defined(LIBRARY_THREAD_RUNTIME)
 static struct
 {
         p64 total;
         p64 below;
 } du_levels[WALK_LEVELS];
+#endif
 
 static walk du_walker;
 static walk_batch du_batch;
@@ -11755,8 +11834,565 @@ static fn du_look_job(address_any context, positive index)
                     du_follow ? 0 : AT_SYMLINK_NOFOLLOW, batch->facts + index);
 }
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        du over parallel_tree.  enter looks at every name of one directory
+        through the handle the pool opened and writes a record for each into
+        the node's output; a subdirectory's whole subtree lands where
+        parallel_child was called for it, and leave writes the directory's
+        end after the last of them.  The sink reads the records on the
+        calling thread in preorder, the order a serial walk meets them in, so
+        hard links, lines and totals come out the same at every width: the
+        jobs only look, and everything whose order shows happens in the sink.
+        Nothing here has a depth limit.
+
+        Under -L, or with more than one operand, GNU's du counts every
+        identity once, directories too, and does not go into a directory it
+        has already counted.  The jobs cannot know which of two names for one
+        directory the walk meets first, so both are read and the sink passes
+        over the second and everything under it.  A directory that is its own
+        ancestor is not entered at all, which is what keeps -L out of a loop.
+*/
+typedef struct du_tree_node
+{
+        struct du_tree_node address_to parent;
+        positive depth;
+        p64 own;
+        p64 device;
+        p64 inode;
+        p32 device_major;
+        p32 device_minor;
+        bool unread;
+        positive length;
+        p8 path[];
+} du_tree_node;
+
+typedef struct
+{
+        p64 total;
+        p64 below;
+} du_tree_level;
+
+enum
+{
+        DU_TREE_BEGIN = 1,
+        DU_TREE_ENTRY,
+        DU_TREE_FAILED,
+        DU_TREE_UNREAD,
+        DU_TREE_READ,
+        DU_TREE_LEAVE,
+};
+
+typedef struct
+{
+        p8 kind;
+        p8 spare[3];
+        b32 error;
+        p32 links;
+        p32 device_major;
+        p32 device_minor;
+        p32 path_bytes;
+        p64 inode;
+        p64 cost;
+} du_tree_record;
+
+static du_tree_level address_to du_tree_levels;
+static positive du_tree_levels_room;
+static p64 du_tree_result;
+static du_tree_node address_to du_tree_skipping;
+
+static du_tree_node address_to du_tree_node_new(du_tree_node address_to parent,
+                                               string_address name,
+                                               positive name_length)
+{
+        positive joint = parent && parent->length &&
+                         parent->path[parent->length - 1] != '/';
+        positive length = (parent ? parent->length + joint : 0) + name_length;
+        du_tree_node address_to node = memory_take(sizeof(du_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(du_tree_node));
+        node->parent = parent;
+        node->depth = parent ? parent->depth + 1 : 0;
+        node->length = length;
+        if (parent)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                if (joint)
+                        node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + joint, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+        node->path[length] = end;
+        return node;
+}
+
+//      A name's whole path, on the stack when it fits.
+static p8 address_to du_tree_path(du_tree_node address_to node, string_address name,
+                                  positive name_length, p8 address_to small,
+                                  positive address_to length)
+{
+        positive joint = node->length && node->path[node->length - 1] != '/';
+        positive total = node->length + joint + name_length;
+        p8 address_to path = total < FILE_PATH_MAX ? small : memory_take(total + 1);
+
+        if (!path)
+                return null;
+        memory_copy(path, node->path, node->length);
+        if (joint)
+                path[node->length] = '/';
+        memory_copy(path + node->length + joint, name, name_length);
+        path[total] = end;
+        address_to length = total;
+        return path;
+}
+
+//      A record and, when there is one, its NUL-terminated path after it.
+static bool du_tree_put(parallel_output address_to output,
+                        du_tree_record address_to record,
+                        string_address path, positive length)
+{
+        positive bytes = path ? length + 1 : 0;
+        p8 address_to at = parallel_reserve(output, sizeof(du_tree_record) + bytes);
+
+        if (!at)
+                return false;
+
+        record->path_bytes = (p32)bytes;
+        memory_copy(at, record, sizeof(du_tree_record));
+        if (bytes)
+        {
+                memory_copy(at + sizeof(du_tree_record), path, length);
+                at[sizeof(du_tree_record) + length] = end;
+        }
+        return true;
+}
+
+static fn du_tree_enter(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        du_tree_node address_to node = node_address;
+        du_tree_record record;
+        p8 records[WALK_READ];
+        positive depth = node->depth + 1;
+        bool shown = du_all && depth <= du_maximum;
+
+        (void)context;
+        memory_fill(address_of record, 0, sizeof(record));
+
+        if (directory < 0)
+        {
+                node->unread = true;
+                record.kind = DU_TREE_UNREAD;
+                record.error = (b32)directory;
+                (void)du_tree_put(output, address_of record, null, 0);
+                return;
+        }
+
+        record.kind = DU_TREE_BEGIN;
+        if (!du_tree_put(output, address_of record, null, 0))
+                return;
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                {
+                        if (got < 0)
+                        {
+                                memory_fill(address_of record, 0, sizeof(record));
+                                record.kind = DU_TREE_READ;
+                                record.error = (b32)got;
+                                (void)du_tree_put(output, address_of record, null, 0);
+                        }
+                        break;
+                }
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to entry =
+                            (struct linux_dirent64 address_to)(records + at);
+                        string_address name = (string_address)entry->d_name;
+
+                        at += entry->d_reclen;
+                        if (file_is_dot(name))
+                                continue;
+
+                        positive name_length = string_length(name);
+                        positive length = 0;
+                        p8 small[FILE_PATH_MAX];
+                        p8 address_to path = null;
+                        file_facts facts;
+                        bool kept = true;
+
+                        //      The path is made only for what reads it: an
+                        //      exclusion, an -a line or a complaint.
+                        if (du_exclude_have || shown)
+                        {
+                                path = du_tree_path(node, name, name_length, small,
+                                                    address_of length);
+                                if (!path)
+                                {
+                                        parallel_stop();
+                                        return;
+                                }
+                                if (du_exclude_have && du_excluded((string_address)path))
+                                {
+                                        if (path != small)
+                                                memory_give(path);
+                                        continue;
+                                }
+                        }
+
+                        bipolar looked = file_look_code(directory, name,
+                                                        du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                        address_of facts);
+
+                        memory_fill(address_of record, 0, sizeof(record));
+
+                        if (looked < 0)
+                        {
+                                if (!path)
+                                        path = du_tree_path(node, name, name_length, small,
+                                                            address_of length);
+                                //      -L through a link that dangles has no
+                                //      reason to give, and GNU's du gives none.
+                                record.kind = DU_TREE_FAILED;
+                                record.error = du_follow && looked == -ERROR_NO_ENTRY
+                                                   ? 0 : (b32)looked;
+                                kept = path && du_tree_put(output, address_of record,
+                                                           (string_address)path, length);
+                        }
+                        else
+                        {
+                                p64 device = file_device_key(facts.device_major,
+                                                             facts.device_minor);
+
+                                if (du_one_system && device != du_device)
+                                        ;
+                                else if ((facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                                {
+                                        bool cycle = false;
+
+                                        for (du_tree_node address_to up = node;
+                                             du_follow && up && !cycle; up = up->parent)
+                                                cycle = up->device == device &&
+                                                        up->inode == facts.inode;
+
+                                        if (!cycle)
+                                        {
+                                                du_tree_node address_to child =
+                                                    du_tree_node_new(node, name, name_length);
+
+                                                kept = child != null;
+                                                if (child)
+                                                {
+                                                        child->own = du_apparent ? 0 : facts.blocks * 512;
+                                                        child->device = device;
+                                                        child->inode = facts.inode;
+                                                        child->device_major = facts.device_major;
+                                                        child->device_minor = facts.device_minor;
+                                                        if (!parallel_child(output, name, child))
+                                                        {
+                                                                memory_give(child);
+                                                                kept = false;
+                                                        }
+                                                }
+                                        }
+                                }
+                                else
+                                {
+                                        record.kind = DU_TREE_ENTRY;
+                                        record.links = facts.hard_links;
+                                        record.device_major = facts.device_major;
+                                        record.device_minor = facts.device_minor;
+                                        record.inode = facts.inode;
+                                        record.cost = du_apparent ? (p64)facts.size
+                                                                  : facts.blocks * 512;
+                                        kept = du_tree_put(output, address_of record,
+                                                           shown ? (string_address)path : null,
+                                                           length);
+                                }
+                        }
+
+                        if (path && path != small)
+                                memory_give(path);
+                        if (!kept)
+                        {
+                                parallel_stop();
+                                return;
+                        }
+                }
+        }
+}
+
+static fn du_tree_leave(address_any context, address_any node_address,
+                        bipolar directory, parallel_output address_to output)
+{
+        du_tree_node address_to node = node_address;
+        du_tree_record record;
+
+        (void)context;
+        (void)directory;
+        if (node->unread)
+                return;
+        memory_fill(address_of record, 0, sizeof(record));
+        record.kind = DU_TREE_LEAVE;
+        (void)du_tree_put(output, address_of record, null, 0);
+}
+
+static fn du_tree_add(positive depth, p64 cost, bool below)
+{
+        if (!depth)
+        {
+                du_tree_result = cost;
+                return;
+        }
+        du_tree_levels[depth - 1].total += cost;
+        if (below)
+                du_tree_levels[depth - 1].below += cost;
+}
+
+//      Whether an identity was counted already.  A hard link always asks;
+//      under GNU's hash_all every name and every directory asks.
+static bool du_tree_seen(p32 major, p32 minor, p64 inode, p32 links, bool directory)
+{
+        if (du_count_links || (!du_hash_all && (directory || links < 2)))
+                return false;
+
+        file_facts facts;
+
+        memory_fill(address_of facts, 0, sizeof(facts));
+        facts.device_major = major;
+        facts.device_minor = minor;
+        facts.inode = inode;
+
+        bipolar seen = file_identity_seen(address_of du_seen, address_of facts);
+
+        if (seen < 0)
+        {
+                shell_memory_failed = true;
+                log_error("du: out of memory while tracking hard links\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
+        }
+        return seen != 0;
+}
+
+static bool du_tree_sink(address_any context, address_any node_address,
+                         address_any data, positive length, bool finished)
+{
+        du_tree_node address_to node = node_address;
+        p8 address_to bytes = data;
+        positive at = 0;
+
+        (void)context;
+        if (finished)
+        {
+                if (du_tree_skipping == node)
+                        du_tree_skipping = null;
+                memory_give(node);
+                return true;
+        }
+
+        while (at < length)
+        {
+                du_tree_record record;
+                string_address path;
+
+                memory_copy(address_of record, bytes + at, sizeof(record));
+                path = (string_address)bytes + at + sizeof(record);
+                at += sizeof(record) + record.path_bytes;
+
+                //      A directory counted under another name is passed over
+                //      with everything under it, up to its own end.
+                if (du_tree_skipping)
+                {
+                        if (node == du_tree_skipping && record.kind == DU_TREE_LEAVE)
+                                du_tree_skipping = null;
+                        continue;
+                }
+
+                if (record.kind == DU_TREE_BEGIN)
+                {
+                        if (node->depth &&
+                            du_tree_seen(node->device_major, node->device_minor,
+                                         node->inode, 2, true))
+                        {
+                                if (du_seen_broken)
+                                        return false;
+                                du_tree_skipping = node;
+                                continue;
+                        }
+                        if (!array_store_reserve(du_tree_levels, du_tree_levels_room,
+                                                 du_tree_levels_room, node->depth + 1, 64))
+                        {
+                                log_error("du: out of memory while walking the tree\n", 0);
+                                du_seen_broken = true;
+                                du_status = 1;
+                                return false;
+                        }
+                        du_tree_levels[node->depth].total = node->own;
+                        du_tree_levels[node->depth].below = 0;
+                }
+                else if (record.kind == DU_TREE_UNREAD)
+                {
+                        if (node->depth &&
+                            du_tree_seen(node->device_major, node->device_minor,
+                                         node->inode, 2, true))
+                        {
+                                if (du_seen_broken)
+                                        return false;
+                                continue;
+                        }
+                        string_format(log_error, "du: cannot read directory '%w': %s\n",
+                                      writer_terminal_quoted_name, (string_address)node->path,
+                                      file_reason(record.error));
+                        du_status = 1;
+                        if (node->depth <= du_maximum)
+                                du_report(node->own, (string_address)node->path);
+                        du_tree_add(node->depth, node->own, true);
+                }
+                else if (record.kind == DU_TREE_READ)
+                {
+                        string_format(log_error, "du: cannot read directory '%w': %s\n",
+                                      writer_terminal_quoted_name, (string_address)node->path,
+                                      file_reason(record.error));
+                        du_status = 1;
+                }
+                else if (record.kind == DU_TREE_FAILED)
+                {
+                        if (record.error)
+                                string_format(log_error, "du: cannot access '%w': %s\n",
+                                              writer_terminal_quoted_name, path,
+                                              file_reason(record.error));
+                        else
+                                string_format(log_error, "du: cannot access '%w'\n",
+                                              writer_terminal_quoted_name, path);
+                        du_status = 1;
+                }
+                else if (record.kind == DU_TREE_ENTRY)
+                {
+                        positive depth = node->depth + 1;
+
+                        if (du_tree_seen(record.device_major, record.device_minor,
+                                         record.inode, record.links, false))
+                        {
+                                if (du_seen_broken)
+                                        return false;
+                                continue;
+                        }
+                        if (du_all && depth <= du_maximum)
+                                du_report(record.cost, path);
+                        du_tree_add(depth, record.cost, false);
+                }
+                else if (record.kind == DU_TREE_LEAVE)
+                {
+                        p64 total = du_tree_levels[node->depth].total;
+
+                        if (node->depth <= du_maximum)
+                                du_report(du_separate ? total - du_tree_levels[node->depth].below
+                                                      : total,
+                                          (string_address)node->path);
+                        du_tree_add(node->depth, total, true);
+                }
+        }
+        return true;
+}
+
+static p64 du_measure_tree(string_address root)
+{
+        file_facts facts;
+        bipolar looked = file_look_code(AT_FDCWD, root,
+                                        du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                        address_of facts);
+
+        if (looked < 0)
+        {
+                if (du_follow && looked == -ERROR_NO_ENTRY)
+                        string_format(log_error, "du: cannot access '%w'\n",
+                                      writer_terminal_quoted_name, root);
+                else
+                        string_format(log_error, "du: cannot access '%w': %s\n",
+                                      writer_terminal_quoted_name, root, file_reason(looked));
+                du_status = 1;
+                return 0;
+        }
+
+        //      GNU's du holds an operand to its exclusions like any other name.
+        if (du_exclude_have && du_excluded(root))
+                return 0;
+
+        bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        du_device = file_device_key(facts.device_major, facts.device_minor);
+        if (du_tree_seen(facts.device_major, facts.device_minor, facts.inode,
+                         facts.hard_links, directory))
+                return 0;
+
+        p64 mine = du_apparent ? (p64)facts.size : facts.blocks * 512;
+
+        if (du_apparent && directory)
+                mine = 0;
+        if (!directory)
+        {
+                du_report(mine, root);
+                return mine;
+        }
+
+        bipolar handle = system_open_at(AT_FDCWD, root, FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        if (handle < 0)
+        {
+                string_format(log_error, "du: cannot read directory '%w': %s\n",
+                              writer_terminal_quoted_name, root, file_reason(handle));
+                du_status = 1;
+                du_report(mine, root);
+                return mine;
+        }
+
+        du_tree_node address_to top = du_tree_node_new(null, root, string_length(root));
+
+        if (!top)
+        {
+                system_close(handle);
+                log_error("du: out of memory while walking the tree\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
+                return 0;
+        }
+        top->own = mine;
+        top->device = du_device;
+        top->inode = facts.inode;
+        top->device_major = facts.device_major;
+        top->device_minor = facts.device_minor;
+        du_tree_result = 0;
+        du_tree_skipping = null;
+
+        bool whole = parallel_tree(du_tree_enter, du_tree_leave, du_tree_sink, null,
+                                   handle, top, du_follow ? 0 : O_NOFOLLOW);
+
+        system_close(handle);
+        if (!whole && !du_seen_broken)
+        {
+                log_error("du: out of memory while walking the tree\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
+        }
+        return du_seen_broken ? 0 : du_tree_result;
+}
+#endif
+
 static p64 du_measure(string_address root)
 {
+#if defined(LIBRARY_THREAD_RUNTIME)
+        return du_measure_tree(root);
+#else
         walk address_to walker = address_of du_walker;
         walk_batch address_to batch = address_of du_batch;
         p64 result = 0;
@@ -11975,6 +12611,7 @@ static p64 du_measure(string_address root)
         }
 
         return result;
+#endif
 }
 
 static bool du_exclude_seen(p8 letter, string_address value)
@@ -12014,7 +12651,7 @@ static b32 file_du()
         du_status = 0;
         du_grand = 0;
         du_unit = 1024;
-        du_maximum = FILE_MAX_DEPTH;
+        du_maximum = positive_max;
         du_exclude_have = 0;
         file_identity_set_clear(address_of du_seen);
         du_seen_broken = false;
@@ -12043,6 +12680,10 @@ static b32 file_du()
         du_one_system = (flags & FILE_FLAG('x')) != 0;
         du_count_links = (flags & FILE_FLAG('l')) != 0;
         du_follow = (flags & FILE_FLAG('L')) != 0;
+        //      GNU's du counts every identity once, directories too, when -L
+        //      can reach one twice or more than one operand is named.
+        du_hash_all = !du_count_links &&
+                      (du_follow || (taking.first < count && count - taking.first > 1));
 
         if (du_unit_option == 'b')
                 du_unit = 1;
@@ -12530,8 +13171,37 @@ static fn chmod_said(string_address shown, positive was, positive now)
         log("\n", 1);
 }
 
-static fn chmod_one(bipolar directory, string_address name, string_address shown,
-                    file_facts address_to known)
+/*
+        What one chmod visit came to.  It is decided where the work is done
+        and said where the output is written: the serial walk does both in
+        turn, and under -R a pool job decides while the sink on the calling
+        thread says it, in walk order.
+*/
+enum
+{
+        CHMOD_DONE = 1,
+        CHMOD_DANGLING,
+        CHMOD_UNREACHED,
+        CHMOD_LINK_KEPT,
+        CHMOD_INVALID,
+        CHMOD_REFUSED,
+};
+
+typedef struct
+{
+        p8 kind;
+        p8 spare[3];
+        b32 error;
+        p32 was;
+        p32 wanted;
+        p32 naive;
+        p32 path_bytes;
+} chmod_outcome;
+
+//      Reads only what the command line set, so a pool job may run it.
+static fn chmod_decide(bipolar directory, string_address name,
+                       file_facts address_to known, bool trusted,
+                       chmod_outcome address_to out)
 {
         file_facts facts;
         // A name on the command line is followed, because Linux has no mode
@@ -12545,6 +13215,8 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         bool through = operand && chmod_selected.dereference != 'h';
         bipolar looked = 0;
 
+        memory_fill(out, 0, sizeof(chmod_outcome));
+
         if (known && !through)
                 facts = *known;
         else
@@ -12557,41 +13229,21 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                 //      A symbolic link pointing at nothing was reached and
                 //      followed, and the reference says that rather than
                 //      that the name could not be found.
-                if (through && looked == -ERROR_NO_ENTRY &&
-                    file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts) &&
-                    (facts.mode & MODE_FORMAT) == MODE_LINK)
-                {
-                        if (!chmod_quiet)
-                                string_format(log_error, "chmod: cannot operate on dangling symlink '%w'\n",
-                                              writer_terminal_quoted_name, shown);
-
-                        chmod_status = 1;
-                        return;
-                }
-
-                // -v says what it could not do on the output stream as well,
-                // because it reports on every file it was handed and not
-                // only on the ones it changed.
-                if (chmod_loud)
-                        string_format(log, "'%w' could not be accessed\n",
-                                      writer_terminal_quoted_name, shown);
-
-                if (!chmod_quiet)
-                        string_format(log_error, "chmod: cannot access '%w': %s\n",
-                                      writer_terminal_quoted_name, shown, file_reason(looked));
-
-                chmod_status = 1;
+                out->kind = through && looked == -ERROR_NO_ENTRY &&
+                                    file_look(directory, name, AT_SYMLINK_NOFOLLOW,
+                                              address_of facts) &&
+                                    (facts.mode & MODE_FORMAT) == MODE_LINK
+                                ? CHMOD_DANGLING
+                                : CHMOD_UNREACHED;
+                out->error = (b32)looked;
                 return;
         }
 
         // Linux keeps no mode on a symlink, so a link that is not followed
-        // is left exactly as it was -- and -v says so in as many words.
+        // is left exactly as it was.
         if (!through && (facts.mode & MODE_FORMAT) == MODE_LINK)
         {
-                if (chmod_loud)
-                        string_format(log, "neither symbolic link '%w' nor referent has been changed\n",
-                                      writer_terminal_quoted_name, shown);
-
+                out->kind = CHMOD_LINK_KEPT;
                 return;
         }
 
@@ -12601,21 +13253,17 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
 
         if (!chmod_referenced &&
             (!file_mode_masked(chmod_specification, facts.mode, directory_mode,
-                               chmod_umask, address_of wanted) ||
+                               chmod_umask, address_of wanted, null) ||
              !file_mode_of(chmod_specification, facts.mode, directory_mode,
                            address_of naive)))
         {
-                if (!chmod_quiet)
-                        string_format(log_error, "chmod: invalid mode: '%s'\n",
-                                      chmod_specification);
-
-                chmod_status = 1;
+                out->kind = CHMOD_INVALID;
                 return;
         }
 
         bipolar done;
 
-        if (file_change_trusted && !through && !operand)
+        if (trusted && !through && !operand)
                 done = system_call_4(syscall(fchmodat2), (positive)directory,
                                      (positive)name, wanted,
                                      AT_SYMLINK_NOFOLLOW);
@@ -12632,17 +13280,72 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                         system_close(handle);
         }
 
-        if (done < 0)
+        out->kind = done < 0 ? CHMOD_REFUSED : CHMOD_DONE;
+        out->error = done < 0 ? (b32)done : 0;
+        out->was = facts.mode;
+        out->wanted = (p32)wanted;
+        out->naive = (p32)naive;
+}
+
+//      Whether an outcome says anything or sets the status.
+static bool chmod_outcome_heard(chmod_outcome address_to out)
+{
+        if (out->kind == CHMOD_LINK_KEPT)
+                return chmod_loud;
+        if (out->kind != CHMOD_DONE)
+                return true;
+        return chmod_loud || chmod_changes ||
+               (chmod_surprising && (out->wanted & ~out->naive));
+}
+
+static fn chmod_report(string_address shown, chmod_outcome address_to out)
+{
+        switch (out->kind)
         {
+        case CHMOD_DANGLING:
+                if (!chmod_quiet)
+                        string_format(log_error, "chmod: cannot operate on dangling symlink '%w'\n",
+                                      writer_terminal_quoted_name, shown);
+                chmod_status = 1;
+                return;
+
+        case CHMOD_UNREACHED:
+                // -v says what it could not do on the output stream as well,
+                // because it reports on every file it was handed and not
+                // only on the ones it changed.
+                if (chmod_loud)
+                        string_format(log, "'%w' could not be accessed\n",
+                                      writer_terminal_quoted_name, shown);
+                if (!chmod_quiet)
+                        string_format(log_error, "chmod: cannot access '%w': %s\n",
+                                      writer_terminal_quoted_name, shown,
+                                      file_reason(out->error));
+                chmod_status = 1;
+                return;
+
+        case CHMOD_LINK_KEPT:
+                if (chmod_loud)
+                        string_format(log, "neither symbolic link '%w' nor referent has been changed\n",
+                                      writer_terminal_quoted_name, shown);
+                return;
+
+        case CHMOD_INVALID:
+                if (!chmod_quiet)
+                        string_format(log_error, "chmod: invalid mode: '%s'\n",
+                                      chmod_specification);
+                chmod_status = 1;
+                return;
+
+        case CHMOD_REFUSED:
                 if (!chmod_quiet)
                         string_format(log_error, "chmod: changing permissions of '%w': %s\n",
-                                      writer_terminal_quoted_name, shown, file_reason(done));
-
+                                      writer_terminal_quoted_name, shown,
+                                      file_reason(out->error));
                 chmod_status = 1;
                 return;
         }
 
-        chmod_said(shown, facts.mode, wanted | (facts.mode & MODE_FORMAT));
+        chmod_said(shown, out->was, out->wanted | (out->was & MODE_FORMAT));
 
         // A "-w" under a umask of 022 takes write away from the owner alone
         // and leaves the group and others as they were. The mode was set as
@@ -12650,21 +13353,256 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         // what the mode looked like it asked for, and answers 1 -- but only
         // for a mode given as that kind of word, which is the one that reads
         // like an option and surprises.
-        if (chmod_surprising && (wanted & ~naive))
+        if (chmod_surprising && (out->wanted & ~out->naive))
         {
                 p8 set[12];
                 p8 expected[12];
 
-                file_mode_letters(set, wanted);
-                file_mode_letters(expected, naive);
+                file_mode_letters(set, out->wanted);
+                file_mode_letters(expected, out->naive);
                 string_format(log_error, "chmod: %w: new permissions are %s, not %s\n",
                               writer_terminal_name, shown, set + 1, expected + 1);
                 chmod_status = 1;
         }
 }
 
+static fn chmod_one(bipolar directory, string_address name, string_address shown,
+                    file_facts address_to known)
+{
+        chmod_outcome outcome;
 
+        chmod_decide(directory, name, known, file_change_trusted,
+                     address_of outcome);
+        chmod_report(shown, address_of outcome);
+}
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        chmod -R over parallel_tree.  A directory's mode is changed by the job
+        reading the directory that holds it, before the pool opens it: the
+        top-down order the serial walk keeps, because the mode it is given is
+        what says whether it can be read.  The pool opens a subdirectory with
+        O_NOFOLLOW, and its job proves it is the directory its parent looked at
+        before reading a name of it, the check file_open_same makes, so a name
+        swapped for a link or for another directory between the look and the
+        open is not walked.  That same look says whether the directory is
+        trusted.  A job says nothing: an outcome that would be heard is a
+        record, and the sink says it in walk order.  There is no depth limit.
+*/
+typedef struct chmod_tree_node
+{
+        struct chmod_tree_node address_to parent;
+        file_facts expected;
+        bool trusted;
+        positive length;
+        p8 path[];
+} chmod_tree_node;
+
+static chmod_tree_node address_to chmod_tree_node_new(chmod_tree_node address_to parent,
+                                                     string_address name,
+                                                     positive name_length)
+{
+        positive joint = parent && parent->length &&
+                         parent->path[parent->length - 1] != '/';
+        positive length = (parent ? parent->length + joint : 0) + name_length;
+        chmod_tree_node address_to node = memory_take(sizeof(chmod_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(chmod_tree_node));
+        node->parent = parent;
+        node->length = length;
+        if (parent)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                if (joint)
+                        node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + joint, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+        node->path[length] = end;
+        return node;
+}
+
+//      An outcome and the whole path it is about, written straight into the
+//      node's output.
+static bool chmod_tree_put(parallel_output address_to output,
+                           chmod_outcome address_to out,
+                           chmod_tree_node address_to node,
+                           string_address name, positive name_length)
+{
+        positive joint = node->length && node->path[node->length - 1] != '/';
+        positive length = node->length + joint + name_length;
+        p8 address_to at = parallel_reserve(output, sizeof(chmod_outcome) + length + 1);
+
+        if (!at)
+                return false;
+
+        out->path_bytes = (p32)(length + 1);
+        memory_copy(at, out, sizeof(chmod_outcome));
+
+        p8 address_to path = at + sizeof(chmod_outcome);
+
+        memory_copy(path, node->path, node->length);
+        if (joint)
+                path[node->length] = '/';
+        memory_copy(path + node->length + joint, name, name_length);
+        path[length] = end;
+        return true;
+}
+
+static fn chmod_tree_enter(address_any context, address_any node_address,
+                           bipolar directory, parallel_output address_to output)
+{
+        chmod_tree_node address_to node = node_address;
+        p8 records[WALK_READ];
+
+        (void)context;
+
+        //      A directory that will not open, or one that is not the one
+        //      its parent looked at, is passed over without a word, as the
+        //      serial walk passes over it.
+        if (directory < 0)
+                return;
+
+        if (node->parent)
+        {
+                file_facts opened;
+
+                if (file_look_code(directory, (string_address)"", AT_EMPTY_PATH,
+                                   address_of opened) < 0 ||
+                    !file_same_identity(address_of node->expected, address_of opened) ||
+                    (node->expected.mode & MODE_FORMAT) != (opened.mode & MODE_FORMAT))
+                        return;
+
+                node->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
+                                !(opened.mode & 0022);
+        }
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                        break;
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to entry =
+                            (struct linux_dirent64 address_to)(records + at);
+                        string_address name = (string_address)entry->d_name;
+                        p8 type = entry->d_type;
+
+                        at += entry->d_reclen;
+                        if (file_is_dot(name))
+                                continue;
+
+                        file_facts facts;
+                        chmod_outcome outcome;
+                        positive name_length = string_length(name);
+                        bool looked = (type == 0 || type == DT_DIR) &&
+                                      file_look(directory, name, AT_SYMLINK_NOFOLLOW,
+                                                address_of facts);
+                        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                        chmod_decide(directory, name, looked ? address_of facts : null,
+                                     node->trusted, address_of outcome);
+
+                        if (chmod_outcome_heard(address_of outcome) &&
+                            !chmod_tree_put(output, address_of outcome, node, name, name_length))
+                        {
+                                parallel_stop();
+                                return;
+                        }
+
+                        if (!here)
+                                continue;
+
+                        chmod_tree_node address_to child = chmod_tree_node_new(node, name, name_length);
+
+                        if (!child)
+                        {
+                                parallel_stop();
+                                return;
+                        }
+                        child->expected = facts;
+                        if (!parallel_child(output, name, child))
+                        {
+                                memory_give(child);
+                                parallel_stop();
+                                return;
+                        }
+                }
+        }
+}
+
+static bool chmod_tree_sink(address_any context, address_any node_address,
+                            address_any data, positive length, bool finished)
+{
+        p8 address_to bytes = data;
+        positive at = 0;
+
+        (void)context;
+        if (finished)
+        {
+                memory_give(node_address);
+                return true;
+        }
+
+        while (at < length)
+        {
+                chmod_outcome outcome;
+
+                memory_copy(address_of outcome, bytes + at, sizeof(outcome));
+                chmod_report((string_address)bytes + at + sizeof(outcome),
+                             address_of outcome);
+                at += sizeof(outcome) + outcome.path_bytes;
+        }
+        return true;
+}
+
+//      One operand of chmod -R: the operand itself on this thread, as the
+//      serial walk visits it, and everything under it on the pool.
+static fn chmod_tree(string_address path)
+{
+        file_facts facts;
+        bool looked = file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, address_of facts);
+        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        file_change_user = (p32)system_call(syscall(geteuid));
+        file_change_descended = false;
+        file_change_trusted = false;
+        chmod_one(AT_FDCWD, path, path, looked ? address_of facts : null);
+
+        if (!here)
+                return;
+
+        file_facts opened;
+        bipolar handle = file_open_same_facts(AT_FDCWD, path, address_of facts,
+                                              FILE_READ | O_DIRECTORY | O_NOFOLLOW,
+                                              address_of opened);
+
+        if (handle < 0)
+                return;
+
+        chmod_tree_node address_to top = chmod_tree_node_new(null, path, string_length(path));
+
+        if (!top ||
+            (top->expected = facts,
+             top->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
+                            !(opened.mode & 0022),
+             !parallel_tree(chmod_tree_enter, null, chmod_tree_sink, null, handle, top,
+                            O_NOFOLLOW)))
+        {
+                log_error("chmod: out of memory while walking the tree\n", 0);
+                chmod_status = 1;
+        }
+        system_close(handle);
+}
+#endif
 
 static const argument_option chmod_options[] = {
     {"changes", 'c', 0, ARGUMENT_SELECT(chmod_selection, loudness)},
@@ -12807,9 +13745,13 @@ static b32 file_chmod()
 
         chmod_umask = file_umask();
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+        file_change_tree = chmod_tree;
+#endif
         file_change_paths(first, count, (taking.flags & FILE_FLAG('R')) != 0,
                           (string_address) "chmod", address_of chmod_status,
                           chmod_one);
+        file_change_tree = null;
 
         return chmod_status;
 }
@@ -12901,8 +13843,34 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
                       writer_terminal_quoted_name, shown, before, who);
 }
 
-static fn chown_one(bipolar directory, string_address name, string_address shown,
-                    file_facts address_to known)
+/*
+        What one chown or chgrp visit came to, decided where the work is done
+        and said where the output is written, as chmod's is.
+*/
+enum
+{
+        CHOWN_DONE = 1,
+        CHOWN_KEPT,
+        CHOWN_UNREACHED,
+        CHOWN_REFUSED,
+        CHOWN_REFUSED_UNLOOKED,
+};
+
+typedef struct
+{
+        p8 kind;
+        p8 changed;
+        p8 spare[2];
+        b32 error;
+        p32 owner;
+        p32 group;
+        p32 path_bytes;
+} chown_outcome;
+
+//      Reads only what the command line set, so a pool job may run it.
+static fn chown_decide(bipolar directory, string_address name,
+                       file_facts address_to known, bool trusted,
+                       bool descended, chown_outcome address_to out)
 {
         //      -h acts on the link everywhere. Otherwise a link the walk
         //      descended into is followed only where -L or -H asked for it;
@@ -12910,17 +13878,19 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         //      to change the link and not what it aims at. A link the caller
         //      named keeps the old following default.
         positive through = chown_selected.dereference == 'h'
-                || (file_change_descended && chown_selected.traverse != 'L'
+                || (descended && chown_selected.traverse != 'L'
                     && chown_selected.traverse != 'H')
             ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
         bipolar looked = 0;
 
+        memory_fill(out, 0, sizeof(chown_outcome));
+
         /*      Nothing below reads the facts unless -v, -c or --from asks,
                 and where the name cannot be exchanged the change is made
                 through it: the reference does not look at such a name
                 either, and the tree costs one call a name. */
-        if (file_change_trusted && through == AT_SYMLINK_NOFOLLOW &&
+        if (trusted && through == AT_SYMLINK_NOFOLLOW &&
             directory != AT_FDCWD && !chown_loud && !chown_changes &&
             chown_from_user < 0 && chown_from_group < 0)
         {
@@ -12928,21 +13898,8 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
                     directory, name, chown_user, chown_group,
                     AT_SYMLINK_NOFOLLOW);
 
-                if (done < 0)
-                {
-                        if (!chown_quiet)
-                        {
-                                string_format(log_error,
-                                              chown_groups_only
-                                                  ? "%s: changing group of '"
-                                                  : "%s: changing ownership of '",
-                                              chown_program);
-                                string_format(log_error, "%w': %s\n",
-                                              writer_terminal_quoted_name, shown,
-                                              file_reason(done));
-                        }
-                        chown_status = 1;
-                }
+                out->kind = done < 0 ? CHOWN_REFUSED_UNLOOKED : CHOWN_DONE;
+                out->error = done < 0 ? (b32)done : 0;
                 return;
         }
 
@@ -12957,22 +13914,13 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         // could not access it, and why.
         if (looked < 0)
         {
-                if (chown_loud)
-                {
-                        string_format(log, "%s%w' to %s\n",
-                                      chown_groups_only ? (string_address)"failed to change group of '" : (string_address) "failed to change ownership of '",
-                                      writer_terminal_quoted_name, shown, chown_spec);
-                }
-
-                if (!chown_quiet)
-                {
-                        string_format(log_error, "%s: cannot access '%w': %s\n", chown_program,
-                                      writer_terminal_quoted_name, shown, file_reason(looked));
-                }
-
-                chown_status = 1;
+                out->kind = CHOWN_UNREACHED;
+                out->error = (b32)looked;
                 return;
         }
+
+        out->owner = facts.owner;
+        out->group = facts.group;
 
         //      --from names the ownership a file must already have. One that
         //      has another is left alone, and -v calls that a retention
@@ -12980,13 +13928,13 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         if ((chown_from_user >= 0 && facts.owner != (positive)chown_from_user) ||
             (chown_from_group >= 0 && facts.group != (positive)chown_from_group))
         {
-                chown_said(shown, address_of facts, false);
+                out->kind = CHOWN_KEPT;
                 return;
         }
 
         bipolar done;
 
-        if (file_change_trusted && through == AT_SYMLINK_NOFOLLOW &&
+        if (trusted && through == AT_SYMLINK_NOFOLLOW &&
             directory != AT_FDCWD)
                 done = system_change_owner_at(directory, name, chown_user,
                                               chown_group,
@@ -13007,11 +13955,64 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
 
         if (done < 0)
         {
+                out->kind = CHOWN_REFUSED;
+                out->error = (b32)done;
+                return;
+        }
+
+        out->kind = CHOWN_DONE;
+        out->changed = (chown_user >= 0 && facts.owner != (positive)chown_user) ||
+                       (chown_group >= 0 && facts.group != (positive)chown_group);
+}
+
+//      Whether an outcome says anything or sets the status.
+static bool chown_outcome_heard(chown_outcome address_to out)
+{
+        if (out->kind == CHOWN_DONE)
+                return chown_loud || (chown_changes && out->changed);
+        if (out->kind == CHOWN_KEPT)
+                return chown_loud;
+        return true;
+}
+
+static fn chown_report(string_address shown, chown_outcome address_to out)
+{
+        file_facts was;
+
+        memory_fill(address_of was, 0, sizeof(was));
+        was.owner = out->owner;
+        was.group = out->group;
+
+        switch (out->kind)
+        {
+        case CHOWN_UNREACHED:
                 if (chown_loud)
+                {
+                        string_format(log, "%s%w' to %s\n",
+                                      chown_groups_only ? (string_address)"failed to change group of '" : (string_address) "failed to change ownership of '",
+                                      writer_terminal_quoted_name, shown, chown_spec);
+                }
+
+                if (!chown_quiet)
+                {
+                        string_format(log_error, "%s: cannot access '%w': %s\n", chown_program,
+                                      writer_terminal_quoted_name, shown, file_reason(out->error));
+                }
+
+                chown_status = 1;
+                return;
+
+        case CHOWN_KEPT:
+                chown_said(shown, address_of was, false);
+                return;
+
+        case CHOWN_REFUSED:
+        case CHOWN_REFUSED_UNLOOKED:
+                if (chown_loud && out->kind == CHOWN_REFUSED)
                 {
                         p8 before[FILE_PATH_MAX];
 
-                        chown_who(facts.owner, facts.group, before);
+                        chown_who(out->owner, out->group, before);
                         string_format(log, "%s%w' from %s to %s\n",
                                       chown_groups_only ? (string_address) "failed to change group of '" : (string_address) "failed to change ownership of '",
                                       writer_terminal_quoted_name, shown, before,
@@ -13026,18 +14027,300 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
                                           : "%s: changing ownership of '",
                                       chown_program);
                         string_format(log_error, "%w': %s\n", writer_terminal_quoted_name, shown,
-                                      file_reason(done));
+                                      file_reason(out->error));
                 }
 
                 chown_status = 1;
                 return;
         }
 
-        bool changed = (chown_user >= 0 && facts.owner != (positive)chown_user) ||
-                       (chown_group >= 0 && facts.group != (positive)chown_group);
-
-        chown_said(shown, address_of facts, changed);
+        chown_said(shown, address_of was, out->changed);
 }
+
+static fn chown_one(bipolar directory, string_address name, string_address shown,
+                    file_facts address_to known)
+{
+        chown_outcome outcome;
+
+        chown_decide(directory, name, known, file_change_trusted,
+                     file_change_descended, address_of outcome);
+        chown_report(shown, address_of outcome);
+}
+
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        chown and chgrp -R over parallel_tree.  A directory is walked as
+        chmod's walk walks it, and changed after everything under it, which is
+        the order the reference's -v shows: its parent's job hands it to the
+        pool and then a leaf whose bytes land after its subtree, and the leaf's
+        job, given the parent's directory pinned open, changes it by name the
+        way the serial walk does -- whether or not the pool could open it.
+        When a leaf runs does not change what a change of owner lets the walk
+        read; where its bytes land is what the output shows.
+*/
+typedef struct chown_tree_node
+{
+        struct chown_tree_node address_to parent;
+        file_facts expected;
+        bool trusted;
+        positive name_at;
+        positive length;
+        p8 path[];
+} chown_tree_node;
+
+static chown_tree_node address_to chown_tree_node_new(chown_tree_node address_to parent,
+                                                     string_address name,
+                                                     positive name_length)
+{
+        positive joint = parent && parent->length &&
+                         parent->path[parent->length - 1] != '/';
+        positive length = (parent ? parent->length + joint : 0) + name_length;
+        chown_tree_node address_to node = memory_take(sizeof(chown_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(chown_tree_node));
+        node->parent = parent;
+        node->length = length;
+        node->name_at = length - name_length;
+        if (parent)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                if (joint)
+                        node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + joint, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+        node->path[length] = end;
+        return node;
+}
+
+//      An outcome and the whole path it is about: head, then name when
+//      there is one, written straight into the output.
+static bool chown_tree_put(parallel_output address_to output,
+                           chown_outcome address_to out,
+                           string_address head, positive head_length,
+                           string_address name, positive name_length)
+{
+        positive joint = name_length && head_length && head[head_length - 1] != '/';
+        positive length = head_length + joint + name_length;
+        p8 address_to at = parallel_reserve(output, sizeof(chown_outcome) + length + 1);
+
+        if (!at)
+                return false;
+
+        out->path_bytes = (p32)(length + 1);
+        memory_copy(at, out, sizeof(chown_outcome));
+
+        p8 address_to path = at + sizeof(chown_outcome);
+
+        memory_copy(path, head, head_length);
+        if (joint)
+                path[head_length] = '/';
+        memory_copy(path + head_length + joint, name, name_length);
+        path[length] = end;
+        return true;
+}
+
+static fn chown_tree_leaf(address_any context, address_any node_address,
+                          bipolar directory, parallel_output address_to output)
+{
+        chown_tree_node address_to leaf = node_address;
+        chown_outcome outcome;
+
+        (void)context;
+        memory_fill(address_of outcome, 0, sizeof(outcome));
+
+        if (directory < 0)
+        {
+                outcome.kind = CHOWN_REFUSED_UNLOOKED;
+                outcome.error = (b32)directory;
+        }
+        else
+                chown_decide(directory, (string_address)leaf->path + leaf->name_at,
+                             address_of leaf->expected, leaf->trusted, true,
+                             address_of outcome);
+
+        if (chown_outcome_heard(address_of outcome) &&
+            !chown_tree_put(output, address_of outcome, (string_address)leaf->path,
+                            leaf->length, (string_address)"", 0))
+                parallel_stop();
+}
+
+static fn chown_tree_enter(address_any context, address_any node_address,
+                           bipolar directory, parallel_output address_to output)
+{
+        chown_tree_node address_to node = node_address;
+        p8 records[WALK_READ];
+
+        (void)context;
+
+        //      Not opened, or not the directory its parent looked at: nothing
+        //      under it is walked, and its leaf still changes it.
+        if (directory < 0)
+                return;
+
+        if (node->parent)
+        {
+                file_facts opened;
+
+                if (file_look_code(directory, (string_address)"", AT_EMPTY_PATH,
+                                   address_of opened) < 0 ||
+                    !file_same_identity(address_of node->expected, address_of opened) ||
+                    (node->expected.mode & MODE_FORMAT) != (opened.mode & MODE_FORMAT))
+                        return;
+
+                node->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
+                                !(opened.mode & 0022);
+        }
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                        break;
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to entry =
+                            (struct linux_dirent64 address_to)(records + at);
+                        string_address name = (string_address)entry->d_name;
+                        p8 type = entry->d_type;
+
+                        at += entry->d_reclen;
+                        if (file_is_dot(name))
+                                continue;
+
+                        file_facts facts;
+                        positive name_length = string_length(name);
+                        bool looked = (type == 0 || type == DT_DIR) &&
+                                      file_look(directory, name, AT_SYMLINK_NOFOLLOW,
+                                                address_of facts);
+                        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                        if (!here)
+                        {
+                                chown_outcome outcome;
+
+                                chown_decide(directory, name, looked ? address_of facts : null,
+                                             node->trusted, true, address_of outcome);
+                                if (chown_outcome_heard(address_of outcome) &&
+                                    !chown_tree_put(output, address_of outcome,
+                                                    (string_address)node->path, node->length,
+                                                    name, name_length))
+                                {
+                                        parallel_stop();
+                                        return;
+                                }
+                                continue;
+                        }
+
+                        chown_tree_node address_to child = chown_tree_node_new(node, name, name_length);
+                        chown_tree_node address_to leaf = child ? chown_tree_node_new(node, name, name_length)
+                                                                : null;
+
+                        if (!child || !leaf)
+                        {
+                                memory_give(child);
+                                memory_give(leaf);
+                                parallel_stop();
+                                return;
+                        }
+                        child->expected = facts;
+                        leaf->expected = facts;
+                        leaf->trusted = node->trusted;
+                        if (!parallel_child(output, name, child))
+                        {
+                                memory_give(child);
+                                memory_give(leaf);
+                                parallel_stop();
+                                return;
+                        }
+                        if (!parallel_leaf(output, chown_tree_leaf, leaf))
+                        {
+                                memory_give(leaf);
+                                parallel_stop();
+                                return;
+                        }
+                }
+        }
+}
+
+static bool chown_tree_sink(address_any context, address_any node_address,
+                            address_any data, positive length, bool finished)
+{
+        p8 address_to bytes = data;
+        positive at = 0;
+
+        (void)context;
+        if (finished)
+        {
+                memory_give(node_address);
+                return true;
+        }
+
+        while (at < length)
+        {
+                chown_outcome outcome;
+
+                memory_copy(address_of outcome, bytes + at, sizeof(outcome));
+                chown_report((string_address)bytes + at + sizeof(outcome),
+                             address_of outcome);
+                at += sizeof(outcome) + outcome.path_bytes;
+        }
+        return true;
+}
+
+//      One operand of chown -R: everything under it on the pool, then the
+//      operand itself on this thread, as the serial walk visits it last.
+static fn chown_tree(string_address path)
+{
+        file_facts facts;
+        bool looked = file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, address_of facts);
+        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        file_change_user = (p32)system_call(syscall(geteuid));
+        file_change_descended = false;
+        file_change_trusted = false;
+
+        if (!here)
+        {
+                chown_one(AT_FDCWD, path, path, looked ? address_of facts : null);
+                return;
+        }
+
+        file_facts opened;
+        bipolar handle = file_open_same_facts(AT_FDCWD, path, address_of facts,
+                                              FILE_READ | O_DIRECTORY | O_NOFOLLOW,
+                                              address_of opened);
+
+        if (handle >= 0)
+        {
+                chown_tree_node address_to top = chown_tree_node_new(null, path, string_length(path));
+
+                if (!top ||
+                    (top->expected = facts,
+                     top->trusted = (opened.owner == file_change_user || opened.owner == 0) &&
+                                    !(opened.mode & 0022),
+                     !parallel_tree(chown_tree_enter, null, chown_tree_sink, null, handle, top,
+                                    O_NOFOLLOW)))
+                {
+                        string_format(log_error, "%s: out of memory while walking the tree\n",
+                                      chown_program);
+                        chown_status = 1;
+                }
+                system_close(handle);
+        }
+
+        file_change_descended = false;
+        file_change_trusted = false;
+        chown_one(AT_FDCWD, path, path, address_of facts);
+}
+#endif
 
 static const argument_option chown_options[] = {
     {"changes", 'c', 0, ARGUMENT_SELECT(chown_selection, loudness)},
@@ -13118,8 +14401,12 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 static fn chown_paths(positive first, positive count)
 {
         file_change_after_contents = true;
+#if defined(LIBRARY_THREAD_RUNTIME)
+        file_change_tree = chown_tree;
+#endif
         file_change_paths(first, count, (chown_flags & FILE_FLAG('R')) != 0,
                           chown_program, address_of chown_status, chown_one);
+        file_change_tree = null;
         file_change_after_contents = false;
 }
 
@@ -15391,6 +16678,7 @@ static b32 file_mkdir()
         positive index = taking.first;
         positive mask = file_umask();
         positive mode = 0777;
+        positive touched = 0;
         positive parent_mode = (0777 & ~mask) | 0300;
         bool parents = (taking.flags & FILE_FLAG('p')) != 0;
         bool given_mode = (taking.flags & FILE_FLAG('m')) != 0;
@@ -15411,7 +16699,7 @@ static b32 file_mkdir()
             (!string_get(file_option_value(address_of taking, 'm')) ||
              !file_mode_masked(file_option_value(address_of taking, 'm'),
                                0777, true, mask,
-                               address_of mode)))
+                               address_of mode, address_of touched)))
         {
                 return string_report(log_error, 1, "mkdir: invalid mode '%s'\n",
                               file_option_value(address_of taking, 'm'));
@@ -15426,7 +16714,7 @@ static b32 file_mkdir()
                 bipolar made = file_make_directories_open(
                     path, parent_mode, mode, given_mode, parents,
                     loud ? mkdir_told : null, parents ? failed : null, null,
-                    null, null);
+                    null, null, given_mode ? touched : 0, false);
 
                 if (made < 0)
                 {
@@ -15465,7 +16753,7 @@ static const argument_option file_node_arguments[] = {
 static bool file_node_mode(string_address specification,
                            positive address_to mode)
 {
-        return file_mode_masked(specification, 0666, false, file_umask(), mode);
+        return file_mode_masked(specification, 0666, false, file_umask(), mode, null);
 }
 
 static b32 file_make_node(string_address program, string_address path,
@@ -22257,10 +23545,13 @@ static bool install_identity(string_address text, bool group,
 /* -D returns the parent descriptor produced by the same no-symlink walk that
    created it.  The destination is never resolved a second time after its
    leading path has been authorized. */
+static fn install_directory_told(string_address path);
+
 static bipolar install_leading(string_address destination,
                                p8 address_to leaf)
 {
         p8 parent[FILE_PATH_MAX];
+        p8 failing[FILE_PATH_MAX];
         positive length = string_length(destination);
 
         if (!length || length >= FILE_PATH_MAX)
@@ -22268,11 +23559,20 @@ static bipolar install_leading(string_address destination,
 
         path_head_copy(parent, FILE_PATH_MAX, destination);
         path_tail_copy(leaf, FILE_PATH_MAX, destination);
+        //      GNU walks every directory of the destination as an ancestor
+        //      and names the one that failed, with its reason.
         bipolar directory = file_make_directories_open(
             parent, 0755, 0755, true, true,
-            null, null, null, null, null);
+            install_loud ? install_directory_told : null,
+            failing, null, null, null, 0, true);
         if (directory >= 0)
                 return directory;
+
+        string_format(log_error, "install: cannot create directory '%w': %s\n",
+                      writer_terminal_quoted_name,
+                      string_get(failing) ? failing : parent,
+                      file_reason(directory));
+        return -ERROR_INVALID;
 
 failed:
         string_format(log_error,
@@ -22497,7 +23797,7 @@ static fn install_pair(string_address source, string_address destination)
         {
                 system_close(destination_directory);
                 system_close(source_handle);
-                string_format(log_error, "install: cannot create staging file for '%w': %s\n",
+                string_format(log_error, "install: cannot create regular file '%w': %s\n",
                               writer_terminal_quoted_name, destination,
                               file_reason(destination_handle));
                 install_status = 1;
@@ -22584,11 +23884,12 @@ static b32 file_install()
                 {
                         string_address path = program_argument((b32)at);
                         p8 leaf[FILE_PATH_MAX];
+                        p8 failing[FILE_PATH_MAX];
                         bipolar parent = -1;
                         bipolar exact = file_make_directories_open(
                             path, 0755, 0700, true, true,
                             install_loud ? install_directory_told : null,
-                            null, null, address_of parent, leaf);
+                            failing, null, address_of parent, leaf, 0, false);
                         bool bootstrapped = false;
                         positive old_mode = 0;
                         bipolar handle = exact < 0
@@ -22613,7 +23914,15 @@ static b32 file_install()
                                 system_close(exact);
                         if (parent >= 0)
                                 system_close(parent);
-                        if (!attributed)
+                        if (exact < 0)
+                        {
+                                string_format(log_error, "install: cannot create directory '%w': %s\n",
+                                              writer_terminal_quoted_name,
+                                              string_get(failing) ? failing : path,
+                                              file_reason(exact));
+                                install_status = 1;
+                        }
+                        else if (!attributed)
                         {
                                 string_format(log_error, "install: cannot create directory '%w'\n",
                                               writer_terminal_quoted_name, path);
