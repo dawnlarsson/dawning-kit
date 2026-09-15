@@ -6069,6 +6069,31 @@ same 'one row is none' 'wrap=1 insert=0 alternate=0 cursor=1 region=0,6' \
 same 'scrolls inside' '[a]|[c]|[d]|[]|[e]'       20 5 in 'a\r\nb\r\nc\r\nd\e[5;1He\e[2;4r\e[4;1H\n' dump
 same 'reset by resize' 'wrap=1 insert=0 alternate=0 cursor=1 region=0,5' \
                                                  20 5 in '\e[2;4r' resize '20x5' mode
+#       A region whose top margin is the top of the page keeps what scrolls
+#       off it, as xterm and tmux keep it: apt reserves the last row for its
+#       progress bar, and everything it printed above went nowhere, missing
+#       from the wheel and from a window made taller. The rows under the
+#       region stay where they are. A deleted line is gone rather than kept,
+#       and the alternate screen keeps nothing. Every answer here is tmux
+#       3.7c's, rows, the lines above them and the cursor.
+same 'a top region keeps what leaves it' '[d]|[e]|[f]|[g]|[S]|[a]|[b]|[c]|3,1' \
+                                                 20 5 in '\e[5;1HS\e[1;4r\e[4;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng' dump back 3 cursor
+same 'and a taller window takes it back' '[a]|[b]|[c]|[d]|[e]|[f]|[g]|[S]|6,1' \
+                                                 20 5 in '\e[5;1HS\e[1;4r\e[4;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng' resize '20x8' dump cursor
+same 'scroll up keeps them too' '[c]|[d]|[]|[]|[S]|[a]|[b]|0,0' \
+                                                 20 5 in 'a\r\nb\r\nc\r\nd\r\nS\e[1;4r\e[2S' dump back 2 cursor
+same 'a deleted line is not kept' '[c]|[d]|[]|[]|[]|[]|[]|0,0' \
+                                                 20 5 in 'a\r\nb\r\nc\r\nd\e[1;4r\e[2M' dump back 2 cursor
+same 'nor at the top of the page' '[b]|[c]|[]|[]|[]|0,0' \
+                                                 20 4 in 'a\r\nb\r\nc\e[1;1H\e[M' dump back 1 cursor
+same 'the alternate screen keeps nothing' '[keep]|[]|[]|[]|[]|[]|[]|[]|1,0' \
+                                                 20 5 in 'keep\r\n\e[?1049h\e[5;1HS\e[1;4r\e[4;1Ha\r\nb\r\nc\r\nd\r\ne\e[?1049l' dump back 3 cursor
+same 'top region scrolled in colour' '7,4|7,1'   8 4 in '\e[4;1H\e[41mS\e[m\e[1;3r\e[3;1H\e[44m\n' attr 2,0 attr 3,0
+#       apt's own bytes, from apt-pkg's install progress, cut after every one.
+cuts 'apt progress' '[Unpack p0]|[Unpack p1]|[Unpack p2]|[]|[Progress: [60%]]|[]|[]|[Reading]|3,0' \
+                                                 20 5 'Reading\r\n\n\e7\e[0;4r\e8\e[1AUnpack p0\r\n\e7\e[5;0f\e[42m\e[30mProgress: [0%]\e[49m\e[39m\e8Unpack p1\r\n\e7\e[5;0f\e[42m\e[30mProgress: [30%]\e[49m\e[39m\e8Unpack p2\r\n\e7\e[5;0f\e[42m\e[30mProgress: [60%]\e[49m\e[39m\e8' dump back 3 cursor
+same 'apt progress torn down' '[Unpack p0]|[Unpack p1]|[]|[]|[]|[]|[]|[Reading]|2,0' \
+                                                 20 5 in 'Reading\r\n\n\e7\e[0;4r\e8\e[1AUnpack p0\r\n\e7\e[5;0f\e[42m\e[30mProgress: [0%]\e[49m\e[39m\e8Unpack p1\r\n\e7\e[5;0f\e[42m\e[30mProgress: [30%]\e[49m\e[39m\e8Unpack p2\r\n\e7\e[5;0f\e[42m\e[30mProgress: [60%]\e[49m\e[39m\e8\e7\e[0;5r\e8\e[1A\e[J' dump back 3 cursor
 
 #
 #       Colour.

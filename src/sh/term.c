@@ -310,6 +310,47 @@ static fn region_scroll(unsigned int count, b32 up)
         touch_all();
 }
 
+/*
+        Lines leaving the top of the screen, which is where history comes from.
+
+        A region whose top margin is the top of the screen keeps what scrolls
+        off it, as xterm keeps it: apt reserves the last row for its progress
+        bar with DECSTBM, and everything it printed above was being dropped
+        rather than kept for the wheel and for a taller window to take back.
+        The ring moves for the region as it does for the whole screen, and
+        the rows under the region, which moved with it, are put back -- one
+        row for apt, where the copy was every row above it. The alternate
+        screen keeps nothing: the lines behind it are the primary screen's.
+*/
+/* What a region with the top of the page as its top margin does, out of
+   the line feed's way: the whole screen's store is the one taken per line. */
+static fn __attribute__((__noinline__)) region_scroll_kept(unsigned int count)
+{
+        unsigned int top;
+
+        // As bounded as the whole screen's, by the region.
+        if (count > region_bottom)
+                count = region_bottom;
+
+        for (unsigned int n = count; n; n--)
+        {
+                window_scroll(window);
+
+                if (history_lines + ROWS < window->history)
+                        history_lines++;
+        }
+
+        // Bottom up, since a row is copied onto one below it.
+        top = row_slot(0);
+        for (unsigned int r = ROWS; r-- > region_bottom;)
+                slot_copy(slot_after(top, r), slot_after(top, r - count));
+
+        for (unsigned int r = region_bottom - count; r < region_bottom; r++)
+                row_blank(r);
+
+        touch_all();
+}
+
 static fn scroll_up(unsigned int count)
 {
         if (region_top == 0 && region_bottom == ROWS)
@@ -327,6 +368,12 @@ static fn scroll_up(unsigned int count)
                         for (unsigned int r = ROWS - count; r < ROWS; r++)
                                 row_blank(r);
 
+                return;
+        }
+
+        if (region_top == 0 && !alternate)
+        {
+                region_scroll_kept(count);
                 return;
         }
 
@@ -1475,10 +1522,16 @@ static fn csi_final(unsigned int final)
 
                         region_top = row;
 
+                        // A deleted line is gone, never history, so only
+                        // the alternate screen, which keeps none, lets the
+                        // ring take a DL at the top of the page.
                         if (final == 'L')
                                 region_scroll(a, false);
-                        else
+                        else if (alternate && region_top == 0 &&
+                                 region_bottom == ROWS)
                                 scroll_up(a);
+                        else
+                                region_scroll(a, true);
 
                         region_top = was;
                 }
