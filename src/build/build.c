@@ -4548,21 +4548,9 @@ static bool build_word_listed(string_address text, string_address word)
 static positive build_path_mark(string_address text)
 {
         positive length = string_length(text);
-        p32 crc;
-        p64 count = length;
 
-        cksum_crc_prepare();
-        crc = cksum_crc_block((p8 address_to)text, length, 0);
-
-        while (count)
-        {
-                p8 byte = (p8)count;
-
-                crc = (crc << 8) ^ cksum_crc_table[0][(crc >> 24) ^ byte];
-                count >>= 8;
-        }
-
-        return (positive)(p32)~crc;
+        return (positive)(p32)~cksum_crc_length(hash_crc32_msb(0, text, length),
+                                                length);
 }
 
 //      ssh takes shell source, not an argument vector. Keep empty words,
