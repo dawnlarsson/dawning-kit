@@ -81,10 +81,12 @@ static void plane_drop(struct output *output)
         output->cursor_plane = NULL;
         output->cursor_shown = false;
 
-        if (!ret && !output->cursor_recovery && output->cursor_buffer)
+        if (!ret && !output->cursor_recovery)
         {
                 drm_client_buffer_delete(output->cursor_buffer);
+                drm_client_buffer_delete(output->cursor_back);
                 output->cursor_buffer = NULL;
+                output->cursor_back = NULL;
         }
 }
 
@@ -102,22 +104,42 @@ static PURE unsigned int plane_scale(struct output *output, unsigned int scale)
         that keeps its framebuffer elsewhere only uploads it when the plane's
         framebuffer changes -- virtio-gpu transfers the image on that edge and
         sends nothing but a position afterwards, which is what makes this
-        cheap. Changing shape is therefore a repaint here, not per move.
+        cheap. Changing shape is therefore a repaint here, not per move, and
+        the repaint has to land in a different framebuffer object than the
+        one already on the plane: flushing new pixels into the same object
+        is not that edge, so the arrow from the first paint stayed up for
+        every later shape.
 */
 static int plane_paint(struct output *output, unsigned int shape,
                        unsigned int fitted_scale)
 {
+        struct drm_client_buffer *into = output->cursor_buffer;
         u32 opaque_ink[INK_COUNT];
         struct iosys_map map;
         struct target t;
 
         canvas_palette(opaque_ink, DRM_FORMAT_ARGB8888);
 
-        if (drm_client_buffer_vmap_local(output->cursor_buffer, &map))
+        if (output->cursor_plane)
+        {
+                if (!output->cursor_back)
+                {
+                        output->cursor_back = drm_client_buffer_create_dumb(
+                            &output->canvas->client, output->cursor_w,
+                            output->cursor_h, DRM_FORMAT_ARGB8888);
+                        if (IS_ERR(output->cursor_back))
+                                output->cursor_back = NULL;
+                }
+
+                if (output->cursor_back)
+                        into = output->cursor_back;
+        }
+
+        if (drm_client_buffer_vmap_local(into, &map))
                 return -EIO;
 
         t.pixels = map.vaddr;
-        t.pitch = output->cursor_buffer->fb->pitches[0] / sizeof(u32);
+        t.pitch = into->fb->pitches[0] / sizeof(u32);
         t.width = (int)output->cursor_w;
         t.height = (int)output->cursor_h;
         t.x = 0;
@@ -134,8 +156,14 @@ static int plane_paint(struct output *output, unsigned int shape,
                            canvas_cursor_hot[shape][1] * (int)fitted_scale,
                            shape, fitted_scale);
 
-        drm_client_buffer_vunmap_local(output->cursor_buffer);
-        drm_client_buffer_flush(output->cursor_buffer, NULL);
+        drm_client_buffer_vunmap_local(into);
+        drm_client_buffer_flush(into, NULL);
+
+        if (into != output->cursor_buffer)
+        {
+                output->cursor_back = output->cursor_buffer;
+                output->cursor_buffer = into;
+        }
 
         output->cursor_shape = shape;
         output->cursor_scale = fitted_scale;
@@ -238,7 +266,9 @@ static void plane_claim(struct drm_client_dev *client, struct output *output)
         {
                 plane_lost(client, output, "would not take the arrow", ret);
                 drm_client_buffer_delete(output->cursor_buffer);
+                drm_client_buffer_delete(output->cursor_back);
                 output->cursor_buffer = NULL;
+                output->cursor_back = NULL;
                 return;
         }
 

@@ -192,6 +192,10 @@ struct output
         // Null means the cursor is drawn into this output's framebuffer.
         struct drm_plane *cursor_plane;
         struct drm_client_buffer *cursor_buffer;
+        // The plane's other cursor image. A driver that copies on framebuffer
+        // change, not on pixel writes, keeps showing the first shape unless
+        // the object itself changes; this is that second object.
+        struct drm_client_buffer *cursor_back;
         unsigned int cursor_w, cursor_h;
         unsigned int cursor_shape;
         unsigned int cursor_scale;

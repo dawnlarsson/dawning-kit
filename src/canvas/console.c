@@ -127,9 +127,9 @@ static _Bool console_registered;
 
 /*
         Opened once the desktop has a size, and never closed while the module
-        is loaded. CON_PRINTBUFFER replays everything printk has kept, so the
-        window comes up carrying the boot it missed rather than starting from
-        whatever was printed next.
+        is loaded -- including across `moonwater canvas off`. CON_PRINTBUFFER
+        replays everything printk has kept, so the window comes up carrying
+        the boot it missed rather than starting from whatever was printed next.
 */
 static void console_start(void)
 {
@@ -173,6 +173,11 @@ static void console_start(void)
 
         WRITE_ONCE(console_pane, pane);
 
+        // CON_ENABLED lives on the object, not only in the initializer:
+        // unregister_console clears it, and a later register then consults
+        // console= -- which names ttyS0 here -- and leaves this disabled, so
+        // the window comes back empty. Restore the flags a first start had.
+        canvas_console.flags = CON_PRINTBUFFER | CON_ANYTIME | CON_ENABLED;
         register_console(&canvas_console);
         console_registered = true;
 }

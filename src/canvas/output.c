@@ -96,6 +96,75 @@ static struct drm_display_mode *output_pick_mode(struct drm_connector *connector
 }
 
 /*
+        The mode the first successful start put on a connector.
+
+        Off and on probes again. A guest's preferred size is then the window
+        already committed -- seventy percent of that, not of the host -- and
+        a real screen's probe is the preferred mode, not the largest one
+        startup took. Remembering the committed size keeps restart on the
+        same picture.
+*/
+#define CANVAS_SAVED_MODES 8
+
+struct canvas_saved_mode
+{
+        char name[32];
+        int hdisplay;
+        int vdisplay;
+        int vrefresh;
+};
+
+static struct canvas_saved_mode canvas_saved_mode[CANVAS_SAVED_MODES];
+static unsigned int canvas_saved_modes;
+
+static const struct canvas_saved_mode *canvas_mode_saved(const char *name)
+{
+        unsigned int i;
+
+        if (!name)
+                return NULL;
+
+        for (i = 0; i < canvas_saved_modes; i++)
+                if (!strcmp(canvas_saved_mode[i].name, name))
+                        return &canvas_saved_mode[i];
+
+        return NULL;
+}
+
+static void canvas_mode_keep(const char *name, const struct drm_display_mode *mode)
+{
+        if (!name || !mode || canvas_mode_saved(name))
+                return;
+
+        if (canvas_saved_modes >= CANVAS_SAVED_MODES)
+                return;
+
+        strscpy(canvas_saved_mode[canvas_saved_modes].name, name,
+                sizeof(canvas_saved_mode[0].name));
+        canvas_saved_mode[canvas_saved_modes].hdisplay = mode->hdisplay;
+        canvas_saved_mode[canvas_saved_modes].vdisplay = mode->vdisplay;
+        canvas_saved_mode[canvas_saved_modes].vrefresh = drm_mode_vrefresh(mode);
+        canvas_saved_modes++;
+}
+
+static void canvas_modes_keep(void)
+{
+        struct output *output;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                struct drm_mode_set *set = output->mode_set;
+
+                if (!set || !set->mode || !set->num_connectors ||
+                    !set->connectors || !set->connectors[0] ||
+                    !set->connectors[0]->name)
+                        continue;
+
+                canvas_mode_keep(set->connectors[0]->name, set->mode);
+        }
+}
+
+/*
         The host's idea of the screen: the preferred mode, or the largest
         if the connector did not mark one.
 */
@@ -206,19 +275,37 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
         {
                 struct drm_connector *connector;
                 struct drm_display_mode *want, *taken;
+                const struct canvas_saved_mode *saved;
 
                 if (!mode_set->mode || !mode_set->num_connectors ||
                     !mode_set->connectors || !mode_set->connectors[0])
                         continue;
 
                 connector = mode_set->connectors[0];
+                saved = connector->name ? canvas_mode_saved(connector->name)
+                                        : NULL;
                 /*
                         A guest stays a window even when the first modeset is
                         refused. The retry used to take the probe's preferred
                         size, which is the host's whole screen, and that is
                         the blow-out the seventy percent cap exists to stop.
+
+                        A later start has already committed once: take that
+                        size rather than seventy percent of the window, or
+                        the probe's preferred instead of the largest.
                 */
-                if (canvas_is_virtual(dev))
+                if (saved)
+                {
+                        want = output_pick_mode(connector, 0, saved->hdisplay,
+                                                saved->vdisplay, true,
+                                                saved->vrefresh);
+                        if (!want || drm_mode_equal(want, mode_set->mode))
+                                continue;
+                        taken = output_mode_take(dev, want);
+                        if (!taken)
+                                continue;
+                }
+                else if (canvas_is_virtual(dev))
                 {
                         taken = output_guest_mode(dev, connector);
                         if (!taken)
@@ -526,6 +613,9 @@ static void output_drop(struct output *output)
         // reach after this output is gone. RMFB drops the client ownership;
         // atomic plane state keeps scanout alive even if removal also fails.
         drm_client_buffer_delete(output->cursor_buffer);
+        drm_client_buffer_delete(output->cursor_back);
+        output->cursor_buffer = NULL;
+        output->cursor_back = NULL;
 
         list_del(&output->link);
 
@@ -671,11 +761,10 @@ static void cursor_plane_recover(void)
                         continue;
                 }
 
-                if (output->cursor_buffer)
-                {
-                        drm_client_buffer_delete(output->cursor_buffer);
-                        output->cursor_buffer = NULL;
-                }
+                drm_client_buffer_delete(output->cursor_buffer);
+                drm_client_buffer_delete(output->cursor_back);
+                output->cursor_buffer = NULL;
+                output->cursor_back = NULL;
 
                 output->cursor_recovery = 0;
         }
@@ -962,6 +1051,7 @@ static int canvas_start(struct canvas *canvas)
         // same sixteen pixels and the same too small without this.
         desktop.cursor_scale = desktop.scale;
         desktop.drawn_scale = desktop.scale;
+        canvas_modes_keep();
 
         if (!desktop.started)
         {

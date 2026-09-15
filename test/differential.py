@@ -20433,7 +20433,7 @@ struct drm_mode_set { struct drm_crtc *crtc; };
 struct canvas { struct list_head link; struct drm_client_dev client; bool started; int retiring; };
 struct output {
     struct list_head link; struct canvas *canvas;
-    struct drm_client_buffer *buffer, *cursor_buffer;
+    struct drm_client_buffer *buffer, *cursor_buffer, *cursor_back;
     struct drm_mode_set *mode_set; struct drm_plane *cursor_plane;
     unsigned cursor_w,cursor_h,cursor_recovery; bool cursor_shown; int x,y;
     struct list_head flush_link; bool flush_queued, flush_whole, flushing, retired;
@@ -20635,6 +20635,12 @@ int main(void) {
     client_unregister(&c->client);
     check("unregister after failed disable releases client wrappers",wrappers()==0 && release_calls==1);
     check("unregister keeps scanout alive until device teardown",scanouts()==1);
+
+    reset(); c=card(true); o=output(c);
+    o->cursor_back=drm_client_buffer_create_dumb(&c->client,o->cursor_w,o->cursor_h,1);
+    output_drop(o);
+    check("retire releases the cursor's spare buffer too",wrappers()==0 && deleted==3);
+    client_unregister(&c->client); check("spare-buffer teardown is balanced",!gems());
 
     reset(); c=card(false); o=output(c);
     check("legacy modesetting uses software cursor",!o->cursor_plane && !o->cursor_buffer && !paint_calls);

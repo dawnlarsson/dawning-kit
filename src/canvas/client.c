@@ -395,14 +395,15 @@ static void __maybe_unused canvas_start_probing(void)
 /*
         Canvas, off and on, from userspace.
 
-        Off undoes what attaching did, in this order: printk stops reaching
-        cells; the input handler and the thread go, which gives every console
-        its keyboard back; every program's window is asked to close and taken
-        off the desktop; each card's client is released; and the kernel's own
-        framebuffer console is set up on each card, which
-        drm_client_lib.active= kept from ever having one. On claims the cards
-        again the way the boot does, and canvas_start opens the kernel log
-        and a terminal as it does at boot.
+        Off undoes what attaching did, in this order: the input handler and
+        the thread go, which gives every console its keyboard back; every
+        program's window is asked to close and taken off the desktop; each
+        card's client is released; and the kernel's own framebuffer console
+        is set up on each card, which drm_client_lib.active= kept from ever
+        having one. The kernel log window stays: its cells are the cache of
+        the boot, and printk keeps writing them while the cards are away.
+        On claims the cards again the way the boot does, and canvas_start
+        opens a terminal as it does at boot if the first one is gone.
 
         Lock order: canvas_control_lock, then a card's clientlist_mutex, then
         canvas_list_lock, then desktop.lock, then a card's master_mutex.
@@ -500,12 +501,10 @@ static long canvas_turn_off(void)
         cancel_delayed_work_sync(&canvas_probe_work);
 #endif
 
-        // printk first: nothing may write to the log's cells once they go.
-        console_stop();
-
         // Input and the thread before any window or output goes, so no key
         // lands in a pane being detached and nothing composes against an
-        // output being released.
+        // output being released. The kernel log window stays registered:
+        // printk keeps filling the same cells, and on will draw them again.
         mutex_lock(&canvas_list_lock);
         canvas_thread_stop();
         mutex_unlock(&canvas_list_lock);
