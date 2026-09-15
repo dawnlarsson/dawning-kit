@@ -349,30 +349,32 @@ static b32 bowl_extract(string_address archive, string_address root)
         return bowl_refuse("archive is not a bootstrap\n");
 }
 
-static bool bowl_prefix_ready(string_address root, string_address marker)
+/* The children of root holding the marker -- none, one, or 2 for more than
+   one -- with the first kept in rel as "/NAME", or negative when root does
+   not open as a directory. Landing asks whether a busy root is a prefix
+   waiting to be hoisted; flattening hoists only a lone one. */
+static bipolar bowl_prefix_find(string_address root, string_address marker,
+                                p8 address_to rel)
 {
         file_walk walk;
         struct linux_dirent64 address_to entry;
         p8 from[BOWL_PATH_LIMIT];
-        p8 rel[258];
-        bool found = false;
+        p8 name[258];
+        bipolar found = 0;
 
         if (!file_walk_open(address_of walk, AT_FDCWD, root))
-                return false;
+                return -ERROR_NOT_DIRECTORY;
 
-        while ((entry = file_walk_next(address_of walk)))
+        while (found < 2 && (entry = file_walk_next(address_of walk)))
         {
                 if (file_is_dot(entry->d_name))
                         continue;
 
-                rel[0] = '/';
-                string_copy_max_end(rel + 1, entry->d_name, sizeof(rel) - 2);
-                if (bowl_root_path(from, sizeof(from), root, rel) &&
-                    bowl_has(from, marker))
-                {
-                        found = true;
-                        break;
-                }
+                name[0] = '/';
+                string_copy_max_end(name + 1, entry->d_name, sizeof(name) - 2);
+                if (bowl_root_path(from, sizeof(from), root, name) &&
+                    bowl_has(from, marker) && !found++)
+                        memory_copy(rel, name, sizeof(name));
         }
 
         file_walk_close(address_of walk);
@@ -381,47 +383,20 @@ static bool bowl_prefix_ready(string_address root, string_address marker)
 
 static b32 bowl_flatten(string_address root, string_address marker)
 {
-        file_walk walk;
-        struct linux_dirent64 address_to entry;
-        p8 inner[256];
         p8 sibling[BOWL_PATH_LIMIT];
         p8 from[BOWL_PATH_LIMIT];
         p8 rel[258];
         bipolar failed;
-        bool found = false;
 
         if (bowl_has(root, marker))
                 return 0;
 
-        inner[0] = end;
-        if (!file_walk_open(address_of walk, AT_FDCWD, root))
-                return bowl_fail(root, -ERROR_NOT_DIRECTORY);
-
-        while ((entry = file_walk_next(address_of walk)))
-        {
-                if (file_is_dot(entry->d_name))
-                        continue;
-
-                rel[0] = '/';
-                string_copy_max_end(rel + 1, entry->d_name, sizeof(rel) - 2);
-                if (!bowl_root_path(from, sizeof(from), root, rel) ||
-                    !bowl_has(from, marker))
-                        continue;
-
-                if (found)
-                {
-                        file_walk_close(address_of walk);
-                        return bowl_refuse("archive has more than one root\n");
-                }
-
-                string_copy_max_end(inner, entry->d_name, sizeof(inner) - 1);
-                found = true;
-        }
-
-        file_walk_close(address_of walk);
-
-        if (!found)
-                return bowl_refuse("archive is not a bowl bootstrap\n");
+        failed = bowl_prefix_find(root, marker, rel);
+        if (failed < 0)
+                return bowl_fail(root, failed);
+        if (failed != 1)
+                return bowl_refuse(failed ? "archive has more than one root\n"
+                                          : "archive is not a bowl bootstrap\n");
 
         if (!bowl_root_path(sibling, sizeof(sibling), root, ".bowl-from"))
                 return bowl_refuse("bowl path is too long\n");
@@ -437,8 +412,6 @@ static b32 bowl_flatten(string_address root, string_address marker)
         if (failed < 0)
                 return bowl_fail(sibling, failed);
 
-        rel[0] = '/';
-        string_copy_max_end(rel + 1, inner, sizeof(rel) - 2);
         if (!bowl_root_path(from, sizeof(from), sibling, rel))
                 return bowl_refuse("bowl path is too long\n");
 
@@ -780,18 +753,13 @@ static b32 bowl_land(string_address archive, string_address root,
         {
                 if (bowl_root_busy(root))
                 {
-                        if (bowl_prefix_ready(root, marker))
-                        {
-                                failed = bowl_flatten(root, marker);
-                                if (failed)
-                                        return failed;
-                        }
-                        else
-                        {
-                                failed = bowl_reset_root(root);
-                                if (failed)
-                                        return failed;
-                        }
+                        p8 rel[258];
+
+                        failed = bowl_prefix_find(root, marker, rel) > 0
+                                     ? bowl_flatten(root, marker)
+                                     : bowl_reset_root(root);
+                        if (failed)
+                                return failed;
                 }
 
                 if (!bowl_has(root, marker))
