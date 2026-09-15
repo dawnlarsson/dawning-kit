@@ -721,7 +721,31 @@ static CONST unsigned int acs_character(unsigned int c)
         return map[c - 0x60];
 }
 
-static fn osc_finish()
+// A colour in xterm's spelling, sixteen bits a channel, ended the way the
+// question was.
+static fn osc_colour(unsigned int colour, b32 bell)
+{
+        static const char hex[] = "0123456789abcdef";
+        p8 text[] = "rgb:0000/0000/0000";
+
+        for (unsigned int channel = 0; channel < 3; channel++)
+        {
+                unsigned int value = colour >> (16 - channel * 8) & 255;
+                p8 address_to at = text + 4 + channel * 5;
+
+                at[0] = at[2] = (p8)hex[value >> 4];
+                at[1] = at[3] = (p8)hex[value & 15];
+        }
+
+        emit_bytes(text, sizeof(text) - 1);
+
+        if (bell)
+                emit(7);
+        else
+                emit_literal("\x1b\\");
+}
+
+static fn osc_finish(b32 bell)
 {
         unsigned int i = 0;
         unsigned int command = 0;
@@ -740,6 +764,56 @@ static fn osc_finish()
                         n = WINDOW_TITLE_MAX - 1;
                 memory_copy(window->title, osc_bytes + i, n);
                 window->title[n] = 0;
+        }
+
+        /*
+                OSC 4 ; index ; ? asks for a colour of the palette, and OSC 10,
+                11 and 12 ; ? for the ink, the paper and the cursor, with more
+                question marks after the first asking for the next ones along.
+                vim, neovim and fish ask for the paper to choose a light or a
+                dark theme, and wait out a timeout on every start when nothing
+                answers. Setting a colour is not taken: every window shares the
+                one table.
+        */
+        while (command == 4 || (command >= 10 && command <= 12))
+        {
+                unsigned int index = command == 11 ? 0 : 7;
+
+                if (command == 4)
+                {
+                        unsigned int from = i;
+
+                        for (index = 0; i < osc_length && osc_bytes[i] >= '0' &&
+                                        osc_bytes[i] <= '9';
+                             i++)
+                                if (index < 256)
+                                        index = index * 10 + (osc_bytes[i] - '0');
+
+                        if (i == from || i >= osc_length || osc_bytes[i++] != ';')
+                                break;
+                }
+
+                if (i < osc_length && osc_bytes[i] == '?' && index < 256)
+                {
+                        emit_literal("\x1b]");
+                        positive_to_string(emit_bytes, command);
+                        emit(';');
+                        if (command == 4)
+                        {
+                                positive_to_string(emit_bytes, index);
+                                emit(';');
+                        }
+                        osc_colour(window_cell_colour(index), bell);
+                }
+
+                while (i < osc_length && osc_bytes[i++] != ';')
+                        ;
+
+                if (i >= osc_length)
+                        break;
+
+                if (command != 4)
+                        command++;
         }
 }
 
@@ -1049,62 +1123,98 @@ static fn alternate_leave()
         touch_all();
 }
 
-static fn mode_set(b32 on)
+/*
+        One mode, changed or only asked about. The answer is DECRPM's: 1 for
+        set, 2 for reset and 0 for a mode this has never heard of, so SM, RM
+        and DECRQM read the one list and cannot disagree.
+*/
+static unsigned int mode(unsigned int p, b32 change, b32 on)
 {
-        for (unsigned int i = 0; i < terminal_csi.count; i++)
+        b32 now;
+
+        if (!terminal_csi.marker)
         {
-                unsigned int p = terminal_csi.value[i];
+                if (p != 4)
+                        return 0;
 
-                if (!terminal_csi.marker)
-                {
-                        if (p == 4)
-                                insert_mode = on;
+                if (change)
+                        insert_mode = on;
 
-                        continue;
-                }
+                return insert_mode ? 1 : 2;
+        }
 
-                switch (p)
-                {
-                case 1:
+        switch (p)
+        {
+        case 1:
+                if (change)
                         application_keys = on;
-                        break;
-                case 7:
+                now = application_keys;
+                break;
+        case 7:
+                if (change)
                         autowrap = on;
-                        break;
-                case 25:
+                now = autowrap;
+                break;
+        case 25:
+                if (change)
                         cursor_visible = on;
-                        break;
-                case 6:
+                now = cursor_visible;
+                break;
+        case 6:
+                if (change)
+                {
                         origin_mode = on;
                         row = on ? region_top : 0;
                         column = 0;
-                        break;
-                case 47:
-                case 1047:
-                case 1049:
-                        if (on)
-                                alternate_enter();
-                        else
-                                alternate_leave();
-                        break;
-                case 1000:
-                case 1002:
-                case 1003:
+                }
+                now = origin_mode;
+                break;
+        case 47:
+        case 1047:
+        case 1049:
+                if (change && on)
+                        alternate_enter();
+                else if (change)
+                        alternate_leave();
+                now = alternate;
+                break;
+        case 1000:
+        case 1002:
+        case 1003:
+                if (change)
+                {
                         mouse_mode = on ? p : 0;
                         if (window)
                                 window->want = mouse_mode ? WINDOW_WANT_POINTER : 0;
-                        break;
-                case 1004:
-                        focus_events = on;
-                        break;
-                case 1006:
-                        mouse_sgr = on;
-                        break;
-                case 2026:
-                        synchronized_output = on;
-                        break;
                 }
+                now = mouse_mode == p;
+                break;
+        case 1004:
+                if (change)
+                        focus_events = on;
+                now = focus_events;
+                break;
+        case 1006:
+                if (change)
+                        mouse_sgr = on;
+                now = mouse_sgr;
+                break;
+        case 2026:
+                if (change)
+                        synchronized_output = on;
+                now = synchronized_output;
+                break;
+        default:
+                return 0;
         }
+
+        return now ? 1 : 2;
+}
+
+static fn mode_set(b32 on)
+{
+        for (unsigned int i = 0; i < terminal_csi.count; i++)
+                mode(terminal_csi.value[i], true, on);
 }
 
 static fn attributes_reset()
@@ -1359,6 +1469,20 @@ static fn csi_final(unsigned int final)
         case 'p':
                 if (csi_intermediate == '!')
                         soft_reset();
+                // DECRQM. neovim and kakoune ask before they lean on
+                // synchronized output or the mouse.
+                else if (csi_intermediate == '$')
+                {
+                        unsigned int p = terminal_csi.count ? terminal_csi.value[0] : 0;
+
+                        emit_literal("\x1b[");
+                        if (terminal_csi.marker)
+                                emit(terminal_csi.marker);
+                        positive_to_string(emit_bytes, p);
+                        emit(';');
+                        emit('0' + mode(p, false, false));
+                        emit_literal("$y");
+                }
                 break;
         case 't':
                 break;
@@ -1482,7 +1606,7 @@ static fn consume(unsigned int c)
                                 string_escape = true;
                         else if (c == 7)
                         {
-                                osc_finish();
+                                osc_finish(true);
                                 in_string = in_escape = false;
                         }
                         else if (osc_length < WINDOW_TITLE_MAX)
@@ -1504,12 +1628,12 @@ static fn consume(unsigned int c)
 
                 if (c == '\\')
                 {
-                        osc_finish();
+                        osc_finish(false);
                         in_escape = false;
                         return;
                 }
 
-                osc_finish();
+                osc_finish(false);
                 in_escape = true;
                 escape_intermediate = false;
         }

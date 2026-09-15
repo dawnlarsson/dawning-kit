@@ -16372,8 +16372,10 @@ def harness_core_state(argv):
     def canvas_sources(work, arch):
         paint = (root / "src/canvas/paint.c").read_text()
         text = (root / "src/canvas/text.c").read_text()
-        cells = section(canvas, "#define target_mark(pixels)",
-                        "// The border and titlebar")
+        window = (root / "src/canvas/window.c").read_text()
+        cells = section(window, "// The colour an index names", "#define WINDOW_CELL_BOLD")
+        cells += section(canvas, "#define target_mark(pixels)",
+                         "// The border and titlebar")
         cells += section(canvas, "struct target\n", "static void target_row")
         cells += section(compose, "struct shape\n", "static _Bool shape_span")
         cells += paint[paint.index("static CONST int round_inset"):]

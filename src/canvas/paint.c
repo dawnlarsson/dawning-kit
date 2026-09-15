@@ -28,32 +28,11 @@ static _Bool canvas_terminal_ready;
 
 static void canvas_terminal_prepare(void)
 {
-        static const u32 sixteen[16] = {
-            0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd,
-            0xe5e5e5, 0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff,
-            0x00ffff, 0xffffff,
-        };
-        static const unsigned int level[6] = {0, 95, 135, 175, 215, 255};
-        unsigned int i, r, g, b, v;
-
         if (canvas_terminal_ready)
                 return;
 
-        for (i = 0; i < 16; i++)
-                canvas_terminal[i] = sixteen[i];
-
-        i = 16;
-        for (r = 0; r < 6; r++)
-                for (g = 0; g < 6; g++)
-                        for (b = 0; b < 6; b++)
-                                canvas_terminal[i++] =
-                                    (level[r] << 16) | (level[g] << 8) | level[b];
-
-        for (i = 0; i < 24; i++)
-        {
-                v = 8 + i * 10;
-                canvas_terminal[232 + i] = (v << 16) | (v << 8) | v;
-        }
+        for (unsigned int i = 0; i < 256; i++)
+                canvas_terminal[i] = window_cell_colour(i);
 
         canvas_terminal_ready = true;
 }
