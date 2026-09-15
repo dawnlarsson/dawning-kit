@@ -11008,6 +11008,622 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
         }
 }
 
+#if defined(LIBRARY_THREAD_RUNTIME)
+/*
+        find over parallel_tree, for an expression that neither prunes, quits,
+        deletes nor runs anything in the directory it found.
+
+        The job reading a directory looks at a name when the walk needs to --
+        a kind the listing would not give, a link -L follows, a directory -L
+        or -xdev must identify -- or when the expression will ask, so the
+        looks run on the pool; it answers -L's loops against the directories
+        above and decides what to go into, which is all a walk decides.
+        What is said about a name is decided in walk order: an expression of
+        names, paths and kinds that only prints is decided in the job itself,
+        which writes the lines; anything else is a record the sink hands to
+        the one evaluator, with the facts the job read, and whatever that
+        evaluator asks beyond them it asks by path.  -depth decides a
+        directory in its leave, after everything under it.  There is no
+        depth limit.
+*/
+typedef struct find_tree_node
+{
+        struct find_tree_node address_to parent;
+        file_facts facts;
+        p64 device;
+        p64 inode;
+        positive depth;
+        bool identified;
+        bool looked;
+        bool deferred;
+        p8 type;
+        positive name_at;
+        positive length;
+        p8 path[];
+} find_tree_node;
+
+enum
+{
+        FIND_TREE_PRINTED = 1,
+        FIND_TREE_ENTRY,
+        FIND_TREE_FAILED,
+        FIND_TREE_CYCLE,
+};
+
+typedef struct
+{
+        p8 kind;
+        p8 type;
+        p8 looked;
+        p8 spare;
+        b32 code;
+        p32 depth;
+        p32 name_at;
+        p32 bytes;
+} find_tree_record;
+
+static bool find_tree_pure;
+static bool find_tree_wants_facts;
+static find_tree_node address_to find_tree_top;
+static file_facts find_tree_facts;
+
+static bool find_tree_kind_in(string_address kinds, p8 kind)
+{
+        for (; string_get(kinds); kinds++)
+                if (string_get(kinds) == kind)
+                        return true;
+        return false;
+}
+
+//      Whether this expression can be walked on the pool at all, and which
+//      of the two ways its names are decided.
+static bool find_tree_usable(void)
+{
+        find_tree_pure = true;
+        find_tree_wants_facts = false;
+
+        for (positive i = 0; i < find_used; i++)
+        {
+                find_node address_to node = address_of find_nodes[i];
+                p8 kind = node->kind;
+
+                if (kind == 'r' || kind == 'q' || kind == 'D')
+                        return false;
+                if (kind == 'x' && (node->mode == 'd' || node->mode == 'O' || node->mode == 'o'))
+                        return false;
+                if (!find_tree_kind_in((string_address)"&|,!vfnNpPtd0", kind))
+                        find_tree_pure = false;
+                if (find_tree_kind_in((string_address)"LIzymugUGkiTwWSYBl", kind))
+                        find_tree_wants_facts = true;
+        }
+        return true;
+}
+
+static find_tree_node address_to find_tree_node_new(find_tree_node address_to parent,
+                                                   string_address name,
+                                                   positive name_length,
+                                                   positive depth)
+{
+        positive joint = parent && parent->length &&
+                         parent->path[parent->length - 1] != '/';
+        positive length = (parent ? parent->length + joint : 0) + name_length;
+        find_tree_node address_to node = memory_take(sizeof(find_tree_node) + length + 1);
+
+        if (!node)
+                return null;
+
+        memory_fill(node, 0, sizeof(find_tree_node));
+        node->parent = parent;
+        node->depth = depth;
+        node->length = length;
+        node->name_at = length - name_length;
+        if (parent)
+        {
+                memory_copy(node->path, parent->path, parent->length);
+                if (joint)
+                        node->path[parent->length] = '/';
+                memory_copy(node->path + parent->length + joint, name, name_length);
+        }
+        else
+                memory_copy(node->path, name, name_length);
+        node->path[length] = end;
+        return node;
+}
+
+//      A line printed by the job: appended to the run of printed bytes the
+//      output ends with, or the start of a new run.
+static bool find_tree_print(parallel_output address_to output, positive address_to open_at,
+                            string_address path, positive length, p8 terminator)
+{
+        find_tree_record record;
+        p8 address_to at;
+
+        if (address_to open_at == positive_max)
+        {
+                at = parallel_reserve(output, sizeof(record));
+                if (!at)
+                        return false;
+                memory_fill(address_of record, 0, sizeof(record));
+                record.kind = FIND_TREE_PRINTED;
+                memory_copy(at, address_of record, sizeof(record));
+                address_to open_at = output->used - sizeof(record);
+        }
+
+        at = parallel_reserve(output, length + 1);
+        if (!at)
+                return false;
+        memory_copy(at, path, length);
+        at[length] = terminator;
+
+        memory_copy(address_of record, output->bytes + address_to open_at, sizeof(record));
+        record.bytes += (p32)(length + 1);
+        memory_copy(output->bytes + address_to open_at, address_of record, sizeof(record));
+        return true;
+}
+
+//      The expression decided in the job: names, paths, kinds and printing.
+static bool find_tree_holds(b32 which, string_address path, positive length,
+                            string_address name, positive mode,
+                            parallel_output address_to output,
+                            positive address_to open_at, bool address_to failed)
+{
+        if (which < 0)
+                return true;
+
+        find_node address_to node = address_of find_nodes[which];
+        p8 lowered[FILE_PATH_MAX];
+
+        switch (node->kind)
+        {
+        case '&':
+                return find_tree_holds(node->left, path, length, name, mode, output, open_at, failed) &&
+                       find_tree_holds(node->right, path, length, name, mode, output, open_at, failed);
+        case '|':
+                return find_tree_holds(node->left, path, length, name, mode, output, open_at, failed) ||
+                       find_tree_holds(node->right, path, length, name, mode, output, open_at, failed);
+        case ',':
+                find_tree_holds(node->left, path, length, name, mode, output, open_at, failed);
+                return find_tree_holds(node->right, path, length, name, mode, output, open_at, failed);
+        case '!':
+                return !find_tree_holds(node->left, path, length, name, mode, output, open_at, failed);
+        case 'v':
+                return true;
+        case 'f':
+                return false;
+        case 'n':
+                if (node->comparison)
+                        return find_pattern_holds(node, name, false);
+                return shell_match(node->text, name);
+        case 'p':
+                if (node->comparison)
+                        return find_pattern_holds(node, path, false);
+                return shell_match(node->text, path);
+        case 'N':
+        case 'P':
+                if (node->comparison)
+                        return find_pattern_holds(node, node->kind == 'N' ? name : path, true);
+                find_lowered(node->kind == 'N' ? name : path, lowered);
+                return shell_match(node->text, lowered);
+        case 't':
+                return find_type_holds((p8)node->number, mode);
+        case 'd':
+        case '0':
+                if (!find_tree_print(output, open_at, path, length,
+                                     node->kind == 'd' ? '\n' : 0))
+                        address_to failed = true;
+                return true;
+        }
+        return false;
+}
+
+//      A record the sink reads: a failure or loop names its path; an entry
+//      carries its depth, kind, the facts the job read, and its path.
+static bool find_tree_note(parallel_output address_to output, positive address_to open_at,
+                           p8 kind, bipolar code, string_address path, positive length,
+                           positive name_at, positive depth, p8 type,
+                           file_facts address_to facts)
+{
+        positive extra = facts ? sizeof(file_facts) : 0;
+        p8 address_to at = parallel_reserve(output, sizeof(find_tree_record) + extra + length + 1);
+        find_tree_record record;
+
+        address_to open_at = positive_max;
+        if (!at)
+                return false;
+        memory_fill(address_of record, 0, sizeof(record));
+        record.kind = kind;
+        record.type = type;
+        record.looked = facts != null;
+        record.code = (b32)code;
+        record.depth = (p32)depth;
+        record.name_at = (p32)name_at;
+        record.bytes = (p32)(extra + length + 1);
+        memory_copy(at, address_of record, sizeof(record));
+        if (facts)
+                memory_copy(at + sizeof(record), facts, sizeof(file_facts));
+        memory_copy(at + sizeof(record) + extra, path, length);
+        at[sizeof(record) + extra + length] = end;
+        return true;
+}
+
+static bool find_tree_decide(parallel_output address_to output, positive address_to open_at,
+                             string_address path, positive length, positive name_at,
+                             positive depth, p8 type, positive mode,
+                             file_facts address_to facts)
+{
+        bool failed = false;
+
+        if (!find_tree_pure)
+                return find_tree_note(output, open_at, FIND_TREE_ENTRY, 0, path, length,
+                                      name_at, depth, type, facts);
+
+        (void)find_tree_holds(find_root, path, length, path + name_at, mode, output,
+                              open_at, address_of failed);
+        return !failed;
+}
+
+static fn find_tree_enter(address_any context, address_any node_address,
+                          bipolar directory, parallel_output address_to output)
+{
+        find_tree_node address_to node = node_address;
+        positive open_at = positive_max;
+        p8 records[WALK_READ];
+
+        (void)context;
+
+        if (directory < 0)
+        {
+                (void)find_tree_note(output, address_of open_at, FIND_TREE_FAILED, directory,
+                                     (string_address)node->path, node->length, 0, node->depth,
+                                     0, null);
+                return;
+        }
+
+        //      A directory the walk looked at before going in is proved to be
+        //      the one it opened, as the serial walk's open proves it.
+        if (node->parent && node->looked)
+        {
+                file_facts opened;
+                bipolar looked = file_look_code(directory, (string_address)"", AT_EMPTY_PATH,
+                                                address_of opened);
+
+                if (looked >= 0 && (!file_same_identity(address_of node->facts, address_of opened) ||
+                                    (opened.mode & MODE_FORMAT) != MODE_DIRECTORY))
+                        looked = -ERROR_AGAIN;
+                if (looked < 0)
+                {
+                        (void)find_tree_note(output, address_of open_at, FIND_TREE_FAILED, looked,
+                                             (string_address)node->path, node->length, 0,
+                                             node->depth, 0, null);
+                        return;
+                }
+        }
+
+        positive depth = node->depth + 1;
+        bool follow = find_follow;
+        bool joint = node->length && node->path[node->length - 1] != '/';
+
+        for (;;)
+        {
+                bipolar got = system_read_directory(directory, records, sizeof(records));
+                bipolar at = 0;
+
+                if (got <= 0)
+                        break;
+
+                while (at < got)
+                {
+                        struct linux_dirent64 address_to record =
+                            (struct linux_dirent64 address_to)(records + at);
+                        string_address name = (string_address)record->d_name;
+                        p8 type = record->d_type;
+                        positive name_length;
+                        positive length;
+                        p8 small[FILE_PATH_MAX];
+                        p8 address_to path;
+                        file_facts facts;
+                        bool looked = false;
+                        bool said = true;
+
+                        at += record->d_reclen;
+                        if (file_is_dot(name))
+                                continue;
+
+                        name_length = string_length(name);
+                        length = node->length + joint + name_length;
+                        path = length < sizeof(small) ? small : memory_take(length + 1);
+                        if (!path)
+                        {
+                                parallel_stop();
+                                return;
+                        }
+                        memory_copy(path, node->path, node->length);
+                        if (joint)
+                                path[node->length] = '/';
+                        memory_copy(path + node->length + joint, name, name_length);
+                        path[length] = end;
+
+                        positive mode = file_mode_from_type(type);
+                        bool structural = type == 0 || (follow && type == DT_LNK) ||
+                                          (type == DT_DIR && (follow || find_one_system));
+
+                        if (structural || find_tree_wants_facts)
+                        {
+                                bipolar code = file_look_code(directory, name,
+                                                              follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                              address_of facts);
+
+                                /* -L follows links that have targets. A dangling
+                                   link is still an entry and is tested as a link. */
+                                if (code < 0 && follow &&
+                                    file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts))
+                                        code = 0;
+                                if (code >= 0)
+                                {
+                                        looked = true;
+                                        mode = facts.mode;
+                                }
+                                else if (structural)
+                                {
+                                        said = find_tree_note(output, address_of open_at,
+                                                              FIND_TREE_FAILED, code,
+                                                              (string_address)path, length, 0,
+                                                              depth, 0, null);
+                                        goto next;
+                                }
+                        }
+
+                        bool directory_entry = (mode & MODE_FORMAT) == MODE_DIRECTORY;
+                        p64 device = looked ? file_device_key(facts.device_major, facts.device_minor)
+                                            : 0;
+
+                        if (directory_entry && follow && looked)
+                        {
+                                bool cycle = false;
+
+                                for (find_tree_node address_to up = node; up && !cycle; up = up->parent)
+                                        cycle = up->identified && up->device == device &&
+                                                up->inode == facts.inode;
+                                if (cycle)
+                                {
+                                        said = find_tree_note(output, address_of open_at,
+                                                              FIND_TREE_CYCLE, 0,
+                                                              (string_address)path, length, 0,
+                                                              depth, 0, null);
+                                        goto next;
+                                }
+                        }
+
+                        bool descend = directory_entry && depth < find_maximum &&
+                                       (!find_one_system || (looked && device == find_device));
+                        bool wanted = depth >= find_minimum && depth <= find_maximum;
+                        bool later = find_deepest && descend;
+
+                        if (wanted && !later)
+                                said = find_tree_decide(output, address_of open_at,
+                                                        (string_address)path, length,
+                                                        length - name_length, depth, type, mode,
+                                                        looked ? address_of facts : null);
+
+                        if (said && descend)
+                        {
+                                find_tree_node address_to child =
+                                    find_tree_node_new(node, name, name_length, depth);
+
+                                if (!child)
+                                        said = false;
+                                else
+                                {
+                                        child->type = type;
+                                        child->looked = looked;
+                                        child->deferred = later && wanted;
+                                        if (looked)
+                                        {
+                                                child->facts = facts;
+                                                child->identified = true;
+                                                child->device = device;
+                                                child->inode = facts.inode;
+                                        }
+                                        else
+                                                child->facts.mode = (p16)mode;
+                                        open_at = positive_max;
+                                        if (!parallel_child(output, name, child))
+                                        {
+                                                memory_give(child);
+                                                said = false;
+                                        }
+                                }
+                        }
+next:
+                        if (path != small)
+                                memory_give(path);
+                        if (!said)
+                        {
+                                parallel_stop();
+                                return;
+                        }
+                }
+        }
+}
+
+static fn find_tree_leave(address_any context, address_any node_address,
+                          bipolar directory, parallel_output address_to output)
+{
+        find_tree_node address_to node = node_address;
+        positive open_at = positive_max;
+
+        (void)context;
+        (void)directory;
+
+        if (!node->deferred)
+                return;
+
+        if (!find_tree_decide(output, address_of open_at, (string_address)node->path,
+                              node->length, node->name_at, node->depth, node->type,
+                              node->facts.mode, node->looked ? address_of node->facts : null))
+                parallel_stop();
+}
+
+static bool find_tree_sink(address_any context, address_any node_address,
+                           address_any data, positive length, bool finished)
+{
+        p8 address_to bytes = data;
+        positive at = 0;
+
+        (void)context;
+        if (finished)
+        {
+                if (node_address != find_tree_top)
+                        memory_give(node_address);
+                return true;
+        }
+
+        while (at < length)
+        {
+                find_tree_record record;
+                string_address payload;
+
+                memory_copy(address_of record, bytes + at, sizeof(record));
+                payload = (string_address)bytes + at + sizeof(record);
+                at += sizeof(record) + record.bytes;
+
+                switch (record.kind)
+                {
+                case FIND_TREE_PRINTED:
+                        if (record.bytes)
+                                log(payload, record.bytes);
+                        break;
+                case FIND_TREE_FAILED:
+                        string_format(log_error, "find: '%w': %s\n", writer_terminal_quoted_name,
+                                      payload, file_reason(record.code));
+                        find_status = 1;
+                        break;
+                case FIND_TREE_CYCLE:
+                        string_format(log_error, "find: File system loop detected; the following directory is part of the cycle: '%w'\n",
+                                      writer_terminal_quoted_name, payload);
+                        find_status = 1;
+                        break;
+                case FIND_TREE_ENTRY:
+                {
+                        string_address path = payload;
+
+                        memory_fill(address_of find_tree_facts, 0, sizeof(find_tree_facts));
+                        if (record.looked)
+                        {
+                                memory_copy(address_of find_tree_facts, payload, sizeof(file_facts));
+                                path = payload + sizeof(file_facts);
+                        }
+                        else
+                                find_tree_facts.mode = (p16)file_mode_from_type(record.type);
+
+                        find_path = path;
+                        find_name = path + record.name_at;
+                        find_facts = address_of find_tree_facts;
+                        find_depth = record.depth;
+                        find_parent = AT_FDCWD;
+                        find_entry = path;
+                        find_facts_known = record.looked;
+                        find_facts_follow = find_follow;
+                        find_pruned = false;
+                        find_true(find_root);
+                        break;
+                }
+                }
+        }
+        return true;
+}
+
+//      A command-line root: itself decided on this thread as the serial walk
+//      decides it, everything under it on the pool.
+static fn find_tree_root(string_address path, string_address name, bipolar parent,
+                         string_address entry)
+{
+        file_facts facts;
+        bool follow = find_follow || find_follow_named;
+
+        if (find_quit)
+                return;
+
+        memory_fill(address_of facts, 0, sizeof(facts));
+        find_path = path;
+        find_name = name;
+        find_facts = address_of facts;
+        find_depth = 0;
+        find_parent = parent;
+        find_entry = entry;
+        find_facts_known = false;
+        find_facts_follow = follow;
+        find_pruned = false;
+
+        if (!find_facts_ready())
+                return;
+
+        find_device = file_device_key(facts.device_major, facts.device_minor);
+
+        bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+        bool wanted = find_minimum == 0;
+
+        if (!find_deepest && wanted)
+                find_true(find_root);
+
+        if (directory && find_maximum > 0 && !find_quit)
+        {
+                bipolar handle = file_open_same(parent, entry, address_of facts,
+                                                FILE_READ | O_DIRECTORY | (follow ? 0 : O_NOFOLLOW));
+
+                if (handle < 0)
+                {
+                        string_format(log_error, "find: '%w': %s\n", writer_terminal_quoted_name,
+                                      path, file_reason(handle));
+                        find_status = 1;
+                }
+                else
+                {
+                        find_tree_node address_to top =
+                            find_tree_node_new(null, path, string_length(path), 0);
+
+                        if (!top)
+                        {
+                                log_error("find: out of memory while walking the tree\n", 0);
+                                find_status = 1;
+                        }
+                        else
+                        {
+                                top->identified = true;
+                                top->looked = true;
+                                top->facts = facts;
+                                top->device = find_device;
+                                top->inode = facts.inode;
+                                find_tree_top = top;
+
+                                if (!parallel_tree(find_tree_enter, find_tree_leave, find_tree_sink,
+                                                   null, handle, top, find_follow ? 0 : O_NOFOLLOW))
+                                {
+                                        log_error("find: out of memory while walking the tree\n", 0);
+                                        find_status = 1;
+                                }
+                                find_tree_top = null;
+                                memory_give(top);
+                        }
+                        system_close(handle);
+                }
+        }
+
+        if (find_deepest && wanted && !find_quit)
+        {
+                find_path = path;
+                find_name = name;
+                find_facts = address_of facts;
+                find_depth = 0;
+                find_parent = parent;
+                find_entry = entry;
+                find_facts_known = true;
+                find_facts_follow = follow;
+                find_true(find_root);
+        }
+}
+#endif
+
 /* Hold a command-line root's parent before any predicate is evaluated.  This
    gives -execdir, -okdir and -delete the same descriptor-relative boundary
    descendants already have, including absolute roots whose ancestors can be
@@ -11075,7 +11691,12 @@ static fn find_walk_root(string_address root)
         }
 
         path_tail_copy(name, FILE_PATH_MAX, root);
-        find_walk(root, name, 0, true, parent, entry, 0);
+#if defined(LIBRARY_THREAD_RUNTIME)
+        if (find_tree_usable())
+                find_tree_root(root, name, parent, entry);
+        else
+#endif
+                find_walk(root, name, 0, true, parent, entry, 0);
         system_close(parent);
 }
 
