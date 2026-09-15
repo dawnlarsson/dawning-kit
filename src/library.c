@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        322 routines (309 public, 13 local), 321 of them on all three and 1 local to one.
+        324 routines (311 public, 13 local), 323 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -283,6 +283,8 @@
           sha256_compress                public  yes     yes     yes
           sha512_blocks                  public  yes     yes     yes
           shell_set_cursor               public  yes     yes     yes
+          signal_jump_mark               public  yes     yes     yes
+          signal_jump_to_mark            public  yes     yes     yes
           signal_return_trampoline       public  yes     yes     yes
           sleep                          public  yes     yes     yes
           socket_accept                  public  yes     yes     yes
@@ -43015,9 +43017,9 @@ void _longjmp(positive address_to state, int value) DEAD_END;
         jumps out, and expects the mask restored will not get that, and there
         is no sigprocmask call hidden in here to make it slow either.
 
-        The mask half now exists and is next door. src/platform/signal.inc
-        holds a sigsetjmp that saves the mask into slots 26 and 27 of the
-        state below and then tail jumps into jump_mark, so the register lists
+        The mask half now exists and is further down. signal_jump_mark is a
+        sigsetjmp that saves the mask into slots 26 and 27 of the state
+        below and then tail jumps into jump_mark, so the register lists
         here are the only ones in the library and are not copied there.
         Nothing in this file changed to make that work, and nothing here pays
         for it: setjmp and _setjmp still make no system call.
@@ -43234,10 +43236,10 @@ __asm__(
         sigsetjmp and siglongjmp are not here and are not missing. They were
         absent while there was no sigprocmask to build them out of, on the
         grounds that a routine taking the second argument and ignoring it
-        would be a promise broken quietly. src/standard/signal.c supplies the
-        mask, and src/platform/signal.inc supplies the two names beside the
-        restorer trampoline that lives there for the same reason -- both are
-        per-architecture instructions, and one file of those is enough.
+        would be a promise broken quietly. signal_jump_mark and
+        signal_jump_to_mark further down supply the mask and the two names,
+        beside the restorer trampoline -- both are per-architecture
+        instructions, and one file of those is enough.
 */
 __asm__(
     ASM_ALIAS(setjmp,   jump_mark)
@@ -43314,6 +43316,140 @@ __asm__(
 );
 
 #endif
+
+/*
+        sigsetjmp and siglongjmp, both instructions now.
+
+        The second is sigsetjmp, and the reason is subtler. sigsetjmp cannot
+        be a C function that saves the mask and then calls jump_mark, because
+        jump_mark writes down the stack pointer its own caller will have after
+        it returns -- which would be a pointer into the C wrapper's frame.
+        That frame is dead the instant the wrapper returns. A later
+        siglongjmp would restore a stack pointer to memory that other calls
+        have since overwritten, reload the callee-saved registers out of it,
+        and continue with a register file made of whatever was last pushed
+        there. It does not fail every time, which is the worst kind.
+
+        So sigsetjmp is a stub that saves the mask and then TAIL jumps to
+        jump_mark with the stack exactly as it was on entry. jump_mark then
+        records sigsetjmp's own caller, which is what it must record, and the
+        register lists in library.c's jump_mark are not copied here or anywhere else.
+        There is one save-the-registers routine in this library and this file
+        does not become a second one.
+*/
+
+/*
+        Where the mask goes, and why it goes in the same array.
+
+        library.c's jump_state reserves thirty two slots for a jump_state and its comment
+        says why: riscv64 is the widest at twenty six slots, and the spare six
+        are for "a later addition, a signal mask among them". This is that
+        addition. Slot 26 records whether a mask was asked for at all and slot
+        27 holds it, so a sigjmp_buf and a jmp_buf are the same object and a
+        program that mixes the two spellings gets a compile error rather than
+        a structure of the wrong size.
+
+        The mask stored is the kernel's eight bytes and not the hundred and
+        twenty eight glibc declares, because eight is all sixty four signals
+        need and all the system call will read.
+*/
+#define SIGNAL_JUMP_SAVED 26
+#define SIGNAL_JUMP_MASK 27
+
+/*
+        The mask half is instructions as well, not a call into C. Both slots
+        are written even when no mask was asked for: a jump_state is an
+        automatic array in most callers and holds whatever was on the stack,
+        and leaving slot 26 alone would have siglongjmp restore eight bytes of
+        rubbish as the process's mask. The mask is read with SIG_BLOCK and a
+        null set, straight into slot 27, which is how every libc asks what is
+        blocked -- and a failed read leaves the zero just stored there.
+
+        siglongjmp puts the mask back before the jump, because after there is
+        no after, and a state saved with a zero flag leaves the mask as it is.
+        Neither stub touches the stack: every register they keep across the
+        system call is one the kernel preserves, so jump_mark still reads the
+        original caller's return address and stack.
+*/
+b32 signal_jump_mark(jump_state state, b32 save_mask) __attribute__((returns_twice));
+fn signal_jump_to_mark(jump_state state, b32 value) DEAD_END;
+
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(signal_jump_mark)
+    "xor %eax, %eax\n   test %esi, %esi\n   setne %al\n"
+    "mov %rax, 208(%rdi)  # slot 26, whether a mask travels\n"
+    "movq $0, 216(%rdi)   # slot 27, empty until read\n"
+    "jz jump_mark\n"
+    "mov %rdi, %r8\n   xor %edi, %edi\n   xor %esi, %esi\n"
+    "lea 216(%r8), %rdx\n   mov $8, %r10d\n"
+    "mov $" MOONWATER_NUMBER(syscall(rt_sigprocmask)) ", %eax\n   syscall\n"
+    "mov %r8, %rdi\n   jmp jump_mark\n"
+    ASM_END(signal_jump_mark)
+
+    ASM_FUNC(signal_jump_to_mark)
+    "cmpq $0, 208(%rdi)\n   je jump_to_mark\n"
+    "mov %rdi, %r8\n   mov %esi, %r9d\n"
+    "mov $2, %edi  # SIG_SETMASK\n   lea 216(%r8), %rsi\n   xor %edx, %edx\n"
+    "mov $8, %r10d\n"
+    "mov $" MOONWATER_NUMBER(syscall(rt_sigprocmask)) ", %eax\n   syscall\n"
+    "mov %r8, %rdi\n   mov %r9d, %esi\n   jmp jump_to_mark\n"
+    ASM_END(signal_jump_to_mark)
+);
+
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(signal_jump_mark)
+    "cmp w1, #0\n   cset x2, ne\n   stp x2, xzr, [x0, #208]\n"
+    "cbnz w1, 1f\n   b jump_mark\n"
+    "1:  mov x9, x0\n   mov x0, #0\n   mov x1, #0\n   add x2, x9, #216\n"
+    "mov x3, #8\n   mov x8, #" MOONWATER_NUMBER(syscall(rt_sigprocmask)) "\n"
+    "svc #0\n   mov x0, x9\n   b jump_mark\n"
+    ASM_END(signal_jump_mark)
+
+    ASM_FUNC(signal_jump_to_mark)
+    "ldr x2, [x0, #208]\n   cbnz x2, 1f\n   b jump_to_mark\n"
+    "1:  mov x9, x0\n   mov w10, w1\n   mov x0, #2\n   add x1, x9, #216\n"
+    "mov x2, #0\n   mov x3, #8\n"
+    "mov x8, #" MOONWATER_NUMBER(syscall(rt_sigprocmask)) "\n   svc #0\n"
+    "mov x0, x9\n   mov w1, w10\n   b jump_to_mark\n"
+    ASM_END(signal_jump_to_mark)
+);
+
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(signal_jump_mark)
+    "snez t0, a1\n   sd t0, 208(a0)\n   sd zero, 216(a0)\n"
+    "bnez a1, 1f\n   tail jump_mark\n"
+    "1:  mv t2, a0\n   li a0, 0\n   li a1, 0\n   addi a2, t2, 216\n   li a3, 8\n"
+    "li a7, " MOONWATER_NUMBER(syscall(rt_sigprocmask)) "\n   ecall\n"
+    "mv a0, t2\n   tail jump_mark\n"
+    ASM_END(signal_jump_mark)
+
+    ASM_FUNC(signal_jump_to_mark)
+    "ld t0, 208(a0)\n   bnez t0, 1f\n   tail jump_to_mark\n"
+    "1:  mv t2, a0\n   mv t3, a1\n   li a0, 2\n   addi a1, t2, 216\n   li a2, 0\n"
+    "li a3, 8\n   li a7, " MOONWATER_NUMBER(syscall(rt_sigprocmask)) "\n   ecall\n"
+    "mv a0, t2\n   mv a1, t3\n   tail jump_to_mark\n"
+    ASM_END(signal_jump_to_mark)
+);
+
+#endif
+
+/*
+        __sigsetjmp is beside sigsetjmp because glibc's header makes sigsetjmp
+        a macro over __sigsetjmp, so an object compiled against real headers
+        has a relocation against the underscored spelling and nothing against
+        the plain one. Both are the same address here.
+*/
+__asm__(
+    ASM_ALIAS(sigsetjmp,   signal_jump_mark)
+    ASM_ALIAS(__sigsetjmp, signal_jump_mark)
+    ASM_ALIAS(siglongjmp,  signal_jump_to_mark)
+);
 
 #endif // LINUX && !KERNEL_MODE && !STANDARD_NO_PLATFORM
 

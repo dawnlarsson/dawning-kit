@@ -619,6 +619,9 @@ p256_multiply p256_square p256_add p256_subtract p384_multiply p384_square p384_
 cover('nothing_to_fold', None, 'jump_mark jump_to_mark',
      'the argument is a jump_state the caller owns and the body is the '
      'register list itself; no literal a caller could pass shortens it')
+cover('nothing_to_fold', None, 'signal_jump_mark signal_jump_to_mark',
+     'a caller-owned jump_state and a flag or value the stub only tests '
+     'once before a system call or a tail jump')
 cover('nothing_to_fold', None, 'montgomery_multiply',
      'the modulus, its inverse and the limb count come from a crypto_field or '
      'an RSA key at run time; no call site holds a literal')

@@ -12031,18 +12031,6 @@ typedef fn(address_to signal_restorer)(void);
 #endif
 
 /*
-        The restorer and the sigsetjmp stub, which are instructions and live
-        next door for the reason that file sets out at length.
-
-        It is read here, before anything that uses it, because
-        signal_action_change fills in the restorer address on x86_64 and
-        cannot do that with a name it has not seen. Everything the .inc needs
-        is already in scope: jump_state and DEAD_END from library.c,
-        the syscall table and MOONWATER_NUMBER from library.c.
-*/
-#include "platform/signal.inc"
-
-/*
         A set of signals, in the shape a program that was written against
         glibc already believes it has.
 
@@ -12571,74 +12559,6 @@ b32 signal_wait(void)
 }
 
 /*
-        The half of sigsetjmp that is not a jump.
-
-        Called from the stub with the state and the flag still in the
-        registers they arrived in. Slot 26 records whether a mask was wanted,
-        because siglongjmp has to know without being told again, and slot 27
-        holds it.
-
-        Both slots are written even when no mask was asked for. A jump_state
-        is an automatic array in most callers and holds whatever was on the
-        stack; leaving slot 26 alone would mean a sigsetjmp with a zero second
-        argument being read later as one that saved a mask, and restoring
-        eight bytes of stack rubbish as the process's signal mask is a failure
-        with no plausible symptom.
-
-        The mask is read with SIG_BLOCK and a null set, which is how every
-        libc asks "what is blocked right now" -- blocking nothing changes
-        nothing and the old value comes back through the third argument.
-*/
-KEEP fn signal_jump_save(jump_state state, b32 save_mask)
-{
-        positive mask = 0;
-
-        state[SIGNAL_JUMP_SAVED] = save_mask ? 1 : 0;
-        state[SIGNAL_JUMP_MASK] = 0;
-
-        if (!save_mask)
-                return;
-
-        system_signal_mask(SIG_BLOCK, 0, address_of mask,
-                           SIGNAL_KERNEL_SET_BYTES);
-
-        state[SIGNAL_JUMP_MASK] = mask;
-}
-
-/*
-        siglongjmp, which unlike its partner is ordinary C.
-
-        The asymmetry is worth stating because it looks like an oversight.
-        sigsetjmp had to be assembly because jump_mark records the stack of
-        whoever called it, and a C wrapper would have interposed a frame that
-        is dead by the time the jump comes back. jump_to_mark records nothing
-        and returns to nobody -- it moves the stack pointer to the mark and
-        continues there -- so a C wrapper's frame is simply abandoned, which
-        is what would have happened to it anyway.
-
-        The mask goes back before the jump and not after, because after there
-        is no after: jump_to_mark does not return here. Restoring first also
-        means the code at the mark starts with the mask the mark was taken
-        under, which is the entire promise sigsetjmp's second argument makes.
-
-        A state saved with a zero second argument leaves the mask exactly as
-        it is, which is _setjmp's behaviour and is what a program that did not
-        ask for the syscall is paying nothing for.
-*/
-fn signal_jump_to_mark(jump_state state, b32 value)
-{
-        if (state[SIGNAL_JUMP_SAVED])
-        {
-                positive mask = state[SIGNAL_JUMP_MASK];
-
-                system_signal_mask(SIG_SETMASK, address_of mask, 0,
-                                   SIGNAL_KERNEL_SET_BYTES);
-        }
-
-        jump_to_mark(state, value);
-}
-
-/*
         The names a C program knows these by, as second labels on the same
         addresses, exactly as library.c attaches strlen to string_length.
 
@@ -12646,12 +12566,8 @@ fn signal_jump_to_mark(jump_state state, b32 value)
         already defines kill, as a static C function with the POSIX name
         itself, so there is no prose routine here to attach and a .set naming
         it would be a second definition of a symbol the assembler has already
-        seen in this translation unit.
-
-        __sigsetjmp is beside sigsetjmp because glibc's header makes sigsetjmp
-        a macro over __sigsetjmp, so an object compiled against real headers
-        has a relocation against the underscored spelling and nothing against
-        the plain one. Both are the same address here.
+        seen in this translation unit. sigsetjmp, __sigsetjmp and siglongjmp
+        are attached in library.c, beside the instructions they name.
 */
 __asm__(
     ASM_ALIAS(signal,      signal_handle)
@@ -12667,9 +12583,6 @@ __asm__(
     ASM_ALIAS(sigpending,  signal_mask_pending)
     ASM_ALIAS(alarm,       signal_alarm)
     ASM_ALIAS(pause,       signal_wait)
-    ASM_ALIAS(sigsetjmp,   signal_jump_mark)
-    ASM_ALIAS(__sigsetjmp, signal_jump_mark)
-    ASM_ALIAS(siglongjmp,  signal_jump_to_mark)
 );
 
 /*

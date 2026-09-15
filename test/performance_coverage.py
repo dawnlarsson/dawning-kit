@@ -112,6 +112,11 @@ jump_mark jump_to_mark
      'that scrambled every saved register, on three machines; a jump has no '
      'C twin to time against')
 
+cover('correctness_only', 'test/checks.c#CHECK_signal', '''
+signal_jump_mark signal_jump_to_mark
+''', 'the mask travels or stays across a jump, from a handler and back, on '
+     'three machines; timed before and after in the commit that made them asm')
+
 cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',
       'the short-decimal reader is held to the general path by name on '
       '131,072 generated inputs a machine in CHECK_number, and reached '
