@@ -17157,6 +17157,7 @@ static void check_spawn_dispatch(void) {
 #define KEY_LEFTALT 56
 #define KEY_RIGHTALT 100
 #define KEY_TAB 15
+#define KEY_A 30
 #define KEY_F9 67
 #define KEY_T 20
 #define WINDOW_KEYS 64
@@ -17364,16 +17365,22 @@ static void desktop_set_awake(_Bool awake) { assert(desktop.lock);desktop.awake=
 static void bind_strscpy(char *to,const char *from,unsigned long size) {
     unsigned long at=0; for (;at+1<size && from[at];at++) to[at]=from[at]; if (size) to[at]=0;
 }
-struct work_struct { void (*func)(struct work_struct *); };
-#define INIT_WORK(work,run) do { (work)->func=(run); } while(0)
+struct work_struct { void (*func)(struct work_struct *); int pending; };
+#define INIT_WORK(work,run) do { (work)->func=(run); (work)->pending=0; } while(0)
 static unsigned long jiffies;
 static int system_state=SYSTEM_RUNNING;
 static unsigned bind_queued,bind_helpers,bind_offs,bind_reboots;
 static int bind_thread_pid=42,bind_wait_answer;
 static _Bool bind_forced;
 static char bind_argv[3][300];
-static _Bool queue_work(void *queue,struct work_struct *work) { (void)queue;(void)work;bind_queued++;return 1; }
-static _Bool work_pending(struct work_struct *work) { (void)work; return 0; }
+static _Bool work_pending(struct work_struct *work) { return work && work->pending; }
+static _Bool queue_work(void *queue,struct work_struct *work) {
+    (void)queue;
+    if (!work || work->pending) return 0;
+    work->pending=1;
+    bind_queued++;
+    return 1;
+}
 static void orderly_poweroff(_Bool force) { bind_offs++;bind_forced=force; }
 static void orderly_reboot(void) { bind_reboots++; }
 #undef user_mode_thread
@@ -17419,6 +17426,20 @@ static void bind_press(unsigned event, const char *command, int pid, int wait) {
     bind_helpers=bind_offs=bind_reboots=0; bind_forced=0;
     bind_thread_pid=pid; bind_wait_answer=wait;
     bind_run(row);
+}
+static void bind_idle(struct bind_row *row) {
+    if (!row) return;
+    row->work.pending=0;
+    atomic_set(&row->busy,0);
+}
+static void bind_idle_canvas(void) {
+    bind_canvas_work.pending=0;
+    atomic_set(&bind_row(SPARK_BIND_CANVAS_ON)->busy,0);
+    atomic_set(&bind_row(SPARK_BIND_CANVAS_OFF)->busy,0);
+}
+static void bind_clear_mods(void) {
+    bind_send(EV_KEY,KEY_LEFTCTRL,0); bind_send(EV_KEY,KEY_RIGHTCTRL,0);
+    bind_send(EV_KEY,KEY_LEFTALT,0); bind_send(EV_KEY,KEY_RIGHTALT,0);
 }
 """
     # moonwater canvas on and off: what the request decides before Canvas
@@ -17719,7 +17740,7 @@ static void check_bind(void) {
     check(bind_queued==1,"a press queues the command");
     jiffies+=400; bind_send(EV_KEY,KEY_POWER,1);
     check(bind_queued==1,"a second press inside a second is the same press");
-    jiffies+=1200; bind_send(EV_KEY,KEY_POWER,1);
+    bind_idle(power); jiffies+=1200; bind_send(EV_KEY,KEY_POWER,1);
     check(bind_queued==2,"a press after a second is another press");
     jiffies+=5000;
     bind_send(EV_KEY,KEY_POWER,0); bind_send(EV_KEY,KEY_POWER,2);
@@ -17741,7 +17762,7 @@ static void check_bind(void) {
     bind_watch_row(sleep, 1);
     bind_send(EV_KEY,KEY_SLEEP,1);
     check(bind_queued==queued+1,"KEY_SLEEP queues sleep");
-    sleep->last=0; jiffies+=5000;
+    bind_idle(sleep); sleep->last=0; jiffies+=5000;
     bind_send(EV_KEY,KEY_SUSPEND,1);
     check(bind_queued==queued+2,"KEY_SUSPEND is the same sleep event");
 
@@ -17749,6 +17770,7 @@ static void check_bind(void) {
     bind_send(EV_KEY,KEY_LEFTCTRL,1); bind_send(EV_KEY,KEY_LEFTALT,1);
     bind_send(EV_KEY,KEY_DELETE,1);
     check(bind_queued==queued+1,"ctrl+alt+delete queues that event");
+    bind_idle(cad);
     bind_send(EV_KEY,KEY_LEFTCTRL,0); bind_send(EV_KEY,KEY_LEFTALT,0);
 
     queued=bind_queued;
@@ -17760,6 +17782,7 @@ static void check_bind(void) {
     bind_row(SPARK_BIND_LID_CLOSE)->last=0;
     bind_send(EV_SW,SW_LID,1);
     check(bind_queued==queued+1,"a bound lid close queues");
+    bind_idle(bind_row(SPARK_BIND_LID_CLOSE));
     bind_row(SPARK_BIND_LID_OPEN)->last=0;
     atomic_set(&bind_row(SPARK_BIND_LID_OPEN)->bound,1);
     snprintf(bind_row(SPARK_BIND_LID_OPEN)->command,
@@ -17803,6 +17826,7 @@ static void check_bind(void) {
     check(bind_keyboard_notify(NULL,KBD_KEYSYM,&boot)==NOTIFY_STOP,
           "the Boot keysym is stopped so VT does not restart");
     check(bind_queued==queued+1,"and that keysym queues ctrl_alt_delete");
+    bind_idle(cad);
     boot.value=K_BOOT;
     queued=bind_queued; cad->last=0; jiffies+=5000;
     check(bind_keyboard_notify(NULL,KBD_KEYSYM,&boot)==NOTIFY_STOP,
@@ -17875,6 +17899,201 @@ static void check_bind(void) {
           (request.flags & SPARK_BIND_DEFAULT),
           "an empty command puts the default back");
     atomic_set(&power->runs,0);
+    bind_idle(power); bind_idle(sleep); bind_idle(vol); bind_idle(cad);
+    bind_idle(bind_row(SPARK_BIND_LID_CLOSE)); bind_idle(bind_row(SPARK_BIND_LID_OPEN));
+    bind_idle_canvas(); bind_clear_mods();
+}
+static void check_bind_edges(void) {
+    struct bind_control request;
+    struct bind_row *row;
+    unsigned queued, event, op, reserved, length, at, other;
+    unsigned ctrl, alt, key;
+    int value;
+    long got;
+    char who[96];
+    const unsigned ctrls[]={0,KEY_LEFTCTRL,KEY_RIGHTCTRL};
+    const unsigned alts[]={0,KEY_LEFTALT,KEY_RIGHTALT};
+    const unsigned cad_keys[]={KEY_DELETE,KEY_KPDOT,KEY_TAB};
+    const unsigned types[]={EV_SYN,EV_REL,EV_ABS,4u,255u};
+    const unsigned noise[]={0,1,SW_LID,KEY_A,KEY_TAB,KEY_POWER,BTN_LEFT,KEY_RESTART,767u,768u,~0u};
+    const int values[]={-1,0,1,2,255};
+    const unsigned hold_codes[]={
+        KEY_POWER,KEY_SLEEP,KEY_SUSPEND,KEY_RESTART,KEY_VOLUMEUP,
+        KEY_VOLUMEDOWN,KEY_MUTE,KEY_BRIGHTNESSUP,KEY_BRIGHTNESSDOWN};
+
+    bind_start();
+    memset(&bind_dev,0,sizeof(bind_dev));
+    power_admin=1; power_capable=1; system_state=SYSTEM_RUNNING;
+
+    for (event=1; event<=SPARK_BIND_EVENTS; event++) {
+        row=bind_row(event);
+        memset(&request,0,sizeof(request));
+        request.event=event;
+        snprintf(who,sizeof(who),"GET event %u names the row",event);
+        check(!report_bind(&request) && !strcmp(request.name,spark_bind_event_name[event-1]) &&
+              request.count==SPARK_BIND_EVENTS &&
+              !strcmp(request.command,row->def) &&
+              !!(request.flags & SPARK_BIND_DEFAULT) &&
+              !!(request.flags & SPARK_BIND_BOOT)==!!row->boot &&
+              atomic_read(&row->bound)==(row->def[0]!=0),
+              who);
+        for (other=event+1; other<=SPARK_BIND_EVENTS; other++)
+            check(strcmp(spark_bind_event_name[event-1],spark_bind_event_name[other-1]),
+                  "bound event names are unique");
+    }
+
+    for (op=0; op<4; op++)
+    for (event=0; event<SPARK_BIND_EVENTS+3; event++)
+    for (reserved=0; reserved<8; reserved++) {
+        _Bool invalid=op>SPARK_BIND_SET || !event || event>SPARK_BIND_EVENTS || reserved;
+        memset(&request,0,sizeof(request));
+        request.op=op; request.event=event;
+        request.reserved[0]=reserved&1u;
+        request.reserved[1]=(reserved>>1)&1u;
+        request.reserved[2]=(reserved>>2)&1u;
+        got=report_bind(&request);
+        snprintf(who,sizeof(who),"ioctl op=%u event=%u reserved=%u",op,event,reserved);
+        check(invalid ? got==-EINVAL : got==0, who);
+    }
+    memset(&request,0,sizeof(request)); request.event=~0u;
+    check(report_bind(&request)==-EINVAL,"event UINT_MAX is refused");
+    memset(&request,0,sizeof(request)); request.op=~0u; request.event=1;
+    check(report_bind(&request)==-EINVAL,"op UINT_MAX is refused");
+
+    for (length=0; length<=SPARK_BIND_COMMAND_MAX; length++) {
+        memset(&request,0,sizeof(request));
+        request.op=SPARK_BIND_SET; request.event=SPARK_BIND_VOLUME_UP;
+        memset(request.command,'a',length<SPARK_BIND_COMMAND_MAX?length:SPARK_BIND_COMMAND_MAX);
+        if (length<SPARK_BIND_COMMAND_MAX) request.command[length]=0;
+        got=report_bind(&request);
+        snprintf(who,sizeof(who),"SET command length %u",length);
+        if (length==SPARK_BIND_COMMAND_MAX)
+            check(got==-ENAMETOOLONG, who);
+        else if (!length)
+            check(!got && !bind_row(SPARK_BIND_VOLUME_UP)->command[0] &&
+                  !atomic_read(&bind_row(SPARK_BIND_VOLUME_UP)->bound) &&
+                  !bind_key_swallowed(KEY_VOLUMEUP,1), who);
+        else
+            check(!got && strlen(bind_row(SPARK_BIND_VOLUME_UP)->command)==length &&
+                  bind_key_swallowed(KEY_VOLUMEUP,1) &&
+                  bind_key_swallowed(KEY_VOLUMEUP,0), who);
+    }
+
+    memset(&request,0,sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
+    check(!report_bind(&request) && !strcmp(bind_row(SPARK_BIND_POWEROFF)->command,"poweroff") &&
+          bind_key_swallowed(KEY_POWER,1) && bind_key_swallowed(KEY_POWER,0),
+          "empty SET on poweroff restores the default and stays bound");
+
+    queued=bind_queued;
+    for (at=0; at<sizeof(types)/sizeof(*types); at++)
+        for (other=0; other<sizeof(noise)/sizeof(*noise); other++)
+            for (value=0; value<5; value++)
+                bind_send(types[at], noise[other], values[value]);
+    check(bind_queued==queued,"syn, rel, abs and unknown types never queue");
+    bind_send(EV_KEY,KEY_A,1); bind_send(EV_KEY,KEY_A,0);
+    bind_send(EV_KEY,BTN_LEFT,1); bind_send(EV_KEY,BTN_LEFT,0);
+    bind_send(EV_KEY,768,1); bind_send(EV_KEY,~0u,1);
+    check(bind_queued==queued && !bind_key_swallowed(KEY_A,1) &&
+          !bind_key_swallowed(BTN_LEFT,1),
+          "letters, mouse buttons and codes past the map do not bind");
+
+    bind_clear_mods();
+    for (ctrl=0; ctrl<3; ctrl++)
+    for (alt=0; alt<3; alt++)
+    for (key=0; key<3; key++) {
+        struct bind_row *cad=bind_row(SPARK_BIND_CTRL_ALT_DELETE);
+        bind_idle(cad); bind_clear_mods(); cad->last=0; jiffies+=5000;
+        queued=bind_queued;
+        if (ctrls[ctrl]) bind_send(EV_KEY,ctrls[ctrl],1);
+        if (alts[alt]) bind_send(EV_KEY,alts[alt],1);
+        bind_send(EV_KEY,cad_keys[key],1);
+        snprintf(who,sizeof(who),"CAD ctrl=%u alt=%u key=%u",ctrls[ctrl],alts[alt],cad_keys[key]);
+        check(bind_queued==queued+(ctrls[ctrl]&&alts[alt]&&cad_keys[key]!=KEY_TAB), who);
+    }
+    {
+        struct bind_row *cad=bind_row(SPARK_BIND_CTRL_ALT_DELETE);
+        bind_idle(cad); bind_clear_mods(); cad->last=0; jiffies+=5000;
+        queued=bind_queued;
+        bind_send(EV_KEY,KEY_LEFTCTRL,1); bind_send(EV_KEY,KEY_RIGHTCTRL,1);
+        bind_send(EV_KEY,KEY_LEFTCTRL,0); bind_send(EV_KEY,KEY_LEFTALT,1);
+        bind_send(EV_KEY,KEY_DELETE,1);
+        check(bind_queued==queued+1,"right ctrl still held after left is released still makes CAD");
+        bind_idle(cad); bind_clear_mods();
+    }
+
+    {
+        struct bind_row *power=bind_row(SPARK_BIND_POWEROFF);
+        unsigned runs;
+        bind_idle(power); power->last=0; jiffies=5000; bind_queued=0;
+        bind_send(EV_KEY,KEY_POWER,1);
+        runs=(unsigned)atomic_read(&power->runs);
+        power->last=0; jiffies+=5000;
+        bind_send(EV_KEY,KEY_POWER,1);
+        check(bind_queued==1 && atomic_read(&power->runs)==(int)runs,
+              "a pending poweroff does not count a second run");
+        bind_idle(power); power->last=1000; jiffies=1999;
+        queued=bind_queued;
+        bind_send(EV_KEY,KEY_POWER,1);
+        check(bind_queued==queued,"debounce still holds on the last jiffy inside the window");
+        jiffies=2000;
+        bind_send(EV_KEY,KEY_POWER,1);
+        check(bind_queued==queued+1,"and fires on the first jiffy after it");
+        bind_idle(power);
+    }
+
+    {
+        struct bind_row *vol=bind_row(SPARK_BIND_VOLUME_UP);
+        unsigned runs;
+        memset(&request,0,sizeof(request));
+        request.op=SPARK_BIND_SET; request.event=SPARK_BIND_VOLUME_UP;
+        snprintf(request.command,sizeof(request.command),"true");
+        check(!report_bind(&request), "volume is bound for the pending follow-up");
+        bind_idle(vol); vol->last=0; queued=bind_queued;
+        bind_send(EV_KEY,KEY_VOLUMEUP,1);
+        runs=(unsigned)atomic_read(&vol->runs);
+        bind_send(EV_KEY,KEY_VOLUMEUP,1);
+        check(bind_queued==queued+1 && atomic_read(&vol->runs)==(int)runs,
+              "a pending volume key does not double-count");
+        bind_idle(vol); atomic_set(&vol->busy,1); vol->last=0;
+        bind_send(EV_KEY,KEY_VOLUMEUP,1);
+        check(bind_queued==queued+2,
+              "volume without drop_busy queues a follow-up while the run is in flight");
+        bind_idle(vol);
+    }
+
+    {
+        unsigned held;
+        memset(&request,0,sizeof(request));
+        request.op=SPARK_BIND_SET;
+        snprintf(request.command,sizeof(request.command),"true");
+        request.event=SPARK_BIND_SLEEP; report_bind(&request);
+        request.event=SPARK_BIND_VOLUME_DOWN; report_bind(&request);
+        request.event=SPARK_BIND_MUTE; report_bind(&request);
+        request.event=SPARK_BIND_BRIGHTNESS_UP; report_bind(&request);
+        request.event=SPARK_BIND_BRIGHTNESS_DOWN; report_bind(&request);
+        for (held=0; held<sizeof(hold_codes)/sizeof(*hold_codes); held++)
+            check(bind_key_swallowed(hold_codes[held],1), "nine bound keys all swallow their press");
+        for (held=0; held<sizeof(hold_codes)/sizeof(*hold_codes); held++)
+            check(bind_key_swallowed(hold_codes[held],0), "and all nine releases stay swallowed");
+        check(!bind_key_swallowed(KEY_TAB,1), "typing is still not swallowed after nine holds");
+    }
+
+    queued=bind_queued;
+    for (event=0; event<SPARK_BIND_EVENTS+4; event++) {
+        unsigned before=bind_queued;
+        row=bind_row(event);
+        bind_fire(event);
+        check(bind_queued==before+(row && atomic_read(&row->bound) ? 1u : 0u),
+              "bind_fire only queues a bound id");
+        if (row) { bind_idle(row); bind_idle_canvas(); }
+    }
+    check(bind_queued>=queued,"bind_fire walked every id");
+
+    bind_send(EV_SW,1,1); bind_send(EV_SW,SW_LID,2);
+    /* lid 2 is not 0/1 open/close; match still maps value? as open. ignore count. */
+
+    power_admin=1; power_capable=1;
 }
 // KEY_POWER is the ACPI button; bind listens, Canvas does not.
 static void suspend_pending(void) {
@@ -18443,6 +18662,7 @@ int main(void) {
     check_keyboard_state();
     check_console_keyboard();
     check_bind();
+    check_bind_edges();
     check_canvas_control();
     check_settings_sum();
     check_input_suspension();

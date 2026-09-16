@@ -1019,6 +1019,8 @@ static long report_stats(struct stats __user *out)
 */
 #define BIND_MOD_CTRL 1u
 #define BIND_MOD_ALT 2u
+#define BIND_MOD_RCTRL 4u
+#define BIND_MOD_RALT 8u
 
 struct bind_row {
         const char *name;
@@ -1049,7 +1051,6 @@ static struct bind_row bind_table[SPARK_BIND_EVENTS];
 static DEFINE_SPINLOCK(bind_lock);
 static atomic_t bind_ctrl;
 static atomic_t bind_alt;
-static unsigned int bind_held[8];
 static unsigned bind_held_n;
 static _Bool bind_handler_registered;
 static struct work_struct bind_canvas_work;
@@ -1058,9 +1059,12 @@ static struct work_struct bind_canvas_work;
         Codes whose press or release might be a bound key. Typing is the
         common path; a bit test here is what keeps spin_lock_irqsave off it.
         KEY_RESTART is 408, so the map covers the kernel's KEY_MAX floor.
+        bind_down is the keys currently swallowed, the same width, so a ninth
+        bound key still pairs its release.
 */
 #define BIND_CODES 768u
 static unsigned long bind_watch[BIND_CODES / 64];
+static unsigned long bind_down[BIND_CODES / 64];
 
 static const struct {
         const char *def;
@@ -1091,7 +1095,7 @@ static struct bind_row *bind_row(unsigned int event)
         return bind_table + event - 1;
 }
 
-static void bind_watch_code(unsigned int code, _Bool on)
+static void bind_map_set(unsigned long *map, unsigned int code, _Bool on)
 {
         unsigned int word;
         unsigned long bit, now;
@@ -1100,8 +1104,19 @@ static void bind_watch_code(unsigned int code, _Bool on)
                 return;
         word = code / 64;
         bit = 1UL << (code % 64);
-        now = READ_ONCE(bind_watch[word]);
-        WRITE_ONCE(bind_watch[word], on ? now | bit : now & ~bit);
+        now = READ_ONCE(map[word]);
+        WRITE_ONCE(map[word], on ? now | bit : now & ~bit);
+}
+
+static _Bool bind_map_on(const unsigned long *map, unsigned int code)
+{
+        return code < BIND_CODES &&
+               (READ_ONCE(map[code / 64]) & (1UL << (code % 64))) != 0;
+}
+
+static void bind_watch_code(unsigned int code, _Bool on)
+{
+        bind_map_set(bind_watch, code, on);
 }
 
 static void bind_watch_row(struct bind_row *row, _Bool on)
@@ -1128,8 +1143,7 @@ static void bind_watch_row(struct bind_row *row, _Bool on)
 
 static _Bool bind_watched(unsigned int code)
 {
-        return code < BIND_CODES &&
-               (READ_ONCE(bind_watch[code / 64]) & (1UL << (code % 64))) != 0;
+        return bind_map_on(bind_watch, code);
 }
 
 static _Bool bind_command_is_default(struct bind_row *row, const char *command)
@@ -1269,8 +1283,10 @@ static void bind_queue(struct bind_row *row)
                 work = &row->work;
         }
 
+        if (!queue_work(system_dfl_long_wq, work))
+                return;
+
         atomic_fetch_add(1, &row->runs);
-        queue_work(system_dfl_long_wq, work);
 }
 
 static void bind_fire(unsigned int event)
@@ -1360,32 +1376,27 @@ static _Bool bind_row_bound(struct bind_row *row)
 
 static _Bool bind_code_held(unsigned int code)
 {
-        unsigned at;
-
-        for (at = 0; at < bind_held_n; at++)
-                if (bind_held[at] == code)
-                        return true;
-        return false;
+        return bind_map_on(bind_down, code);
 }
 
 static void bind_hold(unsigned int code, int value)
 {
-        unsigned at;
+        if (code >= BIND_CODES)
+                return;
 
         if (value)
         {
-                if (bind_code_held(code) || bind_held_n >= ARRAY_SIZE(bind_held))
+                if (bind_code_held(code))
                         return;
-                bind_held[bind_held_n++] = code;
+                bind_map_set(bind_down, code, 1);
+                bind_held_n++;
                 return;
         }
 
-        for (at = 0; at < bind_held_n; at++)
-                if (bind_held[at] == code)
-                {
-                        bind_held[at] = bind_held[--bind_held_n];
-                        return;
-                }
+        if (!bind_code_held(code))
+                return;
+        bind_map_set(bind_down, code, 0);
+        bind_held_n--;
 }
 
 static _Bool bind_key_swallowed(unsigned int code, int value)
@@ -1421,10 +1432,14 @@ static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
 {
         unsigned int bit = 0;
 
-        if (code == KEY_LEFTCTRL || code == KEY_RIGHTCTRL)
+        if (code == KEY_LEFTCTRL)
                 bit = BIND_MOD_CTRL;
-        else if (code == KEY_LEFTALT || code == KEY_RIGHTALT)
+        else if (code == KEY_RIGHTCTRL)
+                bit = BIND_MOD_RCTRL;
+        else if (code == KEY_LEFTALT)
                 bit = BIND_MOD_ALT;
+        else if (code == KEY_RIGHTALT)
+                bit = BIND_MOD_RALT;
         else
                 return;
 
@@ -1433,7 +1448,7 @@ static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
                 if (!(bind->mods & bit))
                 {
                         bind->mods |= bit;
-                        if (bit == BIND_MOD_CTRL)
+                        if (bit & (BIND_MOD_CTRL | BIND_MOD_RCTRL))
                                 atomic_fetch_add(1, &bind_ctrl);
                         else
                                 atomic_fetch_add(1, &bind_alt);
@@ -1442,7 +1457,7 @@ static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
         else if (bind->mods & bit)
         {
                 bind->mods &= ~bit;
-                if (bit == BIND_MOD_CTRL)
+                if (bit & (BIND_MOD_CTRL | BIND_MOD_RCTRL))
                         atomic_fetch_sub(1, &bind_ctrl);
                 else
                         atomic_fetch_sub(1, &bind_alt);
@@ -1517,7 +1532,9 @@ static void bind_disconnect(struct input_handle *handle)
         struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
 
         bind_mods(bind, KEY_LEFTCTRL, 0);
+        bind_mods(bind, KEY_RIGHTCTRL, 0);
         bind_mods(bind, KEY_LEFTALT, 0);
+        bind_mods(bind, KEY_RIGHTALT, 0);
         input_close_device(handle);
         input_unregister_handle(handle);
         kfree(bind);
@@ -1601,7 +1618,10 @@ static void bind_start(void)
         atomic_set(&bind_alt, 0);
         bind_held_n = 0;
         for (at = 0; at < ARRAY_SIZE(bind_watch); at++)
+        {
                 bind_watch[at] = 0;
+                bind_down[at] = 0;
+        }
 
         for (at = 0; at < SPARK_BIND_EVENTS; at++)
         {
