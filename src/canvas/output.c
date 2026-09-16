@@ -29,6 +29,28 @@ static PURE _Bool canvas_is_virtual(struct drm_device *dev)
                array_count(guests);
 }
 
+/*
+        The firmware's leftover framebuffer, not a GPU.
+
+        simpledrm (and efidrm) bind to whatever GOP left in sysfb. On a
+        Dell with i915 that is card0 at the firmware's size -- often
+        1024x768 -- and Canvas starting there paints the kernel log into
+        that buffer. i915 then takes the same pipe; the firmware client is
+        kicked with a picture on it, and the machine freezes. It is a last
+        resort when no real card appears.
+*/
+static PURE _Bool canvas_is_firmware(struct drm_device *dev)
+{
+        static const char *const firmware[] = {"simpledrm", "efidrm"};
+
+        if (!dev->driver || !dev->driver->name)
+                return false;
+
+        return string_table_find((string_address)dev->driver->name, firmware,
+                                 sizeof(firmware[0]), array_count(firmware)) <
+               array_count(firmware);
+}
+
 static PURE unsigned int output_mode_count(struct drm_connector *connector)
 {
         struct drm_display_mode *mode;
@@ -1055,7 +1077,7 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
         card, or the module loaded by init -- starts it at once.
 
         Both sides under desktop.lock, which canvas_start already holds; the
-        spawn itself happens outside it on the initcall's side.
+        spawn itself happens on the canvas thread, outside that lock.
 */
 #ifdef MODULE
 static _Bool canvas_initcalls_done = true;
@@ -1072,7 +1094,16 @@ static void canvas_terminal_first(void)
                 return;
         }
 
-        pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());
+        /*
+                Outside desktop.lock, on the canvas thread.
+
+                canvas_start holds that lock for the first picture. The
+                terminal's first WINDOW ioctl takes it too, so spawning
+                from here would wait out the child's open. The thread
+                already starts Control-Shift-T that way.
+        */
+        atomic_set(&desktop.spawn, 1);
+        canvas_thread_wake();
 }
 
 #ifndef MODULE
@@ -1087,7 +1118,10 @@ static int __init canvas_initcalls_finished(void)
         rt_mutex_unlock(&desktop.lock);
 
         if (waiting)
-                pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());
+        {
+                atomic_set(&desktop.spawn, 1);
+                canvas_thread_wake();
+        }
 
         return 0;
 }

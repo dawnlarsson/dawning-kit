@@ -286,6 +286,24 @@ static unsigned int canvas_settled_at;
 */
 static u64 canvas_claimed;
 static _Bool canvas_is_on(void);
+static void canvas_firmware_yield(void);
+
+static _Bool canvas_has_native(void)
+{
+        struct canvas *canvas;
+        _Bool native = false;
+
+        mutex_lock(&canvas_list_lock);
+        list_for_each_entry(canvas, &canvas_list, link)
+                if (!canvas_is_firmware(canvas->client.dev))
+                {
+                        native = true;
+                        break;
+                }
+        mutex_unlock(&canvas_list_lock);
+
+        return native;
+}
 
 static int canvas_claim(const char *path, unsigned int minor,
                         struct canvas_control *on)
@@ -293,6 +311,7 @@ static int canvas_claim(const char *path, unsigned int minor,
         struct file *filp;
         struct drm_file *file_priv;
         struct canvas *canvas;
+        struct drm_device *dev;
 
         if (canvas_claimed & BIT_ULL(minor))
                 return -EBUSY;
@@ -310,6 +329,31 @@ static int canvas_claim(const char *path, unsigned int minor,
         }
 
         /*
+                simpledrm is card0 on a Dell with i915: GOP's leftover
+                size, often 1024x768. Starting there paints the kernel
+                log, then i915 takes the same pipe and the machine
+                freezes. Leave it until a GPU appears, or until the
+                settle rounds have passed with none. Userspace on still
+                takes it when it is the only card.
+        */
+        dev = file_priv->minor->dev;
+        if (canvas_is_firmware(dev))
+        {
+                int skip = 0;
+
+                if (canvas_has_native())
+                        skip = -ENODEV;
+                else if (!on && canvas_attempts < CANVAS_SETTLE)
+                        skip = -EAGAIN;
+
+                if (skip)
+                {
+                        filp_close(filp, NULL);
+                        return skip;
+                }
+        }
+
+        /*
                 Turned on from userspace, a card is taken only from nobody.
 
                 This open is the card's master unless another program already
@@ -318,22 +362,22 @@ static int canvas_claim(const char *path, unsigned int minor,
                 console's client, which off left on the card, goes while this
                 file is still the master, so the close below restores nothing.
         */
-        if (on && drm_core_check_feature(file_priv->minor->dev, DRIVER_MODESET))
+        if (on && drm_core_check_feature(dev, DRIVER_MODESET))
         {
                 if (!drm_is_current_master(file_priv))
                 {
                         if (!on->master_pid && !on->master_command[0])
                                 on->master_pid = canvas_master_holder(
-                                    file_priv->minor->dev, on->master_command,
+                                    dev, on->master_command,
                                     sizeof(on->master_command));
                         filp_close(filp, NULL);
                         return -EACCES;
                 }
 
-                canvas_clients_clear(file_priv->minor->dev);
+                canvas_clients_clear(dev);
         }
 
-        canvas = canvas_take_over(file_priv->minor->dev);
+        canvas = canvas_take_over(dev);
 
         if (canvas)
                 canvas_claimed |= BIT_ULL(minor);
@@ -357,6 +401,9 @@ static int canvas_claim(const char *path, unsigned int minor,
 
         drm_client_register(&canvas->client);
         pr_info("[moonwater canvas] " "attached to %s, %s display\n", canvas->client.dev->driver->name, canvas_is_virtual(canvas->client.dev) ? "a guest's" : "a real");
+
+        if (!canvas_is_firmware(canvas->client.dev))
+                canvas_firmware_yield();
 
         return 0;
 }
@@ -518,6 +565,40 @@ static void canvas_client_drop(struct canvas *canvas, struct drm_device *dev)
                 }
         }
         mutex_unlock(&dev->clientlist_mutex);
+}
+
+/*
+        A GPU is attached: the firmware framebuffer is not a second
+        screen, it is the same pipe. Leaving a client on it is what
+        froze the OptiPlex -- i915 taking that pipe with a picture
+        still scanning from simpledrm.
+*/
+static void canvas_firmware_yield(void)
+{
+        for (;;)
+        {
+                struct canvas *canvas, *found = NULL;
+                struct drm_device *dev = NULL;
+
+                mutex_lock(&canvas_list_lock);
+                list_for_each_entry(canvas, &canvas_list, link)
+                        if (canvas_is_firmware(canvas->client.dev))
+                        {
+                                found = canvas;
+                                dev = canvas->client.dev;
+                                drm_dev_get(dev);
+                                break;
+                        }
+                mutex_unlock(&canvas_list_lock);
+
+                if (!found)
+                        return;
+
+                pr_info("[moonwater canvas] " "dropping %s, a GPU is attached\n",
+                        found->client.dev->driver->name);
+                canvas_client_drop(found, dev);
+                drm_dev_put(dev);
+        }
 }
 
 static long canvas_turn_off(void)

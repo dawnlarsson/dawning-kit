@@ -210,6 +210,26 @@ static void plane_claim(struct drm_client_dev *client, struct output *output)
                 return;
         }
 
+        /*
+                i915's cursor plane does not scan a dumb buffer.
+
+                Haswell will take the object and then stop the pipe the
+                moment the plane is armed: the first picture (kernel log)
+                stays, the pointer thread waits out a cursor update that
+                never completes, and there is no terminal. virtio-gpu is
+                why the plane exists; i915's dirtyfb is a frontbuffer
+                flush, so drawing the arrow into the scanout is cheap.
+                moonwater.cursor_plane=0 is the same drawing everywhere.
+        */
+        if (client->dev->driver && client->dev->driver->name &&
+            (!strcmp(client->dev->driver->name, "i915") ||
+             !strcmp(client->dev->driver->name, "xe")))
+        {
+                pr_info_once("[moonwater canvas] " "%s cursor plane skipped, drawing the cursor instead\n",
+                             client->dev->driver->name);
+                return;
+        }
+
         // Direct callbacks rely on atomic state owning framebuffer references;
         // legacy callbacks need core bookkeeping and a different recovery path.
         if (!drm_drv_uses_atomic_modeset(client->dev) || !plane ||

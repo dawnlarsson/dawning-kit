@@ -1041,7 +1041,7 @@ static int canvas_loop(void *unused)
                         unbounded amount of somebody else's work.
                 */
                 if (atomic_xchg(&desktop.spawn, 0))
-                        spawn_terminal();
+                        pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());
 
                 if (atomic_read(&desktop.focus_steps) ||
                     atomic_read(&desktop.focus_commit) ||

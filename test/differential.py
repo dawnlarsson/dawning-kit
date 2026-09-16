@@ -21325,6 +21325,32 @@ int main(void) {
     check("plane-off teardown is balanced",!gems());
     canvas_cursor_plane=true; reset();
 
+    /* Haswell will not scan a dumb buffer on the cursor plane. strcmp, not
+       a table, so this extracted harness needs no string_table_find. */
+    {
+        static const struct drm_driver i915_driver={"i915"};
+        static const struct drm_driver xe_driver={"xe"};
+        const struct drm_driver *saved=atomic_device.driver;
+
+        reset(); said=0;
+        atomic_device.driver=&i915_driver;
+        c=card(true); o=output(c);
+        check("i915 does not claim a cursor plane",
+              !o->cursor_plane && !o->cursor_buffer && !paint_calls && allocated==1);
+        check("skipping i915's plane is said once",
+              said==1 && strstr(said_last,"i915") && strstr(said_last,"skipped"));
+        client_unregister(&c->client);
+
+        reset(); said=0;
+        atomic_device.driver=&xe_driver;
+        c=card(true); o=output(c);
+        check("xe does not claim a cursor plane",
+              !o->cursor_plane && !o->cursor_buffer && !paint_calls && allocated==1);
+        check("skipping xe's plane is not said again",said==0);
+        client_unregister(&c->client);
+        atomic_device.driver=saved; reset();
+    }
+
     /* The plane's size: the driver's cursor size, 64 when it gives none (what
        DRM_CAP_CURSOR_WIDTH answers userspace), raised to its framebuffer
        minimum and held to its maximum. virtio-gpu gives none and refuses
