@@ -26656,9 +26656,11 @@ typedef char *string_address;
 #define AT_FDCWD (-100)
 #define FILE_READ 0
 #define O_DIRECTORY 0200000
+#define O_NOFOLLOW 0400000
 #define O_CLOEXEC 02000000
 #define syscall(name) 0
 #define memory_copy memcpy
+#define string_equals(source, input) (strcmp((const char *)(source), (const char *)(input)) == 0)
 static positive string_length(string_address text) {
     return text ? (positive)strlen(text) : 0;
 }
@@ -26671,21 +26673,33 @@ static positive positive_into_string(p8 *into, positive value) {
     return at;
 }
 static long mock_uid;
-static unsigned mkdirs, modes, failures, checks;
+static unsigned mkdirs, modes, sticky, failures, checks;
 static char made[32][BOWL_PATH_LIMIT];
+static char last_open[BOWL_PATH_LIMIT];
+static char last_private[BOWL_PATH_LIMIT];
 static bipolar system_call(long n) { (void)n; return (bipolar)mock_uid; }
 static bipolar system_call_2(long n, positive handle, positive mode) {
     (void)n; (void)handle;
-    if (mode == 0700) modes++;
+    if (mode == 0700) {
+        modes++;
+        snprintf(last_private, sizeof(last_private), "%s", last_open);
+    }
+    if (mode == 01777) sticky++;
     return 0;
 }
 static bipolar system_open_at(bipolar dir, string_address path, positive flags) {
-    (void)dir; (void)path; (void)flags;
+    (void)dir; (void)flags;
+    snprintf(last_open, sizeof(last_open), "%s", path ? (char *)path : "");
     return 3;
 }
 static void system_close(bipolar handle) { (void)handle; }
 static bipolar bowl_mkdir(string_address path) {
     if (mkdirs < 32) snprintf(made[mkdirs], sizeof(made[0]), "%s", path);
+    mkdirs++;
+    return 0;
+}
+static bipolar bowl_dev_link(string_address target, string_address name) {
+    if (mkdirs < 32) snprintf(made[mkdirs], sizeof(made[0]), "link:%s>%s", name, target);
     mkdirs++;
     return 0;
 }
@@ -26756,23 +26770,56 @@ int main(void) {
         check(!env_has(got, "HOME=/root"), "the default HOME does not replace one");
     }
 
-    mkdirs = modes = 0;
+    {
+        string_address have[] = {
+            "TERM=dumb", "TERMINFO=/x", "HOME=/home/a", "PATH=/bin", "LANG=C",
+            "USER=a", "LOGNAME=a", "XDG_RUNTIME_DIR=", "SHELL=/bin/bash",
+            "TMPDIR=/var/tmp", null};
+        got = bowl_environment(have);
+        check(got != have, "an empty runtime dir is not a complete session");
+        check(!env_has(got, "XDG_RUNTIME_DIR="),
+              "the empty runtime dir is not kept");
+        check(env_has(got, "XDG_RUNTIME_DIR=/run/user/0"),
+              "an empty runtime dir is replaced");
+    }
+
+    {
+        string_address have[] = {"HOME=relative", "XDG_RUNTIME_DIR=run/user/0",
+                                 null};
+        got = bowl_environment(have);
+        check(!env_has(got, "HOME=relative"), "a relative HOME is not kept");
+        check(env_has(got, "HOME=/root"), "a relative HOME becomes /root");
+        check(!env_has(got, "XDG_RUNTIME_DIR=run/user/0"),
+              "a relative runtime dir is not kept");
+        check(env_has(got, "XDG_RUNTIME_DIR=/run/user/0"),
+              "a relative runtime dir is replaced");
+    }
+
+    mkdirs = modes = sticky = 0;
     mock_uid = 0;
+    last_private[0] = 0;
     bowl_session_prepare(null, null);
     {
         unsigned at;
-        int runtime = 0, config = 0, tmp = 0;
+        int runtime = 0, config = 0, tmp = 0, shm = 0, lock = 0, var_run = 0;
         for (at = 0; at < mkdirs && at < 32; at++) {
             if (!strcmp(made[at], "/run/user/0")) runtime = 1;
             if (!strcmp(made[at], "/root/.config")) config = 1;
             if (!strcmp(made[at], "/tmp")) tmp = 1;
+            if (!strcmp(made[at], "/dev/shm")) shm = 1;
+            if (!strcmp(made[at], "/run/lock")) lock = 1;
+            if (!strcmp(made[at], "link:/var/run>/run")) var_run = 1;
         }
-        check(runtime && modes, "the default runtime dir is created 0700");
+        check(runtime && modes && !strcmp(last_private, "/run/user/0"),
+              "the default runtime dir is created 0700");
         check(config, "HOME/.config is created");
-        check(tmp, "/tmp is created");
+        check(tmp && sticky, "/tmp is created 1777");
+        check(shm, "/dev/shm is created");
+        check(lock && var_run, "/run/lock and /var/run are created");
     }
 
-    mkdirs = modes = 0;
+    mkdirs = modes = sticky = 0;
+    last_private[0] = 0;
     bowl_session_prepare("/home/a", "/tmp/xdg-runtime");
     {
         unsigned at;
@@ -26781,9 +26828,16 @@ int main(void) {
             if (!strcmp(made[at], "/tmp/xdg-runtime")) runtime = 1;
             if (!strcmp(made[at], "/home/a/.local/share")) home = 1;
         }
-        check(runtime && modes, "an inherited runtime dir is created 0700");
+        check(runtime && modes && !strcmp(last_private, "/tmp/xdg-runtime"),
+              "an inherited runtime dir is created 0700");
         check(home, "an inherited HOME gets .local/share");
     }
+
+    mkdirs = modes = sticky = 0;
+    last_private[0] = 0;
+    bowl_session_prepare("/root", "/tmp");
+    check(!modes, "/tmp as a runtime dir is not chmod 0700");
+    check(sticky, "/tmp stays 1777 when named as the runtime dir");
 
     if (failures) return 1;
     printf("bowl session: %u of %u\n", checks, checks);

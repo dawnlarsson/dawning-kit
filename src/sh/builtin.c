@@ -2407,11 +2407,13 @@ fn shell_env_init(string_address address_to process_environment)
 
                 string_copy_max_end(name, defaults[i], (positive)(mark - defaults[i]));
 
-                if (!env_get(name))
+                if (bowl_session_default_missing(name, env_get(name)))
                         // String literals, like initial-stack strings, remain
                         // valid for the process lifetime. Mutation takes the
-                        // ordinary owned-cell path later.
-                        env_borrow_assignment(defaults[i], false);
+                        // ordinary owned-cell path later. An empty or relative
+                        // XDG_RUNTIME_DIR still looks set to getenv, so replace
+                        // it rather than leave Weston reading the blank.
+                        env_borrow_assignment(defaults[i], true);
                 else
                         env_export_mark(name);
 
