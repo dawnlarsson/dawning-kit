@@ -1293,8 +1293,9 @@ static fn process_timeout_cleanup(bipolar pidfd, bipolar signal_fd,
                            8);
 }
 
-static fn process_timeout_signal(b32 child, b32 signal, bool foreground,
-                                 bool verbose, string_address command)
+static fn process_timeout_signal(b32 child, bipolar pidfd, b32 signal,
+                                 bool foreground, bool verbose,
+                                 string_address command)
 {
         if (verbose)
         {
@@ -1306,6 +1307,11 @@ static fn process_timeout_signal(b32 child, b32 signal, bool foreground,
                               name, command);
                 log_flush();
         }
+
+        if (foreground && pidfd >= 0 &&
+            system_call_4(syscall(pidfd_send_signal), (positive)pidfd,
+                          (positive)signal, 0, 0) >= 0)
+                return;
 
         system_call_2(syscall(kill),
                       (positive)(foreground ? child : -child),
@@ -1509,7 +1515,7 @@ static b32 process_timeout()
 
                 if (waited == 2)
                 {
-                        process_timeout_signal((b32)child, forwarded,
+                        process_timeout_signal((b32)child, pidfd, forwarded,
                                                foreground, verbose,
                                                program_argument(
                                                    (b32)taking.first));
@@ -1531,7 +1537,7 @@ static b32 process_timeout()
 
         string_address command = program_argument((b32)taking.first);
 
-        process_timeout_signal((b32)child, signal, foreground, verbose,
+        process_timeout_signal((b32)child, pidfd, signal, foreground, verbose,
                                command);
 
         bool killed = signal == SIGKILL;
@@ -1551,7 +1557,7 @@ static b32 process_timeout()
 
                         if (waited == 2)
                         {
-                                process_timeout_signal((b32)child, forwarded,
+                                process_timeout_signal((b32)child, pidfd, forwarded,
                                                        foreground, verbose,
                                                        command);
                                 forwarded = 0;
@@ -1560,7 +1566,7 @@ static b32 process_timeout()
 
                 if (!waited)
                 {
-                        process_timeout_signal((b32)child, SIGKILL,
+                        process_timeout_signal((b32)child, pidfd, SIGKILL,
                                                foreground, verbose, command);
                         killed = true;
                 }
@@ -2132,7 +2138,7 @@ static b32 process_script_record(process_script_state address_to state,
                         }
                         /* A descendant retaining the slave must not hold the
                            recorder forever after the command is reaped. */
-                        process_timeout_signal((b32)child, SIGHUP, false,
+                        process_timeout_signal((b32)child, pidfd, SIGHUP, false,
                                                false, command_text);
                         master_end = true;
                         break;
@@ -2225,7 +2231,7 @@ static b32 process_script_record(process_script_state address_to state,
                         {
                                 b32 number = (b32)(p32)information[0];
                                 if (number != SIGCHLD)
-                                        process_timeout_signal((b32)child,
+                                        process_timeout_signal((b32)child, pidfd,
                                                                number, false,
                                                                false,
                                                                command_text);
@@ -2245,7 +2251,7 @@ static b32 process_script_record(process_script_state address_to state,
         }
 
         if (failed && !child_done)
-                process_timeout_signal((b32)child, SIGKILL, false, false,
+                process_timeout_signal((b32)child, pidfd, SIGKILL, false, false,
                                        command_text);
         if (!child_done)
         {
@@ -2262,12 +2268,12 @@ static b32 process_script_record(process_script_state address_to state,
                                 child_done = waited == 1;
                                 break;
                         }
-                        process_timeout_signal((b32)child, forwarded, false,
+                        process_timeout_signal((b32)child, pidfd, forwarded, false,
                                                false, command_text);
                 }
                 if (!child_done)
                 {
-                        process_timeout_signal((b32)child, SIGKILL, false,
+                        process_timeout_signal((b32)child, pidfd, SIGKILL, false,
                                                false, command_text);
                         if (system_wait4_retry((b32)child, address_of status,
                                                0, null) < 0)

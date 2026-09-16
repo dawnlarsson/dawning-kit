@@ -1808,7 +1808,10 @@ static b32 ul_uclamp_one(b32 pid, address_any context)
 
 static const argument_option ul_uclamp_options[] = {
     {"all-tasks", 'a'}, {"pid", 'p', ARGUMENT_REQUIRED}, {"system", 's'}, {"reset-on-fork", 'R'},
-    {"verbose", 'v'}, {"help", 'h'}, {"version", 'V'}, {"mM", 0, ARGUMENT_REQUIRED}, {null},
+    {"verbose", 'v'}, {"help", 'h'}, {"version", 'V'},
+    {"util-min", 'm', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"util-max", 'M', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"mM", 0, ARGUMENT_REQUIRED}, {null},
 };
 
 static b32 util_linux_uclampset()
@@ -1977,11 +1980,6 @@ static bipolar ul_flock_try(b32 handle, p8 kind, bool nonblocking,
                              (positive)address_of range);
 }
 
-static fn ul_flock_alarm(b32 number)
-{
-        (void)number;
-}
-
 static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
                          positive start, positive length, b32 conflict,
                          bool verbose, bool address_to blocked)
@@ -2031,64 +2029,33 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
         bool immediate = nonblocking || (timed && !timeout);
 
         address_to blocked = true;
-        if (immediate || !timed)
+        if (!immediate && timed)
+                return ul_flock_poll(handle, kind, timeout, fcntl, start,
+                                     length, conflict, verbose, blocked);
+
+        for (;;)
+        {
                 answer = ul_flock_try(handle, kind, immediate, fcntl,
                                       start, length);
-        else
-        {
-                signal_interval prior;
-                if (system_call_2(syscall(getitimer), SIGNAL_TIMER_REAL,
-                                  (positive)address_of prior) < 0 ||
-                    prior.first_seconds || prior.first_microseconds)
-                        return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                             length, conflict, verbose, blocked);
-
-                signal_action wanted;
-                signal_action had;
-                memory_zero(address_of wanted, sizeof wanted);
-                wanted.handler = ul_flock_alarm;
-                if (signal_action_change(SIGALRM, address_of wanted, address_of had) < 0)
-                        return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                             length, conflict, verbose, blocked);
-
-                signal_interval timer = {0, 0, (bipolar)(timeout / 1000000000),
-                                         (bipolar)((timeout % 1000000000 + 999) / 1000)};
-                if (timer.first_microseconds == 1000000)
-                {
-                        timer.first_seconds++;
-                        timer.first_microseconds = 0;
-                }
-                answer = system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
-                                       (positive)address_of timer, 0);
                 if (answer >= 0)
-                        answer = ul_flock_try(handle, kind, false, fcntl,
-                                              start, length);
-
-                signal_interval stopped = {0, 0, 0, 0};
-                system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
-                              (positive)address_of stopped, 0);
-                signal_action_change(SIGALRM, address_of had, null);
+                {
+                        address_to blocked = false;
+                        return 0;
+                }
+                if (!immediate && answer == UL_ERROR_INTERRUPTED)
+                        continue;
+                if (immediate && (answer == -UL_ERROR_AGAIN ||
+                                  answer == -ERROR_ACCESS))
+                {
+                        if (verbose)
+                                string_format(log_error,
+                                              "flock: failed to get lock\n");
+                        return conflict;
+                }
+                string_format(log_error, "flock: cannot lock: %s\n",
+                              file_reason(answer));
+                return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
         }
-
-        if (answer >= 0)
-        {
-                address_to blocked = false;
-                return 0;
-        }
-        if ((immediate && (answer == -UL_ERROR_AGAIN || answer == -ERROR_ACCESS)) ||
-            (!immediate && timed && answer == UL_ERROR_INTERRUPTED))
-        {
-                /*  The reference says which of the two ways it did not get
-                    the lock, and says it only when asked to. */
-                if (verbose)
-                        string_format(log_error, immediate
-                            ? "flock: failed to get lock\n"
-                            : "flock: timeout while waiting to get lock\n");
-                return conflict;
-        }
-        string_format(log_error, "flock: cannot lock: %s\n",
-                      file_reason(answer));
-        return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
 }
 
 static b32 ul_flock_exec(string_address address_to words)
@@ -3141,7 +3108,7 @@ static const argument_option ul_setpriv_options[] = {
     {"landlock-access", 'L', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
     {"landlock-rule", 'D', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
     {"seccomp-filter", 'f', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
-    {"reset-env", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY}, {"help", 'h'}, {"version", 'V'},
+    {"reset-env", 'e', ARGUMENT_LONG_ONLY}, {"help", 'h'}, {"version", 'V'},
     {null},
 };
 
@@ -12326,7 +12293,7 @@ static string_address ul_ipc_time(p8 address_to text, p64 stamp)
         time_t value = (time_t)stamp;
         tm broken;
         if (!localtime_r(address_of value, address_of broken) ||
-            !clock_format_extended(text, 32, "%H:%M", address_of broken))
+            !clock_format_extended(text, 32, "%H:%M", address_of broken, 0))
                 return (string_address)"";
         return text;
 }

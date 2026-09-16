@@ -2378,7 +2378,10 @@ fn shell_env_init(string_address address_to process_environment)
                 env_borrow_assignment(process_environment[at], true);
         }
 
-        bowl_session_prepare(env_get("HOME"), env_get("XDG_RUNTIME_DIR"));
+        /* Runtime dir only: ~/.config and friends belong to a login or bowl
+           session, not every `bash -c` whose HOME is a scratch directory. */
+        bowl_session_prepare_at(env_get("HOME"), env_get("XDG_RUNTIME_DIR"),
+                                false);
 
         // Programs live at the root of the image, so it is on the path.
         // IFS is a variable and not only a splitting policy: a script may
@@ -3015,6 +3018,27 @@ bool env_set(const_string name, const_string value)
 bool env_assign(const_string name, const_string value)
 {
         return env_write(name, value, true);
+}
+
+static bool env_assign_name(const_string name, const_string value)
+{
+        positive length = string_length(env_reading(name));
+        positive base;
+        const_string subscript;
+        positive subscript_length;
+
+        if (env_reference_element_span(name, length, address_of base,
+                                       address_of subscript,
+                                       address_of subscript_length) &&
+            subscript_length)
+                return shell_reference_assign(((env_reference){
+                    .name = name,
+                    .length = base,
+                    .subscript = subscript,
+                    .subscript_length = subscript_length}),
+                    value, false);
+
+        return env_assign(name, value);
 }
 
 static bool env_assign_hashed_span(const_string name, positive name_len,
@@ -10753,6 +10777,14 @@ static fn printf_sets_prepare()
         produced.
 */
 static byte_store printf_kept;
+static writer printf_inner;
+static positive printf_written;
+
+static fn printf_counted(address_any data, positive length)
+{
+        printf_written += length;
+        printf_inner(data, length);
+}
 
 static inline INLINE fn printf_collect(byte_store address_to store,
                                        address_any data, positive length)
@@ -11282,6 +11314,32 @@ fn printf_one(writer write, string_address format)
                         continue;
                 }
 
+                if (conversion == 'n')
+                {
+                        string_address name = printf_next();
+                        p8 digits[24];
+
+                        if (!shell_reference_valid(name, string_length(name)))
+                        {
+                                shell_name_refused("printf", name,
+                                                   string_length(name));
+                                printf_format_failed();
+                                continue;
+                        }
+
+                        digits[positive_into_string(digits, printf_written)] =
+                            end;
+                        if (!env_assign_name(name, digits))
+                        {
+                                string_format(log_error,
+                                              "printf: %s: cannot assign\n",
+                                              name);
+                                printf_format_failed();
+                        }
+
+                        continue;
+                }
+
                 /*
                         %(format)T: a moment written the way date writes it.
 
@@ -11331,7 +11389,7 @@ fn printf_one(writer write, string_address format)
                                 when = (bipolar)shell_started_seconds;
                         }
 
-                        date_shape(write, (b64)when, shape);
+                        date_shape(write, (b64)when, 0, shape);
 
                         continue;
                 }
@@ -11604,6 +11662,10 @@ fn shell_printf(writer write, string_address input)
                 write = printf_keeper;
         }
 
+        printf_inner = write;
+        write = printf_counted;
+        printf_written = 0;
+
         {
                 p8 kind;
 
@@ -11650,7 +11712,7 @@ fn shell_printf(writer write, string_address input)
 
                 printf_kept.bytes[printf_kept.used] = end;
 
-                if (!env_assign(into, printf_kept.bytes))
+                if (!env_assign_name(into, printf_kept.bytes))
                         return shell_answer(string_report(log_error, 1, "printf: %s: cannot assign\n", into));
         }
 
@@ -12078,7 +12140,7 @@ COLD fn shell_read(writer write, string_address input)
                         //      An operand that is not a name is a usage
                         //      error to the Debian shell and a plain
                         //      failure to Bash, which answers 1.
-                        if (!shell_valid_name(shell_argv[name], length))
+                        if (!shell_reference_valid(shell_argv[name], length))
                         {
                                 shell_name_refused("read", shell_argv[name],
                                                    length);
@@ -12238,7 +12300,7 @@ COLD fn shell_read(writer write, string_address input)
         */
         if (exact)
         {
-                if (!array_name && !(env_assign(shell_argv[names], read_line)
+                if (!array_name && !(env_assign_name(shell_argv[names], read_line)
                     || shell_read_refused(shell_argv[names])))
                         return shell_answer(
                             (shell_bash_compat && env_readonly(shell_argv[names]) ? 1 : 2));
@@ -12255,7 +12317,7 @@ COLD fn shell_read(writer write, string_address input)
                 else
                         for (positive name = names + 1; name < shell_argc;
                              name++)
-                                if (!(env_assign(shell_argv[name], "")
+                                if (!(env_assign_name(shell_argv[name], "")
                                     || shell_read_refused(shell_argv[name])))
                                         return shell_answer(
                                             (shell_bash_compat && env_readonly(shell_argv[name]) ? 1 : 2));
@@ -12307,7 +12369,7 @@ COLD fn shell_read(writer write, string_address input)
                 {
                         string_address field = read_field(ifs, address_of at,
                                                            names + 1 == shell_argc);
-                        if (!(env_assign(shell_argv[names], field ? field : (string_address)"")
+                        if (!(env_assign_name(shell_argv[names], field ? field : (string_address)"")
                             || shell_read_refused(shell_argv[names])))
                                 return shell_answer((shell_bash_compat && env_readonly(shell_argv[names]) ? 1 : 2));
                         names++;
@@ -20045,21 +20107,21 @@ COLD fn shell_prompt_written(writer write, string_address text)
                         date_shape(write,
                                    shell_clock_seconds(SHELL_CLOCK_REALTIME,
                                                        null),
-                                   (string_address) "%a %b %d");
+                                   0, (string_address) "%a %b %d");
                         break;
 
                 case 't':
                         date_shape(write,
                                    shell_clock_seconds(SHELL_CLOCK_REALTIME,
                                                        null),
-                                   (string_address) "%H:%M:%S");
+                                   0, (string_address) "%H:%M:%S");
                         break;
 
                 case 'A':
                         date_shape(write,
                                    shell_clock_seconds(SHELL_CLOCK_REALTIME,
                                                        null),
-                                   (string_address) "%H:%M");
+                                   0, (string_address) "%H:%M");
                         break;
 
                 case 'n': write("\n", 1); break;

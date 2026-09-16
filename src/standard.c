@@ -7285,6 +7285,7 @@ typedef struct clock_format_state
         bool to_lower;
         bool change_case;
         bool extensions;
+        positive nanoseconds;
 } clock_format_state;
 
 /*
@@ -7604,6 +7605,7 @@ static fn clock_format_nested(clock_format_state address_to state,
         inner.to_lower = false;
         inner.change_case = false;
         inner.extensions = state->extensions;
+        inner.nanoseconds = state->nanoseconds;
 
         clock_format_core(address_of inner, format, broken);
 
@@ -7871,8 +7873,19 @@ static fn clock_format_core(clock_format_state address_to state,
 
                 case 'N':
                         if (state->extensions)
-                                clock_format_append(state,
-                                                    (address_any)"000000000", 9);
+                        {
+                                positive digits = 9;
+                                positive ns = state->nanoseconds;
+
+                                if (ns > 999999999)
+                                        ns = 999999999;
+                                if (state->width > 0 &&
+                                    (positive)state->width < 9)
+                                        digits = (positive)state->width;
+                                for (positive drop = 9 - digits; drop; drop--)
+                                        ns /= 10;
+                                clock_format_number(state, (bipolar)ns, digits);
+                        }
                         else
                                 clock_format_append(state, (address_any)opened,
                                                     (positive)(cursor - opened));
@@ -8033,7 +8046,8 @@ static fn clock_format_core(clock_format_state address_to state,
 
 static positive clock_format(p8 address_to into, positive max,
                              const char address_to format,
-                             const tm address_to broken, bool extensions)
+                             const tm address_to broken, bool extensions,
+                             positive nanoseconds)
 {
         clock_format_state state;
 
@@ -8067,7 +8081,13 @@ static positive clock_format(p8 address_to into, positive max,
 
         state.out = (byte_store){into, max, 0};
         state.failed = false;
+        state.width = -1;
+        state.pad = 0;
+        state.to_upper = false;
+        state.to_lower = false;
+        state.change_case = false;
         state.extensions = extensions;
+        state.nanoseconds = nanoseconds > 999999999 ? 999999999 : nanoseconds;
 
         clock_format_core(address_of state, format, broken);
 
@@ -8082,13 +8102,13 @@ static positive clock_format(p8 address_to into, positive max,
 positive strftime(p8 address_to into, positive max,
                   const char address_to format, const tm address_to broken)
 {
-        return clock_format(into, max, format, broken, false);
+        return clock_format(into, max, format, broken, false, 0);
 }
 
 /* date(1) shares the full formatter and only opts into the two GNU date
    directives that libc's strftime must return verbatim. */
-#define clock_format_extended(into, max, format, broken)                    \
-        clock_format((into), (max), (format), (broken), true)
+#define clock_format_extended(into, max, format, broken, ns)                \
+        clock_format((into), (max), (format), (broken), true, (ns))
 
 /*
         strptime, which reads a date back out of the text strftime wrote and

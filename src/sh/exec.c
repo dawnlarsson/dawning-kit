@@ -2882,7 +2882,8 @@ fn shell_kill(writer write, string_address input)
                         break;
                 }
 
-                if (string_get(word + 1) == 's' && !string_get(word + 2))
+                if ((string_get(word + 1) == 's' ||
+                     string_get(word + 1) == 'n') && !string_get(word + 2))
                 {
                         if (++at >= shell_argc)
                                 return shell_answer(string_report(log_error, 2, "kill: -s needs a signal\n"));
@@ -3058,10 +3059,9 @@ static b32 job_wait_job(positive found, string_address into,
         b32 answer;
         positive raw;
 
-        if (into)
-                env_set_number(into, (positive)last);
-
         answer = shell_wait_one(last, interrupted, false, false);
+        if (into && !address_to interrupted)
+                env_set_number(into, (positive)last);
 
         //      The last child's own wait word, so an exit code past 128 is
         //      filed as an exit and not as the signal it would spell.
@@ -3097,8 +3097,38 @@ static b32 job_wait_job(positive found, string_address into,
         asked afterwards which job that was. A job that merely stopped has not
         ended, so the wait goes round again -- unless the caller said -f, which
         is the option for wanting the end rather than the next change.
+
+        Named operands restrict that pool: wait -n $slow $fast waits only
+        among those jobs, not an unrelated sibling.
 */
-static b32 job_wait_next(bool force, string_address into)
+static bool job_wait_named(positive at, positive first)
+{
+        if (first >= shell_argc)
+                return true;
+
+        for (positive i = first; i < shell_argc; i++)
+        {
+                string_address word = shell_argv[i];
+                positive found;
+                positive pid;
+
+                if (string_get(word) == '%')
+                {
+                        if (job_specified(word, address_of found) ==
+                                JOB_SPEC_FOUND &&
+                            found == at)
+                                return true;
+                        continue;
+                }
+                if (string_digits_checked_exact(word, 10, address_of pid) &&
+                    (positive)job_table[at].last == pid)
+                        return true;
+        }
+
+        return false;
+}
+
+static b32 job_wait_next(bool force, string_address into, positive first)
 {
         while (true)
         {
@@ -3107,7 +3137,8 @@ static b32 job_wait_next(bool force, string_address into)
                 bool interrupted;
 
                 for (positive at = 0; at < job_count; at++)
-                        if (job_table[at].state == JOB_FINISHED)
+                        if (job_table[at].state == JOB_FINISHED &&
+                            job_wait_named(at, first))
                                 return job_wait_job(at, into,
                                                     address_of interrupted,
                                                     true, true);
@@ -3115,13 +3146,25 @@ static b32 job_wait_next(bool force, string_address into)
                 if (!force)
                         for (positive at = 0; at < job_count; at++)
                                 if (job_table[at].state == JOB_STOPPED &&
-                                    !job_table[at].reported)
+                                    !job_table[at].reported &&
+                                    job_wait_named(at, first))
                                 {
                                         job_table[at].reported = true;
 
                                         return 128 +
                                                (b32)job_table[at].stopped_by;
                                 }
+
+                if (first < shell_argc)
+                {
+                        bool any = false;
+
+                        for (positive at = 0; at < job_count; at++)
+                                if (job_wait_named(at, first))
+                                        any = true;
+                        if (!any)
+                                return 127;
+                }
 
                 if (!shell_wait_count)
                         return 127;
@@ -3214,8 +3257,17 @@ fn job_wait(writer write, string_address input)
 
         job_reap();
 
+        if (into)
+        {
+                positive length = string_length(into);
+
+                if (!length || !shell_valid_name(into, length))
+                        return shell_answer(string_report(log_error, 2,
+                            "wait: %s: invalid identifier\n", into));
+        }
+
         if (next)
-                return shell_answer(job_wait_next(force, into));
+                return shell_answer(job_wait_next(force, into, first));
 
         if (first >= shell_argc)
         {

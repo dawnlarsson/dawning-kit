@@ -3658,17 +3658,15 @@ static bool cat_kernel_copy(const file_facts address_to in)
         positive to = cat_output.mode & MODE_FORMAT;
 
         if (from == MODE_FILE && to == MODE_FILE)
-                for (;;)
-                {
-                        bipolar moved = file_copy_range_once(
-                            (bipolar)input, null, (bipolar)text_out_handle, null,
-                            FILE_KERNEL_COPY_SIZE);
+        {
+                bool range_copy = true;
+                bool send_copy = true;
 
-                        if (moved > 0 || moved == CAT_INTERRUPTED)
-                                continue;
-
-                        return !moved;
-                }
+                return file_copy_stream((bipolar)input,
+                                        (bipolar)text_out_handle, 0, false,
+                                        address_of range_copy,
+                                        address_of send_copy, null, null);
+        }
 
         if (from == MODE_PIPE || to == MODE_PIPE)
         {
@@ -4046,6 +4044,7 @@ typedef struct
 } wc_utf8;
 
 static const b8 text_set_ascii[STRING_SET_BYTES] = {[0 ... 127] = 1};
+static const b8 wc_set_graphic[STRING_SET_BYTES] = {[0x21 ... 0x7e] = 1};
 
 static fn wc_utf8_step(wc_utf8 address_to state, bool valid, p32 code)
 {
@@ -4251,9 +4250,24 @@ static fn wc_bytes_general(const p8 address_to at, positive left, bool want_line
         positive column = address_to column_out;
         bool inside = address_to inside_out;
 
-        for (positive c = 0; c < left; c++)
+        for (positive c = 0; c < left; )
         {
                 p8 character = at[c];
+                positive run = 0;
+
+                if (character >= 0x21 && character < 0x7f)
+                        run = string_span_max(at + c, left - c, wc_set_graphic);
+                if (run)
+                {
+                        column += run;
+                        if (want_words && !inside)
+                        {
+                                inside = true;
+                                words++;
+                        }
+                        c += run;
+                        continue;
+                }
 
                 if (want_lines && character == '\n')
                         lines++;
@@ -4300,6 +4314,7 @@ static fn wc_bytes_general(const p8 address_to at, positive left, bool want_line
                                 words++;
                         }
                 }
+                c++;
         }
 
 
@@ -8122,7 +8137,7 @@ static bool pr_date(p8 address_to into, positive room, b64 stamp,
                 return false;
 
         address_to length = clock_format_extended(into, room, pr_date_format,
-                                                   address_of broken);
+                                                   address_of broken, 0);
         return address_to length || !pr_date_format[0];
 }
 

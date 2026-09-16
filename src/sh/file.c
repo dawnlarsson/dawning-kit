@@ -1829,11 +1829,12 @@ fn file_two(writer write, positive value)
         write(pair, length);
 }
 
-static bool date_shape(writer write, b64 when, string_address format);
+static bool date_shape(writer write, b64 when, positive nanoseconds,
+                       string_address format);
 
 fn file_stamp(writer write, b64 seconds, positive nanoseconds)
 {
-        date_shape(write, seconds, (string_address)"%Y-%m-%d %H:%M:%S.");
+        date_shape(write, seconds, 0, (string_address)"%Y-%m-%d %H:%M:%S.");
         positive_to_padded(write, nanoseconds, 9, '0', 0);
         write(" +0000", 6);
 }
@@ -6707,7 +6708,7 @@ static fn ls_time_say(ls_entry address_to entry)
         case 'f':
                 return file_stamp(ls_out, seconds, fraction);
         case '+':
-                date_shape(ls_out, seconds,
+                date_shape(ls_out, seconds, 0,
                            ls_recent(seconds) ? ls_time_format_recent : ls_time_format_old);
                 return;
         }
@@ -8763,6 +8764,10 @@ static bool file_signed_decimal(string_address text, bipolar address_to value)
 static bool file_unsigned_decimal(string_address text,
                                    positive address_to number)
 {
+        if (string_is(text, '0') &&
+            (text[1] == 'x' || text[1] == 'X'))
+                return string_get(text + 2) &&
+                       string_digits_checked_exact(text + 2, 16, number);
         return string_digits_checked_exact(text, 10, number);
 }
 
@@ -10384,11 +10389,11 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
         {
                 file_moment address_to when = file_moment_of(find_facts, letter);
 
-                date_shape(find_field_write, when->seconds,
+                date_shape(find_field_write, when->seconds, 0,
                            (string_address) "%a %b %e %H:%M:%S.");
                 positive_to_padded(find_field_write, when->nanoseconds, 9, '0', 0);
                 find_field_write("0 ", 2);
-                date_shape(find_field_write, when->seconds, (string_address) "%Y");
+                date_shape(find_field_write, when->seconds, 0, (string_address) "%Y");
                 return true;
         }
         case 'A':
@@ -10414,7 +10419,7 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
 
                 if (which == '+')
                 {
-                        date_shape(find_field_write, when->seconds,
+                        date_shape(find_field_write, when->seconds, 0,
                                    (string_address) "%Y-%m-%d+%H:%M:%S.");
                         positive_to_padded(find_field_write, when->nanoseconds, 9, '0', 0);
                         find_field_write("0", 1);
@@ -10426,7 +10431,7 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
                 // the calendar's own.
                 if (which == 'S' || which == 'T' || which == 'X')
                 {
-                        date_shape(find_field_write, when->seconds,
+                        date_shape(find_field_write, when->seconds, 0,
                                    which == 'S' ? (string_address) "%S"
                                                 : (string_address) "%H:%M:%S");
                         find_field_write(".", 1);
@@ -10437,7 +10442,7 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
 
                 p8 shape[3] = {'%', which, end};
 
-                date_shape(find_field_write, when->seconds, shape);
+                date_shape(find_field_write, when->seconds, 0, shape);
                 return true;
         }
         }
@@ -17864,8 +17869,15 @@ static bool split_size(string_address text, positive address_to out)
 {
         string_address at = text;
         positive value;
+        positive base = 10;
 
-        if (!string_digits_checked(address_of at, 10, address_of value))
+        if (string_is(at, '0') && (at[1] == 'x' || at[1] == 'X'))
+        {
+                at += 2;
+                base = 16;
+        }
+
+        if (!string_digits_checked(address_of at, base, address_of value))
                 return false;
 
         p8 suffix = string_get(at);
@@ -22148,6 +22160,9 @@ static bool cp_force;
 static bool cp_ask;
 static bool cp_never_clobber;
 static bool cp_newer_only;
+static bool cp_update_fail;
+static p8 cp_update_policy;
+static p8 mv_update_policy;
 static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
@@ -22160,6 +22175,8 @@ static file_facts cp_destination_entry_facts;
 static bool mv_across_said;
 static bool mv_ask;
 static bool mv_never_clobber;
+static bool mv_newer_only;
+static bool mv_update_fail;
 static bool mv_destination_decided;
 static bool mv_destination_existed;
 static bool mv_collision_seen;
@@ -22635,19 +22652,32 @@ static bipolar file_stage_claim_at(
 // -n, -u and -i are three ways of asking the same question about a
 // destination that is already there, and a destination that is not there is
 // never in question. -u lets through only a source newer to the nanosecond.
+// --update=none-fail is -n that still fails.
 static bool file_overwrite_allowed(string_address program, string_address shown,
                                    bool exists, bool never, bool newer, bool ask,
+                                   bool fail_skip,
                                    file_facts address_to facts,
                                    file_facts address_to there,
                                    b32 address_to status)
 {
-        if (!exists || never)
-                return !exists;
+        if (!exists)
+                return true;
 
-        if (newer && (facts->modified.seconds < there->modified.seconds ||
-                      (facts->modified.seconds == there->modified.seconds &&
-                       facts->modified.nanoseconds <= there->modified.nanoseconds)))
+        if (never ||
+            (newer && (facts->modified.seconds < there->modified.seconds ||
+                       (facts->modified.seconds == there->modified.seconds &&
+                        facts->modified.nanoseconds <=
+                            there->modified.nanoseconds))))
+        {
+                if (fail_skip)
+                {
+                        string_format(log_error, "%s: not replacing '%w'\n",
+                                      program, writer_terminal_quoted_name,
+                                      shown);
+                        address_to status = 1;
+                }
                 return false;
+        }
 
         if (ask && !file_ask(program, (string_address)"overwrite", shown))
         {
@@ -23980,7 +24010,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
             !(named && cp_destination_decided) &&
             !file_overwrite_allowed((string_address)"cp", destination_shown,
                                     destination_exists, cp_never_clobber,
-                                    cp_newer_only, cp_ask, address_of facts,
+                                    cp_newer_only, cp_ask, cp_update_fail,
+                                    address_of facts,
                                     address_of there, address_of cp_status))
                 return true;
 
@@ -24575,7 +24606,8 @@ static fn cp_pair(string_address source, string_address destination)
         if (kind != MODE_DIRECTORY &&
             !file_overwrite_allowed((string_address)"cp", destination,
                                     collision_exists, cp_never_clobber,
-                                    cp_newer_only, cp_ask, address_of source_facts,
+                                    cp_newer_only, cp_ask, cp_update_fail,
+                                    address_of source_facts,
                                     collision_facts, address_of cp_status))
         {
                 system_close(source_directory);
@@ -24663,6 +24695,53 @@ static bool cp_words_read(string_address option, string_address value,
         return true;
 }
 
+static const file_word file_update_words[] = {
+    {(string_address) "all", 'a', false},
+    {(string_address) "older", 'u', false},
+    {(string_address) "none-fail", 'F', false},
+    {(string_address) "none", 'n', true},
+};
+
+static bool file_update_seen(string_address program, p8 letter,
+                             string_address value, p8 address_to policy)
+{
+        if (letter == 'n' || letter == 'i' || letter == 'f')
+        {
+                address_to policy = letter == 'n' ? 'n' : 'a';
+                return true;
+        }
+        if (letter != 'u')
+                return true;
+        if (!value || !string_get(value))
+        {
+                address_to policy = 'u';
+                return true;
+        }
+
+        {
+                b32 which = file_word_among(program, (string_address) "--update",
+                                            value, file_update_words,
+                                            array_count(file_update_words));
+
+                if (which < 0)
+                        return false;
+                address_to policy = (p8)which;
+                return true;
+        }
+}
+
+static bool cp_option_seen(p8 letter, string_address value)
+{
+        return file_update_seen((string_address) "cp", letter, value,
+                                address_of cp_update_policy);
+}
+
+static bool mv_option_seen(p8 letter, string_address value)
+{
+        return file_update_seen((string_address) "mv", letter, value,
+                                address_of mv_update_policy);
+}
+
 static const argument_option cp_options[] = {
     {"archive", 'a', 0, ARGUMENT_SELECT(cp_selection, dereference)},
     {"attributes-only", 'A'},
@@ -24709,7 +24788,11 @@ static b32 file_cp()
             .program = (string_address) "cp",
             .options = cp_options,
             .selection = (p8 address_to)address_of cp_selected,
+            .seen = cp_option_seen,
         };
+
+        cp_update_policy = 0;
+        cp_update_fail = false;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -24771,9 +24854,11 @@ static b32 file_cp()
         cp_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R') | FILE_FLAG('a'))) != 0;
         cp_preserve = (flags & (FILE_FLAG('p') | FILE_FLAG('a'))) != 0;
         cp_force = (flags & FILE_FLAG('f')) != 0;
-        cp_ask = cp_selected.collision == 'i';
-        cp_never_clobber = cp_selected.collision == 'n';
-        cp_newer_only = (flags & FILE_FLAG('u')) != 0;
+        cp_ask = cp_selected.collision == 'i' && cp_update_policy != 'n' &&
+                 cp_update_policy != 'F';
+        cp_never_clobber = cp_update_policy == 'n' || cp_update_policy == 'F';
+        cp_newer_only = cp_update_policy == 'u';
+        cp_update_fail = cp_update_policy == 'F';
         cp_hard = (flags & FILE_FLAG('l')) != 0;
         cp_symbolic = (flags & FILE_FLAG('s')) != 0;
         cp_loud = (flags & FILE_FLAG('v')) != 0;
@@ -24819,6 +24904,7 @@ static bipolar install_group;
 static bool install_parents;
 static bool install_preserve;
 static bool install_loud;
+static bool install_compare;
 static b32 install_status;
 
 static const argument_option install_options[] = {
@@ -25004,6 +25090,50 @@ static bool install_directory_entry_stable(
                file_name_stable(parent, address_of facts);
 }
 
+static bool install_unchanged(bipolar source, file_facts address_to from,
+                              bipolar parent, string_address leaf,
+                              file_facts address_to to)
+{
+        p8 left[4096];
+        p8 right[4096];
+        bipolar dest;
+        p64 remain;
+
+        if ((to->mode & MODE_FORMAT) != MODE_FILE || from->size != to->size ||
+            (to->mode & 07777) != (install_mode & 07777))
+                return false;
+        if (install_owner >= 0 && to->owner != (positive)install_owner)
+                return false;
+        if (install_group >= 0 && to->group != (positive)install_group)
+                return false;
+
+        dest = file_open_same(parent, leaf, to, FILE_READ);
+        if (dest < 0)
+                return false;
+
+        remain = from->size;
+        while (remain)
+        {
+                positive ask = remain > sizeof(left) ? sizeof(left)
+                                                     : (positive)remain;
+                bipolar got = system_read_retry((positive)source, left, ask);
+                bipolar other = system_read_retry((positive)dest, right, ask);
+
+                if (got != (bipolar)ask || other != (bipolar)ask ||
+                    memory_compare(left, right, ask))
+                {
+                        system_close(dest);
+                        (void)system_seek(source, 0, FILE_SEEK_SET);
+                        return false;
+                }
+                remain -= ask;
+        }
+
+        system_close(dest);
+        (void)system_seek(source, 0, FILE_SEEK_SET);
+        return true;
+}
+
 static fn install_pair(string_address source, string_address destination)
 {
         p8 source_leaf[FILE_PATH_MAX];
@@ -25082,6 +25212,16 @@ static fn install_pair(string_address source, string_address destination)
                 system_close(destination_directory);
                 system_close(source_handle);
                 install_status = 1;
+                return;
+        }
+
+        if (install_compare && destination_exists &&
+            install_unchanged(source_handle, address_of from,
+                              destination_directory, destination_leaf,
+                              address_of to))
+        {
+                system_close(destination_directory);
+                system_close(source_handle);
                 return;
         }
 
@@ -25181,6 +25321,7 @@ static b32 file_install()
         install_parents = (flags & FILE_FLAG('D')) != 0;
         install_preserve = (flags & FILE_FLAG('p')) != 0;
         install_loud = (flags & FILE_FLAG('v')) != 0;
+        install_compare = (flags & FILE_FLAG('C')) != 0;
 
         if (directories)
         {
@@ -25262,7 +25403,6 @@ static b32 file_install()
         renameat2 rather than renameat, because riscv64 never had renameat and
         this tree builds for it; a flags word of zero is the same operation.
 */
-static bool mv_newer_only;
 static bool mv_exchange;
 static bool mv_no_copy;
 static b32 mv_status;
@@ -25311,7 +25451,8 @@ static fn mv_one(string_address source, string_address destination)
             address_of to);
         if (!file_overwrite_allowed((string_address)"mv", destination,
                                     destination_exists, mv_never_clobber,
-                                    mv_newer_only, mv_ask, address_of from,
+                                    mv_newer_only, mv_ask, mv_update_fail,
+                                    address_of from,
                                     address_of to, address_of mv_status))
                 goto finished;
 
@@ -25592,7 +25733,11 @@ static b32 file_mv()
             //      mv's --context takes no value at all, unlike cp's and
             //      mkdir's, so Z is not among the ones that may carry one.
             .selection = address_of mv_collision_option,
+            .seen = mv_option_seen,
         };
+
+        mv_update_policy = 0;
+        mv_update_fail = false;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -25603,15 +25748,17 @@ static b32 file_mv()
         if (!file_targets_told((string_address) "mv", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
 
-        mv_newer_only = (taking.flags & FILE_FLAG('u')) != 0;
+        mv_newer_only = mv_update_policy == 'u';
         // A tree mv copies across devices is made under the same mask cp
         // reads, so a directory it makes can always be written into.
         cp_umask = file_umask();
 
         positive first = taking.first;
 
-        mv_ask = mv_collision_option == 'i';
-        mv_never_clobber = mv_collision_option == 'n';
+        mv_ask = mv_collision_option == 'i' && mv_update_policy != 'n' &&
+                 mv_update_policy != 'F';
+        mv_never_clobber = mv_update_policy == 'n' || mv_update_policy == 'F';
+        mv_update_fail = mv_update_policy == 'F';
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
         mv_exchange = (taking.flags & FILE_FLAG('X')) != 0;
         mv_no_copy = (taking.flags & FILE_FLAG('c')) != 0;
@@ -27392,6 +27539,31 @@ static bool file_duration_read(string_address text, bool units,
         if (string_is(at, '+'))
                 at++;
 
+        if (string_is(at, '0') && (at[1] == 'x' || at[1] == 'X'))
+        {
+                string_address hex = at + 2;
+                positive value;
+                positive unit = 1;
+
+                if (!string_digits_checked(address_of hex, 16, address_of value))
+                        return false;
+                at = hex;
+                if (units && string_get(at) &&
+                    string_first_of("smhd", string_get(at)))
+                {
+                        p8 suffix = string_get(at++);
+
+                        unit = suffix == 'm' ? 60 : suffix == 'h' ? 3600
+                             : suffix == 'd' ? 86400 : 1;
+                }
+                if (string_get(at))
+                        return false;
+                if (value > positive_max / (unit * 1000000000u))
+                        return false;
+                address_to nanoseconds = value * unit * 1000000000u;
+                return true;
+        }
+
         while (byte_is_digit(string_get(at)) ||
                (!point && string_is(at, '.')))
         {
@@ -27673,6 +27845,27 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
         {
                 minus = string_is(text, '-');
                 at++;
+        }
+
+        if (string_is(text + at, '0') &&
+            (text[at + 1] == 'x' || text[at + 1] == 'X'))
+        {
+                string_address hex = text + at + 2;
+                positive value;
+
+                if (!string_digits_checked(address_of hex, 16, address_of value) ||
+                    string_get(hex))
+                        return false;
+                if (minus && value > (positive)bipolar_max + 1)
+                        return false;
+                if (!minus && value > (positive)bipolar_max)
+                        return false;
+                out->coefficient = bipolar_from_magnitude(value, minus);
+                out->scale = 0;
+                out->shown = 0;
+                out->whole_width = 0;
+                out->negative_zero = minus && !value;
+                return true;
         }
 
         positive mantissa = at;
@@ -30767,7 +30960,8 @@ static b32 file_kill()
                         return kill_list(count, index + 1);
                 }
 
-                if ((one && (string_is(name, 's') || string_is(name, 'q'))) ||
+                if ((one && (string_is(name, 's') || string_is(name, 'q') ||
+                             string_is(name, 'n'))) ||
                     (longer && (!string_compare(name, "signal") ||
                                 !string_compare(name, "queue"))))
                 {
@@ -31871,7 +32065,8 @@ static b32 file_cal()
 /* date and strftime used to carry separate calendar-format state machines.
    Keep one engine: the stack covers ordinary command lines and an exceptional
    width grows through the shared byte store until the bounded formatter fits. */
-static bool date_shape(writer write, b64 when, string_address format)
+static bool date_shape(writer write, b64 when, positive nanoseconds,
+                       string_address format)
 {
         time_t stamp = (time_t)when;
         tm broken;
@@ -31882,7 +32077,7 @@ static bool date_shape(writer write, b64 when, string_address format)
                 return false;
 
         length = clock_format_extended(fixed, sizeof(fixed), format,
-                                       address_of broken);
+                                       address_of broken, nanoseconds);
         if (length || !string_get(format))
         {
                 if (length)
@@ -31899,7 +32094,8 @@ static bool date_shape(writer write, b64 when, string_address format)
                         break;
 
                 length = clock_format_extended(grown.bytes, grown.room,
-                                               format, address_of broken);
+                                               format, address_of broken,
+                                               nanoseconds);
                 if (length)
                 {
                         write(grown.bytes, length);
@@ -31945,6 +32141,7 @@ static b32 file_date()
         string_address iso = null;
         bool rfc = (taking.flags & FILE_FLAG('R')) != 0;
         b64 when;
+        positive nanoseconds = 0;
 
         if (taking.flags & FILE_FLAG('I'))
         {
@@ -31959,6 +32156,8 @@ static b32 file_date()
                         iso = (string_address) "%Y-%m-%dT%H:%M+00:00";
                 else if (!string_compare(precision, "seconds"))
                         iso = (string_address) "%Y-%m-%dT%H:%M:%S+00:00";
+                else if (!string_compare(precision, "ns"))
+                        iso = (string_address) "%Y-%m-%dT%H:%M:%S,%N+00:00";
                 else
                         return string_report(log_error, 1,
                                       "date: invalid argument '%s' for '--iso-8601'\n",
@@ -31991,21 +32190,29 @@ static b32 file_date()
                 }
 
                 when = (b64)facts.modified.seconds;
+                nanoseconds = facts.modified.nanoseconds;
         }
         else if (given)
         {
-                if (!file_moment_read(given, file_now(), address_of when))
+                if (!file_moment_read_exact(given, file_now(), address_of when,
+                                            address_of nanoseconds))
                         return string_report(log_error, 1, "date: invalid date '%s'\n", given);
         }
         else
-                when = file_now();
+        {
+                p64 wall[2] = {0, 0};
+
+                system_call_2(syscall(clock_gettime), 0, (positive)wall);
+                when = (b64)wall[0];
+                nanoseconds = (positive)wall[1];
+        }
 
         if (!format)
                 format = iso   ? iso
                          : rfc ? (string_address) "%a, %d %b %Y %H:%M:%S %z"
                                : (string_address) "%a %b %e %H:%M:%S %Z %Y";
 
-        if (!date_shape(log, when, format))
+        if (!date_shape(log, when, nanoseconds, format))
                 return string_report(log_error, 1, "date: formatted value is too large\n");
 
         log("\n", 1);

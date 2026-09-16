@@ -128,30 +128,83 @@ static bipolar bowl_mkdir(string_address path)
         return made == -EEXIST ? 0 : made;
 }
 
+/* Pin every component with O_NOFOLLOW so a name such as /tmp/x -> /etc cannot
+   redirect mkdir or chmod into a host tree the session denylist already refused
+   by string. Missing components are created only relative to the directory
+   already held. */
+static bipolar bowl_open_directory(string_address path, bool create)
+{
+        p8 name[256];
+        bipolar held;
+        positive flags = FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+        string_address at = path;
+
+        if (!path || !string_get(path))
+                return -22;
+
+        held = system_open_at(AT_FDCWD,
+                              path[0] == '/' ? (string_address)"/"
+                                             : (string_address)".",
+                              flags);
+        if (held < 0)
+                return held;
+
+        if (path[0] == '/')
+                at++;
+
+        while (string_get(at))
+        {
+                positive n = 0;
+                bipolar next;
+
+                while (string_is(at, '/'))
+                        at++;
+                if (!string_get(at))
+                        break;
+                while (string_get(at) && string_not(at, '/') &&
+                       n + 1 < sizeof(name))
+                        name[n++] = string_get(at++);
+                if (string_get(at) && string_not(at, '/'))
+                {
+                        system_close(held);
+                        return -36;
+                }
+                name[n] = end;
+                if (n == 1 && name[0] == '.')
+                        continue;
+                if (n == 2 && name[0] == '.' && name[1] == '.')
+                {
+                        system_close(held);
+                        return -22;
+                }
+                next = system_open_at(held, name, flags);
+                if (next < 0 && create && next == -ERROR_NO_ENTRY)
+                {
+                        bipolar made = system_make_directory_at(held, name,
+                                                                0755);
+
+                        next = made < 0 && made != -ERROR_EXISTS
+                                   ? made
+                                   : system_open_at(held, name, flags);
+                }
+                system_close(held);
+                if (next < 0)
+                        return next;
+                held = next;
+        }
+
+        return held;
+}
+
 // A mount point below a directory Moonwater itself may not have.
 static bipolar bowl_mkdir_parents(string_address path)
 {
-        p8 prefix[BOWL_PATH_LIMIT];
-        positive length = string_length(path);
+        bipolar handle = bowl_open_directory(path, true);
 
-        if (length >= sizeof(prefix))
-                return -ENAMETOOLONG;
-
-        for (positive i = 1; i < length; i++)
-        {
-                bipolar failed;
-
-                if (path[i] != '/')
-                        continue;
-
-                memory_copy(prefix, path, i);
-                prefix[i] = 0;
-                failed = bowl_mkdir((string_address)prefix);
-                if (failed < 0)
-                        return failed;
-        }
-
-        return bowl_mkdir(path);
+        if (handle < 0)
+                return handle;
+        system_close(handle);
+        return 0;
 }
 
 static bool bowl_root_path(p8 address_to into, positive room,
@@ -901,6 +954,8 @@ static b32 bowl_launch_failed(bipolar native_shell, string_address what,
 }
 
 static fn bowl_session_prepare_from(string_address address_to environment);
+static fn bowl_session_prepare_at(string_address home, string_address runtime,
+                                  bool user_dirs);
 static string_address address_to bowl_environment(
     string_address address_to inherited);
 
@@ -1206,9 +1261,7 @@ static string_address bowl_session_logname_assignment(void)
 
 static fn bowl_chmod_directory(string_address path, positive mode)
 {
-        bipolar handle = system_open_at(AT_FDCWD, path,
-                                        FILE_READ | O_DIRECTORY | O_NOFOLLOW |
-                                            O_CLOEXEC);
+        bipolar handle = bowl_open_directory(path, false);
 
         if (handle < 0)
                 return;
@@ -1233,7 +1286,8 @@ static fn bowl_session_home_dirs(string_address home)
                         bowl_mkdir_parents(path);
 }
 
-static fn bowl_session_prepare(string_address home, string_address runtime)
+static fn bowl_session_prepare_at(string_address home, string_address runtime,
+                                  bool user_dirs)
 {
         bowl_session_fill();
 
@@ -1251,9 +1305,16 @@ static fn bowl_session_prepare(string_address home, string_address runtime)
         bowl_mkdir("/var");
         bowl_dev_link("/run", "/var/run");
         bowl_dev_link("/run/lock", "/var/lock");
+        if (!user_dirs)
+                return;
         if (!home || bowl_session_steps(home) || bowl_session_host_path(home))
                 home = (string_address)BOWL_SESSION_HOME;
         bowl_session_home_dirs(home);
+}
+
+static fn bowl_session_prepare(string_address home, string_address runtime)
+{
+        bowl_session_prepare_at(home, runtime, true);
 }
 
 static fn bowl_session_prepare_from(string_address address_to environment)
