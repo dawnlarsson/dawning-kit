@@ -1265,8 +1265,8 @@ static b32 host_install_disk(string_address asked, bool removable)
 
         if (!removable && host_join(path, sizeof(path), sysfs, "/removable") &&
             host_read_text(path, text, sizeof(text)) > 0 && string_equals(text, "1"))
-                return host_refuse("%s is removable media; moonwater install %s "
-                                   "--removable is the way to mean it\n", name);
+                return host_refuse("%s is removable media; moonwater install "
+                                   "needs --removable\n", name);
 
         if (!host_running_build(running, sizeof(running)))
                 return host_refuse("%s cannot read its own build\n", "moonwater");

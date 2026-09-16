@@ -17028,6 +17028,12 @@ static void *spawn_handed;
 #define refcount_inc(p) (++*(p))
 #undef SIGCHLD
 #define SIGCHLD 17
+/* gcc 16 does not pull these in through stdio the way an older
+   host still does. bind_run restores SIGCHLD around user_mode_thread. */
+#undef SIG_DFL
+#define SIG_DFL ((void *)0)
+#undef SIG_IGN
+#define SIG_IGN ((void *)1)
 #define atomic_long_add(n, p) ((void)(n), (void)(p))
 #define atomic_long_inc(p) ((void)(p))
 static long stat_task_ns, stat_spawns;
@@ -17392,7 +17398,7 @@ static void kernel_sigaction(int sig, void *act) { (void)sig;(void)act; }
 static int kernel_execve(const char *path, const char *const *argv, const char *const *envp) {
     (void)path;(void)argv;(void)envp; return 0;
 }
-__attribute__((noreturn)) static void do_exit(long code) { (void)code; for(;;){} }
+__attribute__((noreturn)) static void do_exit(long code) { (void)code; abort(); }
 #define CAP_SYS_ADMIN 21
 #define CAP_SYS_BOOT 22
 static _Bool power_capable=1,power_admin=1;
@@ -17716,6 +17722,16 @@ static void check_bind(void) {
 
     bind_start();
     memset(&bind_dev,0,sizeof(bind_dev));
+    {
+        struct bind_spawn *spawn=kzalloc(sizeof(*spawn),0);
+        int answer;
+
+        snprintf(spawn->command,sizeof(spawn->command),"true");
+        snprintf(spawn->event,sizeof(spawn->event),"poweroff");
+        answer=bind_spawn_enter(spawn);
+        check(answer==0,
+              "a bound command that execs returns to userspace instead of exiting");
+    }
     power=bind_row(SPARK_BIND_POWEROFF);
     reset=bind_row(SPARK_BIND_RESET);
     cad=bind_row(SPARK_BIND_CTRL_ALT_DELETE);
@@ -21072,8 +21088,12 @@ static void list_del_init(struct list_head *n) { list_del(n); list_init(n); }
          p=n,n=container_of(n->m.next,__typeof__(*n),m))
 struct drm_driver { const char *name; };
 struct drm_mode_config { unsigned cursor_width,cursor_height; int min_width,min_height,max_width,max_height; };
-struct drm_device { bool atomic; struct drm_mode_config mode_config; const struct drm_driver *driver; };
+struct drm_minor { int index; };
+struct drm_device { bool atomic; struct drm_mode_config mode_config; const struct drm_driver *driver; struct drm_minor *primary; };
 struct drm_client_dev { struct drm_device *dev; };
+typedef uint64_t u64;
+#define BIT_ULL(n) (1ULL << (n))
+static u64 canvas_claimed;
 struct drm_client_buffer { unsigned resource; };
 struct drm_plane_funcs { void (*update_plane)(void), (*disable_plane)(void); };
 struct drm_plane { const struct drm_plane_funcs *funcs; };
@@ -21174,6 +21194,7 @@ static void drm_client_release(struct drm_client_dev *c) {
         ("src/canvas/output.c", "output_drop"),
         ("src/canvas/output.c", "cursor_plane_recover"),
         ("src/canvas/output.c", "canvas_release"),
+        ("src/canvas/client.c", "canvas_claimed_forget"),
         ("src/canvas/client.c", "client_unregister"),
     ])
 
@@ -21242,6 +21263,7 @@ static void reset(void) {
     allocated=deleted=paint_calls=release_calls=commit_calls=0;
     disable_fail=remove_fail=close_fail=commit_fail=create_fail=paint_fail=false;
     fail_during_commit=NULL; cursor_plane_recovery=false; cursor_plane_failures=0;
+    canvas_claimed=0;
     list_init(&desktop.outputs); list_init(&canvas_list); list_init(&desktop.flush_queue);
     in_flight=NULL; waited=0;
 }
@@ -21411,6 +21433,22 @@ int main(void) {
     client_unregister(&c->client);
     check("two outputs, one mid-flush, tear down balanced",
           waited==1 && release_retiring==0 && release_wrappers==0 && wrappers()==0 && deleted==4 && !gems());
+
+    /* A GPU taking simpledrm's minor must be claimable. Leaving the bit set
+       after unregister skipped card0 once the firmware node was gone. */
+    reset();
+    {
+        static struct drm_minor firmware_minor={.index=0};
+        u64 others=BIT_ULL(1)|BIT_ULL(3);
+
+        atomic_device.primary=&firmware_minor;
+        canvas_claimed=BIT_ULL(0)|others;
+        c=card(true);
+        client_unregister(&c->client);
+        check("unregister forgets that card's claimed minor",
+              canvas_claimed==others && !(canvas_claimed&BIT_ULL(0)));
+        atomic_device.primary=NULL;
+    }
     reset();
     printf("canvas-lifetime %u/%u\n",checks-failures,checks); return failures?1:0;
 }
@@ -24708,6 +24746,7 @@ def harness_image_nodes(argv):
     flood = (ROOT / 'src/floodlight.c').read_text()
     bowl = (ROOT / 'src/bowl/runtime.c').read_text()
     window = (ROOT / 'src/canvas/window.c').read_text()
+    host = (ROOT / 'src/sh/host.c').read_text()
 
     def setting(name):
         """One build setting, whose value is a run of adjacent string literals."""
@@ -24770,6 +24809,15 @@ def harness_image_nodes(argv):
     check(define(window, 'WINDOW_DEVICE') == device,
           'window.c opens the device spark publishes (%s against %s)'
           % (define(window, 'WINDOW_DEVICE'), device))
+
+    #   host_refuse takes one name. Two %s is the extra-args class gcc 16
+    #   already refused, except this time too few arguments rather than too
+    #   many: the removable-disk line used to print garbage for the second.
+    for fmt in re.findall(r'host_refuse\(\s*((?:\"(?:[^\"\\]|\\.)*\"\s*)+)',
+                          host):
+        text = ''.join(re.findall(r'\"((?:[^\"\\]|\\.)*)\"', fmt))
+        check(re.sub(r'%%', '', text).count('%s') <= 1,
+              'host_refuse format has one %%s (%r)' % text[:80])
 
     #   Bowl's exposed launchers need a directory before bowl can write one,
     #   and the image is where it gets made. The list is relative; the macro

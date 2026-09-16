@@ -1154,17 +1154,25 @@ static _Bool bind_command_is_default(struct bind_row *row, const char *command)
 static int bind_spawn_enter(void *data)
 {
         struct bind_spawn *spawn = data;
+        char command[SPARK_BIND_COMMAND_MAX];
         char event_env[sizeof("MOONWATER_EVENT=") + SPARK_BIND_NAME_MAX];
-        char *argv[] = {SPARK_TOOL_PROGRAM, "-c", spawn->command, NULL};
+        char *argv[] = {SPARK_TOOL_PROGRAM, "-c", command, NULL};
         char *envp[] = {"HOME=/root", "PATH=/bin:/sbin:/usr/bin:/usr/sbin",
                         "TERM=linux", event_env, NULL};
         int ret;
 
+        /* Copied off the request first: kernel_execve returns on success the
+           same way spawn_enter's does, and the new userspace runs when this
+           function returns 0. do_exit after a successful exec was killing
+           every bound command before it ran. */
+        strscpy(command, spawn->command, sizeof(command));
         snprintf(event_env, sizeof(event_env), "MOONWATER_EVENT=%s", spawn->event);
+        kfree(spawn);
         ret = kernel_execve(argv[0], (const char *const *)argv,
                             (const char *const *)envp);
-        kfree(spawn);
-        do_exit(ret);
+        if (ret)
+                do_exit(ret);
+        return 0;
 }
 
 static void bind_run(struct bind_row *row)

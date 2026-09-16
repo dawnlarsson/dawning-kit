@@ -18,6 +18,7 @@
         first, so it cannot start or rebind a card that is leaving.
 */
 static struct workqueue_struct *canvas_plug_wq;
+static void canvas_claimed_forget(struct drm_device *dev);
 
 static void canvas_plug_ensure(void)
 {
@@ -47,6 +48,8 @@ static void canvas_plug_work(struct work_struct *work)
 static COLD void client_unregister(struct drm_client_dev *client)
 {
         struct canvas *canvas = canvas_from_client(client);
+
+        canvas_claimed_forget(client->dev);
 
         mutex_lock(&canvas_list_lock);
         list_del(&canvas->link);
@@ -287,6 +290,18 @@ static unsigned int canvas_settled_at;
 static u64 canvas_claimed;
 static _Bool canvas_is_on(void);
 static void canvas_firmware_yield(void);
+
+static void canvas_claimed_forget(struct drm_device *dev)
+{
+        int minor;
+
+        if (!dev || !dev->primary)
+                return;
+
+        minor = dev->primary->index;
+        if (minor >= 0 && minor < 64)
+                canvas_claimed &= ~BIT_ULL(minor);
+}
 
 static _Bool canvas_has_native(void)
 {
@@ -550,19 +565,17 @@ static void desktop_detach_windows(void)
         One card's client off DRM's list and released, unless the card is
         going away at this moment and its own unregister already has it.
 */
-static void canvas_client_drop(struct canvas *canvas, struct drm_device *dev)
+static void canvas_client_drop(struct drm_device *dev)
 {
-        struct drm_client_dev *client;
+        struct drm_client_dev *client, *next;
 
         mutex_lock(&dev->clientlist_mutex);
-        list_for_each_entry(client, &dev->clientlist, list)
+        list_for_each_entry_safe(client, next, &dev->clientlist, list)
         {
-                if (client == &canvas->client)
-                {
-                        list_del(&client->list);
-                        client_unregister(client);
-                        break;
-                }
+                if (client->funcs != &client_funcs)
+                        continue;
+                list_del(&client->list);
+                client_unregister(client);
         }
         mutex_unlock(&dev->clientlist_mutex);
 }
@@ -577,26 +590,27 @@ static void canvas_firmware_yield(void)
 {
         for (;;)
         {
-                struct canvas *canvas, *found = NULL;
+                struct canvas *canvas;
                 struct drm_device *dev = NULL;
 
                 mutex_lock(&canvas_list_lock);
                 list_for_each_entry(canvas, &canvas_list, link)
                         if (canvas_is_firmware(canvas->client.dev))
                         {
-                                found = canvas;
+                                /* The device only: DRM can unregister this
+                                   client between the unlock and the drop. */
                                 dev = canvas->client.dev;
                                 drm_dev_get(dev);
                                 break;
                         }
                 mutex_unlock(&canvas_list_lock);
 
-                if (!found)
+                if (!dev)
                         return;
 
                 pr_info("[moonwater canvas] " "dropping %s, a GPU is attached\n",
-                        found->client.dev->driver->name);
-                canvas_client_drop(found, dev);
+                        dev->driver->name);
+                canvas_client_drop(dev);
                 drm_dev_put(dev);
         }
 }
@@ -652,7 +666,7 @@ static long canvas_turn_off(void)
                 if (!canvas)
                         break;
 
-                canvas_client_drop(canvas, dev);
+                canvas_client_drop(dev);
 
                 if (count < ARRAY_SIZE(released))
                         released[count++] = dev;
