@@ -3049,9 +3049,9 @@ static b32 host_canvas(string_address address_to arguments, positive count)
 static fn host_bind_say(string_address prefix, struct bind_control address_to control)
 {
         if (!control->command[0])
-                string_format(log, "%s%s\n", prefix, control->name);
+                string_format(log, "%s%s\n", prefix, (string_address)control->name);
         else
-                string_format(log, "%s%s: %s\n", prefix, control->name,
+                string_format(log, "%s%s: %s\n", prefix, (string_address)control->name,
                               (string_address)control->command);
 }
 
@@ -3089,8 +3089,9 @@ static fn host_bind_keep(unsigned int event, struct bind_control address_to cont
         if (!(control->flags & SPARK_BIND_DEFAULT))
         {
                 failed = host_settings_add(address_of settings, SPARK_SETTINGS_BIND,
-                                           SPARK_SETTINGS_COMMAND, control->command,
-                                           string_length(control->command),
+                                           SPARK_SETTINGS_COMMAND,
+                                           (string_address)control->command,
+                                           string_length((string_address)control->command),
                                            address_of id);
                 if (failed)
                 {
@@ -3162,7 +3163,8 @@ static fn host_bind_names(writer out)
                         break;
                 if (event == 1 && control.count)
                         count = control.count;
-                string_format(out, "%s%s", first ? "" : ", ", control.name);
+                string_format(out, "%s%s", first ? "" : ", ",
+                              (string_address)control.name);
                 first = false;
         }
 }
@@ -3188,7 +3190,7 @@ static unsigned int host_bind_named(string_address first, string_address second)
                         return 0;
                 if (event == 1 && control.count)
                         count = control.count;
-                if (string_equals(control.name, wanted))
+                if (string_equals((string_address)control.name, wanted))
                         return event;
         }
 
@@ -3218,7 +3220,7 @@ static b32 host_bind_tell(unsigned int event, string_address command)
                 return host_refuse("setting what %s runs needs root "
                                    "(CAP_SYS_ADMIN and CAP_SYS_BOOT)\n",
                                    control.name[0] ? (string_address)control.name
-                                                   : "that event");
+                                                   : (string_address)"that event");
         if (failed == -ENAMETOOLONG)
                 return host_refuse("that command is longer than the %s a bound event holds\n",
                                    "255 bytes");

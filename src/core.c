@@ -1352,18 +1352,18 @@ static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
                 {
                         bind->mods |= bit;
                         if (bit == BIND_MOD_CTRL)
-                                atomic_inc(&bind_ctrl);
+                                atomic_fetch_add(1, &bind_ctrl);
                         else
-                                atomic_inc(&bind_alt);
+                                atomic_fetch_add(1, &bind_alt);
                 }
         }
         else if (bind->mods & bit)
         {
                 bind->mods &= ~bit;
                 if (bit == BIND_MOD_CTRL)
-                        atomic_dec(&bind_ctrl);
+                        atomic_fetch_sub(1, &bind_ctrl);
                 else
-                        atomic_dec(&bind_alt);
+                        atomic_fetch_sub(1, &bind_alt);
         }
 }
 

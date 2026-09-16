@@ -17226,6 +17226,7 @@ static _Bool atomic_try_cmpxchg(atomic_t *p,int *old,int value) {
 static int test_bit(unsigned bit,const unsigned long *bits) { return (bits[bit/64]>>(bit%64))&1; }
 static void canvas_thread_wake(void) { wakes++; }
 static void atomic_fetch_add(int value,atomic_t *at) { *at+=value; }
+static void atomic_fetch_sub(int value,atomic_t *at) { *at-=value; }
 #define smp_wmb() ((void)0)
 #define spin_lock_irqsave(lock,flags) do { (flags)=0;mutex_lock(lock); } while(0)
 #define spin_unlock_irqrestore(lock,flags) do { (void)(flags);mutex_unlock(lock); } while(0)
@@ -17372,8 +17373,6 @@ static _Bool queue_work(void *queue,struct work_struct *work) { (void)queue;(voi
 static _Bool work_pending(struct work_struct *work) { (void)work; return 0; }
 static void orderly_poweroff(_Bool force) { bind_offs++;bind_forced=force; }
 static void orderly_reboot(void) { bind_reboots++; }
-static void atomic_inc(atomic_t *p) { ++*p; }
-static void atomic_dec(atomic_t *p) { --*p; }
 #undef user_mode_thread
 static pid_t user_mode_thread(int (*fn)(void *), void *arg, unsigned long sig);
 static int kernel_wait(pid_t pid, int *stat);
