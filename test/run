@@ -10089,12 +10089,12 @@ fi
 #
 #       The power button, on a machine with no screen at all.
 #
-#       ACPI's button driver reports the button as a key and nothing listened,
-#       so a press did nothing. The handler is the kernel's own and not the
-#       compositor's, and this is where that is shown: no display device, so
-#       Canvas gives up on a card and never takes input, and the button still
-#       runs what it was told. QMP presses it. Every answer is reversed or
-#       counted so the command echo on this console cannot pass for one.
+#       ACPI's button driver reports the button as KEY_POWER. Bind owns that
+#       key, not the compositor, and this is where that is shown: no display
+#       device, so Canvas gives up on a card and never takes input, and the
+#       button still runs what it was told. QMP presses it. Every answer is
+#       reversed or counted so the command echo on this console cannot pass
+#       for one.
 #
 if [ -r /dev/kvm ] && command -v python3 > /dev/null 2>&1; then
         MOONWATER_BOOT_WORK=$work python3 - "$image" > "$work/power-answers" 2> "$work/power-why" <<'PY'

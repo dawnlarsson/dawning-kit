@@ -112,13 +112,16 @@ static PURE _Bool key_typed(unsigned int code, unsigned int flags)
 */
 static void keyboard_event(struct input_handle *handle, unsigned int code, int value)
 {
-        unsigned int modifiers = (unsigned int)atomic_read(&desktop.modifiers);
-        unsigned int bit = code < KEY_TABLE ? key_map[code][2] : 0;
+        unsigned int modifiers;
+        unsigned int bit;
         unsigned int head, tail;
         struct window_key key;
 
         if (bind_key_swallowed(code, value))
                 return;
+
+        modifiers = (unsigned int)atomic_read(&desktop.modifiers);
+        bit = code < KEY_TABLE ? key_map[code][2] : 0;
 
         if (bit)
         {

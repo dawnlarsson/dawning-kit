@@ -1530,16 +1530,19 @@ fn host_quiesce(void)
 // Bindings ------------------------------------------------------
 
 /*
-        One request to a bound event: SET when `command` is not null, then
-        read the row back. A command too long is handed over whole, cut at
-        the size without a terminator, so the kernel's own refusal answers.
+        One request to a bound event. SET when `command` is not null, then
+        the kernel copies the row back. A command too long is handed over
+        whole, cut at the size without a terminator, so the kernel's own
+        refusal answers. The listing and boot apply keep the file open;
+        opening once per event was thirteen trips through /dev/spark for
+        `moonwater bind` with no arguments.
 */
-static bipolar host_bind_request(unsigned int op, unsigned int event,
-                                 string_address command,
-                                 struct bind_control address_to control)
+static bipolar host_bind_ioctl(bipolar device, unsigned int op, unsigned int event,
+                               string_address command,
+                               struct bind_control address_to control)
 {
-        bipolar device;
         bipolar failed;
+        positive length;
 
         memory_zero(control, sizeof(address_to control));
         control->op = op;
@@ -1547,23 +1550,31 @@ static bipolar host_bind_request(unsigned int op, unsigned int event,
 
         if (command)
         {
-                positive length = string_length(command);
-
+                length = string_length(command);
                 memory_copy(control->command, command,
                             length < SPARK_BIND_COMMAND_MAX ? length + 1
                                                             : SPARK_BIND_COMMAND_MAX);
         }
 
-        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
-        if (device < 0)
-                return device;
-
         failed = system_control(device, SPARK_IOCTL_BIND, control);
-        system_close(device);
-
         control->command[SPARK_BIND_COMMAND_MAX - 1] = end;
         control->name[SPARK_BIND_NAME_MAX - 1] = end;
         return failed < 0 ? failed : 0;
+}
+
+static bipolar host_bind_request(unsigned int op, unsigned int event,
+                                 string_address command,
+                                 struct bind_control address_to control)
+{
+        bipolar device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
+        bipolar failed;
+
+        if (device < 0)
+                return device;
+
+        failed = host_bind_ioctl(device, op, event, command, control);
+        system_close(device);
+        return failed;
 }
 
 // Settings ------------------------------------------------------
@@ -3109,6 +3120,11 @@ static fn host_bind_apply(host_settings address_to settings)
         p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
         struct bind_control control;
         positive at = 0;
+        bipolar device;
+
+        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
+        if (device < 0)
+                return;
 
         while (host_settings_next(settings, address_of at, address_of setting))
         {
@@ -3116,23 +3132,32 @@ static fn host_bind_apply(host_settings address_to settings)
                         continue;
 
                 host_settings_text(text, address_of setting);
-                host_bind_request(SPARK_BIND_SET, setting.entry.id, text,
-                                  address_of control);
+                host_bind_ioctl(device, SPARK_BIND_SET, setting.entry.id, text,
+                                address_of control);
         }
+
+        system_close(device);
 }
 
 static b32 host_bind_events(void)
 {
         struct bind_control control;
+        bipolar device;
         bipolar failed;
         unsigned int event;
         unsigned int count = SPARK_BIND_EVENTS;
 
+        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
+        if (device < 0)
+                return host_fail(SPARK_DEVICE, device);
+
         for (event = 1; event <= count; event++)
         {
-                failed = host_bind_request(SPARK_BIND_GET, event, null, address_of control);
+                failed = host_bind_ioctl(device, SPARK_BIND_GET, event, null,
+                                         address_of control);
                 if (failed < 0)
                 {
+                        system_close(device);
                         if (event == 1)
                                 return host_fail(SPARK_DEVICE, failed);
                         log_flush();
@@ -3145,6 +3170,7 @@ static b32 host_bind_events(void)
                 host_bind_say("  ", address_of control);
         }
 
+        system_close(device);
         string_format(log, "  reset is the keyboard's reset/restart key; "
                            "a case reset button cannot be bound\n");
         log_flush();
@@ -3218,7 +3244,9 @@ static b32 host_bind_tell(unsigned int event, string_address command)
 
         if (host_bind_keep(event, address_of control))
                 return 1;
-        return host_bind_show(event);
+        host_bind_say(host_label, address_of control);
+        log_flush();
+        return 0;
 }
 
 /* moonwater bind [init|exit|EVENT ...] */
@@ -3426,15 +3454,21 @@ static b32 host_status(void)
         {
                 unsigned int event;
                 unsigned int count = SPARK_BIND_EVENTS;
+                bipolar device = system_open_at(AT_FDCWD, SPARK_DEVICE,
+                                                FILE_READ | O_CLOEXEC);
 
-                for (event = 1; event <= count; event++)
+                if (device >= 0)
                 {
-                        if (host_bind_request(SPARK_BIND_GET, event, null,
-                                              address_of bind) < 0)
-                                break;
-                        if (event == 1 && bind.count)
-                                count = bind.count;
-                        host_bind_say("  ", address_of bind);
+                        for (event = 1; event <= count; event++)
+                        {
+                                if (host_bind_ioctl(device, SPARK_BIND_GET, event, null,
+                                                    address_of bind) < 0)
+                                        break;
+                                if (event == 1 && bind.count)
+                                        count = bind.count;
+                                host_bind_say("  ", address_of bind);
+                        }
+                        system_close(device);
                 }
         }
 

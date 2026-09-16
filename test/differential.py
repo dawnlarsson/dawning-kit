@@ -17348,6 +17348,9 @@ static void desktop_set_awake(_Bool awake) { assert(desktop.lock);desktop.awake=
 #ifndef READ_ONCE
 #define READ_ONCE(x) (x)
 #endif
+#ifndef WRITE_ONCE
+#define WRITE_ONCE(x, val) do { (x) = (val); } while (0)
+#endif
 #ifndef pr_warn
 #define pr_warn(...) ((void)0)
 #endif
@@ -17735,6 +17738,7 @@ static void check_bind(void) {
 
     queued=bind_queued; sleep->last=0; atomic_set(&sleep->bound,1);
     snprintf(sleep->command,sizeof(sleep->command),"true");
+    bind_watch_row(sleep, 1);
     bind_send(EV_KEY,KEY_SLEEP,1);
     check(bind_queued==queued+1,"KEY_SLEEP queues sleep");
     sleep->last=0; jiffies+=5000;
@@ -17768,8 +17772,22 @@ static void check_bind(void) {
     check(bind_queued==queued,"an unbound volume key does not queue");
     atomic_set(&vol->bound,1);
     snprintf(vol->command,sizeof(vol->command),"true");
+    bind_watch_row(vol, 1);
     bind_send(EV_KEY,KEY_VOLUMEUP,1);
     check(bind_queued==queued+1,"a bound volume key queues");
+
+    queued=bind_queued;
+    bind_send(2,0,1);
+    check(bind_queued==queued,"motion is not a bound event");
+
+    queued=bind_queued;
+    bind_fire(SPARK_BIND_CANVAS_ON);
+    check(bind_queued==queued,"an unbound canvas on does not queue");
+    atomic_set(&on->bound,1);
+    snprintf(on->command,sizeof(on->command),"true");
+    bind_fire(SPARK_BIND_CANVAS_ON);
+    check(bind_queued==queued+1,"a bound canvas on queues");
+    atomic_set(&on->bound,0); on->command[0]=0;
 
     check(bind_key_swallowed(KEY_POWER,1),"a bound power key is swallowed");
     check(bind_key_swallowed(KEY_POWER,0),"its release is swallowed too");
@@ -17858,7 +17876,7 @@ static void check_bind(void) {
           "an empty command puts the default back");
     atomic_set(&power->runs,0);
 }
-// ACPI's button arrives as KEY_POWER and nothing listened to it.
+// KEY_POWER is the ACPI button; bind listens, Canvas does not.
 static void suspend_pending(void) {
     desktop.button_changed=desktop.client_changed=desktop.motion_pending=1;
     desktop.wheel=120;desktop.focus_steps=2;desktop.focus_commit=1;desktop.minimize=1;

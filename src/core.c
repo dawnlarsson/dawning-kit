@@ -1067,23 +1067,21 @@ static const struct {
         unsigned int debounce_ms;
         unsigned int boot;
         unsigned int drop_busy;
-        unsigned int ev_type;
         unsigned int code;
-        int want;
 } bind_spec[SPARK_BIND_EVENTS] = {
-        {"poweroff", 1000, 1, 1, EV_KEY, KEY_POWER, 1},
-        {"", 1000, 1, 1, EV_KEY, KEY_SLEEP, 1},
-        {"reboot", 1000, 1, 1, EV_KEY, KEY_RESTART, 1},
-        {"reboot", 1000, 1, 1, 0, 0, 0},
-        {"", 500, 0, 1, EV_SW, SW_LID, 1},
-        {"", 500, 0, 1, EV_SW, SW_LID, 0},
-        {"", 0, 0, 0, EV_KEY, KEY_VOLUMEUP, 1},
-        {"", 0, 0, 0, EV_KEY, KEY_VOLUMEDOWN, 1},
-        {"", 0, 0, 0, EV_KEY, KEY_MUTE, 1},
-        {"", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSUP, 1},
-        {"", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSDOWN, 1},
-        {"", 0, 0, 1, 0, 0, 0},
-        {"", 0, 0, 1, 0, 0, 0},
+        {"poweroff", 1000, 1, 1, KEY_POWER},
+        {"", 1000, 1, 1, KEY_SLEEP},
+        {"reboot", 1000, 1, 1, KEY_RESTART},
+        {"reboot", 1000, 1, 1, 0},
+        {"", 500, 0, 1, 0},
+        {"", 500, 0, 1, 0},
+        {"", 0, 0, 0, KEY_VOLUMEUP},
+        {"", 0, 0, 0, KEY_VOLUMEDOWN},
+        {"", 0, 0, 0, KEY_MUTE},
+        {"", 0, 0, 0, KEY_BRIGHTNESSUP},
+        {"", 0, 0, 0, KEY_BRIGHTNESSDOWN},
+        {"", 0, 0, 1, 0},
+        {"", 0, 0, 1, 0},
 };
 
 static struct bind_row *bind_row(unsigned int event)
@@ -1096,16 +1094,14 @@ static struct bind_row *bind_row(unsigned int event)
 static void bind_watch_code(unsigned int code, _Bool on)
 {
         unsigned int word;
-        unsigned long bit;
+        unsigned long bit, now;
 
         if (code >= BIND_CODES)
                 return;
         word = code / 64;
         bit = 1UL << (code % 64);
-        if (on)
-                bind_watch[word] |= bit;
-        else
-                bind_watch[word] &= ~bit;
+        now = READ_ONCE(bind_watch[word]);
+        WRITE_ONCE(bind_watch[word], on ? now | bit : now & ~bit);
 }
 
 static void bind_watch_row(struct bind_row *row, _Bool on)
@@ -1133,7 +1129,7 @@ static void bind_watch_row(struct bind_row *row, _Bool on)
 static _Bool bind_watched(unsigned int code)
 {
         return code < BIND_CODES &&
-               (bind_watch[code / 64] & (1UL << (code % 64))) != 0;
+               (READ_ONCE(bind_watch[code / 64]) & (1UL << (code % 64))) != 0;
 }
 
 static _Bool bind_command_is_default(struct bind_row *row, const char *command)
@@ -1281,7 +1277,7 @@ static void bind_fire(unsigned int event)
 {
         struct bind_row *row = bind_row(event);
 
-        if (row)
+        if (row && atomic_read(&row->bound))
                 bind_queue(row);
 }
 
@@ -1459,10 +1455,22 @@ static void bind_event(struct input_handle *handle, unsigned int type,
         struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
         struct bind_row *row;
 
-        if (type == EV_KEY && code <= KEY_RIGHTALT)
-                bind_mods(bind, code, value);
-
-        if (value == 2)
+        /*
+                Mice and tablets match EV_KEY for their buttons, so this
+                handler sees every motion report too. Those are not events
+                we bind. A letter key is not in the watch map, so it never
+                reaches bind_match's switch.
+        */
+        if (type == EV_KEY)
+        {
+                if (code <= KEY_RIGHTALT)
+                        bind_mods(bind, code, value);
+                if (value != 1)
+                        return;
+                if (!bind_watched(code))
+                        return;
+        }
+        else if (type != EV_SW)
                 return;
 
         row = bind_match(type, code, value);
