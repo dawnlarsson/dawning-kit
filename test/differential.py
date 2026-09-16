@@ -17422,7 +17422,11 @@ static pid_t user_mode_thread(int (*fn)(void *), void *arg, unsigned long sig) {
     if (bind_thread_pid>0) kfree(spawn);
     return bind_thread_pid;
 }
-static int kernel_wait(pid_t pid, int *stat) { (void)pid; *stat=0; return bind_wait_answer; }
+static int kernel_wait(pid_t pid, int *stat) {
+    if (bind_wait_answer < 0) return bind_wait_answer;
+    *stat = bind_wait_answer;
+    return pid;
+}
 static struct bind_handle bind_dev;
 static void bind_send(unsigned type, unsigned code, int value) {
     bind_event(&bind_dev.handle, type, code, value);
@@ -17758,6 +17762,9 @@ static void check_bind(void) {
     bind_press(SPARK_BIND_POWEROFF,"poweroff",42,-2);
     check(bind_offs==1 && bind_forced && !bind_reboots,
           "a poweroff that cannot run falls back to orderly_poweroff, forced");
+    bind_press(SPARK_BIND_POWEROFF,"poweroff",42,256);
+    check(bind_offs==1 && bind_forced,
+          "a poweroff that returns without stopping the machine falls back");
     bind_press(SPARK_BIND_RESET,"reboot",42,256);
     check(bind_reboots==1 && !bind_offs,"a reboot that fails falls back to orderly_reboot");
     bind_press(SPARK_BIND_POWEROFF,"echo pressed > /dev/ttyS0",42,-2);
@@ -26742,6 +26749,7 @@ typedef char *string_address;
 #define syscall(name) 0
 #define memory_copy memcpy
 #define string_equals(source, input) (strcmp((const char *)(source), (const char *)(input)) == 0)
+#define string_compare_max(source, input, n) strncmp((const char *)(source), (const char *)(input), (n))
 static positive string_length(string_address text) {
     return text ? (positive)strlen(text) : 0;
 }
@@ -26920,6 +26928,49 @@ int main(void) {
     check(!modes, "/tmp as a runtime dir is not chmod 0700");
     check(sticky, "/tmp stays 1777 when named as the runtime dir");
 
+    {
+        string_address have[] = {"HOME=/etc", "XDG_RUNTIME_DIR=/etc", null};
+        got = bowl_environment(have);
+        check(!env_has(got, "HOME=/etc"), "HOME under /etc is not kept");
+        check(env_has(got, "HOME=/root"), "HOME under /etc becomes /root");
+        check(!env_has(got, "XDG_RUNTIME_DIR=/etc"),
+              "a runtime dir under /etc is not kept");
+        check(env_has(got, "XDG_RUNTIME_DIR=/run/user/0"),
+              "a runtime dir under /etc is replaced");
+    }
+
+    {
+        string_address have[] = {"HOME=/tmp/..", "XDG_RUNTIME_DIR=/.", null};
+        got = bowl_environment(have);
+        check(!env_has(got, "HOME=/tmp/.."), "HOME with .. is not kept");
+        check(env_has(got, "HOME=/root"), "HOME with .. becomes /root");
+        check(!env_has(got, "XDG_RUNTIME_DIR=/."),
+              "a runtime dir of /. is not kept");
+        check(env_has(got, "XDG_RUNTIME_DIR=/run/user/0"),
+              "a runtime dir of /. is replaced");
+    }
+
+    mkdirs = modes = sticky = 0;
+    last_private[0] = 0;
+    last_open[0] = 0;
+    bowl_session_prepare("/etc", "/etc");
+    {
+        unsigned at;
+        int etc = 0;
+        for (at = 0; at < mkdirs && at < 32; at++)
+            if (!strncmp(made[at], "/etc", 4)) etc = 1;
+        check(!etc && !strcmp(last_private, "/run/user/0"),
+              "prepare does not mkdir or chmod /etc");
+    }
+
+    mkdirs = modes = sticky = 0;
+    last_private[0] = 0;
+    last_open[0] = 0;
+    bowl_session_prepare("/root", "/tmp/..");
+    check(strcmp(last_open, "/") && strcmp(last_open, "/tmp/..") &&
+              !strcmp(last_private, "/run/user/0"),
+          "prepare does not chmod / through /tmp/..");
+
     if (failures) return 1;
     printf("bowl session: %u of %u\n", checks, checks);
     return 0;
@@ -27020,6 +27071,9 @@ int main(void) {
               string_equals(held, "/bowls/debian") &&
               string_equals(program, "/usr/bin/jq"),
           "an encoded launcher names its root");
+    check(!bowl_launcher("@/bowls/debian/../../bowls/arch/usr/bin/pacman",
+                         held, sizeof(held), &program),
+          "a launcher cannot walk out of its named root");
     p8 alpine[] = "#!/bowl @/bowls/alpine/sbin/apk\n";
     p8 debian[] = "#!/bowl @/bowls/debian/usr/bin/jq\n";
     check(bowl_shebang_target(alpine, held, sizeof(held), &program) &&

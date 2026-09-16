@@ -185,6 +185,27 @@ static bool bowl_name(string_address name, bool plus)
         return true;
 }
 
+/* . or .. as a component, or //, so a path cannot walk out of its root. */
+static bool bowl_path_steps(string_address path)
+{
+        if (!path || path[0] != '/')
+                return true;
+
+        for (; *path; path++)
+        {
+                if (*path != '/')
+                        continue;
+                if (path[1] == '/')
+                        return true;
+                if (path[1] == '.' &&
+                    (!path[2] || path[2] == '/' ||
+                     (path[2] == '.' && (!path[3] || path[3] == '/'))))
+                        return true;
+        }
+
+        return false;
+}
+
 /* A named root has exactly the form /bowls/NAME. */
 static bool bowl_named_root(string_address root)
 {
@@ -236,6 +257,9 @@ static bool bowl_launcher(string_address encoded, p8 address_to root,
         root[root_length] = end;
 
         if (!bowl_named_root(root))
+                return false;
+
+        if (bowl_path_steps(program))
                 return false;
 
         address_to program_out = program;
@@ -346,6 +370,9 @@ static b32 bowl_expose_program(string_address root, string_address program,
                 if (*at <= ' ')
                         return bowl_refuse("whitespace cannot be encoded in "
                                            "an exposed path\n");
+
+        if (bowl_path_steps(program))
+                return bowl_refuse("an exposed path cannot contain . or ..\n");
 
         if (!name || !name[0])
         {
@@ -1003,6 +1030,54 @@ static b32 bowl_path_same(string_address path, string_address want)
         return !path[i] || (path[i] == '/' && !path[i + 1]);
 }
 
+/* . or .. as a component, or //. The same walk as bowl_path_steps; the
+   session extract does not include that function. */
+static b32 bowl_session_steps(string_address path)
+{
+        if (!path || path[0] != '/')
+                return true;
+
+        for (; *path; path++)
+        {
+                if (*path != '/')
+                        continue;
+                if (path[1] == '/')
+                        return true;
+                if (path[1] == '.' &&
+                    (!path[2] || path[2] == '/' ||
+                     (path[2] == '.' && (!path[3] || path[3] == '/'))))
+                        return true;
+        }
+
+        return false;
+}
+
+static b32 bowl_session_host_path(string_address path)
+{
+        static string_address trees[] = {
+            "/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64",
+            "/proc", "/sys", null};
+        positive i;
+
+        if (!path)
+                return false;
+
+        if (bowl_path_same(path, "/"))
+                return true;
+
+        for (i = 0; trees[i]; i++)
+        {
+                positive n = string_length(trees[i]);
+
+                if (string_compare_max(path, trees[i], n))
+                        continue;
+                if (!path[n] || path[n] == '/')
+                        return true;
+        }
+
+        return false;
+}
+
 static b32 bowl_runtime_shared(string_address path)
 {
         return bowl_path_same(path, "/tmp") || bowl_path_same(path, "/var/tmp") ||
@@ -1027,7 +1102,8 @@ static b32 bowl_session_unusable(string_address entry)
                 if (bowl_env_named(entry, path[i]))
                 {
                         value = bowl_env_payload(entry, path[i]);
-                        return value[0] != '/';
+                        return bowl_session_steps(value) ||
+                               bowl_session_host_path(value);
                 }
 
         for (i = 0; empty[i]; i++)
@@ -1055,7 +1131,8 @@ static b32 bowl_session_default_missing(string_address name,
         if (string_equals(name, "HOME") ||
             string_equals(name, "XDG_RUNTIME_DIR") ||
             string_equals(name, "TMPDIR"))
-                return value[0] != '/';
+                return bowl_session_steps(value) ||
+                       bowl_session_host_path(value);
 
         return false;
 }
@@ -1160,7 +1237,8 @@ static fn bowl_session_prepare(string_address home, string_address runtime)
 {
         bowl_session_fill();
 
-        if (!runtime || runtime[0] != '/')
+        if (!runtime || bowl_session_steps(runtime) ||
+            bowl_session_host_path(runtime))
                 runtime = bowl_runtime_path;
 
         bowl_mkdir_parents(runtime);
@@ -1173,7 +1251,7 @@ static fn bowl_session_prepare(string_address home, string_address runtime)
         bowl_mkdir("/var");
         bowl_dev_link("/run", "/var/run");
         bowl_dev_link("/run/lock", "/var/lock");
-        if (!home || home[0] != '/')
+        if (!home || bowl_session_steps(home) || bowl_session_host_path(home))
                 home = (string_address)BOWL_SESSION_HOME;
         bowl_session_home_dirs(home);
 }

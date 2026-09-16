@@ -470,6 +470,18 @@ static _Bool output_grow(struct output *output, struct drm_mode_set *mode_set)
             (unsigned long)output->width * output->height)
                 return false;
 
+        /* The flusher dirtyfb's output->buffer without desktop.lock.
+           Replacing that buffer, or deleting it as replaced after a
+           later commit, is a UAF. output_drop already waits; grow must
+           too. */
+        spin_lock(&desktop.flush_lock);
+        if (output->flushing || output->flush_queued)
+        {
+                spin_unlock(&desktop.flush_lock);
+                return false;
+        }
+        spin_unlock(&desktop.flush_lock);
+
         format = canvas_plane_pick_format(mode_set->crtc->primary,
                                           DRM_FORMAT_XRGB8888,
                                           DRM_FORMAT_ARGB8888);
@@ -1212,11 +1224,11 @@ static int canvas_start(struct canvas *canvas)
 
         // Something to use it with. A desktop with nothing on it is not a
         // desktop, and this is the first program a screen is worth having.
+        // The bit is set only once spawn_terminal has actually started:
+        // setting it first meant a failed spawn never retried, and off
+        // then on found a desktop that believed it already had a terminal.
         if (!desktop.terminal)
-        {
-                desktop.terminal = true;
                 canvas_terminal_first();
-        }
 
         return 0;
 }

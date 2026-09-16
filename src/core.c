@@ -1213,7 +1213,15 @@ static void bind_run(struct bind_row *row)
         kernel_sigaction(SIGCHLD, SIG_DFL);
         pid = user_mode_thread(bind_spawn_enter, spawn, SIGCHLD);
         if (pid > 0)
+        {
+                /* kernel_wait returns the pid, like wait(2). The child's
+                   status is in stat. Treating the wait return as that
+                   status made every successful wait look like a failure,
+                   so poweroff and reboot always fell through to orderly_*. */
                 ret = kernel_wait(pid, &stat);
+                if (ret > 0)
+                        ret = stat;
+        }
         else
         {
                 kfree(spawn);

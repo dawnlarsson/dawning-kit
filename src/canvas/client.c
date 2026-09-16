@@ -321,7 +321,7 @@ static _Bool canvas_has_native(void)
 }
 
 static int canvas_claim(const char *path, unsigned int minor,
-                        struct canvas_control *on)
+                        struct canvas_control *on, _Bool firmware_ok)
 {
         struct file *filp;
         struct drm_file *file_priv;
@@ -349,14 +349,18 @@ static int canvas_claim(const char *path, unsigned int minor,
                 log, then i915 takes the same pipe and the machine
                 freezes. Leave it until a GPU appears, or until the
                 settle rounds have passed with none. Userspace on still
-                takes it when it is the only card.
+                takes it when it is the only card -- the first pass of
+                claim_all skips firmware so card0 cannot start before
+                card1 is tried.
         */
         dev = file_priv->minor->dev;
         if (canvas_is_firmware(dev))
         {
                 int skip = 0;
 
-                if (canvas_has_native())
+                if (!firmware_ok)
+                        skip = -EAGAIN;
+                else if (canvas_has_native())
                         skip = -ENODEV;
                 else if (!on && canvas_attempts < CANVAS_SETTLE)
                         skip = -EAGAIN;
@@ -429,8 +433,9 @@ static int canvas_claim(const char *path, unsigned int minor,
         would be missed by a scan that stopped at the first gap. The whole
         minor space is cheap to try: an absent node fails in filp_open.
 */
-static unsigned int canvas_claim_all(struct canvas_control *on,
-                                     unsigned int *refused)
+static unsigned int canvas_claim_range(struct canvas_control *on,
+                                       unsigned int *refused,
+                                       _Bool firmware_ok)
 {
         char path[24];
         unsigned int minor, taken = 0;
@@ -445,7 +450,7 @@ static unsigned int canvas_claim_all(struct canvas_control *on,
                                          sizeof("/dev/dri/card") - 1),
                     minor);
 
-                switch (canvas_claim(path, minor, on))
+                switch (canvas_claim(path, minor, on, firmware_ok))
                 {
                 case 0:
                         taken++;
@@ -456,6 +461,19 @@ static unsigned int canvas_claim_all(struct canvas_control *on,
                         break;
                 }
         }
+
+        return taken;
+}
+
+static unsigned int canvas_claim_all(struct canvas_control *on,
+                                     unsigned int *refused)
+{
+        unsigned int taken = canvas_claim_range(on, refused, false);
+
+        /* Firmware last: card0 is often simpledrm, and starting it
+           before i915 is the freeze. If nothing else attached, take it. */
+        if (!taken)
+                taken = canvas_claim_range(on, refused, true);
 
         return taken;
 }
@@ -637,6 +655,7 @@ static long canvas_turn_off(void)
         // output being released. The kernel log window stays registered:
         // printk keeps filling the same cells, and on will draw them again.
         mutex_lock(&canvas_list_lock);
+        atomic_set(&desktop.spawn, 0);
         canvas_thread_stop();
         mutex_unlock(&canvas_list_lock);
 
