@@ -4,9 +4,10 @@
         Setup downloads the archive; this file does not talk to pacman, apt
         or apk. It probes the compression magic, extracts, hoists a prefix
         directory when the marker is under one child (Arch root.x86_64, a
-        Nix version dir), and writes the files a first isolated install
+        Nix version dir), and         writes the files a first isolated install
         actually needs -- resolv.conf without a stub resolver, plus the
-        manager conf that exists in that tree.
+        manager conf that exists in that tree. Isolated launches rewrite
+        resolv.conf only; they do not clear manager locks.
 
         gzip and xz applets are compiled in. Extract looks at the archive
         magic and `tar` unpacks gzip, xz, zstd and uncompressed streams

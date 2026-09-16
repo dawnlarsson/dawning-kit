@@ -234,33 +234,10 @@ static bool stdbuf_find_library(string_address preferred_root)
 
         if (preferred_root && stdbuf_library_under(preferred_root))
                 return true;
-        if (stdbuf_library_under(null))
-                return true;
 
-        file_walk walk;
-
-        if (!file_walk_open(address_of walk, AT_FDCWD,
-                            (string_address)BOWL_ROOT_DIRECTORY))
-                return false;
-
-        struct linux_dirent64 address_to entry;
-        bool found = false;
-
-        while (!found && (entry = file_walk_next(address_of walk)))
-        {
-                if (file_is_dot(entry->d_name) ||
-                    !string_compare(entry->d_name, (string_address) "bin"))
-                        continue;
-
-                p8 root[FILE_PATH_MAX];
-
-                if (file_path_join(root, (string_address)BOWL_ROOT_DIRECTORY,
-                                   entry->d_name))
-                        found = stdbuf_library_under(root);
-        }
-
-        file_walk_close(address_of walk);
-        return found;
+        /* Do not walk other bowls: Alpine's musl libstdbuf is not loadable
+           into a Debian glibc process, and the reverse is the same crash. */
+        return stdbuf_library_under(null);
 }
 
 /* A native ELF without PT_INTERP is statically linked, so LD_PRELOAD cannot

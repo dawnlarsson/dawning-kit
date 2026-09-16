@@ -88,11 +88,14 @@ static struct bowl_mount_point bowl_isolated_mounts[] = {
         overlaying them hid every native applet.
 
         /etc and /var stay Moonwater's, as do /home, /root, /tmp, /run, /dev,
-        /proc and /sys, except the two /etc trees desktop programs read:
-        /etc/xdg for weston.ini and /etc/fonts for fontconfig. Overlaying
-        all of /etc hid Moonwater's own names. A later donor namespace skips
-        the libc binds so a second glibc bowl cannot replace a shared Arch
-        loader.
+        /proc and /sys, except the /etc trees desktop and TLS programs read:
+        /etc/xdg for weston.ini, /etc/fonts for fontconfig, /etc/ssl and
+        /etc/pki for the guest's own certificate store. Overlaying all of
+        /etc hid Moonwater's own names.
+
+        Each launch unshares a mount namespace before these binds, so a
+        Debian glibc bowl cannot replace Arch's loader in another process.
+        The host /lib is untouched.
 
         /usr/share is the data tree desktop programs read: Weston, GTK
         schemas, icons, mime. ncurses as root ignores $TERMINFO and reads
@@ -113,6 +116,8 @@ static struct bowl_layer bowl_fast_layers[] = {
     {"/usr/local/share", false},
     {"/etc/xdg", false},
     {"/etc/fonts", false},
+    {"/etc/ssl", false},
+    {"/etc/pki", false},
     {null, false},
 };
 
@@ -194,6 +199,81 @@ static bool bowl_named_root(string_address root)
         return !string_equals(name, "bin") && bowl_name(name, false);
 }
 
+/* Parse @/bowls/NAME/PROGRAM from a shebang invocation. */
+static bool bowl_launcher(string_address encoded, p8 address_to root,
+                          positive room,
+                          string_address address_to program_out)
+{
+        positive prefix = sizeof(BOWL_ROOT_PREFIX) - 1;
+        string_address target;
+        string_address program;
+        positive root_length;
+
+        if (!encoded || encoded[0] != '@')
+                return false;
+
+        /* A shebang file keeps a newline; the kernel does not pass it. */
+        for (string_address at = encoded; *at; at++)
+                if (*at == '\n' || *at == '\r')
+                {
+                        *at = end;
+                        break;
+                }
+
+        target = encoded + 1;
+        if (string_compare_max(target, BOWL_ROOT_PREFIX, prefix))
+                return false;
+
+        program = string_first_of(target + prefix, '/');
+        if (!program || !program[1])
+                return false;
+
+        root_length = (positive)(program - target);
+        if (root_length >= room)
+                return false;
+
+        memory_copy(root, target, root_length);
+        root[root_length] = end;
+
+        if (!bowl_named_root(root))
+                return false;
+
+        address_to program_out = program;
+        return true;
+}
+
+static bool bowl_shebang_target(string_address line, p8 address_to root,
+                                positive room,
+                                string_address address_to program_out)
+{
+        if (!line)
+                return false;
+
+        while (*line && *line != '@')
+                line++;
+
+        return bowl_launcher(line, root, room, program_out);
+}
+
+static bool bowl_needs_isolated(string_address program)
+{
+        static string_address managers[] = {
+            "pacman", "pacman-key", "pacman-conf", "makepkg", "repo-add",
+            "repo-remove", "apt", "apt-get", "apt-cache", "apt-cdrom",
+            "apt-config", "apt-key", "apt-mark", "aptitude", "dpkg",
+            "dpkg-deb", "dpkg-query", "dpkg-reconfigure", "dpkg-divert",
+            "apk", "dnf", "dnf5", "rpm", "yum", "nix", "nix-env",
+            "nix-build", "nix-shell"};
+        p8 name[256];
+
+        if (!program || program[0] != '/')
+                return false;
+
+        path_tail_copy(name, sizeof(name), program);
+        return string_table_find(name, managers, sizeof(managers[0]),
+                                 array_count(managers)) < array_count(managers);
+}
+
 static b32 bowl_usage(void)
 {
         log((address_any)bowl_usage_text, sizeof(bowl_usage_text) - 1);
@@ -242,22 +322,6 @@ static bipolar bowl_bind_ro(string_address source, string_address target)
         generated ELF file or per-command runtime. The launcher is the whole
         system-wide installation and is intentionally created O_EXCL.
 */
-static bool bowl_needs_isolated(string_address program)
-{
-        static string_address managers[] = {
-            "pacman", "pacman-key", "makepkg", "apt", "apt-get", "dpkg", "apk",
-            "dnf", "dnf5", "rpm", "yum", "nix", "nix-env", "nix-build",
-            "nix-shell"};
-        p8 name[256];
-
-        if (!program || program[0] != '/')
-                return false;
-
-        path_tail_copy(name, sizeof(name), program);
-        return string_table_find(name, managers, sizeof(managers[0]),
-                                 array_count(managers)) < array_count(managers);
-}
-
 static b32 bowl_expose_program(string_address root, string_address program,
                                string_address name, bool exclusive)
 {
@@ -315,7 +379,50 @@ static b32 bowl_expose_program(string_address root, string_address program,
         path_join(launcher, sizeof(launcher), BOWL_EXPOSE_DIRECTORY, name);
 
         if (!exclusive && system_access_at(AT_FDCWD, launcher, 0) >= 0)
-                return 0;
+        {
+                p8 existing_root[BOWL_PATH_LIMIT];
+                p8 guest[BOWL_PATH_LIMIT];
+                string_address existing_program = null;
+                bipolar reader = system_open_at(AT_FDCWD, launcher,
+                                                FILE_READ | O_CLOEXEC);
+                bipolar got = reader < 0
+                    ? reader
+                    : system_read_retry((positive)reader, line,
+                                        sizeof(line) - 1);
+
+                if (reader >= 0)
+                        system_close(reader);
+                if (got > 0)
+                        line[got] = end;
+                else
+                        line[0] = end;
+
+                if (bowl_shebang_target(line, existing_root,
+                                        sizeof(existing_root),
+                                        address_of existing_program) &&
+                    string_equals(existing_root, root))
+                        return 0;
+
+                if (bowl_shebang_target(line, existing_root,
+                                        sizeof(existing_root),
+                                        address_of existing_program) &&
+                    bowl_root_path(guest, sizeof(guest), existing_root,
+                                   existing_program) &&
+                    system_access_at(AT_FDCWD, guest, BOWL_ACCESS_EXECUTE) >=
+                        0)
+                {
+                        string_format(log,
+                                      bowl_label
+                                      "%s is already exposed from %s\n",
+                                      name, existing_root);
+                        log_flush();
+                        return 1;
+                }
+
+                /* Garbage or a launcher whose guest file is gone: this root
+                   may take the name. */
+                system_remove_at(AT_FDCWD, launcher, 0);
+        }
 
         memory_copy(line, BOWL_EXPOSE_PREFIX, prefix_length);
         memory_copy(line + prefix_length, root, root_length);
@@ -424,7 +531,9 @@ static bool bowl_fill_command(string_address name, p8 address_to into,
         p8 root[BOWL_PATH_LIMIT];
         p8 rel[256];
         p8 installed[BOWL_PATH_LIMIT];
+        p8 fallback[BOWL_PATH_LIMIT];
         bool found = false;
+        bool held = false;
         positive name_length;
 
         if (!name || string_first_of(name, '/') || !bowl_name(name, true))
@@ -460,26 +569,34 @@ static bool bowl_fill_command(string_address name, p8 address_to into,
                                              BOWL_ACCESS_EXECUTE) < 0)
                                 continue;
 
-                        found = true;
                         if (!bowl_expose_program(root, rel, name, false) &&
                             path_join(into, room, BOWL_EXPOSE_DIRECTORY,
                                       name))
-                                break;
-
-                        if (string_length(installed) >= room)
                         {
-                                found = false;
+                                found = true;
                                 break;
                         }
 
-                        memory_copy(into, installed,
-                                    string_length(installed) + 1);
-                        break;
+                        /* Another root already owns the name, or the write
+                           failed. Keep the guest path so wrap can still run
+                           this binary, and keep looking for a root that can
+                           own the launcher. */
+                        if (!held && string_length(installed) < sizeof(fallback))
+                        {
+                                memory_copy(fallback, installed,
+                                            string_length(installed) + 1);
+                                held = true;
+                        }
                 }
         }
 
         file_walk_close(address_of walk);
-        return found;
+        if (found)
+                return true;
+        if (!held || string_length(fallback) >= room)
+                return false;
+        memory_copy(into, fallback, string_length(fallback) + 1);
+        return true;
 }
 
 static p8 bowl_wrap_root[BOWL_PATH_LIMIT];
@@ -572,41 +689,6 @@ static bool bowl_wrap_words(string_address cwd,
         words[1] = bowl_wrap_root;
         words[2] = bowl_wrap_program;
         words[count + 2] = null;
-        return true;
-}
-
-/* Parse @/bowls/NAME/PROGRAM from a shebang invocation. */
-static bool bowl_launcher(string_address encoded, p8 address_to root,
-                          positive room,
-                          string_address address_to program_out)
-{
-        positive prefix = sizeof(BOWL_ROOT_PREFIX) - 1;
-        string_address target;
-        string_address program;
-        positive root_length;
-
-        if (!encoded || encoded[0] != '@')
-                return false;
-
-        target = encoded + 1;
-        if (string_compare_max(target, BOWL_ROOT_PREFIX, prefix))
-                return false;
-
-        program = string_first_of(target + prefix, '/');
-        if (!program || !program[1])
-                return false;
-
-        root_length = (positive)(program - target);
-        if (root_length >= room)
-                return false;
-
-        memory_copy(root, target, root_length);
-        root[root_length] = end;
-
-        if (!bowl_named_root(root))
-                return false;
-
-        address_to program_out = program;
         return true;
 }
 
@@ -1554,10 +1636,13 @@ static b32 bowl_main()
         if (!isolated_told)
                 isolated = bowl_needs_isolated(program);
 
-        /* An older tree was landed before these lines existed. */
+        /* Isolated guests need the host's nameservers. Pacman/apk/apt conf
+           and lock files are written when the tree is landed, not on every
+           enter: clearing locks here raced a manager already running in
+           that root. */
         if (isolated)
         {
-                b32 failed = bowl_configure(root);
+                b32 failed = bowl_write_resolv(root);
 
                 if (failed)
                         return failed;

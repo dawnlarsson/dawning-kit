@@ -26867,6 +26867,127 @@ int main(void) {
         return 0
 
 
+def harness_bowl_roots(argv):
+    """Launchers name one bowl; a second distro does not silently take the name."""
+    root = HARNESS_ROOT
+    bowl = (root / "src/bowl/runtime.c").read_text()
+    start = bowl.index("static bool bowl_name(")
+    stop = bowl.index("static b32 bowl_usage(")
+    source = r'''
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <ctype.h>
+typedef unsigned char p8;
+typedef unsigned long positive;
+typedef int b32;
+typedef char *string_address;
+#define fn void
+#define address_to *
+#define null ((void *)0)
+#define end '\0'
+#define BOWL_ROOT_PREFIX "/bowls/"
+#define BOWL_PATH_LIMIT 4096
+#define array_count(array) (sizeof(array) / sizeof((array)[0]))
+#define byte_is_alnum(value) isalnum((unsigned char)(value))
+#define string_equals(source, input) (strcmp((const char *)(source), (const char *)(input)) == 0)
+#define string_compare_max(source, input, n) strncmp((const char *)(source), (const char *)(input), (n))
+#define memory_copy memcpy
+static positive string_length(string_address text) {
+    return text ? (positive)strlen((const char *)text) : 0;
+}
+static string_address string_first_of(string_address text, int byte) {
+    char *found = text ? strchr((char *)text, byte) : null;
+    return found;
+}
+static void path_tail_copy(p8 *into, positive room, string_address path) {
+    const char *s = path ? (const char *)path : "";
+    const char *slash = s;
+    for (; *s; s++) if (*s == '/') slash = s + 1;
+    snprintf((char *)into, room ? room : 1, "%s", slash);
+}
+static positive string_table_find(string_address name, void *table, positive stride,
+                                  positive count) {
+    unsigned char *at = table;
+    positive i;
+    for (i = 0; i < count; i++, at += stride) {
+        string_address row = *(string_address *)at;
+        if (row && string_equals(row, name)) return i;
+    }
+    return count;
+}
+static unsigned failures, checks;
+static void check(int okay, const char *name) {
+    checks++;
+    if (!okay && ++failures <= 12) fprintf(stderr, "FAIL %s\n", name);
+}
+'''
+    source += bowl[start:stop]
+    source += r'''
+int main(void) {
+    p8 held[BOWL_PATH_LIMIT];
+    string_address program = null;
+
+    check(bowl_named_root("/bowls/debian") && bowl_named_root("/bowls/arch"),
+          "named distro roots");
+    check(!bowl_named_root("/bowls/bin") && !bowl_named_root("/bowls/") &&
+              !bowl_named_root("/tmp/debian"),
+          "bin and other paths are not named roots");
+
+    check(bowl_launcher("@/bowls/debian/usr/bin/jq", held, sizeof(held), &program) &&
+              string_equals(held, "/bowls/debian") &&
+              string_equals(program, "/usr/bin/jq"),
+          "an encoded launcher names its root");
+    p8 alpine[] = "#!/bowl @/bowls/alpine/sbin/apk\n";
+    p8 debian[] = "#!/bowl @/bowls/debian/usr/bin/jq\n";
+    check(bowl_shebang_target(alpine, held, sizeof(held), &program) &&
+              string_equals(held, "/bowls/alpine") &&
+              string_equals(program, "/sbin/apk"),
+          "a shebang line names its root");
+    check(bowl_shebang_target(debian, held, sizeof(held), &program) &&
+              !string_equals(held, "/bowls/arch"),
+          "a debian launcher is not an arch root");
+
+    check(bowl_needs_isolated("/usr/bin/apt-get") &&
+              bowl_needs_isolated("/usr/bin/apt-cache") &&
+              bowl_needs_isolated("/usr/bin/dpkg-query") &&
+              bowl_needs_isolated("/usr/bin/pacman") &&
+              bowl_needs_isolated("/sbin/apk"),
+          "package tools stay isolated");
+    check(!bowl_needs_isolated("/usr/bin/jq") &&
+              !bowl_needs_isolated("/usr/bin/weston") &&
+              !bowl_needs_isolated("apt-get"),
+          "ordinary programs stay fast");
+
+    if (failures) return 1;
+    printf("bowl roots: %u of %u\n", checks, checks);
+    return 0;
+}
+'''
+
+    del argv
+    with tempfile.TemporaryDirectory(prefix="moonwater-bowl-roots-") as temporary:
+        work = Path(temporary)
+        source_path = work / "roots.c"
+        source_path.write_text(source)
+        compiler = os.environ.get("CC", "gcc")
+        built = subprocess.run(
+            [compiler, "-O2", "-std=gnu11", "-w", str(source_path), "-o", str(work / "roots")],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if built.returncode:
+            sys.stderr.write(built.stdout)
+            return 1
+        ran = subprocess.run([str(work / "roots")], text=True, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+        print(ran.stdout, end="", flush=True)
+        if ran.returncode:
+            sys.stderr.write(ran.stdout)
+            return 1
+        write_tally("bowl-roots", *re.search(r"(\d+) of (\d+)", ran.stdout).groups())
+        return 0
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -26887,6 +27008,7 @@ HARNESS_CHECKS = {
     "floodlight": harness_floodlight,
     "image_nodes": harness_image_nodes,
     "bowl_session": harness_bowl_session,
+    "bowl_roots": harness_bowl_roots,
     "riscv_builtins": harness_riscv_builtins,
 }
 
