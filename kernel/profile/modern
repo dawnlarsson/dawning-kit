@@ -94,8 +94,9 @@ CONFIG_IPV6=n
 # The signing keyring, for modules this image does not load.
 CONFIG_SYSTEM_TRUSTED_KEYRING=n
 
-# The ACPI power button. Nothing here is switched off by pressing one; the
-# shell says poweroff and the kernel takes S5 from there.
+# The ACPI power button driver. Off here, KEY_POWER never arrives, so
+# moonwater bind poweroff cannot see a press; the kernel's own ACPI path
+# still takes S5. general leaves this on.
 CONFIG_ACPI_BUTTON=n
 
 # RAM block devices.

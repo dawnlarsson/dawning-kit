@@ -254,6 +254,7 @@ static unsigned int canvas_settled_at;
         One bit per minor, which is the whole of DRM's minor space.
 */
 static u64 canvas_claimed;
+static _Bool canvas_is_on(void);
 
 static int canvas_claim(const char *path, unsigned int minor,
                         struct canvas_control *on)
@@ -368,7 +369,11 @@ static unsigned int canvas_claim_all(struct canvas_control *on,
 
 static COLD void canvas_probe(struct work_struct *work)
 {
+        _Bool was_on = canvas_is_on();
+
         canvas_claim_all(NULL, NULL);
+        if (!was_on && canvas_is_on())
+                bind_fire(SPARK_BIND_CANVAS_ON);
         canvas_attempts++;
 
         if (!canvas_settled_at && !list_empty(&canvas_list))

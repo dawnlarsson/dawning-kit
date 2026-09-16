@@ -1205,23 +1205,26 @@ static void bind_queue(struct bind_row *row)
         if (system_state != SYSTEM_RUNNING)
                 return;
 
-        if (row->drop_busy && atomic_read(&row->busy))
-                return;
-
         if (row->event == SPARK_BIND_CANVAS_ON ||
             row->event == SPARK_BIND_CANVAS_OFF)
         {
                 struct bind_row *on = bind_row(SPARK_BIND_CANVAS_ON);
                 struct bind_row *off = bind_row(SPARK_BIND_CANVAS_OFF);
 
-                if (atomic_read(&on->busy) || atomic_read(&off->busy))
+                if (atomic_read(&on->busy) || atomic_read(&off->busy) ||
+                    work_pending(&bind_canvas_work))
                         return;
                 atomic_set(&on->busy, 1);
                 atomic_set(&off->busy, 1);
                 work = &bind_canvas_work;
         }
         else
+        {
+                if (row->drop_busy &&
+                    (atomic_read(&row->busy) || work_pending(&row->work)))
+                        return;
                 work = &row->work;
+        }
 
         atomic_fetch_add(1, &row->runs);
         queue_work(system_dfl_long_wq, work);
@@ -1547,6 +1550,31 @@ static void bind_stop(void)
                 cancel_work_sync(&bind_table[at].work);
 }
 
+static void bind_answer(struct bind_control *request, struct bind_row *row)
+{
+        unsigned long flags;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        strscpy(request->name, row->name, sizeof(request->name));
+        strscpy(request->command, row->command, sizeof(request->command));
+        spin_unlock_irqrestore(&bind_lock, flags);
+
+        request->runs = (unsigned int)atomic_read(&row->runs);
+        request->count = SPARK_BIND_EVENTS;
+        request->flags = 0;
+        if (bind_command_is_default(row, request->command))
+                request->flags |= SPARK_BIND_DEFAULT;
+        if (atomic_read(&row->busy))
+                request->flags |= SPARK_BIND_RUNNING;
+        if (work_pending(&row->work) ||
+            ((row->event == SPARK_BIND_CANVAS_ON ||
+              row->event == SPARK_BIND_CANVAS_OFF) &&
+             work_pending(&bind_canvas_work)))
+                request->flags |= SPARK_BIND_PENDING;
+        if (row->boot)
+                request->flags |= SPARK_BIND_BOOT;
+}
+
 static long report_bind(struct bind_control __user *out)
 {
         struct bind_control request;
@@ -1567,7 +1595,12 @@ static long report_bind(struct bind_control __user *out)
         {
                 if (!capable(CAP_SYS_ADMIN) ||
                     (row->boot && !capable(CAP_SYS_BOOT)))
-                        return -EPERM;
+                {
+                        bind_answer(&request, row);
+                        return copy_to_user(out, &request, sizeof(request))
+                                       ? -EFAULT
+                                       : -EPERM;
+                }
                 if (!memchr(request.command, 0, sizeof(request.command)))
                         return -ENAMETOOLONG;
 
@@ -1580,26 +1613,7 @@ static long report_bind(struct bind_control __user *out)
                 spin_unlock_irqrestore(&bind_lock, flags);
         }
 
-        spin_lock_irqsave(&bind_lock, flags);
-        strscpy(request.name, row->name, sizeof(request.name));
-        strscpy(request.command, row->command, sizeof(request.command));
-        spin_unlock_irqrestore(&bind_lock, flags);
-
-        request.runs = (unsigned int)atomic_read(&row->runs);
-        request.count = SPARK_BIND_EVENTS;
-        request.flags = 0;
-        if (bind_command_is_default(row, request.command))
-                request.flags |= SPARK_BIND_DEFAULT;
-        if (atomic_read(&row->busy))
-                request.flags |= SPARK_BIND_RUNNING;
-        if (work_pending(&row->work) ||
-            ((row->event == SPARK_BIND_CANVAS_ON ||
-              row->event == SPARK_BIND_CANVAS_OFF) &&
-             work_pending(&bind_canvas_work)))
-                request.flags |= SPARK_BIND_PENDING;
-        if (row->boot)
-                request.flags |= SPARK_BIND_BOOT;
-
+        bind_answer(&request, row);
         return copy_to_user(out, &request, sizeof(request)) ? -EFAULT : 0;
 }
 

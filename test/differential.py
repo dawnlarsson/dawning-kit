@@ -17391,7 +17391,7 @@ struct keyboard_notifier_param { unsigned int value; int down; };
     source += section(core, "#ifdef CONFIG_VT\nstatic int bind_keyboard_notify",
                       "static void bind_start(void)")
     source += section(core, "static void bind_start(void)", "static void bind_stop(void)")
-    source += section(core, "static long report_bind",
+    source += section(core, "static void bind_answer",
                       "#ifdef CONFIG_MOONWATER_CANVAS\n#define REPORT_CANVAS")
     source += r"""
 static pid_t user_mode_thread(int (*fn)(void *), void *arg, unsigned long sig) {
@@ -17804,13 +17804,15 @@ static void check_bind(void) {
     memset(&request,0,sizeof(request));
     request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
     snprintf(request.command,sizeof(request.command),"reboot");
-    check(report_bind(&request)==-EPERM && !strcmp(power->command,"echo set"),
-          "setting a boot event without CAP_SYS_BOOT is refused and changes nothing");
+    check(report_bind(&request)==-EPERM && !strcmp(power->command,"echo set") &&
+          !strcmp(request.name,"poweroff") && (request.flags & SPARK_BIND_BOOT),
+          "setting a boot event without CAP_SYS_BOOT is refused, names the event, and changes nothing");
     power_capable=1; power_admin=0;
     memset(&request,0,sizeof(request));
     request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
     snprintf(request.command,sizeof(request.command),"reboot");
-    check(report_bind(&request)==-EPERM && !strcmp(power->command,"echo set"),
+    check(report_bind(&request)==-EPERM && !strcmp(power->command,"echo set") &&
+          !strcmp(request.name,"poweroff"),
           "setting with CAP_SYS_BOOT but not CAP_SYS_ADMIN is refused: it runs with every capability");
     power_capable=0; power_admin=1;
     memset(&request,0,sizeof(request));
@@ -17822,6 +17824,14 @@ static void check_bind(void) {
     snprintf(request.command,sizeof(request.command),"true");
     check(!report_bind(&request) && !strcmp(vol->command,"true"),
           "a non-boot event needs CAP_SYS_ADMIN and not CAP_SYS_BOOT");
+    power_admin=0;
+    memset(&request,0,sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_VOLUME_UP;
+    snprintf(request.command,sizeof(request.command),"false");
+    check(report_bind(&request)==-EPERM && !strcmp(vol->command,"true") &&
+          !strcmp(request.name,"volume_up") && !(request.flags & SPARK_BIND_BOOT),
+          "refusing a non-boot event still names it and does not require CAP_SYS_BOOT");
+    power_admin=1;
     power_capable=1;
     memset(&request,'x',sizeof(request));
     request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;

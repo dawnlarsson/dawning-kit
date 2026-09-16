@@ -2827,7 +2827,7 @@ fn host_exit_run(void)
                 log_flush();
 
                 //      The environment init's entries get, not the stopping
-                //      shell's: the power button's poweroff has almost none.
+                //      shell's: a bound poweroff has almost none.
                 child = host_event_start(text, -1, host_event_environment);
                 if (child < 0)
                         continue;
@@ -3077,7 +3077,7 @@ static fn host_bind_forget(host_settings address_to settings, p16 event)
         }
 }
 
-static fn host_bind_keep(unsigned int event, struct bind_control address_to control)
+static b32 host_bind_keep(unsigned int event, struct bind_control address_to control)
 {
         host_settings settings;
         p16 id = (p16)event;
@@ -3094,12 +3094,10 @@ static fn host_bind_keep(unsigned int event, struct bind_control address_to cont
                                            string_length((string_address)control->command),
                                            address_of id);
                 if (failed)
-                {
-                        host_settings_refused("bind", failed, address_of settings);
-                        return;
-                }
+                        return host_settings_refused("bind", failed, address_of settings);
         }
         host_settings_save(address_of settings);
+        return 0;
 }
 
 static fn host_bind_apply(host_settings address_to settings)
@@ -3217,17 +3215,20 @@ static b32 host_bind_tell(unsigned int event, string_address command)
                                            address_of control);
 
         if (failed == -EPERM)
-                return host_refuse("setting what %s runs needs root "
-                                   "(CAP_SYS_ADMIN and CAP_SYS_BOOT)\n",
+                return host_refuse("setting what %s runs needs root (%s)\n",
                                    control.name[0] ? (string_address)control.name
-                                                   : (string_address)"that event");
+                                                   : (string_address)"that event",
+                                   control.flags & SPARK_BIND_BOOT
+                                       ? (string_address)"CAP_SYS_ADMIN and CAP_SYS_BOOT"
+                                       : (string_address)"CAP_SYS_ADMIN");
         if (failed == -ENAMETOOLONG)
                 return host_refuse("that command is longer than the %s a bound event holds\n",
                                    "255 bytes");
         if (failed < 0)
                 return host_fail(SPARK_DEVICE, failed);
 
-        host_bind_keep(event, address_of control);
+        if (host_bind_keep(event, address_of control))
+                return 1;
         return host_bind_show(event);
 }
 

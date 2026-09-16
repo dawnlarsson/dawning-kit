@@ -10240,7 +10240,7 @@ if capboot:
 else:
     out.append(("root with only CAP_SYS_BOOT cannot set it, since it runs with every capability",
                 "not run: the helper did not build", "yes"))
-asked("a command longer than the button holds is refused",
+asked("a command longer than a bound event holds is refused",
       "moonwater bind poweroff \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
       b"1-long")
 asked("the power button takes a command",

@@ -390,9 +390,10 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
         back the event's default, which for most events is nothing.
 
         poweroff, reset and ctrl_alt_delete default to poweroff, reboot and
-        reboot. canvas on and canvas off run when the desktop starts and
-        stops, not instead of `moonwater canvas on|off`. init and exit are
-        lists in the settings block, not rows here.
+        reboot. canvas on and canvas off run when the desktop starts (the
+        first card at boot, or `moonwater canvas on`) and when it stops,
+        not instead of `moonwater canvas on|off`. init and exit are lists
+        in the settings block, not rows here.
 
         Reading needs nothing. Setting needs CAP_SYS_ADMIN, because the line
         runs as root, and CAP_SYS_BOOT as well for the events flagged
@@ -665,8 +666,8 @@ static inline int spark_settings_newest(const struct spark_settings *slots)
         or the last one set since. Both requests are root's, because a command
         can carry a secret. GET answers ENODATA when the image handed over
         nothing and nothing was set. SET checks the slot the way boot does and
-        takes effect at the next Canvas start and the next power button press;
-        it opens and closes nothing on its own.
+        replaces the session copy; moonwater boot applies bind rows from the
+        image. Nothing here opens or closes Canvas.
 */
 struct spark_settings_request {
         unsigned long address; // user pointer to SPARK_SETTINGS_SLOT bytes
