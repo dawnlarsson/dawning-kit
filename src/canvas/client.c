@@ -662,6 +662,10 @@ static long canvas_turn_off(void)
         rt_mutex_lock(&desktop.lock);
         desktop.off = true;
         desktop_detach_windows();
+        // The kernel log stays; a click can have focused it. Left
+        // that way, on comes back painted with every key dropped.
+        if (desktop.focused && !desktop.focused->shared)
+                pane_focus(NULL);
         desktop.terminal = false;
         desktop.suspended = false;
         rt_mutex_unlock(&desktop.lock);

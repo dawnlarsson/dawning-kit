@@ -152,6 +152,12 @@ static fn tls_expand_label(p8 address_to secret, string_address label,
         positive label_length = string_length(label);
         positive used = 2;
 
+        // HkdfLabel is 2 + 1 + 6 + label + 1 + context. The copies below
+        // use the full lengths, so a truncated length byte is not a bound.
+        if (label_length > 249 || context_length > 255 ||
+            used + 1 + 6 + label_length + 1 + context_length > sizeof info)
+                return;
+
         info[0] = (p8)(out_length >> 8);
         info[1] = (p8)out_length;
         info[used++] = (p8)(6 + label_length);

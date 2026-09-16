@@ -1054,6 +1054,7 @@ static atomic_t bind_alt;
 static unsigned bind_held_n;
 static _Bool bind_handler_registered;
 static struct work_struct bind_canvas_work;
+static atomic_t bind_alive;
 
 /*
         Codes whose press or release might be a bound key. Typing is the
@@ -1275,7 +1276,7 @@ static void bind_queue(struct bind_row *row)
 {
         struct work_struct *work;
 
-        if (system_state != SYSTEM_RUNNING)
+        if (system_state != SYSTEM_RUNNING || !atomic_read(&bind_alive))
                 return;
 
         if (row->event == SPARK_BIND_CANVAS_ON ||
@@ -1662,11 +1663,17 @@ static void bind_start(void)
                 INIT_WORK(&row->work, bind_work);
                 bind_watch_row(row, row->def[0] != 0);
         }
+
+        atomic_set(&bind_alive, 1);
 }
 
 static void bind_stop(void)
 {
         unsigned at;
+
+        // Before cancel: bind_fire from a still-open /dev/spark must not
+        // queue work against text that exit_module is about to free.
+        atomic_set(&bind_alive, 0);
 
 #ifdef CONFIG_VT
         unregister_keyboard_notifier(&bind_kbd_nb);
@@ -1677,6 +1684,9 @@ static void bind_stop(void)
         if (bind_handler_registered)
                 input_unregister_handler(&bind_handler);
 
+        cancel_work_sync(&bind_canvas_work);
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+                cancel_work_sync(&bind_table[at].work);
         cancel_work_sync(&bind_canvas_work);
         for (at = 0; at < SPARK_BIND_EVENTS; at++)
                 cancel_work_sync(&bind_table[at].work);

@@ -320,10 +320,12 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
 //      A mask of n leading bits, said as the prefix length a route wants.
 static CONST p8 dhcp_prefix_of(p32 mask)
 {
-        p32 first_zero = ~mask;
-        p8 bits = first_zero
-                    ? (p8)(bits_leading_zeros((positive)first_zero) - 32)
-                    : 32;
+        p8 bits = 0;
+
+        // Walk the 32-bit mask itself. Subtracting 32 from a CLZ assumed
+        // a 64-bit positive; on ILP32 that wrapped a /24 into /248.
+        while (bits < 32 && (mask & (0x80000000u >> bits)))
+                bits++;
 
         return bits ? bits : 24;
 }

@@ -856,7 +856,9 @@ static bipolar system_path_same_opened_at(
    parent writer cannot exchange it after the identity check.  The current
    owner can trust a directory that is not world-writable: group-writable
    0775 is how a user-private group (and Lima's mapped uid/gid) creates
-   directories under umask 002.  A sticky directory is safe when its owner
+   directories under umask 002.  Host root may too: a remote image build
+   runs as root inside a 0700 stage the SSH identity owns, and mkdir of
+   artifacts is exactly that.  A sticky directory is safe when its owner
    is the current user or the host root that already has authority over
    this process. */
 static bool system_path_parent_cleanup_safe(bipolar directory)
@@ -873,7 +875,7 @@ static bool system_path_parent_cleanup_safe(bipolar directory)
                 return false;
         if (parent.mode & 01000)
                 return parent.user == user || parent.user == 0;
-        return parent.user == user && !(parent.mode & 0002);
+        return (parent.user == user || user == 0) && !(parent.mode & 0002);
 }
 
 static bipolar system_path_private_directory_valid(

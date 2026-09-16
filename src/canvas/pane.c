@@ -612,6 +612,10 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
             width > (unsigned int)desktop.width || height > (unsigned int)desktop.height)
                 return NULL;
 
+        if (!columns && height &&
+            (unsigned long)width > ((unsigned long)-1 - WINDOW_PIXELS) / 4 / height)
+                return NULL;
+
         bytes = PAGE_ALIGN(WINDOW_PIXELS +
                            (columns ? ring_bytes : (unsigned long)width * height * 4));
 

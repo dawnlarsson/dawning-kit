@@ -261,6 +261,21 @@ static void keys_deliver(void)
         if (head == tail)
                 return;
 
+        // Owned panes have no program. Off can leave the kernel log
+        // focused, and a click can put it there; either way the keys
+        // belong in a window that can take them, not in the ring of
+        // nothing. Create still does not focus: this is only when a
+        // key has already arrived and nothing shared holds it.
+        if (!pane || !pane->shared)
+        {
+                pane = pane_topmost(NULL, false, INT_MAX);
+                if (pane)
+                {
+                        pane_focus(pane);
+                        desktop.damage_all = true;
+                }
+        }
+
         if (!pane || !pane->shared)
         {
                 atomic_set(&desktop.key_tail, (int)head);

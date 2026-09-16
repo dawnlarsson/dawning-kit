@@ -50599,6 +50599,7 @@ static fn leasing(void)
         }
 
         check("a /16 mask is a /16", dhcp_prefix_of(0xffff0000) == 16);
+        check("a /24 mask is a /24", dhcp_prefix_of(0xffffff00) == 24);
         check("a /32 mask is a /32", dhcp_prefix_of(0xffffffff) == 32);
         check("no mask at all falls back to /24", dhcp_prefix_of(0) == 24);
         check("non-contiguous masks are not silently shortened",
@@ -54473,6 +54474,8 @@ b32 main(void)
             AT_FDCWD, root,
             FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         check("protected staging root stays pinned", directory >= 0);
+        check("an owner-private parent is cleanup-safe",
+              directory >= 0 && system_path_parent_cleanup_safe(directory));
         if (directory >= 0)
         {
                 path_stage_normal(directory);

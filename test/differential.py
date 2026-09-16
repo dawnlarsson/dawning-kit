@@ -17217,6 +17217,7 @@ static struct {
     int lock;
     _Bool suspended;
     _Bool awake;
+    _Bool terminal;
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
 static unsigned wakes,wheel_cas,drain_race;
@@ -17941,6 +17942,9 @@ static void check_bind(void) {
     bind_idle(power); bind_idle(sleep); bind_idle(vol); bind_idle(cad);
     bind_idle(bind_row(SPARK_BIND_LID_CLOSE)); bind_idle(bind_row(SPARK_BIND_LID_OPEN));
     bind_idle_canvas(); bind_clear_mods();
+    queued=bind_queued; atomic_set(&bind_alive,0); bind_queue(power);
+    check(bind_queued==queued,"nothing is queued once bindings have stopped");
+    atomic_set(&bind_alive,1);
 }
 static void check_bind_edges(void) {
     struct bind_control request;
@@ -18365,8 +18369,10 @@ static void check_input_suspension(void) {
           "a suspension stops the frame timer, which would otherwise wake Canvas every frame");
     check(!desktop.button_changed && !desktop.client_changed && !desktop.motion_pending &&
           !desktop.wheel && !desktop.focus_steps && !desktop.focus_commit &&
-          !desktop.minimize && !desktop.spawn && !desktop.frame_pending,
-          "every button, movement, wheel step, chord, asked-for terminal and frame is dropped");
+          !desktop.minimize && !desktop.frame_pending,
+          "every button, movement, wheel step, chord and frame is dropped");
+    check(desktop.spawn,
+          "a wanted terminal is still wanted when the card is taken before it starts");
     check(desktop.key_tail==desktop.key_head && desktop.key_head==7,
           "every key recorded is dropped by moving the tail, the thread's own index");
     check(!mock_resumes,"nothing resumes while the card is still taken");
@@ -18379,6 +18385,14 @@ static void check_input_suspension(void) {
           "input arriving after the card is given back is delivered");
     check(!canvas_suspend_check() && mock_resumes==1,
           "a desktop that was not suspended is not resumed again");
+    memset(&desktop,0,sizeof(desktop));
+    desktop.terminal=1;desktop.spawn=1;mock_taken=1;
+    check(canvas_suspend_check() && desktop.spawn,
+          "Control-Shift-T is still queued while another program has the card");
+    memset(&desktop,0,sizeof(desktop));
+    desktop.suspended=1;mock_taken=0;mock_resumes=0;
+    check(!canvas_suspend_check() && desktop.spawn && mock_resumes==1,
+          "resume starts a terminal that never ran");
     memset(&desktop,0,sizeof(desktop));mock_taken=0;mock_resumes=0;
 }
 static void check_settings_sum(void) {

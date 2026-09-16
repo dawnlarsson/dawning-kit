@@ -948,11 +948,22 @@ static void canvas_input_drop(void)
         atomic_set(&desktop.focus_steps, 0);
         atomic_set(&desktop.focus_commit, 0);
         atomic_set(&desktop.minimize, 0);
-        atomic_set(&desktop.spawn, 0);
         atomic_set(&desktop.frame_pending, 0);
 
         // The tail is this thread's to move; the handler only moves head.
         atomic_set(&desktop.key_tail, atomic_read(&desktop.key_head));
+
+        /*
+                A wanted terminal is not dropped.
+
+                Off then on used to lose the first /term whenever this ran
+                in the same pass as canvas_start's spawn: the claim file, or
+                the console client off had just set up, still looked like
+                master, spawn was cleared, and nothing asked again. Keys
+                typed at a program that holds the card still go nowhere;
+                the terminal is started so the desktop has one when that
+                program leaves.
+        */
 }
 
 static _Bool canvas_suspend_check(void)
@@ -976,7 +987,11 @@ static _Bool canvas_suspend_check(void)
                         desktop_set_awake(false);
         }
         else if (desktop.suspended)
+        {
                 desktop_resume();
+                if (!desktop.terminal)
+                        atomic_set(&desktop.spawn, 1);
+        }
 
         rt_mutex_unlock(&desktop.lock);
 
@@ -1025,13 +1040,8 @@ static int canvas_loop(void *unused)
 
                 __set_current_state(TASK_RUNNING);
 
-                if (canvas_suspend_check())
-                        continue;
-
-                pointer_apply();
-
                 /*
-                        Outside desktop.lock, and deliberately.
+                        Outside desktop.lock, and before the suspend check.
 
                         Starting a program allocates, makes a task and runs
                         execve on it, none of which the lock has anything to do
@@ -1039,6 +1049,12 @@ static int canvas_loop(void *unused)
                         under that same lock by the ioctl the new program will
                         make. Holding it across the spawn is a lock held over an
                         unbounded amount of somebody else's work.
+
+                        The spawn is consumed here even when another program
+                        still looks like master: waiting until the card is
+                        ours again was how off then on came back painted and
+                        with every key dropped, because the first terminal
+                        had been asked for and then never started.
                 */
                 if (atomic_xchg(&desktop.spawn, 0))
                 {
@@ -1052,6 +1068,11 @@ static int canvas_loop(void *unused)
                                 rt_mutex_unlock(&desktop.lock);
                         }
                 }
+
+                if (canvas_suspend_check())
+                        continue;
+
+                pointer_apply();
 
                 if (atomic_read(&desktop.focus_steps) ||
                     atomic_read(&desktop.focus_commit) ||
@@ -1131,9 +1152,18 @@ static void canvas_thread_start(void)
                 .sched_priority = 1,
                 .sched_flags = SCHED_FLAG_RESET_ON_FORK,
         };
+        static _Bool frame_ready;
         struct task_struct *thread, *flush;
 
-        hrtimer_setup(&desktop.frame, desktop_frame, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+        // Once: hrtimer_setup on a timer that has already been cancelled is
+        // a second init of the same object, which some kernels warn on, and
+        // off then on is exactly that path.
+        if (!frame_ready)
+        {
+                hrtimer_setup(&desktop.frame, desktop_frame, CLOCK_MONOTONIC,
+                              HRTIMER_MODE_REL);
+                frame_ready = true;
+        }
         thread = kthread_run(canvas_loop, NULL, "moonwater/canvas");
 
         if (IS_ERR(thread))
