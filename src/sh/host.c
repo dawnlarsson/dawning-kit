@@ -3230,12 +3230,11 @@ static b32 host_bind_tell(unsigned int event, string_address command)
                                            address_of control);
 
         if (failed == -EPERM)
-                return host_refuse("setting what %s runs needs root (%s)\n",
+                return host_refuse(control.flags & SPARK_BIND_BOOT
+                                           ? "setting what %s runs needs root (CAP_SYS_ADMIN and CAP_SYS_BOOT)\n"
+                                           : "setting what %s runs needs root (CAP_SYS_ADMIN)\n",
                                    control.name[0] ? (string_address)control.name
-                                                   : (string_address)"that event",
-                                   control.flags & SPARK_BIND_BOOT
-                                       ? (string_address)"CAP_SYS_ADMIN and CAP_SYS_BOOT"
-                                       : (string_address)"CAP_SYS_ADMIN");
+                                                   : (string_address)"that event");
         if (failed == -ENAMETOOLONG)
                 return host_refuse("that command is longer than the %s a bound event holds\n",
                                    "255 bytes");
