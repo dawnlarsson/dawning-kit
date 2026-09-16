@@ -1322,9 +1322,10 @@ static struct bind_row *bind_match(unsigned int type, unsigned int code, int val
         unsigned int event;
 
         if (type == EV_SW)
-                return code == SW_LID ? bind_row(value ? SPARK_BIND_LID_CLOSE
-                                                       : SPARK_BIND_LID_OPEN)
-                                      : NULL;
+                return (code == SW_LID && (value == 0 || value == 1))
+                               ? bind_row(value ? SPARK_BIND_LID_CLOSE
+                                                : SPARK_BIND_LID_OPEN)
+                               : NULL;
 
         if (type != EV_KEY || value != 1)
                 return NULL;
@@ -1443,7 +1444,7 @@ static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
         else
                 return;
 
-        if (value)
+        if (value == 1)
         {
                 if (!(bind->mods & bit))
                 {
@@ -1454,7 +1455,7 @@ static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
                                 atomic_fetch_add(1, &bind_alt);
                 }
         }
-        else if (bind->mods & bit)
+        else if (value == 0 && (bind->mods & bit))
         {
                 bind->mods &= ~bit;
                 if (bit & (BIND_MOD_CTRL | BIND_MOD_RCTRL))
@@ -1478,7 +1479,8 @@ static void bind_event(struct input_handle *handle, unsigned int type,
         */
         if (type == EV_KEY)
         {
-                if (code <= KEY_RIGHTALT)
+                if (code == KEY_LEFTCTRL || code == KEY_RIGHTCTRL ||
+                    code == KEY_LEFTALT || code == KEY_RIGHTALT)
                         bind_mods(bind, code, value);
                 if (value != 1)
                         return;
