@@ -1024,12 +1024,9 @@ struct bind_row {
         const char *name;
         const char *def;
         unsigned int event;
-        unsigned int debounce_ms;
+        unsigned int debounce;
         unsigned int boot;
         unsigned int drop_busy;
-        unsigned int ev_type;
-        unsigned int code;
-        int want;
         char command[SPARK_BIND_COMMAND_MAX];
         atomic_t bound;
         atomic_t runs;
@@ -1057,8 +1054,15 @@ static unsigned bind_held_n;
 static _Bool bind_handler_registered;
 static struct work_struct bind_canvas_work;
 
+/*
+        Codes whose press or release might be a bound key. Typing is the
+        common path; a bit test here is what keeps spin_lock_irqsave off it.
+        KEY_RESTART is 408, so the map covers the kernel's KEY_MAX floor.
+*/
+#define BIND_CODES 768u
+static unsigned long bind_watch[BIND_CODES / 64];
+
 static const struct {
-        const char *name;
         const char *def;
         unsigned int debounce_ms;
         unsigned int boot;
@@ -1067,19 +1071,19 @@ static const struct {
         unsigned int code;
         int want;
 } bind_spec[SPARK_BIND_EVENTS] = {
-        {"poweroff", "poweroff", 1000, 1, 1, EV_KEY, KEY_POWER, 1},
-        {"sleep", "", 1000, 1, 1, EV_KEY, KEY_SLEEP, 1},
-        {"reset", "reboot", 1000, 1, 1, EV_KEY, KEY_RESTART, 1},
-        {"ctrl_alt_delete", "reboot", 1000, 1, 1, 0, 0, 0},
-        {"lid_close", "", 500, 0, 1, EV_SW, SW_LID, 1},
-        {"lid_open", "", 500, 0, 1, EV_SW, SW_LID, 0},
-        {"volume_up", "", 0, 0, 0, EV_KEY, KEY_VOLUMEUP, 1},
-        {"volume_down", "", 0, 0, 0, EV_KEY, KEY_VOLUMEDOWN, 1},
-        {"mute", "", 0, 0, 0, EV_KEY, KEY_MUTE, 1},
-        {"brightness_up", "", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSUP, 1},
-        {"brightness_down", "", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSDOWN, 1},
-        {"canvas on", "", 0, 0, 1, 0, 0, 0},
-        {"canvas off", "", 0, 0, 1, 0, 0, 0},
+        {"poweroff", 1000, 1, 1, EV_KEY, KEY_POWER, 1},
+        {"", 1000, 1, 1, EV_KEY, KEY_SLEEP, 1},
+        {"reboot", 1000, 1, 1, EV_KEY, KEY_RESTART, 1},
+        {"reboot", 1000, 1, 1, 0, 0, 0},
+        {"", 500, 0, 1, EV_SW, SW_LID, 1},
+        {"", 500, 0, 1, EV_SW, SW_LID, 0},
+        {"", 0, 0, 0, EV_KEY, KEY_VOLUMEUP, 1},
+        {"", 0, 0, 0, EV_KEY, KEY_VOLUMEDOWN, 1},
+        {"", 0, 0, 0, EV_KEY, KEY_MUTE, 1},
+        {"", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSUP, 1},
+        {"", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSDOWN, 1},
+        {"", 0, 0, 1, 0, 0, 0},
+        {"", 0, 0, 1, 0, 0, 0},
 };
 
 static struct bind_row *bind_row(unsigned int event)
@@ -1087,6 +1091,49 @@ static struct bind_row *bind_row(unsigned int event)
         if (!event || event > SPARK_BIND_EVENTS)
                 return NULL;
         return bind_table + event - 1;
+}
+
+static void bind_watch_code(unsigned int code, _Bool on)
+{
+        unsigned int word;
+        unsigned long bit;
+
+        if (code >= BIND_CODES)
+                return;
+        word = code / 64;
+        bit = 1UL << (code % 64);
+        if (on)
+                bind_watch[word] |= bit;
+        else
+                bind_watch[word] &= ~bit;
+}
+
+static void bind_watch_row(struct bind_row *row, _Bool on)
+{
+        switch (row->event)
+        {
+        case SPARK_BIND_CTRL_ALT_DELETE:
+                bind_watch_code(KEY_DELETE, on);
+                bind_watch_code(KEY_KPDOT, on);
+                return;
+        case SPARK_BIND_SLEEP:
+                bind_watch_code(KEY_SLEEP, on);
+                bind_watch_code(KEY_SUSPEND, on);
+                return;
+        case SPARK_BIND_LID_CLOSE:
+        case SPARK_BIND_LID_OPEN:
+        case SPARK_BIND_CANVAS_ON:
+        case SPARK_BIND_CANVAS_OFF:
+                return;
+        default:
+                bind_watch_code(bind_spec[row->event - 1].code, on);
+        }
+}
+
+static _Bool bind_watched(unsigned int code)
+{
+        return code < BIND_CODES &&
+               (bind_watch[code / 64] & (1UL << (code % 64))) != 0;
 }
 
 static _Bool bind_command_is_default(struct bind_row *row, const char *command)
@@ -1243,38 +1290,71 @@ static _Bool bind_debounce(struct bind_row *row)
         unsigned long now = jiffies | 1;
         unsigned long last = READ_ONCE(row->last);
 
-        if (!row->debounce_ms)
+        if (!row->debounce)
                 return true;
 
-        if (last && time_before(now, last + msecs_to_jiffies(row->debounce_ms)))
+        if (last && time_before(now, last + row->debounce))
                 return false;
 
         return cmpxchg(&row->last, last, now) == last;
 }
 
+/*
+        Direct by code, not a walk of bind_row. Each row carries a 256-byte
+        command; thirteen of those is a cache line per comparison. The
+        codes here are immediates, so the compiler's compare chain is the
+        floor.
+*/
 static struct bind_row *bind_match(unsigned int type, unsigned int code, int value)
 {
-        unsigned int at;
-        _Bool ctrl = atomic_read(&bind_ctrl) > 0;
-        _Bool alt = atomic_read(&bind_alt) > 0;
+        unsigned int event;
 
-        if (type == EV_KEY && value == 1 &&
-            (code == KEY_DELETE || code == KEY_KPDOT) && ctrl && alt)
-                return bind_row(SPARK_BIND_CTRL_ALT_DELETE);
+        if (type == EV_SW)
+                return code == SW_LID ? bind_row(value ? SPARK_BIND_LID_CLOSE
+                                                       : SPARK_BIND_LID_OPEN)
+                                      : NULL;
 
-        if (type == EV_KEY && value == 1 &&
-            (code == KEY_SLEEP || code == KEY_SUSPEND))
-                return bind_row(SPARK_BIND_SLEEP);
+        if (type != EV_KEY || value != 1)
+                return NULL;
 
-        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+        if (code == KEY_DELETE || code == KEY_KPDOT)
+                return (atomic_read(&bind_ctrl) > 0 &&
+                        atomic_read(&bind_alt) > 0)
+                               ? bind_row(SPARK_BIND_CTRL_ALT_DELETE)
+                               : NULL;
+
+        switch (code)
         {
-                struct bind_row *row = bind_table + at;
-
-                if (row->ev_type == type && row->code == code && row->want == value)
-                        return row;
+        case KEY_POWER:
+                event = SPARK_BIND_POWEROFF;
+                break;
+        case KEY_SLEEP:
+        case KEY_SUSPEND:
+                event = SPARK_BIND_SLEEP;
+                break;
+        case KEY_RESTART:
+                event = SPARK_BIND_RESET;
+                break;
+        case KEY_VOLUMEUP:
+                event = SPARK_BIND_VOLUME_UP;
+                break;
+        case KEY_VOLUMEDOWN:
+                event = SPARK_BIND_VOLUME_DOWN;
+                break;
+        case KEY_MUTE:
+                event = SPARK_BIND_MUTE;
+                break;
+        case KEY_BRIGHTNESSUP:
+                event = SPARK_BIND_BRIGHTNESS_UP;
+                break;
+        case KEY_BRIGHTNESSDOWN:
+                event = SPARK_BIND_BRIGHTNESS_DOWN;
+                break;
+        default:
+                return NULL;
         }
 
-        return NULL;
+        return bind_row(event);
 }
 
 static _Bool bind_row_bound(struct bind_row *row)
@@ -1317,6 +1397,9 @@ static _Bool bind_key_swallowed(unsigned int code, int value)
         struct bind_row *row;
         unsigned long flags;
         _Bool swallow = false;
+
+        if (!bind_watched(code) && (value == 1 || !READ_ONCE(bind_held_n)))
+                return false;
 
         spin_lock_irqsave(&bind_lock, flags);
         if (value == 1)
@@ -1376,7 +1459,7 @@ static void bind_event(struct input_handle *handle, unsigned int type,
         struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
         struct bind_row *row;
 
-        if (type == EV_KEY)
+        if (type == EV_KEY && code <= KEY_RIGHTALT)
                 bind_mods(bind, code, value);
 
         if (value == 2)
@@ -1509,26 +1592,29 @@ static void bind_start(void)
         atomic_set(&bind_ctrl, 0);
         atomic_set(&bind_alt, 0);
         bind_held_n = 0;
+        for (at = 0; at < ARRAY_SIZE(bind_watch); at++)
+                bind_watch[at] = 0;
 
         for (at = 0; at < SPARK_BIND_EVENTS; at++)
         {
                 struct bind_row *row = bind_table + at;
 
-                row->name = bind_spec[at].name;
+                row->name = spark_bind_event_name[at];
                 row->def = bind_spec[at].def;
                 row->event = at + 1;
-                row->debounce_ms = bind_spec[at].debounce_ms;
+                row->debounce = bind_spec[at].debounce_ms
+                                        ? (unsigned int)msecs_to_jiffies(
+                                                  bind_spec[at].debounce_ms)
+                                        : 0;
                 row->boot = bind_spec[at].boot;
                 row->drop_busy = bind_spec[at].drop_busy;
-                row->ev_type = bind_spec[at].ev_type;
-                row->code = bind_spec[at].code;
-                row->want = bind_spec[at].want;
                 strscpy(row->command, row->def, sizeof(row->command));
                 atomic_set(&row->bound, row->def[0] != 0);
                 atomic_set(&row->runs, 0);
                 atomic_set(&row->busy, 0);
                 row->last = 0;
                 INIT_WORK(&row->work, bind_work);
+                bind_watch_row(row, row->def[0] != 0);
         }
 }
 
@@ -1610,6 +1696,7 @@ static long report_bind(struct bind_control __user *out)
                 else
                         strscpy(row->command, request.command, sizeof(row->command));
                 atomic_set(&row->bound, row->command[0] != 0);
+                bind_watch_row(row, row->command[0] != 0);
                 spin_unlock_irqrestore(&bind_lock, flags);
         }
 

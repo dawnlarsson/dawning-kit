@@ -429,6 +429,27 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
 #define SPARK_BIND_CANVAS_OFF 13u
 #define SPARK_BIND_EVENTS 13u
 
+/*
+        Names in event-id order, the same strings the kernel table uses.
+        Userspace matches a typed word against this rather than opening
+        /dev/spark once per event.
+*/
+static const char spark_bind_event_name[SPARK_BIND_EVENTS][SPARK_BIND_NAME_MAX] = {
+        "poweroff",
+        "sleep",
+        "reset",
+        "ctrl_alt_delete",
+        "lid_close",
+        "lid_open",
+        "volume_up",
+        "volume_down",
+        "mute",
+        "brightness_up",
+        "brightness_down",
+        "canvas on",
+        "canvas off",
+};
+
 struct bind_control {
         unsigned int op;     // SPARK_BIND_GET, or SPARK_BIND_SET, which stores command first
         unsigned int event;  // 1 to count

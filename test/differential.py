@@ -17824,6 +17824,9 @@ static void check_bind(void) {
     snprintf(request.command,sizeof(request.command),"true");
     check(!report_bind(&request) && !strcmp(vol->command,"true"),
           "a non-boot event needs CAP_SYS_ADMIN and not CAP_SYS_BOOT");
+    check(bind_key_swallowed(KEY_VOLUMEUP,1),"a bound volume key is swallowed");
+    check(bind_key_swallowed(KEY_VOLUMEUP,0),"its release is swallowed too");
+    check(!bind_key_swallowed(KEY_TAB,1),"a typing key is not swallowed while a volume bind is live");
     power_admin=0;
     memset(&request,0,sizeof(request));
     request.op=SPARK_BIND_SET; request.event=SPARK_BIND_VOLUME_UP;

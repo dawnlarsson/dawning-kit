@@ -3059,21 +3059,24 @@ static fn host_bind_forget(host_settings address_to settings, p16 event)
 {
         host_setting setting;
         positive at;
+        bool dropped;
 
         for (;;)
         {
                 at = 0;
+                dropped = false;
                 while (host_settings_next(settings, address_of at, address_of setting))
                 {
                         if (setting.entry.list == SPARK_SETTINGS_BIND &&
                             setting.entry.id == event)
                         {
                                 host_settings_drop(settings, address_of setting);
-                                goto again;
+                                dropped = true;
+                                break;
                         }
                 }
-                return;
-        again:;
+                if (!dropped)
+                        return;
         }
 }
 
@@ -3150,29 +3153,21 @@ static b32 host_bind_events(void)
 
 static fn host_bind_names(writer out)
 {
-        struct bind_control control;
         unsigned int event;
-        unsigned int count = SPARK_BIND_EVENTS;
         bool first = true;
 
-        for (event = 1; event <= count; event++)
+        for (event = 0; event < SPARK_BIND_EVENTS; event++)
         {
-                if (host_bind_request(SPARK_BIND_GET, event, null, address_of control) < 0)
-                        break;
-                if (event == 1 && control.count)
-                        count = control.count;
                 string_format(out, "%s%s", first ? "" : ", ",
-                              (string_address)control.name);
+                              (string_address)spark_bind_event_name[event]);
                 first = false;
         }
 }
 
 static unsigned int host_bind_named(string_address first, string_address second)
 {
-        struct bind_control control;
         p8 wanted[SPARK_BIND_NAME_MAX];
         unsigned int event;
-        unsigned int count = SPARK_BIND_EVENTS;
 
         wanted[0] = end;
         string_append_bounded(wanted, first, sizeof(wanted));
@@ -3182,15 +3177,9 @@ static unsigned int host_bind_named(string_address first, string_address second)
                 string_append_bounded(wanted, second, sizeof(wanted));
         }
 
-        for (event = 1; event <= count; event++)
-        {
-                if (host_bind_request(SPARK_BIND_GET, event, null, address_of control) < 0)
-                        return 0;
-                if (event == 1 && control.count)
-                        count = control.count;
-                if (string_equals((string_address)control.name, wanted))
-                        return event;
-        }
+        for (event = 0; event < SPARK_BIND_EVENTS; event++)
+                if (string_equals((string_address)spark_bind_event_name[event], wanted))
+                        return event + 1;
 
         return 0;
 }
