@@ -558,6 +558,7 @@ static long canvas_turn_off(void)
         pr_info("[moonwater canvas] " "off: %u card(s) given back to the console\n", count);
 
         mutex_unlock(&canvas_control_lock);
+        bind_fire(SPARK_BIND_CANVAS_OFF);
         return 0;
 }
 
@@ -586,7 +587,10 @@ static long canvas_turn_on(struct canvas_control *answer)
         mutex_unlock(&canvas_control_lock);
 
         if (taken)
+        {
+                bind_fire(SPARK_BIND_CANVAS_ON);
                 return 0;
+        }
 
         return refused ? -EBUSY : -ENODEV;
 }

@@ -10,7 +10,7 @@ Moonwater is also supposed to be super small, sub 15 mb for the entire system.
 ## moonwater cli
 
 `moonwater` manages the system itself: where it lives, what it does at boot, and
-what the machine's own buttons do.
+what the machine's own events run.
 
 ```sh
 moonwater                              where this session runs: live, from a disk, or waiting for an answer
@@ -19,29 +19,33 @@ moonwater update [DISK]                write this build over an install, keeping
 moonwater use [DISK]                   run this build with an install's /bowls, /root and /home
 moonwater live                         leave the disks alone this session
 
-moonwater init                         list what runs at every boot, with ids
-moonwater init add "command"           run a command at boot, once the disks are settled
-moonwater init remove ID|"command"
-moonwater init mount on|off            mount the data partition over /bowls, /root and /home [on]
+moonwater bind                         the machine's events, and what each runs
+moonwater bind EVENT [COMMAND]         one event; empty puts the default back
+moonwater bind poweroff [COMMAND]      the power button [poweroff]
+moonwater bind canvas on|off [COMMAND] when the desktop starts or stops, not instead of canvas on|off
+moonwater bind init                    list what runs at every boot, with ids
+moonwater bind init add "command"      run a command at boot, once the disks are settled
+moonwater bind init remove ID|"command"
+moonwater bind init mount on|off       mount the data partition over /bowls, /root and /home [on]
 
-moonwater exit                         list what runs when the machine powers off or reboots
-moonwater exit add "command"           run a command before the disks go read-only
-moonwater exit remove ID|"command"
+moonwater bind exit                    list what runs when the machine powers off or reboots
+moonwater bind exit add "command"      run a command before the disks go read-only
+moonwater bind exit remove ID|"command"
 
 moonwater canvas                       whether the desktop is on, and on which screens
 moonwater canvas on|off                start or stop the desktop [on]
-
-moonwater button power                 show what the power button runs
-moonwater button power "command"       run a command when it is pressed [poweroff]
 ```
 
 Commands given to `moonwater` run as root through the shell, exactly as if typed
-into a terminal. init runs in the background and keeps each command's output in
-/run/moonwater/init; exit gives each command 10 seconds and all of them 30.
+into a terminal. bind init runs in the background and keeps each command's output
+in /run/moonwater/init; bind exit gives each command 10 seconds and all of them 30.
 
-The init and exit settings live inside the boot image. Set them on a live USB stick
-and `moonwater install` takes them to the disk; `moonwater update` keeps the disk's
-own. On a read-only stick a change lasts only for the session.
+The bind, init and exit settings live inside the boot image. Set them on a live USB
+stick and `moonwater install` takes them to the disk; `moonwater update` keeps the
+disk's own. On a read-only stick a change lasts only for the session. `reset` is the
+keyboard's reset/restart key; a reset button on a PC case is wired to the hardware
+and cannot be bound. Bound keys go only to the binding; keys are not grabbed, so an
+unbound one still types.
 
 Canvas, the desktop, is part of the kernel: a compositor that draws with the CPU
 through DRM, so it works on any display the kernel can drive.

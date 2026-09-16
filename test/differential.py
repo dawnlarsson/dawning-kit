@@ -17040,7 +17040,7 @@ static long stat_task_ns, stat_spawns;
     source += r'''
 static long report_stats(struct stats *out) { (void)out; return 322; }
 '''
-    source += "static long report_power_button(struct power_button_control *out);\n"
+    source += "static long report_bind(struct bind_control *out);\n"
     # The settings requests are checked where they are written, not here:
     # device_ioctl only has to reach them.
     source += r'''
@@ -17302,6 +17302,7 @@ static void vt_event(unsigned long event,unsigned console) {
     if (vt_watcher) vt_watcher->notifier_call(vt_watcher,event,&param);
 }
 '''
+    source += "static _Bool bind_key_swallowed(unsigned int code, int value);\n"
     source += section(keys, "#define KEY_TABLE", "// Under desktop.lock")
     source += section(pointer, "static inline struct pointer_handle *pointer_handle_of", "static HOT void pointer_event")
     source += section(pointer, "static COLD void pointer_disconnect", "static void canvas_input_devices")
@@ -17318,50 +17319,106 @@ static void desktop_resume(void) { assert(desktop.lock);mock_resumes++;desktop.s
 static void desktop_set_awake(_Bool awake) { assert(desktop.lock);desktop.awake=awake; }
 """
     source += section(pointer, "#define CANVAS_SUSPENDED_POLL_MS", "static void canvas_flush_wake")
-    # The power button's handler and the work it queues, against a mocked
-    # workqueue, helper and reboot: what runs, how it is started, what a
-    # failure falls back to, and which presses count.
+    # Bindings: the table, spawn without UMH, debounce, the chord, and the ioctl.
     source += r"""
 #define KEY_POWER 116
+#define KEY_MUTE 113
+#define KEY_VOLUMEDOWN 114
+#define KEY_VOLUMEUP 115
+#define KEY_DELETE 111
+#define KEY_KPDOT 83
+#define KEY_SLEEP 142
+#define KEY_SUSPEND 205
+#define KEY_RESTART 408
+#define KEY_BRIGHTNESSDOWN 224
+#define KEY_BRIGHTNESSUP 225
+#define EV_SW 5
+#define SW_LID 0
+#define SYSTEM_RUNNING 3
+#define KBD_KEYSYM 3
+#define KT_SPEC 2
+#define KTYP(x) ((unsigned)(x)>>8)
+#define KVAL(x) ((unsigned)(x)&0xffu)
+#define K_BOOT ((KT_SPEC<<8)|12)
+#define NOTIFY_STOP 0x8001
+#define NOTIFY_OK 1
+#define CONFIG_PM 1
+#define PM_POST_SUSPEND 0x0004
 #ifndef READ_ONCE
 #define READ_ONCE(x) (x)
 #endif
-#define UMH_WAIT_EXEC 1
-#define UMH_WAIT_PROC 2
 #ifndef pr_warn
 #define pr_warn(...) ((void)0)
 #endif
 #define ATOMIC_INIT(value) (value)
 #define msecs_to_jiffies(ms) ((unsigned long)(ms))
 #define time_before(a,b) ((long)((a)-(b))<0)
-#define system_unbound_wq ((void *)0)
+#define system_dfl_long_wq ((void *)1)
 #define cmpxchg(at,old,new) ({ __typeof__(*(at)) seen_=*(at); if (seen_==(old)) *(at)=(new); seen_; })
 #undef strscpy
-#define strscpy(to,from,size) power_strscpy((to),(from),(size))
-static void power_strscpy(char *to,const char *from,unsigned long size) {
+#define strscpy(to,from,size) bind_strscpy((to),(from),(size))
+static void bind_strscpy(char *to,const char *from,unsigned long size) {
     unsigned long at=0; for (;at+1<size && from[at];at++) to[at]=from[at]; if (size) to[at]=0;
 }
 struct work_struct { void (*func)(struct work_struct *); };
-#define DECLARE_WORK(name,run) struct work_struct name={run}
+#define INIT_WORK(work,run) do { (work)->func=(run); } while(0)
 static unsigned long jiffies;
-static unsigned power_queued,power_helpers,power_offs,power_reboots,power_wait;
-static int power_helper_answer;
-static _Bool power_forced;
-static char power_argv[3][300];
-static _Bool queue_work(void *queue,struct work_struct *work) { (void)queue;(void)work;power_queued++;return 1; }
-static int call_usermodehelper(const char *path,char **argv,char **envp,int wait) {
-    (void)envp;power_helpers++;power_wait=(unsigned)wait;
-    for (unsigned i=0;i<3;i++) snprintf(power_argv[i],sizeof(power_argv[i]),"%s",argv[i]);
-    assert(!strcmp(path,argv[0]) && !argv[3]);
-    return power_helper_answer;
+static int system_state=SYSTEM_RUNNING;
+static unsigned bind_queued,bind_helpers,bind_offs,bind_reboots;
+static int bind_thread_pid=42,bind_wait_answer;
+static _Bool bind_forced;
+static char bind_argv[3][300];
+static _Bool queue_work(void *queue,struct work_struct *work) { (void)queue;(void)work;bind_queued++;return 1; }
+static _Bool work_pending(struct work_struct *work) { (void)work; return 0; }
+static void orderly_poweroff(_Bool force) { bind_offs++;bind_forced=force; }
+static void orderly_reboot(void) { bind_reboots++; }
+static void atomic_inc(atomic_t *p) { ++*p; }
+static void atomic_dec(atomic_t *p) { --*p; }
+#undef user_mode_thread
+static pid_t user_mode_thread(int (*fn)(void *), void *arg, unsigned long sig);
+static int kernel_wait(pid_t pid, int *stat);
+static void kernel_sigaction(int sig, void *act) { (void)sig;(void)act; }
+static int kernel_execve(const char *path, const char *const *argv, const char *const *envp) {
+    (void)path;(void)argv;(void)envp; return 0;
 }
-static void orderly_poweroff(_Bool force) { power_offs++;power_forced=force; }
-static void orderly_reboot(void) { power_reboots++; }
+__attribute__((noreturn)) static void do_exit(long code) { (void)code; for(;;){} }
+#define CAP_SYS_ADMIN 21
+#define CAP_SYS_BOOT 22
+static _Bool power_capable=1,power_admin=1;
+static _Bool capable(int cap) { return cap==CAP_SYS_BOOT ? power_capable : cap==CAP_SYS_ADMIN && power_admin; }
+struct keyboard_notifier_param { unsigned int value; int down; };
 """
-    source += section(core, "#define POWER_COMMAND_DEFAULT", "static int power_connect")
-    source += "#define CAP_SYS_ADMIN 21\n#define CAP_SYS_BOOT 22\nstatic _Bool power_capable=1,power_admin=1;\n"
-    source += "static _Bool capable(int cap) { return cap==CAP_SYS_BOOT ? power_capable : cap==CAP_SYS_ADMIN && power_admin; }\n"
-    source += section(core, "static long report_power_button", "#ifdef CONFIG_MOONWATER_CANVAS\n#define REPORT_CANVAS")
+    source += section(core, "#define BIND_MOD_CTRL", "static int bind_connect")
+    source += section(core, "#ifdef CONFIG_VT\nstatic int bind_keyboard_notify",
+                      "static void bind_start(void)")
+    source += section(core, "static void bind_start(void)", "static void bind_stop(void)")
+    source += section(core, "static long report_bind",
+                      "#ifdef CONFIG_MOONWATER_CANVAS\n#define REPORT_CANVAS")
+    source += r"""
+static pid_t user_mode_thread(int (*fn)(void *), void *arg, unsigned long sig) {
+    struct bind_spawn *spawn=arg;
+    (void)fn;(void)sig;
+    bind_helpers++;
+    snprintf(bind_argv[0],sizeof(bind_argv[0]),"%s",SPARK_TOOL_PROGRAM);
+    snprintf(bind_argv[1],sizeof(bind_argv[1]),"-c");
+    snprintf(bind_argv[2],sizeof(bind_argv[2]),"%s",spawn->command);
+    if (bind_thread_pid>0) kfree(spawn);
+    return bind_thread_pid;
+}
+static int kernel_wait(pid_t pid, int *stat) { (void)pid; *stat=0; return bind_wait_answer; }
+static struct bind_handle bind_dev;
+static void bind_send(unsigned type, unsigned code, int value) {
+    bind_event(&bind_dev.handle, type, code, value);
+}
+static void bind_press(unsigned event, const char *command, int pid, int wait) {
+    struct bind_row *row=bind_row(event);
+    snprintf(row->command,sizeof(row->command),"%s",command);
+    atomic_set(&row->bound, command[0]!=0);
+    bind_helpers=bind_offs=bind_reboots=0; bind_forced=0;
+    bind_thread_pid=pid; bind_wait_answer=wait;
+    bind_run(row);
+}
+"""
     # moonwater canvas on and off: what the request decides before Canvas
     # is touched, with Canvas itself mocked.
     source += r'''
@@ -17612,10 +17669,182 @@ static void check_console_keyboard(void) {
           "giving the keys back twice restores once, and a late VT event mutes nothing");
     vt_modes[0]=vt_modes[1]=vt_modes[2]=vt_modes[3]=K_UNICODE;
 }
-static void power_press(const char *command,int answer) {
-    snprintf(power_command,sizeof(power_command),"%s",command);
-    power_helper_answer=answer;power_helpers=power_offs=power_reboots=0;power_forced=0;
-    power_work.func(&power_work);
+static void check_bind(void) {
+    struct bind_control request;
+    struct bind_row *power,*reset,*cad,*sleep,*vol,*on,*off;
+    struct keyboard_notifier_param boot={.value=0xf20c,.down=1};
+    unsigned queued;
+
+    bind_start();
+    memset(&bind_dev,0,sizeof(bind_dev));
+    power=bind_row(SPARK_BIND_POWEROFF);
+    reset=bind_row(SPARK_BIND_RESET);
+    cad=bind_row(SPARK_BIND_CTRL_ALT_DELETE);
+    sleep=bind_row(SPARK_BIND_SLEEP);
+    vol=bind_row(SPARK_BIND_VOLUME_UP);
+    on=bind_row(SPARK_BIND_CANVAS_ON);
+    off=bind_row(SPARK_BIND_CANVAS_OFF);
+
+    _Static_assert(sizeof(struct bind_control)==312,"spark bind ABI");
+    _Static_assert(((SPARK_IOCTL_BIND>>16)&0x3fffu)==sizeof(struct bind_control),
+                   "bind opcode encodes the request size");
+
+    check(!strcmp(power->command,"poweroff") && !strcmp(reset->command,"reboot") &&
+          !strcmp(cad->command,"reboot") && !sleep->command[0] && !vol->command[0],
+          "poweroff, reset and ctrl_alt_delete have defaults; the rest start empty");
+    check(!strcmp(power->name,"poweroff") && !strcmp(on->name,"canvas on") &&
+          !strcmp(off->name,"canvas off"),
+          "canvas on and canvas off are the names, not start and stop");
+
+    bind_press(SPARK_BIND_POWEROFF,"poweroff",42,0);
+    check(bind_helpers==1 && !strcmp(bind_argv[0],"/shell") && !strcmp(bind_argv[1],"-c") &&
+          !strcmp(bind_argv[2],"poweroff") && !bind_offs,
+          "poweroff runs as /shell -c poweroff, waited for, with nothing forced");
+    bind_press(SPARK_BIND_POWEROFF,"poweroff",42,-2);
+    check(bind_offs==1 && bind_forced && !bind_reboots,
+          "a poweroff that cannot run falls back to orderly_poweroff, forced");
+    bind_press(SPARK_BIND_RESET,"reboot",42,256);
+    check(bind_reboots==1 && !bind_offs,"a reboot that fails falls back to orderly_reboot");
+    bind_press(SPARK_BIND_POWEROFF,"echo pressed > /dev/ttyS0",42,-2);
+    check(bind_helpers==1 && !bind_offs && !bind_reboots,
+          "any other command is started and left to itself, even when it cannot start");
+    bind_press(SPARK_BIND_SLEEP,"",42,0);
+    check(!bind_helpers && !bind_offs,"an empty command is the event ignored");
+
+    snprintf(power->command,sizeof(power->command),"poweroff");
+    atomic_set(&power->bound,1); power->last=0; bind_queued=0; jiffies=5000;
+    bind_send(EV_KEY,KEY_POWER,1);
+    check(bind_queued==1,"a press queues the command");
+    jiffies+=400; bind_send(EV_KEY,KEY_POWER,1);
+    check(bind_queued==1,"a second press inside a second is the same press");
+    jiffies+=1200; bind_send(EV_KEY,KEY_POWER,1);
+    check(bind_queued==2,"a press after a second is another press");
+    jiffies+=5000;
+    bind_send(EV_KEY,KEY_POWER,0); bind_send(EV_KEY,KEY_POWER,2);
+    bind_send(EV_KEY,KEY_TAB,1); bind_send(0,KEY_POWER,1);
+    check(bind_queued==2,"a release, a repeat and any other key are not presses");
+
+    queued=bind_queued; atomic_set(&power->busy,1); power->last=0; jiffies+=5000;
+    bind_send(EV_KEY,KEY_POWER,1);
+    check(bind_queued==queued,"a debounced row drops presses while its run is in flight");
+    atomic_set(&power->busy,0);
+
+    system_state=0; power->last=0; jiffies+=5000;
+    bind_send(EV_KEY,KEY_POWER,1);
+    check(bind_queued==queued,"nothing is queued unless the system is running");
+    system_state=SYSTEM_RUNNING;
+
+    queued=bind_queued; sleep->last=0; atomic_set(&sleep->bound,1);
+    snprintf(sleep->command,sizeof(sleep->command),"true");
+    bind_send(EV_KEY,KEY_SLEEP,1);
+    check(bind_queued==queued+1,"KEY_SLEEP queues sleep");
+    sleep->last=0; jiffies+=5000;
+    bind_send(EV_KEY,KEY_SUSPEND,1);
+    check(bind_queued==queued+2,"KEY_SUSPEND is the same sleep event");
+
+    queued=bind_queued; cad->last=0; jiffies+=5000;
+    bind_send(EV_KEY,KEY_LEFTCTRL,1); bind_send(EV_KEY,KEY_LEFTALT,1);
+    bind_send(EV_KEY,KEY_DELETE,1);
+    check(bind_queued==queued+1,"ctrl+alt+delete queues that event");
+    bind_send(EV_KEY,KEY_LEFTCTRL,0); bind_send(EV_KEY,KEY_LEFTALT,0);
+
+    queued=bind_queued;
+    bind_send(EV_SW,SW_LID,1);
+    check(bind_queued==queued,"an unbound lid close does not queue");
+    atomic_set(&bind_row(SPARK_BIND_LID_CLOSE)->bound,1);
+    snprintf(bind_row(SPARK_BIND_LID_CLOSE)->command,
+             sizeof(bind_row(SPARK_BIND_LID_CLOSE)->command),"true");
+    bind_row(SPARK_BIND_LID_CLOSE)->last=0;
+    bind_send(EV_SW,SW_LID,1);
+    check(bind_queued==queued+1,"a bound lid close queues");
+    bind_row(SPARK_BIND_LID_OPEN)->last=0;
+    atomic_set(&bind_row(SPARK_BIND_LID_OPEN)->bound,1);
+    snprintf(bind_row(SPARK_BIND_LID_OPEN)->command,
+             sizeof(bind_row(SPARK_BIND_LID_OPEN)->command),"true");
+    bind_send(EV_SW,SW_LID,0);
+    check(bind_queued==queued+2,"a bound lid open queues");
+
+    queued=bind_queued;
+    bind_send(EV_KEY,KEY_VOLUMEUP,1);
+    check(bind_queued==queued,"an unbound volume key does not queue");
+    atomic_set(&vol->bound,1);
+    snprintf(vol->command,sizeof(vol->command),"true");
+    bind_send(EV_KEY,KEY_VOLUMEUP,1);
+    check(bind_queued==queued+1,"a bound volume key queues");
+
+    check(bind_key_swallowed(KEY_POWER,1),"a bound power key is swallowed");
+    check(bind_key_swallowed(KEY_POWER,0),"its release is swallowed too");
+    check(!bind_key_swallowed(KEY_TAB,1),"a typing key is not swallowed");
+
+    queued=bind_queued;
+    atomic_set(&on->busy,1); atomic_set(&off->busy,1);
+    bind_queue(on); bind_queue(off);
+    check(bind_queued==queued,"canvas on and off share a busy bit and drop while it is held");
+    atomic_set(&on->busy,0); atomic_set(&off->busy,0);
+
+    queued=bind_queued; cad->last=0; jiffies+=5000;
+    check(bind_keyboard_notify(NULL,KBD_KEYSYM,&boot)==NOTIFY_STOP,
+          "the Boot keysym is stopped so VT does not restart");
+    check(bind_queued==queued+1,"and that keysym queues ctrl_alt_delete");
+    boot.value=K_BOOT;
+    queued=bind_queued; cad->last=0; jiffies+=5000;
+    check(bind_keyboard_notify(NULL,KBD_KEYSYM,&boot)==NOTIFY_STOP,
+          "K_BOOT compared by type and value still stops");
+
+    power->last=0; jiffies=9000;
+    bind_pm_notify(NULL,PM_POST_SUSPEND,NULL);
+    check(power->last==(jiffies|1),"post-suspend restamps debounce");
+
+    memset(&request,0,sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
+    snprintf(request.command,sizeof(request.command),"echo set");
+    check(!report_bind(&request) && !strcmp(power->command,"echo set") &&
+          !strcmp(request.command,"echo set") && !strcmp(request.name,"poweroff"),
+          "setting the line with CAP_SYS_ADMIN and CAP_SYS_BOOT stores it and reads it back");
+    power_capable=0;
+    memset(&request,0,sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
+    snprintf(request.command,sizeof(request.command),"reboot");
+    check(report_bind(&request)==-EPERM && !strcmp(power->command,"echo set"),
+          "setting a boot event without CAP_SYS_BOOT is refused and changes nothing");
+    power_capable=1; power_admin=0;
+    memset(&request,0,sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
+    snprintf(request.command,sizeof(request.command),"reboot");
+    check(report_bind(&request)==-EPERM && !strcmp(power->command,"echo set"),
+          "setting with CAP_SYS_BOOT but not CAP_SYS_ADMIN is refused: it runs with every capability");
+    power_capable=0; power_admin=1;
+    memset(&request,0,sizeof(request));
+    request.event=SPARK_BIND_POWEROFF;
+    check(!report_bind(&request) && !strcmp(request.command,"echo set"),
+          "reading the line needs no capability");
+    memset(&request,0,sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_VOLUME_UP;
+    snprintf(request.command,sizeof(request.command),"true");
+    check(!report_bind(&request) && !strcmp(vol->command,"true"),
+          "a non-boot event needs CAP_SYS_ADMIN and not CAP_SYS_BOOT");
+    power_capable=1;
+    memset(&request,'x',sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
+    request.reserved[0]=request.reserved[1]=request.reserved[2]=0;
+    check(report_bind(&request)==-ENAMETOOLONG && !strcmp(power->command,"echo set"),
+          "a line with no end inside the request is refused");
+    memset(&request,0,sizeof(request)); request.op=2; request.event=SPARK_BIND_POWEROFF;
+    check(report_bind(&request)==-EINVAL,"an op that is neither get nor set is refused");
+    memset(&request,0,sizeof(request)); request.reserved[1]=1; request.event=SPARK_BIND_POWEROFF;
+    check(report_bind(&request)==-EINVAL,"a reserved field that is not zero is refused");
+    memset(&request,0,sizeof(request));
+    check(report_bind(&request)==-EINVAL,"event 0 is refused");
+    atomic_set(&power->runs,3);
+    memset(&request,0,sizeof(request)); request.event=SPARK_BIND_POWEROFF;
+    check(!report_bind(&request) && request.runs==3 && request.count==SPARK_BIND_EVENTS,
+          "the runs acted on are read back");
+    memset(&request,0,sizeof(request));
+    request.op=SPARK_BIND_SET; request.event=SPARK_BIND_POWEROFF;
+    check(!report_bind(&request) && !strcmp(power->command,"poweroff") &&
+          (request.flags & SPARK_BIND_DEFAULT),
+          "an empty command puts the default back");
+    atomic_set(&power->runs,0);
 }
 // ACPI's button arrives as KEY_POWER and nothing listened to it.
 static void suspend_pending(void) {
@@ -17695,68 +17924,6 @@ static void check_canvas_control(void) {
     power_capable=1;power_admin=1;canvas_on_answer=0;
 }
 
-static void check_power_button(void) {
-    check(!strcmp(power_command,"poweroff"),"the power button runs poweroff until told otherwise");
-    power_press("poweroff",0);
-    check(power_helpers==1 && !strcmp(power_argv[0],"/shell") && !strcmp(power_argv[1],"-c") &&
-          !strcmp(power_argv[2],"poweroff") && power_wait==UMH_WAIT_PROC && !power_offs,
-          "poweroff runs as /shell -c poweroff, waited for, with nothing forced");
-    power_press("poweroff",-2);
-    check(power_offs==1 && power_forced && !power_reboots,
-          "a poweroff that cannot run falls back to orderly_poweroff, forced");
-    power_press("reboot",256);
-    check(power_reboots==1 && !power_offs,"a reboot that fails falls back to orderly_reboot");
-    power_press("echo pressed > /dev/ttyS0",-2);
-    check(power_helpers==1 && power_wait==UMH_WAIT_EXEC && !power_offs && !power_reboots,
-          "any other command is started and left to itself, even when it cannot start");
-    power_press("",0);
-    check(!power_helpers && !power_offs,"an empty command is the button ignored");
-    snprintf(power_command,sizeof(power_command),"poweroff");
-    power_last=0;power_queued=0;jiffies=5000;
-    power_event(0,EV_KEY,KEY_POWER,1);
-    check(power_queued==1,"a press queues the command");
-    jiffies+=400;power_event(0,EV_KEY,KEY_POWER,1);
-    check(power_queued==1,"a second press inside a second is the same press");
-    jiffies+=1200;power_event(0,EV_KEY,KEY_POWER,1);
-    check(power_queued==2,"a press after a second is another press");
-    jiffies+=5000;
-    power_event(0,EV_KEY,KEY_POWER,0);power_event(0,EV_KEY,KEY_POWER,2);
-    power_event(0,EV_KEY,KEY_TAB,1);power_event(0,0,KEY_POWER,1);
-    check(power_queued==2,"a release, a repeat and any other key are not presses");
-    power_last=0;power_queued=0;
-
-    struct power_button_control request;
-    memset(&request,0,sizeof(request));
-    request.set=1;snprintf(request.command,sizeof(request.command),"echo set");
-    check(!report_power_button(&request) && !strcmp(power_command,"echo set") &&
-          !strcmp(request.command,"echo set"),
-          "setting the line with CAP_SYS_BOOT stores it and reads it back");
-    power_capable=0;
-    memset(&request,0,sizeof(request));
-    request.set=1;snprintf(request.command,sizeof(request.command),"reboot");
-    check(report_power_button(&request)==-EPERM && !strcmp(power_command,"echo set"),
-          "setting the line without CAP_SYS_BOOT is refused and changes nothing");
-    power_capable=1;power_admin=0;
-    memset(&request,0,sizeof(request));
-    request.set=1;snprintf(request.command,sizeof(request.command),"reboot");
-    check(report_power_button(&request)==-EPERM && !strcmp(power_command,"echo set"),
-          "setting the line with CAP_SYS_BOOT but not CAP_SYS_ADMIN is refused: it runs with every capability");
-    power_capable=0;power_admin=1;
-    memset(&request,0,sizeof(request));
-    check(!report_power_button(&request) && !strcmp(request.command,"echo set"),
-          "reading the line needs no capability");
-    power_capable=1;
-    memset(&request,'x',sizeof(request));request.set=1;request.reserved[0]=request.reserved[1]=0;
-    check(report_power_button(&request)==-ENAMETOOLONG && !strcmp(power_command,"echo set"),
-          "a line with no end inside the request is refused");
-    memset(&request,0,sizeof(request));request.set=2;
-    check(report_power_button(&request)==-EINVAL,"a set that is neither 0 nor 1 is refused");
-    memset(&request,0,sizeof(request));request.reserved[1]=1;
-    check(report_power_button(&request)==-EINVAL,"a reserved field that is not zero is refused");
-    power_presses=3;memset(&request,0,sizeof(request));
-    check(!report_power_button(&request) && request.presses==3,"the presses acted on are read back");
-    power_presses=0;snprintf(power_command,sizeof(power_command),"poweroff");
-}
 static int reference_int(s64 value) {
     return value<INT_MIN?INT_MIN:value>INT_MAX?INT_MAX:(int)value;
 }
@@ -18245,7 +18412,7 @@ int main(void) {
     check_key_typed();
     check_keyboard_state();
     check_console_keyboard();
-    check_power_button();
+    check_bind();
     check_canvas_control();
     check_settings_sum();
     check_input_suspension();

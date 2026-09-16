@@ -117,6 +117,9 @@ static void keyboard_event(struct input_handle *handle, unsigned int code, int v
         unsigned int head, tail;
         struct window_key key;
 
+        if (bind_key_swallowed(code, value))
+                return;
+
         if (bit)
         {
                 unsigned int *held = keyboard_held(handle);

@@ -6344,7 +6344,7 @@ static COLD bool shell_stop_refused(string_address name)
 
 fn shell_stop(writer write, positive command)
 {
-        // moonwater exit: what is to run while every filesystem still writes.
+        // moonwater bind exit: what is to run while every filesystem still writes.
         host_exit_run();
 
         write(str("Syncing...\n"));

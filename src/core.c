@@ -27,11 +27,20 @@
 #include <linux/netdevice.h>
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
-// The power button, which is the machine's rather than the compositor's.
+// Bindings: the machine's own keys and events, not the compositor's.
 #include <linux/input.h>
 #include <linux/reboot.h>
-#include <linux/umh.h>
+#include <linux/kmod.h>
+#include <linux/sched/signal.h>
+#include <linux/notifier.h>
 #include <linux/workqueue.h>
+#ifdef CONFIG_VT
+#include <linux/keyboard.h>
+#include <linux/vt_kern.h>
+#endif
+#ifdef CONFIG_PM
+#include <linux/suspend.h>
+#endif
 #include <linux/io.h>
 #ifdef CONFIG_EFI
 #include <linux/efi.h>
@@ -125,6 +134,8 @@ struct device_context
 #include <linux/font.h>
 #include <drm/drm_file.h>
 #include <drm/drm_rect.h>
+static void bind_fire(unsigned int event);
+static _Bool bind_key_swallowed(unsigned int code, int value);
 #include "canvas/canvas.c"
 #endif
 
@@ -992,189 +1003,602 @@ static long report_stats(struct stats __user *out)
 }
 
 /*
-        The power button.
+        Bindings: what the machine's own events run.
 
-        ACPI's button driver only reports KEY_POWER as a key, and nothing here
-        listened, so pressing it did nothing at all. This is its own input
-        handler rather than a key the compositor's handler looks for: that one
-        exists only while Canvas has a screen, and the button has to work on a
-        machine with none.
+        One input handler, not grabbing, so a key Canvas does not swallow still
+        types. The callback is interrupt context and only debounces and queues;
+        the line runs from system_dfl_long_wq as `/shell -c`, through
+        user_mode_thread and kernel_wait, never call_usermodehelper: waiting
+        there holds helper_lock, and a command that then stops the machine
+        stalls five seconds in usermodehelper_disable.
 
-        A press runs the line SPARK_IOCTL_POWER_BUTTON last set, "poweroff" until
-        then, as `/shell -c` would. The handler is called from the input
-        core, in interrupt context, so it only notes the press and queues the
-        work; the command runs from a workqueue. A firmware that reports the
-        button twice, or a hand that presses it twice, is one press inside
-        POWER_DEBOUNCE_MS.
-
-        "poweroff" and "reboot" are the lines that must not fail quietly: one
-        that could not start, or answered that it could not stop the machine,
-        falls back to the kernel's orderly_poweroff or orderly_reboot. The
-        shell's poweroff is tried first because it remounts the disks
-        read-only on the way down, and the kernel's own poweroff_cmd,
-        /sbin/poweroff, is not in this image. Any other line runs and is left
-        to itself.
+        poweroff and reboot must not fail quietly: a line that could not start,
+        or returned without stopping the machine, falls back to orderly_poweroff
+        or orderly_reboot. The shell's poweroff is tried first because it
+        remounts the disks read-only, and /sbin/poweroff is not in this image.
 */
-#define POWER_COMMAND_DEFAULT "poweroff"
-#define POWER_DEBOUNCE_MS 1000
+#define BIND_MOD_CTRL 1u
+#define BIND_MOD_ALT 2u
 
-static DEFINE_MUTEX(power_command_lock);
-static char power_command[SPARK_POWER_COMMAND_MAX] = POWER_COMMAND_DEFAULT;
-static unsigned long power_last;
-static atomic_t power_presses = ATOMIC_INIT(0);
+struct bind_row {
+        const char *name;
+        const char *def;
+        unsigned int event;
+        unsigned int debounce_ms;
+        unsigned int boot;
+        unsigned int drop_busy;
+        unsigned int ev_type;
+        unsigned int code;
+        int want;
+        char command[SPARK_BIND_COMMAND_MAX];
+        atomic_t bound;
+        atomic_t runs;
+        atomic_t busy;
+        unsigned long last;
+        struct work_struct work;
+};
 
-static void power_run(struct work_struct *work)
+struct bind_spawn {
+        char command[SPARK_BIND_COMMAND_MAX];
+        char event[SPARK_BIND_NAME_MAX];
+};
+
+struct bind_handle {
+        struct input_handle handle;
+        unsigned int mods;
+};
+
+static struct bind_row bind_table[SPARK_BIND_EVENTS];
+static DEFINE_SPINLOCK(bind_lock);
+static atomic_t bind_ctrl;
+static atomic_t bind_alt;
+static unsigned int bind_held[8];
+static unsigned bind_held_n;
+static _Bool bind_handler_registered;
+static struct work_struct bind_canvas_work;
+
+static const struct {
+        const char *name;
+        const char *def;
+        unsigned int debounce_ms;
+        unsigned int boot;
+        unsigned int drop_busy;
+        unsigned int ev_type;
+        unsigned int code;
+        int want;
+} bind_spec[SPARK_BIND_EVENTS] = {
+        {"poweroff", "poweroff", 1000, 1, 1, EV_KEY, KEY_POWER, 1},
+        {"sleep", "", 1000, 1, 1, EV_KEY, KEY_SLEEP, 1},
+        {"reset", "reboot", 1000, 1, 1, EV_KEY, KEY_RESTART, 1},
+        {"ctrl_alt_delete", "reboot", 1000, 1, 1, 0, 0, 0},
+        {"lid_close", "", 500, 0, 1, EV_SW, SW_LID, 1},
+        {"lid_open", "", 500, 0, 1, EV_SW, SW_LID, 0},
+        {"volume_up", "", 0, 0, 0, EV_KEY, KEY_VOLUMEUP, 1},
+        {"volume_down", "", 0, 0, 0, EV_KEY, KEY_VOLUMEDOWN, 1},
+        {"mute", "", 0, 0, 0, EV_KEY, KEY_MUTE, 1},
+        {"brightness_up", "", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSUP, 1},
+        {"brightness_down", "", 0, 0, 0, EV_KEY, KEY_BRIGHTNESSDOWN, 1},
+        {"canvas on", "", 0, 0, 1, 0, 0, 0},
+        {"canvas off", "", 0, 0, 1, 0, 0, 0},
+};
+
+static struct bind_row *bind_row(unsigned int event)
 {
-        static char *envp[] = {"HOME=/root",
-                               "PATH=/bin:/sbin:/usr/bin:/usr/sbin", NULL};
-        char command[SPARK_POWER_COMMAND_MAX];
-        char *argv[] = {SPARK_TOOL_PROGRAM, "-c", command, NULL};
-        _Bool poweroff, reboot;
+        if (!event || event > SPARK_BIND_EVENTS)
+                return NULL;
+        return bind_table + event - 1;
+}
+
+static _Bool bind_command_is_default(struct bind_row *row, const char *command)
+{
+        return !strcmp(command, row->def);
+}
+
+static int bind_spawn_enter(void *data)
+{
+        struct bind_spawn *spawn = data;
+        char event_env[sizeof("MOONWATER_EVENT=") + SPARK_BIND_NAME_MAX];
+        char *argv[] = {SPARK_TOOL_PROGRAM, "-c", spawn->command, NULL};
+        char *envp[] = {"HOME=/root", "PATH=/bin:/sbin:/usr/bin:/usr/sbin",
+                        "TERM=linux", event_env, NULL};
         int ret;
 
-        (void)work;
+        snprintf(event_env, sizeof(event_env), "MOONWATER_EVENT=%s", spawn->event);
+        ret = kernel_execve(argv[0], (const char *const *)argv,
+                            (const char *const *)envp);
+        kfree(spawn);
+        do_exit(ret);
+}
 
-        mutex_lock(&power_command_lock);
-        strscpy(command, power_command, sizeof(command));
-        mutex_unlock(&power_command_lock);
+static void bind_run(struct bind_row *row)
+{
+        struct bind_spawn *spawn;
+        char command[SPARK_BIND_COMMAND_MAX];
+        _Bool poweroff, reboot;
+        pid_t pid;
+        int ret = 0, stat = 0;
+        unsigned long flags;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        strscpy(command, row->command, sizeof(command));
+        spin_unlock_irqrestore(&bind_lock, flags);
+
+        atomic_set(&row->busy, 1);
 
         if (!command[0])
         {
-                pr_info("[moonwater] " "power button: ignored\n");
-                return;
+                pr_info("[moonwater] " "%s: ignored\n", row->name);
+                goto done;
         }
 
-        poweroff = !strcmp(command, POWER_COMMAND_DEFAULT);
+        poweroff = !strcmp(command, "poweroff");
         reboot = !strcmp(command, "reboot");
-        pr_info("[moonwater] " "power button: %s\n", command);
+        pr_info("[moonwater] " "%s: %s\n", row->name, command);
 
-        ret = call_usermodehelper(argv[0], argv, envp,
-                                  poweroff || reboot ? UMH_WAIT_PROC : UMH_WAIT_EXEC);
+        spawn = kzalloc(sizeof(*spawn), GFP_KERNEL);
+        if (!spawn)
+        {
+                ret = -ENOMEM;
+                goto fallback;
+        }
+
+        strscpy(spawn->command, command, sizeof(spawn->command));
+        strscpy(spawn->event, row->name, sizeof(spawn->event));
+
+        kernel_sigaction(SIGCHLD, SIG_DFL);
+        pid = user_mode_thread(bind_spawn_enter, spawn, SIGCHLD);
+        if (pid > 0)
+                ret = kernel_wait(pid, &stat);
+        else
+        {
+                kfree(spawn);
+                ret = pid ? pid : -EAGAIN;
+        }
+        kernel_sigaction(SIGCHLD, SIG_IGN);
+
         if (!ret)
-                return;
+                goto done;
 
+fallback:
         if (!poweroff && !reboot)
         {
-                pr_warn("[moonwater] " "power button: %s did not start (%d)\n", command, ret);
-                return;
+                pr_warn("[moonwater] " "%s: %s did not start (%d)\n",
+                        row->name, command, ret);
+                goto done;
         }
 
-        pr_warn("[moonwater] " "power button: %s answered %d, stopping the machine anyway\n", command, ret);
+        pr_warn("[moonwater] " "%s: %s answered %d, stopping the machine anyway\n",
+                row->name, command, ret);
 
         if (reboot)
                 orderly_reboot();
         else
                 orderly_poweroff(true);
+done:
+        atomic_set(&row->busy, 0);
 }
 
-static DECLARE_WORK(power_work, power_run);
+static void bind_work(struct work_struct *work)
+{
+        bind_run(container_of(work, struct bind_row, work));
+}
 
-static void power_event(struct input_handle *handle, unsigned int type,
-                        unsigned int code, int value)
+static void bind_canvas_run(struct work_struct *work)
+{
+        struct bind_row *on = bind_row(SPARK_BIND_CANVAS_ON);
+        struct bind_row *off = bind_row(SPARK_BIND_CANVAS_OFF);
+        _Bool running = false;
+
+        (void)work;
+#ifdef CONFIG_MOONWATER_CANVAS
+        running = canvas_is_on();
+#endif
+        bind_run(running ? on : off);
+        atomic_set(&on->busy, 0);
+        atomic_set(&off->busy, 0);
+}
+
+static void bind_queue(struct bind_row *row)
+{
+        struct work_struct *work;
+
+        if (system_state != SYSTEM_RUNNING)
+                return;
+
+        if (row->drop_busy && atomic_read(&row->busy))
+                return;
+
+        if (row->event == SPARK_BIND_CANVAS_ON ||
+            row->event == SPARK_BIND_CANVAS_OFF)
+        {
+                struct bind_row *on = bind_row(SPARK_BIND_CANVAS_ON);
+                struct bind_row *off = bind_row(SPARK_BIND_CANVAS_OFF);
+
+                if (atomic_read(&on->busy) || atomic_read(&off->busy))
+                        return;
+                atomic_set(&on->busy, 1);
+                atomic_set(&off->busy, 1);
+                work = &bind_canvas_work;
+        }
+        else
+                work = &row->work;
+
+        atomic_fetch_add(1, &row->runs);
+        queue_work(system_dfl_long_wq, work);
+}
+
+static void bind_fire(unsigned int event)
+{
+        struct bind_row *row = bind_row(event);
+
+        if (row)
+                bind_queue(row);
+}
+
+static _Bool bind_debounce(struct bind_row *row)
 {
         unsigned long now = jiffies | 1;
-        unsigned long last = READ_ONCE(power_last);
+        unsigned long last = READ_ONCE(row->last);
 
-        (void)handle;
+        if (!row->debounce_ms)
+                return true;
 
-        if (type != EV_KEY || code != KEY_POWER || value != 1)
-                return;
+        if (last && time_before(now, last + msecs_to_jiffies(row->debounce_ms)))
+                return false;
 
-        if (last && time_before(now, last + msecs_to_jiffies(POWER_DEBOUNCE_MS)))
-                return;
-
-        // Two devices reporting one press land here together; one wins.
-        if (cmpxchg(&power_last, last, now) != last)
-                return;
-
-        atomic_fetch_add(1, &power_presses);
-        queue_work(system_unbound_wq, &power_work);
+        return cmpxchg(&row->last, last, now) == last;
 }
 
-static int power_connect(struct input_handler *handler, struct input_dev *dev,
-                         const struct input_device_id *id)
+static struct bind_row *bind_match(unsigned int type, unsigned int code, int value)
 {
-        struct input_handle *handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+        unsigned int at;
+        _Bool ctrl = atomic_read(&bind_ctrl) > 0;
+        _Bool alt = atomic_read(&bind_alt) > 0;
+
+        if (type == EV_KEY && value == 1 &&
+            (code == KEY_DELETE || code == KEY_KPDOT) && ctrl && alt)
+                return bind_row(SPARK_BIND_CTRL_ALT_DELETE);
+
+        if (type == EV_KEY && value == 1 &&
+            (code == KEY_SLEEP || code == KEY_SUSPEND))
+                return bind_row(SPARK_BIND_SLEEP);
+
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+        {
+                struct bind_row *row = bind_table + at;
+
+                if (row->ev_type == type && row->code == code && row->want == value)
+                        return row;
+        }
+
+        return NULL;
+}
+
+static _Bool bind_row_bound(struct bind_row *row)
+{
+        return row && atomic_read(&row->bound);
+}
+
+static _Bool bind_code_held(unsigned int code)
+{
+        unsigned at;
+
+        for (at = 0; at < bind_held_n; at++)
+                if (bind_held[at] == code)
+                        return true;
+        return false;
+}
+
+static void bind_hold(unsigned int code, int value)
+{
+        unsigned at;
+
+        if (value)
+        {
+                if (bind_code_held(code) || bind_held_n >= ARRAY_SIZE(bind_held))
+                        return;
+                bind_held[bind_held_n++] = code;
+                return;
+        }
+
+        for (at = 0; at < bind_held_n; at++)
+                if (bind_held[at] == code)
+                {
+                        bind_held[at] = bind_held[--bind_held_n];
+                        return;
+                }
+}
+
+static _Bool bind_key_swallowed(unsigned int code, int value)
+{
+        struct bind_row *row;
+        unsigned long flags;
+        _Bool swallow = false;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        if (value == 1)
+        {
+                row = bind_match(EV_KEY, code, 1);
+                if (bind_row_bound(row))
+                {
+                        bind_hold(code, 1);
+                        swallow = true;
+                }
+        }
+        else if (bind_code_held(code))
+        {
+                if (!value)
+                        bind_hold(code, 0);
+                swallow = true;
+        }
+        spin_unlock_irqrestore(&bind_lock, flags);
+        return swallow;
+}
+
+static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
+{
+        unsigned int bit = 0;
+
+        if (code == KEY_LEFTCTRL || code == KEY_RIGHTCTRL)
+                bit = BIND_MOD_CTRL;
+        else if (code == KEY_LEFTALT || code == KEY_RIGHTALT)
+                bit = BIND_MOD_ALT;
+        else
+                return;
+
+        if (value)
+        {
+                if (!(bind->mods & bit))
+                {
+                        bind->mods |= bit;
+                        if (bit == BIND_MOD_CTRL)
+                                atomic_inc(&bind_ctrl);
+                        else
+                                atomic_inc(&bind_alt);
+                }
+        }
+        else if (bind->mods & bit)
+        {
+                bind->mods &= ~bit;
+                if (bit == BIND_MOD_CTRL)
+                        atomic_dec(&bind_ctrl);
+                else
+                        atomic_dec(&bind_alt);
+        }
+}
+
+static void bind_event(struct input_handle *handle, unsigned int type,
+                       unsigned int code, int value)
+{
+        struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
+        struct bind_row *row;
+
+        if (type == EV_KEY)
+                bind_mods(bind, code, value);
+
+        if (value == 2)
+                return;
+
+        row = bind_match(type, code, value);
+        if (!row || !bind_row_bound(row) || !bind_debounce(row))
+                return;
+
+        bind_queue(row);
+}
+
+static int bind_connect(struct input_handler *handler, struct input_dev *dev,
+                        const struct input_device_id *id)
+{
+        struct bind_handle *bind = kzalloc(sizeof(*bind), GFP_KERNEL);
         int ret;
 
-        if (!handle)
+        (void)id;
+
+        if (!bind)
                 return -ENOMEM;
 
-        handle->dev = dev;
-        handle->handler = handler;
-        handle->name = "moonwater-power";
+        bind->handle.dev = dev;
+        bind->handle.handler = handler;
+        bind->handle.name = "moonwater-bind";
 
-        ret = input_register_handle(handle);
+        ret = input_register_handle(&bind->handle);
         if (ret)
                 goto free;
 
-        ret = input_open_device(handle);
+        ret = input_open_device(&bind->handle);
         if (ret)
                 goto unregister;
 
         return 0;
 
 unregister:
-        input_unregister_handle(handle);
+        input_unregister_handle(&bind->handle);
 free:
-        kfree(handle);
+        kfree(bind);
         return ret;
 }
 
-static void power_disconnect(struct input_handle *handle)
+static void bind_disconnect(struct input_handle *handle)
 {
+        struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
+
+        bind_mods(bind, KEY_LEFTCTRL, 0);
+        bind_mods(bind, KEY_LEFTALT, 0);
         input_close_device(handle);
         input_unregister_handle(handle);
-        kfree(handle);
+        kfree(bind);
 }
 
-static const struct input_device_id power_ids[] = {
-    {
-        .flags = INPUT_DEVICE_ID_MATCH_EVBIT | INPUT_DEVICE_ID_MATCH_KEYBIT,
-        .evbit = {BIT_MASK(EV_KEY)},
-        .keybit = {[BIT_WORD(KEY_POWER)] = BIT_MASK(KEY_POWER)},
-    },
-    {},
+static const struct input_device_id bind_ids[] = {
+        {
+                .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+                .evbit = {BIT_MASK(EV_KEY)},
+        },
+        {
+                .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+                .evbit = {BIT_MASK(EV_SW)},
+        },
+        {},
 };
 
-static struct input_handler power_handler = {
-    .event = power_event,
-    .connect = power_connect,
-    .disconnect = power_disconnect,
-    .name = "moonwater-power",
-    .id_table = power_ids,
+static struct input_handler bind_handler = {
+        .event = bind_event,
+        .connect = bind_connect,
+        .disconnect = bind_disconnect,
+        .name = "moonwater-bind",
+        .id_table = bind_ids,
 };
 
-static _Bool power_handler_registered;
-
-static long report_power_button(struct power_button_control __user *out)
+#ifdef CONFIG_VT
+static int bind_keyboard_notify(struct notifier_block *nb, unsigned long code,
+                                void *p)
 {
-        struct power_button_control request;
+        struct keyboard_notifier_param *param = p;
+
+        (void)nb;
+        if (code != KBD_KEYSYM || !param->down)
+                return NOTIFY_DONE;
+
+        // The raw keymap stores Boot as 0xf20c; K_BOOT is 0x020c.
+        if ((KTYP(param->value) & 0x0f) == KT_SPEC &&
+            KVAL(param->value) == KVAL(K_BOOT))
+        {
+                struct bind_row *row = bind_row(SPARK_BIND_CTRL_ALT_DELETE);
+
+                if (bind_row_bound(row) && bind_debounce(row))
+                        bind_queue(row);
+                return NOTIFY_STOP;
+        }
+
+        return NOTIFY_DONE;
+}
+
+static struct notifier_block bind_kbd_nb = {
+        .notifier_call = bind_keyboard_notify,
+};
+#endif
+
+#ifdef CONFIG_PM
+static int bind_pm_notify(struct notifier_block *nb, unsigned long event, void *p)
+{
+        unsigned at;
+
+        (void)nb;
+        (void)p;
+        if (event != PM_POST_SUSPEND)
+                return NOTIFY_DONE;
+
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+                if (bind_table[at].drop_busy)
+                        WRITE_ONCE(bind_table[at].last, jiffies | 1);
+
+        return NOTIFY_OK;
+}
+
+static struct notifier_block bind_pm_nb = {.notifier_call = bind_pm_notify};
+#endif
+
+static void bind_start(void)
+{
+        unsigned at;
+
+        INIT_WORK(&bind_canvas_work, bind_canvas_run);
+        atomic_set(&bind_ctrl, 0);
+        atomic_set(&bind_alt, 0);
+        bind_held_n = 0;
+
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+        {
+                struct bind_row *row = bind_table + at;
+
+                row->name = bind_spec[at].name;
+                row->def = bind_spec[at].def;
+                row->event = at + 1;
+                row->debounce_ms = bind_spec[at].debounce_ms;
+                row->boot = bind_spec[at].boot;
+                row->drop_busy = bind_spec[at].drop_busy;
+                row->ev_type = bind_spec[at].ev_type;
+                row->code = bind_spec[at].code;
+                row->want = bind_spec[at].want;
+                strscpy(row->command, row->def, sizeof(row->command));
+                atomic_set(&row->bound, row->def[0] != 0);
+                atomic_set(&row->runs, 0);
+                atomic_set(&row->busy, 0);
+                row->last = 0;
+                INIT_WORK(&row->work, bind_work);
+        }
+}
+
+static void bind_stop(void)
+{
+        unsigned at;
+
+#ifdef CONFIG_VT
+        unregister_keyboard_notifier(&bind_kbd_nb);
+#endif
+#ifdef CONFIG_PM
+        unregister_pm_notifier(&bind_pm_nb);
+#endif
+        if (bind_handler_registered)
+                input_unregister_handler(&bind_handler);
+
+        cancel_work_sync(&bind_canvas_work);
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+                cancel_work_sync(&bind_table[at].work);
+}
+
+static long report_bind(struct bind_control __user *out)
+{
+        struct bind_control request;
+        struct bind_row *row;
+        unsigned long flags;
 
         if (copy_from_user(&request, out, sizeof(request)))
                 return -EFAULT;
-        if (request.set > 1 || request.reserved[0] || request.reserved[1])
+        if (request.op > SPARK_BIND_SET || request.reserved[0] ||
+            request.reserved[1] || request.reserved[2])
                 return -EINVAL;
 
-        if (request.set)
+        row = bind_row(request.event);
+        if (!row)
+                return -EINVAL;
+
+        if (request.op == SPARK_BIND_SET)
         {
-                // The line runs with every capability on the next press, so
-                // choosing it is running a command as root, not only stopping
-                // the machine: CAP_SYS_BOOT alone must not reach CAP_SYS_ADMIN.
-                if (!capable(CAP_SYS_BOOT) || !capable(CAP_SYS_ADMIN))
+                if (!capable(CAP_SYS_ADMIN) ||
+                    (row->boot && !capable(CAP_SYS_BOOT)))
                         return -EPERM;
                 if (!memchr(request.command, 0, sizeof(request.command)))
                         return -ENAMETOOLONG;
 
-                mutex_lock(&power_command_lock);
-                strscpy(power_command, request.command, sizeof(power_command));
-                mutex_unlock(&power_command_lock);
+                spin_lock_irqsave(&bind_lock, flags);
+                if (!request.command[0])
+                        strscpy(row->command, row->def, sizeof(row->command));
+                else
+                        strscpy(row->command, request.command, sizeof(row->command));
+                atomic_set(&row->bound, row->command[0] != 0);
+                spin_unlock_irqrestore(&bind_lock, flags);
         }
 
-        mutex_lock(&power_command_lock);
-        strscpy(request.command, power_command, sizeof(request.command));
-        mutex_unlock(&power_command_lock);
-        request.presses = (unsigned int)atomic_read(&power_presses);
+        spin_lock_irqsave(&bind_lock, flags);
+        strscpy(request.name, row->name, sizeof(request.name));
+        strscpy(request.command, row->command, sizeof(request.command));
+        spin_unlock_irqrestore(&bind_lock, flags);
+
+        request.runs = (unsigned int)atomic_read(&row->runs);
+        request.count = SPARK_BIND_EVENTS;
+        request.flags = 0;
+        if (bind_command_is_default(row, request.command))
+                request.flags |= SPARK_BIND_DEFAULT;
+        if (atomic_read(&row->busy))
+                request.flags |= SPARK_BIND_RUNNING;
+        if (work_pending(&row->work) ||
+            ((row->event == SPARK_BIND_CANVAS_ON ||
+              row->event == SPARK_BIND_CANVAS_OFF) &&
+             work_pending(&bind_canvas_work)))
+                request.flags |= SPARK_BIND_PENDING;
+        if (row->boot)
+                request.flags |= SPARK_BIND_BOOT;
 
         return copy_to_user(out, &request, sizeof(request)) ? -EFAULT : 0;
 }
@@ -1585,8 +2009,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 return report_stats((struct stats __user *)arg);
         case SPARK_IOCTL_SNAPSHOT:
                 return report_snapshot((struct snapshot_request __user *)arg);
-        case SPARK_IOCTL_POWER_BUTTON:
-                return report_power_button((struct power_button_control __user *)arg);
+        case SPARK_IOCTL_BIND:
+                return report_bind((struct bind_control __user *)arg);
         case SPARK_IOCTL_SETTINGS_GET:
                 return settings_get((struct spark_settings_request __user *)arg);
         case SPARK_IOCTL_SETTINGS_SET:
@@ -1763,11 +2187,18 @@ static b32 __init start()
                 return ret;
         }
 
-        // Before the compositor: the button has to work with no screen.
-        if (input_register_handler(&power_handler))
-                pr_alert("[moonwater] " "could not watch the power button\n");
+        // Before the compositor: bindings have to work with no screen.
+        bind_start();
+        if (input_register_handler(&bind_handler))
+                pr_alert("[moonwater] " "could not watch the machine's keys\n");
         else
-                power_handler_registered = true;
+                bind_handler_registered = true;
+#ifdef CONFIG_VT
+        register_keyboard_notifier(&bind_kbd_nb);
+#endif
+#ifdef CONFIG_PM
+        register_pm_notifier(&bind_pm_nb);
+#endif
 
 #if defined(CONFIG_MOONWATER_CANVAS) && \
     defined(CONFIG_MOONWATER_CANVAS_AUTOSTART)
@@ -1791,9 +2222,7 @@ static void __exit exit_module(void)
         put_pid(xchg(&canvas_spawned, NULL));
 #endif
 
-        if (power_handler_registered)
-                input_unregister_handler(&power_handler);
-        cancel_work_sync(&power_work);
+        bind_stop();
 
         misc_deregister(&device);
         kvfree(snapshot);

@@ -123,6 +123,8 @@ static fn host_settings_keep(host_settings address_to settings);
 static bool host_settings_install(host_install address_to install,
                                   host_settings address_to into);
 static fn host_events_boot(host_settings address_to settings);
+static fn host_bind_apply(host_settings address_to settings);
+static b32 host_bind(string_address address_to arguments, positive count);
 static b32 host_usage(void);
 static fn host_usage_write(writer out);
 
@@ -959,7 +961,10 @@ static b32 host_boot(void)
                 once the disks are found. */
         known = host_settings_booted(address_of settings);
         if (known)
+        {
                 host_settings_keep(address_of settings);
+                host_bind_apply(address_of settings);
+        }
 
         if (known && settings.flags & SPARK_SETTINGS_MOUNT_OFF)
         {
@@ -1006,6 +1011,7 @@ static b32 host_boot(void)
                 {
                         known = true;
                         host_settings_keep(address_of settings);
+                        host_bind_apply(address_of settings);
                 }
 
                 if (known && settings.flags & SPARK_SETTINGS_MOUNT_OFF)
@@ -1521,92 +1527,43 @@ fn host_quiesce(void)
         storage_mount_table_release(address_of table);
 }
 
-// Buttons -------------------------------------------------------
+// Bindings ------------------------------------------------------
 
 /*
-        One request to the power button: set the line it runs first when
-        `command` is not null, then read back what it runs into `control`.
-        A command too long for the kernel is handed over whole, cut at the
-        size without a terminator, so the kernel's own refusal is what
-        answers it.
+        One request to a bound event: SET when `command` is not null, then
+        read the row back. A command too long is handed over whole, cut at
+        the size without a terminator, so the kernel's own refusal answers.
 */
-static bipolar host_power_button_request(string_address command,
-                                         struct power_button_control address_to control)
+static bipolar host_bind_request(unsigned int op, unsigned int event,
+                                 string_address command,
+                                 struct bind_control address_to control)
 {
         bipolar device;
         bipolar failed;
 
         memory_zero(control, sizeof(address_to control));
+        control->op = op;
+        control->event = event;
 
         if (command)
         {
                 positive length = string_length(command);
 
                 memory_copy(control->command, command,
-                            length < SPARK_POWER_COMMAND_MAX ? length + 1
-                                                             : SPARK_POWER_COMMAND_MAX);
-                control->set = 1;
+                            length < SPARK_BIND_COMMAND_MAX ? length + 1
+                                                            : SPARK_BIND_COMMAND_MAX);
         }
 
         device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
         if (device < 0)
                 return device;
 
-        failed = system_control(device, SPARK_IOCTL_POWER_BUTTON, control);
+        failed = system_control(device, SPARK_IOCTL_BIND, control);
         system_close(device);
 
-        control->command[SPARK_POWER_COMMAND_MAX - 1] = end;
+        control->command[SPARK_BIND_COMMAND_MAX - 1] = end;
+        control->name[SPARK_BIND_NAME_MAX - 1] = end;
         return failed < 0 ? failed : 0;
-}
-
-/*
-        What the power button runs from now until the machine stops: the
-        command line given, or poweroff for an empty one. For this boot only
-        -- the kernel keeps it and nothing here writes it anywhere, so
-        whatever keeps it across boots calls this with what it kept.
-        Answers 0, or 1 having said why not.
-*/
-static b32 host_power_button_tell(string_address command)
-{
-        struct power_button_control control;
-        bipolar failed = host_power_button_request(
-            command && *command ? command : (string_address)"poweroff",
-            address_of control);
-
-        if (failed == -EPERM)
-                return host_refuse("setting what the power button runs needs root "
-                                   "(CAP_SYS_ADMIN and CAP_SYS_BOOT)%s\n", "");
-        if (failed == -ENAMETOOLONG)
-                return host_refuse("that command is longer than the %s a power button holds\n",
-                                   "255 bytes");
-
-        return failed < 0 ? host_fail(SPARK_DEVICE, failed) : 0;
-}
-
-/* moonwater button power ["COMMAND"] */
-static b32 host_button(string_address address_to arguments, positive count)
-{
-        struct power_button_control control;
-        bipolar failed;
-
-        if (count < 3 || count > 4 || !string_equals(arguments[2], "power"))
-                return host_usage();
-
-        if (count == 4 && host_power_button_tell(arguments[3]))
-                return 1;
-
-        failed = host_power_button_request(null, address_of control);
-        if (failed < 0)
-                return host_fail(SPARK_DEVICE, failed);
-
-        if (!control.command[0])
-                string_format(log, host_label "the power button is ignored\n");
-        else
-                string_format(log, host_label "the power button runs: %s\n",
-                              (string_address)control.command);
-
-        log_flush();
-        return 0;
 }
 
 // Settings ------------------------------------------------------
@@ -2512,7 +2469,7 @@ static fn host_settings_note(host_settings address_to settings,
                 return;
 
         string_format(log, host_label "%s is read when the entry runs and is not kept "
-                                      "after power off; moonwater %s add \"$(cat %s)\" "
+                                      "after power off; moonwater bind %s add \"$(cat %s)\" "
                                       "keeps the script itself\n",
                       path, verb, path);
         log_flush();
@@ -3081,6 +3038,259 @@ static b32 host_canvas(string_address address_to arguments, positive count)
         return host_usage();
 }
 
+/*
+        Bound events, and the init and exit lists, as one verb.
+
+        A kernel event is one line. init and exit stay lists, because more
+        than one thing runs at boot and at stop. An empty line puts the
+        event's default back. What is not the default is kept in the image
+        and put back at the next boot.
+*/
+static fn host_bind_say(string_address prefix, struct bind_control address_to control)
+{
+        if (!control->command[0])
+                string_format(log, "%s%s\n", prefix, control->name);
+        else
+                string_format(log, "%s%s: %s\n", prefix, control->name,
+                              (string_address)control->command);
+}
+
+static fn host_bind_forget(host_settings address_to settings, p16 event)
+{
+        host_setting setting;
+        positive at;
+
+        for (;;)
+        {
+                at = 0;
+                while (host_settings_next(settings, address_of at, address_of setting))
+                {
+                        if (setting.entry.list == SPARK_SETTINGS_BIND &&
+                            setting.entry.id == event)
+                        {
+                                host_settings_drop(settings, address_of setting);
+                                goto again;
+                        }
+                }
+                return;
+        again:;
+        }
+}
+
+static fn host_bind_keep(unsigned int event, struct bind_control address_to control)
+{
+        host_settings settings;
+        p16 id = (p16)event;
+        string_address failed;
+
+        host_state_ready();
+        host_settings_session(address_of settings);
+        host_bind_forget(address_of settings, id);
+        if (!(control->flags & SPARK_BIND_DEFAULT))
+        {
+                failed = host_settings_add(address_of settings, SPARK_SETTINGS_BIND,
+                                           SPARK_SETTINGS_COMMAND, control->command,
+                                           string_length(control->command),
+                                           address_of id);
+                if (failed)
+                {
+                        host_settings_refused("bind", failed, address_of settings);
+                        return;
+                }
+        }
+        host_settings_save(address_of settings);
+}
+
+static fn host_bind_apply(host_settings address_to settings)
+{
+        host_setting setting;
+        p8 text[SPARK_SETTINGS_TEXT_MOST + 1];
+        struct bind_control control;
+        positive at = 0;
+
+        while (host_settings_next(settings, address_of at, address_of setting))
+        {
+                if (setting.entry.list != SPARK_SETTINGS_BIND)
+                        continue;
+
+                host_settings_text(text, address_of setting);
+                host_bind_request(SPARK_BIND_SET, setting.entry.id, text,
+                                  address_of control);
+        }
+}
+
+static b32 host_bind_events(void)
+{
+        struct bind_control control;
+        bipolar failed;
+        unsigned int event;
+        unsigned int count = SPARK_BIND_EVENTS;
+
+        for (event = 1; event <= count; event++)
+        {
+                failed = host_bind_request(SPARK_BIND_GET, event, null, address_of control);
+                if (failed < 0)
+                {
+                        if (event == 1)
+                                return host_fail(SPARK_DEVICE, failed);
+                        log_flush();
+                        return 0;
+                }
+
+                if (event == 1 && control.count)
+                        count = control.count;
+
+                host_bind_say("  ", address_of control);
+        }
+
+        string_format(log, "  reset is the keyboard's reset/restart key; "
+                           "a case reset button cannot be bound\n");
+        log_flush();
+        return 0;
+}
+
+static fn host_bind_names(writer out)
+{
+        struct bind_control control;
+        unsigned int event;
+        unsigned int count = SPARK_BIND_EVENTS;
+        bool first = true;
+
+        for (event = 1; event <= count; event++)
+        {
+                if (host_bind_request(SPARK_BIND_GET, event, null, address_of control) < 0)
+                        break;
+                if (event == 1 && control.count)
+                        count = control.count;
+                string_format(out, "%s%s", first ? "" : ", ", control.name);
+                first = false;
+        }
+}
+
+static unsigned int host_bind_named(string_address first, string_address second)
+{
+        struct bind_control control;
+        p8 wanted[SPARK_BIND_NAME_MAX];
+        unsigned int event;
+        unsigned int count = SPARK_BIND_EVENTS;
+
+        wanted[0] = end;
+        string_append_bounded(wanted, first, sizeof(wanted));
+        if (second)
+        {
+                string_append_bounded(wanted, " ", sizeof(wanted));
+                string_append_bounded(wanted, second, sizeof(wanted));
+        }
+
+        for (event = 1; event <= count; event++)
+        {
+                if (host_bind_request(SPARK_BIND_GET, event, null, address_of control) < 0)
+                        return 0;
+                if (event == 1 && control.count)
+                        count = control.count;
+                if (string_equals(control.name, wanted))
+                        return event;
+        }
+
+        return 0;
+}
+
+static b32 host_bind_show(unsigned int event)
+{
+        struct bind_control control;
+        bipolar failed = host_bind_request(SPARK_BIND_GET, event, null, address_of control);
+
+        if (failed < 0)
+                return host_fail(SPARK_DEVICE, failed);
+
+        host_bind_say(host_label, address_of control);
+        log_flush();
+        return 0;
+}
+
+static b32 host_bind_tell(unsigned int event, string_address command)
+{
+        struct bind_control control;
+        bipolar failed = host_bind_request(SPARK_BIND_SET, event, command,
+                                           address_of control);
+
+        if (failed == -EPERM)
+                return host_refuse("setting what %s runs needs root "
+                                   "(CAP_SYS_ADMIN and CAP_SYS_BOOT)\n",
+                                   control.name[0] ? (string_address)control.name
+                                                   : "that event");
+        if (failed == -ENAMETOOLONG)
+                return host_refuse("that command is longer than the %s a bound event holds\n",
+                                   "255 bytes");
+        if (failed < 0)
+                return host_fail(SPARK_DEVICE, failed);
+
+        host_bind_keep(event, address_of control);
+        return host_bind_show(event);
+}
+
+/* moonwater bind [init|exit|EVENT ...] */
+static b32 host_bind(string_address address_to arguments, positive count)
+{
+        struct bind_control probe;
+        p8 text[SPARK_BIND_COMMAND_MAX];
+        unsigned int event;
+        string_address second = null;
+        positive words;
+        positive length = 0;
+
+        if (count == 2)
+                return host_bind_events();
+
+        if (string_equals(arguments[2], "init") || string_equals(arguments[2], "exit"))
+        {
+                arguments[1] = arguments[2];
+                for (positive at = 3; at < count; at++)
+                        arguments[at - 1] = arguments[at];
+                return host_settings_command(arguments, count - 1);
+        }
+
+        if (string_equals(arguments[2], "canvas"))
+        {
+                if (count < 4 ||
+                    (!string_equals(arguments[3], "on") && !string_equals(arguments[3], "off")))
+                        return host_usage();
+                second = arguments[3];
+                words = 4;
+        }
+        else
+                words = 3;
+
+        event = host_bind_named(arguments[2], second);
+        if (!event)
+        {
+                if (host_bind_request(SPARK_BIND_GET, 1, null, address_of probe) < 0)
+                        return host_fail(SPARK_DEVICE, -ENODEV);
+
+                if (second)
+                        string_format(log_error,
+                                      host_label "canvas %s is not a bound event; the events are ",
+                                      arguments[3]);
+                else
+                        string_format(log_error, host_label "%s is not a bound event; the events are ",
+                                      arguments[2]);
+                host_bind_names(log_error);
+                string_format(log_error, "\n");
+                log_flush();
+                return 1;
+        }
+
+        if (count == words)
+                return host_bind_show(event);
+
+        if (!host_settings_words(text, sizeof(text), arguments + words, count - words,
+                                 address_of length))
+                return host_refuse("that command is longer than the %s a bound event holds\n",
+                                   "255 bytes");
+
+        return host_bind_tell(event, text);
+}
+
 // The command ---------------------------------------------------
 
 static fn host_title(writer out)
@@ -3106,16 +3316,18 @@ static fn host_usage_write(writer out)
                       "               " TERM_DIM "write this build onto a disk" TERM_RESET "\n"
                       TERM_BOLD "  live" TERM_RESET
                       "                        " TERM_DIM "leave the disks alone" TERM_RESET "\n"
-                      TERM_BOLD "  init [add|remove ...]" TERM_RESET
-                      "       " TERM_DIM "what runs at boot" TERM_RESET "\n"
-                      TERM_BOLD "  init mount [on|off]" TERM_RESET
-                      "         " TERM_DIM "mount kept disks at boot" TERM_RESET "\n"
-                      TERM_BOLD "  exit [add|remove ...]" TERM_RESET
-                      "       " TERM_DIM "what runs when the machine stops" TERM_RESET "\n"
+                      TERM_BOLD "  bind" TERM_RESET
+                      "                        " TERM_DIM "what the machine's events run" TERM_RESET "\n"
+                      TERM_BOLD "  bind EVENT [COMMAND]" TERM_RESET
+                      "        " TERM_DIM "one event; empty puts the default back" TERM_RESET "\n"
+                      TERM_BOLD "  bind init [add|remove ...]" TERM_RESET
+                      "  " TERM_DIM "what runs at boot" TERM_RESET "\n"
+                      TERM_BOLD "  bind init mount [on|off]" TERM_RESET
+                      "    " TERM_DIM "mount kept disks at boot" TERM_RESET "\n"
+                      TERM_BOLD "  bind exit [add|remove ...]" TERM_RESET
+                      "  " TERM_DIM "what runs when the machine stops" TERM_RESET "\n"
                       TERM_BOLD "  canvas [on|off]" TERM_RESET
                       "             " TERM_DIM "the desktop" TERM_RESET "\n"
-                      TERM_BOLD "  button power [COMMAND]" TERM_RESET
-                      "      " TERM_DIM "what the power button runs" TERM_RESET "\n"
                       "\n"
                       TERM_DIM "  Settings stay in the image this session started from.\n"
                       "  install takes this session's; update keeps the disk's.\n" TERM_RESET);
@@ -3155,8 +3367,8 @@ static fn host_status_events(host_settings address_to settings, positive which)
 }
 
 /*
-        This session as one page: the build, the disks, Canvas, the power
-        button, init and exit, then the commands. Nothing is a log line;
+        This session as one page: the build, the disks, Canvas, the bound
+        events, init and exit, then the commands. Nothing is a log line;
         the words that name each fact stay as they are.
 */
 static b32 host_status(void)
@@ -3167,7 +3379,7 @@ static b32 host_status(void)
         host_medium_search search;
         host_settings settings;
         struct canvas_control canvas;
-        struct power_button_control power;
+        struct bind_control bind;
 
         host_state_ready();
         host_title(log);
@@ -3219,13 +3431,19 @@ static b32 host_status(void)
         if (host_canvas_request(SPARK_CANVAS_STATUS, address_of canvas) >= 0)
                 host_canvas_write("  ", address_of canvas);
 
-        if (host_power_button_request(null, address_of power) >= 0)
         {
-                if (!power.command[0])
-                        string_format(log, "  the power button is ignored\n");
-                else
-                        string_format(log, "  the power button runs: %s\n",
-                                      (string_address)power.command);
+                unsigned int event;
+                unsigned int count = SPARK_BIND_EVENTS;
+
+                for (event = 1; event <= count; event++)
+                {
+                        if (host_bind_request(SPARK_BIND_GET, event, null,
+                                              address_of bind) < 0)
+                                break;
+                        if (event == 1 && bind.count)
+                                count = bind.count;
+                        host_bind_say("  ", address_of bind);
+                }
         }
 
         host_settings_session(address_of settings);
@@ -3313,15 +3531,12 @@ static b32 host_main()
                 return host_status();
 
         // Before the root check: reading needs nothing, and the kernel
-        // decides who may set it.
-        if (string_equals(verb, "button"))
-                return host_button(arguments, count);
+        // decides who may set a bound event. init and exit still need root.
+        if (string_equals(verb, "bind"))
+                return host_bind(arguments, count);
 
         if (string_equals(verb, "canvas"))
                 return host_canvas(arguments, count);
-
-        if (string_equals(verb, "init") || string_equals(verb, "exit"))
-                return host_settings_command(arguments, count);
 
         if (!string_equals(verb, "install") && !string_equals(verb, "use") &&
             !string_equals(verb, "update") && !string_equals(verb, "live") &&

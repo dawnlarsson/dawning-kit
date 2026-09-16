@@ -328,7 +328,7 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
         them at once: 1 spawn, 2 stats, 3 input stats, 4 window create
         (window.c), 5 window commit (window.c), 6 cursor stats, 7 input
         devices, 9 snapshot, 10 Canvas on and off, 11
-        the power button, 12 and 13 reading and setting the boot settings.
+        bindings, 12 and 13 reading and setting the boot settings.
         8 was never used and stays that way. The next request takes the next
         free number past the highest, 14 at the time of writing, and a gap is
         never filled: an old program sending an old number must never reach a
@@ -380,33 +380,69 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
 #define SPARK_IOCTL_CANVAS 0xc0c0730au
 
 /*
-        The power button, and the command line it runs.
+        Bindings: what the machine's own events run.
 
-        The power button runs its line the way `/shell -c` does, and the line
-        is "poweroff" until somebody sets another: the shell's own poweroff,
-        which syncs, remounts the disks read-only and stops the machine. Set
-        it to a script, to "reboot", or to nothing at all to have the button
-        ignored. The kernel holds the line while it is up and nothing longer;
-        keeping it across a boot belongs to whoever sets it at boot.
+        Every event has a name and an id, and an id is never given to another
+        event, so an old program asking for one can never reach a new one.
+        A bound event runs its line the way `/shell -c` does, as root with
+        every capability. The line lasts until the machine stops; keeping it
+        across a boot belongs to whoever sets it at boot. An empty line puts
+        back the event's default, which for most events is nothing.
 
-        Reading needs nothing. Setting needs CAP_SYS_BOOT and CAP_SYS_ADMIN:
-        the line runs as root with every capability on the next press, so a
-        process allowed only to stop the machine must not choose what runs.
+        poweroff, reset and ctrl_alt_delete default to poweroff, reboot and
+        reboot. canvas on and canvas off run when the desktop starts and
+        stops, not instead of `moonwater canvas on|off`. init and exit are
+        lists in the settings block, not rows here.
+
+        Reading needs nothing. Setting needs CAP_SYS_ADMIN, because the line
+        runs as root, and CAP_SYS_BOOT as well for the events flagged
+        SPARK_BIND_BOOT, which stop, sleep or restart the machine: a process
+        allowed only to stop the machine must not choose what runs.
+
+        The 312-byte request is a different ioctl from the 272-byte power
+        button that used this number; a stale caller gets ENOTTY.
 */
-#define SPARK_POWER_COMMAND_MAX 256u
+#define SPARK_BIND_COMMAND_MAX 256u
+#define SPARK_BIND_NAME_MAX 24u
 
-struct power_button_control {
-        unsigned int set;      // 1 stores command first; 0 only reads it back
-        unsigned int presses;  // presses acted on since boot
-        unsigned int reserved[2];
-        char command[SPARK_POWER_COMMAND_MAX]; // NUL terminated, "" ignores
+#define SPARK_BIND_GET 0u
+#define SPARK_BIND_SET 1u
+
+#define SPARK_BIND_DEFAULT 0x1u // the line is the event's default
+#define SPARK_BIND_RUNNING 0x2u // a run is in flight
+#define SPARK_BIND_PENDING 0x4u // a run is queued
+#define SPARK_BIND_BOOT 0x8u    // setting it needs CAP_SYS_BOOT as well
+
+#define SPARK_BIND_POWEROFF 1u
+#define SPARK_BIND_SLEEP 2u
+#define SPARK_BIND_RESET 3u
+#define SPARK_BIND_CTRL_ALT_DELETE 4u
+#define SPARK_BIND_LID_CLOSE 5u
+#define SPARK_BIND_LID_OPEN 6u
+#define SPARK_BIND_VOLUME_UP 7u
+#define SPARK_BIND_VOLUME_DOWN 8u
+#define SPARK_BIND_MUTE 9u
+#define SPARK_BIND_BRIGHTNESS_UP 10u
+#define SPARK_BIND_BRIGHTNESS_DOWN 11u
+#define SPARK_BIND_CANVAS_ON 12u
+#define SPARK_BIND_CANVAS_OFF 13u
+#define SPARK_BIND_EVENTS 13u
+
+struct bind_control {
+        unsigned int op;     // SPARK_BIND_GET, or SPARK_BIND_SET, which stores command first
+        unsigned int event;  // 1 to count
+        unsigned int runs;   // answered: runs started since boot
+        unsigned int flags;  // answered: SPARK_BIND_*
+        unsigned int count;  // answered: how many events there are
+        unsigned int reserved[3];
+        char name[SPARK_BIND_NAME_MAX];       // answered
+        char command[SPARK_BIND_COMMAND_MAX]; // NUL terminated; "" sets the default
 };
 
-_Static_assert(sizeof(struct power_button_control) == 272,
-               "spark power button ABI");
+_Static_assert(sizeof(struct bind_control) == 312, "spark bind ABI");
 
-// _IOWR('s', 11, struct power_button_control)
-#define SPARK_IOCTL_POWER_BUTTON 0xc110730bu
+// _IOWR('s', 11, struct bind_control)
+#define SPARK_IOCTL_BIND 0xc138730bu
 
 /*
         One launch request.

@@ -10225,26 +10225,26 @@ def asked(name, line, marker, seconds=20):
 
 asked("the compositor found no card", "true", b"gave up waiting for a card", 30)
 asked("the power button runs poweroff by default",
-      "moonwater button power | grep -c 'runs: poweroff' | sed 's/^/tluafed-/' | rev",
+      "moonwater bind poweroff | grep -c 'poweroff: poweroff' | sed 's/^/tluafed-/' | rev",
       b"1-default")
 asked("a user without CAP_SYS_BOOT cannot set it",
-      "setpriv --reuid=65534 --regid=65534 --clear-groups moonwater button power true 2>&1 | grep -c 'needs root' | sed 's/^/toorn-/' | rev",
+      "setpriv --reuid=65534 --regid=65534 --clear-groups moonwater bind poweroff true 2>&1 | grep -c 'needs root' | sed 's/^/toorn-/' | rev",
       b"1-nroot")
 #       Three counts in one answer: the helper left CAP_SYS_BOOT alone in the
 #       effective set, the kernel refused the line, and the button still runs
 #       poweroff afterwards.
 if capboot:
     asked("root with only CAP_SYS_BOOT cannot set it, since it runs with every capability",
-          "mkdir -p /mnt; mount -r -t vfat /dev/sda1 /mnt; { /mnt/capboot grep -c 'CapEff:.0000000000400000$' /proc/self/status; /mnt/capboot moonwater button power true 2>&1 | grep -c 'needs root'; moonwater button power | grep -c 'runs: poweroff'; } | tr -d '\\n' | sed 's/^/toob-/' | rev",
+          "mkdir -p /mnt; mount -r -t vfat /dev/sda1 /mnt; { /mnt/capboot grep -c 'CapEff:.0000000000400000$' /proc/self/status; /mnt/capboot moonwater bind poweroff true 2>&1 | grep -c 'needs root'; moonwater bind poweroff | grep -c 'poweroff: poweroff'; } | tr -d '\\n' | sed 's/^/toob-/' | rev",
           b"111-boot")
 else:
     out.append(("root with only CAP_SYS_BOOT cannot set it, since it runs with every capability",
                 "not run: the helper did not build", "yes"))
 asked("a command longer than the button holds is refused",
-      "moonwater button power \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
+      "moonwater bind poweroff \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
       b"1-long")
 asked("the power button takes a command",
-      "moonwater button power 'echo NOTTUB | rev > /dev/ttyS0' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
+      "moonwater bind poweroff 'echo NOTTUB | rev > /dev/ttyS0' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
       b"1-set")
 
 if ready:
@@ -10264,7 +10264,7 @@ out.append(("two presses apart run it twice more",
             str(transcript.count(b"BUTTON")), "3"))
 
 asked("the power button runs poweroff again",
-      "moonwater button power poweroff | grep -c 'runs: poweroff' | sed 's/^/niaga-/' | rev",
+      "moonwater bind poweroff poweroff | grep -c 'poweroff: poweroff' | sed 's/^/niaga-/' | rev",
       b"1-again")
 
 powered = "no"
@@ -10484,11 +10484,11 @@ printf 'status-stick-%s\n' $(( $(grep -c 'this image is on sda1' /tmp/status) * 
 mkdir -p /bowls/probe
 printf 'kept\n' > /bowls/probe/file
 printf 'home\n' > /root/probe
-moonwater init add "echo carried > /root/carried" > /tmp/init-add 2>&1
+moonwater bind init add "echo carried > /root/carried" > /tmp/init-add 2>&1
 printf 'in-memory-%s\n' $(( $(grep -c 'this session only: sda1 is read-only' /tmp/init-add) * 7 ))
-moonwater init add "echo boot >> /root/boots" > /dev/null 2>&1
-moonwater exit add "echo stop >> /root/stops" > /dev/null 2>&1
-printf 'listed-%s\n' $(( $(moonwater init | grep -c -e '^1  echo carried' -e '^2  echo boot') * 7 ))
+moonwater bind init add "echo boot >> /root/boots" > /dev/null 2>&1
+moonwater bind exit add "echo stop >> /root/stops" > /dev/null 2>&1
+printf 'listed-%s\n' $(( $(moonwater bind init | grep -c -e '^1  echo carried' -e '^2  echo boot') * 7 ))
 printf 'no\n' | moonwater install nvme0n1 > /tmp/refused 2>&1
 printf 'unconfirmed-%s\n' $(( $? + 40 ))
 printf 'sda\n' | moonwater install sda > /tmp/removable 2>&1
@@ -10530,10 +10530,10 @@ printf 'status-same-%s\n' $(( $(grep -c 'installed on nvme0n1, this build' /tmp/
 sleep 2
 printf 'carried-%s\n' "$(rev < /root/carried)"
 printf 'booted-%s\n' $(( $(grep -c boot /root/boots) * 7 ))
-moonwater init add "echo disk >> /root/disk" > /tmp/disk-add 2>&1
+moonwater bind init add "echo disk >> /root/disk" > /tmp/disk-add 2>&1
 printf 'written-%s\n' $(( $(grep -c 'saved in the image on nvme0n1p1' /tmp/disk-add) * 7 ))
-moonwater init add "sleep 8; poweroff" > /dev/null 2>&1
-printf 'disk-listed-%s\n' $(( $(moonwater init | grep -c -e '^3  echo disk' -e '^4  sleep 8') * 7 ))
+moonwater bind init add "sleep 8; poweroff" > /dev/null 2>&1
+printf 'disk-listed-%s\n' $(( $(moonwater bind init | grep -c -e '^3  echo disk' -e '^4  sleep 8') * 7 ))
 mkdir -p /mnt
 mount -t vfat /dev/nvme0n1p1 /mnt
 at=$(od -An -tu2 -j526 -N2 /mnt/EFI/BOOT/BOOTX64.EFI)
@@ -10820,8 +10820,8 @@ PY
 this line is eaten by the console
 sleep 2
 printf 'read-%s\n' $(( $(dmesg | grep -c 'settings: slot 0, generation 1') * 7 ))
-printf 'listed-%s\n' $(( $(moonwater init | grep -c '^1  printf') * 7 ))
-printf 'switch-%s\n' $(( $(moonwater init mount | grep -c 'init mount off') * 7 ))
+printf 'listed-%s\n' $(( $(moonwater bind init | grep -c '^1  printf') * 7 ))
+printf 'switch-%s\n' $(( $(moonwater bind init mount | grep -c 'init mount off') * 7 ))
 printf 'verdict-%s\n' "$(rev < /run/moonwater/verdict)"
 printf 'ended-%s\n' "$(rev < /run/moonwater/init/1.status)"
 poweroff
@@ -10842,7 +10842,7 @@ COMMANDS
 this line is eaten by the console
 sleep 2
 printf 'damaged-%s\n' $(( $(dmesg | grep -c 'both settings slots in the image are damaged') * 7 ))
-printf 'defaults-%s\n' $(( $(moonwater init | grep -c 'nothing runs at boot') * 7 ))
+printf 'defaults-%s\n' $(( $(moonwater bind init | grep -c 'nothing runs at boot') * 7 ))
 poweroff
 COMMANDS
         settings_boot damaged
