@@ -21053,6 +21053,7 @@ static bool canvas_cursor_plane = true;
 static void flusher_step(void);
 static unsigned waited;
 #define wait_event(q,cond) do { (void)(q); while (!(cond)) { waited++; flusher_step(); } } while (0)
+#define cancel_work_sync(w) ((void)(w))
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 struct list_head { struct list_head *next, *prev; };
 static void list_init(struct list_head *h) { h->next = h->prev = h; }
@@ -21078,10 +21079,10 @@ struct drm_plane_funcs { void (*update_plane)(void), (*disable_plane)(void); };
 struct drm_plane { const struct drm_plane_funcs *funcs; };
 struct drm_crtc { struct drm_plane *cursor; };
 struct drm_mode_set { struct drm_crtc *crtc; };
-struct canvas { struct list_head link; struct drm_client_dev client; bool started; int retiring; };
+struct canvas { struct list_head link; struct drm_client_dev client; bool started; int retiring; int plug; };
 struct output {
     struct list_head link; struct canvas *canvas;
-    struct drm_client_buffer *buffer, *cursor_buffer, *cursor_back;
+    struct drm_client_buffer *buffer, *cursor_buffer, *cursor_back, *replaced;
     struct drm_mode_set *mode_set; struct drm_plane *cursor_plane;
     unsigned cursor_w,cursor_h,cursor_recovery; bool cursor_shown; int x,y;
     struct list_head flush_link; bool flush_queued, flush_whole, flushing, retired;
@@ -21289,6 +21290,12 @@ int main(void) {
     output_drop(o);
     check("retire releases the cursor's spare buffer too",wrappers()==0 && deleted==3);
     client_unregister(&c->client); check("spare-buffer teardown is balanced",!gems());
+
+    reset(); c=card(true); o=output(c);
+    o->replaced=drm_client_buffer_create_dumb(&c->client,320,240,1);
+    output_drop(o);
+    check("retire releases a replaced scanout too",wrappers()==0 && deleted==3);
+    client_unregister(&c->client); check("replaced-scanout teardown is balanced",!gems());
 
     reset(); c=card(false); o=output(c);
     check("legacy modesetting uses software cursor",!o->cursor_plane && !o->cursor_buffer && !paint_calls);

@@ -214,6 +214,11 @@ struct output
         _Bool flush_whole;
         _Bool flushing;
         _Bool retired;
+
+        // The scanout the CRTC still holds after a grow, freed once the
+        // commit that replaces it has landed. Destroying it sooner blanks
+        // the pipe.
+        struct drm_client_buffer *replaced;
 };
 
 struct canvas
@@ -230,6 +235,12 @@ struct canvas
         // Outputs dropped while their buffer was with the flusher. The card
         // is released only once the flusher has freed every one.
         atomic_t retiring;
+
+        // Hotplug runs here, never on the DRM helper workqueue. A commit
+        // from that queue disables cursor planes and can wait on the same
+        // queue, which is a lockup: the first picture stays, the pointer
+        // thread never runs, and the kernel log is what is left.
+        struct work_struct plug;
 };
 
 static struct desktop

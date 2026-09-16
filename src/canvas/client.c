@@ -14,14 +14,43 @@
         The outputs come off the desktop before the card they belong to is
         released, or output->canvas dangles for anything still composing.
         canvas_thread_stop joins a thread that takes desktop.lock, so it runs under
-        canvas_list_lock and never under desktop.lock.
+        canvas_list_lock and never under desktop.lock. The plug work is cancelled
+        first, so it cannot start or rebind a card that is leaving.
 */
+static struct workqueue_struct *canvas_plug_wq;
+
+static void canvas_plug_ensure(void)
+{
+        if (!canvas_plug_wq)
+                canvas_plug_wq = alloc_ordered_workqueue("moonwater/plug", 0);
+}
+
+static void canvas_plug_work(struct work_struct *work)
+{
+        struct canvas *canvas = container_of(work, struct canvas, plug);
+        int ret = 0;
+
+        rt_mutex_lock(&desktop.lock);
+
+        if (!canvas->started)
+        {
+                ret = canvas_start(canvas);
+                canvas->started = (ret == 0);
+        }
+        else
+                ret = canvas_rebind(canvas);
+
+        rt_mutex_unlock(&desktop.lock);
+        (void)ret;
+}
+
 static COLD void client_unregister(struct drm_client_dev *client)
 {
         struct canvas *canvas = canvas_from_client(client);
 
         mutex_lock(&canvas_list_lock);
         list_del(&canvas->link);
+        cancel_work_sync(&canvas->plug);
         if (list_empty(&canvas_list))
                 canvas_thread_stop();
         mutex_unlock(&canvas_list_lock);
@@ -46,22 +75,21 @@ static COLD void client_free(struct drm_client_dev *client)
 static int client_hotplug(struct drm_client_dev *client)
 {
         struct canvas *canvas = canvas_from_client(client);
-        int ret = 0;
 
-        rt_mutex_lock(&desktop.lock);
+        /*
+                Never start or rebind on the caller's workqueue.
 
-        if (!canvas->started)
-        {
-                ret = canvas_start(canvas);
-                canvas->started = (ret == 0);
-        }
-        else
-        {
-                ret = canvas_rebind(canvas);
-        }
-
-        rt_mutex_unlock(&desktop.lock);
-        return ret;
+                drm_client_register calls this itself, which is fine, but a
+                later connector hotplug runs on the DRM helper workqueue. A
+                modeset commit from there disables every cursor plane and can
+                wait on that same queue: on i915 that is a frozen low-res
+                kernel log and no pointer. Queue on moonwater/plug, which
+                nothing in DRM flushes.
+        */
+        canvas_plug_ensure();
+        queue_work(canvas_plug_wq ? canvas_plug_wq : system_unbound_wq,
+                   &canvas->plug);
+        return 0;
 }
 
 // The bool argument is whether the restore happens from an atomic context.
@@ -153,6 +181,9 @@ static struct canvas *canvas_take_over(struct drm_device *dev)
                 kfree(canvas);
                 return NULL;
         }
+
+        canvas_plug_ensure();
+        INIT_WORK(&canvas->plug, canvas_plug_work);
 
         mutex_lock(&canvas_list_lock);
         first = list_empty(&canvas_list);

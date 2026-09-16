@@ -133,8 +133,19 @@ static const struct canvas_saved_mode *canvas_mode_saved(const char *name)
 
 static void canvas_mode_keep(const char *name, const struct drm_display_mode *mode)
 {
-        if (!name || !mode || canvas_mode_saved(name))
+        unsigned int i;
+
+        if (!name || !mode)
                 return;
+
+        for (i = 0; i < canvas_saved_modes; i++)
+                if (!strcmp(canvas_saved_mode[i].name, name))
+                {
+                        canvas_saved_mode[i].hdisplay = mode->hdisplay;
+                        canvas_saved_mode[i].vdisplay = mode->vdisplay;
+                        canvas_saved_mode[i].vrefresh = drm_mode_vrefresh(mode);
+                        return;
+                }
 
         if (canvas_saved_modes >= CANVAS_SAVED_MODES)
                 return;
@@ -259,7 +270,8 @@ static struct drm_display_mode *output_guest_mode(struct drm_device *dev,
         modesets, then the device's mode configuration, which is what guards a
         connector's list of modes.
 */
-static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
+static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest,
+                                   _Bool keep_saved)
 {
         struct drm_client_dev *client = &canvas->client;
         struct drm_device *dev = client->dev;
@@ -282,8 +294,9 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
                         continue;
 
                 connector = mode_set->connectors[0];
-                saved = connector->name ? canvas_mode_saved(connector->name)
-                                        : NULL;
+                saved = keep_saved && connector->name
+                                ? canvas_mode_saved(connector->name)
+                                : NULL;
                 /*
                         A guest stays a window even when the first modeset is
                         refused. The retry used to take the probe's preferred
@@ -293,6 +306,11 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
                         A later start has already committed once: take that
                         size rather than seventy percent of the window, or
                         the probe's preferred instead of the largest.
+
+                        A hotplug on a running card must not: the first
+                        picture is often a fallback written before EDID
+                        finished, and restoring that size leaves a real
+                        screen at 1024x768 for the rest of the boot.
                 */
                 if (saved)
                 {
@@ -404,6 +422,58 @@ static void output_attach(struct output *output)
         desktop_sync_frame_ns();
 }
 
+/*
+        A later probe listed a larger mode than the one already scanning.
+
+        The first picture is often a fallback: i915 writes 1024x768 before
+        EDID finishes, then hotplugs with the panel's real list. The buffer
+        on the CRTC is the old size, so a modeset of the new size with that
+        framebuffer is refused. A new buffer is made first; the old one is
+        kept until the commit that points the pipe at the new one has
+        landed, because freeing it sooner blanks the scanout.
+*/
+static _Bool output_grow(struct output *output, struct drm_mode_set *mode_set)
+{
+        unsigned int width, height;
+        u32 format;
+        struct drm_client_buffer *fresh;
+
+        if (!mode_set || !mode_set->mode || !mode_set->crtc ||
+            !mode_set->crtc->primary)
+                return false;
+
+        width = mode_set->mode->hdisplay;
+        height = mode_set->mode->vdisplay;
+        if ((unsigned long)width * height <=
+            (unsigned long)output->width * output->height)
+                return false;
+
+        format = canvas_plane_pick_format(mode_set->crtc->primary,
+                                          DRM_FORMAT_XRGB8888,
+                                          DRM_FORMAT_ARGB8888);
+        if (format == DRM_FORMAT_INVALID)
+                return false;
+
+        fresh = drm_client_buffer_create_dumb(&output->canvas->client, width,
+                                              height, format);
+        if (IS_ERR(fresh))
+                return false;
+
+        if (output->replaced)
+                drm_client_buffer_delete(output->buffer);
+        else
+                output->replaced = output->buffer;
+
+        output->buffer = fresh;
+        output->width = width;
+        output->height = height;
+        output->opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
+        canvas_palette(output->palette, format);
+        mode_set->fb = fresh->fb;
+        desktop_sync_frame_ns();
+        return true;
+}
+
 static void desktop_place_outputs(void);
 static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mode_set);
 static void output_disable_modeset(struct drm_device *dev,
@@ -451,6 +521,14 @@ static _Bool output_bring_up(struct canvas *canvas, struct drm_mode_set *mode_se
         (drm_client_modeset_commit does) and can wait on that same queue,
         so the pointer thread never runs again and the plane is left off.
         The mode already scanning is the one the window has; leave it.
+
+        A real card is the same queue. i915 hotplugs after EDID, and with a
+        cursor plane the commit from here is the virtio lockup: low-res
+        kernel log, no pointer, no terminal. The callback only queues; this
+        runs on moonwater/plug. A guest still returns above. A real screen
+        may grow if the connector now lists more pixels than the fallback
+        that was committed first; a hotplug that does not grow does not
+        commit, so the cursor plane stays up.
 */
 static int canvas_rebind(struct canvas *canvas)
 {
@@ -463,7 +541,8 @@ static int canvas_rebind(struct canvas *canvas)
                 return 0;
 
         if (canvas_probe_modes(canvas,
-                               IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE)))
+                               IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE),
+                               false))
         {
                 desktop_redraw();
                 return 0;
@@ -478,7 +557,10 @@ static int canvas_rebind(struct canvas *canvas)
                 output = output_for_modeset(canvas, mode_set);
                 if (output)
                 {
-                        output_attach(output);
+                        if (output_grow(output, mode_set))
+                                placed = true;
+                        else
+                                output_attach(output);
                         continue;
                 }
 
@@ -488,9 +570,12 @@ static int canvas_rebind(struct canvas *canvas)
         mutex_unlock(&client->modeset_mutex);
 
         if (placed)
+        {
                 desktop_place_outputs();
+                canvas_modes_keep();
+                desktop_redraw();
+        }
 
-        desktop_redraw();
         return 0;
 }
 
@@ -600,6 +685,7 @@ static void output_disable_modeset(struct drm_device *dev,
 static void output_free(struct output *output)
 {
         drm_client_buffer_delete(output->buffer);
+        drm_client_buffer_delete(output->replaced);
         kfree(output);
 }
 
@@ -699,6 +785,17 @@ static _Bool desktop_commit(void)
 
                 committed = output->canvas;
                 set = drm_client_modeset_commit(&committed->client);
+                if (!set)
+                {
+                        struct output *grown;
+
+                        list_for_each_entry(grown, &desktop.outputs, link)
+                                if (grown->canvas == committed && grown->replaced)
+                                {
+                                        drm_client_buffer_delete(grown->replaced);
+                                        grown->replaced = NULL;
+                                }
+                }
 
                 // Somebody else is master, and the card is not ours to draw
                 // on until they let go. The loop is woken so it watches for that.
@@ -917,7 +1014,7 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
         struct drm_mode_set *mode_set;
         unsigned int count = 0;
 
-        if (canvas_probe_modes(canvas, biggest))
+        if (canvas_probe_modes(canvas, biggest, true))
                 return -ENODEV;
 
 #ifdef CONFIG_MOONWATER_CANVAS_SCALE
@@ -1013,12 +1110,11 @@ static int canvas_start(struct canvas *canvas)
         /*
                 A refused commit means the mode, not the moment.
 
-                This runs from the hotplug that drm_client_register fires, and
-                the file canvas_claim opened to find the card is still open at
-                that point -- so it is still the device's master, and a commit
-                answers EBUSY whatever mode it was handed. Falling back on that
-                threw away every mode this ever chose and quietly took the
-                probe's, which is the opposite of the point.
+                The claim file is closed before drm_client_register, and this
+                runs from moonwater/plug after that, so a commit is not EBUSY
+                because we still hold master. EBUSY here is another program.
+                Falling back on that threw away every mode this ever chose and
+                quietly took the probe's, which is the opposite of the point.
         */
         for (unsigned int attempt = 0; ; attempt++)
         {

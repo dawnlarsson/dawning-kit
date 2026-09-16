@@ -881,6 +881,12 @@ static void canvas_thread_stop(void)
                 synchronize_rcu();
                 kthread_stop(thread);
         }
+
+        if (canvas_plug_wq)
+        {
+                destroy_workqueue(canvas_plug_wq);
+                canvas_plug_wq = NULL;
+        }
 }
 
 /*
