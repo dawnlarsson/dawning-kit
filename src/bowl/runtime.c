@@ -91,17 +91,23 @@ static struct bowl_mount_point bowl_isolated_mounts[] = {
         /proc and /sys. A later donor namespace skips the libc binds so a
         second glibc bowl cannot replace a shared Arch loader.
 
-        /usr/share/terminfo is the one data tree bound as well. ncurses run
-        as root ignores $TERMINFO and reads only the directory it was built
-        with, and Moonwater runs everything as root, so without the guest's
-        own database nano and every other curses program refused to start.
+        /usr/share is the data tree desktop programs read: Weston, GTK
+        schemas, icons, mime. ncurses as root ignores $TERMINFO and reads
+        only the directory it was built with, so /usr/share/terminfo is
+        still listed for a bowl that has the database but no broader share
+        tree. /usr/libexec is weston-desktop-shell and the rest of the
+        helpers compiled next to the libraries.
 */
 static struct bowl_layer bowl_fast_layers[] = {
     {"/lib", false},
     {"/lib64", false},
     {"/usr/lib", false},
     {"/usr/lib64", false},
+    {"/usr/share", false},
     {"/usr/share/terminfo", false},
+    {"/usr/libexec", false},
+    {"/usr/local/lib", false},
+    {"/usr/local/share", false},
     {null, false},
 };
 
@@ -780,6 +786,10 @@ static b32 bowl_launch_failed(bipolar native_shell, string_address what,
         return bowl_fail(what, failed);
 }
 
+static fn bowl_session_prepare_from(string_address address_to environment);
+static string_address address_to bowl_environment(
+    string_address address_to inherited);
+
 static DEAD_END fn bowl_inside(string_address root,
                                string_address program,
                                string_address address_to arguments,
@@ -800,6 +810,10 @@ static DEAD_END fn bowl_inside(string_address root,
                 bowl_fail(root, failed);
                 exit(1);
         }
+
+        /* Isolated /run is a fresh tmpfs; fast keeps the host's. Either way
+           the guest now sees the directories the session variables name. */
+        bowl_session_prepare_from(environment);
 
         /* Fast does not overlay /usr, so /usr/bin/jq is still Moonwater's
            missing name. The file is the one under the bowl root. Isolated
@@ -838,13 +852,155 @@ static b32 bowl_env_named(string_address entry, string_address name)
         return name[i] == 0 && entry[i] == '=';
 }
 
+static string_address bowl_env_value(string_address address_to environment,
+                                     string_address name)
+{
+        if (!environment)
+                return null;
+
+        for (; *environment; environment++)
+                if (bowl_env_named(*environment, name))
+                        return *environment + string_length(name) + 1;
+
+        return null;
+}
+
 /*
-        A guest ncurses still looks at $TERMINFO, and the compiled database
-        lives under /run/moonwater/terminfo. An inherited environment that
-        already names both is left alone; one that names neither — bowl from
-        a kernel console, or from a script that cleared the block — gets the
-        pair, or the open fails with "Error opening terminal".
+        The session a guest program expects.
+
+        Weston, GTK, Qt, PipeWire and almost every other desktop program
+        refuse to start without XDG_RUNTIME_DIR, and they want it to be a
+        0700 directory owned by this user. Isolated populate puts a fresh
+        tmpfs on /run, so the host copy is gone and this runs after the
+        guest can see the path. An inherited environment that already names
+        the usual variables is left alone; one that names none — bowl from a
+        kernel console, bind init, or a script that cleared the block —
+        gets the set, or Weston fails with "XDG_RUNTIME_DIR not set".
 */
+#define BOWL_RUNTIME_DIR "/run/user/"
+#define BOWL_SESSION_HOME "/root"
+
+static p8 bowl_runtime_path[sizeof(BOWL_RUNTIME_DIR) + 20];
+static p8 bowl_runtime_assignment[sizeof("XDG_RUNTIME_DIR=") +
+                                 sizeof(bowl_runtime_path)];
+static p8 bowl_user_assignment[sizeof("USER=") + 20];
+static p8 bowl_logname_assignment[sizeof("LOGNAME=") + 20];
+
+static fn bowl_session_assign(p8 address_to into, positive room,
+                              string_address name, string_address value)
+{
+        positive n = string_length(name);
+        positive v = string_length(value);
+
+        if (!room || n + v + 2 > room)
+        {
+                if (room)
+                        into[0] = end;
+                return;
+        }
+
+        memory_copy(into, name, n);
+        into[n] = '=';
+        memory_copy(into + n + 1, value, v + 1);
+}
+
+static fn bowl_session_fill(void)
+{
+        positive uid = (positive)system_call(syscall(geteuid));
+        p8 digits[24];
+        string_address user;
+
+        memory_copy(bowl_runtime_path, BOWL_RUNTIME_DIR,
+                    sizeof(BOWL_RUNTIME_DIR) - 1);
+        bowl_runtime_path[sizeof(BOWL_RUNTIME_DIR) - 1 +
+                          positive_into_string(bowl_runtime_path +
+                                                   sizeof(BOWL_RUNTIME_DIR) - 1,
+                                               uid)] = end;
+        bowl_session_assign(bowl_runtime_assignment,
+                            sizeof(bowl_runtime_assignment), "XDG_RUNTIME_DIR",
+                            bowl_runtime_path);
+
+        if (!uid)
+                user = (string_address) "root";
+        else
+        {
+                digits[positive_into_string(digits, uid)] = end;
+                user = digits;
+        }
+
+        bowl_session_assign(bowl_user_assignment, sizeof(bowl_user_assignment),
+                            "USER", user);
+        bowl_session_assign(bowl_logname_assignment,
+                            sizeof(bowl_logname_assignment), "LOGNAME", user);
+}
+
+static string_address bowl_session_runtime_assignment(void)
+{
+        bowl_session_fill();
+        return bowl_runtime_assignment;
+}
+
+static string_address bowl_session_user_assignment(void)
+{
+        bowl_session_fill();
+        return bowl_user_assignment;
+}
+
+static string_address bowl_session_logname_assignment(void)
+{
+        bowl_session_fill();
+        return bowl_logname_assignment;
+}
+
+static fn bowl_chmod_private(string_address path)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_DIRECTORY | O_CLOEXEC);
+
+        if (handle < 0)
+                return;
+
+        system_call_2(syscall(fchmod), (positive)handle, 0700);
+        system_close(handle);
+}
+
+static fn bowl_session_home_dirs(string_address home)
+{
+        static string_address names[] = {
+            "/.config", "/.cache", "/.local", "/.local/share", "/.local/state",
+            null};
+        p8 path[BOWL_PATH_LIMIT];
+        positive i;
+
+        if (!home || home[0] != '/')
+                return;
+
+        for (i = 0; names[i]; i++)
+                if (bowl_root_path(path, sizeof(path), home, names[i]))
+                        bowl_mkdir_parents(path);
+}
+
+static fn bowl_session_prepare(string_address home, string_address runtime)
+{
+        bowl_session_fill();
+
+        if (!runtime || runtime[0] != '/')
+                runtime = bowl_runtime_path;
+
+        bowl_mkdir_parents(runtime);
+        bowl_chmod_private(runtime);
+        bowl_mkdir("/tmp");
+        if (!home || home[0] != '/')
+                home = (string_address)BOWL_SESSION_HOME;
+        bowl_session_home_dirs(home);
+}
+
+static fn bowl_session_prepare_from(string_address address_to environment)
+{
+        bowl_session_prepare(bowl_env_value(environment, "HOME"),
+                             bowl_env_value(environment, "XDG_RUNTIME_DIR"));
+}
+
 static string_address address_to bowl_environment(
     string_address address_to inherited)
 {
@@ -852,6 +1008,16 @@ static string_address address_to bowl_environment(
         positive n = 0;
         b32 have_term = false;
         b32 have_terminfo = false;
+        b32 have_home = false;
+        b32 have_path = false;
+        b32 have_lang = false;
+        b32 have_user = false;
+        b32 have_logname = false;
+        b32 have_runtime = false;
+        b32 have_shell = false;
+        b32 have_tmpdir = false;
+
+        bowl_session_fill();
 
         if (inherited)
         {
@@ -859,14 +1025,34 @@ static string_address address_to bowl_environment(
                 {
                         if (bowl_env_named(inherited[n], "TERM"))
                                 have_term = true;
-                        if (bowl_env_named(inherited[n], "TERMINFO"))
+                        else if (bowl_env_named(inherited[n], "TERMINFO"))
                                 have_terminfo = true;
+                        else if (bowl_env_named(inherited[n], "HOME"))
+                                have_home = true;
+                        else if (bowl_env_named(inherited[n], "PATH"))
+                                have_path = true;
+                        else if (bowl_env_named(inherited[n], "LANG") ||
+                                 bowl_env_named(inherited[n], "LC_ALL"))
+                                have_lang = true;
+                        else if (bowl_env_named(inherited[n], "USER"))
+                                have_user = true;
+                        else if (bowl_env_named(inherited[n], "LOGNAME"))
+                                have_logname = true;
+                        else if (bowl_env_named(inherited[n],
+                                                "XDG_RUNTIME_DIR"))
+                                have_runtime = true;
+                        else if (bowl_env_named(inherited[n], "SHELL"))
+                                have_shell = true;
+                        else if (bowl_env_named(inherited[n], "TMPDIR"))
+                                have_tmpdir = true;
                 }
 
-                if (have_term && have_terminfo)
+                if (have_term && have_terminfo && have_home && have_path &&
+                    have_lang && have_user && have_logname && have_runtime &&
+                    have_shell && have_tmpdir)
                         return inherited;
 
-                if (n > 509)
+                if (n > 500)
                         return inherited;
 
                 for (positive i = 0; i < n; i++)
@@ -877,6 +1063,22 @@ static string_address address_to bowl_environment(
                 mixed[n++] = "TERM=" TERM_NAME;
         if (!have_terminfo)
                 mixed[n++] = "TERMINFO=" TERM_INFO_DIRECTORY;
+        if (!have_home)
+                mixed[n++] = "HOME=" BOWL_SESSION_HOME;
+        if (!have_path)
+                mixed[n++] = "PATH=" BOWL_DEFAULT_PATH;
+        if (!have_lang)
+                mixed[n++] = "LANG=C.UTF-8";
+        if (!have_user)
+                mixed[n++] = bowl_user_assignment;
+        if (!have_logname)
+                mixed[n++] = bowl_logname_assignment;
+        if (!have_runtime)
+                mixed[n++] = bowl_runtime_assignment;
+        if (!have_shell)
+                mixed[n++] = "SHELL=/bin/sh";
+        if (!have_tmpdir)
+                mixed[n++] = "TMPDIR=/tmp";
         mixed[n] = null;
         return mixed;
 }
@@ -1108,14 +1310,8 @@ static b32 bowl_launch(string_address root, string_address program,
                        bool isolated)
 {
         string_address native_arguments[] = {BOWL_NATIVE_SHELL, null};
-        string_address fallback_environment[] = {
-            "TERM=" TERM_NAME,
-            "TERMINFO=" TERM_INFO_DIRECTORY,
-            "PATH=" BOWL_DEFAULT_PATH,
-            "HOME=/root",
-            "LANG=C.UTF-8",
-            null};
-        string_address address_to environment = file_environment_all();
+        string_address address_to environment =
+            bowl_environment(file_environment_all());
         bipolar native_shell = -1;
         bipolar failed;
         bipolar child;
@@ -1125,9 +1321,6 @@ static b32 bowl_launch(string_address root, string_address program,
                 return bowl_usage();
 
         terminal_terminfo_install();
-
-        environment = environment ? bowl_environment(environment)
-                                  : fallback_environment;
 
         if (!program)
         {

@@ -186,7 +186,7 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
                 src/floodlight.c. Both are fixed rather than allocated because
                 the node is made here, before there is a devtmpfs to make it. */
         {"image_directories",
-         "sys proc dev tmp etc root bin sbin usr lib lib64 var opt bowls/bin"},
+         "sys proc dev tmp run etc root bin sbin usr lib lib64 var opt bowls/bin"},
         {"image_nodes",
          "dev/tty c 5 0"
          " dev/console c 5 1"

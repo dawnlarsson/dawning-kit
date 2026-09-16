@@ -2590,8 +2590,15 @@ static bool host_settings_install(host_install address_to install,
 #define HOST_EVENT_POLL_NS ((p64)20000000)
 #define HOST_EVENT_SHOWN 80
 
-static string_address host_event_environment[] = {
-    "TERM=dumb", "HOME=/root", "PATH=" BOWL_DEFAULT_PATH, "LANG=C.UTF-8", null};
+static string_address address_to host_event_environment(void)
+{
+        static string_address seed[] = {
+            "TERM=dumb", "HOME=/root", "PATH=" BOWL_DEFAULT_PATH, "LANG=C.UTF-8",
+            null};
+
+        bowl_session_prepare("/root", null);
+        return bowl_environment(seed);
+}
 
 static fn host_decimal(p8 address_to into, positive room, positive value)
 {
@@ -2778,7 +2785,7 @@ static fn host_events_boot(host_settings address_to settings)
 
                 host_write_text(status_path, "running\n");
                 output = system_open_at_mode(AT_FDCWD, path, FILE_WRITE | O_CLOEXEC, 0600);
-                child = host_event_start(text, output, host_event_environment);
+                child = host_event_start(text, output, host_event_environment());
                 if (output >= 0)
                         system_close(output);
 
@@ -2839,7 +2846,7 @@ fn host_exit_run(void)
 
                 //      The environment init's entries get, not the stopping
                 //      shell's: a bound poweroff has almost none.
-                child = host_event_start(text, -1, host_event_environment);
+                child = host_event_start(text, -1, host_event_environment());
                 if (child < 0)
                         continue;
 
@@ -2970,7 +2977,7 @@ static fn host_tty1_shell(void)
                         system_call_3(syscall(dup3), (positive)tty, at, 0);
 
                 system_call_1(syscall(chdir), (positive)(string_address)"/root");
-                (void)shell_exec_file(HOST_EVENT_SHELL, argv, 1, host_event_environment);
+                (void)shell_exec_file(HOST_EVENT_SHELL, argv, 1, host_event_environment());
                 system_call_1(syscall(exit), 127);
         }
 }

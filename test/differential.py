@@ -26629,6 +26629,190 @@ def harness_https_bench(argv):
         os.waitpid(server, 0)
 
 
+def harness_bowl_session(argv):
+    """Bowl fills the session Weston and GTK expect, without replacing one already set."""
+    root = HARNESS_ROOT
+    bowl = (root / "src/bowl/runtime.c").read_text()
+    start = bowl.index("static b32 bowl_env_named(")
+    stop = bowl.index("/*\n        Room on the filesystem that holds a bowl.")
+    source = r'''
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+typedef unsigned char p8;
+typedef unsigned long positive;
+typedef int b32;
+typedef int bipolar;
+typedef char *string_address;
+#define fn void
+#define address_to *
+#define null ((void *)0)
+#define end '\0'
+#define TERM_NAME "xterm-256color"
+#define TERM_INFO_DIRECTORY "/run/moonwater/terminfo"
+#define BOWL_DEFAULT_PATH "/bin:/usr/bin:/bowls/bin:/"
+#define BOWL_PATH_LIMIT 4096
+#define AT_FDCWD (-100)
+#define FILE_READ 0
+#define O_DIRECTORY 0200000
+#define O_CLOEXEC 02000000
+#define syscall(name) 0
+#define memory_copy memcpy
+static positive string_length(string_address text) {
+    return text ? (positive)strlen(text) : 0;
+}
+static positive positive_into_string(p8 *into, positive value) {
+    char digits[24];
+    unsigned used = 0;
+    do digits[used++] = (char)('0' + value % 10); while ((value /= 10) && used < sizeof(digits));
+    unsigned at = 0;
+    while (used) into[at++] = (p8)digits[--used];
+    return at;
+}
+static long mock_uid;
+static unsigned mkdirs, modes, failures, checks;
+static char made[32][BOWL_PATH_LIMIT];
+static bipolar system_call(long n) { (void)n; return (bipolar)mock_uid; }
+static bipolar system_call_2(long n, positive handle, positive mode) {
+    (void)n; (void)handle;
+    if (mode == 0700) modes++;
+    return 0;
+}
+static bipolar system_open_at(bipolar dir, string_address path, positive flags) {
+    (void)dir; (void)path; (void)flags;
+    return 3;
+}
+static void system_close(bipolar handle) { (void)handle; }
+static bipolar bowl_mkdir(string_address path) {
+    if (mkdirs < 32) snprintf(made[mkdirs], sizeof(made[0]), "%s", path);
+    mkdirs++;
+    return 0;
+}
+static bipolar bowl_mkdir_parents(string_address path) { return bowl_mkdir(path); }
+static bool bowl_root_path(p8 *into, positive room, string_address root, string_address path) {
+    if (!room) return false;
+    snprintf((char *)into, room, "%s%s", root, path);
+    return true;
+}
+static void check(int okay, const char *name) {
+    checks++;
+    if (!okay && ++failures <= 12) fprintf(stderr, "FAIL %s\n", name);
+}
+static int env_has(string_address *environment, const char *want) {
+    if (!environment) return 0;
+    for (; *environment; environment++) if (!strcmp(*environment, want)) return 1;
+    return 0;
+}
+static int env_named(string_address *environment, const char *name) {
+    size_t n = strlen(name);
+    if (!environment) return 0;
+    for (; *environment; environment++)
+        if (!strncmp(*environment, name, n) && (*environment)[n] == '=') return 1;
+    return 0;
+}
+'''
+    source += bowl[start:stop]
+    source += r'''
+int main(void) {
+    string_address *got;
+    mock_uid = 0;
+    got = bowl_environment(null);
+    check(env_has(got, "TERM=xterm-256color"), "empty env gets TERM");
+    check(env_has(got, "TERMINFO=/run/moonwater/terminfo"), "empty env gets TERMINFO");
+    check(env_has(got, "HOME=/root"), "empty env gets HOME");
+    check(env_has(got, "PATH=/bin:/usr/bin:/bowls/bin:/"), "empty env gets PATH");
+    check(env_has(got, "LANG=C.UTF-8"), "empty env gets LANG");
+    check(env_has(got, "USER=root"), "uid 0 is USER=root");
+    check(env_has(got, "LOGNAME=root"), "uid 0 is LOGNAME=root");
+    check(env_has(got, "XDG_RUNTIME_DIR=/run/user/0"), "uid 0 runtime dir");
+    check(env_has(got, "SHELL=/bin/sh"), "empty env gets SHELL");
+    check(env_has(got, "TMPDIR=/tmp"), "empty env gets TMPDIR");
+
+    mock_uid = 1000;
+    got = bowl_environment(null);
+    check(env_has(got, "USER=1000"), "a numeric uid is USER");
+    check(env_has(got, "LOGNAME=1000"), "a numeric uid is LOGNAME");
+    check(env_has(got, "XDG_RUNTIME_DIR=/run/user/1000"), "runtime dir follows the uid");
+
+    {
+        string_address have[] = {
+            "TERM=dumb", "TERMINFO=/x", "HOME=/home/a", "PATH=/bin", "LANG=C",
+            "USER=a", "LOGNAME=a", "XDG_RUNTIME_DIR=/tmp/rt", "SHELL=/bin/bash",
+            "TMPDIR=/var/tmp", null};
+        mock_uid = 0;
+        got = bowl_environment(have);
+        check(got == have, "a complete session is left alone");
+    }
+
+    {
+        string_address have[] = {"LC_ALL=C", "HOME=/home/a", null};
+        got = bowl_environment(have);
+        check(env_named(got, "LC_ALL") && !env_named(got, "LANG"),
+              "LC_ALL is a locale; LANG is not added");
+        check(env_has(got, "HOME=/home/a"), "an inherited HOME is kept");
+        check(env_has(got, "XDG_RUNTIME_DIR=/run/user/0"),
+              "a partial env still gets a runtime dir");
+        check(!env_has(got, "HOME=/root"), "the default HOME does not replace one");
+    }
+
+    mkdirs = modes = 0;
+    mock_uid = 0;
+    bowl_session_prepare(null, null);
+    {
+        unsigned at;
+        int runtime = 0, config = 0, tmp = 0;
+        for (at = 0; at < mkdirs && at < 32; at++) {
+            if (!strcmp(made[at], "/run/user/0")) runtime = 1;
+            if (!strcmp(made[at], "/root/.config")) config = 1;
+            if (!strcmp(made[at], "/tmp")) tmp = 1;
+        }
+        check(runtime && modes, "the default runtime dir is created 0700");
+        check(config, "HOME/.config is created");
+        check(tmp, "/tmp is created");
+    }
+
+    mkdirs = modes = 0;
+    bowl_session_prepare("/home/a", "/tmp/xdg-runtime");
+    {
+        unsigned at;
+        int runtime = 0, home = 0;
+        for (at = 0; at < mkdirs && at < 32; at++) {
+            if (!strcmp(made[at], "/tmp/xdg-runtime")) runtime = 1;
+            if (!strcmp(made[at], "/home/a/.local/share")) home = 1;
+        }
+        check(runtime && modes, "an inherited runtime dir is created 0700");
+        check(home, "an inherited HOME gets .local/share");
+    }
+
+    if (failures) return 1;
+    printf("bowl session: %u of %u\n", checks, checks);
+    return 0;
+}
+'''
+
+    del argv
+    with tempfile.TemporaryDirectory(prefix="moonwater-bowl-session-") as temporary:
+        work = Path(temporary)
+        source_path = work / "session.c"
+        source_path.write_text(source)
+        compiler = os.environ.get("CC", "gcc")
+        built = subprocess.run(
+            [compiler, "-O2", "-std=gnu11", "-w", str(source_path), "-o", str(work / "session")],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if built.returncode:
+            sys.stderr.write(built.stdout)
+            return 1
+        ran = subprocess.run([str(work / "session")], text=True, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+        print(ran.stdout, end="", flush=True)
+        if ran.returncode:
+            sys.stderr.write(ran.stdout)
+            return 1
+        write_tally("bowl-session", *re.search(r"(\d+) of (\d+)", ran.stdout).groups())
+        return 0
+
+
 HARNESS_CHECKS = {
     "https_bench": harness_https_bench,
     "compression": harness_compression,
@@ -26648,6 +26832,7 @@ HARNESS_CHECKS = {
     "canvas_view": harness_canvas_view,
     "floodlight": harness_floodlight,
     "image_nodes": harness_image_nodes,
+    "bowl_session": harness_bowl_session,
     "riscv_builtins": harness_riscv_builtins,
 }
 

@@ -294,7 +294,7 @@ static b32 screen_term()
         if (child == 0)
         {
                 string_address argv[] = {SHELL, null};
-                string_address envp[] = {
+                string_address seed[] = {
                     "TERM=" TERM_NAME,
                     "TERMINFO=" TERM_INFO_DIRECTORY,
                     "HOME=/root",
@@ -312,7 +312,9 @@ static b32 screen_term()
                 //      may have a question for whoever is at this window.
                 host_terminal_opening();
 
-                (void)shell_exec_file((string_address)SHELL, argv, 1, envp);
+                bowl_session_prepare("/root", null);
+                (void)shell_exec_file((string_address)SHELL, argv, 1,
+                                      bowl_environment(seed));
                 system_call_1(syscall(exit), 127);
         }
 

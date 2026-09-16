@@ -2331,7 +2331,7 @@ fn shell_env_init(string_address address_to process_environment)
         while (process_environment && process_environment[inherited])
                 inherited++;
 
-        if (!env_table_room(inherited + 4))
+        if (!env_table_room(inherited + 16))
                 return;
 
         // Production enters once. Keeping the routine restartable makes the
@@ -2349,12 +2349,12 @@ fn shell_env_init(string_address address_to process_environment)
         env_index_tombstones = 0;
         env_index_touch();
 
-        // The inherited entries and four defaults are the upper bound.  One
-        // allocation and clear now serves variable lookup and export state.
-        // Allocation failure retains the existing linear fallback.
+        // The inherited entries and the session defaults are the upper bound.
+        // One allocation and clear now serves variable lookup and export
+        // state. Allocation failure retains the existing linear fallback.
         name_index_prepare(address_of env_index, address_of env_index_room,
                            address_of env_index_slots,
-                           address_of env_index_tombstones, inherited + 4);
+                           address_of env_index_tombstones, inherited + 16);
 
         // A shell launched by make, system(), or another shell starts with the
         // environment it was given.  Initial-stack strings are immutable and
@@ -2378,24 +2378,32 @@ fn shell_env_init(string_address address_to process_environment)
                 env_borrow_assignment(process_environment[at], true);
         }
 
+        bowl_session_prepare(env_get("HOME"), env_get("XDG_RUNTIME_DIR"));
+
         // Programs live at the root of the image, so it is on the path.
         // IFS is a variable and not only a splitting policy: a script may
         // read it, save it and put it back, and under set -u one that is
         // absent rather than defaulted is an error where every other shell
-        // hands over the three bytes.
+        // hands over the three bytes. XDG_RUNTIME_DIR is the directory
+        // Weston, GTK, Qt and PipeWire refuse to start without.
         string_address defaults[] = {"PATH=" BOWL_DEFAULT_PATH,
                                      "SHELL=/bin/sh",
                                      "HOME=/root",
                                      "LANG=C.UTF-8",
                                      "IFS= \t\n",
-                                     "OPTIND=1", null};
+                                     "OPTIND=1",
+                                     "TMPDIR=/tmp",
+                                     bowl_session_user_assignment(),
+                                     bowl_session_logname_assignment(),
+                                     bowl_session_runtime_assignment(),
+                                     null};
 
         positive i = 0;
 
         while (defaults[i])
         {
                 string_address mark = string_first_of(defaults[i], '=');
-                p8 name[16];
+                p8 name[24];
 
                 string_copy_max_end(name, defaults[i], (positive)(mark - defaults[i]));
 
