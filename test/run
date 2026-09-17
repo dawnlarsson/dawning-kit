@@ -4113,14 +4113,32 @@ lane_files()
                 "$work/cp-mode-regression/link-target" \
                 > /dev/null 2> "$work/cp-mode-regression/link.err"
         cp_link_status=$?
-        if [ "$cp_link_status:$(readlink "$work/cp-mode-regression/link-target" 2>/dev/null):$(cat "$work/cp-mode-regression/victim")" = \
-                '1:victim:symlink victim' ]; then
-                tally cp-final-symlink-refused 1 1
+        if [ "$cp_link_status:$(test -L "$work/cp-mode-regression/link-target"; echo $?):$(cat "$work/cp-mode-regression/link-target" 2>/dev/null):$(cat "$work/cp-mode-regression/victim")" = \
+                '0:1:copy source:symlink victim' ]; then
+                tally cp-final-symlink-replaced 1 1
         else
-                tally cp-final-symlink-refused 0 1
-                note "cp final symlink returned $cp_link_status with victim [$(cat "$work/cp-mode-regression/victim" 2>/dev/null)]"
+                tally cp-final-symlink-replaced 0 1
+                note "cp live dest symlink returned $cp_link_status with victim [$(cat "$work/cp-mode-regression/victim" 2>/dev/null)]"
                 files_failed=1
         fi
+
+        ln -sf missing "$work/cp-mode-regression/dangling"
+        "$farm/cp" "$work/cp-mode-regression/link-source" \
+                "$work/cp-mode-regression/dangling" \
+                > /dev/null 2> "$work/cp-mode-regression/dangling.err"
+        cp_dangling_status=$?
+        if [ "$cp_dangling_status:$(readlink "$work/cp-mode-regression/dangling" 2>/dev/null)" = \
+                '1:missing' ] &&
+                grep -q 'dangling symlink' "$work/cp-mode-regression/dangling.err"; then
+                tally cp-dangling-symlink-refused 1 1
+        else
+                tally cp-dangling-symlink-refused 0 1
+                note "cp dangling dest symlink returned $cp_dangling_status"
+                files_failed=1
+        fi
+
+        printf 'symlink victim\n' > "$work/cp-mode-regression/victim"
+        ln -sf victim "$work/cp-mode-regression/link-target"
 
         "$farm/cp" -f "$work/cp-mode-regression/link-source" \
                 "$work/cp-mode-regression/link-target"

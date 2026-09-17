@@ -10656,7 +10656,9 @@ static bool find_exec_once(find_node address_to node)
         }
 
         if ((node->mode == 'o' || node->mode == 'O') &&
-            !find_exec_asked(node, subject))
+            !find_exec_asked(node, node->mode == 'O'
+                                       ? file_last_component(subject)
+                                       : subject))
         {
                 if (directory >= 0)
                         system_close(directory);
@@ -15727,10 +15729,51 @@ static b32 file_chgrp()
 // mv, ln and install and defined where the copying is.
 static p8 file_backup_kind;
 static string_address file_backup_suffix;
+static p8 file_backup_shown[FILE_PATH_MAX];
+static bool file_backup_did;
 static bool file_backup_made_at(string_address program, bipolar directory,
                                 string_address destination,
                                 string_address shown,
                                 file_facts address_to expected);
+
+static fn file_backup_told(string_address source, string_address destination,
+                           string_address head, string_address mid)
+{
+        string_format(log, "%s%w%s%w", head, writer_terminal_quoted_name, source,
+                      mid, writer_terminal_quoted_name, destination);
+        if (file_backup_did)
+        {
+                string_format(log, "' (backup: '%w')\n",
+                              writer_terminal_quoted_name, file_backup_shown);
+                file_backup_did = false;
+        }
+        else
+                string_format(log, "'\n");
+}
+
+static bool file_overwrite_kinds_ok(string_address program,
+                                   string_address source,
+                                   string_address destination,
+                                   positive source_mode, positive dest_mode)
+{
+        bool src_dir = (source_mode & MODE_FORMAT) == MODE_DIRECTORY;
+        bool dst_dir = (dest_mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        if (src_dir == dst_dir)
+                return true;
+        if (src_dir)
+                string_format(log_error,
+                              "%s: cannot overwrite non-directory '%w' with directory '%w'\n",
+                              program, writer_terminal_quoted_name, destination,
+                              writer_terminal_quoted_name, source);
+        else
+                string_format(log_error,
+                              "%s: cannot overwrite directory '%w' with non-directory '%w'\n",
+                              program, writer_terminal_quoted_name, destination,
+                              writer_terminal_quoted_name, source);
+        return false;
+}
+
 static bool file_backup_taken(file_taking address_to taking, string_address program);
 static bool ln_option_seen(p8 letter, string_address value);
 
@@ -18264,6 +18307,12 @@ static b32 file_mknod()
                                address_of mode, address_of given_mode))
                 return 1;
 
+        /* GNU compiles -m before it counts names, so mknod -m x with
+           nothing to make is an invalid mode, not a missing operand. */
+        if (!file_node_mode_taken((string_address) "mknod", address_of taking,
+                                  address_of mode, given_mode))
+                return 1;
+
         /*
                 The operand count, counted the way the reference counts it:
                 the name, the type, and for everything but a pipe a major and
@@ -18312,10 +18361,6 @@ static b32 file_mknod()
         else if (file_operand_count > 4)
                 return string_report(log_error, 1, "mknod: extra operand '%s'\n",
                                      file_operand_at(4));
-
-        if (!file_node_mode_taken((string_address) "mknod", address_of taking,
-                                  address_of mode, given_mode))
-                return 1;
 
         string_address path = file_operand_at(0);
         p8 type = string_get(file_operand_at(1));
@@ -23504,6 +23549,7 @@ static bool file_backup_made_at(string_address program, bipolar directory,
         positive length = string_length(destination);
         file_facts facts;
 
+        file_backup_did = false;
         if (!file_backup_kind)
                 return true;
         if (expected)
@@ -23593,6 +23639,20 @@ static bool file_backup_made_at(string_address program, bipolar directory,
                 string_format(log_error, "%s: cannot backup '%w", program,
                               writer_terminal_quoted_name, shown);
                 return string_report(log_error, false, "': %s\n", file_reason(moved));
+        }
+
+        {
+                string_address leaf = file_last_component(shown);
+                positive prefix = (positive)(leaf - shown);
+                positive kept_len = string_length(kept);
+
+                if (prefix + kept_len < FILE_PATH_MAX)
+                {
+                        memory_copy_apart(file_backup_shown, shown, prefix);
+                        memory_copy_apart_end(file_backup_shown + prefix, kept,
+                                              kept_len);
+                        file_backup_did = true;
+                }
         }
 
         return true;
@@ -23943,9 +24003,16 @@ static bool cp_linked(bipolar source_directory, string_address source,
                 system_close(source_handle);
         if (made_handle < 0)
         {
-                return string_report(log_error, false, "cp: cannot create link '%w': %s\n",
-                              writer_terminal_quoted_name, destination_shown,
-                              file_reason(made_handle));
+                return string_report(
+                    log_error, false,
+                    cp_symbolic
+                        ? (string_address)
+                              "cp: cannot create symbolic link '%w' to '%w': %s\n"
+                        : (string_address)
+                              "cp: cannot create hard link '%w' to '%w': %s\n",
+                    writer_terminal_quoted_name, destination_shown,
+                    writer_terminal_quoted_name, source_shown,
+                    file_reason(made_handle));
         }
 
         file_facts address_to approved =
@@ -23957,13 +24024,22 @@ static bool cp_linked(bipolar source_directory, string_address source,
             destination, made_handle, 0, no_clobber, approved, 0);
         if (done < 0)
         {
-                return string_report(log_error, false, "cp: cannot create link '%w': %s\n",
-                              writer_terminal_quoted_name, destination_shown, file_reason(done));
+                return string_report(
+                    log_error, false,
+                    cp_symbolic
+                        ? (string_address)
+                              "cp: cannot create symbolic link '%w' to '%w': %s\n"
+                        : (string_address)
+                              "cp: cannot create hard link '%w' to '%w': %s\n",
+                    writer_terminal_quoted_name, destination_shown,
+                    writer_terminal_quoted_name, source_shown,
+                    file_reason(done));
         }
 
         if (cp_loud)
-                string_format(log, "'%w' -> '%w'\n", writer_terminal_quoted_name, source_shown,
-                              writer_terminal_quoted_name, destination_shown);
+                file_backup_told(source_shown, destination_shown,
+                                 (string_address) "'",
+                                 (string_address) "' -> '");
 
         return true;
 }
@@ -25243,14 +25319,18 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                                       writer_terminal_quoted_name, destination_shown);
         }
 
-        /* A final symlink is authority chosen by the directory writer, not
-           by the cp caller. Never follow it into an existing victim. An
-           explicit replacement request replaces the link itself through the
-           private staging transaction. */
+        if (!moving && destination_exists && !file_backup_kind &&
+            !file_overwrite_kinds_ok((string_address) "cp", source_shown,
+                                     destination_shown, kind, there.mode))
+                return false;
+
+        /* GNU copy.c refuses a dangling destination symlink unless
+           POSIXLY_CORRECT; a live one is the thing written through. */
         if (!moving && destination_is_link && !cp_force && !cp_replace &&
-            kind != MODE_DIRECTORY)
+            kind != MODE_DIRECTORY && !destination_exists)
         {
-                return string_report(log_error, false, "cp: not writing through symlink '%w'\n",
+                return string_report(log_error, false,
+                                     "cp: not writing through dangling symlink '%w'\n",
                               writer_terminal_quoted_name, destination_shown);
         }
 
@@ -25599,8 +25679,9 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         };
 
         if (!moving && cp_loud)
-                string_format(log, "'%w' -> '%w'\n", writer_terminal_quoted_name, source_shown,
-                              writer_terminal_quoted_name, destination_shown);
+                file_backup_told(source_shown, destination_shown,
+                                 (string_address) "'",
+                                 (string_address) "' -> '");
 
         bool complete = true;
         positive skipped = 0;
@@ -25756,8 +25837,9 @@ copied_without_metadata:
         if (!moving)
         {
                 if (cp_loud)
-                        string_format(log, "'%w' -> '%w'\n", writer_terminal_quoted_name,
-                                      source_shown, writer_terminal_quoted_name, destination_shown);
+                        file_backup_told(source_shown, destination_shown,
+                                         (string_address) "'",
+                                         (string_address) "' -> '");
                 return true;
         }
 
@@ -26207,6 +26289,47 @@ static b32 file_cp()
                 return string_report(log_error, 1, "Try 'cp --help' for more information.\n");
         }
 
+        {
+                string_address sparse_opt = file_option_value(address_of taking, 'z');
+                string_address reflink_opt = file_option_value(address_of taking, 'k');
+                p8 sparse = 'a';
+                p8 reflink = 0;
+
+                if (sparse_opt && string_get(sparse_opt))
+                {
+                        string_address last = string_last_of(sparse_opt, ',');
+
+                        last = last ? last + 1 : sparse_opt;
+                        if (string_equals(last, (string_address) "never"))
+                                sparse = 'n';
+                        else if (string_equals(last, (string_address) "always"))
+                                sparse = 'A';
+                }
+                if (taking.flags & FILE_FLAG('k'))
+                {
+                        if (!reflink_opt || !string_get(reflink_opt))
+                                reflink = 'A';
+                        else
+                        {
+                                string_address last = string_last_of(reflink_opt, ',');
+
+                                last = last ? last + 1 : reflink_opt;
+                                if (string_equals(last, (string_address) "always"))
+                                        reflink = 'A';
+                                else if (string_equals(last, (string_address) "never"))
+                                        reflink = 'n';
+                                else
+                                        reflink = 'a';
+                        }
+                }
+                if (reflink == 'A' && sparse != 'a')
+                {
+                        log_error("cp: --reflink can be used only with --sparse=auto\n", 0);
+                        return string_report(log_error, 1,
+                                             "Try 'cp --help' for more information.\n");
+                }
+        }
+
         cp_attributes_only = (taking.flags & FILE_FLAG('A')) != 0;
         cp_replace = (taking.flags & FILE_FLAG('D')) != 0;
 
@@ -26239,6 +26362,15 @@ static b32 file_cp()
                 cp_dereference = 0;
 
         string_address into = file_option_value(address_of taking, 't');
+
+        if ((flags & FILE_FLAG('e')) != 0 &&
+            ((flags & FILE_FLAG('T')) != 0 ||
+             (!into && count - first == 2 &&
+              !file_is_directory_through(program_argument((b32)(count - 1))))))
+        {
+                log_error("cp: with --parents, the destination must be a directory\n", 0);
+                return string_report(log_error, 1, "Try 'cp --help' for more information.\n");
+        }
 
         if (!file_source_destination((string_address) "cp", first, count, into,
                                      (flags & FILE_FLAG('T')) != 0, cp_pair))
@@ -26462,11 +26594,18 @@ static bool install_unchanged(bipolar source, file_facts address_to from,
         p64 remain;
 
         if ((to->mode & MODE_FORMAT) != MODE_FILE || from->size != to->size ||
-            (to->mode & 07777) != (install_mode & 07777))
+            (to->mode & 07777) != (install_mode & 07777) ||
+            (install_mode & ~0777))
                 return false;
         if (install_owner >= 0 && to->owner != (positive)install_owner)
                 return false;
         if (install_group >= 0 && to->group != (positive)install_group)
+                return false;
+        if (install_owner < 0 &&
+            to->owner != (positive)system_call(syscall(getuid)))
+                return false;
+        if (install_group < 0 &&
+            to->group != (positive)system_call(syscall(getgid)))
                 return false;
 
         dest = file_open_same(parent, leaf, to, FILE_READ);
@@ -26509,9 +26648,15 @@ static fn install_pair(string_address source, string_address destination)
         {
                 if (source_directory >= 0)
                         system_close(source_directory);
-                string_format(log_error, "install: cannot stat '%w': %s\n",
-                              writer_terminal_quoted_name, source,
-                              looked < 0 ? file_reason(looked) : (string_address)"Not a regular file");
+                if (looked >= 0 &&
+                    (from.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                        string_format(log_error, "install: omitting directory '%w'\n",
+                                      writer_terminal_quoted_name, source);
+                else
+                        string_format(log_error, "install: cannot stat '%w': %s\n",
+                                      writer_terminal_quoted_name, source,
+                                      looked < 0 ? file_reason(looked)
+                                                 : (string_address) "Not a regular file");
                 install_status = 1;
                 return;
         }
@@ -26522,7 +26667,7 @@ static fn install_pair(string_address source, string_address destination)
         system_close(source_directory);
         if (source_handle < 0)
         {
-                string_format(log_error, "install: cannot open '%w': %s\n",
+                string_format(log_error, "install: cannot open '%w' for reading: %s\n",
                               writer_terminal_quoted_name, source, file_reason(source_handle));
                 install_status = 1;
                 return;
@@ -26542,7 +26687,7 @@ static fn install_pair(string_address source, string_address destination)
                 if (!install_parents)
                         string_format(
                             log_error,
-                            "install: cannot open destination parent '%w': %s\n",
+                            "install: cannot create regular file '%w': %s\n",
                             writer_terminal_quoted_name, destination,
                             file_reason(destination_directory));
                 install_status = 1;
@@ -26599,6 +26744,10 @@ static fn install_pair(string_address source, string_address destination)
                 return;
         }
 
+        if (install_loud && destination_exists && !file_backup_kind)
+                string_format(log, "removed '%w'\n", writer_terminal_quoted_name,
+                              destination);
+
         if (!file_backup_made_at((string_address)"install",
                                  destination_directory, destination_leaf,
                                  destination,
@@ -26648,8 +26797,8 @@ static fn install_pair(string_address source, string_address destination)
         }
 
         if (install_loud)
-                string_format(log, "'%w' -> '%w'\n", writer_terminal_quoted_name, source,
-                              writer_terminal_quoted_name, destination);
+                file_backup_told(source, destination, (string_address) "'",
+                                 (string_address) "' -> '");
 }
 
 static fn install_directory_told(string_address path)
@@ -26663,9 +26812,6 @@ static bool install_option_seen(p8 letter, string_address value)
         if (!file_backup_seen((string_address) "install", letter, value))
                 return false;
         if (!file_into_option_seen((string_address) "install", letter, value))
-                return false;
-        if (letter == 'm' && value &&
-            !file_mode_of(value, 0, false, address_of install_mode))
                 return false;
         if (letter == 'o' && value &&
             !install_identity(value, false, address_of install_owner))
@@ -26707,8 +26853,7 @@ static b32 file_install()
         positive flags = taking.flags;
         bool directories = (flags & FILE_FLAG('d')) != 0;
 
-        if ((mode && !file_mode_of(mode, 0, false, address_of install_mode)) ||
-            (owner && !install_identity(owner, false, address_of install_owner)) ||
+        if ((owner && !install_identity(owner, false, address_of install_owner)) ||
             (group && !install_identity(group, true, address_of install_group)))
                 return 1;
 
@@ -26719,10 +26864,24 @@ static b32 file_install()
 
         if (directories)
         {
-                if (into || (flags & (FILE_FLAG('D') | FILE_FLAG('T'))))
-                        return string_report(log_error, 1, "%s: missing operand\n", (string_address) "install");
+                if (into)
+                        return string_report(
+                            log_error, 1,
+                            "install: target directory not allowed when installing a directory\n");
                 if (taking.first >= count)
-                        return string_report(log_error, 1, "%s: missing operand\n", (string_address) "install");
+                        return string_report(log_error, 1,
+                                             "install: missing file operand\n");
+                if ((flags & FILE_FLAG('T')) && count - taking.first > 2)
+                        return string_report(
+                            log_error, 1, "install: extra operand '%w'\n",
+                            writer_terminal_quoted_name,
+                            program_argument((b32)(taking.first + 2)));
+                if (mode &&
+                    !file_mode_of(mode, 0, true, address_of install_mode))
+                        return string_report(log_error, 1,
+                                             "install: invalid mode '%w'\n",
+                                             writer_terminal_quoted_name,
+                                             mode);
 
                 for (positive at = taking.first; at < count; at++)
                 {
@@ -26778,8 +26937,47 @@ static b32 file_install()
                 return install_status;
         }
 
-        if (install_parents && (into || count - taking.first != 2))
-                return string_report(log_error, 1, "install: -D requires one source and one destination\n");
+        if (taking.first >= count)
+                return string_report(log_error, 1, "install: missing file operand\n");
+        if (!into && taking.first + 1 >= count)
+                return string_report(
+                    log_error, 1,
+                    "install: missing destination file operand after '%w'\n",
+                    writer_terminal_quoted_name,
+                    program_argument((b32)taking.first));
+        if (mode && !file_mode_of(mode, 0, false, address_of install_mode))
+                return string_report(log_error, 1, "install: invalid mode '%w'\n",
+                                     writer_terminal_quoted_name, mode);
+        if (install_compare && (install_mode & ~0777))
+                log_error("install: the --compare (-C) option is ignored when you specify a mode with non-permission bits\n",
+                          0);
+        if (install_parents && into)
+        {
+                file_facts into_facts;
+                bipolar into_looked =
+                    file_look_code(AT_FDCWD, into, 0, address_of into_facts);
+
+                if (into_looked == -ERROR_NO_ENTRY)
+                {
+                        p8 failing[FILE_PATH_MAX];
+                        bipolar made = file_make_directories_open(
+                            into, 0755, 0755, true, true,
+                            install_loud ? install_directory_told : null,
+                            failing, null, null, null, 0, false);
+
+                        if (made < 0)
+                        {
+                                string_format(
+                                    log_error,
+                                    "install: cannot create directory '%w': %s\n",
+                                    writer_terminal_quoted_name,
+                                    string_get(failing) ? failing : into,
+                                    file_reason(made));
+                                return 1;
+                        }
+                        system_close(made);
+                }
+        }
 
         if (!file_source_destination((string_address) "install", taking.first,
                                      count, into,
@@ -26856,6 +27054,13 @@ static fn mv_one(string_address source, string_address destination)
                 string_format(log_error, "mv: '%w' and '%w' are the same file\n",
                               writer_terminal_quoted_name, source, writer_terminal_quoted_name,
                               destination);
+                mv_status = 1;
+                goto finished;
+        }
+        if (destination_exists && !mv_exchange && !file_backup_kind &&
+            !file_overwrite_kinds_ok((string_address) "mv", source, destination,
+                                     from.mode, to.mode))
+        {
                 mv_status = 1;
                 goto finished;
         }
@@ -26967,11 +27172,12 @@ static fn mv_one(string_address source, string_address destination)
         if (done == 0)
         {
                 if (mv_loud)
-                        string_format(log, "%s%w%s%w'\n",
-                                      mv_exchange ? (string_address)"exchanged '" : (string_address)"renamed '",
-                                      writer_terminal_quoted_name, source,
-                                      mv_exchange ? (string_address)"' <-> '" : (string_address)"' -> '",
-                                      writer_terminal_quoted_name, destination);
+                        file_backup_told(
+                            source, destination,
+                            mv_exchange ? (string_address) "exchanged '"
+                                        : (string_address) "renamed '",
+                            mv_exchange ? (string_address) "' <-> '"
+                                        : (string_address) "' -> '");
 
                 goto finished;
         }
@@ -27037,9 +27243,9 @@ static fn mv_one(string_address source, string_address destination)
                 if (copied)
                 {
                         if (mv_loud)
-                                string_format(log, "renamed '%w' -> '%w'\n",
-                                              writer_terminal_quoted_name, source,
-                                              writer_terminal_quoted_name, destination);
+                                file_backup_told(source, destination,
+                                                 (string_address) "renamed '",
+                                                 (string_address) "' -> '");
 
                         goto finished;
                 }
