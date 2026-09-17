@@ -1,8 +1,10 @@
 #
 # Gaming and Performance
 #
-CONFIG_HZ_1000=y
-CONFIG_HZ=1000
+# Tick rate lives in the latency profile (250 Hz, NO_HZ_IDLE). Pinning
+# 1000 Hz here used to win last and keep every busy core interrupting
+# a thousand times a second.
+#
 CONFIG_PREEMPT=y
 CONFIG_PREEMPT_DYNAMIC=n
 CONFIG_X86_INTEL_TSX_MODE_ON=y

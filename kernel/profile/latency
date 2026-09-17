@@ -2,10 +2,11 @@
 # Latency
 #
 # Everything here is chosen for the time between an event and a response, not
-# for throughput, power or size. It is composed into every image, because the
-# whole point of a compositor living in the kernel is that the path from a
-# mouse moving to the screen changing is short, and a kernel ticking at 250 Hz
-# with no high resolution timers throws that away before any of our code runs.
+# for throughput or size. It is composed into every image, because the whole
+# point of a compositor living in the kernel is that the path from a mouse
+# moving to the screen changing is short. HIGH_RES_TIMERS is the setting that
+# actually buys that; a 1000 Hz tick does not, and it stops the machine from
+# sitting idle.
 #
 # Measured, not assumed: the numbers each of these is worth are in the input
 # latency research, and the ones that could be measured here were.
@@ -24,16 +25,17 @@ CONFIG_HIGH_RES_TIMERS=y
 #
 # The tick itself.
 #
-# 1000 Hz, so the coarsest scheduling decision is 1 ms rather than 4. And
-# dynticks, so an idle core stops being interrupted a thousand times a second
-# for nothing -- HZ_PERIODIC was on, which is the opposite of what a desktop
-# wants. NO_HZ_FULL is deliberately not the choice: it stops the tick on busy
-# cores too, and pays for it with IPIs and accounting work that hurt exactly
-# the interactive case this is for.
+# 250 Hz is the kernel's default. HIGH_RES_TIMERS already give 1 ns sleeps
+# and scheduler deadlines, so 1000 Hz does not make the compositor finer --
+# it just interrupts a busy core four times as often. NO_HZ_IDLE stops the
+# tick on a core that has gone idle, which is what lets the machine sit
+# still. NO_HZ_FULL is deliberately not the choice: it stops the tick on
+# busy cores too, and pays for it with IPIs and accounting work that hurt
+# exactly the interactive case this is for.
 #
-CONFIG_HZ_1000=y
-CONFIG_HZ=1000
-CONFIG_HZ_250=n
+CONFIG_HZ_250=y
+CONFIG_HZ=250
+CONFIG_HZ_1000=n
 CONFIG_HZ_PERIODIC=n
 CONFIG_NO_HZ_IDLE=y
 CONFIG_NO_HZ_FULL=n
@@ -62,9 +64,10 @@ CONFIG_PREEMPT_DYNAMIC=n
 #
 # The ladder governor was the only one built, and it is meant for systems with
 # a periodic tick -- it steps down one C state at a time and cannot look at
-# what the workload actually does. TEO predicts the next wakeup from history,
-# which for a machine being poked by a mouse means staying out of the deep C
-# states whose exit latency is the cost.
+# what the workload actually does. TEO predicts the next wakeup from history:
+# a core that is being poked stays in a shallow C state, and a core that has
+# gone quiet is allowed into the deep ones. Pinning max_cstate=1 on the
+# command line used to forbid that; it does not any more.
 #
 CONFIG_CPU_IDLE_GOV_TEO=y
 CONFIG_CPU_IDLE_GOV_LADDER=n
@@ -73,13 +76,18 @@ CONFIG_CPU_IDLE_GOV_MENU=n
 #
 # Frequency.
 #
-# schedutil ramps the clock from scheduler utilisation, which means a burst of
-# work after an idle period runs at low clock until it has been going long
-# enough to be noticed. That ramp is milliseconds, and every interactive event
-# is exactly that shape. The performance governor does not ramp.
+# The range is the hardware's own, lowest P-state through turbo, not a
+# pinned top frequency. On Intel and AMD that is the pstate driver in
+# active mode (HWP / EPP): the package picks the P-state, so a burst
+# climbs in microseconds rather than waiting on schedutil's software
+# ramp, which is what latency-critical work needs. SCHEDUTIL as the
+# Kconfig default would put intel_pstate in passive mode; the command
+# line in profile/gpu keeps it active. schedutil remains the default
+# for ARM and for ACPI cpufreq (older AMD), and uclamp is how one task
+# asks for the top of the range without holding every core there.
 #
-CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
-CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=n
+CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=n
 
 #
 # Memory.
@@ -152,18 +160,14 @@ CONFIG_DEFAULT_CUBIC=n
 #
 # PCIe link power.
 #
-# ASPM lets a PCIe link drop to a low power state when it is idle, and the
-# link then has to be woken before the next transaction crosses it. That wake
-# is paid by whatever arrives first after a pause -- which for a cursor is
-# exactly the movement after the user stopped to read something. It is a tail
-# cost, not a mean one, and this is a machine plugged into a wall.
+# ASPM lets a PCIe link drop to a low power state when it is idle. Forcing
+# PERFORMANCE holds every link at L0 for the whole uptime, which is the
+# same "always on" decision as the performance CPU governor. DEFAULT leaves
+# whatever the firmware chose, which is what a desktop or a laptop already
+# ships with.
 #
-# PCIEASPM_DEFAULT, which was the setting, does not mean off: it means leave
-# whatever the firmware chose. So on a board whose BIOS enables ASPM this
-# changes something and on one whose BIOS disables it this changes nothing.
-#
-CONFIG_PCIEASPM_PERFORMANCE=y
-CONFIG_PCIEASPM_DEFAULT=n
+CONFIG_PCIEASPM_DEFAULT=y
+CONFIG_PCIEASPM_PERFORMANCE=n
 
 #
 # Scheduler.

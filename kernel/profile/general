@@ -71,8 +71,18 @@ CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
 CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
 CONFIG_X86_INTEL_PSTATE=y
 CONFIG_X86_AMD_PSTATE=y
+# Zen 2+ uses amd-pstate; Bulldozer through Zen 1 still need ACPI _PSS.
+CONFIG_X86_ACPI_CPUFREQ=y
 CONFIG_CPU_IDLE=y
 CONFIG_INTEL_IDLE=y
+# I/O and IRQ time is not busy time. Without this, schedutil holds the
+# clock up because a core looks utilised while it was only taking
+# interrupts.
+CONFIG_IRQ_TIME_ACCOUNTING=y
+# A latency-critical task can raise its util clamp and get the top of
+# the P-state range without pinning every other core there.
+CONFIG_UCLAMP_TASK=y
+CONFIG_UCLAMP_TASK_GROUP=y
 
 #
 # Storage: AHCI for SATA, NVMe for anything since about 2014.
