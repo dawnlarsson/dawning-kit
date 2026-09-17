@@ -5395,17 +5395,42 @@ static bool file_source_destination(string_address program, positive first,
                 return true;
         }
 
-        //      The reference stats the target and quotes what the kernel
-        //      said about it: not there is one answer and there but not a
-        //      directory is another.
-        if (!file_is_directory_through(last))
-        {
-                file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, last, 0, address_of facts);
+        //      One look: GNU cp/mv name a -t directory as "target directory"
+        //      with the kernel reason, install uses failed-to-access / not-a-
+        //      directory, and a trailing operand stays "target".
+        file_facts target_facts;
+        bipolar target_looked = file_look_code(AT_FDCWD, last, 0,
+                                               address_of target_facts);
 
-                return string_report(log_error, false, "%s: target '%w': %s\n", program,
-                              writer_terminal_quoted_name, last,
-                              file_reason(looked < 0 ? looked : -ERROR_NOT_DIRECTORY));
+        if (target_looked < 0 ||
+            (target_facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+        {
+                bipolar why = target_looked < 0 ? target_looked
+                                                : -ERROR_NOT_DIRECTORY;
+
+                if (into && string_equals(program, (string_address) "install"))
+                {
+                        if (target_looked < 0)
+                                return string_report(
+                                    log_error, false,
+                                    "%s: failed to access '%w': %s\n", program,
+                                    writer_terminal_quoted_name, last,
+                                    file_reason(target_looked));
+                        return string_report(
+                            log_error, false,
+                            "%s: target '%w' is not a directory\n", program,
+                            writer_terminal_quoted_name, last);
+                }
+
+                if (into)
+                        return string_report(
+                            log_error, false,
+                            "%s: target directory '%w': %s\n", program,
+                            writer_terminal_quoted_name, last, file_reason(why));
+
+                return string_report(log_error, false, "%s: target '%w': %s\n",
+                                     program, writer_terminal_quoted_name, last,
+                                     file_reason(why));
         }
 
         bool complete = true;
@@ -9297,8 +9322,8 @@ static string_address find_value(string_address word)
 {
         if (find_at >= find_count)
         {
-                string_format(log_error, "find: missing argument to %w\n", writer_terminal_name,
-                              word);
+                string_format(log_error, "find: missing argument to `%w'\n",
+                              writer_terminal_quoted_name, word);
                 find_bad = true;
                 return null;
         }
@@ -9623,7 +9648,7 @@ static b32 find_parse_primary()
                 //      findutils quotes the predicate the way it quotes
                 //      everything else, with a backquote in front and an
                 //      apostrophe behind.
-                string_format(log_error, "find: unknown predicate '%w'\n",
+                string_format(log_error, "find: unknown predicate `%w'\n",
                               writer_terminal_quoted_name, word);
                 find_bad = true;
                 return -1;
@@ -9713,10 +9738,12 @@ static b32 find_parse_primary()
         case '<':
                 if (!file_unsigned_decimal(value, node->kind == '>'
                                                       ? address_of find_maximum
-                                                      : address_of find_minimum))
+                                                      : address_of find_minimum) ||
+                    string_is(value, '+'))
                 {
-                        string_format(log_error, "find: invalid depth '%w'\n",
-                                      writer_terminal_quoted_name, value);
+                        string_format(log_error,
+                                      "find: Expected a positive decimal integer argument to %s, but got '%w'\n",
+                                      word, writer_terminal_quoted_name, value);
                         goto bad;
                 }
                 node->kind = 'v';
@@ -9760,7 +9787,7 @@ static b32 find_parse_primary()
                 }
                 if (find_at >= find_count)
                 {
-                        string_format(log_error, "find: missing argument to '%w'\n",
+                        string_format(log_error, "find: missing argument to `%w'\n",
                                       writer_terminal_quoted_name, word);
                         goto bad;
                 }
@@ -9864,6 +9891,30 @@ static b32 find_parse_primary()
         case 'u':
         {
                 bool group = node->kind == 'g';
+                bool numeric = find_is(word, "-uid") || find_is(word, "-gid");
+
+                if (!numeric && !string_get(value))
+                {
+                        string_format(log_error,
+                                      group ? "find: The argument to -group should not be empty\n"
+                                            : "find: The argument to -user should not be empty\n");
+                        goto bad;
+                }
+
+                if (numeric)
+                {
+                        positive number;
+                        string_address after = find_marked(
+                            value, address_of node->comparison);
+
+                        if (!string_digits_checked(address_of after, 10,
+                                                   address_of number) ||
+                            string_get(after) || number > (positive)b64_max)
+                                goto bad_number;
+                        node->number = (b64)number;
+                        break;
+                }
+
                 bipolar who = file_identity_of(value, group);
                 if (who < 0)
                 {
@@ -9907,9 +9958,9 @@ static b32 find_parse_primary()
         return index;
 
 bad_number:
-        string_format(log_error, "find: invalid number '%w' for ", writer_terminal_quoted_name,
-                      value);
-        string_format(log_error, "%w\n", writer_terminal_name, word);
+        string_format(log_error, "find: invalid argument `%w' to `%w'\n",
+                      writer_terminal_quoted_name, value,
+                      writer_terminal_quoted_name, word);
 bad:
         find_bad = true;
         return -1;
@@ -10851,12 +10902,14 @@ static bool find_true(b32 which)
         case 'u':
                 if (!find_facts_ready())
                         return false;
-                return find_facts->owner == (positive)node->number;
+                return find_holds_count(node->comparison, find_facts->owner,
+                                        node->number);
 
         case 'g':
                 if (!find_facts_ready())
                         return false;
-                return find_facts->group == (positive)node->number;
+                return find_holds_count(node->comparison, find_facts->group,
+                                        node->number);
 
         case 'U':
                 if (!find_facts_ready())
@@ -15373,6 +15426,7 @@ static bool ln_ask;
 static bool ln_loud;
 static bool ln_relative;
 static bool ln_through;
+static string_address ln_target_directory;
 typedef struct { p8 collision, dereference; } ln_selection;
 _Static_assert(sizeof(ln_selection) <= 16, "selection mask covers every field");
 static ln_selection ln_selected;
@@ -15405,6 +15459,31 @@ static bool ln_relative_text(string_address target, string_address name,
                 return false;
 
         return realpath_relative(above, there, into);
+}
+
+static bool ln_same_dirent(string_address source, bipolar dest_dir,
+                           string_address dest_leaf)
+{
+        if (!string_equals(file_last_component(source), dest_leaf))
+                return false;
+
+        p8 source_leaf[FILE_PATH_MAX];
+        bipolar source_dir = file_parent_open(source, source_leaf);
+
+        if (source_dir < 0)
+                return false;
+
+        file_facts source_parent;
+        file_facts dest_parent;
+        bool same = file_look_code(source_dir, (string_address) "", AT_EMPTY_PATH,
+                                   address_of source_parent) >= 0 &&
+                    file_look_code(dest_dir, (string_address) "", AT_EMPTY_PATH,
+                                   address_of dest_parent) >= 0 &&
+                    file_same_identity(address_of source_parent,
+                                       address_of dest_parent);
+
+        system_close(source_dir);
+        return same;
 }
 
 static bool ln_make(string_address target, string_address name)
@@ -15522,12 +15601,15 @@ static bool ln_make(string_address target, string_address name)
 
         /*
                 A hard link needs its source pinned before the destination is
-                given up.  A destination that is the same inode is refused;
-                removal atomically detaches and verifies the inode approved
-                above, so a swapped replacement is preserved.
+                given up.  GNU do_link refuses the same file only when it
+                would unlink dest and (nlink==1 or the same directory entry).
+                -i without -f/-b does not take that path.
         */
         if (!ln_symbolic && destination_exists &&
-            file_same_identity(address_of source, address_of destination))
+            (ln_force || file_backup_kind) &&
+            file_same_identity(address_of source, address_of destination) &&
+            (source.hard_links == 1 ||
+             ln_same_dirent(target, destination_directory, destination_leaf)))
         {
                 string_format(log_error, "ln: '%w' and '%w' are the same file\n",
                               writer_terminal_quoted_name, target, writer_terminal_quoted_name,
@@ -15620,6 +15702,7 @@ static b32 file_ln()
 {
         positive count = (positive)program_argument_count();
         ln_selected = (ln_selection){};
+        ln_target_directory = null;
 
         file_taking taking = {
             .program = (string_address) "ln",
@@ -15669,6 +15752,33 @@ static b32 file_ln()
 
         if (into && alone)
                 return string_report(log_error, 1, "ln: cannot combine --target-directory and --no-target-directory\n");
+
+        if (alone)
+        {
+                if (count - first == 1)
+                {
+                        string_format(log_error,
+                                      "ln: missing destination file operand after '%w'\n",
+                                      writer_terminal_quoted_name,
+                                      program_argument((b32)first));
+                        return string_report(log_error, 1,
+                                      "Try 'ln --help' for more information.\n");
+                }
+
+                if (count - first != 2)
+                {
+                        string_format(log_error, "ln: extra operand '%w'\n",
+                                      writer_terminal_quoted_name,
+                                      program_argument((b32)(first + 2)));
+                        return string_report(log_error, 1,
+                                      "Try 'ln --help' for more information.\n");
+                }
+
+                return ln_make(program_argument((b32)first),
+                               program_argument((b32)(first + 1)))
+                           ? 0
+                           : 1;
+        }
 
         // -n is about the destination and not the target: a link that already
         // points at a directory is a thing to replace rather than a directory
@@ -19585,6 +19695,9 @@ static b32 csplit_execute_regex(csplit_state address_to state,
                                address_of matched_after))
                 return CSPLIT_NOT_FOUND;
 
+        (void)matched_at;
+        (void)matched_after;
+
         positive target;
 
         if (pattern->offset < 0)
@@ -19615,17 +19728,17 @@ static b32 csplit_execute_regex(csplit_state address_to state,
 
         if (state->suppress_matched)
         {
-                /* Offsets and suppression describe two different target
-                   lines. Refuse that ambiguous combination until the exact
-                   GNU ordering is represented. */
-                if (pattern->offset)
-                {
-                        log_error("csplit: --suppress-matched with an offset is unsupported\n",
-                                  0);
-                        return CSPLIT_FAILED;
-                }
-                state->cursor = matched_after;
-                state->cursor_line = matched_line + 1;
+                /* GNU process_regexp: write_to_file(current+offset) then
+                   remove_line() once. */
+                state->cursor = boundary;
+                state->cursor_line = target;
+                p8 address_to newline = memory_first_of(
+                    state->input + state->cursor, '\n',
+                    state->length - state->cursor);
+
+                state->cursor = newline ? (positive)(newline - state->input) + 1
+                                        : state->length;
+                state->cursor_line++;
         }
         else
         {
@@ -19741,6 +19854,7 @@ static b32 file_csplit()
         memory_fill(address_of pattern, 0, sizeof(pattern));
         bool have_pattern = false;
         bool failed = false;
+        positive last_line = 0;
 
         for (positive i = 1; i < file_operand_count && !failed; i++)
         {
@@ -19754,7 +19868,8 @@ static b32 file_csplit()
                 {
                         if (!have_pattern)
                         {
-                                log_error("csplit: repeat with no previous pattern\n", 0);
+                                string_format(log_error, "csplit: '%w': invalid pattern\n",
+                                              writer_terminal_quoted_name, word);
                                 failed = true;
                                 break;
                         }
@@ -19769,13 +19884,6 @@ static b32 file_csplit()
                                 {
                                         string_format(log_error, "csplit: '%w': invalid pattern\n",
                                                       writer_terminal_quoted_name, word);
-                                        failed = true;
-                                        break;
-                                }
-                                if (state.suppress_matched && pattern.offset)
-                                {
-                                        log_error("csplit: --suppress-matched with an offset is unsupported\n",
-                                                  0);
                                         failed = true;
                                         break;
                                 }
@@ -19800,6 +19908,26 @@ static b32 file_csplit()
                                 failed = true;
                                 break;
                         }
+                        else
+                        {
+                                if (pattern.line_target < last_line)
+                                {
+                                        string_format(log_error,
+                                                      "csplit: line number '%w' is smaller than preceding line number, ",
+                                                      writer_terminal_quoted_name, word);
+                                        positive_to_string(log_error, last_line);
+                                        log_error("\n", 1);
+                                        failed = true;
+                                        break;
+                                }
+
+                                if (pattern.line_target == last_line)
+                                        string_format(log_error,
+                                                      "csplit: warning: line number '%w' is the same as preceding line number\n",
+                                                      writer_terminal_quoted_name, word);
+
+                                last_line = pattern.line_target;
+                        }
                         have_pattern = true;
                 }
 
@@ -19813,6 +19941,28 @@ static b32 file_csplit()
                                 continue;
                         if (done == CSPLIT_NOT_FOUND && forever)
                         {
+                                if (pattern.kind == CSPLIT_LINE)
+                                {
+                                        p8 shown[32];
+                                        positive n = positive_into_base(
+                                            shown, pattern.line_step, 10, false);
+
+                                        if (n >= sizeof(shown))
+                                                n = sizeof(shown) - 1;
+                                        shown[n] = end;
+                                        string_format(log_error,
+                                                      "csplit: '%w': line number out of range",
+                                                      writer_terminal_quoted_name,
+                                                      shown);
+                                        if (repetition)
+                                        {
+                                                log_error(" on repetition ", 0);
+                                                positive_to_string(log_error, repetition);
+                                        }
+                                        log_error("\n", 1);
+                                        failed = true;
+                                        break;
+                                }
                                 /* A repeated %pattern% consumes the unmatched
                                    tail as part of the suppressed search. */
                                 if (pattern.discard)
@@ -22945,28 +23095,32 @@ static positive cp_umask;
         The name is moved rather than copied, so a backup costs nothing and
         the file that was there keeps its inode.
 */
+static const file_word file_backup_words[] = {
+    {(string_address) "none", 0, false},
+    {(string_address) "off", 0, false},
+    {(string_address) "simple", 's', false},
+    {(string_address) "never", 's', false},
+    {(string_address) "existing", 'e', false},
+    {(string_address) "nil", 'e', false},
+    {(string_address) "numbered", 'n', false},
+    {(string_address) "t", 'n', false},
+};
+
 static bool file_backup_control(string_address program, string_address word)
 {
-        if (!word || !string_compare(word, "existing") || !string_compare(word, "nil"))
-                file_backup_kind = 'e';
-        else if (!string_compare(word, "none") || !string_compare(word, "off"))
-                file_backup_kind = 0;
-        else if (!string_compare(word, "simple") || !string_compare(word, "never"))
-                file_backup_kind = 's';
-        else if (!string_compare(word, "numbered") || !string_compare(word, "t"))
-                file_backup_kind = 'n';
-        else
+        if (!word)
         {
-                return string_report(log_error, false,
-                              "%s: invalid argument '%s' for 'backup type'\n"
-                              "Valid arguments are:\n"
-                              "  - 'none', 'off'\n"
-                              "  - 'simple', 'never'\n"
-                              "  - 'existing', 'nil'\n"
-                              "  - 'numbered', 't'\n",
-                              program, word);
+                file_backup_kind = 'e';
+                return true;
         }
 
+        b32 which = file_word_among(program, (string_address) "backup type",
+                                    word, file_backup_words,
+                                    array_count(file_backup_words));
+
+        if (which < 0)
+                return false;
+        file_backup_kind = (p8)which;
         return true;
 }
 
@@ -25508,9 +25662,9 @@ static bool cp_words_read(string_address option, string_address value,
 
 static const file_word file_update_words[] = {
     {(string_address) "all", 'a', false},
-    {(string_address) "older", 'u', false},
-    {(string_address) "none-fail", 'F', false},
     {(string_address) "none", 'n', true},
+    {(string_address) "none-fail", 'F', false},
+    {(string_address) "older", 'u', false},
 };
 
 static bool file_backup_seen(string_address program, p8 letter,
@@ -25585,7 +25739,27 @@ static bool mv_option_seen(p8 letter, string_address value)
 
 static bool ln_option_seen(p8 letter, string_address value)
 {
-        return file_backup_seen((string_address) "ln", letter, value);
+        /* GNU ln.c stats -t inside getopt and defers backup CONTROL until
+           after the operand scan. */
+        if (letter != 't')
+                return true;
+
+        if (ln_target_directory)
+                return file_targets_told((string_address) "ln", true);
+
+        file_facts facts;
+        bipolar looked = file_look_code(AT_FDCWD, value, 0, address_of facts);
+
+        if (looked < 0)
+                return string_report(log_error, false, "ln: failed to access '%w': %s\n",
+                              writer_terminal_quoted_name, value, file_reason(looked));
+
+        if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return string_report(log_error, false, "ln: target '%w' is not a directory\n",
+                              writer_terminal_quoted_name, value);
+
+        ln_target_directory = value;
+        return true;
 }
 
 static const argument_option cp_options[] = {
@@ -26724,6 +26898,37 @@ static string_address rm_wording(file_facts address_to facts)
                            : (string_address) "remove regular empty file";
 }
 
+/* GNU remove.c prompt(): faccessat W_OK whenever -i. */
+static string_address rm_prompt(bipolar directory, string_address name,
+                                file_facts address_to facts, bool descend)
+{
+        bool locked = system_access_at(directory, name, 2) != 0;
+
+        if (descend)
+                return locked ? (string_address) "descend into write-protected directory"
+                              : (string_address) "descend into directory";
+
+        if (!locked)
+                return rm_wording(facts);
+
+        positive kind = facts->mode & MODE_FORMAT;
+
+        if (kind == MODE_DIRECTORY)
+                return rm_recursive
+                           ? (string_address) "remove write-protected directory"
+                           : (string_address) "attempt removal of inaccessible directory";
+
+        if (kind == MODE_LINK)
+                return (string_address) "remove write-protected symbolic link";
+
+        if (kind != MODE_FILE)
+                return (string_address) "remove write-protected";
+
+        return facts->size
+                   ? (string_address) "remove write-protected regular file"
+                   : (string_address) "remove write-protected regular empty file";
+}
+
 static bool rm_contents(bipolar directory, string_address shown, positive depth)
 {
         bool complete = true;
@@ -26834,7 +27039,9 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         }
         else if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
         {
-                if (rm_ask && !file_ask((string_address) "rm", rm_wording(address_of facts),
+                if (rm_ask && !file_ask((string_address) "rm",
+                                        rm_prompt(directory, name, address_of facts,
+                                                  false),
                                         shown))
                         return false;
 
@@ -26910,12 +27117,16 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                         if (empty_directory)
                         {
                                 if (!file_ask((string_address) "rm",
-                                              (string_address) "remove directory", shown))
+                                              rm_prompt(directory, name,
+                                                        address_of facts, false),
+                                              shown))
                                         return false;
                                 asked_remove = true;
                         }
                         else if (!file_ask((string_address) "rm",
-                                           (string_address) "descend into directory", shown))
+                                           rm_prompt(directory, name,
+                                                     address_of facts, true),
+                                           shown))
                                 return false;
                 }
 
@@ -26952,8 +27163,16 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 }
         }
 
+        if (!complete && rm_status == 0)
+        {
+                if (inside >= 0)
+                        system_close(inside);
+                return false;
+        }
+
         if (rm_ask && !asked_remove &&
-            !file_ask((string_address) "rm", (string_address) "remove directory", shown))
+            !file_ask((string_address) "rm",
+                      rm_prompt(directory, name, address_of facts, false), shown))
                 return false;
 
         bipolar gone = file_remove_same(directory, name, AT_REMOVEDIR,
@@ -28393,15 +28612,19 @@ static b32 file_touch()
                 }
 
                 /* GNU creates only when -c is off and links are followed;
-                   utimens always runs. -c is silent only for ENOENT. */
+                   utimens always runs. Open EACCES/ENOENT/EPERM/ELOOP is
+                   "cannot touch"; EISDIR falls through to "setting times of".
+                   -c is silent only for ENOENT. */
+                bipolar created = 0;
+
                 if (!no_create && through)
                 {
-                        bipolar made = system_open_at_mode(AT_FDCWD,
+                        created = system_open_at_mode(AT_FDCWD,
                                                      path, FILE_WRITE & ~O_TRUNC,
                                                      0666);
 
-                        if (made >= 0)
-                                system_close(made);
+                        if (created >= 0)
+                                system_close(created);
                 }
 
                 bipolar done = system_update_times_at(
@@ -28412,8 +28635,15 @@ static b32 file_touch()
                 {
                         if (no_create && done == -ERROR_NO_ENTRY)
                                 continue;
-                        string_format(log_error, "touch: setting times of '%w': %s\n",
-                                      writer_terminal_quoted_name, path, file_reason(done));
+                        if (created < 0 && created != -ERROR_IS_DIRECTORY &&
+                            created != -ERROR_EXISTS &&
+                            created != -ERROR_INVALID)
+                                string_format(log_error, "touch: cannot touch '%w': %s\n",
+                                              writer_terminal_quoted_name, path,
+                                              file_reason(created));
+                        else
+                                string_format(log_error, "touch: setting times of '%w': %s\n",
+                                              writer_terminal_quoted_name, path, file_reason(done));
                         status = 1;
                 }
         }
@@ -28993,8 +29223,13 @@ static positive seq_decimal_width(seq_decimal address_to number,
 
         magnitude /= positive_power_ten(min(scale, precision));
 
-        return max(positive_digits(magnitude), number->whole_width) +
-               (precision ? precision + 1 : 0) +
+        /* GNU scan_arg skips auto-width when the operand has x/X, so hex
+           integers keep whole_width 0 and -w pads to 1 rather than digits. */
+        positive whole = number->whole_width
+                             ? max(positive_digits(magnitude), number->whole_width)
+                             : 1;
+
+        return whole + (precision ? precision + 1 : 0) +
                (number->coefficient < 0 || number->negative_zero);
 }
 
@@ -29054,6 +29289,8 @@ static bool seq_format_read(string_address text, seq_format address_to format)
                 format->directive = at++;
 
                 string_address field = text + at;
+                while (string_first_of((string_address) "'", string_get(field)))
+                        field++;
                 conversion_spec parsed = conversion_spec_take_max(&field, positive_max);
                 // The former pre-digit limit of 100000 admits one final digit.
                 if (parsed.stars || parsed.overflow || parsed.field[0] > 1000009 ||
@@ -33775,7 +34012,7 @@ static fn xargs_trace_words(string_address address_to words, positive count)
                 if (i)
                         log_error(" ", 1);
 
-                ls_quote_shell(log_error, words[i], string_length(words[i]), false, false);
+                ls_quote_shell(log_error, words[i], string_length(words[i]), false, true);
         }
 
         //      -p writes the same words and then waits on the terminal, so
@@ -34362,8 +34599,8 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code < 0)
         {
-                string_format(log_error, "xargs: failed to run command '%w': %s\n",
-                              writer_terminal_quoted_name, command, file_reason(code));
+                string_format(log_error, "xargs: %s: %s\n", command,
+                              file_reason(code));
                 xargs_answer_raise(code == -ERROR_NO_ENTRY ||
                                            code == -ERROR_NOT_DIRECTORY
                                        ? 127 : 126);
@@ -34719,12 +34956,19 @@ static bool xargs_option_seen(p8 letter, string_address value)
                 return true;
         }
 
+        if (letter == '0')
+        {
+                xargs_null = true;
+                xargs_delimited = true;
+                xargs_delimiter = 0;
+        }
+
         if (letter == 'd' && value)
         {
-                p8 unused;
-
-                if (!xargs_delimiter_read(value, address_of unused))
+                if (!xargs_delimiter_read(value, address_of xargs_delimiter))
                         return false;
+                xargs_delimited = true;
+                xargs_null = xargs_delimiter == 0;
         }
 
         if (letter == 'V' && value)
@@ -34790,6 +35034,9 @@ static b32 file_xargs()
         xargs_lines = 0;
         xargs_replace = null;
         xargs_ending_which = 0;
+        xargs_null = false;
+        xargs_delimited = false;
+        xargs_delimiter = 0;
 
         file_taking taking = {
             .program = (string_address) "xargs",
@@ -34802,7 +35049,6 @@ static b32 file_xargs()
 
         positive index = taking.first;
 
-        xargs_null = (taking.flags & FILE_FLAG('0')) != 0;
         xargs_ask = (taking.flags & FILE_FLAG('p')) != 0;
         xargs_terminal = -2;
         xargs_trace = (taking.flags & FILE_FLAG('t')) != 0;
@@ -34815,8 +35061,6 @@ static b32 file_xargs()
                 xargs_ending = null;
         xargs_slot_name = file_option_value(address_of taking, 'V');
         xargs_exit_too_long = (taking.flags & FILE_FLAG('x')) != 0;
-        xargs_delimited = false;
-        xargs_delimiter = 0;
         xargs_said_nul = false;
         xargs_most_bytes = XARGS_BATCH_BYTES;
         xargs_input = 0;
@@ -34847,16 +35091,6 @@ static b32 file_xargs()
 
                 if (xargs_most_bytes > XARGS_BATCH_BYTES)
                         xargs_most_bytes = XARGS_BATCH_BYTES;
-        }
-
-        if (taking.flags & FILE_FLAG('d'))
-        {
-                if (!xargs_delimiter_read(file_option_value(address_of taking, 'd'),
-                                          address_of xargs_delimiter))
-                        return 1;
-
-                xargs_delimited = true;
-                xargs_null = xargs_delimiter == 0;
         }
 
         string_address from = file_option_value(address_of taking, 'a');
