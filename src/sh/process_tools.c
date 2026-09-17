@@ -19,8 +19,8 @@ static b32 process_tool_exec_environment(
         bipolar answer = file_exec_path_try_in(words[0], words, environment,
                                                path);
 
-        return string_report(log_error, answer == -ERROR_NO_ENTRY ? 127 : 126, "%s: failed to run command '%s': %s\n",
-                      program, words[0], file_reason(answer));
+        return string_report(log_error, answer == -ERROR_NO_ENTRY ? 127 : 126, "%s: failed to run command '%w': %s\n",
+                      program, writer_terminal_quoted_name, words[0], file_reason(answer));
 }
 
 static b32 process_tool_exec(string_address program,
@@ -1303,8 +1303,8 @@ static fn process_timeout_signal(b32 child, bipolar pidfd, b32 signal,
 
                 kill_name((positive)signal, name);
                 string_format(log_error,
-                              "timeout: sending signal %s to command '%s'\n",
-                              name, command);
+                              "timeout: sending signal %s to command '%w'\n",
+                              name, writer_terminal_quoted_name, command);
                 log_flush();
         }
 

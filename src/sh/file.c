@@ -9394,8 +9394,8 @@ static b32 file_nice()
         if (given)
         {
                 if (!nice_adjustment(given, address_of adjustment))
-                        return string_report(log_error, 125, "nice: invalid adjustment '%s'\n",
-                                      given);
+                        return string_report(log_error, 125, "nice: invalid adjustment '%w'\n",
+                                      writer_terminal_quoted_name, given);
         }
 
         if (first >= count)
@@ -10370,8 +10370,8 @@ static b32 find_parse_primary()
                 positive mode;
                 if (!file_mode_of(value, 0, false, address_of mode))
                 {
-                        string_format(log_error, "find: invalid mode %w\n", writer_terminal_name,
-                                      value);
+                        string_format(log_error, "find: invalid mode %w\n",
+                                      writer_terminal_quoted_name, value);
                         goto bad;
                 }
                 node->number = (b64)mode;
@@ -11729,6 +11729,14 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
                                           walk.handle, held, entry->d_type);
                         }
 
+                        if (walk.error < 0)
+                        {
+                                string_format(log_error, "find: '%w': %s\n",
+                                              writer_terminal_quoted_name, path,
+                                              file_reason(walk.error));
+                                find_status = 1;
+                        }
+
                         file_walk_close(address_of walk);
                 }
         }
@@ -12043,10 +12051,11 @@ static fn find_tree_enter(address_any context, address_any node_address,
         positive depth = node->depth + 1;
         bool follow = find_follow;
         bool joint = node->length && node->path[node->length - 1] != '/';
+        bipolar got = 0;
 
         for (;;)
         {
-                bipolar got = system_read_directory(directory, records, sizeof(records));
+                got = system_read_directory(directory, records, sizeof(records));
                 bipolar at = 0;
 
                 if (got <= 0)
@@ -12185,6 +12194,11 @@ next:
                         }
                 }
         }
+
+        if (got < 0)
+                (void)find_tree_note(output, address_of open_at, FIND_TREE_FAILED, got,
+                                     (string_address)node->path, node->length, 0,
+                                     node->depth, 0, null);
 }
 
 static fn find_tree_leave(address_any context, address_any node_address,
@@ -13459,7 +13473,7 @@ static fn du_tree_enter(address_any context, address_any node_address,
                                                 kept = child != null;
                                                 if (child)
                                                 {
-                                                        child->own = du_apparent ? (p64)facts.size
+                                                        child->own = du_apparent ? 0
                                                                                  : facts.blocks * 512;
                                                         child->device = device;
                                                         child->inode = facts.inode;
@@ -13699,9 +13713,11 @@ static p64 du_measure_tree(string_address root)
                          facts.hard_links, directory))
                 return 0;
 
-        /* GNU's apparent size is st_size for every kind, directories
-           included: the directory record itself was written too. */
-        p64 mine = du_apparent ? (p64)facts.size : facts.blocks * 512;
+        /* GNU --apparent-size without -b counts a directory as the sum of
+           its children, not st_size of the directory record. */
+        p64 mine = du_apparent
+                       ? (directory ? 0 : (p64)facts.size)
+                       : facts.blocks * 512;
 
         if (!directory)
         {
@@ -13920,7 +13936,11 @@ static p64 du_measure(string_address root)
                                 continue;
                         }
 
-                        p64 mine = du_apparent ? (p64)facts->size : facts->blocks * 512;
+                        p64 mine = du_apparent
+                                       ? ((facts->mode & MODE_FORMAT) == MODE_DIRECTORY
+                                              ? 0
+                                              : (p64)facts->size)
+                                       : facts->blocks * 512;
 
                         if (kept->mark == DU_ENTERED)
                         {
@@ -14056,14 +14076,6 @@ static b32 file_du()
         if (du_summary && du_all)
                 return string_report(log_error, 1,
                                      "du: cannot both summarize and show all entries\n");
-        if (du_summary && (flags & FILE_FLAG('d')))
-                return string_report(log_error, 1,
-                                     "du: cannot both summarize and use --max-depth\n");
-
-        // -s is --max-depth=0 said another way, and the two are the same
-        // switch here so that giving both cannot mean two things.
-        if (du_summary)
-                du_maximum = 0;
 
         if (flags & FILE_FLAG('d'))
         {
@@ -14079,6 +14091,19 @@ static b32 file_du()
 
                 du_maximum = negative ? 0 : maximum;
         }
+
+        if (du_summary && (flags & FILE_FLAG('d')))
+        {
+                string_format(log_error,
+                              "du: warning: summarizing conflicts with --max-depth=%b\n",
+                              (b32)du_maximum);
+                return 1;
+        }
+
+        // -s is --max-depth=0 said another way, and the two are the same
+        // switch here so that giving both cannot mean two things.
+        if (du_summary)
+                du_maximum = 0;
 
         if (first >= count)
         {
@@ -14743,7 +14768,7 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
                 file_mode_letters(set, out->wanted);
                 file_mode_letters(expected, out->naive);
                 string_format(log_error, "chmod: %w: new permissions are %s, not %s\n",
-                              writer_terminal_name, shown, set + 1, expected + 1);
+                              writer_terminal_quoted_name, shown, set + 1, expected + 1);
                 chmod_status = 1;
         }
 }
@@ -20469,6 +20494,15 @@ static b32 file_csplit()
         file_facts facts;
         bool looked = file_look(in, (string_address)"", AT_EMPTY_PATH,
                                 address_of facts);
+
+        if (looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                if (in != 0)
+                        system_close(in);
+                string_format(log_error, "csplit: read error: %s\n",
+                              file_reason(-ERROR_IS_DIRECTORY));
+                return 1;
+        }
 
         utility_arena.used = 0;
         positive length;
@@ -26218,6 +26252,15 @@ static fn cp_pair(string_address source, string_address destination)
 
         if (source_directory < 0 || destination_directory < 0)
         {
+                if (source_directory < 0)
+                        string_format(log_error, "cp: cannot access '%w': %s\n",
+                                      writer_terminal_quoted_name, source,
+                                      file_reason(source_directory));
+                else
+                        string_format(log_error,
+                                      "cp: cannot create regular file '%w': %s\n",
+                                      writer_terminal_quoted_name, destination,
+                                      file_reason(destination_directory));
                 if (source_directory >= 0)
                         system_close(source_directory);
                 if (destination_directory >= 0)
@@ -26786,8 +26829,9 @@ static bool install_identity(string_address text, bool group,
         bipolar found = file_identity_of(text, group);
 
         if (found < 0)
-                return string_report(log_error, false, "install: invalid %s '%s'\n",
-                              group ? "group" : "user", text);
+                return string_report(log_error, false, "install: invalid %s '%w'\n",
+                              group ? "group" : "user", writer_terminal_quoted_name,
+                              text);
 
         address_to identity = found;
         return true;
@@ -33296,7 +33340,8 @@ static b32 file_kill()
         {
                 string_address argument = program_argument((b32)index);
 
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                /* util-linux: a lone "-" is an empty signal name, not a pid. */
+                if (!string_is(argument, '-'))
                         break;
 
                 if (!string_compare(argument, "--"))
@@ -33433,7 +33478,7 @@ static b32 file_kill()
                                 if (!string_digits_checked_exact(value, 10,
                                                                  address_of queue))
                                         return string_report(log_error, 1,
-                                                      "kill: invalid sigval argument: %s\n",
+                                                      "kill: argument error: '%s'\n",
                                                       value);
                                 (void)queue;
                         }
@@ -33807,6 +33852,9 @@ static b32 file_rename()
         positive renamed = 0;
         bool failed = false;
 
+        if (string_equals(before, after))
+                return 4;
+
         for (positive at = 2; at < file_operand_count; at++)
         {
                 string_address source = file_operand_at(at);
@@ -33886,11 +33934,17 @@ static b32 file_rename()
                                 file_facts there;
 
                                 if (file_look_link((string_address)destination, address_of there) &&
-                                    (no_overwrite || !rename_ask((string_address)destination)))
+                                    (no_overwrite || (interactive && no_act) ||
+                                     (interactive && !rename_ask((string_address)destination))))
                                 {
                                         if (no_overwrite)
-                                                string_format(log, "Skipping existing link: `%w'\n",
-                                                              writer_terminal_name, destination);
+                                                string_format(log, "Skipping existing link: `%w' -> `%w'\n",
+                                                              writer_terminal_name, source,
+                                                              writer_terminal_name, target);
+                                        if (verbose)
+                                                string_format(log, "%w: `%w' -> `%w'\n", writer_terminal_name,
+                                                              source, writer_terminal_quoted_name, target,
+                                                              writer_terminal_quoted_name, destination);
                                         system_close(source_handle);
                                         system_close(source_directory);
                                         continue;
@@ -33944,6 +33998,24 @@ static b32 file_rename()
                         continue;
                 }
 
+                if (no_act && (no_overwrite || interactive))
+                {
+                        file_facts there;
+
+                        if (file_look(AT_FDCWD, destination, AT_SYMLINK_NOFOLLOW,
+                                      address_of there))
+                        {
+                                if (no_overwrite)
+                                        string_format(log, "Skipping existing file: `%w'\n",
+                                                      writer_terminal_name, destination);
+                                if (verbose)
+                                        string_format(log, "`%w' -> `%w'\n",
+                                                      writer_terminal_quoted_name, source,
+                                                      writer_terminal_quoted_name, destination);
+                                continue;
+                        }
+                }
+
                 if (!no_act)
                 {
                         p8 source_leaf[FILE_PATH_MAX];
@@ -33989,12 +34061,15 @@ static b32 file_rename()
                         }
 
                         if (destination_exists &&
-                            (no_overwrite ||
+                            (no_overwrite || (interactive && no_act) ||
                              (interactive && !rename_ask(destination))))
                         {
                                 if (no_overwrite)
                                         string_format(log, "Skipping existing file: `%w'\n",
                                                       writer_terminal_name, destination);
+                                if (verbose)
+                                        string_format(log, "`%w' -> `%w'\n", writer_terminal_quoted_name, source,
+                                                      writer_terminal_quoted_name, destination);
                                 system_close(source_handle);
                                 system_close(source_directory);
                                 system_close(destination_directory);
@@ -35209,7 +35284,7 @@ static fn xargs_job_finish(positive slot, positive status)
         if (status & 0x7f)
         {
                 string_format(log_error, "xargs: %w: terminated by signal %b\n",
-                              writer_terminal_name, job->command,
+                              writer_terminal_quoted_name, job->command,
                               (b32)(status & 0x7f));
                 xargs_answer_raise(125);
                 xargs_done = true;
@@ -35229,7 +35304,7 @@ static fn xargs_job_finish(positive slot, positive status)
         {
                 string_format(log_error,
                               "xargs: %w: exited with status 255; aborting\n",
-                              writer_terminal_name, job->command);
+                              writer_terminal_quoted_name, job->command);
                 xargs_answer_raise(124);
                 xargs_done = true;
                 xargs_job_release(slot);

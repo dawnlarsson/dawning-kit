@@ -2633,7 +2633,7 @@ static bool join_option_seen(p8 letter, string_address value)
 
                 if (value[0] && value[1] && !zero)
                         return false;
-                b32 separator = zero ? 0 : value[0] ? value[0] : '\n';
+                b32 separator = zero || !value[0] ? 0 : value[0];
                 if (join_separator >= 0 && join_separator != separator)
                         return false;
                 join_separator = separator;

@@ -228,9 +228,9 @@ DOMAIN_FLOOR = {
                    "with the work under /tmp: a run whose root is on a "
                    "filesystem mounted without nosuid and nodev cannot see "
                    "the mounts this build used to break"),
-    "files": (71395, 74224, 150,
-              "2788 cases are still untriaged, and a dozen causes hold most "
-              "of them. kill is 2942 of 2963: util-linux's exact-argv parse "
+    "files": (71566, 74224, 150,
+              "2658 cases are still untriaged, and a dozen causes hold most "
+              "of them. kill is 2953 of 2963: util-linux's exact-argv parse "
               "is in, including packed --list=/-l=/-d= and treating an "
               "unknown dashed word as a process after a signal is taken. "
               "mkdir, 180: GNU mkdir -p follows "
@@ -245,7 +245,7 @@ DOMAIN_FLOOR = {
               "rows mix walk leftovers and reason_unverified. realpath, 62: -s/-P/-L "
               "last-win on the same walk byte is certified, named "
               "operands carry the kernel's reason, and further trailing-slash "
-              "and loop pins that now match are gone. cp 388, mv 245, ln "
+              "and loop pins that now match are gone. cp 385, mv 245, ln "
               "124, xargs 31, install 70 and split 11: GNU install compiles "
               "-m after the operand count, -D creates a missing -t directory, "
               "and cp replaces a live dest symlink while refusing a "
@@ -267,9 +267,9 @@ DOMAIN_FLOOR = {
               "are different every run and can never be the reference's. "
               "The rest is a long tail of tools each with a handful of "
               "orderings and features left -- env 148, hardlink "
-              "121, rm 113, chmod 16, cal 58, csplit 47, chown 58, "
-              "namei 57, seq 22, chgrp 48, readlink 47, du 35, rename "
-              "19, shuf 6, pathchk 6. Touch agrees on all 1309. Mknod agrees "
+              "121, rm 113, chmod 16, cal 42, csplit 30, chown 58, "
+              "namei 45, seq 22, chgrp 48, readlink 0, du 25, rename "
+              "11, shuf 2, pathchk 6. Touch agrees on all 1309. Mknod agrees "
               "on all 762. Env's leftover is "
               "--block-signal/--default-signal/--ignore-signal, still "
               "no-ops and still option-pinned: taking the pins off while "
@@ -30142,7 +30142,6 @@ PINNED = r"""
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--time=bogus"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","utility":"du"},"domain":"files","id":"3b7b9bbd9ec36e52","kind":"bug","list":"ledger","reason_id":"r98","utility":"du"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--block-size=K"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","utility":"du"},"domain":"files","id":"4bee1532b8c8a4f2","kind":"bug","list":"ledger","reason_id":"r98","utility":"du"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-dnope"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","utility":"du"},"domain":"files","id":"78db59ee206fac21","kind":"bug","list":"ledger","reason_id":"r98","utility":"du"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-d","1","-s","dir"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","utility":"du"},"domain":"files","id":"84d996892ec27c11","kind":"bug","list":"ledger","reason_id":"r98","utility":"du"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-\u00f8"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","tier":"singles","utility":"du"},"domain":"files","id":"9b155b7bb5fc0af7","kind":"bug","list":"ledger","reason_id":"r325","reference":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"utility":"du"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--time=mtime"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","utility":"du"},"domain":"files","id":"9dbe5233ea694e7d","kind":"bug","list":"ledger","reason_id":"r98","utility":"du"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--time=atime"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_nul_words","utility":"du"},"domain":"files","id":"a72cfd6740eaeb0d","kind":"bug","list":"ledger","reason_id":"r98","utility":"du"},
@@ -30397,9 +30396,7 @@ PINNED = r"""
 {"domain":"files","kind":"bug","list":"ledger","option":"--strip-program","reason_id":"r107","utility":"install"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-Z","reason_id":"r107","utility":"install"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-s","reason_id":"r107","utility":"install"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-q","x","999999"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"kill"},"domain":"files","id":"9f71d57e8273a4c4","kind":"bug","list":"ledger","reason_id":"r108","utility":"kill"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":2,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":[],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"kill"},"domain":"files","id":"af8d1cc7d9440dcc","kind":"bug","list":"ledger","reason_id":"r108","utility":"kill"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-","999999"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"kill"},"domain":"files","id":"ddc2fa3ea2335d5c","kind":"bug","list":"ledger","reason_id":"r108","utility":"kill"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["a.txt","new\nline"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"link"},"domain":"files","id":"07cf5e367b57acd2","kind":"bug","list":"ledger","reason_id":"r109","utility":"link"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["a.txt","new\nline"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","utility":"ln"},"domain":"files","id":"227f151d27f5f836","kind":"bug","list":"ledger","reason_id":"r110","utility":"ln"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--backup=bogus","a.txt","pointer"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_yes","utility":"ln"},"domain":"files","id":"3ca284fc0f68c893","kind":"bug","list":"ledger","reason_id":"r110","utility":"ln"},

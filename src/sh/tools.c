@@ -9122,7 +9122,12 @@ static bool dump_od_seen(p8 letter, string_address value)
         }
 
         if (letter == 'e' || letter == 'F' || letter == 'f')
-                return string_diagnostic(&text_diagnostic, 0, null, "floating point output is unsupported");
+        {
+                text_flush();
+                string_format(writer_stderr, "od: floating point output is unsupported\n");
+                dump_od_type_failed = true;
+                return true;
+        }
 
         /* Legacy switches name the same formats as -t, including its host
            sizes and tuned hex-byte selection. Keep only their spelling. */
