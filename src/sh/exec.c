@@ -8052,11 +8052,14 @@ static b32 exec_call(positive slot)
         return status;
 }
 
-b32 shell_call_function(string_address name, string_address address_to arguments,
-                        positive count)
+positive shell_function_slot(string_address name)
 {
-        positive2 named = string_hash_33_length(name);
-        positive slot = exec_function_slot(name, named);
+        return exec_function_slot(name, string_hash_33_length(name));
+}
+
+b32 shell_call_slot(positive slot, string_address name,
+                    string_address address_to arguments, positive count)
+{
         string_address words[8];
         string_address address_to saved_argv = shell_argv;
         positive saved_argc = shell_argc;
@@ -8080,6 +8083,12 @@ b32 shell_call_function(string_address name, string_address address_to arguments
         shell_argv = saved_argv;
         shell_argc = saved_argc;
         return status;
+}
+
+b32 shell_call_function(string_address name, string_address address_to arguments,
+                        positive count)
+{
+        return shell_call_slot(shell_function_slot(name), name, arguments, count);
 }
 
 /*

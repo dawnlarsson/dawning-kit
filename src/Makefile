@@ -16,6 +16,34 @@ ccflags-y += $(if $(MOONWATER_STOCK),-DSTOCK_STRINGS)
 
 moonwater-y := core.o
 
+#       The machine script baked into the module. CONFIG_MOONWATER_MACHINE_SCRIPT
+#       is a path relative to the repository root (src/../). kbuild sees this
+#       directory through a symlink at kernel/moonwater, so resolve $(src)
+#       first and then walk up, otherwise ../ is kernel/ rather than the repo.
+mw-machine-script := $(patsubst "%",%,$(CONFIG_MOONWATER_MACHINE_SCRIPT))
+ifeq ($(mw-machine-script),)
+mw-machine-script := main.moonwater.sh
+endif
+mw-src := $(realpath $(src))
+mw-machine-abs := $(realpath $(mw-src)/../$(mw-machine-script))
+
+moonwater-y += machine_script.o
+targets += machine_script.S
+
+quiet_cmd_mwscript = SCRIPT  $@
+      cmd_mwscript = { \
+	echo '.section .rodata,"a"'; \
+	echo '.balign 1'; \
+	echo '.globl moonwater_machine_builtin'; \
+	echo '.globl moonwater_machine_builtin_end'; \
+	echo 'moonwater_machine_builtin:'; \
+	echo '.incbin "$(mw-machine-abs)"'; \
+	echo 'moonwater_machine_builtin_end:'; \
+} > $@
+
+$(obj)/machine_script.S: $(mw-machine-abs) FORCE
+	$(call if_changed,mwscript)
+
 #       Floodlight is not part of the module and must never become part of it.
 #       It is a separate object with its own initcall, because the whole worth
 #       of the file is that its trusted base is the file: folded into

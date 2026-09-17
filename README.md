@@ -45,7 +45,8 @@ stick and `moonwater install` takes them to the disk; `moonwater update` keeps t
 disk's own. On a read-only stick a change lasts only for the session. `reset` is the
 keyboard's reset/restart key; a reset button on a PC case is wired to the hardware
 and cannot be bound. Bound keys go only to the binding; keys are not grabbed, so an
-unbound one still types.
+unbound one still types. `/root/main.moonwater.sh` overlays the kernel's builtin
+machine script: see `main.moonwater.sh` in this repository.
 
 Canvas, the desktop, is part of the kernel: a compositor that draws with the CPU
 through DRM, so it works on any display the kernel can drive.
@@ -56,9 +57,51 @@ get the desktop back. From that console another display server, Weston say, can
 take the screen. While another program holds the display, Canvas ignores the
 keyboard and mouse until it lets go.
 
+## The machine script
+
+`main.moonwater.sh` at the repository root is the machine script. Clone the
+repo, edit that file, rebuild. It is the working example: the three optional
+hooks, the bind arms, `canvas)` / `*)` / `recover`, and the poweroff and reset
+fallback. The kernel bakes it into the module. `CONFIG_MOONWATER_MACHINE_SCRIPT`
+can point at another path relative to the repository root.
+
+Init starts `/shell -c 'moonwater machine'` with the network, not after the
+disks: the process attaches immediately, waits for a boot verdict, then
+overlays `/root/main.moonwater.sh` when that file is present and allowed. If
+the disks never appear, the builtin still runs. Copying this file to
+`/root/main.moonwater.sh` overlays the builtin without rebuilding.
+
+`moonwater bind` and `moonwater machine` both ask the module for the overlay.
+They do not each scan a private copy. A literal arm owns that event at that
+line; `canvas)` owns both `canvas on` and `canvas off`; `*)` owns the rest.
+Events the overlay does not name still use the image binds.
+
+The disk file must be a regular file, owned by root, and not group- or
+world-writable. A symlink is refused. Moonwater opens it with `O_NOFOLLOW`.
+Larger than 64 KiB is refused. A refused file is left alone: the builtin
+stays, and a line goes to the kernel log.
+
+`moonwater bind mute` then reads as `mute: /root/main.moonwater.sh:8` when
+that arm is on disk, or `mute: builtin:8` when it is the baked copy, and SET
+is refused:
+
+```
+[Moonwater] mute is /root/main.moonwater.sh:8; change it there
+```
+
+The same overlay applies to init and exit when `moonwater_init` or
+`moonwater_end` exist: listing them names the hook, and add/remove is refused
+the same way. `moonwater bind init mount` still works. Without those hooks, the
+stored lists still run even if `moonwater_event` is present.
+
+If the process is gone, the image binds spawn `/shell -c` again for events
+the overlay does not own. Changing the disk file updates what the CLI prints
+on the next `moonwater bind`; the running machine sources the kernel's copy
+at start, so a new file is picked up on the next start.
+
 ## Bowl
 
-Bowl runs Debian, Arch, or another Linux package directly on the Moonwater
+Bowl runs Debian, Arch, or another Linux package manager directly on the Moonwater
 kernel. The default fast profile binds only that package's loader and libc,
 leaves Moonwater's applets in place, and does not use a VM or supervisor fork;
 `--isolated` supplies the complete namespace and root view needed by package
@@ -67,7 +110,7 @@ path with `bowl expose`.
 
 on a fresh install of moonwater:
 ```sh
-bowl setup <alpine | arch | debian | fedora>
+bowl setup <alpine | arch | debian | fedora | nix>
 ```
 then just use the package manger from the distro like normal:
 ```sh

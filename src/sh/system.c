@@ -76,11 +76,12 @@ string_address settle_argv[] = {(string_address)settle_program,
                                 (string_address) "boot", null};
 
 /*
-        The machine script. Started after the disks have settled, so
-        /root/main.moonwater.sh is the disk's file when there is one. /shell
+        The machine script. Started with the network, not after the disks:
+        the kernel already holds the builtin fallback, and the process waits
+        for a boot verdict before overlaying /root/main.moonwater.sh. /shell
         -c once at boot, not per event: the kernel queues into that process
-        while it is attached. A clean 0 or 1 means there is no script, or
-        the file was refused; those are not a crash loop.
+        while it is attached. A clean 0 or 1 is an orderly stop or a refused
+        attach; those are not a crash loop.
 */
 #define machine_program "/shell"
 #define MACHINE_SETTLED_NS 1000000000
@@ -213,12 +214,12 @@ static DEAD_END b32 system_init()
         positive network_failures = 0;
 #endif
 
-        wait_for_settling(settling);
-        started = clock_monotonic_nanoseconds();
-
         bipolar machine = start_machine();
         positive machine_started = clock_monotonic_nanoseconds();
         positive machine_failures = 0;
+
+        wait_for_settling(settling);
+        started = clock_monotonic_nanoseconds();
 
         // Returning from PID 1 panics the kernel, which on a machine with no
         // serial console says nothing at all. Retrying at a bounded rate keeps

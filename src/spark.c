@@ -327,12 +327,14 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
         The request numbers, in one place, because more than one change adds
         them at once: 1 spawn, 2 stats, 3 input stats, 4 window create
         (window.c), 5 window commit (window.c), 6 cursor stats, 7 input
-        devices, 9 snapshot, 10 Canvas on and off, 11
-        bindings, 12 and 13 reading and setting the boot settings.
-        8 was never used and stays that way. The next request takes the next
-        free number past the highest, 14 at the time of writing, and a gap is
-        never filled: an old program sending an old number must never reach a
-        new request that happens to share it.
+        devices, 9 snapshot, 10 Canvas on and off, 11 bindings, 12 and 13
+        reading and setting the boot settings. 8 was never used and stays
+        that way. 14 and 15 are Moonwater's machine process and script;
+        they are defined in moonwater.c so Spark stays the image and spawn
+        device. The next request takes the next free number past the
+        highest, 16 at the time of writing, and a gap is never filled: an
+        old program sending an old number must never reach a new request
+        that happens to share it.
 */
 
 /*
@@ -385,8 +387,9 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
         Every event has a name and an id, and an id is never given to another
         event, so an old program asking for one can never reach a new one.
         A bound event runs its line the way `/shell -c` does, as root with
-        every capability -- unless a machine script is attached, in which
-        case the event is queued into that process and `$1` is this name.
+        every capability -- unless a machine-script arm owns that event, in
+        which case it is queued into the attached process and `$1` is this
+        name.
         The line lasts until the machine stops; keeping it
         across a boot belongs to whoever sets it at boot. An empty line puts
         back the event's default, which for most events is nothing.
@@ -401,6 +404,14 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
         runs as root, and CAP_SYS_BOOT as well for the events flagged
         SPARK_BIND_BOOT, which stop, sleep or restart the machine: a process
         allowed only to stop the machine must not choose what runs.
+
+        A machine-script arm, or *), owns that event while the kernel holds
+        the script: bind_fire queues into the attached process instead of
+        spawning the image line, and `moonwater bind` prints the script line
+        rather than SET. Events the overlay does not name still use the image
+        binds. SET of the image line is still allowed (the fallback if the
+        machine process is not attached); the CLI refuses to change an owned
+        event so the two copies cannot drift from the keyboard.
 
         The 312-byte request is a different ioctl from the 272-byte power
         button that used this number; a stale caller gets ENOTTY.
@@ -451,6 +462,17 @@ static const char spark_bind_event_name[SPARK_BIND_EVENTS][SPARK_BIND_NAME_MAX] 
         "canvas on",
         "canvas off",
 };
+
+static const unsigned char spark_bind_stop[SPARK_BIND_EVENTS] = {
+        [SPARK_BIND_POWEROFF - 1] = 1,
+        [SPARK_BIND_RESET - 1] = 1,
+        [SPARK_BIND_CTRL_ALT_DELETE - 1] = 1,
+};
+
+static inline int spark_bind_is_stop(unsigned int event)
+{
+        return event && event <= SPARK_BIND_EVENTS && spark_bind_stop[event - 1];
+}
 
 struct bind_control {
         unsigned int op;     // SPARK_BIND_GET, or SPARK_BIND_SET, which stores command first
@@ -704,35 +726,5 @@ struct spark_settings_request {
 
 _Static_assert(sizeof(struct spark_settings_request) == 16,
                "spark settings request ABI");
-
-/*
-        The machine script process. One attacher holds /dev/spark and waits;
-        bind_fire queues into it instead of spawning `/shell -c`. Closing the
-        descriptor detaches. END is an orderly stop, not a bind row: it does
-        not sit behind the queue, and a detach after it does not drain.
-*/
-#define SPARK_MACHINE_ATTACH 0u
-#define SPARK_MACHINE_DETACH 1u
-#define SPARK_MACHINE_WAIT 2u
-#define SPARK_MACHINE_STATUS 3u
-#define SPARK_MACHINE_END 4u
-
-#define SPARK_MACHINE_ATTACHED 0x1u
-
-struct machine_control {
-        unsigned int op;     // SPARK_MACHINE_*
-        unsigned int event;  // 1..SPARK_BIND_EVENTS, or 0 for end
-        unsigned int queued; // answered: events waiting
-        unsigned int flags;  // answered: SPARK_MACHINE_ATTACHED
-        unsigned int extra;  // canvas: 1 is on, 0 is off
-        unsigned int reserved[3];
-        char name[SPARK_BIND_NAME_MAX];
-        char unused[8];
-};
-
-_Static_assert(sizeof(struct machine_control) == 64, "spark machine ABI");
-
-// _IOWR('s', 14, struct machine_control)
-#define SPARK_IOCTL_MACHINE 0xc040730eu
 
 #endif

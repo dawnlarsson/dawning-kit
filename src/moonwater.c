@@ -1,0 +1,1851 @@
+/*
+        Moonwater's machine: the event source, the script, and the CLI.
+
+        Spark stays the image and the spawn device. This file owns the rest.
+        The numbers 14 and 15 stay in Spark's ioctl catalog so they are
+        never reused; their structs live here.
+*/
+
+#ifndef MOONWATER_INCLUDED
+#define MOONWATER_INCLUDED
+
+#define MOONWATER_ATTACH 0u
+#define MOONWATER_DETACH 1u
+#define MOONWATER_WAIT 2u
+#define MOONWATER_STATUS 3u
+#define MOONWATER_END 4u
+#define MOONWATER_ATTACHED 0x1u
+
+struct machine_control {
+        unsigned int op;     // MOONWATER_ATTACH .. END
+        unsigned int event;  // 1..SPARK_BIND_EVENTS, or 0 for end
+        unsigned int queued; // answered: events waiting
+        unsigned int flags;  // answered: MOONWATER_ATTACHED
+        unsigned int extra;  // canvas: 1 is on, 0 is off
+        unsigned int reserved[3];
+        char name[SPARK_BIND_NAME_MAX];
+        char unused[8];
+};
+
+_Static_assert(sizeof(struct machine_control) == 64, "moonwater machine ABI");
+
+// _IOWR('s', 14, struct machine_control)
+#define MOONWATER_IOCTL_MACHINE 0xc040730eu
+
+#define MOONWATER_HOOK_INIT 1u
+#define MOONWATER_HOOK_EVENT 2u
+#define MOONWATER_HOOK_END 4u
+#define MOONWATER_HOOKS 3u
+
+#define MOONWATER_SCRIPT_BYTES 65536u
+#define MOONWATER_SCRIPT_GET 0u
+#define MOONWATER_SCRIPT_SET 1u
+#define MOONWATER_ORIGIN_BUILTIN 0u
+#define MOONWATER_ORIGIN_DISK 1u
+
+struct moonwater_overlay {
+        unsigned char hooks;
+        unsigned char pad;
+        unsigned short init_line;
+        unsigned short event_line;
+        unsigned short end_line;
+        unsigned short star_line;
+        unsigned short bind_line[SPARK_BIND_EVENTS];
+};
+
+_Static_assert(sizeof(struct moonwater_overlay) == 36, "moonwater overlay");
+
+static const struct {
+        char name[16];
+        unsigned char bit;
+        unsigned char line_off;
+} moonwater_hook[MOONWATER_HOOKS] = {
+        { "moonwater_init", MOONWATER_HOOK_INIT,
+          (unsigned char)__builtin_offsetof(struct moonwater_overlay, init_line) },
+        { "moonwater_event", MOONWATER_HOOK_EVENT,
+          (unsigned char)__builtin_offsetof(struct moonwater_overlay, event_line) },
+        { "moonwater_end", MOONWATER_HOOK_END,
+          (unsigned char)__builtin_offsetof(struct moonwater_overlay, end_line) },
+};
+
+static inline unsigned short moonwater_overlay_line(const struct moonwater_overlay *overlay,
+                                                    unsigned char off)
+{
+        return *(const unsigned short *)((const unsigned char *)overlay + off);
+}
+
+static inline unsigned short moonwater_bind_line(const struct moonwater_overlay *overlay,
+                                                 unsigned int event)
+{
+        if (!event || event > SPARK_BIND_EVENTS)
+                return 0;
+        return overlay->bind_line[event - 1];
+}
+
+static inline int moonwater_is_canvas(unsigned int event)
+{
+        return event == SPARK_BIND_CANVAS_ON || event == SPARK_BIND_CANVAS_OFF;
+}
+
+/*
+        The script text lives in the module: main.moonwater.sh at the
+        repository root is baked in as the fallback, and /root/main.moonwater.sh
+        overlays it when present. GET answers the overlay the CLI and the
+        machine both use; SET replaces the live copy. The module scans once;
+        userspace does not.
+*/
+struct machine_script {
+        unsigned int op;
+        unsigned int origin;
+        unsigned int length;
+        unsigned int flags; // none; nonzero is refused
+        unsigned long address;
+        struct moonwater_overlay overlay;
+        unsigned int pad;
+};
+
+_Static_assert(sizeof(struct machine_script) == 64, "moonwater script ABI");
+_Static_assert(__builtin_offsetof(struct machine_script, overlay) == 24,
+               "moonwater script overlay");
+_Static_assert(__builtin_offsetof(struct moonwater_overlay, bind_line) == 10,
+               "moonwater overlay arms");
+
+// _IOWR('s', 15, struct machine_script)
+#define MOONWATER_IOCTL_SCRIPT 0xc040730fu
+
+#if defined(STANDARD_MODERN_C_KERNEL) || defined(MOONWATER_SCAN)
+/*
+        Classify-once lexer: a 256-byte class table, the same shape as
+        Plan 9 lex and the kernel n_tty map. Skip, punct, quote and word
+        all switch on script_kind[c]; the walk does not re-test character
+        classes.
+*/
+
+#define SCRIPT_WORD 64
+#define SCRIPT_TOK_END 0
+#define SCRIPT_TOK_WORD 1
+#define SCRIPT_TOK_PUNCT 2
+#define SCRIPT_TOK_DSEMI 3
+
+#define SK_NONE 0
+#define SK_SPACE 1
+#define SK_NL 2
+#define SK_HASH 3
+#define SK_ESC 4
+#define SK_PUNCT 5
+#define SK_SEMI 6
+#define SK_QUOTE 7
+#define SK_WORD 8
+#define SK_WORD2 9
+
+static const unsigned char script_kind[256] = {
+        ['\t'] = SK_SPACE, ['\n'] = SK_NL, ['\r'] = SK_SPACE, [' '] = SK_SPACE,
+        ['#'] = SK_HASH, ['\\'] = SK_ESC,
+        ['('] = SK_PUNCT, [')'] = SK_PUNCT, ['{'] = SK_PUNCT, ['}'] = SK_PUNCT,
+        ['|'] = SK_PUNCT, [';'] = SK_SEMI,
+        ['"'] = SK_QUOTE, ['\''] = SK_QUOTE, ['`'] = SK_QUOTE,
+        ['A' ... 'Z'] = SK_WORD, ['a' ... 'z'] = SK_WORD,
+        ['_'] = SK_WORD, ['$'] = SK_WORD, ['*'] = SK_WORD, ['?'] = SK_WORD,
+        ['['] = SK_WORD, ['@'] = SK_WORD,
+        ['0' ... '9'] = SK_WORD2, ['-'] = SK_WORD2, ['/'] = SK_WORD2,
+        [']'] = SK_WORD2, ['.'] = SK_WORD2,
+};
+
+struct script_read {
+        const unsigned char *text;
+        unsigned long length;
+        unsigned long at;
+        unsigned short line;
+};
+
+struct script_token {
+        unsigned char kind;
+        unsigned char punct;
+        unsigned short line;
+        char word[SCRIPT_WORD];
+};
+
+static int script_eq(const char *a, const char *b)
+{
+        while (*a && *a == *b) {
+                a++;
+                b++;
+        }
+        return *a == *b;
+}
+
+static int script_word_is(const struct script_token *token, const char *text)
+{
+        return token->kind == SCRIPT_TOK_WORD && script_eq(token->word, text);
+}
+
+static int script_punct_is(const struct script_token *token, unsigned char value)
+{
+        return token->kind == SCRIPT_TOK_PUNCT && token->punct == value;
+}
+
+static void script_next(struct script_read *scan, struct script_token *token)
+{
+        unsigned char value, quote, kind;
+        unsigned int used = 0;
+        unsigned char *b = (unsigned char *)token;
+        unsigned long n = sizeof(*token);
+
+        while (n--)
+                *b++ = 0;
+        while (scan->at < scan->length) {
+                value = scan->text[scan->at];
+                kind = script_kind[value];
+                if (kind == SK_NL || kind == SK_SPACE) {
+                        scan->line += kind == SK_NL;
+                        scan->at++;
+                        continue;
+                }
+                if (kind == SK_ESC && scan->at + 1 < scan->length &&
+                    scan->text[scan->at + 1] == '\n') {
+                        scan->at += 2;
+                        scan->line++;
+                        continue;
+                }
+                if (kind == SK_HASH) {
+                        while (scan->at < scan->length &&
+                               scan->text[scan->at] != '\n')
+                                scan->at++;
+                        continue;
+                }
+                break;
+        }
+        token->line = scan->line;
+        if (scan->at >= scan->length) {
+                token->kind = SCRIPT_TOK_END;
+                return;
+        }
+
+        value = scan->text[scan->at];
+        kind = script_kind[value];
+        if (kind == SK_SEMI && scan->at + 1 < scan->length &&
+            scan->text[scan->at + 1] == ';') {
+                scan->at += 2;
+                token->kind = SCRIPT_TOK_DSEMI;
+                return;
+        }
+        if (kind == SK_PUNCT || kind == SK_SEMI) {
+                scan->at++;
+                token->kind = SCRIPT_TOK_PUNCT;
+                token->punct = value;
+                token->word[0] = (char)value;
+                return;
+        }
+
+        token->kind = SCRIPT_TOK_WORD;
+        if (kind == SK_QUOTE) {
+                quote = value;
+                scan->at++;
+                while (scan->at < scan->length && scan->text[scan->at] != quote) {
+                        value = scan->text[scan->at];
+                        if (quote != '\'' && value == '\\' &&
+                            scan->at + 1 < scan->length) {
+                                scan->at++;
+                                value = scan->text[scan->at];
+                        }
+                        if (value == '\n')
+                                scan->line++;
+                        if (used + 1 < SCRIPT_WORD)
+                                token->word[used++] = (char)value;
+                        scan->at++;
+                }
+                if (scan->at < scan->length)
+                        scan->at++;
+                return;
+        }
+
+        if (kind == SK_WORD) {
+                while (scan->at < scan->length) {
+                        kind = script_kind[scan->text[scan->at]];
+                        if (kind != SK_WORD && kind != SK_WORD2)
+                                break;
+                        if (used + 1 < SCRIPT_WORD)
+                                token->word[used++] = (char)scan->text[scan->at];
+                        scan->at++;
+                }
+                return;
+        }
+
+        scan->at++;
+        token->kind = SCRIPT_TOK_PUNCT;
+        token->punct = value;
+        token->word[0] = (char)value;
+}
+
+static struct script_token script_peek(struct script_read *scan)
+{
+        struct script_read held = *scan;
+        struct script_token token;
+
+        script_next(scan, &token);
+        *scan = held;
+        return token;
+}
+
+static void script_arm_event(struct moonwater_overlay *into, unsigned int event,
+                             unsigned short line)
+{
+        if (event && event <= SPARK_BIND_EVENTS && !into->bind_line[event - 1])
+                into->bind_line[event - 1] = line;
+}
+
+static void script_arm(struct moonwater_overlay *into, const char *pattern,
+                       unsigned short line)
+{
+        unsigned int event;
+
+        if (script_eq(pattern, "*")) {
+                if (!into->star_line)
+                        into->star_line = line;
+                return;
+        }
+        if (script_eq(pattern, "canvas")) {
+                script_arm_event(into, SPARK_BIND_CANVAS_ON, line);
+                script_arm_event(into, SPARK_BIND_CANVAS_OFF, line);
+                return;
+        }
+        for (event = 0; event < SPARK_BIND_EVENTS; event++)
+                if (script_eq(spark_bind_event_name[event], pattern)) {
+                        script_arm_event(into, event + 1, line);
+                        return;
+                }
+}
+
+static void script_block(struct script_read *scan, struct moonwater_overlay *into,
+                         unsigned short depth);
+
+static void script_parse_case(struct script_read *scan,
+                              struct moonwater_overlay *into)
+{
+        struct script_token token;
+        unsigned short cases = 1;
+
+        do {
+                script_next(scan, &token);
+                if (token.kind == SCRIPT_TOK_END)
+                        return;
+        } while (!script_word_is(&token, "esac") && !script_word_is(&token, "in"));
+        if (script_word_is(&token, "esac"))
+                return;
+
+        while (cases) {
+                script_next(scan, &token);
+                if (token.kind == SCRIPT_TOK_END || script_punct_is(&token, '}'))
+                        return;
+                if (script_word_is(&token, "esac")) {
+                        cases--;
+                        continue;
+                }
+                if (script_punct_is(&token, '{')) {
+                        script_block(scan, 0, 1);
+                        continue;
+                }
+                if (script_word_is(&token, "case")) {
+                        cases++;
+                        continue;
+                }
+                if (script_punct_is(&token, '('))
+                        script_next(scan, &token);
+
+                while (token.kind == SCRIPT_TOK_WORD) {
+                        script_arm(into, token.word, token.line);
+                        script_next(scan, &token);
+                        if (!script_punct_is(&token, '|'))
+                                break;
+                        script_next(scan, &token);
+                }
+
+                while (!script_punct_is(&token, ')') &&
+                       token.kind != SCRIPT_TOK_END &&
+                       token.kind != SCRIPT_TOK_DSEMI &&
+                       !script_word_is(&token, "esac"))
+                        script_next(scan, &token);
+                if (token.kind == SCRIPT_TOK_END)
+                        return;
+                if (script_word_is(&token, "esac")) {
+                        cases--;
+                        continue;
+                }
+
+                for (;;) {
+                        script_next(scan, &token);
+                        if (token.kind == SCRIPT_TOK_END ||
+                            script_punct_is(&token, '}'))
+                                return;
+                        if (token.kind == SCRIPT_TOK_DSEMI)
+                                break;
+                        if (script_word_is(&token, "case"))
+                                cases++;
+                        else if (script_word_is(&token, "esac")) {
+                                cases--;
+                                break;
+                        } else if (script_punct_is(&token, '{'))
+                                script_block(scan, 0, 1);
+                }
+        }
+}
+
+static void script_block(struct script_read *scan, struct moonwater_overlay *into,
+                         unsigned short depth)
+{
+        struct script_token token;
+
+        while (depth) {
+                script_next(scan, &token);
+                if (token.kind == SCRIPT_TOK_END)
+                        return;
+                if (script_punct_is(&token, '{'))
+                        depth++;
+                else if (script_punct_is(&token, '}'))
+                        depth--;
+                else if (into && script_word_is(&token, "case"))
+                        script_parse_case(scan, into);
+        }
+}
+
+static int script_take_function(struct script_read *scan, const char *name,
+                                unsigned short line, struct moonwater_overlay *into)
+{
+        struct script_token token;
+        unsigned int i;
+        unsigned char hook = 0;
+        unsigned char off = 0;
+
+        token = script_peek(scan);
+        if (script_punct_is(&token, '(')) {
+                script_next(scan, &token);
+                token = script_peek(scan);
+                if (script_punct_is(&token, ')'))
+                        script_next(scan, &token);
+                token = script_peek(scan);
+        }
+        if (!script_punct_is(&token, '{'))
+                return 0;
+
+        script_next(scan, &token);
+        for (i = 0; i < MOONWATER_HOOKS; i++)
+                if (script_eq(name, moonwater_hook[i].name)) {
+                        hook = moonwater_hook[i].bit;
+                        off = moonwater_hook[i].line_off;
+                        break;
+                }
+        if (hook) {
+                unsigned short *slot =
+                        (unsigned short *)((unsigned char *)into + off);
+
+                into->hooks |= hook;
+                if (!*slot)
+                        *slot = line;
+        }
+        script_block(scan, hook == MOONWATER_HOOK_EVENT ? into : 0, 1);
+        return 1;
+}
+
+static void moonwater_scan(const char *text, unsigned long length,
+                           struct moonwater_overlay *into)
+{
+        struct script_read scan;
+        struct script_token token;
+        unsigned char *b = (unsigned char *)into;
+        unsigned long n = sizeof(*into);
+        unsigned int event;
+
+        while (n--)
+                *b++ = 0;
+        scan.text = (const unsigned char *)text;
+        scan.length = length;
+        scan.at = 0;
+        scan.line = 1;
+
+        while (scan.at < scan.length) {
+                script_next(&scan, &token);
+                if (token.kind == SCRIPT_TOK_END)
+                        break;
+                if (script_word_is(&token, "function")) {
+                        script_next(&scan, &token);
+                        if (token.kind == SCRIPT_TOK_WORD)
+                                script_take_function(&scan, token.word, token.line,
+                                                     into);
+                        continue;
+                }
+                if (token.kind == SCRIPT_TOK_WORD) {
+                        struct script_token next = script_peek(&scan);
+
+                        if (script_punct_is(&next, '('))
+                                script_take_function(&scan, token.word, token.line,
+                                                     into);
+                }
+        }
+
+        if (!into->star_line)
+                return;
+        for (event = 0; event < SPARK_BIND_EVENTS; event++)
+                if (!into->bind_line[event])
+                        into->bind_line[event] = into->star_line;
+}
+
+#endif /* scan */
+
+#ifdef STANDARD_MODERN_C_KERNEL
+#ifdef CONFIG_MOONWATER_CANVAS
+static _Bool canvas_is_on(void);
+#endif
+
+/*
+        One input handler, not grabbing. The callback is IRQ context and only
+        debounces and queues; the line runs from system_dfl_long_wq as
+        `/shell -c`. A machine-script arm is queued into the attached process
+        instead. Events the overlay does not name still use the image line.
+
+        poweroff and reboot must not fail quietly: a line that could not start,
+        or returned without stopping, falls back to orderly_poweroff or
+        orderly_reboot.
+*/
+#define BIND_MOD_CTRL 1u
+#define BIND_MOD_ALT 2u
+#define BIND_MOD_RCTRL 4u
+#define BIND_MOD_RALT 8u
+#define BIND_BOOT 1u
+#define BIND_DROP 2u
+#define BIND_CANVAS 4u
+#define BIND_CAD 8u
+#define BIND_CODES 768u
+#define BIND_MACHINE_QUEUE 32
+#define BIND_CODES_PER 2
+
+struct bind_row {
+        unsigned int event;
+        unsigned int debounce;
+        unsigned int flags;
+        atomic_t bound;
+        atomic_t runs;
+        atomic_t busy;
+        unsigned long last;
+        const char *def;
+        char command[SPARK_BIND_COMMAND_MAX];
+        struct work_struct work;
+};
+
+struct bind_spawn {
+        char command[SPARK_BIND_COMMAND_MAX];
+        char event[SPARK_BIND_NAME_MAX];
+};
+
+struct bind_handle {
+        struct input_handle handle;
+        unsigned int mods;
+};
+
+static struct bind_row bind_table[SPARK_BIND_EVENTS];
+static DEFINE_SPINLOCK(bind_lock);
+static atomic_t bind_ctrl;
+static atomic_t bind_alt;
+static unsigned bind_held_n;
+static _Bool bind_handler_registered;
+static struct work_struct bind_canvas_work;
+static atomic_t bind_alive;
+static atomic_t bind_machine_live;
+
+static struct {
+        unsigned int event[BIND_MACHINE_QUEUE];
+        unsigned int count;
+        struct file *owner;
+        wait_queue_head_t wait;
+        _Bool ending;
+} bind_machine;
+
+static DEFINE_SPINLOCK(bind_machine_lock);
+
+extern const char moonwater_machine_builtin[];
+extern const char moonwater_machine_builtin_end[];
+
+static char machine_script_text[MOONWATER_SCRIPT_BYTES];
+static unsigned int machine_script_length;
+static unsigned int machine_script_origin;
+static unsigned int machine_script_owned;
+static unsigned int machine_script_builtin;
+static struct moonwater_overlay machine_script_overlay;
+static DEFINE_MUTEX(machine_script_lock);
+
+static const struct {
+        const char *def;
+        unsigned short debounce_ms;
+        unsigned char flags;
+        unsigned short code[BIND_CODES_PER];
+} bind_spec[SPARK_BIND_EVENTS] = {
+        { "poweroff", 1000, BIND_BOOT | BIND_DROP, { KEY_POWER, 0 } },
+        { "", 1000, BIND_BOOT | BIND_DROP, { KEY_SLEEP, KEY_SUSPEND } },
+        { "reboot", 1000, BIND_BOOT | BIND_DROP, { KEY_RESTART, 0 } },
+        { "reboot", 1000, BIND_BOOT | BIND_DROP | BIND_CAD,
+          { KEY_DELETE, KEY_KPDOT } },
+        { "", 500, BIND_DROP, { 0, 0 } },
+        { "", 500, BIND_DROP, { 0, 0 } },
+        { "", 0, 0, { KEY_VOLUMEUP, 0 } },
+        { "", 0, 0, { KEY_VOLUMEDOWN, 0 } },
+        { "", 0, 0, { KEY_MUTE, 0 } },
+        { "", 0, 0, { KEY_BRIGHTNESSUP, 0 } },
+        { "", 0, 0, { KEY_BRIGHTNESSDOWN, 0 } },
+        { "", 0, BIND_DROP | BIND_CANVAS, { 0, 0 } },
+        { "", 0, BIND_DROP | BIND_CANVAS, { 0, 0 } },
+};
+
+static const unsigned short bind_mod_code[] = {
+        KEY_LEFTCTRL, KEY_RIGHTCTRL, KEY_LEFTALT, KEY_RIGHTALT,
+};
+
+static const unsigned char bind_mod_of[256] = {
+        [KEY_LEFTCTRL] = BIND_MOD_CTRL,
+        [KEY_RIGHTCTRL] = BIND_MOD_RCTRL,
+        [KEY_LEFTALT] = BIND_MOD_ALT,
+        [KEY_RIGHTALT] = BIND_MOD_RALT,
+};
+
+static const unsigned char bind_lid[2] = {
+        SPARK_BIND_LID_OPEN,
+        SPARK_BIND_LID_CLOSE,
+};
+
+static const unsigned char bind_machine_admin[MOONWATER_END + 1] = {
+        [MOONWATER_ATTACH] = 1,
+        [MOONWATER_WAIT] = 1,
+        [MOONWATER_END] = 1,
+};
+
+static struct bind_row *bind_row(unsigned int event)
+{
+        if (!event || event > SPARK_BIND_EVENTS)
+                return NULL;
+        return bind_table + event - 1;
+}
+
+static void bind_map_set(unsigned long *map, unsigned int code, _Bool on)
+{
+        unsigned int word;
+        unsigned long bit, now;
+
+        if (code >= BIND_CODES)
+                return;
+        word = code / 64;
+        bit = 1UL << (code % 64);
+        now = READ_ONCE(map[word]);
+        WRITE_ONCE(map[word], on ? now | bit : now & ~bit);
+}
+
+static unsigned long bind_down[BIND_CODES / 64];
+static u8 bind_code_event[BIND_CODES];
+
+static _Bool bind_map_on(const unsigned long *map, unsigned int code)
+{
+        return code < BIND_CODES &&
+               (READ_ONCE(map[code / 64]) & (1UL << (code % 64))) != 0;
+}
+
+static _Bool bind_watched(unsigned int code)
+{
+        return code < BIND_CODES && READ_ONCE(bind_code_event[code]) != 0;
+}
+
+static void bind_watch_code(unsigned int code, unsigned int event, _Bool on)
+{
+        if (!code || code >= BIND_CODES)
+                return;
+        WRITE_ONCE(bind_code_event[code], on ? (u8)event : 0);
+}
+
+static void bind_watch_row(struct bind_row *row, _Bool on)
+{
+        unsigned int i, event = row->event;
+
+        for (i = 0; i < BIND_CODES_PER; i++)
+                bind_watch_code(bind_spec[event - 1].code[i], event, on);
+}
+
+static int bind_spawn_enter(void *data)
+{
+        struct bind_spawn *spawn = data;
+        char command[SPARK_BIND_COMMAND_MAX];
+        char event_env[sizeof("MOONWATER_EVENT=") + SPARK_BIND_NAME_MAX];
+        char *argv[] = { SPARK_TOOL_PROGRAM, "-c", command, NULL };
+        char *envp[] = { "HOME=/root", "PATH=/bin:/sbin:/usr/bin:/usr/sbin",
+                         "TERM=linux", event_env, NULL };
+        int ret;
+
+        strscpy(command, spawn->command, sizeof(command));
+        snprintf(event_env, sizeof(event_env), "MOONWATER_EVENT=%s", spawn->event);
+        ret = kernel_execve(argv[0], (const char *const *)argv,
+                            (const char *const *)envp);
+        if (ret)
+                do_exit(ret);
+        return 0;
+}
+
+static void bind_run(struct bind_row *row)
+{
+        struct bind_spawn spawn;
+        const char *name = spark_bind_event_name[row->event - 1];
+        _Bool poweroff, reboot;
+        pid_t pid;
+        int ret = 0, stat = 0;
+        unsigned long flags;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        strscpy(spawn.command, row->command, sizeof(spawn.command));
+        spin_unlock_irqrestore(&bind_lock, flags);
+        strscpy(spawn.event, name, sizeof(spawn.event));
+        atomic_set(&row->busy, 1);
+
+        if (!spawn.command[0]) {
+                pr_info("[moonwater] %s: ignored\n", name);
+                goto done;
+        }
+
+        poweroff = !strcmp(spawn.command, "poweroff");
+        reboot = !strcmp(spawn.command, "reboot");
+        pr_info("[moonwater] %s: %s\n", name, spawn.command);
+
+        kernel_sigaction(SIGCHLD, SIG_DFL);
+        pid = user_mode_thread(bind_spawn_enter, &spawn, SIGCHLD);
+        if (pid > 0) {
+                ret = kernel_wait(pid, &stat);
+                if (ret > 0)
+                        ret = stat;
+        } else
+                ret = pid ? pid : -EAGAIN;
+        kernel_sigaction(SIGCHLD, SIG_IGN);
+
+        if (!ret)
+                goto done;
+        if (!poweroff && !reboot) {
+                pr_warn("[moonwater] %s: %s did not start (%d)\n",
+                        name, spawn.command, ret);
+                goto done;
+        }
+
+        pr_warn("[moonwater] %s: %s answered %d, stopping the machine anyway\n",
+                name, spawn.command, ret);
+        if (reboot)
+                orderly_reboot();
+        else
+                orderly_poweroff(true);
+done:
+        atomic_set(&row->busy, 0);
+}
+
+static void bind_work(struct work_struct *work)
+{
+        bind_run(container_of(work, struct bind_row, work));
+}
+
+static void bind_canvas_run(struct work_struct *work)
+{
+        struct bind_row *on = bind_row(SPARK_BIND_CANVAS_ON);
+        struct bind_row *off = bind_row(SPARK_BIND_CANVAS_OFF);
+        _Bool running = false;
+
+        (void)work;
+#ifdef CONFIG_MOONWATER_CANVAS
+        running = canvas_is_on();
+#endif
+        bind_run(running ? on : off);
+        atomic_set(&on->busy, 0);
+        atomic_set(&off->busy, 0);
+}
+
+static void bind_machine_shift(unsigned int at)
+{
+        unsigned int n = --bind_machine.count - at;
+
+        if (n)
+                memmove(bind_machine.event + at, bind_machine.event + at + 1,
+                        n * sizeof(bind_machine.event[0]));
+}
+
+static void bind_machine_watch_all(_Bool on)
+{
+        unsigned at;
+        unsigned long flags;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+                bind_watch_row(bind_table + at,
+                               on || atomic_read(&bind_table[at].bound));
+        spin_unlock_irqrestore(&bind_lock, flags);
+}
+
+static _Bool bind_machine_push(struct bind_row *row)
+{
+        unsigned long flags;
+        unsigned int event = row->event, i;
+
+        spin_lock_irqsave(&bind_machine_lock, flags);
+        if (!bind_machine.owner || bind_machine.ending) {
+                _Bool attached = bind_machine.owner || bind_machine.ending;
+
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                return attached;
+        }
+
+        if (row->flags & BIND_CANVAS) {
+                for (i = 0; i < bind_machine.count; i++)
+                        if (moonwater_is_canvas(bind_machine.event[i])) {
+                                bind_machine.event[i] = event;
+                                atomic_fetch_add(1, &row->runs);
+                                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                                wake_up(&bind_machine.wait);
+                                return true;
+                        }
+        }
+
+        if (bind_machine.count == BIND_MACHINE_QUEUE) {
+                for (i = 0; i < bind_machine.count; i++)
+                        if (!spark_bind_is_stop(bind_machine.event[i])) {
+                                bind_machine_shift(i);
+                                break;
+                        }
+        }
+        if (bind_machine.count == BIND_MACHINE_QUEUE) {
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                return true;
+        }
+
+        bind_machine.event[bind_machine.count++] = event;
+        atomic_fetch_add(1, &row->runs);
+        spin_unlock_irqrestore(&bind_machine_lock, flags);
+        wake_up(&bind_machine.wait);
+        return true;
+}
+
+static void bind_queue(struct bind_row *row)
+{
+        struct work_struct *work;
+
+        if (system_state != SYSTEM_RUNNING || !atomic_read(&bind_alive))
+                return;
+
+        if (atomic_read(&bind_machine_live) &&
+            (READ_ONCE(machine_script_owned) & (1u << (row->event - 1))) &&
+            bind_machine_push(row))
+                return;
+
+        if (row->flags & BIND_CANVAS) {
+                struct bind_row *on = bind_row(SPARK_BIND_CANVAS_ON);
+                struct bind_row *off = bind_row(SPARK_BIND_CANVAS_OFF);
+
+                if (atomic_read(&on->busy) || atomic_read(&off->busy) ||
+                    work_pending(&bind_canvas_work))
+                        return;
+                atomic_set(&on->busy, 1);
+                atomic_set(&off->busy, 1);
+                work = &bind_canvas_work;
+        } else {
+                if ((row->flags & BIND_DROP) &&
+                    (atomic_read(&row->busy) || work_pending(&row->work)))
+                        return;
+                work = &row->work;
+        }
+
+        if (queue_work(system_dfl_long_wq, work))
+                atomic_fetch_add(1, &row->runs);
+}
+
+static _Bool bind_row_bound(struct bind_row *row)
+{
+        return row && (atomic_read(&bind_machine_live) || atomic_read(&row->bound));
+}
+
+static void bind_fire(unsigned int event)
+{
+        struct bind_row *row = bind_row(event);
+
+        if (bind_row_bound(row))
+                bind_queue(row);
+}
+
+static void bind_machine_detach(struct file *file)
+{
+        unsigned long flags;
+        unsigned int drain[BIND_MACHINE_QUEUE], n = 0, i;
+        _Bool was_owner = false;
+
+        spin_lock_irqsave(&bind_machine_lock, flags);
+        if (bind_machine.owner == file) {
+                was_owner = true;
+                if (!bind_machine.ending)
+                        for (i = 0; i < bind_machine.count; i++)
+                                drain[n++] = bind_machine.event[i];
+                bind_machine.owner = NULL;
+                bind_machine.ending = false;
+                bind_machine.count = 0;
+                atomic_set(&bind_machine_live, 0);
+        }
+        spin_unlock_irqrestore(&bind_machine_lock, flags);
+
+        if (!was_owner)
+                return;
+
+        bind_machine_watch_all(false);
+        wake_up(&bind_machine.wait);
+        for (i = 0; i < n; i++) {
+                struct bind_row *row = bind_row(drain[i]);
+
+                if (row)
+                        bind_queue(row);
+        }
+}
+
+static void bind_machine_fill(struct machine_control *request, unsigned int event)
+{
+        request->event = event;
+        request->extra = event == SPARK_BIND_CANVAS_ON;
+        request->flags = MOONWATER_ATTACHED;
+        request->queued = bind_machine.count;
+        if (event && event <= SPARK_BIND_EVENTS)
+                strscpy(request->name, spark_bind_event_name[event - 1],
+                        sizeof(request->name));
+        else
+                strscpy(request->name, "end", sizeof(request->name));
+}
+
+static long bind_machine_wait(struct file *file, struct machine_control *request)
+{
+        unsigned long flags;
+        unsigned int event;
+
+        for (;;) {
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                if (bind_machine.owner != file) {
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return -EPIPE;
+                }
+                if (bind_machine.ending) {
+                        bind_machine_fill(request, 0);
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return 0;
+                }
+                if (bind_machine.count) {
+                        event = bind_machine.event[0];
+                        bind_machine_shift(0);
+                        bind_machine_fill(request, event);
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return 0;
+                }
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                if (wait_event_interruptible(
+                            bind_machine.wait,
+                            READ_ONCE(bind_machine.count) ||
+                                READ_ONCE(bind_machine.ending) ||
+                                READ_ONCE(bind_machine.owner) != file))
+                        return -EINTR;
+        }
+}
+
+static void machine_script_commit(const char *text, unsigned int length,
+                                  unsigned int origin)
+{
+        unsigned int bits = 0, event;
+
+        if (length > MOONWATER_SCRIPT_BYTES)
+                length = MOONWATER_SCRIPT_BYTES;
+        if (text != machine_script_text)
+                memcpy(machine_script_text, text, length);
+        machine_script_length = length;
+        machine_script_origin = origin;
+        moonwater_scan(machine_script_text, length, &machine_script_overlay);
+        for (event = 0; event < SPARK_BIND_EVENTS; event++)
+                if (machine_script_overlay.bind_line[event])
+                        bits |= 1u << event;
+        WRITE_ONCE(machine_script_owned, bits);
+}
+
+static void machine_script_reset(void)
+{
+        machine_script_builtin = (unsigned int)(moonwater_machine_builtin_end -
+                                                moonwater_machine_builtin);
+        if (machine_script_builtin > MOONWATER_SCRIPT_BYTES) {
+                pr_warn("[moonwater] builtin machine script is %u bytes; using the first %u\n",
+                        machine_script_builtin, MOONWATER_SCRIPT_BYTES);
+                machine_script_builtin = MOONWATER_SCRIPT_BYTES;
+        }
+        mutex_lock(&machine_script_lock);
+        machine_script_commit(moonwater_machine_builtin, machine_script_builtin,
+                              MOONWATER_ORIGIN_BUILTIN);
+        mutex_unlock(&machine_script_lock);
+}
+
+static void machine_script_answer(struct machine_script *request)
+{
+        request->origin = machine_script_origin;
+        request->length = machine_script_length;
+        request->flags = 0;
+        request->overlay = machine_script_overlay;
+        request->pad = 0;
+}
+
+static long report_machine(struct file *file, struct machine_control __user *out)
+{
+        struct machine_control request;
+        unsigned long flags;
+        long ret = 0;
+
+        if (copy_from_user(&request, out, sizeof(request)))
+                return -EFAULT;
+        if (request.reserved[0] || request.reserved[1] || request.reserved[2])
+                return -EINVAL;
+        if (request.op > MOONWATER_END)
+                return -EINVAL;
+        if (bind_machine_admin[request.op] && !capable(CAP_SYS_ADMIN))
+                return -EPERM;
+
+        switch (request.op) {
+        case MOONWATER_ATTACH:
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                if (bind_machine.owner && bind_machine.owner != file) {
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return -EBUSY;
+                }
+                bind_machine.owner = file;
+                bind_machine.ending = false;
+                request.queued = bind_machine.count;
+                atomic_set(&bind_machine_live, 1);
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                bind_machine_watch_all(true);
+                request.flags = MOONWATER_ATTACHED;
+                break;
+        case MOONWATER_DETACH:
+                bind_machine_detach(file);
+                request.flags = 0;
+                request.queued = 0;
+                break;
+        case MOONWATER_WAIT:
+                ret = bind_machine_wait(file, &request);
+                if (ret)
+                        return ret;
+                break;
+        case MOONWATER_STATUS:
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                request.queued = bind_machine.count;
+                request.flags = bind_machine.owner ? MOONWATER_ATTACHED : 0;
+                request.event = 0;
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                break;
+        case MOONWATER_END:
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                if (!bind_machine.owner) {
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return -EPIPE;
+                }
+                bind_machine.ending = true;
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                wake_up(&bind_machine.wait);
+                request.flags = MOONWATER_ATTACHED;
+                break;
+        }
+
+        return copy_to_user(out, &request, sizeof(request)) ? -EFAULT : 0;
+}
+
+static long report_machine_script(struct machine_script __user *out)
+{
+        struct machine_script request;
+
+        if (copy_from_user(&request, out, sizeof(request)))
+                return -EFAULT;
+        if (request.flags || request.pad)
+                return -EINVAL;
+
+        switch (request.op) {
+        case MOONWATER_SCRIPT_GET:
+                mutex_lock(&machine_script_lock);
+                machine_script_answer(&request);
+                if (request.address && machine_script_length &&
+                    copy_to_user((void __user *)request.address,
+                                 machine_script_text, machine_script_length)) {
+                        mutex_unlock(&machine_script_lock);
+                        return -EFAULT;
+                }
+                mutex_unlock(&machine_script_lock);
+                break;
+        case MOONWATER_SCRIPT_SET:
+                if (!capable(CAP_SYS_ADMIN))
+                        return -EPERM;
+                if (request.length > MOONWATER_SCRIPT_BYTES)
+                        return -EINVAL;
+                if (request.length && !request.address)
+                        return -EINVAL;
+                mutex_lock(&machine_script_lock);
+                if (!request.length)
+                        machine_script_commit(moonwater_machine_builtin,
+                                              machine_script_builtin,
+                                              MOONWATER_ORIGIN_BUILTIN);
+                else if (copy_from_user(machine_script_text,
+                                        (void __user *)request.address,
+                                        request.length)) {
+                        mutex_unlock(&machine_script_lock);
+                        return -EFAULT;
+                } else
+                        machine_script_commit(machine_script_text, request.length,
+                                              MOONWATER_ORIGIN_DISK);
+                machine_script_answer(&request);
+                mutex_unlock(&machine_script_lock);
+                break;
+        default:
+                return -EINVAL;
+        }
+
+        return copy_to_user(out, &request, sizeof(request)) ? -EFAULT : 0;
+}
+
+static _Bool bind_debounce(struct bind_row *row)
+{
+        unsigned long now = jiffies | 1;
+        unsigned long last = READ_ONCE(row->last);
+
+        if (!row->debounce)
+                return true;
+        if (last && time_before(now, last + row->debounce))
+                return false;
+        return cmpxchg(&row->last, last, now) == last;
+}
+
+static struct bind_row *bind_match(unsigned int type, unsigned int code, int value)
+{
+        unsigned int event;
+
+        if (type == EV_SW)
+                return (code == SW_LID && (unsigned int)value < 2)
+                               ? bind_row(bind_lid[value])
+                               : NULL;
+        if (type != EV_KEY || value != 1 || code >= BIND_CODES)
+                return NULL;
+
+        event = READ_ONCE(bind_code_event[code]);
+        if (!event)
+                return NULL;
+        if ((bind_spec[event - 1].flags & BIND_CAD) &&
+            !(atomic_read(&bind_ctrl) > 0 && atomic_read(&bind_alt) > 0))
+                return NULL;
+        return bind_row(event);
+}
+
+static void bind_hold(unsigned int code, int value)
+{
+        _Bool down = value != 0;
+
+        if (code >= BIND_CODES || bind_map_on(bind_down, code) == down)
+                return;
+        bind_map_set(bind_down, code, down);
+        bind_held_n += down ? 1 : -1;
+}
+
+static _Bool bind_key_swallowed(unsigned int code, int value)
+{
+        struct bind_row *row;
+        unsigned long flags;
+        _Bool swallow = false;
+
+        if (!bind_watched(code) && (value == 1 || !READ_ONCE(bind_held_n)))
+                return false;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        if (value == 1) {
+                row = bind_match(EV_KEY, code, 1);
+                if (row) {
+                        bind_hold(code, 1);
+                        swallow = true;
+                }
+        } else if (bind_map_on(bind_down, code)) {
+                if (!value)
+                        bind_hold(code, 0);
+                swallow = true;
+        }
+        spin_unlock_irqrestore(&bind_lock, flags);
+        return swallow;
+}
+
+static void bind_mods(struct bind_handle *bind, unsigned int code, int value)
+{
+        unsigned int bit = code < 256 ? bind_mod_of[code] : 0;
+        atomic_t *side;
+
+        if (!bit)
+                return;
+        side = (bit & (BIND_MOD_CTRL | BIND_MOD_RCTRL)) ? &bind_ctrl : &bind_alt;
+        if (value == 1) {
+                if (!(bind->mods & bit)) {
+                        bind->mods |= bit;
+                        atomic_fetch_add(1, side);
+                }
+        } else if (value == 0 && (bind->mods & bit)) {
+                bind->mods &= ~bit;
+                atomic_fetch_sub(1, side);
+        }
+}
+
+static void bind_event(struct input_handle *handle, unsigned int type,
+                       unsigned int code, int value)
+{
+        struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
+        struct bind_row *row;
+
+        if (type == EV_KEY) {
+                bind_mods(bind, code, value);
+                if (value != 1)
+                        return;
+        } else if (type != EV_SW)
+                return;
+
+        row = bind_match(type, code, value);
+        if (!row || (type == EV_SW && !bind_row_bound(row)) || !bind_debounce(row))
+                return;
+        bind_queue(row);
+}
+
+static int bind_connect(struct input_handler *handler, struct input_dev *dev,
+                        const struct input_device_id *id)
+{
+        struct bind_handle *bind = kzalloc(sizeof(*bind), GFP_KERNEL);
+        int ret;
+
+        (void)id;
+        if (!bind)
+                return -ENOMEM;
+        bind->handle.dev = dev;
+        bind->handle.handler = handler;
+        bind->handle.name = "moonwater-bind";
+        ret = input_register_handle(&bind->handle);
+        if (ret)
+                goto free;
+        ret = input_open_device(&bind->handle);
+        if (ret)
+                goto unregister;
+        return 0;
+unregister:
+        input_unregister_handle(&bind->handle);
+free:
+        kfree(bind);
+        return ret;
+}
+
+static void bind_disconnect(struct input_handle *handle)
+{
+        struct bind_handle *bind = container_of(handle, struct bind_handle, handle);
+        unsigned int i;
+
+        for (i = 0; i < ARRAY_SIZE(bind_mod_code); i++)
+                bind_mods(bind, bind_mod_code[i], 0);
+        input_close_device(handle);
+        input_unregister_handle(handle);
+        kfree(bind);
+}
+
+static const struct input_device_id bind_ids[] = {
+        { .flags = INPUT_DEVICE_ID_MATCH_EVBIT, .evbit = { BIT_MASK(EV_KEY) } },
+        { .flags = INPUT_DEVICE_ID_MATCH_EVBIT, .evbit = { BIT_MASK(EV_SW) } },
+        {},
+};
+
+static struct input_handler bind_handler = {
+        .event = bind_event,
+        .connect = bind_connect,
+        .disconnect = bind_disconnect,
+        .name = "moonwater-bind",
+        .id_table = bind_ids,
+};
+
+#ifdef CONFIG_VT
+static int bind_keyboard_notify(struct notifier_block *nb, unsigned long code,
+                                void *p)
+{
+        struct keyboard_notifier_param *param = p;
+        struct bind_row *row;
+
+        (void)nb;
+        if (code != KBD_KEYSYM || !param->down)
+                return NOTIFY_DONE;
+        if ((KTYP(param->value) & 0x0f) != KT_SPEC ||
+            KVAL(param->value) != KVAL(K_BOOT))
+                return NOTIFY_DONE;
+
+        row = bind_row(SPARK_BIND_CTRL_ALT_DELETE);
+        if (bind_row_bound(row) && bind_debounce(row))
+                bind_queue(row);
+        return NOTIFY_STOP;
+}
+
+static struct notifier_block bind_kbd_nb = { .notifier_call = bind_keyboard_notify };
+#endif
+
+#ifdef CONFIG_PM
+static int bind_pm_notify(struct notifier_block *nb, unsigned long event, void *p)
+{
+        unsigned at;
+
+        (void)nb;
+        (void)p;
+        if (event != PM_POST_SUSPEND)
+                return NOTIFY_DONE;
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+                if (bind_table[at].flags & BIND_DROP)
+                        WRITE_ONCE(bind_table[at].last, jiffies | 1);
+        return NOTIFY_OK;
+}
+
+static struct notifier_block bind_pm_nb = { .notifier_call = bind_pm_notify };
+#endif
+
+static void bind_start(void)
+{
+        unsigned at;
+
+        INIT_WORK(&bind_canvas_work, bind_canvas_run);
+        init_waitqueue_head(&bind_machine.wait);
+        machine_script_reset();
+        bind_machine.owner = NULL;
+        bind_machine.ending = false;
+        bind_machine.count = 0;
+        atomic_set(&bind_machine_live, 0);
+        atomic_set(&bind_ctrl, 0);
+        atomic_set(&bind_alt, 0);
+        bind_held_n = 0;
+        memset(bind_down, 0, sizeof(bind_down));
+        memset(bind_code_event, 0, sizeof(bind_code_event));
+
+        for (at = 0; at < SPARK_BIND_EVENTS; at++) {
+                struct bind_row *row = bind_table + at;
+
+                row->def = bind_spec[at].def;
+                row->event = at + 1;
+                row->flags = bind_spec[at].flags;
+                row->debounce = (unsigned int)msecs_to_jiffies(
+                        bind_spec[at].debounce_ms);
+                strscpy(row->command, row->def, sizeof(row->command));
+                atomic_set(&row->bound, row->def[0] != 0);
+                atomic_set(&row->runs, 0);
+                atomic_set(&row->busy, 0);
+                row->last = 0;
+                INIT_WORK(&row->work, bind_work);
+                bind_watch_row(row, row->def[0] != 0);
+        }
+        atomic_set(&bind_alive, 1);
+        if (input_register_handler(&bind_handler))
+                pr_alert("[moonwater] could not watch the machine's keys\n");
+        else
+                bind_handler_registered = true;
+#ifdef CONFIG_VT
+        register_keyboard_notifier(&bind_kbd_nb);
+#endif
+#ifdef CONFIG_PM
+        register_pm_notifier(&bind_pm_nb);
+#endif
+}
+
+static void bind_stop(void)
+{
+        unsigned at;
+
+        atomic_set(&bind_alive, 0);
+        spin_lock_irq(&bind_machine_lock);
+        bind_machine.owner = NULL;
+        bind_machine.ending = false;
+        bind_machine.count = 0;
+        atomic_set(&bind_machine_live, 0);
+        spin_unlock_irq(&bind_machine_lock);
+        wake_up_all(&bind_machine.wait);
+
+#ifdef CONFIG_VT
+        unregister_keyboard_notifier(&bind_kbd_nb);
+#endif
+#ifdef CONFIG_PM
+        unregister_pm_notifier(&bind_pm_nb);
+#endif
+        if (bind_handler_registered)
+                input_unregister_handler(&bind_handler);
+
+        cancel_work_sync(&bind_canvas_work);
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+                cancel_work_sync(&bind_table[at].work);
+}
+
+static void bind_answer(struct bind_control *request, struct bind_row *row)
+{
+        unsigned long flags;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        strscpy(request->name, spark_bind_event_name[row->event - 1],
+                sizeof(request->name));
+        strscpy(request->command, row->command, sizeof(request->command));
+        spin_unlock_irqrestore(&bind_lock, flags);
+
+        request->runs = (unsigned int)atomic_read(&row->runs);
+        request->count = SPARK_BIND_EVENTS;
+        request->flags = 0;
+        if (!strcmp(request->command, row->def))
+                request->flags |= SPARK_BIND_DEFAULT;
+        if (atomic_read(&row->busy))
+                request->flags |= SPARK_BIND_RUNNING;
+        if (work_pending(&row->work) ||
+            ((row->flags & BIND_CANVAS) && work_pending(&bind_canvas_work)))
+                request->flags |= SPARK_BIND_PENDING;
+        if (row->flags & BIND_BOOT)
+                request->flags |= SPARK_BIND_BOOT;
+}
+
+static long report_bind(struct bind_control __user *out)
+{
+        struct bind_control request;
+        struct bind_row *row;
+        unsigned long flags;
+
+        if (copy_from_user(&request, out, sizeof(request)))
+                return -EFAULT;
+        if (request.op > SPARK_BIND_SET || request.reserved[0] ||
+            request.reserved[1] || request.reserved[2])
+                return -EINVAL;
+
+        row = bind_row(request.event);
+        if (!row)
+                return -EINVAL;
+
+        if (request.op == SPARK_BIND_SET) {
+                if (!capable(CAP_SYS_ADMIN) ||
+                    ((row->flags & BIND_BOOT) && !capable(CAP_SYS_BOOT))) {
+                        bind_answer(&request, row);
+                        return copy_to_user(out, &request, sizeof(request))
+                                       ? -EFAULT
+                                       : -EPERM;
+                }
+                if (!memchr(request.command, 0, sizeof(request.command)))
+                        return -ENAMETOOLONG;
+
+                spin_lock_irqsave(&bind_lock, flags);
+                strscpy(row->command,
+                        request.command[0] ? request.command : row->def,
+                        sizeof(row->command));
+                atomic_set(&row->bound, row->command[0] != 0);
+                bind_watch_row(row, row->command[0] != 0 ||
+                                            atomic_read(&bind_machine_live));
+                spin_unlock_irqrestore(&bind_lock, flags);
+        }
+
+        bind_answer(&request, row);
+        return copy_to_user(out, &request, sizeof(request)) ? -EFAULT : 0;
+}
+
+#endif /* STANDARD_MODERN_C_KERNEL */
+
+#endif /* MOONWATER_INCLUDED */
+
+#ifdef MOONWATER_CLI
+#define HOST_MACHINE_OK 0
+#define HOST_MACHINE_ABSENT 1
+#define HOST_MACHINE_REFUSED 2
+#define HOST_REBOOT_RESTART 0x01234567u
+#define HOST_REBOOT_POWER_OFF 0x4321fedcu
+
+extern string_address address_to shell_argv;
+extern positive shell_argc;
+
+COLD fn shell_dot(writer write, string_address input);
+bool exec_function_readonly_set(string_address name);
+positive shell_function_slot(string_address name);
+b32 shell_call_slot(positive slot, string_address name,
+                    string_address address_to arguments, positive count);
+fn shell_stop(writer write, positive command);
+bool env_assign(const_string name, const_string value);
+
+static struct machine_script host_machine;
+static p8 host_machine_text[MOONWATER_SCRIPT_BYTES];
+static p8 host_machine_fresh;
+static bool host_machine_self;
+
+static const struct {
+        string_address name;
+        string_address value;
+} host_machine_env[] = {
+        { "HOME", "/root" },
+        { "TERM", "dumb" },
+        { "PATH", BOWL_DEFAULT_PATH },
+        { "LANG", "C.UTF-8" },
+};
+
+static bool host_machine_file_allowed(p16 mode, p32 owner)
+{
+        return (mode & MODE_FORMAT) == MODE_FILE && owner == 0 &&
+               (mode & 0022) == 0;
+}
+
+static bipolar host_machine_read_once(bipolar handle, void *into, positive room)
+{
+        bipolar got;
+
+        do
+                got = system_read_once(handle, into, room);
+        while (got == -4);
+        return got;
+}
+
+static p8 host_machine_read_file(string_address path, p8 address_to text,
+                                 positive room, positive address_to used)
+{
+        file_facts facts;
+        file_facts opened;
+        bipolar handle;
+        bipolar got;
+
+        address_to used = 0;
+        if (!file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, address_of facts))
+                return HOST_MACHINE_ABSENT;
+        if ((facts.mode & MODE_FORMAT) == MODE_LINK ||
+            !host_machine_file_allowed(facts.mode, facts.owner))
+                return HOST_MACHINE_REFUSED;
+
+        handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC | O_NOFOLLOW);
+        if (handle < 0)
+                return HOST_MACHINE_REFUSED;
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH, address_of opened) ||
+            !host_machine_file_allowed(opened.mode, opened.owner)) {
+                system_close(handle);
+                return HOST_MACHINE_REFUSED;
+        }
+
+        for (;;) {
+                if (address_to used == room) {
+                        p8 extra;
+
+                        got = host_machine_read_once(handle, address_of extra, 1);
+                        system_close(handle);
+                        return (got < 0 || got) ? HOST_MACHINE_REFUSED : HOST_MACHINE_OK;
+                }
+                got = host_machine_read_once(handle, text + address_to used,
+                                             room - address_to used);
+                if (got < 0) {
+                        system_close(handle);
+                        return HOST_MACHINE_REFUSED;
+                }
+                if (!got)
+                        break;
+                address_to used += (positive)got;
+        }
+        system_close(handle);
+        return HOST_MACHINE_OK;
+}
+
+static bipolar host_machine_ioctl(bipolar device, unsigned int op,
+                                  struct machine_control address_to control)
+{
+        memory_zero(control, sizeof(address_to control));
+        control->op = op;
+        return system_control(device, MOONWATER_IOCTL_MACHINE, control);
+}
+
+static bipolar host_machine_script(unsigned int op)
+{
+        host_machine.op = op;
+        return host_spark_once(MOONWATER_IOCTL_SCRIPT, address_of host_machine,
+                               FILE_READ);
+}
+
+static fn host_machine_publish(void)
+{
+        positive used = 0;
+        p8 loaded;
+
+        if (!bowl_is_root())
+                return;
+
+        loaded = host_machine_read_file(HOST_MACHINE_SCRIPT, host_machine_text,
+                                        MOONWATER_SCRIPT_BYTES, address_of used);
+        if (loaded == HOST_MACHINE_REFUSED) {
+                string_address line[] = { "machine script refused: ",
+                                          HOST_MACHINE_SCRIPT, null };
+
+                host_kmsg(line);
+                return;
+        }
+
+        memory_zero(address_of host_machine, sizeof(host_machine));
+        if (loaded == HOST_MACHINE_OK) {
+                host_machine.length = (unsigned int)used;
+                host_machine.address = (unsigned long)host_machine_text;
+        }
+        if (host_machine_script(MOONWATER_SCRIPT_SET) >= 0)
+                host_machine_fresh = 1;
+}
+
+static fn host_machine_ask(void)
+{
+        if (host_machine_fresh)
+                return;
+        host_machine_publish();
+        if (host_machine_fresh)
+                return;
+        memory_zero(address_of host_machine, sizeof(host_machine));
+        if (host_machine_script(MOONWATER_SCRIPT_GET) < 0)
+                host_machine.origin = MOONWATER_ORIGIN_BUILTIN;
+        host_machine_fresh = 1;
+}
+
+static string_address host_machine_where(void)
+{
+        host_machine_ask();
+        return host_machine.origin == MOONWATER_ORIGIN_DISK
+                   ? HOST_MACHINE_SCRIPT
+                   : HOST_MACHINE_BUILTIN;
+}
+
+static p16 host_machine_hook_line(p8 hook)
+{
+        unsigned int i;
+
+        host_machine_ask();
+        for (i = 0; i < MOONWATER_HOOKS; i++)
+                if (moonwater_hook[i].bit == hook)
+                        return moonwater_overlay_line(&host_machine.overlay,
+                                                      moonwater_hook[i].line_off);
+        return 0;
+}
+
+static p16 host_machine_event_line(unsigned int event)
+{
+        host_machine_ask();
+        return moonwater_bind_line(&host_machine.overlay, event);
+}
+
+static fn host_machine_refused(string_address name, p16 line)
+{
+        string_format(log_error, host_label "%s is %s:%p; change it there\n", name,
+                      host_machine_where(), (positive)line);
+        log_flush();
+}
+
+static fn host_machine_wait_verdict(p8 address_to into, positive room)
+{
+        p64 started = system_clock_ns(HOST_CLOCK_BOOTTIME);
+
+        into[0] = end;
+        for (;;) {
+                if (host_read_text(HOST_VERDICT, into, room) >= 0)
+                        return;
+                if (system_clock_ns(HOST_CLOCK_BOOTTIME) - started >=
+                    HOST_VERDICT_WAIT_NS)
+                        return;
+                host_pause(HOST_POLL_NS * 2);
+        }
+}
+
+static b32 host_machine_call(positive slot, string_address name,
+                             string_address first, string_address second)
+{
+        string_address arguments[2];
+        positive count = 0;
+
+        if (first)
+                arguments[count++] = first;
+        if (second)
+                arguments[count++] = second;
+        return shell_call_slot(slot, name, arguments, count);
+}
+
+static fn host_machine_dirty(bool on)
+{
+        if (on)
+                host_write_text(HOST_MACHINE_DIRTY, "1\n");
+        else
+                system_remove_at(AT_FDCWD, HOST_MACHINE_DIRTY, 0);
+}
+
+static fn host_machine_close(bipolar device)
+{
+        struct machine_control control;
+
+        if (device < 0)
+                return;
+        (void)host_machine_ioctl(device, MOONWATER_DETACH, address_of control);
+        system_close(device);
+}
+
+static bool host_machine_stop(void)
+{
+        struct machine_control control;
+        bipolar device;
+        p64 started;
+
+        if (host_machine_self)
+                return true;
+        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
+        if (device < 0)
+                return false;
+        if (host_machine_ioctl(device, MOONWATER_STATUS, address_of control) < 0 ||
+            !(control.flags & MOONWATER_ATTACHED)) {
+                system_close(device);
+                return false;
+        }
+        (void)host_machine_ioctl(device, MOONWATER_END, address_of control);
+        started = system_clock_ns(HOST_CLOCK_BOOTTIME);
+        while (system_clock_ns(HOST_CLOCK_BOOTTIME) - started < HOST_EXIT_EACH_NS) {
+                if (host_machine_ioctl(device, MOONWATER_STATUS, address_of control) < 0 ||
+                    !(control.flags & MOONWATER_ATTACHED))
+                        break;
+                host_pause(HOST_EVENT_POLL_NS);
+        }
+        system_close(device);
+        return true;
+}
+
+static b32 host_machine_source(void)
+{
+        string_address argv[3];
+        string_address address_to saved_argv;
+        positive saved_argc;
+        bipolar handle;
+        bipolar failed;
+
+        memory_zero(address_of host_machine, sizeof(host_machine));
+        host_machine.address = (unsigned long)host_machine_text;
+        failed = host_machine_script(MOONWATER_SCRIPT_GET);
+        if (failed < 0)
+                return failed;
+        host_machine_fresh = 1;
+
+        host_state_ready();
+        handle = system_open_at_mode(AT_FDCWD, HOST_MACHINE_RUNTIME,
+                                     FILE_WRITE | O_CLOEXEC, 0600);
+        if (handle < 0)
+                return handle;
+        failed = storage_format_write(handle, host_machine_text, host_machine.length,
+                                      0);
+        system_close(handle);
+        if (failed < 0)
+                return failed;
+
+        saved_argv = shell_argv;
+        saved_argc = shell_argc;
+        argv[0] = ".";
+        argv[1] = HOST_MACHINE_RUNTIME;
+        argv[2] = null;
+        shell_argv = argv;
+        shell_argc = 2;
+        shell_dot(log, HOST_MACHINE_RUNTIME);
+        shell_argv = saved_argv;
+        shell_argc = saved_argc;
+        return 0;
+}
+
+static fn host_machine_hook(positive slot, unsigned int which,
+                            string_address first, string_address second)
+{
+        if (host_machine.overlay.hooks & moonwater_hook[which].bit)
+                host_machine_call(slot, (string_address)moonwater_hook[which].name,
+                                  first, second);
+}
+
+static b32 host_machine_run(void)
+{
+        struct machine_control control;
+        p8 verdict[HOST_NAME_ROOM + 16];
+        bipolar device = -1;
+        bipolar failed;
+        p8 dirty[8];
+        positive slot[MOONWATER_HOOKS];
+        unsigned int i;
+        bool marked = false;
+
+        if (!bowl_is_root())
+                return host_refuse("%s needs root\n", "moonwater machine");
+
+        host_state_ready();
+        system_call_1(syscall(chdir), (positive)(string_address) "/root");
+        bowl_session_prepare("/root", null);
+        for (i = 0; i < sizeof(host_machine_env) / sizeof(host_machine_env[0]); i++)
+                env_assign(host_machine_env[i].name, host_machine_env[i].value);
+
+        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
+        if (device < 0)
+                return host_fail(SPARK_DEVICE, device);
+        failed = host_machine_ioctl(device, MOONWATER_ATTACH, address_of control);
+        if (failed < 0) {
+                system_close(device);
+                return host_fail("machine attach", failed);
+        }
+
+        host_machine_wait_verdict(verdict, sizeof(verdict));
+        host_machine_publish();
+        failed = host_machine_source();
+        if (failed < 0) {
+                host_machine_close(device);
+                return host_fail("machine script", failed);
+        }
+
+        for (i = 0; i < MOONWATER_HOOKS; i++) {
+                exec_function_readonly_set((string_address)moonwater_hook[i].name);
+                slot[i] = shell_function_slot((string_address)moonwater_hook[i].name);
+        }
+
+        host_machine_hook(slot[0], 0, (string_address)verdict, null);
+        if (host_read_text(HOST_MACHINE_DIRTY, dirty, sizeof(dirty)) >= 0) {
+                host_machine_dirty(false);
+                host_machine_hook(slot[1], 1, "recover", null);
+        }
+
+        for (;;) {
+                string_address extra = null;
+                string_address name;
+
+                failed = host_machine_ioctl(device, MOONWATER_WAIT, address_of control);
+                if (failed == -4)
+                        continue;
+                if (failed < 0)
+                        break;
+
+                if (!control.event) {
+                        host_machine_dirty(false);
+                        marked = false;
+                        host_machine_self = true;
+                        host_machine_hook(slot[2], 2, null, null);
+                        break;
+                }
+
+                if (moonwater_is_canvas(control.event)) {
+                        name = (string_address) "canvas";
+                        extra = control.extra ? (string_address) "on"
+                                              : (string_address) "off";
+                } else if (control.event > SPARK_BIND_EVENTS)
+                        continue;
+                else
+                        name = (string_address)spark_bind_event_name[control.event - 1];
+
+                if (!marked) {
+                        host_machine_dirty(true);
+                        marked = true;
+                }
+                host_machine_hook(slot[1], 1, name, extra);
+                if (!control.queued && marked) {
+                        host_machine_dirty(false);
+                        marked = false;
+                }
+
+                if (spark_bind_is_stop(control.event)) {
+                        unsigned int stopping = control.event;
+
+                        host_machine_self = true;
+                        host_machine_hook(slot[2], 2, null, null);
+                        host_machine_dirty(false);
+                        host_machine_close(device);
+                        shell_stop(log, stopping == SPARK_BIND_POWEROFF
+                                            ? HOST_REBOOT_POWER_OFF
+                                            : HOST_REBOOT_RESTART);
+                        return 1;
+                }
+        }
+
+        host_machine_dirty(false);
+        host_machine_close(device);
+        return 0;
+}
+
+#endif /* MOONWATER_CLI */

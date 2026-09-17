@@ -46,10 +46,11 @@
 #define HOST_MEDIUM HOST_STATE "/medium"
 #define HOST_LOOK HOST_STATE "/look"
 #define HOST_MACHINE_SCRIPT "/root/main.moonwater.sh"
+#define HOST_MACHINE_BUILTIN "builtin"
+#define HOST_MACHINE_RUNTIME HOST_STATE "/machine.sh"
 #define HOST_MACHINE_DIRTY HOST_STATE "/machine.dirty"
-#define HOST_MACHINE_HOOK_INIT 1u
-#define HOST_MACHINE_HOOK_EVENT 2u
-#define HOST_MACHINE_HOOK_END 4u
+
+#include "../moonwater.c"
 
 #define HOST_SYSTEM_NAME "moonwater-boot"
 #define HOST_DATA_NAME "moonwater-data"
@@ -132,10 +133,9 @@ static fn host_bind_apply(host_settings address_to settings);
 static b32 host_bind(string_address address_to arguments, positive count);
 static b32 host_usage(void);
 static fn host_usage_write(writer out);
-static bool host_machine_has_hook(p8 hook);
 static p16 host_machine_hook_line(p8 hook);
-static p16 host_machine_named_line(string_address name);
 static p16 host_machine_event_line(unsigned int event);
+static string_address host_machine_where(void);
 static fn host_machine_refused(string_address name, p16 line);
 static bool host_machine_stop(void);
 static b32 host_machine_run(void);
@@ -1549,6 +1549,19 @@ fn host_quiesce(void)
         opening once per event was thirteen trips through /dev/spark for
         `moonwater bind` with no arguments.
 */
+static bipolar host_spark_once(unsigned int command, void *request, unsigned int flags)
+{
+        bipolar device = system_open_at(AT_FDCWD, SPARK_DEVICE, flags | O_CLOEXEC);
+        bipolar failed;
+
+        if (device < 0)
+                return device;
+
+        failed = system_control(device, command, request);
+        system_close(device);
+        return failed;
+}
+
 static bipolar host_bind_ioctl(bipolar device, unsigned int op, unsigned int event,
                                string_address command,
                                struct bind_control address_to control)
@@ -1640,9 +1653,11 @@ static const struct
         string_address verb;
         p8 list;
         string_address empty;
+        p8 hook;
 } host_lists[] = {
-    {"init", SPARK_SETTINGS_INIT, "nothing runs at boot"},
-    {"exit", SPARK_SETTINGS_EXIT, "nothing runs when the machine stops"},
+    {"init", SPARK_SETTINGS_INIT, "nothing runs at boot", MOONWATER_HOOK_INIT},
+    {"exit", SPARK_SETTINGS_EXIT, "nothing runs when the machine stops",
+     MOONWATER_HOOK_END},
 };
 
 /*
@@ -1968,16 +1983,10 @@ static bool host_settings_kept(host_settings address_to into)
 static bool host_settings_booted(host_settings address_to into)
 {
         struct spark_settings_request request = {(unsigned long)into, 0};
-        bipolar device = system_open_at(AT_FDCWD, SPARK_DEVICE,
-                                        FILE_READ_WRITE | O_CLOEXEC);
-        bipolar failed;
 
-        if (device < 0)
-                return false;
-
-        failed = system_control(device, SPARK_IOCTL_SETTINGS_GET, address_of request);
-        system_close(device);
-        return failed >= 0 && spark_settings_check(into) >= 0;
+        return host_spark_once(SPARK_IOCTL_SETTINGS_GET, address_of request,
+                               FILE_READ_WRITE) >= 0 &&
+               spark_settings_check(into) >= 0;
 }
 
 /* This session's copy, root's alone because a command can carry a secret, and the kernel's. */
@@ -1988,13 +1997,8 @@ static fn host_settings_keep(host_settings address_to settings)
 
         host_settings_seal(settings);
         host_state_ready();
-
-        handle = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ_WRITE | O_CLOEXEC);
-        if (handle >= 0)
-        {
-                system_control(handle, SPARK_IOCTL_SETTINGS_SET, address_of request);
-                system_close(handle);
-        }
+        (void)host_spark_once(SPARK_IOCTL_SETTINGS_SET, address_of request,
+                              FILE_READ_WRITE);
 
         handle = system_open_at_mode(AT_FDCWD, HOST_SETTINGS_NEXT,
                                      FILE_WRITE | O_CLOEXEC, 0600);
@@ -2312,13 +2316,13 @@ static fn host_settings_list(host_settings address_to settings, positive which)
         host_setting setting;
         positive at = 0;
         positive shown = 0;
-        p8 hook = which == 0 ? HOST_MACHINE_HOOK_INIT : HOST_MACHINE_HOOK_END;
+        p16 line = host_machine_hook_line(host_lists[which].hook);
 
-        if (host_machine_has_hook(hook))
+        if (line)
         {
                 string_format(log, host_label "%s is %s:%p\n",
-                              host_lists[which].verb, HOST_MACHINE_SCRIPT,
-                              (positive)host_machine_hook_line(hook));
+                              host_lists[which].verb, host_machine_where(),
+                              (positive)line);
                 log_flush();
                 return;
         }
@@ -2385,20 +2389,18 @@ static b32 host_settings_apply(host_settings address_to settings,
                 return HOST_SETTINGS_SHOWN;
         }
 
-        if ((list == SPARK_SETTINGS_INIT &&
-             host_machine_has_hook(HOST_MACHINE_HOOK_INIT)) ||
-            (list == SPARK_SETTINGS_EXIT &&
-             host_machine_has_hook(HOST_MACHINE_HOOK_END)))
         {
-                if (count >= 3 && string_equals(arguments[2], "mount"))
-                        ;
-                else
+                p16 overlay = host_machine_hook_line(host_lists[which].hook);
+
+                if (overlay)
                 {
-                        host_machine_refused(verb, host_machine_hook_line(
-                                                       list == SPARK_SETTINGS_INIT
-                                                           ? HOST_MACHINE_HOOK_INIT
-                                                           : HOST_MACHINE_HOOK_END));
-                        return HOST_SETTINGS_REFUSED;
+                        if (count >= 3 && string_equals(arguments[2], "mount"))
+                                ;
+                        else
+                        {
+                                host_machine_refused(verb, overlay);
+                                return HOST_SETTINGS_REFUSED;
+                        }
                 }
         }
 
@@ -2772,7 +2774,7 @@ static fn host_events_boot(host_settings address_to settings)
         positive at = 0;
 
         if (!settings || !host_settings_count(settings, SPARK_SETTINGS_INIT) ||
-            host_machine_has_hook(HOST_MACHINE_HOOK_INIT) || system_fork())
+            host_machine_hook_line(MOONWATER_HOOK_INIT) || system_fork())
                 return;
 
         //      The runner, from here on: its own session, outliving boot.
@@ -2860,7 +2862,7 @@ fn host_exit_run(void)
              !host_settings_booted(address_of settings)))
                 return;
 
-        if (machine && host_machine_has_hook(HOST_MACHINE_HOOK_END))
+        if (machine && host_machine_hook_line(MOONWATER_HOOK_END))
                 return;
 
         while (host_settings_next(address_of settings, address_of at, address_of setting))
@@ -2923,20 +2925,9 @@ fn host_exit_run(void)
 static bipolar host_canvas_request(positive request,
                                    struct canvas_control address_to control)
 {
-        bipolar device;
-        bipolar failed;
-
         memory_zero(control, sizeof(address_to control));
         control->request = (unsigned int)request;
-
-        device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
-        if (device < 0)
-                return device;
-
-        failed = system_control(device, SPARK_IOCTL_CANVAS, control);
-        system_close(device);
-
-        return failed;
+        return host_spark_once(SPARK_IOCTL_CANVAS, control, FILE_READ);
 }
 
 static fn host_canvas_write(string_address prefix,
@@ -3110,11 +3101,11 @@ static b32 host_canvas(string_address address_to arguments, positive count)
 */
 static fn host_bind_say(string_address prefix, struct bind_control address_to control)
 {
-        p16 line = host_machine_named_line((string_address)control->name);
+        p16 line = host_machine_event_line(control->event);
 
         if (line)
                 string_format(log, "%s%s: %s:%p\n", prefix,
-                              (string_address)control->name, HOST_MACHINE_SCRIPT,
+                              (string_address)control->name, host_machine_where(),
                               (positive)line);
         else if (!control->command[0])
                 string_format(log, "%s%s\n", prefix, (string_address)control->name);
@@ -3196,7 +3187,7 @@ static fn host_bind_apply(host_settings address_to settings)
         system_close(device);
 }
 
-static b32 host_bind_events(void)
+static bipolar host_bind_each(string_address prefix, bool required)
 {
         struct bind_control control;
         bipolar device;
@@ -3206,7 +3197,7 @@ static b32 host_bind_events(void)
 
         device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ | O_CLOEXEC);
         if (device < 0)
-                return host_fail(SPARK_DEVICE, device);
+                return required ? device : 0;
 
         for (event = 1; event <= count; event++)
         {
@@ -3215,19 +3206,24 @@ static b32 host_bind_events(void)
                 if (failed < 0)
                 {
                         system_close(device);
-                        if (event == 1)
-                                return host_fail(SPARK_DEVICE, failed);
-                        log_flush();
-                        return 0;
+                        return (required && event == 1) ? failed : 0;
                 }
-
                 if (event == 1 && control.count)
                         count = control.count;
-
-                host_bind_say("  ", address_of control);
+                host_bind_say(prefix, address_of control);
         }
 
         system_close(device);
+        return 0;
+}
+
+static b32 host_bind_events(void)
+{
+        bipolar failed = host_bind_each("  ", true);
+
+        if (failed < 0)
+                return host_fail(SPARK_DEVICE, failed);
+
         string_format(log, "  reset is the keyboard's reset/restart key; "
                            "a case reset button cannot be bound\n");
         log_flush();
@@ -3264,19 +3260,6 @@ static unsigned int host_bind_named(string_address first, string_address second)
                 if (string_equals((string_address)spark_bind_event_name[event], wanted))
                         return event + 1;
 
-        return 0;
-}
-
-static b32 host_bind_show(unsigned int event)
-{
-        struct bind_control control;
-        bipolar failed = host_bind_request(SPARK_BIND_GET, event, null, address_of control);
-
-        if (failed < 0)
-                return host_fail(SPARK_DEVICE, failed);
-
-        host_bind_say(host_label, address_of control);
-        log_flush();
         return 0;
 }
 
@@ -3369,7 +3352,17 @@ static b32 host_bind(string_address address_to arguments, positive count)
         }
 
         if (count == words)
-                return host_bind_show(event);
+        {
+                struct bind_control control;
+                bipolar failed = host_bind_request(SPARK_BIND_GET, event, null,
+                                                   address_of control);
+
+                if (failed < 0)
+                        return host_fail(SPARK_DEVICE, failed);
+                host_bind_say(host_label, address_of control);
+                log_flush();
+                return 0;
+        }
 
         if (!host_settings_words(text, sizeof(text), arguments + words, count - words,
                                  address_of length))
@@ -3417,9 +3410,10 @@ static fn host_usage_write(writer out)
                       TERM_BOLD "  canvas [on|off]" TERM_RESET
                       "             " TERM_DIM "the desktop" TERM_RESET "\n"
                       "\n"
-                      TERM_DIM "  Settings stay in the image this session started from.\n"
+                      TERM_DIM                       "  Settings stay in the image this session started from.\n"
                       "  install takes this session's; update keeps the disk's.\n"
-                      "  " HOST_MACHINE_SCRIPT " overwrites bind, init and exit.\n" TERM_RESET);
+                      "  The machine script overwrites bind, init and exit.\n"
+                      "  " HOST_MACHINE_SCRIPT " overlays the kernel builtin.\n" TERM_RESET);
         log_flush();
 }
 
@@ -3436,13 +3430,13 @@ static fn host_status_events(host_settings address_to settings, positive which)
         host_setting setting;
         positive at = 0;
         positive shown = 0;
-        p8 hook = which == 0 ? HOST_MACHINE_HOOK_INIT : HOST_MACHINE_HOOK_END;
+        p16 line = host_machine_hook_line(host_lists[which].hook);
 
-        if (host_machine_has_hook(hook))
+        if (line)
         {
                 string_format(log, "  %s: %s:%p\n", host_lists[which].verb,
-                              HOST_MACHINE_SCRIPT,
-                              (positive)host_machine_hook_line(hook));
+                              host_machine_where(),
+                              (positive)line);
                 return;
         }
 
@@ -3477,7 +3471,6 @@ static b32 host_status(void)
         host_medium_search search;
         host_settings settings;
         struct canvas_control canvas;
-        struct bind_control bind;
 
         host_state_ready();
         host_title(log);
@@ -3529,26 +3522,7 @@ static b32 host_status(void)
         if (host_canvas_request(SPARK_CANVAS_STATUS, address_of canvas) >= 0)
                 host_canvas_write("  ", address_of canvas);
 
-        {
-                unsigned int event;
-                unsigned int count = SPARK_BIND_EVENTS;
-                bipolar device = system_open_at(AT_FDCWD, SPARK_DEVICE,
-                                                FILE_READ | O_CLOEXEC);
-
-                if (device >= 0)
-                {
-                        for (event = 1; event <= count; event++)
-                        {
-                                if (host_bind_ioctl(device, SPARK_BIND_GET, event, null,
-                                                    address_of bind) < 0)
-                                        break;
-                                if (event == 1 && bind.count)
-                                        count = bind.count;
-                                host_bind_say("  ", address_of bind);
-                        }
-                        system_close(device);
-                }
-        }
+        (void)host_bind_each("  ", false);
 
         host_settings_session(address_of settings);
         host_status_events(address_of settings, 0);
@@ -3708,4 +3682,5 @@ static b32 host_main()
                            count == 3 ? arguments[2] : null);
 }
 
-#include "machine.c"
+#define MOONWATER_CLI
+#include "../moonwater.c"

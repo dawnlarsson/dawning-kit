@@ -10250,30 +10250,30 @@ asked("init add is refused the same way",
 asked("exit is the moonwater_end hook, not the stored list",
       "moonwater bind exit | grep -c '/root/main.moonwater.sh:11' | sed 's/^/dne-/' | rev",
       b"1-end")
-asked("removing the script restores the image binds",
-      "rm -f /root/main.moonwater.sh; moonwater bind poweroff | grep -c 'poweroff: poweroff' | sed 's/^/tluafed-/' | rev",
+asked("removing the script restores the builtin",
+      "rm -f /root/main.moonwater.sh; moonwater bind poweroff | grep -c 'poweroff: builtin:' | sed 's/^/tluafed-/' | rev",
       b"1-default")
-asked("the power button runs poweroff by default",
-      "moonwater bind poweroff | grep -c 'poweroff: poweroff' | sed 's/^/tluafed-/' | rev",
+asked("the power button is the builtin poweroff arm",
+      "moonwater bind poweroff | grep -c 'poweroff: builtin:' | sed 's/^/tluafed-/' | rev",
       b"1-default")
-asked("a user without CAP_SYS_BOOT cannot set it",
-      "setpriv --reuid=65534 --regid=65534 --clear-groups moonwater bind poweroff true 2>&1 | grep -c 'needs root' | sed 's/^/toorn-/' | rev",
+asked("a user cannot replace a script arm",
+      "setpriv --reuid=65534 --regid=65534 --clear-groups moonwater bind poweroff true 2>&1 | grep -c 'change it there' | sed 's/^/toorn-/' | rev",
       b"1-nroot")
 #       Three counts in one answer: the helper left CAP_SYS_BOOT alone in the
-#       effective set, the kernel refused the line, and the button still runs
-#       poweroff afterwards.
+#       effective set, the kernel overlay refused the line, and the button
+#       still names the builtin afterwards.
 if capboot:
-    asked("root with only CAP_SYS_BOOT cannot set it, since it runs with every capability",
-          "mkdir -p /mnt; mount -r -t vfat /dev/sda1 /mnt; { /mnt/capboot grep -c 'CapEff:.0000000000400000$' /proc/self/status; /mnt/capboot moonwater bind poweroff true 2>&1 | grep -c 'needs root'; moonwater bind poweroff | grep -c 'poweroff: poweroff'; } | tr -d '\\n' | sed 's/^/toob-/' | rev",
+    asked("root with only CAP_SYS_BOOT cannot replace a script arm",
+          "mkdir -p /mnt; mount -r -t vfat /dev/sda1 /mnt; { /mnt/capboot grep -c 'CapEff:.0000000000400000$' /proc/self/status; /mnt/capboot moonwater bind poweroff true 2>&1 | grep -c 'change it there'; moonwater bind poweroff | grep -c 'poweroff: builtin:'; } | tr -d '\\n' | sed 's/^/toob-/' | rev",
           b"111-boot")
 else:
-    out.append(("root with only CAP_SYS_BOOT cannot set it, since it runs with every capability",
+    out.append(("root with only CAP_SYS_BOOT cannot replace a script arm",
                 "not run: the helper did not build", "yes"))
 asked("a command longer than a bound event holds is refused",
-      "moonwater bind poweroff \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
+      "moonwater bind mute \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
       b"1-long")
 asked("the power button takes a command",
-      "moonwater bind poweroff 'echo NOTTUB | rev > /dev/ttyS0' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
+      "printf '%s\\n' 'function moonwater_event {' '  :' '}' > /root/main.moonwater.sh; chmod 600 /root/main.moonwater.sh; moonwater bind mute >/dev/null; moonwater bind poweroff 'echo NOTTUB | rev > /dev/ttyS0' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
       b"1-set")
 
 if ready:
