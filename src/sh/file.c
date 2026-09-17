@@ -3632,6 +3632,21 @@ static bool file_option_needs(file_taking address_to taking, string_address word
                       taking->program);
 }
 
+static COLD b32 file_need_operand(string_address program)
+{
+        string_format(log_error, "%s: missing operand\n", program);
+        return string_report(log_error, 1, "Try '%s --help' for more information.\n",
+                      program);
+}
+
+static COLD b32 file_need_operand_after(string_address program, string_address word)
+{
+        string_format(log_error, "%s: missing operand after '%w'\n", program,
+                      writer_terminal_quoted_name, word);
+        return string_report(log_error, 1, "Try '%s --help' for more information.\n",
+                      program);
+}
+
 static p8 file_long_letter(file_taking address_to taking, string_address name,
                            positive length)
 {
@@ -3668,6 +3683,9 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                         taking->last = taking->digits;
                                         cursor.at++;
                                         cursor.letters = null;
+                                        if (taking->seen &&
+                                            !taking->seen(taking->digits, taking->value[bit]))
+                                                return false;
                                         continue;
                                 }
                         }
@@ -3693,6 +3711,41 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 string_address shown = long_option ? cursor.word : named;
                 if (option == ARGUMENT_UNKNOWN)
                 {
+                        /* GNU split's optstring includes 0123456789 with no
+                           argument, so -d7 is -d then the old -7 line count.
+                           Cluster digits after a short that takes none are
+                           that same -N, not an invalid option -- '7'. */
+                        if (!long_option && taking->digits && byte_is_digit(letter) &&
+                            cursor.letters)
+                        {
+                                string_address start = cursor.letters - 1;
+                                string_address at = cursor.letters;
+                                positive bit = file_letter_bit(taking->digits);
+
+                                while (byte_is_digit(string_get(at)))
+                                        at++;
+                                cursor.letters = string_get(at) ? at : null;
+                                taking->repeated |= taking->flags & ((positive)1 << bit);
+                                taking->flags |= (positive)1 << bit;
+                                taking->last = taking->digits;
+                                if (!string_get(at))
+                                        taking->value[bit] = start;
+                                else
+                                {
+                                        static p8 file_digit_cluster[64];
+                                        positive n = (positive)(at - start);
+
+                                        if (n >= sizeof(file_digit_cluster))
+                                                return false;
+                                        memory_copy_apart(file_digit_cluster, start, n);
+                                        file_digit_cluster[n] = end;
+                                        taking->value[bit] = file_digit_cluster;
+                                }
+                                if (taking->seen &&
+                                    !taking->seen(taking->digits, taking->value[bit]))
+                                        return false;
+                                continue;
+                        }
                         if (long_option)
                                 string_format(log_error, "%s: unrecognized option '%s'\n",
                                               taking->program, shown);
@@ -14472,12 +14525,16 @@ static b32 file_chmod()
         if (minus_mode)
         {
                 if (first >= count)
-                        return string_report(log_error, 1, "%s: missing operand\n", (string_address) "chmod");
+                        return file_need_operand_after((string_address) "chmod",
+                                                       minus_mode);
 
                 chmod_specification = minus_mode;
         }
-        else if (first >= count || (!chmod_referenced && first + 1 >= count))
-                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "chmod");
+        else if (first >= count)
+                return file_need_operand((string_address) "chmod");
+        else if (!chmod_referenced && first + 1 >= count)
+                return file_need_operand_after((string_address) "chmod",
+                                               program_argument((b32)first));
         else if (!chmod_referenced)
                 chmod_specification = program_argument((b32)first++);
 
@@ -17528,7 +17585,7 @@ static b32 file_mkdir()
         //      reference asks: mkdir -m nonsense with nothing to make is a
         //      missing operand and not an invalid mode.
         if (index >= count)
-                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mkdir");
+                return file_need_operand((string_address) "mkdir");
 
         //      -m is read against a=rwx the way the reference mkdir reads
         //      it: the base is all nine bits and not the umask-filtered set,
@@ -18017,6 +18074,7 @@ typedef struct
         bool protect_input;
         positive mode;
         file_facts input;
+        string_address input_name;
         file_staged_name stage;
         p8 suffix[SPLIT_SUFFIX_MAX];
         p8 name[FILE_PATH_MAX];
@@ -18036,11 +18094,15 @@ static const argument_option split_options[] = {
     {null},
 };
 
-static bool split_size(string_address text, positive address_to out)
+static bool split_parse_size(string_address text, bool suffixes, bool bare_b,
+                             positive address_to out)
 {
         string_address at = text;
         positive value;
         positive base = 10;
+
+        if (!text)
+                return false;
 
         if (string_is(at, '0') && (at[1] == 'x' || at[1] == 'X'))
         {
@@ -18053,6 +18115,9 @@ static bool split_size(string_address text, positive address_to out)
 
         p8 suffix = string_get(at);
 
+        if (!suffixes && suffix)
+                return false;
+
         if (suffix == 'b' && !string_get(at + 1))
         {
                 if (value > positive_max / 512)
@@ -18060,7 +18125,7 @@ static bool split_size(string_address text, positive address_to out)
                 value *= 512;
                 at++;
         }
-        else if (suffix == 'B' && !string_get(at + 1))
+        else if (bare_b && suffix == 'B' && !string_get(at + 1))
                 at++;
         else if (suffix)
         {
@@ -18098,6 +18163,11 @@ static bool split_size(string_address text, positive address_to out)
 
         address_to out = value;
         return true;
+}
+
+static bool split_size(string_address text, positive address_to out)
+{
+        return split_parse_size(text, true, true, out);
 }
 
 /* The default alphabetic sequence remains lexically ordered when it grows:
@@ -18222,21 +18292,20 @@ static bool split_output_open(split_output address_to output)
                 return true;
         if (!split_output_name(output))
                 return false;
-        if (file_same_as_input(output->protect_input, output->name,
-                               address_of output->input))
-        {
-                return string_report(log_error, false, "split: '%w' would overwrite input; aborting\n",
-                              writer_terminal_quoted_name, output->name);
-        }
 
-        bipolar opened = file_staged_name_open(
-            address_of output->stage, output->name, output->mode,
-            FILE_STAGED_STREAM_SPECIAL);
+        bipolar opened = file_staged_name_open_at(
+            address_of output->stage, AT_FDCWD, output->name, output->mode,
+            FILE_STAGED_STREAM_SPECIAL,
+            output->protect_input ? address_of output->input : null);
 
         if (opened < 0)
         {
-                return string_report(log_error, false, "split: cannot open '%w': %s\n",
-                              writer_terminal_quoted_name, output->name, file_reason(opened));
+                if (output->protect_input && opened == -ERROR_INVALID)
+                        return string_report(log_error, false, "split: '%w' would overwrite input; aborting\n",
+                                      writer_terminal_quoted_name, output->name);
+
+                return string_report(log_error, false, "split: %w: %s\n",
+                              writer_terminal_name, output->name, file_reason(opened));
         }
 
         if (output->verbose)
@@ -18331,7 +18400,9 @@ static bool split_stream(bipolar in, positive piece, p8 separator, bool lines,
                                                    sizeof(file_transfer));
 
                 if (taken < 0)
-                        return string_report(log_error, false, "split: read error\n");
+                        return string_report(log_error, false, "split: %w: %s\n",
+                                      writer_terminal_name, output->input_name,
+                                      file_reason(taken));
                 if (!taken)
                         return split_output_close(output);
 
@@ -18760,7 +18831,10 @@ static bool split_chunk_buffer(p8 address_to input, positive length,
 
 static bool split_separator(string_address text, p8 address_to separator)
 {
-        if (string_get(text) && !string_get(text + 1))
+        if (!text || !string_get(text))
+                return string_report(log_error, false, "split: empty record separator\n");
+
+        if (!string_get(text + 1))
         {
                 address_to separator = string_get(text);
                 return true;
@@ -18771,52 +18845,162 @@ static bool split_separator(string_address text, p8 address_to separator)
                 address_to separator = 0;
                 return true;
         }
-        return false;
+        return string_report(log_error, false, "split: multi-character separator '%s'\n",
+                      text);
+}
+
+static p8 split_way;
+static bool split_have_separator;
+static p8 split_separator_byte;
+static string_address split_suffix_start;
+
+static bool split_try_help(string_address message)
+{
+        if (message)
+                log_error(message, 0);
+        return string_report(log_error, false, "Try 'split --help' for more information.\n");
+}
+
+static bool split_option_seen(p8 letter, string_address value)
+{
+        /* GNU split.c: a second -b/-l/-C/-n is fatal even when the letter
+           repeats; clustered 0-9 is type_digits, which is not -l. */
+        if (letter == 'D' || letter == 'b' || letter == 'l' ||
+            letter == 'C' || letter == 'n')
+        {
+                if (split_way && !(split_way == 'D' && letter == 'D'))
+                        return split_try_help((string_address)
+                            "split: cannot split in more than one way\n");
+
+                split_way = letter;
+                if (letter == 'n')
+                {
+                        split_chunk chunk;
+
+                        return !value || split_chunks(value, address_of chunk);
+                }
+
+                positive piece;
+                bool lines = letter != 'b';
+                bool suffixes = letter != 'l' && letter != 'D';
+
+                if (!split_parse_size(value, suffixes, false, address_of piece))
+                        return string_report(log_error, false,
+                                      "split: invalid number of %s: '%s'\n",
+                                      lines ? (string_address) "lines"
+                                            : (string_address) "bytes",
+                                      value ? value : (string_address) "");
+                return true;
+        }
+
+        if (letter == 't')
+        {
+                p8 separator;
+
+                if (!split_separator(value, address_of separator))
+                        return false;
+                if (split_have_separator && separator != split_separator_byte)
+                        return string_report(log_error, false,
+                                      "split: multiple separator characters specified\n");
+                split_have_separator = true;
+                split_separator_byte = separator;
+                return true;
+        }
+
+        if (letter == 'a')
+        {
+                positive width;
+
+                if (!string_digits_checked_exact(value, 10, address_of width) ||
+                    width > SPLIT_SUFFIX_MAX)
+                        return string_report(log_error, false,
+                                      "split: invalid suffix length: '%s'\n",
+                                      value ? value : (string_address) "");
+                return true;
+        }
+
+        if (letter == 'S')
+        {
+                if (value && string_first_of(value, '/'))
+                {
+                        string_format(log_error,
+                                      "split: invalid suffix '%s', contains directory separator\n",
+                                      value);
+                        return split_try_help(null);
+                }
+                return true;
+        }
+
+        if ((letter == 'd' || letter == 'x') && value)
+        {
+                positive radix = letter == 'x' ? 16 : 10;
+                positive start;
+
+                if (!string_digits_checked_exact(value, radix, address_of start))
+                {
+                        string_format(log_error,
+                                      "split: '%s': invalid start value for %s suffix\n",
+                                      value,
+                                      letter == 'x' ? (string_address) "hexadecimal"
+                                                    : (string_address) "numerical");
+                        return split_try_help(null);
+                }
+                split_suffix_start = value;
+                return true;
+        }
+
+        return true;
 }
 
 static b32 file_split()
 {
         p8 suffix_kind = 0;
 
+        split_way = 0;
+        split_have_separator = false;
+        split_separator_byte = '\n';
+        split_suffix_start = null;
 
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"split",
             .options = split_options,
-            /* Only the long spellings take an optional FROM.  In `-d7 -b3`,
-               coreutils reads 7 as the old -7 line count and diagnoses the
-               line/byte mode conflict; it is not a suffix start. */
-            .digits = 'l',
+            /* Clustered 0-9 is GNU type_digits, a different split type from
+               -l.  Only the long -d/-x spellings take an optional FROM: in
+               `-d7 -b3`, coreutils reads 7 as that old line count. */
+            .digits = 'D',
             .operand = file_operand,
+            .seen = split_option_seen,
             .selection = address_of suffix_kind,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
 
-        /* file_take rejects the combined -d7 spelling; with -b this is the
-           same deliberate refusal and status as GNU's mode-conflict answer. */
         if (file_operand_count > 2)
-                return string_report(log_error, 1, "split: extra operand\n");
+        {
+                string_format(log_error, "split: extra operand '%w'\n",
+                              writer_terminal_quoted_name, file_operand_at(2));
+                split_try_help(null);
+                return 1;
+        }
 
         bool bytes = (taking.flags & FILE_FLAG('b')) != 0;
-        bool lines = (taking.flags & FILE_FLAG('l')) != 0;
         bool line_bytes = (taking.flags & FILE_FLAG('C')) != 0;
         bool distribute = (taking.flags & FILE_FLAG('n')) != 0;
-
-        if ((positive)bytes + (positive)lines + (positive)line_bytes +
-                (positive)distribute >
-            1)
-                return string_report(log_error, 1, "split: cannot split in more than one way\n");
-
         p8 mode = bytes ? 'b' : line_bytes ? 'C' : distribute ? 'n' : 'l';
 
         positive piece = 1000;
         string_address measure = file_option_value(address_of taking, mode);
 
+        if (mode == 'l' && !measure)
+                measure = file_option_value(address_of taking, 'D');
+
         if (measure && mode != 'n' &&
-            !split_size(measure, address_of piece))
-                return string_report(log_error, 1, "split: invalid number of bytes: '%s'\n",
+            !split_parse_size(measure, mode != 'l', false, address_of piece))
+                return string_report(log_error, 1, "split: invalid number of %s: '%s'\n",
+                              mode == 'b' ? (string_address) "bytes"
+                                          : (string_address) "lines",
                               measure);
 
         split_chunk chunk = {0};
@@ -18829,26 +19013,29 @@ static b32 file_split()
 
         positive suffix_length = 2;
         string_address width = file_option_value(address_of taking, 'a');
+        bool suffix_fixed = false;
 
         if (width)
         {
-                string_address at = width;
-
-                if (!string_digits_checked(address_of at, 10,
-                                           address_of suffix_length) ||
-                    string_get(at) || !suffix_length ||
+                if (!string_digits_checked_exact(width, 10, address_of suffix_length) ||
                     suffix_length > SPLIT_SUFFIX_MAX)
                         return string_report(log_error, 1,
                                       "split: invalid suffix length: '%s'\n",
                                       width);
+                /* GNU xdectoimax min is 0; set_suffix_length then treats 0 as
+                   unset and restores the default width, so -a 0 is not fixed. */
+                if (suffix_length)
+                        suffix_fixed = true;
+                else
+                        suffix_length = 2;
         }
 
-        p8 separator = '\n';
+        p8 separator = split_have_separator ? split_separator_byte : '\n';
         string_address separator_text = file_option_value(address_of taking, 't');
 
-        if (separator_text && !split_separator(separator_text,
-                                               address_of separator))
-                return string_report(log_error, 1, "split: multi-character separator\n");
+        if (separator_text && !split_have_separator &&
+            !split_separator(separator_text, address_of separator))
+                return 1;
 
         string_address input_name = file_operand_count
                                         ? file_operand_at(0)
@@ -18878,29 +19065,41 @@ static b32 file_split()
             .additional_length = string_length(additional),
             .suffix_length = suffix_length,
             .radix = suffix_kind == 'd' ? 10 : suffix_kind == 'x' ? 16 : 0,
-            .suffix_fixed = width != null,
+            .suffix_fixed = suffix_fixed || split_suffix_start != null,
             .verbose = (taking.flags & FILE_FLAG('v')) != 0,
             .mode = 0666 & ~file_umask(),
+            .input_name = input_name,
             .stage = {.directory = -1, .handle = -1},
         };
         memory_fill(output.suffix, output.radix ? '0' : 'a', suffix_length);
 
-        string_address first_suffix = suffix_kind
-                                          ? file_option_value(address_of taking,
-                                                              suffix_kind)
-                                          : null;
+        string_address first_suffix = split_suffix_start;
 
-        if (first_suffix)
+        if (first_suffix && output.radix)
         {
                 string_address at = first_suffix;
 
-                if (!string_digits_checked(address_of at, output.radix,
-                                           address_of output.number) ||
-                    string_get(at))
+                while (string_is(at, '0') && string_get(at + 1))
+                        at++;
+                if (string_length(at) > suffix_length)
                 {
                         string_format(log_error,
-                                      "split: invalid suffix start: '%s'\n",
-                                      first_suffix);
+                                      "split: numerical suffix start value is too large for the suffix length\n");
+                        split_try_help(null);
+                        if (in != 0)
+                                system_close(in);
+                        return 1;
+                }
+
+                if (!string_digits_checked_exact(first_suffix, output.radix,
+                                                 address_of output.number))
+                {
+                        string_format(log_error,
+                                      "split: '%s': invalid start value for %s suffix\n",
+                                      first_suffix,
+                                      output.radix == 16 ? (string_address) "hexadecimal"
+                                                         : (string_address) "numerical");
+                        split_try_help(null);
                         if (in != 0)
                                 system_close(in);
                         return 1;
@@ -18908,10 +19107,28 @@ static b32 file_split()
         }
 
         file_facts facts;
-        bool looked = file_look(in, (string_address)"", AT_EMPTY_PATH,
-                                address_of facts);
+        bipolar looked = file_look_code(in, (string_address)"", AT_EMPTY_PATH,
+                                        address_of facts);
 
-        if (looked && (facts.mode & MODE_FORMAT) == MODE_FILE)
+        if (looked < 0)
+        {
+                string_format(log_error, "split: %w: %s\n", writer_terminal_name,
+                              input_name, file_reason(looked));
+                if (in != 0)
+                        system_close(in);
+                return 1;
+        }
+
+        if ((facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                string_format(log_error, "split: %w: %s\n", writer_terminal_name,
+                              input_name, file_reason(-ERROR_IS_DIRECTORY));
+                if (in != 0)
+                        system_close(in);
+                return 1;
+        }
+
+        if ((facts.mode & MODE_FORMAT) == MODE_FILE)
         {
                 output.protect_input = true;
                 output.input = facts;
@@ -18919,7 +19136,7 @@ static b32 file_split()
 
         bool complete = false;
 
-        bool regular = looked && (facts.mode & MODE_FORMAT) == MODE_FILE;
+        bool regular = (facts.mode & MODE_FORMAT) == MODE_FILE;
         bool fancy = mode == 'n' &&
                      (chunk.k || chunk.kind != SPLIT_CHUNK_BYTES);
 
@@ -27788,7 +28005,7 @@ static b32 file_rm()
                 if (rm_force)
                         return 0;
 
-                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "rm");
+                return file_need_operand((string_address) "rm");
         }
 
         /*
