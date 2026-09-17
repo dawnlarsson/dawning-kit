@@ -1541,6 +1541,11 @@ static bool file_resolve_as(string_address path, p8 address_to into,
                                 else
                                         missing_walk = false;
                         }
+                        else if (follow && seen < 0 &&
+                                 seen != -ERROR_NO_ENTRY &&
+                                 seen != -ERROR_INVALID &&
+                                 !(policy & FILE_RESOLVE_UNRESOLVED))
+                                return false;
                         continue;
                 }
 
@@ -13687,10 +13692,6 @@ static p64 du_measure_tree(string_address root)
                 return 0;
         }
 
-        //      GNU's du holds an operand to its exclusions like any other name.
-        if (du_exclude_have && du_excluded(root))
-                return 0;
-
         bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
 
         du_device = file_device_key(facts.device_major, facts.device_minor);
@@ -13753,6 +13754,11 @@ static p64 du_measure_tree(string_address root)
 
 static p64 du_measure(string_address root)
 {
+        //      GNU's du holds an operand to its exclusions like any other
+        //      name, and does so before the look: --exclude=* missing is
+        //      success, not cannot-access.
+        if (du_exclude_have && du_excluded(root))
+                return 0;
 #if defined(LIBRARY_THREAD_RUNTIME)
         return du_measure_tree(root);
 #else
@@ -16544,6 +16550,7 @@ static positive namei_text_room;
 static string_address namei_operand;
 static bool namei_no_symlinks;
 static bool namei_mounts;
+static bool namei_mount_failed;
 
 static const argument_option namei_options[] = {
     {"long", 'l'},
@@ -16582,8 +16589,16 @@ static bool namei_is_mountpoint(string_address path,
                 return false;
 
         file_facts parent;
-        if (!file_look(AT_FDCWD, parent_path, 0, address_of parent))
+        bipolar looked = file_look_code(AT_FDCWD, parent_path, 0,
+                                        address_of parent);
+        if (looked < 0)
+        {
+                string_format(log_error, "namei: stat of %w failed: %s\n",
+                              writer_terminal_name, parent_path,
+                              file_reason(looked));
+                namei_mount_failed = true;
                 return false;
+        }
 
         return facts->mount_id != parent.mount_id ||
                file_same_identity(facts, address_of parent);
@@ -16682,8 +16697,18 @@ static bool namei_walk(string_address path, string_address base,
                         return false;
                 }
                 row->known = true;
-                row->mountpoint = namei_is_mountpoint(candidate,
-                                                      address_of row->facts);
+                {
+                        p8 shown[FILE_PATH_MAX];
+
+                        if (at >= FILE_PATH_MAX)
+                                return false;
+                        memory_copy_apart(shown, path, at);
+                        shown[at] = end;
+                        row->mountpoint = namei_is_mountpoint(
+                            shown, address_of row->facts);
+                }
+                if (namei_mount_failed)
+                        return false;
 
                 if ((row->facts.mode & MODE_FORMAT) == MODE_LINK)
                 {
@@ -16870,14 +16895,20 @@ static b32 file_namei()
                         continue;
                 }
 
-                string_format(log, "f: %w\n", writer_terminal_name, namei_operand);
+                namei_mount_failed = false;
 
                 positive hops = 0;
                 p8 resolved[FILE_PATH_MAX];
                 string_address cwd = working_directory_get();
                 if (!cwd || !namei_walk(namei_operand, cwd, 0,
                                          address_of hops, resolved))
+                {
                         status = 1;
+                        if (namei_mount_failed)
+                                continue;
+                }
+
+                string_format(log, "f: %w\n", writer_terminal_name, namei_operand);
                 namei_show(modes, owners, vertical);
         }
         log_flush();
@@ -17465,11 +17496,18 @@ static b32 file_readlink()
                         if (!valid)
                         {
                                 if (loud)
-                                        file_shell_name_message(
+                                {
+                                        file_facts facts;
+                                        bipolar looked = file_look_code(
+                                            AT_FDCWD, path, 0, address_of facts);
+
+                                        if (looked >= 0)
+                                                looked = -ERROR_NO_ENTRY;
+                                        file_shell_name_reason(
                                             log_error,
                                             (string_address)"readlink: ", path,
-                                            (string_address)
-                                                ": No such file or directory\n");
+                                            (string_address)": ", looked);
+                                }
 
                                 status = 1;
                                 continue;
@@ -19967,6 +20005,24 @@ static const argument_option csplit_options[] = {
     {null},
 };
 
+static bool csplit_seen(p8 letter, string_address value)
+{
+        if (letter != 'n' || !value)
+                return true;
+
+        string_address at = value;
+        positive digits;
+
+        /* GNU refuses a non-numeric -n when it is seen, so `-n x --digits=4`
+           never last-wins onto 4. Zero is a valid width. */
+        if (!string_digits_checked(address_of at, 10, address_of digits) ||
+            string_get(at) || digits > 32)
+                return string_report(log_error, false,
+                                     "csplit: invalid number: '%s'\n", value);
+
+        return true;
+}
+
 static bool csplit_name(csplit_state address_to state, positive number)
 {
         p8 suffix[32];
@@ -20343,6 +20399,7 @@ static b32 file_csplit()
             .program = (string_address)"csplit",
             .options = csplit_options,
             .operand = file_operand,
+            .seen = csplit_seen,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -20359,9 +20416,43 @@ static b32 file_csplit()
 
                 if (!string_digits_checked(address_of at, 10,
                                            address_of digits) ||
-                    string_get(at) || !digits || digits > 32)
+                    string_get(at) || digits > 32)
                         return string_report(log_error, 1, "csplit: invalid number: '%s'\n",
                                       digit_text);
+        }
+
+        /* GNU reads every line-number pattern before the first section, so
+           `3 2` refuses the smaller number with no pre0000. */
+        {
+                positive last_line = 0;
+
+                for (positive i = 1; i < file_operand_count; i++)
+                {
+                        string_address word = file_operand_at(i);
+                        bool forever = false;
+                        positive repeats = 1;
+                        csplit_pattern pattern;
+
+                        if (csplit_repeat(word, address_of forever,
+                                          address_of repeats))
+                                continue;
+                        if (string_is(word, '/') || string_is(word, '%'))
+                                continue;
+
+                        memory_fill(address_of pattern, 0, sizeof(pattern));
+                        if (!csplit_parse_line(word, address_of pattern))
+                                continue;
+                        if (pattern.line_target < last_line)
+                        {
+                                string_format(log_error,
+                                              "csplit: line number '%w' is smaller than preceding line number, ",
+                                              writer_terminal_quoted_name, word);
+                                positive_to_string(log_error, last_line);
+                                log_error("\n", 1);
+                                return 1;
+                        }
+                        last_line = pattern.line_target;
+                }
         }
 
         string_address input_name = file_operand_at(0);
@@ -20525,15 +20616,23 @@ static b32 file_csplit()
                                         if (n >= sizeof(shown))
                                                 n = sizeof(shown) - 1;
                                         shown[n] = end;
+                                        /* GNU writes the leftover tail as a
+                                           section, then names the failing
+                                           {*} repeat in 1-based form. */
+                                        if (!csplit_section(address_of state,
+                                                            state.cursor, length,
+                                                            true))
+                                        {
+                                                failed = true;
+                                                break;
+                                        }
                                         string_format(log_error,
                                                       "csplit: '%w': line number out of range",
                                                       writer_terminal_quoted_name,
                                                       shown);
-                                        if (repetition)
-                                        {
-                                                log_error(" on repetition ", 0);
-                                                positive_to_string(log_error, repetition);
-                                        }
+                                        log_error(" on repetition ", 0);
+                                        positive_to_string(log_error,
+                                                           repetition + 1);
                                         log_error("\n", 1);
                                         failed = true;
                                         break;
@@ -22471,15 +22570,29 @@ static shuf_record address_to shuf_file_records(string_address name,
         p8 address_to input = utility_arena_read_all(
             (positive)handle, FILE_TRANSFER_SIZE, address_of length,
             address_of read_failed);
+        bool directory = false;
+
+        if (!input && read_failed && handle != 0)
+        {
+                file_facts facts;
+
+                directory = file_look((bipolar)handle, (string_address)"",
+                                      AT_EMPTY_PATH, address_of facts) &&
+                            (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+        }
 
         if (handle != 0)
                 system_close(handle);
 
         if (!input)
         {
-                log_error(read_failed ? (string_address) "shuf: read error\n"
-                                      : (string_address) "shuf: input too large\n",
-                          0);
+                if (read_failed && directory)
+                        string_format(log_error, "shuf: read error: %s\n",
+                                      file_reason(-ERROR_IS_DIRECTORY));
+                else
+                        log_error(read_failed ? (string_address) "shuf: read error\n"
+                                              : (string_address) "shuf: input too large\n",
+                                  0);
                 return null;
         }
 
@@ -22798,12 +22911,44 @@ static b32 file_shuf()
 
         positive wanted = shuf_wanted;
         bool limited = shuf_limited;
+        string_address output_name = file_option_value(address_of taking, 'o');
 
         //      No lines are wanted, so no input is read: a file that is not
-        //      there or cannot be read is never opened, and the answer is a
-        //      successful nothing.
+        //      there or cannot be read is never opened. GNU still creates an
+        //      empty -o name.
         if (limited && !wanted)
+        {
+                if (!output_name)
+                        return 0;
+
+                file_staged_name stage = {.directory = -1, .handle = -1};
+                bipolar handle = file_staged_name_open(
+                    address_of stage, output_name,
+                    0666 & ~file_umask(),
+                    FILE_STAGED_STREAM_SPECIAL);
+
+                if (handle < 0)
+                {
+                        string_format(log_error, "shuf: %w: %s\n",
+                                      writer_terminal_name, output_name,
+                                      file_reason(handle));
+                        return 1;
+                }
+
+                bipolar finished = file_staged_name_finish(
+                    address_of stage, true, 0);
+
+                if (finished < 0)
+                {
+                        string_format(log_error,
+                                      "shuf: failed to publish output '%w': %s\n",
+                                      writer_terminal_quoted_name, output_name,
+                                      file_reason(finished));
+                        return 1;
+                }
+
                 return 0;
+        }
 
         positive low = 0;
         positive high = 0;
@@ -22858,7 +23003,6 @@ static b32 file_shuf()
                 return 1;
         }
 
-        string_address output_name = file_option_value(address_of taking, 'o');
         shuf_output output = {
             .handle = 1,
             .name = output_name,
@@ -30347,7 +30491,8 @@ static b32 file_seq()
 
                 positive magnitude = value < 0 ? (positive)0 - (positive)value
                                                : (positive)value;
-                bool negative_zero = !written && first.negative_zero;
+                bool negative_zero = (!written && first.negative_zero) ||
+                                     (!value && step_negative);
                 fixed_decimal field = fixed_decimal_prepare(
                     magnitude, scale, value < 0 || negative_zero,
                     format.width, format.precision, format.flags);
@@ -33657,7 +33802,7 @@ static b32 file_rename()
         bool no_act = (taking.flags & FILE_FLAG('n')) != 0;
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
         bool no_overwrite = (taking.flags & FILE_FLAG('o')) != 0;
-        bool interactive = !no_act && !no_overwrite &&
+        bool interactive = !no_overwrite &&
                            (taking.flags & FILE_FLAG('i')) != 0;
         positive renamed = 0;
         bool failed = false;
@@ -33743,6 +33888,9 @@ static b32 file_rename()
                                 if (file_look_link((string_address)destination, address_of there) &&
                                     (no_overwrite || !rename_ask((string_address)destination)))
                                 {
+                                        if (no_overwrite)
+                                                string_format(log, "Skipping existing link: `%w'\n",
+                                                              writer_terminal_name, destination);
                                         system_close(source_handle);
                                         system_close(source_directory);
                                         continue;
@@ -33844,6 +33992,9 @@ static b32 file_rename()
                             (no_overwrite ||
                              (interactive && !rename_ask(destination))))
                         {
+                                if (no_overwrite)
+                                        string_format(log, "Skipping existing file: `%w'\n",
+                                                      writer_terminal_name, destination);
                                 system_close(source_handle);
                                 system_close(source_directory);
                                 system_close(destination_directory);
@@ -33870,7 +34021,11 @@ static b32 file_rename()
                         if (answer < 0)
                         {
                                 if (no_overwrite && answer == -ERROR_EXISTS)
+                                {
+                                        string_format(log, "Skipping existing file: `%w'\n",
+                                                      writer_terminal_name, destination);
                                         continue;
+                                }
                                 string_format(log_error, "rename: %w: rename to %w failed: %s\n",
                                               writer_terminal_name, source, writer_terminal_name,
                                               destination, file_reason(answer));
@@ -34162,6 +34317,32 @@ static b32 file_cal()
                         program_argument_list(), cal_options, true,
                         cal_months_twelve, array_count(cal_months_twelve)))
                         return 1;
+                {
+                        static const argument_exclusive_pair cal_year_months[] = {
+                            {'y', (string_address)"year"},
+                            {'n', (string_address)"months"},
+                        };
+
+                        if (argument_exclusive_refuse(
+                                log_error, (string_address)"cal",
+                                (positive)program_argument_count(),
+                                program_argument_list(), cal_options, true,
+                                cal_year_months, array_count(cal_year_months)))
+                                return 1;
+                }
+                {
+                        static const argument_exclusive_pair cal_three_span[] = {
+                            {'3', (string_address)"three"},
+                            {'S', (string_address)"span"},
+                        };
+
+                        if (argument_exclusive_refuse(
+                                log_error, (string_address)"cal",
+                                (positive)program_argument_count(),
+                                program_argument_list(), cal_options, true,
+                                cal_three_span, array_count(cal_three_span)))
+                                return 1;
+                }
         }
         if (taking.flags & (FILE_FLAG('w') | FILE_FLAG('v') |
                             FILE_FLAG('c')))
