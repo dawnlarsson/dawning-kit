@@ -647,20 +647,32 @@ static bipolar file_parent_open(string_address path, p8 address_to leaf)
                                          FILE_PATH_MAX);
 }
 
+/* GNU strip_trailing_slashes / path_tail_copy: trailing separators go
+   except for root. One copy into FILE_PATH_MAX; callers keep the original
+   spelling for diagnostics. */
+static bool file_name_without_trailing_slashes(p8 address_to into,
+                                               string_address path)
+{
+        positive length = string_length(path);
+
+        if (length >= FILE_PATH_MAX)
+                return false;
+        memory_copy_apart(into, path, length);
+        while (length > 1 && into[length - 1] == '/')
+                length--;
+        into[length] = end;
+        return true;
+}
+
 /* Linux rename/open accept a trailing slash on a directory. The pinned
    parent walk treats that spelling as an empty leaf, so strip separators
    the way path_tail_copy does, keeping the original name for diagnostics. */
 static bipolar file_parent_open_named(string_address path, p8 address_to leaf)
 {
         p8 trimmed[FILE_PATH_MAX];
-        positive length = string_length(path);
 
-        if (length >= sizeof(trimmed))
+        if (!file_name_without_trailing_slashes(trimmed, path))
                 return -ERROR_NAME_TOO_LONG;
-        memory_copy_apart(trimmed, path, length);
-        while (length > 1 && trimmed[length - 1] == '/')
-                length--;
-        trimmed[length] = end;
         return file_parent_open(trimmed, leaf);
 }
 
@@ -5278,7 +5290,7 @@ static bipolar file_make_directories_open(
     fn(address_to told)(string_address),
     p8 address_to failed, bool address_to created,
     bipolar address_to leaf_parent, p8 address_to leaf_name,
-    positive leaf_touched, bool leaf_ancestor)
+    positive leaf_touched, bool leaf_ancestor, bool parent_owned)
 {
         p8 work[FILE_PATH_MAX];
         p8 component[SYSTEM_PATH_LEAF_ROOM];
@@ -5385,7 +5397,8 @@ static bipolar file_make_directories_open(
                         }
                         else if (!last && !parents)
                                 next = -ERROR_NO_ENTRY;
-                        else if (!system_path_parent_cleanup_safe(held))
+                        else if (parent_owned &&
+                                 !system_path_parent_cleanup_safe(held))
                                 next = -ERROR_ACCESS;
                         else
                         {
@@ -5518,7 +5531,74 @@ static bipolar file_make_directories_open(
         directory test ask about a link rather than about what the link points
         at, and it says "target is not a directory" where these two say "extra
         operand".
+
+        GNU cp --parents joins the whole source path onto the dest directory
+        and mkdir's the missing intermediate dest components. file_cp sets
+        this; mv and install leave it false.
 */
+static bool file_join_source_path;
+
+static bool file_destination_in(string_address program, string_address directory,
+                                string_address source,
+                                p8 address_to destination)
+{
+        p8 piece[FILE_PATH_MAX];
+
+        if (file_join_source_path)
+        {
+                if (!file_name_without_trailing_slashes(piece, source))
+                {
+                        string_format(log_error, "%s: cannot create '%w/%w': %s\n",
+                                      program, writer_terminal_quoted_name,
+                                      directory, writer_terminal_quoted_name,
+                                      source, file_reason(-ERROR_NAME_TOO_LONG));
+                        return false;
+                }
+        }
+        else
+                path_tail_copy(piece, FILE_PATH_MAX, source);
+
+        if (!file_path_join(destination, directory, piece))
+        {
+                string_format(log_error, "%s: cannot create '%w/%w': %s\n",
+                              program, writer_terminal_quoted_name, directory,
+                              writer_terminal_quoted_name, piece,
+                              file_reason(-ERROR_NAME_TOO_LONG));
+                return false;
+        }
+
+        if (!file_join_source_path)
+                return true;
+
+        /* GNU make_dir_parents_private creates dest components after the
+           target directory and before the leaf. path_head_copy is dirname. */
+        p8 parent[FILE_PATH_MAX];
+        p8 failing[FILE_PATH_MAX];
+
+        path_head_copy(parent, FILE_PATH_MAX, destination);
+        if (string_equals(parent, directory) ||
+            string_equals(parent, (string_address) "."))
+                return true;
+
+        /* GNU cp --parents mkdirat in the named dest, including a
+           world-writable fixture directory. The owned-parent gate is for
+           mkdir/install in sticky or hostile parents, not this. */
+        bipolar made = file_make_directories_open(
+            parent, 0777, 0777, false, true, null, failing, null, null, null,
+            0, false, false);
+        if (made < 0)
+        {
+                string_format(log_error,
+                              "%s: cannot create directory '%w': %s\n", program,
+                              writer_terminal_quoted_name,
+                              string_get(failing) ? failing : parent,
+                              file_reason(made));
+                return false;
+        }
+        system_close(made);
+        return true;
+}
+
 static bool file_source_destination(string_address program, positive first,
                                     positive count, string_address into, bool alone,
                                     fn(address_to pair)(string_address source,
@@ -5607,17 +5687,10 @@ static bool file_source_destination(string_address program, positive first,
         while (first < after)
         {
                 string_address source = program_argument((b32)first++);
-                p8 tail[FILE_PATH_MAX];
                 p8 destination[FILE_PATH_MAX];
 
-                path_tail_copy(tail, FILE_PATH_MAX, source);
-
-                if (!file_path_join(destination, last, tail))
+                if (!file_destination_in(program, last, source, destination))
                 {
-                        string_format(log_error, "%s: cannot create '%w/%w': %s\n", program,
-                                      writer_terminal_quoted_name, last,
-                                      writer_terminal_quoted_name, tail,
-                                      file_reason(-ERROR_NAME_TOO_LONG));
                         complete = false;
                         continue;
                 }
@@ -13845,8 +13918,12 @@ static b32 file_du()
         else if (du_unit_option == 'm')
                 du_unit = 1048576;
 
-        if (du_summary && (du_all || (flags & FILE_FLAG('d'))))
-                return string_report(log_error, 1, "du: summarizing conflicts with --all or --max-depth\n");
+        if (du_summary && du_all)
+                return string_report(log_error, 1,
+                                     "du: cannot both summarize and show all entries\n");
+        if (du_summary && (flags & FILE_FLAG('d')))
+                return string_report(log_error, 1,
+                                     "du: cannot both summarize and use --max-depth\n");
 
         // -s is --max-depth=0 said another way, and the two are the same
         // switch here so that giving both cannot mean two things.
@@ -18081,7 +18158,7 @@ static b32 file_mkdir()
                 bipolar made = file_make_directories_open(
                     path, parent_mode, mode, given_mode, parents,
                     loud ? mkdir_told : null, parents ? failed : null, null,
-                    null, null, given_mode ? touched : 0, false);
+                    null, null, given_mode ? touched : 0, false, true);
 
                 if (made < 0)
                 {
@@ -18341,6 +18418,11 @@ static b32 file_mknod()
                 {
                         string_format(log_error, "mknod: extra operand '%s'\n",
                                       file_operand_at(2));
+                        /* GNU names the first spare word always, and adds the
+                           fifo trailer only when both a major and a minor
+                           were given (`node p 1` vs `node p 1 2`). */
+                        if (file_operand_count < 4)
+                                return 1;
                         return string_report(log_error, 1,
                                              "Fifos do not have major and minor device numbers.\n");
                 }
@@ -20158,7 +20240,7 @@ static b32 file_csplit()
 
         if (in < 0)
         {
-                return string_report(log_error, 1, "csplit: cannot open '%w': %s\n",
+                return string_report(log_error, 1, "csplit: cannot open '%w' for reading: %s\n",
                               writer_terminal_quoted_name, input_name, file_reason(in));
         }
 
@@ -26229,6 +26311,7 @@ static b32 file_cp()
         cp_update_policy = 0;
         cp_update_fail = false;
         file_into_seen = null;
+        file_join_source_path = false;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -26363,7 +26446,8 @@ static b32 file_cp()
 
         string_address into = file_option_value(address_of taking, 't');
 
-        if ((flags & FILE_FLAG('e')) != 0 &&
+        file_join_source_path = (flags & FILE_FLAG('e')) != 0;
+        if (file_join_source_path &&
             ((flags & FILE_FLAG('T')) != 0 ||
              (!into && count - first == 2 &&
               !file_is_directory_through(program_argument((b32)(count - 1))))))
@@ -26453,7 +26537,7 @@ static bipolar install_leading(string_address destination,
         bipolar directory = file_make_directories_open(
             parent, 0755, 0755, true, true,
             install_loud ? install_directory_told : null,
-            failing, null, null, null, 0, true);
+            failing, null, null, null, 0, true, true);
         if (directory >= 0)
                 return directory;
 
@@ -26837,6 +26921,7 @@ static b32 file_install()
         install_group = -1;
         install_status = 0;
         file_into_seen = null;
+        file_join_source_path = false;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -26892,7 +26977,8 @@ static b32 file_install()
                         bipolar exact = file_make_directories_open(
                             path, 0755, 0700, true, true,
                             install_loud ? install_directory_told : null,
-                            failing, null, address_of parent, leaf, 0, false);
+                            failing, null, address_of parent, leaf, 0, false,
+                            true);
                         bool bootstrapped = false;
                         positive old_mode = 0;
                         bipolar handle = exact < 0
@@ -26963,7 +27049,7 @@ static b32 file_install()
                         bipolar made = file_make_directories_open(
                             into, 0755, 0755, true, true,
                             install_loud ? install_directory_told : null,
-                            failing, null, null, null, 0, false);
+                            failing, null, null, null, 0, false, true);
 
                         if (made < 0)
                         {
@@ -27338,6 +27424,7 @@ static b32 file_mv()
         mv_update_policy = 0;
         mv_update_fail = false;
         file_into_seen = null;
+        file_join_source_path = false;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -33990,7 +34077,7 @@ static b32 file_cal()
                                                     address_of stamp,
                                                     address_of nanoseconds))
                                 return string_report(log_error, 1,
-                                              "cal: cannot parse date '%s'\n",
+                                              "cal: failed to parse timestamp or unknown month name: %s\n",
                                               word);
                         positive hour, minute, second;
                         file_split_moment(stamp, address_of year,
@@ -34034,7 +34121,14 @@ static b32 file_cal()
                      !selected_day ||
                      selected_day > cal_days_in_month(year, month,
                                                        proleptic)))
-                        return string_report(log_error, 1, "cal: illegal day value\n");
+                {
+                        string_format(log_error, "cal: illegal day value: use 1-");
+                        positive_to_string(log_error,
+                                           cal_days_in_month(year, month,
+                                                             proleptic));
+                        log_error("\n", 1);
+                        return 1;
+                }
         }
 
         bool monday = week_start == 'm';
@@ -34054,9 +34148,25 @@ static b32 file_cal()
                 months = 1;
         if ((p64)months > 25769803776ULL)
                 return string_report(log_error, 1, "cal: requested calendar range is out of bounds\n");
+        /* GNU names --months vs --twelve in argv order; other range clashes
+           stay a single unsupported sentence. */
+        {
+                static const argument_exclusive_pair cal_months_twelve[] = {
+                    {'n', (string_address)"months"},
+                    {'Y', (string_address)"twelve"},
+                };
+
+                if (argument_exclusive_refuse(
+                        log_error, (string_address)"cal",
+                        (positive)program_argument_count(),
+                        program_argument_list(), cal_options, true,
+                        cal_months_twelve, array_count(cal_months_twelve)))
+                        return 1;
+        }
         if ((whole_year && (three || months_given || one || twelve)) ||
             (three && (months_given || twelve)) ||
-            (one && (three || months_given || twelve)))
+            (one && (three || months_given || twelve)) ||
+            (twelve && months_given))
                 return string_report(log_error, 1, "cal: conflicting calendar range options are unsupported\n");
 
         b64 first = (year - 1) * 12 + (b64)month - 1;

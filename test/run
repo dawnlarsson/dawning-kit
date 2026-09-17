@@ -4137,6 +4137,23 @@ lane_files()
                 files_failed=1
         fi
 
+        mkdir -p "$work/cp-mode-regression/src/sub" \
+                "$work/cp-mode-regression/hollow"
+        printf 'parents body\n' > "$work/cp-mode-regression/src/sub/deep"
+        (
+                cd "$work/cp-mode-regression" || exit 1
+                "$farm/cp" --parents src/sub/deep hollow
+        )
+        cp_parents_status=$?
+        if [ "$cp_parents_status:$(cat "$work/cp-mode-regression/hollow/src/sub/deep" 2>/dev/null)" = \
+                '0:parents body' ]; then
+                tally cp-parents-keeps-source-path 1 1
+        else
+                tally cp-parents-keeps-source-path 0 1
+                note "cp --parents returned $cp_parents_status or dest layout"
+                files_failed=1
+        fi
+
         printf 'symlink victim\n' > "$work/cp-mode-regression/victim"
         ln -sf victim "$work/cp-mode-regression/link-target"
 
