@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io storage_format machine differential_oracle text files misc util_linux shell builtins awk term edit kit boot install canvas"
 
 describe()
 {
@@ -122,6 +122,7 @@ describe()
         checksum) echo "the cksum CRC against a bitwise model, in every mode, on three machines" ;;
         storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
         storage_format) echo "GPT, FAT32 and ext4 as an install writes them, checked by sfdisk and e2fsck" ;;
+        machine) echo "the machine script: hooks, case arms, overlay lines and file policy" ;;
         term)     echo "the emulator driven a byte and a read at a time, and the line being edited" ;;
         edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
         kit)      echo "build, source-inventory, remote-host and firmware tooling" ;;
@@ -2048,6 +2049,8 @@ lane_storage_format()
         tally storage_format-images "$((checked - refused))" "$checked"
         [ "$refused" = 0 ]
 }
+
+lane_machine() { freestanding_checks_lane machine machine; }
 lane_leaving()   { freestanding_checks_lane leaving leaving; }
 #       strtod and strtof against glibc, over generated text.
 #
@@ -10226,6 +10229,30 @@ def asked(name, line, marker, seconds=20):
     out.append((name, "yes" if wait_for(marker, seconds) else "no", "yes"))
 
 asked("the compositor found no card", "true", b"gave up waiting for a card", 30)
+asked("a machine script overlays mute at its case arm",
+      "printf '%s\\n' 'function moonwater_init {' '  true' '}' 'function moonwater_event {' '  case $1 in' '  mute) : ;;' '  canvas) : ;;' '  *) : ;;' '  esac' '}' 'function moonwater_end {' '  true' '}' > /root/main.moonwater.sh; chmod 600 /root/main.moonwater.sh; moonwater bind mute | grep -c 'mute: /root/main.moonwater.sh:6' | sed 's/^/etum-/' | rev",
+      b"1-mute")
+asked("canvas on and canvas off share the canvas arm",
+      "moonwater bind canvas on | grep -c 'canvas on: /root/main.moonwater.sh:7' | sed 's/^/no-/' | rev",
+      b"1-on")
+asked("poweroff is the star arm",
+      "moonwater bind poweroff | grep -c 'poweroff: /root/main.moonwater.sh:8' | sed 's/^/rats-/' | rev",
+      b"1-star")
+asked("SET is refused at the script line",
+      "moonwater bind mute true 2>&1 | grep -c 'mute is /root/main.moonwater.sh:6; change it there' | sed 's/^/esufer-/' | rev",
+      b"1-refuse")
+asked("init is the moonwater_init hook, not the stored list",
+      "moonwater bind init | grep -c '/root/main.moonwater.sh:1' | sed 's/^/tini-/' | rev",
+      b"1-init")
+asked("init add is refused the same way",
+      "moonwater bind init add true 2>&1 | grep -c 'init is /root/main.moonwater.sh:1; change it there' | sed 's/^/dda-/' | rev",
+      b"1-add")
+asked("exit is the moonwater_end hook, not the stored list",
+      "moonwater bind exit | grep -c '/root/main.moonwater.sh:11' | sed 's/^/dne-/' | rev",
+      b"1-end")
+asked("removing the script restores the image binds",
+      "rm -f /root/main.moonwater.sh; moonwater bind poweroff | grep -c 'poweroff: poweroff' | sed 's/^/tluafed-/' | rev",
+      b"1-default")
 asked("the power button runs poweroff by default",
       "moonwater bind poweroff | grep -c 'poweroff: poweroff' | sed 's/^/tluafed-/' | rev",
       b"1-default")
@@ -10536,6 +10563,12 @@ moonwater bind init add "echo disk >> /root/disk" > /tmp/disk-add 2>&1
 printf 'written-%s\n' $(( $(grep -c 'saved in the image on nvme0n1p1' /tmp/disk-add) * 7 ))
 moonwater bind init add "sleep 8; poweroff" > /dev/null 2>&1
 printf 'disk-listed-%s\n' $(( $(moonwater bind init | grep -c -e '^3  echo disk' -e '^4  sleep 8') * 7 ))
+printf '%s\n' 'function moonwater_event {' '  case $1 in' '  mute) : ;;' '  esac' '}' > /root/main.moonwater.sh
+chmod 600 /root/main.moonwater.sh
+printf 'script-%s\n' $(( $(moonwater bind mute | grep -c 'mute: /root/main.moonwater.sh:3') * 7 ))
+printf 'refused-%s\n' $(( $(moonwater bind mute true 2>&1 | grep -c 'change it there') * 7 ))
+printf 'init-kept-%s\n' $(( $(moonwater bind init | grep -c 'echo disk') * 7 ))
+rm -f /root/main.moonwater.sh
 mkdir -p /mnt
 mount -t vfat /dev/nvme0n1p1 /mnt
 at=$(od -An -tu2 -j526 -N2 /mnt/EFI/BOOT/BOOTX64.EFI)
@@ -10556,6 +10589,9 @@ says disk 'the install carried init'     'carried-deirrac'
 says disk 'init ran at the disk boot'    'booted-7'
 says disk 'a setting writes the disk in place' 'written-7'
 says disk 'and reads back from it'       'disk-listed-14'
+says disk 'a machine script overlays mute' 'script-7'
+says disk 'SET is refused at the script' 'refused-7'
+says disk 'init stays the stored list without moonwater_init' 'init-kept-7'
 disk_checks disk
 
 cat > "$work/update.commands" <<'COMMANDS'

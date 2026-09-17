@@ -19,6 +19,7 @@
 #include <linux/file.h>
 // Before the library's own spellings below: poll.h names a bool of its own.
 #include <linux/poll.h>
+#include <linux/wait.h>
 #include <linux/kernel_stat.h>
 #include <linux/cpumask.h>
 #include <linux/timekeeping.h>
@@ -1010,7 +1011,8 @@ static long report_stats(struct stats __user *out)
         the line runs from system_dfl_long_wq as `/shell -c`, through
         user_mode_thread and kernel_wait, never call_usermodehelper: waiting
         there holds helper_lock, and a command that then stops the machine
-        stalls five seconds in usermodehelper_disable.
+        stalls five seconds in usermodehelper_disable. While a machine script
+        is attached, bind_fire queues into that process instead.
 
         poweroff and reboot must not fail quietly: a line that could not start,
         or returned without stopping the machine, falls back to orderly_poweroff
@@ -1055,6 +1057,29 @@ static unsigned bind_held_n;
 static _Bool bind_handler_registered;
 static struct work_struct bind_canvas_work;
 static atomic_t bind_alive;
+
+#define BIND_MACHINE_QUEUE 32
+#define BIND_MACHINE_TOMBSTONE 0xffffffffu
+
+struct bind_machine_item {
+        unsigned int event;
+        unsigned int extra;
+};
+
+static struct {
+        struct bind_machine_item items[BIND_MACHINE_QUEUE];
+        unsigned int head, tail, count;
+        struct file *owner;
+        wait_queue_head_t wait;
+        _Bool ending;
+} bind_machine;
+
+static DEFINE_SPINLOCK(bind_machine_lock);
+
+static _Bool bind_machine_attached(void)
+{
+        return READ_ONCE(bind_machine.owner) != NULL;
+}
 
 /*
         Codes whose press or release might be a bound key. Typing is the
@@ -1272,11 +1297,129 @@ static void bind_canvas_run(struct work_struct *work)
         atomic_set(&off->busy, 0);
 }
 
+static _Bool bind_machine_droppable(unsigned int event)
+{
+        return event != SPARK_BIND_POWEROFF && event != SPARK_BIND_RESET &&
+               event != SPARK_BIND_CTRL_ALT_DELETE && event != 0;
+}
+
+static void bind_machine_compact(void)
+{
+        unsigned int i, kept = 0, src = bind_machine.head;
+        struct bind_machine_item tmp[BIND_MACHINE_QUEUE];
+
+        for (i = 0; i < bind_machine.count; i++)
+        {
+                if (bind_machine.items[src].event != BIND_MACHINE_TOMBSTONE)
+                        tmp[kept++] = bind_machine.items[src];
+                src = (src + 1) % BIND_MACHINE_QUEUE;
+        }
+        for (i = 0; i < kept; i++)
+                bind_machine.items[i] = tmp[i];
+        bind_machine.head = 0;
+        bind_machine.tail = kept % BIND_MACHINE_QUEUE;
+        bind_machine.count = kept;
+}
+
+static void bind_machine_watch_all(_Bool on)
+{
+        unsigned at;
+        unsigned long flags;
+
+        spin_lock_irqsave(&bind_lock, flags);
+        for (at = 0; at < SPARK_BIND_EVENTS; at++)
+        {
+                struct bind_row *row = bind_table + at;
+
+                bind_watch_row(row, on || atomic_read(&row->bound));
+        }
+        spin_unlock_irqrestore(&bind_lock, flags);
+}
+
+static _Bool bind_machine_push(struct bind_row *row)
+{
+        unsigned long flags;
+        unsigned int event = row->event;
+        unsigned int extra = event == SPARK_BIND_CANVAS_ON;
+        unsigned int i, idx;
+
+        spin_lock_irqsave(&bind_machine_lock, flags);
+        if (!bind_machine.owner || bind_machine.ending)
+        {
+                _Bool attached = bind_machine.owner != NULL || bind_machine.ending;
+
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                return attached;
+        }
+
+        if (event == SPARK_BIND_CANVAS_ON || event == SPARK_BIND_CANVAS_OFF)
+        {
+                idx = bind_machine.head;
+                for (i = 0; i < bind_machine.count; i++)
+                {
+                        unsigned int queued = bind_machine.items[idx].event;
+
+                        if (queued == SPARK_BIND_CANVAS_ON ||
+                            queued == SPARK_BIND_CANVAS_OFF)
+                                bind_machine.items[idx].event = BIND_MACHINE_TOMBSTONE;
+                        idx = (idx + 1) % BIND_MACHINE_QUEUE;
+                }
+                bind_machine_compact();
+        }
+
+        if (bind_machine.count == BIND_MACHINE_QUEUE)
+        {
+                bind_machine_compact();
+                if (bind_machine.count == BIND_MACHINE_QUEUE)
+                {
+                        idx = bind_machine.head;
+                        for (i = 0; i < bind_machine.count; i++)
+                        {
+                                if (bind_machine_droppable(
+                                        bind_machine.items[idx].event))
+                                {
+                                        bind_machine.items[idx].event =
+                                            BIND_MACHINE_TOMBSTONE;
+                                        break;
+                                }
+                                idx = (idx + 1) % BIND_MACHINE_QUEUE;
+                        }
+                        bind_machine_compact();
+                }
+                if (bind_machine.count == BIND_MACHINE_QUEUE &&
+                    bind_machine_droppable(
+                        bind_machine.items[bind_machine.head].event))
+                {
+                        bind_machine.head =
+                            (bind_machine.head + 1) % BIND_MACHINE_QUEUE;
+                        bind_machine.count--;
+                }
+        }
+
+        if (bind_machine.count == BIND_MACHINE_QUEUE)
+        {
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                return true;
+        }
+
+        bind_machine.items[bind_machine.tail].event = event;
+        bind_machine.items[bind_machine.tail].extra = extra;
+        bind_machine.tail = (bind_machine.tail + 1) % BIND_MACHINE_QUEUE;
+        bind_machine.count++;
+        atomic_fetch_add(1, &row->runs);
+        spin_unlock_irqrestore(&bind_machine_lock, flags);
+        wake_up(&bind_machine.wait);
+        return true;
+}
+
 static void bind_queue(struct bind_row *row)
 {
         struct work_struct *work;
 
         if (system_state != SYSTEM_RUNNING || !atomic_read(&bind_alive))
+                return;
+
+        if (bind_machine_push(row))
                 return;
 
         if (row->event == SPARK_BIND_CANVAS_ON ||
@@ -1306,11 +1449,188 @@ static void bind_queue(struct bind_row *row)
         atomic_fetch_add(1, &row->runs);
 }
 
+static void bind_machine_detach(struct file *file)
+{
+        unsigned long flags;
+        struct bind_machine_item drain[BIND_MACHINE_QUEUE];
+        unsigned int n = 0, i;
+        _Bool was_owner = false;
+
+        spin_lock_irqsave(&bind_machine_lock, flags);
+        if (bind_machine.owner == file)
+        {
+                was_owner = true;
+                if (!bind_machine.ending)
+                {
+                        for (i = 0; i < bind_machine.count; i++)
+                        {
+                                unsigned int idx =
+                                    (bind_machine.head + i) % BIND_MACHINE_QUEUE;
+                                unsigned int event =
+                                    bind_machine.items[idx].event;
+
+                                if (event && event <= SPARK_BIND_EVENTS)
+                                        drain[n++] = bind_machine.items[idx];
+                        }
+                }
+                bind_machine.owner = NULL;
+                bind_machine.ending = false;
+                bind_machine.head = 0;
+                bind_machine.tail = 0;
+                bind_machine.count = 0;
+        }
+        spin_unlock_irqrestore(&bind_machine_lock, flags);
+
+        if (!was_owner)
+                return;
+
+        bind_machine_watch_all(false);
+        wake_up(&bind_machine.wait);
+
+        for (i = 0; i < n; i++)
+        {
+                struct bind_row *row = bind_row(drain[i].event);
+
+                if (row)
+                        bind_queue(row);
+        }
+}
+
+static long bind_machine_wait(struct file *file, struct machine_control *request)
+{
+        unsigned long flags;
+        struct bind_machine_item item;
+        _Bool got = false;
+
+        for (;;)
+        {
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                if (bind_machine.owner != file)
+                {
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return -EPIPE;
+                }
+                if (bind_machine.ending)
+                {
+                        request->queued = bind_machine.count;
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        request->event = 0;
+                        request->extra = 0;
+                        request->flags = SPARK_MACHINE_ATTACHED;
+                        strscpy(request->name, "end", sizeof(request->name));
+                        return 0;
+                }
+                while (bind_machine.count)
+                {
+                        item = bind_machine.items[bind_machine.head];
+                        bind_machine.head =
+                            (bind_machine.head + 1) % BIND_MACHINE_QUEUE;
+                        bind_machine.count--;
+                        if (item.event != BIND_MACHINE_TOMBSTONE)
+                        {
+                                got = true;
+                                break;
+                        }
+                }
+                request->queued = bind_machine.count;
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                if (got)
+                        break;
+                if (wait_event_interruptible(
+                            bind_machine.wait,
+                            READ_ONCE(bind_machine.count) ||
+                                READ_ONCE(bind_machine.ending) ||
+                                READ_ONCE(bind_machine.owner) != file))
+                        return -EINTR;
+        }
+
+        request->event = item.event;
+        request->extra = item.extra;
+        request->flags = SPARK_MACHINE_ATTACHED;
+        if (item.event && item.event <= SPARK_BIND_EVENTS)
+                strscpy(request->name, spark_bind_event_name[item.event - 1],
+                        sizeof(request->name));
+        else
+                strscpy(request->name, "end", sizeof(request->name));
+        return 0;
+}
+
+static long report_machine(struct file *file, struct machine_control __user *out)
+{
+        struct machine_control request;
+        unsigned long flags;
+        long ret = 0;
+
+        if (copy_from_user(&request, out, sizeof(request)))
+                return -EFAULT;
+        if (request.reserved[0] || request.reserved[1] || request.reserved[2])
+                return -EINVAL;
+
+        switch (request.op)
+        {
+        case SPARK_MACHINE_ATTACH:
+                if (!capable(CAP_SYS_ADMIN))
+                        return -EPERM;
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                if (bind_machine.owner && bind_machine.owner != file)
+                {
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return -EBUSY;
+                }
+                bind_machine.owner = file;
+                bind_machine.ending = false;
+                request.queued = bind_machine.count;
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                bind_machine_watch_all(true);
+                request.flags = SPARK_MACHINE_ATTACHED;
+                break;
+        case SPARK_MACHINE_DETACH:
+                bind_machine_detach(file);
+                request.flags = 0;
+                request.queued = 0;
+                break;
+        case SPARK_MACHINE_WAIT:
+                if (!capable(CAP_SYS_ADMIN))
+                        return -EPERM;
+                ret = bind_machine_wait(file, &request);
+                if (ret)
+                        return ret;
+                break;
+        case SPARK_MACHINE_STATUS:
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                request.queued = bind_machine.count;
+                request.flags = bind_machine.owner ? SPARK_MACHINE_ATTACHED : 0;
+                request.event = 0;
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                break;
+        case SPARK_MACHINE_END:
+                if (!capable(CAP_SYS_ADMIN))
+                        return -EPERM;
+                spin_lock_irqsave(&bind_machine_lock, flags);
+                if (!bind_machine.owner)
+                {
+                        spin_unlock_irqrestore(&bind_machine_lock, flags);
+                        return -EPIPE;
+                }
+                bind_machine.ending = true;
+                spin_unlock_irqrestore(&bind_machine_lock, flags);
+                wake_up(&bind_machine.wait);
+                request.flags = SPARK_MACHINE_ATTACHED;
+                break;
+        default:
+                return -EINVAL;
+        }
+
+        return copy_to_user(out, &request, sizeof(request)) ? -EFAULT : 0;
+}
+
+static _Bool bind_row_bound(struct bind_row *row);
+
 static void bind_fire(unsigned int event)
 {
         struct bind_row *row = bind_row(event);
 
-        if (row && atomic_read(&row->bound))
+        if (bind_row_bound(row))
                 bind_queue(row);
 }
 
@@ -1389,7 +1709,7 @@ static struct bind_row *bind_match(unsigned int type, unsigned int code, int val
 
 static _Bool bind_row_bound(struct bind_row *row)
 {
-        return row && atomic_read(&row->bound);
+        return row && (atomic_read(&row->bound) || bind_machine_attached());
 }
 
 static _Bool bind_code_held(unsigned int code)
@@ -1633,6 +1953,12 @@ static void bind_start(void)
         unsigned at;
 
         INIT_WORK(&bind_canvas_work, bind_canvas_run);
+        init_waitqueue_head(&bind_machine.wait);
+        bind_machine.owner = NULL;
+        bind_machine.ending = false;
+        bind_machine.head = 0;
+        bind_machine.tail = 0;
+        bind_machine.count = 0;
         atomic_set(&bind_ctrl, 0);
         atomic_set(&bind_alt, 0);
         bind_held_n = 0;
@@ -1674,6 +2000,14 @@ static void bind_stop(void)
         // Before cancel: bind_fire from a still-open /dev/spark must not
         // queue work against text that exit_module is about to free.
         atomic_set(&bind_alive, 0);
+        spin_lock_irq(&bind_machine_lock);
+        bind_machine.owner = NULL;
+        bind_machine.ending = false;
+        bind_machine.count = 0;
+        bind_machine.head = 0;
+        bind_machine.tail = 0;
+        spin_unlock_irq(&bind_machine_lock);
+        wake_up_all(&bind_machine.wait);
 
 #ifdef CONFIG_VT
         unregister_keyboard_notifier(&bind_kbd_nb);
@@ -2168,6 +2502,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 return report_snapshot((struct snapshot_request __user *)arg);
         case SPARK_IOCTL_BIND:
                 return report_bind((struct bind_control __user *)arg);
+        case SPARK_IOCTL_MACHINE:
+                return report_machine(file, (struct machine_control __user *)arg);
         case SPARK_IOCTL_SETTINGS_GET:
                 return settings_get((struct spark_settings_request __user *)arg);
         case SPARK_IOCTL_SETTINGS_SET:
@@ -2212,6 +2548,7 @@ static int device_close(struct inode *inode, struct file *file)
 {
         struct device_context *context = file->private_data;
 
+        bind_machine_detach(file);
 #ifdef CONFIG_MOONWATER_CANVAS
         window_release(file);
 #endif

@@ -57796,6 +57796,305 @@ b32 main(void)
 }
 #endif /* CHECK_storage_format */
 
+#ifdef CHECK_machine
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#include "../src/sh/shell.c"
+
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+/*
+        The machine script is parsed, never sourced, for the CLI overlay.
+        These cases are the contract: hooks, case arms, canvas) owning both
+        desktop events, *) covering the rest, first arm and first hook
+        keeping the line, recover not being a bind row, comments and quotes
+        not inventing functions, and the file policy that keeps the one
+        auditable path from being a symlink or a world-writable file.
+*/
+
+static fn machine_scan(string_address text, host_machine_script address_to into)
+{
+        host_machine_scan_text(text, string_length(text), into);
+}
+
+static fn machine_hooks(void)
+{
+        host_machine_script script;
+
+        machine_scan("", address_of script);
+        check("an empty file has no hooks", !script.hooks);
+
+        machine_scan("echo moonwater_event\n", address_of script);
+        check("a name that is not a function is not a hook", !script.hooks);
+
+        machine_scan("function moonwater_event\necho hi\n", address_of script);
+        check("function without a body is not a hook", !script.hooks);
+
+        machine_scan("# function moonwater_event {\nfunction moonwater_init {\n  :\n}\n",
+                     address_of script);
+        check("a comment does not define a hook",
+              script.hooks == HOST_MACHINE_HOOK_INIT && !script.event_line);
+        check("moonwater_init is the line of its name", script.init_line == 2);
+
+        machine_scan("echo 'function moonwater_event {'\n", address_of script);
+        check("a quoted function line is not a hook", !script.hooks);
+
+        machine_scan("moonwater_event() {\n  :\n}\n", address_of script);
+        check("NAME() { is a hook", script.hooks == HOST_MACHINE_HOOK_EVENT);
+        check("and the line is the name", script.event_line == 1);
+
+        machine_scan("function moonwater_init {\n  :\n}\n"
+                     "function moonwater_event {\n  :\n}\n"
+                     "function moonwater_end {\n  :\n}\n",
+                     address_of script);
+        check("all three hooks are found",
+              script.hooks == (HOST_MACHINE_HOOK_INIT | HOST_MACHINE_HOOK_EVENT |
+                               HOST_MACHINE_HOOK_END));
+        check("init is line 1", script.init_line == 1);
+        check("event is line 4", script.event_line == 4);
+        check("end is line 7", script.end_line == 7);
+}
+
+static fn machine_arms(void)
+{
+        host_machine_script script;
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  mute) echo muted ;;\n"
+                     "  canvas) echo canvas ;;\n"
+                     "  *) echo other ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("an event function with arms is a hook",
+              script.hooks & HOST_MACHINE_HOOK_EVENT);
+        check("mute is the mute arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 3);
+        check("canvas on is the canvas arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_CANVAS_ON) == 4);
+        check("canvas off is the same canvas arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_CANVAS_OFF) == 4);
+        check("poweroff is the star arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_POWEROFF) == 5);
+        check("reset is also the star arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_RESET) == 5);
+        check("star was seen", script.star && script.star_line == 5);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  mute|volume_up) : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("mute|volume_up owns mute",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 3);
+        check("and volume_up at the same line",
+              host_machine_event_line_of(address_of script, SPARK_BIND_VOLUME_UP) == 3);
+        check("poweroff falls back to the function",
+              host_machine_event_line_of(address_of script, SPARK_BIND_POWEROFF) == 1);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  \"canvas on\") : ;;\n"
+                     "  \"canvas off\") : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("quoted canvas on is that event only",
+              host_machine_event_line_of(address_of script, SPARK_BIND_CANVAS_ON) == 3);
+        check("quoted canvas off is the other",
+              host_machine_event_line_of(address_of script, SPARK_BIND_CANVAS_OFF) == 4);
+        check("mute is the function, not a canvas arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 1);
+
+        machine_scan("function moonwater_event {\n  :\n}\n", address_of script);
+        check("no case still owns every event at the function",
+              host_machine_event_line_of(address_of script, SPARK_BIND_POWEROFF) == 1 &&
+                  host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 1);
+
+        machine_scan("function moonwater_init {\n"
+                     "  function inner {\n"
+                     "    case $1 in\n"
+                     "    mute) : ;;\n"
+                     "    esac\n"
+                     "  }\n"
+                     "}\n",
+                     address_of script);
+        check("a nested function inside init is not moonwater_event",
+              script.hooks == HOST_MACHINE_HOOK_INIT &&
+                  !host_machine_event_line_of(address_of script, SPARK_BIND_MUTE));
+
+        machine_scan("function moonwater_event() {\n"
+                     "  case $1 in\n"
+                     "  mute) : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("function NAME() { is still a hook",
+              script.hooks == HOST_MACHINE_HOOK_EVENT && script.event_line == 1);
+        check("and still owns its mute arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 3);
+
+        machine_scan("function moonwater_init {\n  :\n}\n"
+                     "function moonwater_init {\n  :\n}\n",
+                     address_of script);
+        check("the first hook definition keeps the line", script.init_line == 1);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  mute) : ;;\n"
+                     "  mute) echo second ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("the first mute arm keeps the line",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 3);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  *) : ;;\n"
+                     "  mute) : ;;\n"
+                     "  canvas) : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("a later mute arm still owns mute after star",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 4);
+        check("a later canvas arm still owns both canvas events",
+              host_machine_event_line_of(address_of script, SPARK_BIND_CANVAS_ON) == 5 &&
+                  host_machine_event_line_of(address_of script,
+                                             SPARK_BIND_CANVAS_OFF) == 5);
+        check("poweroff stays on the star that came first",
+              host_machine_event_line_of(address_of script, SPARK_BIND_POWEROFF) == 3);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  (mute) : ;;\n"
+                     "  canvas|volume_up) : ;;\n"
+                     "  'reset') : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("a parenthesized mute arm owns mute",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 3);
+        check("canvas|volume_up owns canvas on",
+              host_machine_event_line_of(address_of script, SPARK_BIND_CANVAS_ON) == 4);
+        check("and volume_up at that line",
+              host_machine_event_line_of(address_of script, SPARK_BIND_VOLUME_UP) == 4);
+        check("a quoted reset arm owns reset",
+              host_machine_event_line_of(address_of script, SPARK_BIND_RESET) == 5);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  canvas on) : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("unquoted canvas on is the canvas word, both events",
+              host_machine_event_line_of(address_of script, SPARK_BIND_CANVAS_ON) == 3 &&
+                  host_machine_event_line_of(address_of script,
+                                             SPARK_BIND_CANVAS_OFF) == 3);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  # mute) : ;;\n"
+                     "  sleep) : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("a commented mute arm is not mute",
+              host_machine_event_line_of(address_of script, SPARK_BIND_MUTE) == 1);
+        check("sleep is the sleep arm",
+              host_machine_event_line_of(address_of script, SPARK_BIND_SLEEP) == 4);
+
+        machine_scan("function moonwater_event {\n"
+                     "  case $1 in\n"
+                     "  recover) : ;;\n"
+                     "  esac\n"
+                     "}\n",
+                     address_of script);
+        check("a recover arm is not a bind row",
+              host_machine_event_line_of(address_of script, SPARK_BIND_POWEROFF) == 1);
+}
+
+static fn machine_policy(void)
+{
+        check("root's 0644 regular file is allowed",
+              host_machine_file_allowed(MODE_FILE | 0644, 0));
+        check("root's 0600 regular file is allowed",
+              host_machine_file_allowed(MODE_FILE | 0600, 0));
+        check("group-writable is refused",
+              !host_machine_file_allowed(MODE_FILE | 0664, 0));
+        check("other-writable is refused",
+              !host_machine_file_allowed(MODE_FILE | 0642, 0));
+        check("a non-root owner is refused",
+              !host_machine_file_allowed(MODE_FILE | 0644, 1));
+        check("a symlink is refused",
+              !host_machine_file_allowed(MODE_LINK | 0644, 0));
+        check("a directory is refused",
+              !host_machine_file_allowed(MODE_DIRECTORY | 0700, 0));
+        {
+                host_machine_script empty;
+
+                memory_zero(address_of empty, sizeof(empty));
+                check("an event without moonwater_event is not owned",
+                      host_machine_event_line_of(address_of empty,
+                                                 SPARK_BIND_POWEROFF) == 0);
+        }
+
+        check("the one script path is /root/main.moonwater.sh",
+              string_equals(HOST_MACHINE_SCRIPT, "/root/main.moonwater.sh"));
+        check("the machine ioctl request is 64 bytes",
+              sizeof(struct machine_control) == 64);
+        check("there are thirteen bind events", SPARK_BIND_EVENTS == 13);
+        check("poweroff, reset and ctrl_alt_delete stop the machine",
+              host_machine_stop_event(SPARK_BIND_POWEROFF) &&
+                  host_machine_stop_event(SPARK_BIND_RESET) &&
+                  host_machine_stop_event(SPARK_BIND_CTRL_ALT_DELETE));
+        check("mute and canvas do not stop the machine",
+              !host_machine_stop_event(SPARK_BIND_MUTE) &&
+                  !host_machine_stop_event(SPARK_BIND_CANVAS_ON) &&
+                  !host_machine_stop_event(SPARK_BIND_CANVAS_OFF));
+        check("event 0 is the orderly end, not a bind",
+              !host_machine_stop_event(0));
+
+        {
+                unsigned int event;
+                bool named_recover = false;
+                bool named_canvas_on = false;
+                bool named_canvas_off = false;
+
+                for (event = 0; event < SPARK_BIND_EVENTS; event++)
+                {
+                        if (string_equals((string_address)spark_bind_event_name[event],
+                                          "recover"))
+                                named_recover = true;
+                        if (string_equals((string_address)spark_bind_event_name[event],
+                                          "canvas on"))
+                                named_canvas_on = true;
+                        if (string_equals((string_address)spark_bind_event_name[event],
+                                          "canvas off"))
+                                named_canvas_off = true;
+                }
+
+                check("recover is not a bind name", !named_recover);
+                check("canvas on is a bind name", named_canvas_on);
+                check("canvas off is a bind name", named_canvas_off);
+        }
+}
+
+b32 main(void)
+{
+        machine_hooks();
+        machine_arms();
+        machine_policy();
+        return test_report(null);
+}
+#endif /* CHECK_machine */
+
 #ifdef CHECK_probe
 #include "../src/compiler_memory.c"
 #include "../src/spark.c"

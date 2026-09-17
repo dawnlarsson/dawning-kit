@@ -385,7 +385,9 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
         Every event has a name and an id, and an id is never given to another
         event, so an old program asking for one can never reach a new one.
         A bound event runs its line the way `/shell -c` does, as root with
-        every capability. The line lasts until the machine stops; keeping it
+        every capability -- unless a machine script is attached, in which
+        case the event is queued into that process and `$1` is this name.
+        The line lasts until the machine stops; keeping it
         across a boot belongs to whoever sets it at boot. An empty line puts
         back the event's default, which for most events is nothing.
 
@@ -702,5 +704,35 @@ struct spark_settings_request {
 
 _Static_assert(sizeof(struct spark_settings_request) == 16,
                "spark settings request ABI");
+
+/*
+        The machine script process. One attacher holds /dev/spark and waits;
+        bind_fire queues into it instead of spawning `/shell -c`. Closing the
+        descriptor detaches. END is an orderly stop, not a bind row: it does
+        not sit behind the queue, and a detach after it does not drain.
+*/
+#define SPARK_MACHINE_ATTACH 0u
+#define SPARK_MACHINE_DETACH 1u
+#define SPARK_MACHINE_WAIT 2u
+#define SPARK_MACHINE_STATUS 3u
+#define SPARK_MACHINE_END 4u
+
+#define SPARK_MACHINE_ATTACHED 0x1u
+
+struct machine_control {
+        unsigned int op;     // SPARK_MACHINE_*
+        unsigned int event;  // 1..SPARK_BIND_EVENTS, or 0 for end
+        unsigned int queued; // answered: events waiting
+        unsigned int flags;  // answered: SPARK_MACHINE_ATTACHED
+        unsigned int extra;  // canvas: 1 is on, 0 is off
+        unsigned int reserved[3];
+        char name[SPARK_BIND_NAME_MAX];
+        char unused[8];
+};
+
+_Static_assert(sizeof(struct machine_control) == 64, "spark machine ABI");
+
+// _IOWR('s', 14, struct machine_control)
+#define SPARK_IOCTL_MACHINE 0xc040730eu
 
 #endif

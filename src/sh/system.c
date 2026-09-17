@@ -75,6 +75,21 @@ string_address network_argv[] = {(string_address)network_program,
 string_address settle_argv[] = {(string_address)settle_program,
                                 (string_address) "boot", null};
 
+/*
+        The machine script. Started after the disks have settled, so
+        /root/main.moonwater.sh is the disk's file when there is one. /shell
+        -c once at boot, not per event: the kernel queues into that process
+        while it is attached. A clean 0 or 1 means there is no script, or
+        the file was refused; those are not a crash loop.
+*/
+#define machine_program "/shell"
+#define MACHINE_SETTLED_NS 1000000000
+#define MACHINE_GIVE_UP 5
+
+string_address machine_argv[] = {(string_address)machine_program,
+                                 (string_address) "-c",
+                                 (string_address) "moonwater machine", null};
+
 //      A watcher that dies this quickly is not going to work on the next try
 //      either -- a missing /ip, most likely -- so say so once and stop.
 #define NETWORK_SETTLED_NS 1000000000
@@ -103,6 +118,11 @@ static bipolar start_network()
 {
         return start_service((string_address)network_program,
                              network_argv, 2);
+}
+
+static bipolar start_machine()
+{
+        return start_service((string_address)machine_program, machine_argv, 3);
 }
 
 static fn wait_for_settling(bipolar service)
@@ -196,6 +216,10 @@ static DEAD_END b32 system_init()
         wait_for_settling(settling);
         started = clock_monotonic_nanoseconds();
 
+        bipolar machine = start_machine();
+        positive machine_started = clock_monotonic_nanoseconds();
+        positive machine_failures = 0;
+
         // Returning from PID 1 panics the kernel, which on a machine with no
         // serial console says nothing at all. Retrying at a bounded rate keeps
         // the reason on screen instead.
@@ -257,6 +281,39 @@ static DEAD_END b32 system_init()
                                 continue;
                         }
 #endif
+
+                        if (reaped == machine)
+                        {
+                                positive code = status & 0x7f
+                                                    ? 0xff
+                                                    : (status >> 8) & 0xff;
+
+                                if (code == 0 || code == 1)
+                                {
+                                        machine = -1;
+                                        continue;
+                                }
+
+                                if (clock_monotonic_nanoseconds() - machine_started >=
+                                    MACHINE_SETTLED_NS)
+                                        machine_failures = 0;
+                                else
+                                        machine_failures++;
+
+                                if (machine_failures >= MACHINE_GIVE_UP)
+                                {
+                                        string_format(log, init_label
+                                                      "the machine script keeps exiting; "
+                                                      "leaving it alone\n");
+                                        log_flush();
+                                        machine = -1;
+                                        continue;
+                                }
+
+                                machine_started = clock_monotonic_nanoseconds();
+                                machine = start_machine();
+                                continue;
+                        }
 
                         if (reaped != shell)
                                 continue;

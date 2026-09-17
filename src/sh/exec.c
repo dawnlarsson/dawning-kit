@@ -8052,6 +8052,36 @@ static b32 exec_call(positive slot)
         return status;
 }
 
+b32 shell_call_function(string_address name, string_address address_to arguments,
+                        positive count)
+{
+        positive2 named = string_hash_33_length(name);
+        positive slot = exec_function_slot(name, named);
+        string_address words[8];
+        string_address address_to saved_argv = shell_argv;
+        positive saved_argc = shell_argc;
+        positive at;
+        b32 status;
+
+        if (slot == positive_max)
+                return 127;
+
+        if (count > 6)
+                count = 6;
+
+        words[0] = name;
+        for (at = 0; at < count; at++)
+                words[at + 1] = arguments[at];
+        words[count + 1] = null;
+
+        shell_argv = words;
+        shell_argc = count + 1;
+        status = exec_call(slot);
+        shell_argv = saved_argv;
+        shell_argc = saved_argc;
+        return status;
+}
+
 /*
         set -x: the command about to run, written out.
 

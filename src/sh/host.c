@@ -45,6 +45,11 @@
 #define HOST_SYSTEM HOST_STATE "/system"
 #define HOST_MEDIUM HOST_STATE "/medium"
 #define HOST_LOOK HOST_STATE "/look"
+#define HOST_MACHINE_SCRIPT "/root/main.moonwater.sh"
+#define HOST_MACHINE_DIRTY HOST_STATE "/machine.dirty"
+#define HOST_MACHINE_HOOK_INIT 1u
+#define HOST_MACHINE_HOOK_EVENT 2u
+#define HOST_MACHINE_HOOK_END 4u
 
 #define HOST_SYSTEM_NAME "moonwater-boot"
 #define HOST_DATA_NAME "moonwater-data"
@@ -127,6 +132,13 @@ static fn host_bind_apply(host_settings address_to settings);
 static b32 host_bind(string_address address_to arguments, positive count);
 static b32 host_usage(void);
 static fn host_usage_write(writer out);
+static bool host_machine_has_hook(p8 hook);
+static p16 host_machine_hook_line(p8 hook);
+static p16 host_machine_named_line(string_address name);
+static p16 host_machine_event_line(unsigned int event);
+static fn host_machine_refused(string_address name, p16 line);
+static bool host_machine_stop(void);
+static b32 host_machine_run(void);
 
 static b32 host_refuse(string_address text, string_address name)
 {
@@ -2300,6 +2312,16 @@ static fn host_settings_list(host_settings address_to settings, positive which)
         host_setting setting;
         positive at = 0;
         positive shown = 0;
+        p8 hook = which == 0 ? HOST_MACHINE_HOOK_INIT : HOST_MACHINE_HOOK_END;
+
+        if (host_machine_has_hook(hook))
+        {
+                string_format(log, host_label "%s is %s:%p\n",
+                              host_lists[which].verb, HOST_MACHINE_SCRIPT,
+                              (positive)host_machine_hook_line(hook));
+                log_flush();
+                return;
+        }
 
         while (host_settings_next(settings, address_of at, address_of setting))
         {
@@ -2361,6 +2383,23 @@ static b32 host_settings_apply(host_settings address_to settings,
         {
                 host_settings_list(settings, which);
                 return HOST_SETTINGS_SHOWN;
+        }
+
+        if ((list == SPARK_SETTINGS_INIT &&
+             host_machine_has_hook(HOST_MACHINE_HOOK_INIT)) ||
+            (list == SPARK_SETTINGS_EXIT &&
+             host_machine_has_hook(HOST_MACHINE_HOOK_END)))
+        {
+                if (count >= 3 && string_equals(arguments[2], "mount"))
+                        ;
+                else
+                {
+                        host_machine_refused(verb, host_machine_hook_line(
+                                                       list == SPARK_SETTINGS_INIT
+                                                           ? HOST_MACHINE_HOOK_INIT
+                                                           : HOST_MACHINE_HOOK_END));
+                        return HOST_SETTINGS_REFUSED;
+                }
         }
 
         for (positive at = 0; at < array_count(host_switches); at++)
@@ -2733,7 +2772,7 @@ static fn host_events_boot(host_settings address_to settings)
         positive at = 0;
 
         if (!settings || !host_settings_count(settings, SPARK_SETTINGS_INIT) ||
-            system_fork())
+            host_machine_has_hook(HOST_MACHINE_HOOK_INIT) || system_fork())
                 return;
 
         //      The runner, from here on: its own session, outliving boot.
@@ -2814,9 +2853,14 @@ fn host_exit_run(void)
         positive at = 0;
         p64 started = system_clock_ns(HOST_CLOCK_BOOTTIME);
 
+        bool machine = host_machine_stop();
+
         if (!bowl_is_root() ||
             (!host_settings_kept(address_of settings) &&
              !host_settings_booted(address_of settings)))
+                return;
+
+        if (machine && host_machine_has_hook(HOST_MACHINE_HOOK_END))
                 return;
 
         while (host_settings_next(address_of settings, address_of at, address_of setting))
@@ -3066,7 +3110,13 @@ static b32 host_canvas(string_address address_to arguments, positive count)
 */
 static fn host_bind_say(string_address prefix, struct bind_control address_to control)
 {
-        if (!control->command[0])
+        p16 line = host_machine_named_line((string_address)control->name);
+
+        if (line)
+                string_format(log, "%s%s: %s:%p\n", prefix,
+                              (string_address)control->name, HOST_MACHINE_SCRIPT,
+                              (positive)line);
+        else if (!control->command[0])
                 string_format(log, "%s%s\n", prefix, (string_address)control->name);
         else
                 string_format(log, "%s%s: %s\n", prefix, (string_address)control->name,
@@ -3233,8 +3283,20 @@ static b32 host_bind_show(unsigned int event)
 static b32 host_bind_tell(unsigned int event, string_address command)
 {
         struct bind_control control;
-        bipolar failed = host_bind_request(SPARK_BIND_SET, event, command,
-                                           address_of control);
+        p16 line = host_machine_event_line(event);
+        bipolar failed;
+
+        if (line)
+        {
+                host_machine_refused(event && event <= SPARK_BIND_EVENTS
+                                         ? (string_address)spark_bind_event_name[event - 1]
+                                         : (string_address) "that event",
+                                     line);
+                return 1;
+        }
+
+        failed = host_bind_request(SPARK_BIND_SET, event, command,
+                                   address_of control);
 
         if (failed == -EPERM)
                 return host_refuse(control.flags & SPARK_BIND_BOOT
@@ -3356,7 +3418,8 @@ static fn host_usage_write(writer out)
                       "             " TERM_DIM "the desktop" TERM_RESET "\n"
                       "\n"
                       TERM_DIM "  Settings stay in the image this session started from.\n"
-                      "  install takes this session's; update keeps the disk's.\n" TERM_RESET);
+                      "  install takes this session's; update keeps the disk's.\n"
+                      "  " HOST_MACHINE_SCRIPT " overwrites bind, init and exit.\n" TERM_RESET);
         log_flush();
 }
 
@@ -3373,6 +3436,15 @@ static fn host_status_events(host_settings address_to settings, positive which)
         host_setting setting;
         positive at = 0;
         positive shown = 0;
+        p8 hook = which == 0 ? HOST_MACHINE_HOOK_INIT : HOST_MACHINE_HOOK_END;
+
+        if (host_machine_has_hook(hook))
+        {
+                string_format(log, "  %s: %s:%p\n", host_lists[which].verb,
+                              HOST_MACHINE_SCRIPT,
+                              (positive)host_machine_hook_line(hook));
+                return;
+        }
 
         while (host_settings_next(settings, address_of at, address_of setting))
         {
@@ -3570,6 +3642,9 @@ static b32 host_main()
         if (string_equals(verb, "canvas"))
                 return host_canvas(arguments, count);
 
+        if (string_equals(verb, "machine") && count == 2)
+                return host_machine_run();
+
         if (!string_equals(verb, "install") && !string_equals(verb, "use") &&
             !string_equals(verb, "update") && !string_equals(verb, "live") &&
             !string_equals(verb, "boot") && !string_equals(verb, "ask"))
@@ -3632,3 +3707,5 @@ static b32 host_main()
         return host_answer(string_equals(verb, "update"),
                            count == 3 ? arguments[2] : null);
 }
+
+#include "machine.c"
