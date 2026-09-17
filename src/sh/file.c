@@ -3583,6 +3583,14 @@ typedef struct
         p8 last;
         positive flags, repeated, bare, first;
         string_address value[FILE_LETTERS];
+        /* Optional replacement of the process argument vector. env -S
+           rebuilds argv and rescans it; other callers leave these zero. */
+        string_address address_to argv;
+        positive argc;
+        /* seen() sets stop to end the scan after the current option, leaving
+           later words for the caller. env -S needs that so options written
+           after -S are not taken before the split string is spliced in. */
+        bool stop;
 } file_taking;
 
 /* Help wins over version; callers retain their writer and flush/status policy. */
@@ -3634,8 +3642,11 @@ static p8 file_long_letter(file_taking address_to taking, string_address name,
 
 static bool file_take_from(file_taking address_to taking, positive index)
 {
-        argument_cursor cursor = {.argc = (positive)program_argument_count(),
-                                  .argv = program_argument_list(), .at = index};
+        argument_cursor cursor = {
+            .argc = taking->argv ? taking->argc
+                                 : (positive)program_argument_count(),
+            .argv = taking->argv ? taking->argv : program_argument_list(),
+            .at = index};
         for (;;)
         {
                 /* Legacy numeric operands/counts belong to utility policy,
@@ -3746,6 +3757,11 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 if (taking->seen ? !taking->seen(letter, seen_value)
                     : taking->seen_in && !taking->seen_in(letter, seen_value, taking->context))
                         return false;
+                if (taking->stop)
+                {
+                        taking->first = cursor.at;
+                        return true;
+                }
         }
         taking->first = cursor.at;
         return true;
@@ -12806,7 +12822,8 @@ static fn du_tree_enter(address_any context, address_any node_address,
                                                 kept = child != null;
                                                 if (child)
                                                 {
-                                                        child->own = du_apparent ? 0 : facts.blocks * 512;
+                                                        child->own = du_apparent ? (p64)facts.size
+                                                                                 : facts.blocks * 512;
                                                         child->device = device;
                                                         child->inode = facts.inode;
                                                         child->device_major = facts.device_major;
@@ -13049,10 +13066,10 @@ static p64 du_measure_tree(string_address root)
                          facts.hard_links, directory))
                 return 0;
 
+        /* GNU's apparent size is st_size for every kind, directories
+           included: the directory record itself was written too. */
         p64 mine = du_apparent ? (p64)facts.size : facts.blocks * 512;
 
-        if (du_apparent && directory)
-                mine = 0;
         if (!directory)
         {
                 du_report(mine, root);
@@ -13266,12 +13283,6 @@ static p64 du_measure(string_address root)
                         }
 
                         p64 mine = du_apparent ? (p64)facts->size : facts->blocks * 512;
-
-                        // --apparent-size is asking how much was written, and
-                        // nothing was written into the directory itself; only
-                        // what is under it counts.
-                        if (du_apparent && directory)
-                                mine = 0;
 
                         if (kept->mark == DU_ENTERED)
                         {
@@ -15279,6 +15290,7 @@ static bool file_backup_made_at(string_address program, bipolar directory,
                                 string_address shown,
                                 file_facts address_to expected);
 static bool file_backup_taken(file_taking address_to taking, string_address program);
+static bool ln_option_seen(p8 letter, string_address value);
 
 // ln ------------------------------------------------------------
 // ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
@@ -15524,6 +15536,7 @@ static b32 file_ln()
             //      caller; taken and left to the link call to refuse.
             .options = ln_options,
             .selection = (p8 address_to)address_of ln_selected,
+            .seen = ln_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -17997,8 +18010,8 @@ static b32 file_sync()
         Line-byte packing (-C) scans mapped regular input with the shared
         vector first-of primitive, while indeterminate streams use the shared
         text arena.  Plain -n distribution keeps known-size input in the
-        kernel-copy path.  Its l/, r/ and K/N forms are distinct scheduling
-        contracts and are rejected until implemented rather than guessed.
+        kernel-copy path.  l/, r/ and K/N use the same materialized buffer
+        GNU's line-aware and round-robin schedulers walk.
 */
 #define SPLIT_SUFFIX_MAX 32
 
@@ -18472,14 +18485,290 @@ static bool split_materialized(bipolar in, file_facts address_to facts,
         return answer;
 }
 
-static bool split_chunks(string_address text, positive address_to chunks)
+static bool split_stdout_write(address_any bytes, positive length)
 {
-        positive value;
+        return !length || system_write_all(1, bytes, length) == length;
+}
 
-        if (!file_unsigned_decimal(text, address_of value) || !value)
+enum
+{
+        SPLIT_CHUNK_BYTES,
+        SPLIT_CHUNK_LINES,
+        SPLIT_CHUNK_RR,
+};
+
+typedef struct
+{
+        p8 kind;
+        positive k;
+        positive n;
+} split_chunk;
+
+static bool split_chunk_decimal(string_address text, string_address address_to rest,
+                                positive address_to value)
+{
+        string_address at = text;
+
+        if (!string_digits_checked(address_of at, 10, value) || at == text)
                 return false;
-        address_to chunks = value;
+        address_to rest = at;
         return true;
+}
+
+static bool split_chunks(string_address text, split_chunk address_to chunk)
+{
+        while (byte_is_space(string_get(text)))
+                text++;
+
+        p8 kind = SPLIT_CHUNK_BYTES;
+
+        if (string_is(text, 'l') && string_is(text + 1, '/'))
+        {
+                kind = SPLIT_CHUNK_LINES;
+                text += 2;
+        }
+        else if (string_is(text, 'r') && string_is(text + 1, '/'))
+        {
+                kind = SPLIT_CHUNK_RR;
+                text += 2;
+        }
+
+        string_address rest;
+        string_address after_k;
+        positive first;
+
+        if (!split_chunk_decimal(text, address_of rest, address_of first) ||
+            !first)
+                return string_report(log_error, false,
+                                     "split: invalid number of chunks: '%s'\n",
+                                     text);
+
+        chunk->kind = kind;
+        after_k = rest;
+        if (string_is(rest, '/'))
+        {
+                positive n;
+
+                if (!split_chunk_decimal(rest + 1, address_of rest, address_of n) ||
+                    string_get(rest) || !n)
+                        return string_report(log_error, false,
+                                             "split: invalid number of chunks: '%s'\n",
+                                             text);
+                if (first > n)
+                {
+                        p8 shown[32];
+                        positive wide = min((positive)(after_k - text),
+                                            sizeof(shown) - 1);
+
+                        memory_copy_end(shown, text, wide);
+                        return string_report(log_error, false,
+                                             "split: invalid chunk number: '%s'\n",
+                                             shown);
+                }
+                chunk->k = first;
+                chunk->n = n;
+                return true;
+        }
+
+        if (string_get(rest))
+                return string_report(log_error, false,
+                                     "split: invalid number of chunks: '%s'\n",
+                                     text);
+
+        chunk->k = 0;
+        chunk->n = first;
+        return true;
+}
+
+/* -n l/[K/]N: a line that starts in a size partition is written whole to
+   that piece, GNU lines_chunk_split on a buffer. */
+static bool split_lines_chunk(p8 address_to input, positive length,
+                              split_chunk chunk, p8 separator,
+                              split_output address_to output)
+{
+        positive n = chunk.n;
+        positive k = chunk.k;
+        positive rem = n ? length % n : 0;
+        positive chunk_size = n ? length / n : 0;
+        positive chunk_no = 1;
+        positive chunk_end = chunk_size + (positive)(rem > 0);
+        positive n_written = 0;
+        bool new_file = true;
+        p8 address_to bp = input;
+
+        if (k > 1 && length)
+        {
+                positive start = (k - 1) * chunk_size + min(k - 1, rem);
+                if (start)
+                        start--;
+                bp = input + start;
+                n_written = start;
+                chunk_no = k - 1;
+                chunk_end = start + 1;
+        }
+
+        while (n_written < length)
+        {
+                p8 address_to eob = input + length;
+
+                while (bp != eob)
+                {
+                        bool next = false;
+                        positive available = (positive)(eob - bp);
+                        bipolar skip_from = (bipolar)chunk_end - 1 - (bipolar)n_written;
+                        positive skip = skip_from > 0
+                                            ? min(available, (positive)skip_from)
+                                            : 0;
+                        p8 address_to found = memory_first_of(
+                            bp + skip, separator, available - skip);
+                        p8 address_to bp_out;
+
+                        if (found)
+                        {
+                                bp_out = found + 1;
+                                next = true;
+                        }
+                        else
+                                bp_out = eob;
+
+                        positive to_write = (positive)(bp_out - bp);
+
+                        if (k == chunk_no)
+                        {
+                                if (!split_stdout_write(bp, to_write))
+                                        return false;
+                        }
+                        else if (!k)
+                        {
+                                if (new_file && !split_output_close(output))
+                                        return false;
+                                if (!split_output_write(output, bp, to_write))
+                                        return false;
+                        }
+
+                        n_written += to_write;
+                        bp += to_write;
+                        new_file = next;
+
+                        while (next || chunk_end <= n_written)
+                        {
+                                if (!next && bp == eob)
+                                        break;
+                                if (k && k == chunk_no)
+                                        return true;
+                                chunk_end += chunk_size + (positive)(chunk_no < rem);
+                                chunk_no++;
+                                if (chunk_end <= n_written)
+                                {
+                                        if (!k)
+                                        {
+                                                if (!split_output_close(output) ||
+                                                    !split_output_open(output) ||
+                                                    !split_output_close(output))
+                                                        return false;
+                                        }
+                                }
+                                else
+                                        next = false;
+                        }
+                }
+        }
+
+        if (!k)
+        {
+                if (!split_output_close(output))
+                        return false;
+                while (chunk_no++ <= n)
+                        if (!split_output_open(output) || !split_output_close(output))
+                                return false;
+        }
+
+        return true;
+}
+
+static bool split_round_robin(p8 address_to input, positive length,
+                              split_chunk chunk, p8 separator,
+                              split_output address_to output)
+{
+        positive n = chunk.n;
+        positive k = chunk.k;
+
+        if (k)
+        {
+                positive at = 0;
+                positive line = 0;
+
+                while (at < length)
+                {
+                        p8 address_to found = memory_first_of(
+                            input + at, separator, length - at);
+                        positive stop = found ? (positive)(found - input) + 1
+                                              : length;
+
+                        line++;
+                        if ((line - 1) % n + 1 == k &&
+                            !split_stdout_write(input + at, stop - at))
+                                return false;
+                        at = stop;
+                }
+                return true;
+        }
+
+        for (positive which = 1; which <= n; which++)
+        {
+                positive at = 0;
+                positive line = 0;
+                bool any = false;
+
+                while (at < length)
+                {
+                        p8 address_to found = memory_first_of(
+                            input + at, separator, length - at);
+                        positive stop = found ? (positive)(found - input) + 1
+                                              : length;
+
+                        line++;
+                        if ((line - 1) % n + 1 == which)
+                        {
+                                if (!split_output_write(output, input + at,
+                                                        stop - at))
+                                        return false;
+                                any = true;
+                        }
+                        at = stop;
+                }
+
+                if (!any && !split_output_open(output))
+                        return false;
+                if (!split_output_close(output))
+                        return false;
+        }
+
+        return true;
+}
+
+static bool split_bytes_extract(p8 address_to bytes, p64 length, positive k,
+                                positive n)
+{
+        p64 start = (p64)(k - 1) * (length / n) + min((p64)(k - 1), length % n);
+        p64 stop = k == n ? length
+                          : (p64)k * (length / n) + min((p64)k, length % n);
+
+        return split_stdout_write(bytes + (positive)start,
+                                  (positive)(stop - start));
+}
+
+static bool split_chunk_buffer(p8 address_to input, positive length,
+                               split_chunk chunk, p8 separator,
+                               split_output address_to output)
+{
+        if (chunk.kind == SPLIT_CHUNK_RR)
+                return split_round_robin(input, length, chunk, separator, output);
+        if (chunk.kind == SPLIT_CHUNK_LINES)
+                return split_lines_chunk(input, length, chunk, separator, output);
+        if (chunk.k)
+                return split_bytes_extract(input, length, chunk.k, chunk.n);
+        return split_fixed(-1, length, chunk.n, true, output, input);
 }
 
 static bool split_separator(string_address text, p8 address_to separator)
@@ -18543,11 +18832,13 @@ static b32 file_split()
                 return string_report(log_error, 1, "split: invalid number of bytes: '%s'\n",
                               measure);
 
-        positive chunks = 0;
-        if (mode == 'n' && !split_chunks(measure, address_of chunks))
-                return string_report(log_error, 1,
-                              "split: unsupported number of chunks: '%s'\n",
-                              measure);
+        split_chunk chunk = {0};
+        if (mode == 'n' &&
+            (!measure || !split_chunks(measure, address_of chunk)))
+                return measure ? 1
+                               : string_report(log_error, 1,
+                                               "split: invalid number of chunks: '%s'\n",
+                                               (string_address) "");
 
         positive suffix_length = 2;
         string_address width = file_option_value(address_of taking, 'a');
@@ -18639,17 +18930,67 @@ static b32 file_split()
                 output.input = facts;
         }
 
-        bool complete;
+        bool complete = false;
 
         bool regular = looked && (facts.mode & MODE_FORMAT) == MODE_FILE;
+        bool fancy = mode == 'n' &&
+                     (chunk.k || chunk.kind != SPLIT_CHUNK_BYTES);
 
-        if (regular && (mode == 'n' || (mode == 'b' && facts.size)))
+        if (fancy)
+        {
+                p8 address_to input = null;
+                positive length = 0;
+                bool mapped = false;
+
+                complete = false;
+
+                if (regular && facts.size)
+                {
+                        bipolar got = system_call_6(
+                            syscall(mmap), 0, (positive)facts.size,
+                            FILE_PROTECT_READ, FILE_MAP_PRIVATE, (positive)in, 0);
+                        if (got >= 0)
+                        {
+                                input = (p8 address_to)(positive)got;
+                                length = (positive)facts.size;
+                                mapped = true;
+                        }
+                }
+
+                if (!input)
+                {
+                        bool read_failed;
+
+                        utility_arena.used = 0;
+                        input = utility_arena_read_all(
+                            (positive)in, FILE_TRANSFER_SIZE, address_of length,
+                            address_of read_failed);
+                        if (!input)
+                        {
+                                log_error(read_failed
+                                              ? (string_address) "split: read error\n"
+                                              : (string_address) "split: input too large\n",
+                                          0);
+                                complete = false;
+                        }
+                }
+
+                if (input)
+                        complete = split_chunk_buffer(input, length, chunk,
+                                                      separator,
+                                                      address_of output);
+                if (mapped)
+                        system_call_2(syscall(munmap), (positive)input, length);
+                else
+                        utility_arena.used = 0;
+        }
+        else if (regular && (mode == 'n' || (mode == 'b' && facts.size)))
                 complete = split_fixed(in, facts.size,
-                                        mode == 'n' ? chunks : piece,
+                                        mode == 'n' ? chunk.n : piece,
                                         mode == 'n', address_of output, null);
         else if (mode == 'C' || mode == 'n')
                 complete = split_materialized(in, address_of facts, regular,
-                                               mode == 'n' ? chunks : piece,
+                                               mode == 'n' ? chunk.n : piece,
                                                separator, mode == 'n',
                                                address_of output);
         else
@@ -18970,8 +19311,22 @@ static b32 csplit_execute_line(csplit_state address_to state,
                 return CSPLIT_FAILED;
 
         pattern->line_target = target;
-        state->cursor = boundary;
-        state->cursor_line = target;
+
+        if (state->suppress_matched)
+        {
+                /* Omit the matched line from every section, then continue
+                   after it. GNU's --suppress-matched on a line number. */
+                p8 address_to newline = memory_first_of(
+                    state->input + boundary, '\n', state->length - boundary);
+                state->cursor = newline ? (positive)(newline - state->input) + 1
+                                        : state->length;
+                state->cursor_line = target + 1;
+        }
+        else
+        {
+                state->cursor = boundary;
+                state->cursor_line = target;
+        }
 
         if (state->next_search_line < target)
                 state->next_search_line = target;
@@ -24873,6 +25228,14 @@ static const file_word file_update_words[] = {
     {(string_address) "none", 'n', true},
 };
 
+static bool file_backup_seen(string_address program, p8 letter,
+                             string_address value)
+{
+        if (letter != 'B' || !value)
+                return true;
+        return file_backup_control(program, value);
+}
+
 static bool file_update_seen(string_address program, p8 letter,
                              string_address value, p8 address_to policy)
 {
@@ -24903,14 +25266,41 @@ static bool file_update_seen(string_address program, p8 letter,
 
 static bool cp_option_seen(p8 letter, string_address value)
 {
+        if (!file_backup_seen((string_address) "cp", letter, value))
+                return false;
+        if (letter == 'p' &&
+            !cp_words_read((string_address) "--preserve", value,
+                           cp_preserve_words, array_count(cp_preserve_words),
+                           null))
+                return false;
+        if (letter == 'N' &&
+            !cp_words_read((string_address) "--no-preserve", value,
+                           cp_preserve_words, array_count(cp_preserve_words),
+                           null))
+                return false;
+        if (letter == 'z' &&
+            !cp_words_read((string_address) "--sparse", value, cp_sparse_words,
+                           array_count(cp_sparse_words), null))
+                return false;
+        if (letter == 'k' &&
+            !cp_words_read((string_address) "--reflink", value, cp_reflink_words,
+                           array_count(cp_reflink_words), null))
+                return false;
         return file_update_seen((string_address) "cp", letter, value,
                                 address_of cp_update_policy);
 }
 
 static bool mv_option_seen(p8 letter, string_address value)
 {
+        if (!file_backup_seen((string_address) "mv", letter, value))
+                return false;
         return file_update_seen((string_address) "mv", letter, value,
                                 address_of mv_update_policy);
+}
+
+static bool ln_option_seen(p8 letter, string_address value)
+{
+        return file_backup_seen((string_address) "ln", letter, value);
 }
 
 static const argument_option cp_options[] = {
@@ -25455,6 +25845,22 @@ static fn install_directory_told(string_address path)
                       writer_terminal_quoted_name, path);
 }
 
+static bool install_option_seen(p8 letter, string_address value)
+{
+        if (!file_backup_seen((string_address) "install", letter, value))
+                return false;
+        if (letter == 'm' && value &&
+            !file_mode_of(value, 0, false, address_of install_mode))
+                return false;
+        if (letter == 'o' && value &&
+            !install_identity(value, false, address_of install_owner))
+                return false;
+        if (letter == 'g' && value &&
+            !install_identity(value, true, address_of install_group))
+                return false;
+        return true;
+}
+
 static b32 file_install()
 {
         positive count = (positive)program_argument_count();
@@ -25462,6 +25868,7 @@ static b32 file_install()
         file_taking taking = {
             .program = (string_address) "install",
             .options = install_options,
+            .seen = install_option_seen,
         };
 
         install_mode = 0755;
@@ -27425,28 +27832,24 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
         else if (string_get(text + digits))
                 return false;
 
+        /* POSIX [[CC]YY]MMDDhhmm[.ss] is 8, 10 or 12 digits. GNU 9.11
+           refuses a 14-digit run: seconds belong after a dot. */
         if (digits != 8 && digits != 10 && digits != 12)
                 return false;
 
         b64 field[6];
         positive at = 0;
+        positive fields = digits / 2;
 
         for (positive i = 0; i < 6; i++)
+                field[i] = -1;
+
+        for (positive i = 0; i < fields; i++)
         {
-                if (i == 0 && digits < 12)
-                {
-                        field[0] = -1;
-                        continue;
-                }
+                positive slot = i + (6 - fields);
 
-                if (i == 1 && digits < 10)
-                {
-                        field[1] = -1;
-                        continue;
-                }
-
-                field[i] = (string_get(text + at) - '0') * 10 +
-                           (string_get(text + at + 1) - '0');
+                field[slot] = (string_get(text + at) - '0') * 10 +
+                              (string_get(text + at + 1) - '0');
                 at += 2;
         }
 
@@ -27463,14 +27866,26 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
         else
                 year = field[0] * 100 + field[1];
 
+        b64 stamp_second = has_fraction ? fraction : 0;
+
+        /* Hour 24 with minute and second 0 is midnight of the next day,
+           gnulib posixtime's rule. */
         if (field[2] < 1 || field[2] > 12 || field[3] < 1 ||
             field[3] > (b64)file_month_days(year, field[2]) ||
-            field[4] > 23 || field[5] > 59)
+            field[4] > 24 || field[5] > 59 || stamp_second > 60 ||
+            (field[4] == 24 && (field[5] || stamp_second)))
                 return false;
 
-        address_to out = clock_days_from_civil(year, field[2], field[3]) * 86400 +
-                         field[4] * 3600 + field[5] * 60 +
-                         (has_fraction ? fraction : 0);
+        b64 days = clock_days_from_civil(year, field[2], field[3]);
+
+        if (field[4] == 24)
+        {
+                days++;
+                field[4] = 0;
+        }
+
+        address_to out = days * 86400 + field[4] * 3600 + field[5] * 60 +
+                         stamp_second;
 
         return true;
 }
@@ -27995,6 +28410,7 @@ typedef struct
         positive shown;
         positive whole_width;
         bool negative_zero;
+        bool infinite;
 } seq_decimal;
 
 /*
@@ -28018,6 +28434,34 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
                 at++;
         }
 
+        /* inf / infinity / INF, GNU seq's unbounded last (and start). */
+        if ((text[at] == 'i' || text[at] == 'I') &&
+            (text[at + 1] == 'n' || text[at + 1] == 'N') &&
+            (text[at + 2] == 'f' || text[at + 2] == 'F'))
+        {
+                positive end_at = at + 3;
+
+                if ((text[end_at] == 'i' || text[end_at] == 'I') &&
+                    (text[end_at + 1] == 'n' || text[end_at + 1] == 'N') &&
+                    (text[end_at + 2] == 'i' || text[end_at + 2] == 'I') &&
+                    (text[end_at + 3] == 'n' || text[end_at + 3] == 'N') &&
+                    (text[end_at + 4] == 'i' || text[end_at + 4] == 'I') &&
+                    (text[end_at + 5] == 't' || text[end_at + 5] == 'T') &&
+                    (text[end_at + 6] == 'y' || text[end_at + 6] == 'Y'))
+                        end_at += 7;
+
+                if (string_get(text + end_at))
+                        return false;
+
+                out->coefficient = minus ? -1 : 1;
+                out->scale = 0;
+                out->shown = 0;
+                out->whole_width = minus ? 4 : 3;
+                out->negative_zero = false;
+                out->infinite = true;
+                return true;
+        }
+
         if (string_is(text + at, '0') &&
             (text[at + 1] == 'x' || text[at + 1] == 'X'))
         {
@@ -28036,6 +28480,7 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
                 out->shown = 0;
                 out->whole_width = 0;
                 out->negative_zero = minus && !value;
+                out->infinite = false;
                 return true;
         }
 
@@ -28173,6 +28618,7 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
                         out->scale = 0;
                         out->shown = shown;
                         out->negative_zero = minus;
+                        out->infinite = false;
                         return true;
                 }
 
@@ -28189,12 +28635,13 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
         out->scale = (positive)effective;
         out->shown = shown;
         out->negative_zero = minus && coefficient == 0;
+        out->infinite = false;
         return true;
 }
 
 static bool seq_decimal_rescale(seq_decimal address_to number, positive scale)
 {
-        if (number->scale == scale)
+        if (number->infinite || number->scale == scale)
                 return true;
 
         positive multiplier = positive_power_ten(scale - number->scale);
@@ -28369,6 +28816,17 @@ static positive seq_format_literal_into(p8 address_to into,
         return used;
 }
 
+static bool seq_less(seq_decimal left, seq_decimal right)
+{
+        if (left.infinite && right.infinite)
+                return left.coefficient < 0 && right.coefficient > 0;
+        if (left.infinite)
+                return left.coefficient < 0;
+        if (right.infinite)
+                return right.coefficient > 0;
+        return left.coefficient < right.coefficient;
+}
+
 static const argument_option seq_options[] = {
     {"equal-width", 'w'},
     {"format", 'f', ARGUMENT_REQUIRED},
@@ -28478,8 +28936,8 @@ static b32 file_seq()
                                       text);
                 }
 
-        seq_decimal first = given == 1 ? (seq_decimal){1} : number[0];
-        seq_decimal step = given == 3 ? number[1] : (seq_decimal){1};
+        seq_decimal first = given == 1 ? (seq_decimal){.coefficient = 1} : number[0];
+        seq_decimal step = given == 3 ? number[1] : (seq_decimal){.coefficient = 1};
         seq_decimal last = number[given - 1];
         positive precision = max(first.shown, step.shown);
         positive scale = max(first.scale, max(step.scale, last.scale));
@@ -28493,6 +28951,55 @@ static b32 file_seq()
         {
                 return string_report(log_error, 1, "seq: invalid Zero increment value: '%s'\n",
                               program_argument((b32)(index + 1)));
+        }
+
+        bool step_negative = step.coefficient < 0;
+        bool out_of_range = step_negative ? seq_less(first, last)
+                                          : seq_less(last, first);
+
+        bool step_infinite = step.infinite && !first.infinite;
+
+        if (first.infinite)
+        {
+                if (out_of_range)
+                {
+                        log_flush();
+                        return 0;
+                }
+
+                string_address word = first.coefficient < 0
+                                          ? (string_address) "-inf"
+                                          : (string_address) "inf";
+                positive word_length = first.coefficient < 0 ? 4 : 3;
+
+                while (1)
+                {
+                        log(word, word_length);
+                        log(separator, 0);
+                        if (log_failed())
+                                return 1;
+                }
+        }
+
+        if (step_infinite)
+        {
+                if (out_of_range)
+                {
+                        log_flush();
+                        return 0;
+                }
+                last.coefficient = first.coefficient;
+                last.infinite = false;
+        }
+
+        if (last.infinite)
+        {
+                if (out_of_range)
+                {
+                        log_flush();
+                        return 0;
+                }
+                last.coefficient = step_negative ? bipolar_min : bipolar_max;
         }
 
         if (!format_text)
@@ -28601,6 +29108,22 @@ static b32 file_seq()
                         break;
 
                 value += step.coefficient;
+        }
+
+        if (step_infinite && written)
+        {
+                string_address word = step.coefficient < 0
+                                          ? (string_address) "-inf"
+                                          : (string_address) "inf";
+                positive word_length = step.coefficient < 0 ? 4 : 3;
+
+                while (1)
+                {
+                        log(separator, 0);
+                        log(word, word_length);
+                        if (log_failed())
+                                return 1;
+                }
         }
 
         if (written)
@@ -28776,11 +29299,22 @@ static string_address address_to env_dropped;
 static positive env_dropped_room;
 static positive env_drops;
 
+static file_taking address_to env_taking_now;
+
 // -u is the one option here that means it every time it is given, and the
 // scanner keeps one value a letter, so each one is written down as it is read
 // and they are all applied once the environment to drop them from exists.
+// -S stops the scan so options written after it are not taken before the
+// split string is spliced in, which is GNU's restart of getopt.
 static bool env_seen(p8 letter, string_address value)
 {
+        if (letter == 'S')
+        {
+                if (env_taking_now)
+                        env_taking_now->stop = true;
+                return true;
+        }
+
         if (letter != 'u')
                 return true;
 
@@ -28793,62 +29327,247 @@ static bool env_seen(p8 letter, string_address value)
 }
 
 /*
-        -S, which exists because a shebang line is one argument however many
-        words are written on it: the string is cut at its spaces and the
-        pieces stand where it stood.
-
-        GNU's -S also reads quotes, backslashes and $VAR out of that string. A
-        shebang line has none of them, and cutting a quoted string at the
-        wrong space is worse than saying so, so one carrying any of them is
-        refused instead.
+        -S exists because a shebang line is one argument however many words
+        are written on it. GNU's parser is the contract: quotes, \\ escapes,
+        ${VAR} from the process environment, # comments at a separator, and
+        \\c as end-of-string.
 */
 static p8 address_to env_split_store;
 static positive env_split_room;
 static string_address address_to env_words;
 static positive env_words_room;
 
+static bool env_split_grow(positive want, positive origin, positive given)
+{
+        p8 address_to old = env_split_store;
+
+        if (!shell_array_room(env_split_store, env_split_room, want))
+                return string_report(log_error, false, "env: split string is too large\n");
+
+        if (old && env_split_store != old)
+                for (positive i = origin; i < given; i++)
+                        env_words[i] = env_split_store + (env_words[i] - old);
+
+        return true;
+}
+
+static bool env_split_put(p8 letter, positive address_to filled,
+                          positive origin, positive given)
+{
+        if (!env_split_grow(*filled + 2, origin, given))
+                return false;
+        env_split_store[(*filled)++] = letter;
+        return true;
+}
+
 static bool env_split(string_address text, positive address_to have)
 {
         positive filled = 0;
-        positive given = address_to have;
-        positive i = 0;
-        positive length = string_length(text);
+        positive origin = address_to have;
+        positive given = origin;
+        bool dq = false;
+        bool sq = false;
+        bool sep = true;
 
-        for (positive j = 0; string_get(text + j); j++)
+        if (!shell_array_room(env_words, env_words_room, given + 2) ||
+            !env_split_grow(string_length(text) + 2, origin, given))
+                return false;
+
+        while (string_get(text))
         {
-                p8 letter = string_get(text + j);
+                p8 letter = string_get(text);
+                p8 next = letter;
 
-                if (letter == '"' || letter == '\'' || letter == '\\' || letter == '$')
-                        return string_report(log_error, false, "env: -S here cuts at spaces and reads nothing else\n");
-        }
+                switch (letter)
+                {
+                case '\'':
+                        if (dq)
+                                break;
+                        sq = !sq;
+                        if (sep)
+                        {
+                                if (!shell_array_room(env_words, env_words_room, given + 2))
+                                        return string_report(log_error, false,
+                                                      "env: split string is too large\n");
+                                env_words[given++] = env_split_store + filled;
+                                sep = false;
+                        }
+                        text++;
+                        continue;
 
-        /*
-                Reserve before storing pointers into the byte block: growing
-                it after the first word would move the text underneath those
-                pointers. At most every second byte begins a one-byte word.
-        */
-        if (!shell_array_room(env_split_store, env_split_room, length + 1) ||
-            !shell_array_room(env_words, env_words_room, given + length / 2 + 2))
-                return string_report(log_error, false, "env: split string is too large\n");
+                case '"':
+                        if (sq)
+                                break;
+                        dq = !dq;
+                        if (sep)
+                        {
+                                if (!shell_array_room(env_words, env_words_room, given + 2))
+                                        return string_report(log_error, false,
+                                                      "env: split string is too large\n");
+                                env_words[given++] = env_split_store + filled;
+                                sep = false;
+                        }
+                        text++;
+                        continue;
 
-        while (string_get(text + i))
-        {
-                i += string_span(text + i, string_set_blanks);
+                case ' ':
+                case '\t':
+                case '\n':
+                case '\v':
+                case '\f':
+                case '\r':
+                        if (sq || dq)
+                                break;
+                        if (!sep)
+                        {
+                                if (!env_split_put(end, address_of filled, origin, given))
+                                        return false;
+                                sep = true;
+                        }
+                        text++;
+                        continue;
 
-                if (string_is(text + i, end))
+                case '#':
+                        if (sep)
+                                goto env_split_done;
                         break;
 
-                env_words[given++] = env_split_store + filled;
+                case '\\':
+                        if (sq && text[1] != '\\' && text[1] != '\'')
+                                break;
+                        next = string_get(text + 1);
+                        if (!next)
+                                return string_report(log_error, false,
+                                              "env: invalid backslash at end of string in -S\n");
+                        text++;
+                        switch (next)
+                        {
+                        case '"':
+                        case '#':
+                        case '$':
+                        case '\'':
+                        case '\\':
+                                break;
+                        case '_':
+                                if (!dq)
+                                {
+                                        text++;
+                                        if (!sep)
+                                        {
+                                                if (!env_split_put(end, address_of filled,
+                                                                   origin, given))
+                                                        return false;
+                                                sep = true;
+                                        }
+                                        continue;
+                                }
+                                next = ' ';
+                                break;
+                        case 'c':
+                                if (dq)
+                                        return string_report(log_error, false,
+                                                      "env: '\\c' must not appear in double-quoted -S string\n");
+                                goto env_split_done;
+                        case 'f':
+                                next = '\f';
+                                break;
+                        case 'n':
+                                next = '\n';
+                                break;
+                        case 'r':
+                                next = '\r';
+                                break;
+                        case 't':
+                                next = '\t';
+                                break;
+                        case 'v':
+                                next = '\v';
+                                break;
+                        default:
+                                return string_report(log_error, false,
+                                              "env: invalid sequence '\\%c' in -S\n", next);
+                        }
+                        letter = next;
+                        break;
 
-                while (string_get(text + i) && !string_is(text + i, ' ') &&
-                       !string_is(text + i, '\t'))
-                        env_split_store[filled++] = string_get(text + i++);
+                case '$':
+                        if (sq)
+                                break;
+                        {
+                                if (text[1] != '{' ||
+                                    !(byte_is_alpha(text[2]) || text[2] == '_'))
+                                        return string_report(log_error, false,
+                                                      "env: only ${VARNAME} expansion is supported, error at: %s\n",
+                                                      text);
 
-                env_split_store[filled++] = end;
+                                string_address name = text + 2;
+                                positive length = 0;
+
+                                while (byte_is_alnum(name[length]) || name[length] == '_')
+                                        length++;
+
+                                if (name[length] != '}')
+                                        return string_report(log_error, false,
+                                                      "env: only ${VARNAME} expansion is supported, error at: %s\n",
+                                                      text);
+
+                                p8 varname[256];
+
+                                if (length >= sizeof(varname))
+                                        return string_report(log_error, false,
+                                                      "env: only ${VARNAME} expansion is supported, error at: %s\n",
+                                                      text);
+
+                                memory_copy_end(varname, name, length);
+
+                                string_address value = file_environment(varname);
+
+                                if (sep)
+                                {
+                                        if (!shell_array_room(env_words, env_words_room, given + 2))
+                                                return string_report(log_error, false,
+                                                              "env: split string is too large\n");
+                                        env_words[given++] = env_split_store + filled;
+                                        sep = false;
+                                }
+
+                                if (value)
+                                        while (string_get(value))
+                                        {
+                                                if (!env_split_put(string_get(value++),
+                                                                   address_of filled, origin, given))
+                                                        return false;
+                                        }
+
+                                text = name + length + 1;
+                                continue;
+                        }
+                }
+
+                if (sep)
+                {
+                        if (!shell_array_room(env_words, env_words_room, given + 2))
+                                return string_report(log_error, false, "env: split string is too large\n");
+                        env_words[given++] = env_split_store + filled;
+                        sep = false;
+                }
+
+                if (!env_split_put(letter, address_of filled, origin, given))
+                        return false;
+                text++;
+        }
+
+env_split_done:
+        if (dq || sq)
+                return string_report(log_error, false, "env: no terminating quote in -S string\n");
+
+        if (!sep)
+        {
+                if (!env_split_put(end, address_of filled, origin, given))
+                        return false;
         }
 
         address_to have = given;
-
         return true;
 }
 
@@ -28863,21 +29582,66 @@ static b32 file_env()
             .seen = env_seen,
         };
 
+        env_taking_now = address_of taking;
+
         // 125 is env's own failure, told apart from 126 for a command that
         // cannot be run and 127 for one that is not there.
         if (!file_take(address_of taking))
+        {
+                env_taking_now = null;
                 return 125;
+        }
+
+        env_taking_now = null;
+
+        if (taking.stop)
+        {
+                string_address split = file_option_value(address_of taking, 'S');
+                positive have = 1;
+                positive origin_first = taking.first;
+                positive origin_count = (positive)program_argument_count();
+
+                if (!shell_array_room(env_words, env_words_room, 2))
+                        return string_report(log_error, 125, "env: argument list is too large\n");
+
+                env_words[0] = (string_address) "env";
+
+                if (split && !env_split(split, address_of have))
+                        return 125;
+
+                if (!shell_array_room(env_words, env_words_room,
+                                      have + origin_count - origin_first + 1))
+                        return string_report(log_error, 125, "env: argument list is too large\n");
+
+                while (origin_first < origin_count)
+                        env_words[have++] = program_argument((b32)origin_first++);
+
+                env_words[have] = null;
+                taking.argv = env_words;
+                taking.argc = have;
+                taking.stop = false;
+                env_taking_now = address_of taking;
+                if (!file_take_from(address_of taking, 1))
+                {
+                        env_taking_now = null;
+                        return 125;
+                }
+                env_taking_now = null;
+        }
 
         if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('d') | FILE_FLAG('g')))
                 log_error("env: the signal options are taken here and change nothing\n", 0);
 
+        string_address address_to argv = taking.argv ? taking.argv
+                                                     : program_argument_list();
+        positive count = taking.argv ? taking.argc
+                                     : (positive)program_argument_count();
         positive index = taking.first;
-        positive count = (positive)program_argument_count();
         bool empty = (taking.flags & FILE_FLAG('i')) != 0;
 
         // A mere -, from before env had options to spell it with, means -i.
-        if (index < count && string_is(program_argument((b32)index), '-') &&
-            string_is(program_argument((b32)index) + 1, end))
+        if (index < count && string_is(argv[index], '-') &&
+            string_is(argv[index] + 1, end))
         {
                 empty = true;
                 index++;
@@ -28893,24 +29657,29 @@ static b32 file_env()
         }
 
         for (positive i = 0; i < env_drops; i++)
-                env_drop(env_dropped[i]);
+        {
+                string_address name = env_dropped[i] ? env_dropped[i]
+                                                     : (string_address) "";
 
-        /*
-                What -S carries stands where -S stood, ahead of the words that
-                followed it, and the whole lot is read as though it had been
-                written out: assignments first and then the command.
-        */
+                if (!string_get(name))
+                        return string_report(log_error, 125,
+                                            "env: cannot unset '': %s\n",
+                                            file_reason(-ERROR_INVALID));
+                if (string_first_of(name, '='))
+                        return string_report(log_error, 125,
+                                            "env: cannot unset %w: %s\n",
+                                            writer_terminal_quoted_name, name,
+                                            file_reason(-ERROR_INVALID));
+                env_drop(name);
+        }
+
         positive have = 0;
-        string_address split = file_option_value(address_of taking, 'S');
 
-        if (split && !env_split(split, address_of have))
-                return 125;
-
-        if (!shell_array_room(env_words, env_words_room, have + count - index + 1))
+        if (!shell_array_room(env_words, env_words_room, count - index + 1))
                 return string_report(log_error, 125, "env: argument list is too large\n");
 
         while (index < count)
-                env_words[have++] = program_argument((b32)index++);
+                env_words[have++] = argv[index++];
 
         env_words[have] = null;
 
@@ -28949,10 +29718,19 @@ static b32 file_env()
                 return 0;
         }
 
-        if (where && system_change_directory(where) < 0)
+        if (taking.flags & FILE_FLAG('0'))
+                return string_report(log_error, 125,
+                                    "env: cannot specify --null (-0) with command\n");
+
+        if (where)
         {
-                return string_report(log_error, 125, "env: cannot change directory to %w\n",
-                              writer_terminal_name, where);
+                bipolar changed = system_change_directory(where);
+
+                if (changed < 0)
+                        return string_report(log_error, 125,
+                                            "env: cannot change directory to %w: %s\n",
+                                            writer_terminal_quoted_name, where,
+                                            file_reason(changed));
         }
 
         string_address address_to arguments = env_words + at;
@@ -28977,6 +29755,16 @@ static b32 file_env()
 
         string_format(log_error, "env: '%w%s", writer_terminal_quoted_name, name,
                       answer == -ERROR_ACCESS ? (string_address)"': Permission denied\n" : (string_address)"': No such file or directory\n");
+
+        if (answer != -ERROR_ACCESS)
+        {
+                for (positive i = 0; name[i]; i++)
+                        if (byte_is_space(name[i]))
+                        {
+                                log_error("env: use -[v]S to pass options in shebang lines\n", 0);
+                                break;
+                        }
+        }
 
         return answer == -ERROR_ACCESS ? 126 : 127;
 }
@@ -33539,8 +34327,49 @@ static const argument_option xargs_options[] = {
     {"verbose", 't'},
     {"L", 0, ARGUMENT_REQUIRED},
     {"i", 0, ARGUMENT_OPTIONAL},
-    {null},
+        {null},
 };
+
+static bool xargs_option_seen(p8 letter, string_address value)
+{
+        if ((letter == 'n' || letter == 'L' || letter == 'P' || letter == 's') &&
+            value)
+        {
+                positive unused;
+
+                if (!xargs_count_value(value, letter == 'l' ? 'L' : letter,
+                                       address_of unused))
+                        return false;
+        }
+
+        if (letter == 'l')
+        {
+                positive unused = 1;
+
+                if (value && !xargs_count_value(value, 'L', address_of unused))
+                        return false;
+        }
+
+        if (letter == 'd' && value)
+        {
+                p8 unused;
+
+                if (!xargs_delimiter_read(value, address_of unused))
+                        return false;
+        }
+
+        if (letter == 'V' && value)
+        {
+                if (!string_get(value))
+                        return string_report(log_error, false,
+                                      "xargs: --process-slot-var requires a nonempty name\n");
+                if (string_first_of(value, '='))
+                        return string_report(log_error, false,
+                                      "xargs: option --process-slot-var may not be set to a value which includes `='\n");
+        }
+
+        return true;
+}
 
 static b32 file_xargs()
 {
@@ -33573,6 +34402,7 @@ static b32 file_xargs()
         file_taking taking = {
             .program = (string_address) "xargs",
             .options = xargs_options,
+            .seen = xargs_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -33856,6 +34686,15 @@ static b32 file_xargs()
 
                         if (letter == '\n')
                         {
+                                if (xargs_replace && started)
+                                {
+                                        while (xargs_item_length &&
+                                               byte_is_blank(xargs_item[xargs_item_length - 1]))
+                                                xargs_item_length--;
+                                        if (!xargs_item_length)
+                                                started = false;
+                                }
+
                                 if (started)
                                 {
                                         xargs_item[xargs_item_length] = end;
