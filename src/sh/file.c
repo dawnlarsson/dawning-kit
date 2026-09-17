@@ -24428,7 +24428,10 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 return false;
         }
 
-        if (destination_exists &&
+        /* GNU copy.c skips same_file_ok entirely under UPDATE_NONE /
+           UPDATE_NONE_FAIL (-n / --update=none-fail) and then skips the
+           copy; the same-file sentence is not the answer. */
+        if (!moving && destination_exists && !cp_never_clobber &&
             file_same_identity(address_of facts, address_of there))
         {
                 return string_report(log_error, false, "cp: '%w' and '%w' are the same file\n",
@@ -25040,7 +25043,7 @@ static fn cp_pair(string_address source, string_address destination)
         bool entry_exists = file_look(
             destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
             address_of destination_entry);
-        if (destination_exists &&
+        if (destination_exists && !cp_never_clobber &&
             file_same_identity(address_of source_facts,
                                address_of destination_facts))
         {
@@ -25716,6 +25719,18 @@ static fn install_pair(string_address source, string_address destination)
                 install_status = 1;
                 return;
         }
+        if (destination_exists &&
+            (to.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                string_format(log_error,
+                              "install: cannot create regular file '%w': %s\n",
+                              writer_terminal_quoted_name, destination,
+                              file_reason(-ERROR_IS_DIRECTORY));
+                system_close(destination_directory);
+                system_close(source_handle);
+                install_status = 1;
+                return;
+        }
 
         if (install_compare && destination_exists &&
             install_unchanged(source_handle, address_of from,
@@ -25968,6 +25983,22 @@ static fn mv_one(string_address source, string_address destination)
         bool destination_exists = file_look(
             destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
             address_of to);
+        /* GNU same_file_ok runs before -u/-i skip, and is itself skipped
+           only for UPDATE_NONE / UPDATE_NONE_FAIL. A later --update must
+           still see two names for one file. */
+        if (destination_exists && !mv_never_clobber &&
+            (file_same_identity(address_of from, address_of to) ||
+             ((from.mode & MODE_FORMAT) == MODE_LINK &&
+              file_look(source_directory, source_leaf, 0,
+                        address_of through) &&
+              file_same_identity(address_of through, address_of to))))
+        {
+                string_format(log_error, "mv: '%w' and '%w' are the same file\n",
+                              writer_terminal_quoted_name, source, writer_terminal_quoted_name,
+                              destination);
+                mv_status = 1;
+                goto finished;
+        }
         if (!file_overwrite_allowed((string_address)"mv", destination,
                                     destination_exists, mv_never_clobber,
                                     mv_newer_only, mv_ask, mv_update_fail,
@@ -25982,23 +26013,6 @@ static fn mv_one(string_address source, string_address destination)
         if (destination_exists)
                 mv_destination_facts = to;
         mv_collision_seen = false;
-
-
-        // The two names for one file, or a link named as the source that
-        // points at the destination: renaming either would lose the file.
-        if (destination_exists &&
-            (file_same_identity(address_of from, address_of to) ||
-             ((from.mode & MODE_FORMAT) == MODE_LINK &&
-              file_look(source_directory, source_leaf, 0,
-                        address_of through) &&
-              file_same_identity(address_of through, address_of to))))
-        {
-                string_format(log_error, "mv: '%w' and '%w' are the same file\n",
-                              writer_terminal_quoted_name, source, writer_terminal_quoted_name,
-                              destination);
-                mv_status = 1;
-                goto finished;
-        }
 
         source_handle = file_open_same(
             source_directory, source_leaf, address_of from,
@@ -33339,6 +33353,7 @@ static bipolar xargs_input;
 static bool xargs_needs_input;
 static positive xargs_most;
 static string_address xargs_replace;
+static p8 xargs_exclusive;
 static string_address xargs_ending;
 static positive xargs_lines;
 static b32 xargs_answer;
@@ -34246,7 +34261,7 @@ static const argument_option xargs_options[] = {
     {"no-run-if-empty", 'r'},
     {"null", '0'},
     {"process-slot-var", 'V', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
-    {"replace", 'I', ARGUMENT_REQUIRED},
+    {"replace", 'I', ARGUMENT_REQUIRED | ARGUMENT_LONG_OPTIONAL},
     {"verbose", 't'},
     {"L", 0, ARGUMENT_REQUIRED},
     {"i", 0, ARGUMENT_OPTIONAL},
@@ -34291,6 +34306,10 @@ static bool xargs_option_seen(p8 letter, string_address value)
                                       "xargs: option --process-slot-var may not be set to a value which includes `='\n");
         }
 
+        if (letter == 'I' || letter == 'i' || letter == 'L' ||
+            letter == 'l' || letter == 'n')
+                xargs_exclusive = letter;
+
         return true;
 }
 
@@ -34321,6 +34340,7 @@ static b32 file_xargs()
         xargs_active = 0;
         xargs_parallel = 1;
         xargs_lines = 0;
+        xargs_exclusive = 0;
 
         file_taking taking = {
             .program = (string_address) "xargs",
@@ -34342,6 +34362,8 @@ static b32 file_xargs()
         if (!xargs_ending && (taking.flags & FILE_FLAG('e')))
                 xargs_ending = file_option_value(address_of taking, 'e');
         xargs_replace = file_option_value(address_of taking, 'I');
+        if ((taking.flags & FILE_FLAG('I')) && !xargs_replace)
+                xargs_replace = "{}";
         xargs_slot_name = file_option_value(address_of taking, 'V');
         xargs_exit_too_long = (taking.flags & FILE_FLAG('x')) != 0;
         xargs_delimited = false;
@@ -34416,6 +34438,27 @@ static b32 file_xargs()
 
                 if (!xargs_replace)
                         xargs_replace = "{}";
+        }
+
+        /* GNU last-wins among -I/-i, -L/-l and -n: each clears the others
+           when it is taken. -n1 next to -i is ignored so replace stays. */
+        if (xargs_exclusive == 'I' || xargs_exclusive == 'i')
+        {
+                xargs_most = 0;
+                xargs_lines = 0;
+        }
+        else if (xargs_exclusive == 'L' || xargs_exclusive == 'l')
+        {
+                xargs_most = 0;
+                xargs_replace = null;
+        }
+        else if (xargs_exclusive == 'n')
+        {
+                xargs_lines = 0;
+                if (xargs_most == 1 && xargs_replace)
+                        xargs_most = 0;
+                else
+                        xargs_replace = null;
         }
 
         string_address from = file_option_value(address_of taking, 'a');
