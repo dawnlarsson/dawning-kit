@@ -9872,12 +9872,13 @@ static b32 find_parse_and()
         while (1)
         {
                 string_address word = find_word();
+                string_address operator = null;
 
                 if (find_is(word, (string_address) "-a") ||
                     find_is(word, (string_address) "-and"))
                 {
+                        operator = word;
                         find_at++;
-                        word = find_word();
                 }
                 else if (!word || find_is(word, (string_address) ")") ||
                          find_is(word, (string_address) ",") ||
@@ -9889,6 +9890,16 @@ static b32 find_parse_and()
 
                 if (find_bad)
                         return -1;
+
+                if (right < 0)
+                {
+                        if (operator)
+                                string_format(log_error,
+                                              "find: expected an expression after '%s'\n",
+                                              operator);
+                        find_bad = true;
+                        return -1;
+                }
 
                 b32 node = find_make('&');
 
@@ -9911,12 +9922,20 @@ static b32 find_parse_comma()
 
         while (!find_bad && find_is(find_word(), (string_address) ","))
         {
+                string_address operator = find_word();
+
                 find_at++;
 
                 b32 right = find_parse_or();
 
-                if (find_bad || right < 0)
+                if (find_bad)
+                        return -1;
+
+                if (right < 0)
                 {
+                        string_format(log_error,
+                                      "find: expected an expression after '%s'\n",
+                                      operator);
                         find_bad = true;
                         return -1;
                 }
@@ -9944,12 +9963,23 @@ static b32 find_parse_or()
         while (find_is(find_word(), (string_address) "-o") ||
                find_is(find_word(), (string_address) "-or"))
         {
+                string_address operator = find_word();
+
                 find_at++;
 
                 b32 right = find_parse_and();
 
                 if (find_bad)
                         return -1;
+
+                if (right < 0)
+                {
+                        string_format(log_error,
+                                      "find: expected an expression after '%s'\n",
+                                      operator);
+                        find_bad = true;
+                        return -1;
+                }
 
                 b32 node = find_make('|');
 
@@ -13918,12 +13948,12 @@ static fn chmod_decide(bipolar directory, string_address name,
         // A name on the command line is followed, because Linux has no mode
         // on a symlink of its own to change and chmod has always meant the
         // thing pointed at -- unless -h was asked for, which aims at the
-        // link itself. A link met under -R is not followed either: the walk
-        // refuses to descend into one, and it must refuse to change through
-        // one too, or chmod -R 000 over a tree with a link to /etc in it
-        // changes /etc.
+        // link itself. A link met under -R is not followed either, except
+        // -R -L which follows every name, because the walk must not change
+        // through a link to /etc. -R -P aims at the command-line link too.
         bool operand = directory == AT_FDCWD;
-        bool through = operand && chmod_selected.dereference != 'h';
+        bool through = chmod_selected.dereference == 'd' ||
+                       (operand && chmod_selected.dereference != 'h');
         bipolar looked = 0;
 
         memory_fill(out, 0, sizeof(chmod_outcome));
@@ -14014,6 +14044,9 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
         switch (out->kind)
         {
         case CHMOD_DANGLING:
+                if (chmod_loud)
+                        string_format(log, "'%w' could not be accessed\n",
+                                      writer_terminal_quoted_name, shown);
                 if (!chmod_quiet)
                         string_format(log_error, "chmod: cannot operate on dangling symlink '%w'\n",
                                       writer_terminal_quoted_name, shown);
@@ -14372,6 +14405,14 @@ static b32 file_chmod()
             chmod_selected.traverse == 'P')
                 return string_report(log_error, 1,
                                      "chmod: -R --dereference requires either -H or -L\n");
+
+        // GNU: -R -P is FTS_PHYSICAL and dereference=0 (the link itself);
+        // -R -L is FTS_LOGICAL and dereference=1 unless -h already said no.
+        if ((taking.flags & FILE_FLAG('R')) && chmod_selected.traverse == 'P')
+                chmod_selected.dereference = 'h';
+        else if ((taking.flags & FILE_FLAG('R')) &&
+                 chmod_selected.traverse == 'L' && !chmod_selected.dereference)
+                chmod_selected.dereference = 'd';
 
         string_address like = file_option_value(address_of taking, 'e');
 
@@ -15380,6 +15421,19 @@ static bool ln_make(string_address target, string_address name)
             destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
             address_of destination);
         bool destination_exists = destination_look >= 0;
+
+        // GNU do_link: a destination directory is refused before -i or
+        // backup, with the unquoted name the reference prints.
+        if (destination_exists &&
+            (destination.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                string_format(log_error, "ln: %w: cannot overwrite directory\n",
+                              writer_terminal_name, name);
+                system_close(destination_directory);
+                if (source_handle >= 0)
+                        system_close(source_handle);
+                return false;
+        }
 
         if (ln_ask && destination_exists &&
             !file_ask((string_address)"ln", (string_address)"replace", name))
@@ -24322,6 +24376,54 @@ added:
 
 /* cp and cross-device mv copy the same object graph. Only source removal,
    dereferencing, overwrite policy and metadata policy differ. */
+
+static bool cp_same_dirent(bipolar source_directory, string_address source,
+                           bipolar destination_directory, string_address destination)
+{
+        file_facts left;
+        file_facts right;
+
+        if (!string_compare(source, destination))
+                return false;
+        if (file_look_code(source_directory, (string_address)"", AT_EMPTY_PATH,
+                           address_of left) < 0)
+                return false;
+        if (file_look_code(destination_directory, (string_address)"", AT_EMPTY_PATH,
+                           address_of right) < 0)
+                return false;
+        return file_same_identity(address_of left, address_of right);
+}
+
+/* GNU copy.c same_file_ok after the UPDATE_NONE skip. True proceeds
+   (and *done is -l already linked). False is the same-file refuse. */
+static bool cp_same_file_ok(bipolar source_directory, string_address source,
+                            bipolar destination_directory,
+                            string_address destination,
+                            file_facts address_to source_facts,
+                            bool destination_is_link, bool address_to done)
+{
+        *done = false;
+        if (cp_hard)
+        {
+                *done = true;
+                return true;
+        }
+
+        bool same_name = cp_same_dirent(source_directory, source,
+                                        destination_directory, destination);
+
+        if (file_backup_kind && !same_name)
+                return true;
+        if (cp_replace)
+        {
+                if (destination_is_link)
+                        return true;
+                if (source_facts->hard_links > 1 && !same_name)
+                        return true;
+        }
+        return false;
+}
+
 static bool file_copy_one(bipolar source_directory, string_address source,
                           string_address source_shown,
                           bipolar destination_directory,
@@ -24430,13 +24532,26 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
         /* GNU copy.c skips same_file_ok entirely under UPDATE_NONE /
            UPDATE_NONE_FAIL (-n / --update=none-fail) and then skips the
-           copy; the same-file sentence is not the answer. */
+           copy; the same-file sentence is not the answer. -l is already
+           linked, -b of a distinct dirent and --remove-destination of a
+           dest symlink or extra hard link all proceed. */
         if (!moving && destination_exists && !cp_never_clobber &&
             file_same_identity(address_of facts, address_of there))
         {
-                return string_report(log_error, false, "cp: '%w' and '%w' are the same file\n",
-                              writer_terminal_quoted_name, source_shown,
-                              writer_terminal_quoted_name, destination_shown);
+                bool done = false;
+
+                if (cp_same_file_ok(source_directory, source,
+                                    destination_directory, destination,
+                                    address_of facts, destination_is_link,
+                                    address_of done))
+                {
+                        if (done)
+                                return true;
+                }
+                else
+                        return string_report(log_error, false, "cp: '%w' and '%w' are the same file\n",
+                                      writer_terminal_quoted_name, source_shown,
+                                      writer_terminal_quoted_name, destination_shown);
         }
 
         /* A final symlink is authority chosen by the directory writer, not
@@ -25047,14 +25162,31 @@ static fn cp_pair(string_address source, string_address destination)
             file_same_identity(address_of source_facts,
                                address_of destination_facts))
         {
-                string_format(log_error, "cp: '%w' and '%w' are the same file\n",
-                              writer_terminal_quoted_name, source, writer_terminal_quoted_name,
-                              destination);
-                system_close(source_directory);
-                system_close(destination_directory);
-                system_close(source_pinned);
-                cp_status = 1;
-                return;
+                bool destination_is_link = entry_exists &&
+                    (destination_entry.mode & MODE_FORMAT) == MODE_LINK;
+                bool done = false;
+
+                if (!cp_same_file_ok(source_directory, source_leaf,
+                                     destination_directory, destination_leaf,
+                                     address_of source_facts, destination_is_link,
+                                     address_of done))
+                {
+                        string_format(log_error, "cp: '%w' and '%w' are the same file\n",
+                                      writer_terminal_quoted_name, source, writer_terminal_quoted_name,
+                                      destination);
+                        system_close(source_directory);
+                        system_close(destination_directory);
+                        system_close(source_pinned);
+                        cp_status = 1;
+                        return;
+                }
+                if (done)
+                {
+                        system_close(source_directory);
+                        system_close(destination_directory);
+                        system_close(source_pinned);
+                        return;
+                }
         }
 
         /* Collision options authorize the original destination.  Backing it
@@ -26539,6 +26671,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         bool complete = true;
 
         bipolar inside = -1;
+        bool asked_remove = false;
         if (rm_recursive)
         {
                 if (depth == 0)
@@ -26549,10 +26682,28 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                         return false;
                 }
 
-                if (rm_ask && !file_ask((string_address) "rm",
-                                        (string_address) "descend into directory", shown))
-                        return false;
+                bool empty_directory = false;
 
+                if (rm_ask)
+                {
+                        bipolar emptiness = file_directory_empty_same(
+                            directory, name, address_of facts, O_NOFOLLOW);
+
+                        empty_directory = emptiness > 0;
+                        if (empty_directory)
+                        {
+                                if (!file_ask((string_address) "rm",
+                                              (string_address) "remove directory", shown))
+                                        return false;
+                                asked_remove = true;
+                        }
+                        else if (!file_ask((string_address) "rm",
+                                           (string_address) "descend into directory", shown))
+                                return false;
+                }
+
+                if (!empty_directory)
+                {
                 inside = file_open_same(
                     directory, name, address_of facts,
                     FILE_READ | O_DIRECTORY | O_NOFOLLOW);
@@ -26581,9 +26732,10 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 }
 
                 complete = rm_contents(inside, shown, depth - 1);
+                }
         }
 
-        if (rm_ask && !rm_recursive &&
+        if (rm_ask && !asked_remove &&
             !file_ask((string_address) "rm", (string_address) "remove directory", shown))
                 return false;
 
@@ -27620,6 +27772,8 @@ static b32 file_rm()
         }
 
         rm_force = rm_selected.collision == 'f';
+        if (prompting == 'i' || prompting == 'I')
+                rm_force = false;
         rm_ask = prompting == 'i';
         rm_ask_once = prompting == 'I';
         rm_loud = (flags & FILE_FLAG('v')) != 0;
@@ -33353,7 +33507,7 @@ static bipolar xargs_input;
 static bool xargs_needs_input;
 static positive xargs_most;
 static string_address xargs_replace;
-static p8 xargs_exclusive;
+static p8 xargs_ending_which;
 static string_address xargs_ending;
 static positive xargs_lines;
 static b32 xargs_answer;
@@ -34250,8 +34404,8 @@ static bool xargs_delimiter_read(string_address text, p8 address_to into)
 static const argument_option xargs_options[] = {
     {"arg-file", 'a', ARGUMENT_REQUIRED},
     {"delimiter", 'd', ARGUMENT_REQUIRED},
-    {"eof", 'E', ARGUMENT_REQUIRED},
-    {"e", 0, ARGUMENT_OPTIONAL},
+    {"eof", 'e', ARGUMENT_OPTIONAL},
+    {"E", 0, ARGUMENT_REQUIRED},
     {"exit", 'x'},
     {"interactive", 'p'},
     {"max-args", 'n', ARGUMENT_REQUIRED},
@@ -34268,6 +34422,13 @@ static const argument_option xargs_options[] = {
         {null},
 };
 
+static fn xargs_exclusive_warn(string_address newer, string_address older)
+{
+        string_format(log_error,
+                      "xargs: warning: options %s and %s are mutually exclusive, ignoring previous %s value\n",
+                      older, newer, older);
+}
+
 static bool xargs_option_seen(p8 letter, string_address value)
 {
         if ((letter == 'n' || letter == 'L' || letter == 'P' || letter == 's') &&
@@ -34278,6 +34439,44 @@ static bool xargs_option_seen(p8 letter, string_address value)
                 if (!xargs_count_value(value, letter == 'l' ? 'L' : letter,
                                        address_of unused))
                         return false;
+
+                if (letter == 'P' || letter == 's')
+                        return true;
+
+                if (letter == 'n')
+                {
+                        if (xargs_lines)
+                        {
+                                xargs_exclusive_warn((string_address) "--max-args/-n",
+                                                     (string_address) "--max-lines");
+                                xargs_lines = 0;
+                        }
+                        if (xargs_replace)
+                        {
+                                if (unused == 1)
+                                        return true;
+                                xargs_exclusive_warn((string_address) "--max-args/-n",
+                                                     (string_address) "--replace");
+                                xargs_replace = null;
+                        }
+                        xargs_most = unused;
+                        return true;
+                }
+
+                if (xargs_most)
+                {
+                        xargs_exclusive_warn((string_address) "-L",
+                                             (string_address) "--max-args");
+                        xargs_most = 0;
+                }
+                if (xargs_replace)
+                {
+                        xargs_exclusive_warn((string_address) "-L",
+                                             (string_address) "--replace");
+                        xargs_replace = null;
+                }
+                xargs_lines = unused;
+                return true;
         }
 
         if (letter == 'l')
@@ -34286,6 +34485,21 @@ static bool xargs_option_seen(p8 letter, string_address value)
 
                 if (value && !xargs_count_value(value, 'L', address_of unused))
                         return false;
+
+                if (xargs_most)
+                {
+                        xargs_exclusive_warn((string_address) "--max-lines/-l",
+                                             (string_address) "--max-args");
+                        xargs_most = 0;
+                }
+                if (xargs_replace)
+                {
+                        xargs_exclusive_warn((string_address) "--max-lines/-l",
+                                             (string_address) "--replace");
+                        xargs_replace = null;
+                }
+                xargs_lines = unused;
+                return true;
         }
 
         if (letter == 'd' && value)
@@ -34306,9 +34520,25 @@ static bool xargs_option_seen(p8 letter, string_address value)
                                       "xargs: option --process-slot-var may not be set to a value which includes `='\n");
         }
 
-        if (letter == 'I' || letter == 'i' || letter == 'L' ||
-            letter == 'l' || letter == 'n')
-                xargs_exclusive = letter;
+        if (letter == 'I' || letter == 'i')
+        {
+                if (xargs_most)
+                {
+                        xargs_exclusive_warn((string_address) "--replace/-I/-i",
+                                             (string_address) "--max-args");
+                        xargs_most = 0;
+                }
+                if (xargs_lines)
+                {
+                        xargs_exclusive_warn((string_address) "--replace/-I/-i",
+                                             (string_address) "--max-lines");
+                        xargs_lines = 0;
+                }
+                xargs_replace = value ? value : (string_address) "{}";
+        }
+
+        if (letter == 'E' || letter == 'e')
+                xargs_ending_which = letter;
 
         return true;
 }
@@ -34339,8 +34569,10 @@ static b32 file_xargs()
         xargs_ran = false;
         xargs_active = 0;
         xargs_parallel = 1;
+        xargs_most = 0;
         xargs_lines = 0;
-        xargs_exclusive = 0;
+        xargs_replace = null;
+        xargs_ending_which = 0;
 
         file_taking taking = {
             .program = (string_address) "xargs",
@@ -34358,41 +34590,19 @@ static b32 file_xargs()
         xargs_terminal = -2;
         xargs_trace = (taking.flags & FILE_FLAG('t')) != 0;
         xargs_needs_input = (taking.flags & FILE_FLAG('r')) != 0;
-        xargs_ending = file_option_value(address_of taking, 'E');
-        if (!xargs_ending && (taking.flags & FILE_FLAG('e')))
+        if (xargs_ending_which == 'E')
+                xargs_ending = file_option_value(address_of taking, 'E');
+        else if (xargs_ending_which == 'e')
                 xargs_ending = file_option_value(address_of taking, 'e');
-        xargs_replace = file_option_value(address_of taking, 'I');
-        if ((taking.flags & FILE_FLAG('I')) && !xargs_replace)
-                xargs_replace = "{}";
+        else
+                xargs_ending = null;
         xargs_slot_name = file_option_value(address_of taking, 'V');
         xargs_exit_too_long = (taking.flags & FILE_FLAG('x')) != 0;
         xargs_delimited = false;
         xargs_delimiter = 0;
         xargs_said_nul = false;
-        xargs_most = 0;
-        xargs_lines = 0;
         xargs_most_bytes = XARGS_BATCH_BYTES;
         xargs_input = 0;
-
-        if ((taking.flags & FILE_FLAG('n')) &&
-            !xargs_count_value(file_option_value(address_of taking, 'n'), 'n',
-                               address_of xargs_most))
-                return 1;
-
-        if ((taking.flags & FILE_FLAG('L')) &&
-            !xargs_count_value(file_option_value(address_of taking, 'L'), 'L',
-                               address_of xargs_lines))
-                return 1;
-
-        if (taking.flags & FILE_FLAG('l'))
-        {
-                string_address written = file_option_value(address_of taking, 'l');
-
-                xargs_lines = 1;
-
-                if (written && !xargs_count_value(written, 'L', address_of xargs_lines))
-                        return 1;
-        }
 
         if (taking.flags & FILE_FLAG('P'))
         {
@@ -34430,35 +34640,6 @@ static b32 file_xargs()
 
                 xargs_delimited = true;
                 xargs_null = xargs_delimiter == 0;
-        }
-
-        if (!xargs_replace && (taking.flags & FILE_FLAG('i')))
-        {
-                xargs_replace = file_option_value(address_of taking, 'i');
-
-                if (!xargs_replace)
-                        xargs_replace = "{}";
-        }
-
-        /* GNU last-wins among -I/-i, -L/-l and -n: each clears the others
-           when it is taken. -n1 next to -i is ignored so replace stays. */
-        if (xargs_exclusive == 'I' || xargs_exclusive == 'i')
-        {
-                xargs_most = 0;
-                xargs_lines = 0;
-        }
-        else if (xargs_exclusive == 'L' || xargs_exclusive == 'l')
-        {
-                xargs_most = 0;
-                xargs_replace = null;
-        }
-        else if (xargs_exclusive == 'n')
-        {
-                xargs_lines = 0;
-                if (xargs_most == 1 && xargs_replace)
-                        xargs_most = 0;
-                else
-                        xargs_replace = null;
         }
 
         string_address from = file_option_value(address_of taking, 'a');
