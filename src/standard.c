@@ -7734,10 +7734,31 @@ static fn clock_format_core(clock_format_state address_to state,
                         cursor++;
                 }
 
+                /*
+                        GNU date's %:z / %::z / %:::z: colons between the
+                        flags and z choose how much of the offset to write.
+                        More than three is not a conversion, so the bytes
+                        stay literal the way an unknown specifier does.
+                */
+                positive colons = 0;
+
+                while (address_to cursor == ':')
+                {
+                        colons++;
+                        cursor++;
+                }
+
                 which = (p8)(address_to cursor);
 
                 if (which != end)
                         cursor++;
+
+                if (colons && (which != 'z' || colons > 3))
+                {
+                        clock_format_append(state, (address_any)opened,
+                                            (positive)(cursor - opened));
+                        continue;
+                }
 
                 /*
                         # decides which way to fold inside the specifier that
@@ -8008,12 +8029,33 @@ static fn clock_format_core(clock_format_state address_to state,
                 {
                         bipolar offset = broken->tm_gmtoff;
                         bipolar magnitude = offset < 0 ? -offset : offset;
+                        bipolar hours = magnitude / 3600;
+                        bipolar minutes = magnitude / 60 % 60;
+                        bipolar seconds = magnitude % 60;
 
                         clock_format_byte(state, offset < 0 ? '-' : '+');
-                        clock_format_number(state,
-                                            magnitude / 3600 * 100 +
-                                                    magnitude / 60 % 60,
-                                            4);
+                        if (!colons)
+                                clock_format_number(state,
+                                                    hours * 100 + minutes, 4);
+                        else
+                        {
+                                clock_format_number(state, hours, 2);
+                                /* %:::z keeps only as many fields as are
+                                   not zero: hours, then minutes, then
+                                   seconds. %:z is always hours:minutes,
+                                   %::z always hours:minutes:seconds. */
+                                if (colons == 1 || colons == 2 || minutes ||
+                                    seconds)
+                                {
+                                        clock_format_byte(state, ':');
+                                        clock_format_number(state, minutes, 2);
+                                }
+                                if (colons == 2 || (colons == 3 && seconds))
+                                {
+                                        clock_format_byte(state, ':');
+                                        clock_format_number(state, seconds, 2);
+                                }
+                        }
                         break;
                 }
 

@@ -2163,53 +2163,110 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
                         if (!digits)
                                 return false;
 
-                        if (!marked && string_is(text + at, '-'))
-                        {
-                                positive wide;
-                                b64 rest;
-
-                                if (dated)
-                                        return false;
-
-                                at = file_read_number(text, at + 1, address_of rest,
-                                                      address_of wide);
-
-                                if (!wide || !string_is(text + at, '-'))
-                                        return false;
-
-                                b64 which;
-
-                                at = file_read_number(text, at + 1, address_of which,
-                                                      address_of wide);
-
-                                if (!wide || rest < 1 || rest > 12 || which < 1)
-                                        return false;
-
-                                year = digits <= 2 ? (value <= 68 ? 2000 + value : 1900 + value)
-                                                   : value;
-
-                                if (which > file_month_days(year, rest))
-                                        return false;
-
-                                month = (positive)rest;
-                                day = (positive)which;
-                                dated = true;
-
-                                // A clock time already read stands; the day
-                                // is midnight only when no time was said.
-                                if (!timed)
+                                if (!marked && string_is(text + at, '-'))
                                 {
-                                        hour = 0;
-                                        minute = 0;
-                                        second = 0;
-                                        address_to nanoseconds = 0;
+                                        positive wide;
+                                        b64 rest;
+
+                                        if (dated)
+                                                return false;
+
+                                        at = file_read_number(text, at + 1, address_of rest,
+                                                              address_of wide);
+
+                                        if (!wide || !string_is(text + at, '-'))
+                                                return false;
+
+                                        b64 which;
+
+                                        at = file_read_number(text, at + 1, address_of which,
+                                                              address_of wide);
+
+                                        if (!wide || rest < 1 || rest > 12 || which < 1)
+                                                return false;
+
+                                        year = digits <= 2 ? (value <= 68 ? 2000 + value : 1900 + value)
+                                                           : value;
+
+                                        if (which > file_month_days(year, rest))
+                                                return false;
+
+                                        month = (positive)rest;
+                                        day = (positive)which;
+                                        dated = true;
+
+                                        // A clock time already read stands; the day
+                                        // is midnight only when no time was said.
+                                        if (!timed)
+                                        {
+                                                hour = 0;
+                                                minute = 0;
+                                                second = 0;
+                                                address_to nanoseconds = 0;
+                                        }
+
+                                        if (string_is(text + at, 'T') || string_is(text + at, 't'))
+                                                at++;
+
+                                        continue;
                                 }
 
-                                if (string_is(text + at, 'T') || string_is(text + at, 't'))
-                                        at++;
+                                /* GNU 9.11: dd.mm.yy / dd.mm.yyyy, the European
+                                   dotted form. Two dots are required so a
+                                   fractional 1.5 is not stolen as a date. */
+                                if (!marked && string_is(text + at, '.'))
+                                {
+                                        positive wide;
+                                        b64 rest;
+                                        positive after = file_read_number(
+                                            text, at + 1, address_of rest,
+                                            address_of wide);
 
-                                continue;
-                        }
+                                        if (wide && string_is(text + after, '.'))
+                                        {
+                                                b64 which;
+                                                positive end_at;
+
+                                                if (dated)
+                                                        return false;
+
+                                                end_at = file_read_number(
+                                                    text, after + 1,
+                                                    address_of which,
+                                                    address_of wide);
+
+                                                if (!wide || value < 1 ||
+                                                    value > 31 || rest < 1 ||
+                                                    rest > 12)
+                                                        return false;
+
+                                                year = wide <= 2
+                                                           ? (which <= 68
+                                                                  ? 2000 + which
+                                                                  : 1900 + which)
+                                                           : which;
+
+                                                if (value > file_month_days(
+                                                                year, rest))
+                                                        return false;
+
+                                                day = (positive)value;
+                                                month = (positive)rest;
+                                                dated = true;
+                                                at = end_at;
+
+                                                if (!timed)
+                                                {
+                                                        hour = 0;
+                                                        minute = 0;
+                                                        second = 0;
+                                                        address_to nanoseconds =
+                                                            0;
+                                                }
+
+                                                continue;
+                                        }
+                                }
 
                         if (!marked && string_is(text + at, ':'))
                         {
@@ -16922,6 +16979,80 @@ static bool realpath_relative(string_address from, string_address path,
         return true;
 }
 
+static fn realpath_say(string_address name, string_address why)
+{
+        if (!string_get(name))
+                string_format(log_error, "realpath: '': %s\n", why);
+        else
+                string_format(log_error, "realpath: %w: %s\n", writer_terminal_name,
+                              name, why);
+}
+
+/* Same walk the operands use, so --relative-to sees -e/-E/-m/-L/-s the way
+   GNU's canonicalize_filename_mode does. */
+static bool realpath_named(string_address path, p8 policy, bool logical,
+                           bool written_name, bool allow_missing,
+                           bool need_exist, p8 answer[FILE_PATH_MAX],
+                           string_address address_to why)
+{
+        p8 scratch[FILE_PATH_MAX];
+        string_address source = path;
+
+        if (!string_get(path) || string_length(path) >= FILE_PATH_MAX)
+        {
+                *why = (string_address) "No such file or directory";
+                return false;
+        }
+
+        if (logical && !written_name)
+        {
+                if (!file_resolve_as(path, scratch, false, policy))
+                {
+                        *why = (string_address) "Invalid argument";
+                        return false;
+                }
+
+                source = scratch;
+        }
+
+        if (!file_resolve_as(source, answer, !written_name, policy))
+        {
+                file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, path, 0,
+                                                address_of facts);
+
+                *why = looked < 0 ? file_reason(looked)
+                                  : (string_address) "No such file or directory";
+                return false;
+        }
+
+        if (written_name && !allow_missing)
+        {
+                file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, path, 0,
+                                                address_of facts);
+
+                if (looked < 0 &&
+                    (need_exist || looked != -ERROR_NO_ENTRY))
+                {
+                        *why = file_reason(looked);
+                        return false;
+                }
+        }
+
+        path_head_copy(scratch, FILE_PATH_MAX, answer);
+
+        if (!written_name &&
+            ((!allow_missing && !file_is_directory_through(scratch)) ||
+             (need_exist && !file_exists(AT_FDCWD, answer))))
+        {
+                *why = (string_address) "No such file or directory";
+                return false;
+        }
+
+        return true;
+}
+
 static b32 file_realpath()
 {
         realpath_selected.missing = 'E';
@@ -16951,26 +17082,68 @@ static b32 file_realpath()
 
         p8 base_real[FILE_PATH_MAX];
         p8 against_real[FILE_PATH_MAX];
-        string_address base = file_option_value(address_of taking, 'B');
-        string_address against = file_option_value(address_of taking, 'R');
-
-        if ((base && !string_get(base)) || (against && !string_get(against)))
-                return string_report(log_error, 1, "realpath: relative directory is empty\n");
-
-        // Both directories are made canonical before anything is said
-        // relative to them, or /tmp/./x would not look like /tmp/x.
-        if (base && file_real(base, base_real))
-                base = base_real;
-
-        if (!against)
-                against = base;
-        else if (file_real(against, against_real))
-                against = against_real;
-
+        string_address base_opt = file_option_value(address_of taking, 'B');
+        string_address against_opt = file_option_value(address_of taking, 'R');
+        string_address base = null;
+        string_address against = null;
+        bool need_exist = realpath_selected.missing == 'e';
         p8 policy = allow_missing ? FILE_RESOLVE_UNRESOLVED
                     : FILE_RESOLVE_DIRECTORIES |
                           (written_name ? FILE_RESOLVE_MISSING_TAIL
                                         : FILE_RESOLVE_FINAL_MISSING);
+        string_address why = null;
+
+        /* GNU: if only --relative-base is given, it is also --relative-to.
+           Both are canonicalized with the operand policy, and -e further
+           demands a directory. A --relative-to that is not under
+           --relative-base is dropped, so every operand is printed absolute. */
+        if (base_opt && !against_opt)
+                against_opt = base_opt;
+
+        if (against_opt)
+        {
+                if (!realpath_named(against_opt, policy, logical, written_name,
+                                    allow_missing, need_exist, against_real,
+                                    address_of why))
+                {
+                        realpath_say(against_opt, why);
+                        return 1;
+                }
+
+                if (need_exist && !file_is_directory_through(against_real))
+                {
+                        realpath_say(against_opt,
+                                     (string_address) "Not a directory");
+                        return 1;
+                }
+
+                against = against_real;
+        }
+
+        if (base_opt && base_opt != against_opt)
+        {
+                if (!realpath_named(base_opt, policy, logical, written_name,
+                                    allow_missing, need_exist, base_real,
+                                    address_of why))
+                {
+                        realpath_say(base_opt, why);
+                        return 1;
+                }
+
+                if (need_exist && !file_is_directory_through(base_real))
+                {
+                        realpath_say(base_opt,
+                                     (string_address) "Not a directory");
+                        return 1;
+                }
+
+                if (against && !realpath_under(base_real, against))
+                        against = null;
+                else
+                        base = base_real;
+        }
+        else if (base_opt)
+                base = against;
 
         while (first < count)
         {
@@ -16979,6 +17152,12 @@ static b32 file_realpath()
                 p8 scratch[FILE_PATH_MAX];
                 string_address source = path;
                 string_address reason = (string_address) "Invalid argument";
+
+                if (!string_get(path))
+                {
+                        reason = (string_address) "No such file or directory";
+                        goto failed;
+                }
 
                 /*
                         -L takes the .. out of the name before any link in it
@@ -17025,28 +17204,20 @@ static b32 file_realpath()
                         goto failed;
                 }
 
-                // --relative-base names where the shorthand stops being worth
-                // it: a path outside that directory is said in full.
-                if (against && (!base || realpath_under(base, answer)))
-                {
-                        if (!realpath_relative(against, answer, scratch))
-                        {
-                                reason = (string_address) "File name too long";
-                                goto failed;
-                        }
-
+                /* GNU prints a relative path only when --relative-to is live
+                   and the operand sits under --relative-base; relpath failure
+                   (no common prefix, or a name that will not fit) falls back
+                   to the absolute spelling rather than an error. */
+                if (against && (!base || realpath_under(base, answer)) &&
+                    realpath_relative(against, answer, scratch))
                         file_written(scratch, zero);
-                }
                 else
                         file_written(answer, zero);
                 continue;
 
 failed:
                 if (!quiet)
-                {
-                        string_format(log_error, "realpath: %w: %s\n", writer_terminal_name, path,
-                                      reason);
-                }
+                        realpath_say(path, reason);
                 status = 1;
         }
 
@@ -32112,65 +32283,229 @@ static bool date_shape(writer write, b64 when, positive nanoseconds,
         return false;
 }
 
+static string_address date_chosen_format;
+
+static const file_word date_iso_words[] = {
+    {"hours", 3}, {"minutes", 4}, {"date", 0}, {"seconds", 1}, {"ns", 2},
+};
+
+static const file_word date_rfc3339_words[] = {
+    {"date", 0, true}, {"seconds", 1, true}, {"ns", 2, true},
+};
+
 static const argument_option date_options[] = {
     {"date", 'd', ARGUMENT_REQUIRED},
+    {"file", 'f', ARGUMENT_REQUIRED},
     {"reference", 'r', ARGUMENT_REQUIRED},
+    {"set", 's', ARGUMENT_REQUIRED},
     {"utc", 'u'},
     {"universal", 'u'},
     {"rfc-2822", 'R'},
     {"rfc-email", 'R'},
     {"iso-8601", 'I', ARGUMENT_OPTIONAL},
+    {"rfc-3339", '3', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"resolution", 'Q', ARGUMENT_LONG_ONLY},
     {null},
 };
 
+static bool date_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'I')
+        {
+                static const string_address iso[] = {
+                    "%Y-%m-%d",
+                    "%Y-%m-%dT%H:%M:%S%:z",
+                    "%Y-%m-%dT%H:%M:%S,%N%:z",
+                    "%Y-%m-%dT%H%:z",
+                    "%Y-%m-%dT%H:%M%:z",
+                };
+                b32 which = 0;
+
+                if (value)
+                {
+                        which = file_word_among((string_address) "date",
+                                                (string_address) "--iso-8601",
+                                                value, date_iso_words,
+                                                array_count(date_iso_words));
+                        if (which < 0)
+                                return false;
+                }
+
+                date_chosen_format = iso[which];
+        }
+        else if (letter == 'R')
+                date_chosen_format = (string_address) "%a, %d %b %Y %H:%M:%S %z";
+        else if (letter == '3')
+        {
+                static const string_address rfc[] = {
+                    "%Y-%m-%d",
+                    "%Y-%m-%d %H:%M:%S%:z",
+                    "%Y-%m-%d %H:%M:%S.%N%:z",
+                };
+                b32 which = file_word_among((string_address) "date",
+                                            (string_address) "--rfc-3339",
+                                            value ? value : (string_address) "",
+                                            date_rfc3339_words,
+                                            array_count(date_rfc3339_words));
+
+                if (which < 0)
+                        return false;
+
+                date_chosen_format = rfc[which];
+        }
+
+        return true;
+}
+
+static bool date_emit(string_address format, b64 when, positive nanoseconds)
+{
+        if (!date_shape(log, when, nanoseconds, format))
+                return string_report(log_error, false,
+                                     "date: formatted value is too large\n");
+
+        log("\n", 1);
+        return true;
+}
+
+static bool date_batch(string_address path, string_address format, b64 now)
+{
+        bipolar handle;
+        bool close_handle = false;
+
+        if (string_is(path, '-') && !string_get(path + 1))
+                handle = 0;
+        else
+        {
+                if (file_is_directory_through(path))
+                        return string_report(
+                            log_error, false, "date: %w: read error: %s\n",
+                            writer_terminal_name, path,
+                            file_reason(-ERROR_IS_DIRECTORY));
+
+                handle = system_open_at(AT_FDCWD, path, FILE_READ);
+                if (handle < 0)
+                        return string_report(log_error, false, "date: %w: %s\n",
+                                             writer_terminal_name, path,
+                                             file_reason(handle));
+                close_handle = true;
+        }
+
+        positive length = 0;
+        bool read_failed = false;
+        p8 address_to input = utility_arena_read_all(
+            (positive)handle, 4096, address_of length, address_of read_failed);
+
+        if (close_handle)
+                system_close(handle);
+
+        if (!input)
+        {
+                if (read_failed)
+                        string_format(log_error, "date: %w: read error\n",
+                                      writer_terminal_name, path);
+                return false;
+        }
+
+        bool ok = true;
+        positive at = 0;
+
+        while (at < length)
+        {
+                positive start = at;
+                b64 when;
+                positive ns = 0;
+
+                while (at < length && input[at] != '\n')
+                        at++;
+
+                p8 saved = input[at];
+                input[at] = end;
+
+                if (!file_moment_read_exact(input + start, now, address_of when,
+                                            address_of ns))
+                {
+                        string_format(log_error, "date: invalid date '%s'\n",
+                                      input + start);
+                        ok = false;
+                }
+                else if (!date_emit(format, when, ns))
+                        ok = false;
+
+                if (at < length)
+                {
+                        input[at] = saved;
+                        at++;
+                }
+        }
+
+        utility_arena.used = 0;
+        return ok;
+}
+
 static b32 file_date()
 {
+        date_chosen_format = null;
+
         positive count = (positive)program_argument_count();
         file_taking taking = {
             .program = (string_address) "date",
             .options = date_options,
+            .seen = date_option_seen,
         };
 
         if (!file_take(address_of taking))
                 return 1;
 
         positive index = taking.first;
-        string_address format = null;
+        string_address format = date_chosen_format;
         string_address given = file_option_value(address_of taking, 'd');
         string_address of_file = file_option_value(address_of taking, 'r');
-        string_address iso = null;
-        bool rfc = (taking.flags & FILE_FLAG('R')) != 0;
+        string_address batch = file_option_value(address_of taking, 'f');
+        string_address set_text = file_option_value(address_of taking, 's');
+        bool resolution = (taking.flags & FILE_FLAG('Q')) != 0;
+        bool set_date = (taking.flags & FILE_FLAG('s')) != 0;
+        positive sources = (given ? 1u : 0u) + (batch ? 1u : 0u) +
+                           (of_file ? 1u : 0u) + (resolution ? 1u : 0u);
         b64 when;
         positive nanoseconds = 0;
+        b32 status = 0;
 
-        if (taking.flags & FILE_FLAG('I'))
-        {
-                string_address precision = file_option_value(address_of taking, 'I');
+        if (sources > 1)
+                return string_report(
+                    log_error, 1,
+                    "date: the options to specify dates for printing are mutually exclusive\n"
+                    "Try 'date --help' for more information.\n");
 
-                if (!precision || string_is(precision, end) ||
-                    !string_compare(precision, "date"))
-                        iso = (string_address) "%Y-%m-%d";
-                else if (!string_compare(precision, "hours"))
-                        iso = (string_address) "%Y-%m-%dT%H+00:00";
-                else if (!string_compare(precision, "minutes"))
-                        iso = (string_address) "%Y-%m-%dT%H:%M+00:00";
-                else if (!string_compare(precision, "seconds"))
-                        iso = (string_address) "%Y-%m-%dT%H:%M:%S+00:00";
-                else if (!string_compare(precision, "ns"))
-                        iso = (string_address) "%Y-%m-%dT%H:%M:%S,%N+00:00";
-                else
-                        return string_report(log_error, 1,
-                                      "date: invalid argument '%s' for '--iso-8601'\n",
-                                      precision);
-        }
+        if (set_date && sources)
+                return string_report(
+                    log_error, 1,
+                    "date: the options to print and set the time may not be used together\n"
+                    "Try 'date --help' for more information.\n");
 
         if (index < count)
         {
                 string_address argument = program_argument((b32)index++);
 
                 if (!string_is(argument, '+'))
-                        return string_report(log_error, 1, "date: cannot set the date: %s\n",
-                                      argument);
+                {
+                        if (sources || set_date)
+                                return string_report(
+                                    log_error, 1,
+                                    "date: the argument '%s' lacks a leading '+';\n"
+                                    "when using an option to specify date(s), any non-option\n"
+                                    "argument must be a format string beginning with '+'\n"
+                                    "Try 'date --help' for more information.\n",
+                                    argument);
+
+                        return string_report(log_error, 1,
+                                             "date: cannot set the date: %s\n",
+                                             argument);
+                }
+
+                if (format)
+                        return string_report(
+                            log_error, 1,
+                            "date: multiple output formats specified\n");
 
                 format = argument + 1;
         }
@@ -32178,25 +32513,47 @@ static b32 file_date()
         if (index < count)
                 return string_report(log_error, 1, "date: too many operands\n");
 
+        if (!format)
+                format = resolution ? (string_address) "%s.%N"
+                                    : (string_address) "%a %b %e %H:%M:%S %Z %Y";
+
+        if (batch)
+        {
+                status = date_batch(batch, format, file_now()) ? 0 : 1;
+                log_flush();
+                return status;
+        }
+
         if (of_file)
         {
                 file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, of_file, 0, address_of facts);
+                bipolar looked = file_look_code(AT_FDCWD, of_file, 0,
+                                                address_of facts);
 
                 if (looked < 0)
-                {
-                        return string_report(log_error, 1, "date: %w: %s\n", writer_terminal_name, of_file,
-                                      file_reason(looked));
-                }
+                        return string_report(log_error, 1, "date: %w: %s\n",
+                                             writer_terminal_name, of_file,
+                                             file_reason(looked));
 
                 when = (b64)facts.modified.seconds;
                 nanoseconds = facts.modified.nanoseconds;
         }
-        else if (given)
+        else if (resolution)
         {
-                if (!file_moment_read_exact(given, file_now(), address_of when,
+                p64 stamp[2] = {0, 0};
+
+                system_call_2(syscall(clock_getres), 0, (positive)stamp);
+                when = (b64)stamp[0];
+                nanoseconds = (positive)stamp[1];
+        }
+        else if (given || set_text)
+        {
+                string_address text = set_text ? set_text : given;
+
+                if (!file_moment_read_exact(text, file_now(), address_of when,
                                             address_of nanoseconds))
-                        return string_report(log_error, 1, "date: invalid date '%s'\n", given);
+                        return string_report(log_error, 1,
+                                             "date: invalid date '%s'\n", text);
         }
         else
         {
@@ -32207,18 +32564,30 @@ static b32 file_date()
                 nanoseconds = (positive)wall[1];
         }
 
-        if (!format)
-                format = iso   ? iso
-                         : rfc ? (string_address) "%a, %d %b %Y %H:%M:%S %z"
-                               : (string_address) "%a %b %e %H:%M:%S %Z %Y";
+        if (set_date)
+        {
+                p64 tv[2];
 
-        if (!date_shape(log, when, nanoseconds, format))
-                return string_report(log_error, 1, "date: formatted value is too large\n");
+                tv[0] = when;
+                tv[1] = nanoseconds / 1000;
 
-        log("\n", 1);
+                bipolar set = (bipolar)system_call_2(syscall(settimeofday),
+                                                     (positive)tv, 0);
+
+                if (set < 0)
+                {
+                        string_format(log_error, "date: cannot set date: %s\n",
+                                      file_reason(set));
+                        status = 1;
+                }
+        }
+
+        if (!date_emit(format, when, nanoseconds))
+                return 1;
+
         log_flush();
 
-        return 0;
+        return status;
 }
 
 // xargs -----------------------------------------------------------
