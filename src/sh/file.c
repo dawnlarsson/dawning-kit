@@ -10335,6 +10335,28 @@ static b32 find_parse_primary()
                 }
                 if (node->comparison == '+')
                 {
+                        positive braces = 0;
+
+                        for (b32 at = (b32)node->number; at < (b32)find_at; at++)
+                        {
+                                string_address arg = program_argument(at);
+
+                                if (find_is(arg, "{}"))
+                                        braces++;
+                                else if (string_find(arg, (string_address) "{}"))
+                                {
+                                        log_error("find: In -exec ... {} + the {} must appear by itself\n",
+                                                  0);
+                                        goto bad;
+                                }
+                        }
+                        if (braces > 1)
+                        {
+                                log_error("find: Only one instance of {} is supported with -exec ... +\n",
+                                          0);
+                                goto bad;
+                        }
+
                         node->extra--;
                         if (!array_store_reserve(
                                 find_batches, find_batch_room, find_batch_have,
@@ -15217,6 +15239,12 @@ static b32 file_chmod()
 // first operand names only a group.
 static bipolar chown_user = -1;
 static bipolar chown_group = -1;
+static bool chown_groups_only;
+
+static bool chown_group_words(void)
+{
+        return chown_groups_only || (chown_user < 0 && chown_group >= 0);
+}
 static b32 chown_status;
 static positive chown_flags;
 static bool chown_loud;
@@ -15226,7 +15254,6 @@ typedef struct { p8 dereference, traverse, loudness; } chown_selection;
 _Static_assert(sizeof(chown_selection) <= 16, "selection mask covers every field");
 static chown_selection chown_selected;
 static string_address chown_program;
-static bool chown_groups_only;
 //      The spec exactly as it was written, which is what the reference puts
 //      after "to" when it says what it could not do -- the name it was given
 //      and not the name that number happens to have in the database.
@@ -15244,7 +15271,7 @@ static bipolar chown_from_group = -1;
 // only a user was named, and user:group when a group was.
 static fn chown_who(positive user, positive group, p8 address_to into)
 {
-        if (chown_groups_only)
+        if (chown_group_words())
         {
                 file_account_label(group, true, true, into);
                 return;
@@ -15282,7 +15309,7 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
 
                 chown_who(was->owner, was->group, who);
                 string_format(log, "%s%w' retained as %s\n",
-                              chown_groups_only ? (string_address)"group of '" : (string_address)"ownership of '",
+                              chown_group_words() ? (string_address)"group of '" : (string_address)"ownership of '",
                               writer_terminal_quoted_name, shown, who);
                 return;
         }
@@ -15294,7 +15321,7 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
                   chown_group < 0 ? was->group : (positive)chown_group, who);
 
         string_format(log, "%s%w' from %s to %s\n",
-                      chown_groups_only ? (string_address)"changed group of '" : (string_address)"changed ownership of '",
+                      chown_group_words() ? (string_address)"changed group of '" : (string_address)"changed ownership of '",
                       writer_terminal_quoted_name, shown, before, who);
 }
 
@@ -15444,7 +15471,7 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
                 if (chown_loud)
                 {
                         string_format(log, "%s%w' to %s\n",
-                                      chown_groups_only ? (string_address)"failed to change group of '" : (string_address) "failed to change ownership of '",
+                                      chown_group_words() ? (string_address)"failed to change group of '" : (string_address) "failed to change ownership of '",
                                       writer_terminal_quoted_name, shown, chown_spec);
                 }
 
@@ -15469,7 +15496,7 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
 
                         chown_who(out->owner, out->group, before);
                         string_format(log, "%s%w' from %s to %s\n",
-                                      chown_groups_only ? (string_address) "failed to change group of '" : (string_address) "failed to change ownership of '",
+                                      chown_group_words() ? (string_address) "failed to change group of '" : (string_address) "failed to change ownership of '",
                                       writer_terminal_quoted_name, shown, before,
                                       chown_spec);
                 }
@@ -15477,7 +15504,7 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
                 if (!chown_quiet)
                 {
                         string_format(log_error,
-                                      chown_groups_only
+                                      chown_group_words()
                                           ? "%s: changing group of '"
                                           : "%s: changing ownership of '",
                                       chown_program);
@@ -15873,7 +15900,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
         chown_from_user = -1;
         chown_from_group = -1;
         chown_status = 0;
-        chown_selected = (chown_selection){.dereference = 'd'};
+        chown_selected = (chown_selection){};
         chown_program = program;
         chown_groups_only = groups_only;
         chown_spec = (string_address) "";
@@ -15898,9 +15925,9 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         //      A recursive walk that was told to follow links has to be
         //      told which ones, and the last of -H, -L and -P is the one
-        //      that answers: -P, or none at all, leaves the question open
-        //      and the reference refuses the pair.
-        if ((taking.flags & FILE_FLAG('R')) && (taking.flags & FILE_FLAG('d')) &&
+        //      that answers. GNU refuses only when --dereference is still
+        //      the last deref word; the default follow is not that word.
+        if ((taking.flags & FILE_FLAG('R')) && chown_selected.dereference == 'd' &&
             chown_selected.traverse != 'H' && chown_selected.traverse != 'L')
                 return string_report(log_error, 1,
                                      "%s: -R --dereference requires either -H or -L\n",
@@ -16454,15 +16481,24 @@ static b32 file_ln()
 
         if (into)
         {
-                file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, into, AT_SYMLINK_NOFOLLOW,
-                                                address_of facts);
+                /* GNU ln.c getopt stats -t following; openat NOFOLLOW is
+                   only --no-dereference. A second look is paid only for -n. */
+                if (!through)
+                {
+                        file_facts facts;
+                        bipolar looked = file_look_code(AT_FDCWD, into,
+                                                        AT_SYMLINK_NOFOLLOW,
+                                                        address_of facts);
 
-                if (looked < 0 || (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
-                        return string_report(log_error, 1, "ln: target '%w': %s\n",
-                                      writer_terminal_quoted_name, into,
-                                      file_reason(looked < 0 ? looked
-                                                             : -ERROR_NOT_DIRECTORY));
+                        if (looked < 0 ||
+                            (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                                return string_report(
+                                    log_error, 1, "ln: target '%w': %s\n",
+                                    writer_terminal_quoted_name, into,
+                                    file_reason(looked < 0
+                                                    ? looked
+                                                    : -ERROR_NOT_DIRECTORY));
+                }
                 directory = true;
         }
         else
@@ -20246,21 +20282,21 @@ static bool csplit_line_offset(csplit_state address_to state,
         return true;
 }
 
-static bool csplit_parse_regex(string_address word,
-                               csplit_pattern address_to pattern)
+static bipolar csplit_parse_regex(string_address word,
+                                  csplit_pattern address_to pattern)
 {
         p8 delimiter = string_get(word);
         positive source = 1;
         positive used = 0;
 
         if (delimiter != '/' && delimiter != '%')
-                return false;
+                return 0;
 
         while (string_get(word + source) &&
                string_get(word + source) != delimiter)
         {
                 if (used + 2 >= sizeof(pattern->expression))
-                        return false;
+                        return 0;
 
                 p8 byte = string_get(word + source++);
                 pattern->expression[used++] = byte;
@@ -20270,7 +20306,7 @@ static bool csplit_parse_regex(string_address word,
         }
 
         if (!string_is(word + source, delimiter) || !used)
-                return false;
+                return 0;
 
         pattern->expression[used] = end;
         pattern->kind = CSPLIT_REGEX;
@@ -20282,9 +20318,9 @@ static bool csplit_parse_regex(string_address word,
         if (!string_get(offset))
                 pattern->offset = 0;
         else if (!file_signed_decimal(offset, address_of pattern->offset))
-                return false;
+                return -1;
 
-        return true;
+        return 1;
 }
 
 static bool csplit_parse_line(string_address word,
@@ -20342,6 +20378,27 @@ static b32 csplit_execute_line(csplit_state address_to state,
         }
 
         positive boundary;
+
+        /* GNU last_line_to_save is absolute. A later equal or already-passed
+           line is a warning-only empty slice, not `'N': match not found`. */
+        if (target < state->cursor_line)
+        {
+                if (!csplit_section(state, state->cursor, state->cursor, true))
+                        return CSPLIT_FAILED;
+                pattern->line_target = target;
+                if (state->suppress_matched)
+                {
+                        p8 address_to newline = memory_first_of(
+                            state->input + state->cursor, '\n',
+                            state->length - state->cursor);
+
+                        state->cursor = newline
+                                            ? (positive)(newline - state->input) + 1
+                                            : state->length;
+                        state->cursor_line++;
+                }
+                return CSPLIT_EXECUTED;
+        }
 
         if (!csplit_line_offset(state, target, false, address_of boundary))
                 return CSPLIT_NOT_FOUND;
@@ -20648,10 +20705,17 @@ static b32 file_csplit()
 
                         if (string_is(word, '/') || string_is(word, '%'))
                         {
-                                if (!csplit_parse_regex(word, address_of pattern))
+                                bipolar parsed = csplit_parse_regex(
+                                    word, address_of pattern);
+
+                                if (parsed <= 0)
                                 {
-                                        string_format(log_error, "csplit: '%w': invalid pattern\n",
-                                                      writer_terminal_quoted_name, word);
+                                        string_format(
+                                            log_error,
+                                            parsed < 0
+                                                ? "csplit: '%w': integer expected after delimiter\n"
+                                                : "csplit: '%w': invalid pattern\n",
+                                            writer_terminal_quoted_name, word);
                                         failed = true;
                                         break;
                                 }
@@ -23882,6 +23946,7 @@ static string_address file_into_seen;
 static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
+static bool cp_reflink_always;
 static b32 cp_status;
 static bool cp_destination_decided;
 static bool cp_destination_existed;
@@ -24412,11 +24477,14 @@ static bool file_overwrite_allowed(string_address program, string_address shown,
         if (!exists)
                 return true;
 
+        /* GNU UPDATE_OLDER skips only !S_ISDIR(src). A directory source
+           is still copied even when the destination is newer. */
         if (never ||
-            (newer && (facts->modified.seconds < there->modified.seconds ||
-                       (facts->modified.seconds == there->modified.seconds &&
-                        facts->modified.nanoseconds <=
-                            there->modified.nanoseconds))))
+            (newer && (facts->mode & MODE_FORMAT) != MODE_DIRECTORY &&
+             (facts->modified.seconds < there->modified.seconds ||
+              (facts->modified.seconds == there->modified.seconds &&
+               facts->modified.nanoseconds <=
+                   there->modified.nanoseconds))))
         {
                 if (fail_skip)
                 {
@@ -24504,8 +24572,10 @@ static bool cp_linked(bipolar source_directory, string_address source,
 
         file_facts address_to approved =
             destination_exists ? destination_facts : null;
-        bool no_clobber = cp_never_clobber ||
-                          (!cp_force && !cp_replace && !approved);
+        /* GNU link_or_copy.c: an existing dest is File exists unless
+           -f or --remove-destination. -i may have approved a later
+           unlink; -l/-s still refuse unless force/replace. */
+        bool no_clobber = cp_never_clobber || (!cp_force && !cp_replace);
         bipolar done = file_stage_publish_protected_at(
             address_of protected, destination_directory,
             destination, made_handle, 0, no_clobber, approved, 0);
@@ -25661,6 +25731,10 @@ static bool cp_same_file_ok(bipolar source_directory, string_address source,
 
         if (file_backup_kind && !same_name)
                 return true;
+        /* GNU same_file_ok: a symbolic copy onto an existing dest link
+           proceeds, then linkat fails with EEXIST. */
+        if (cp_symbolic && destination_is_link)
+                return true;
         if (cp_replace)
         {
                 if (destination_is_link)
@@ -25995,6 +26069,16 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
         if (kind != MODE_DIRECTORY)
         {
+                /* This image has no FICLONE. GNU --reflink=always fails
+                   closed; auto/never still copy. */
+                if (!moving && cp_reflink_always && kind == MODE_FILE)
+                        return string_report(
+                            log_error, false,
+                            "cp: failed to clone '%w' from '%w': %s\n",
+                            writer_terminal_quoted_name, destination_shown,
+                            writer_terminal_quoted_name, source_shown,
+                            file_reason(-ERROR_NOT_SUPPORTED));
+
                 positive source_flags = FILE_READ |
                                         (follow ? 0 : O_NOFOLLOW);
                 if (kind == MODE_FILE)
@@ -26401,8 +26485,12 @@ static fn cp_pair(string_address source, string_address destination)
             source_flags);
         if (source_pinned < 0)
         {
-                string_format(log_error, "cp: cannot stat '%w': %s\n", writer_terminal_quoted_name,
-                              source, file_reason(source_pinned));
+                string_format(log_error,
+                              kind == MODE_DIRECTORY
+                                  ? "cp: cannot access '%w': %s\n"
+                                  : "cp: cannot stat '%w': %s\n",
+                              writer_terminal_quoted_name, source,
+                              file_reason(source_pinned));
                 system_close(source_directory);
                 system_close(destination_directory);
                 cp_status = 1;
@@ -26559,8 +26647,13 @@ static bool file_backup_seen(string_address program, p8 letter,
 {
         if (letter != 'B' || !value)
                 return true;
-        if (string_get(value))
-                file_backup_control_named = value;
+        /* GNU empty --backup= is VERSION_CONTROL, not an invalid type. */
+        if (!string_get(value))
+        {
+                file_backup_control_named = null;
+                return true;
+        }
+        file_backup_control_named = value;
         return file_backup_control(program, value);
 }
 
@@ -26706,6 +26799,7 @@ static b32 file_cp()
         positive count = (positive)program_argument_count();
         cp_status = 0;
         cp_destination_decided = false;
+        cp_reflink_always = false;
         cp_selected = (cp_selection){};
 
         file_taking taking = {
@@ -26819,6 +26913,7 @@ static b32 file_cp()
                         return string_report(log_error, 1,
                                              "Try 'cp --help' for more information.\n");
                 }
+                cp_reflink_always = reflink == 'A';
         }
 
         cp_attributes_only = (taking.flags & FILE_FLAG('A')) != 0;
@@ -27221,15 +27316,24 @@ static fn install_pair(string_address source, string_address destination)
         if (destination_exists &&
             (to.mode & MODE_FORMAT) == MODE_DIRECTORY)
         {
-                if (install_no_target)
+                /* GNU copy.c: overwrite-kinds only when backup_type is
+                   no_backups. With --backup, -T still fails EISDIR, and
+                   -v writes the arrow before that. */
+                if (install_no_target && !file_backup_kind)
                         (void)file_overwrite_kinds_ok(
                             (string_address) "install", source, destination,
                             from.mode, to.mode);
                 else
+                {
+                        if (install_no_target && install_loud)
+                                file_backup_told(source, destination,
+                                                 (string_address) "'",
+                                                 (string_address) "' -> '");
                         string_format(log_error,
                                       "install: cannot create regular file '%w': %s\n",
                                       writer_terminal_quoted_name, destination,
                                       file_reason(-ERROR_IS_DIRECTORY));
+                }
                 system_close(destination_directory);
                 system_close(source_handle);
                 install_status = 1;
@@ -27562,11 +27666,19 @@ static fn mv_one(string_address source, string_address destination)
                         address_of through) &&
               file_same_identity(address_of through, address_of to))))
         {
-                string_format(log_error, "mv: '%w' and '%w' are the same file\n",
-                              writer_terminal_quoted_name, source, writer_terminal_quoted_name,
-                              destination);
-                mv_status = 1;
-                goto finished;
+                /* GNU same_file_ok: -b of a distinct dirent proceeds. */
+                if (!(file_backup_kind &&
+                      !cp_same_dirent(source_directory, source_leaf,
+                                      destination_directory,
+                                      destination_leaf)))
+                {
+                        string_format(log_error, "mv: '%w' and '%w' are the same file\n",
+                                      writer_terminal_quoted_name, source,
+                                      writer_terminal_quoted_name,
+                                      destination);
+                        mv_status = 1;
+                        goto finished;
+                }
         }
         if (!file_overwrite_allowed((string_address)"mv", destination,
                                     destination_exists, mv_never_clobber,
@@ -27795,8 +27907,15 @@ static fn mv_one(string_address source, string_address destination)
                 }
         }
 
-        string_format(log_error, "mv: cannot move '%w' to '%w': %s\n", writer_terminal_quoted_name,
-                      source, writer_terminal_quoted_name, destination, file_reason(done));
+        if (done == -ERROR_NOT_EMPTY)
+                string_format(log_error, "mv: cannot overwrite '%w': %s\n",
+                              writer_terminal_quoted_name, destination,
+                              file_reason(done));
+        else
+                string_format(log_error, "mv: cannot move '%w' to '%w': %s\n",
+                              writer_terminal_quoted_name, source,
+                              writer_terminal_quoted_name, destination,
+                              file_reason(done));
         mv_status = 1;
 
 finished:
@@ -27960,7 +28079,7 @@ static string_address rm_prompt(bipolar directory, string_address name,
                                 file_facts address_to facts, bool descend)
 {
         bool locked = (facts->mode & MODE_FORMAT) == MODE_LINK
-                          ? (facts->mode & 0222) == 0
+                          ? false
                           : system_access_at(directory, name, 2) != 0;
 
         if (descend)
@@ -28172,7 +28291,9 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                         bipolar emptiness = file_directory_empty_same(
                             directory, name, address_of facts, O_NOFOLLOW);
 
-                        empty_directory = emptiness > 0;
+                        /* GNU FTS_DNR: unreadable dir is PA_REMOVE_DIR, not
+                           descend. Ask to remove and skip the walk. */
+                        empty_directory = emptiness > 0 || emptiness < 0;
                         if (empty_directory)
                         {
                                 if (!file_ask((string_address) "rm",
@@ -29361,7 +29482,10 @@ static b32 file_rm()
                         // -f forgives a name that is not there and nothing
                         // else: a name that cannot be looked at is reported
                         // with the kernel's reason, as the reference rm does.
-                        if (!rm_force || looked != -ERROR_NO_ENTRY)
+                        if (!rm_force ||
+                            (looked != -ERROR_NO_ENTRY &&
+                             looked != -ERROR_NOT_DIRECTORY &&
+                             looked != -ERROR_INVALID))
                         {
                                 string_format(log_error, "rm: cannot remove '%w': %s\n",
                                               writer_terminal_quoted_name, path,
@@ -29394,16 +29518,31 @@ static b32 file_rm()
                         p8 above[FILE_PATH_MAX];
                         file_facts parent;
 
-                        if (file_path_join(above, path, "..") &&
-                            file_look_at(above, address_of parent) &&
-                            (parent.device_major != facts.device_major ||
-                             parent.device_minor != facts.device_minor))
+                        if (file_path_join(above, path, ".."))
                         {
-                                string_format(log_error, "rm: skipping '%w', since it's on a different device\n",
-                                              writer_terminal_quoted_name, path);
-                                log_error("rm: and --preserve-root=all is in effect\n", 0);
-                                rm_status = 1;
-                                continue;
+                                bipolar looked = file_look_code(
+                                    AT_FDCWD, above, AT_SYMLINK_NOFOLLOW,
+                                    address_of parent);
+
+                                if (looked < 0)
+                                {
+                                        string_format(
+                                            log_error,
+                                            "rm: failed to stat '%w': skipping '%w'\n",
+                                            writer_terminal_quoted_name, above,
+                                            writer_terminal_quoted_name, path);
+                                        rm_status = 1;
+                                        continue;
+                                }
+                                if (parent.device_major != facts.device_major ||
+                                    parent.device_minor != facts.device_minor)
+                                {
+                                        string_format(log_error, "rm: skipping '%w', since it's on a different device\n",
+                                                      writer_terminal_quoted_name, path);
+                                        log_error("rm: and --preserve-root=all is in effect\n", 0);
+                                        rm_status = 1;
+                                        continue;
+                                }
                         }
                 }
 
@@ -33690,18 +33829,20 @@ static b32 file_kill()
                 if (print_only)
                 {
                         file_line(word);
+                        kill_ok++;
                         continue;
                 }
 
                 //      -r looks first and says nothing: a living process
-                //      with no handler for this signal is left alone.
-                //      A pid that is not there still fails; util-linux does
-                //      not count a handler-skip as an error.
+                //      with no handler, and a pid that is not there, are
+                //      skipped without a diagnostic. util-linux does not
+                //      count a skip as an error; if nothing was signalled,
+                //      the exit is still 1.
                 if (needs_handler)
                 {
                         p8 text[8192];
 
-                        if (kill_process_status(word, text, sizeof(text)) >= 0 &&
+                        if (kill_process_status(word, text, sizeof(text)) < 0 ||
                             !kill_handled(word, number))
                                 continue;
                 }
@@ -33747,7 +33888,7 @@ static b32 file_kill()
         log_flush();
 
         if (!kill_err)
-                return 0;
+                return kill_ok ? 0 : 1;
         return kill_ok ? 64 : 1;
 }
 
@@ -34077,7 +34218,7 @@ static b32 file_rename()
                                                 string_format(log, "Skipping existing link: `%w' -> `%w'\n",
                                                               writer_terminal_name, source,
                                                               writer_terminal_name, target);
-                                        if (verbose)
+                                        if (verbose && no_act)
                                                 string_format(log, "%w: `%w' -> `%w'\n", writer_terminal_name,
                                                               source, writer_terminal_quoted_name, target,
                                                               writer_terminal_quoted_name, destination);
@@ -34144,7 +34285,7 @@ static b32 file_rename()
                                 if (no_overwrite)
                                         string_format(log, "Skipping existing file: `%w'\n",
                                                       writer_terminal_name, destination);
-                                if (verbose)
+                                if (verbose && no_act)
                                         string_format(log, "`%w' -> `%w'\n",
                                                       writer_terminal_quoted_name, source,
                                                       writer_terminal_quoted_name, destination);
@@ -34203,7 +34344,7 @@ static b32 file_rename()
                                 if (no_overwrite)
                                         string_format(log, "Skipping existing file: `%w'\n",
                                                       writer_terminal_name, destination);
-                                if (verbose)
+                                if (verbose && no_act)
                                         string_format(log, "`%w' -> `%w'\n", writer_terminal_quoted_name, source,
                                                       writer_terminal_quoted_name, destination);
                                 system_close(source_handle);
@@ -34517,30 +34658,19 @@ static b32 file_cal()
         if (file_meta(address_of taking, "[-1|-3|-y|-Y] [-n MONTHS] [-Ssmj] [[MONTH] YEAR]", log_error))
                 return 0;
         {
-                static const argument_exclusive_pair cal_months_twelve[] = {
-                    {'n', (string_address)"months"},
+                static const argument_exclusive_pair cal_year_months_twelve[] = {
                     {'Y', (string_address)"twelve"},
+                    {'n', (string_address)"months"},
+                    {'y', (string_address)"year"},
                 };
 
                 if (argument_exclusive_refuse(
                         log_error, (string_address)"cal",
                         (positive)program_argument_count(),
                         program_argument_list(), cal_options, true,
-                        cal_months_twelve, array_count(cal_months_twelve)))
+                        cal_year_months_twelve,
+                        array_count(cal_year_months_twelve)))
                         return 1;
-                {
-                        static const argument_exclusive_pair cal_year_months[] = {
-                            {'y', (string_address)"year"},
-                            {'n', (string_address)"months"},
-                        };
-
-                        if (argument_exclusive_refuse(
-                                log_error, (string_address)"cal",
-                                (positive)program_argument_count(),
-                                program_argument_list(), cal_options, true,
-                                cal_year_months, array_count(cal_year_months)))
-                                return 1;
-                }
                 {
                         static const argument_exclusive_pair cal_three_span[] = {
                             {'3', (string_address)"three"},
@@ -35905,9 +36035,9 @@ static fn xargs_item_done()
 
         if (xargs_replace)
         {
-                if (!xargs_replaced(xargs_item))
+                if (!string_get(xargs_replace) || !xargs_replaced(xargs_item))
                 {
-                        log_error("xargs: argument list too long\n", 0);
+                        log_error("xargs: command too long\n", 0);
                         xargs_answer_raise(1);
                         xargs_done = true;
                         return;
@@ -36375,7 +36505,17 @@ static b32 file_xargs()
                 goto xargs_finished;
         }
 
-        xargs_item_room = XARGS_BATCH_BYTES + 1;
+        /* GNU read_string: the item cap is -s minus the command prefix.
+           Keep the 131072 allocation; only the put bound tightens. */
+        {
+                positive remain = xargs_most_bytes > xargs_prefix_bytes
+                                      ? xargs_most_bytes - xargs_prefix_bytes
+                                      : 1;
+
+                if (remain > XARGS_BATCH_BYTES)
+                        remain = XARGS_BATCH_BYTES;
+                xargs_item_room = remain + 1;
+        }
         xargs_mark = utility_arena.used;
 
         for (;;)
