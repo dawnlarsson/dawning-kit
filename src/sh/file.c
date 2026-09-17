@@ -5042,9 +5042,10 @@ static bipolar file_created_directory_mode_at(
 }
 
 /* Make a directory path while every namespace operation is relative to the
-   directory descriptor obtained for the preceding component.  O_NOFOLLOW
-   prevents an intermediate symbolic link from redirecting the walk.  The
-   returned O_PATH descriptor is the exact final directory and remains owned
+   directory descriptor obtained for the preceding component.  Existing
+   directory symlinks are followed, the way GNU mkdir -p and install -D
+   follow them; O_NOFOLLOW is only on a name this walk just created.
+   The returned O_PATH descriptor is the final directory and remains owned
    by the caller; install uses it for ownership and mode changes.
 
    Parent modes and explicit leaf modes are installed with a cleared umask,
@@ -5062,8 +5063,7 @@ static bipolar file_make_directories_open(
         p8 work[FILE_PATH_MAX];
         p8 component[SYSTEM_PATH_LEAF_ROOM];
         positive length = string_length(path);
-        positive flags = O_PATH | O_DIRECTORY | O_CLOEXEC |
-                         (parents ? O_NOFOLLOW : 0);
+        positive flags = O_PATH | O_DIRECTORY | O_CLOEXEC;
 
         if (created)
                 address_to created = false;
@@ -5140,32 +5140,17 @@ static bipolar file_make_directories_open(
                                 /* The last component preserves mkdir's
                                    EEXIST answer for every non-directory
                                    entry, including a symbolic link.
-                                   Before it, the open's own errno is the
-                                   reason: ENOENT through a dangling link
-                                   and ELOOP through a loop when the open
-                                   followed it.  -p never follows a link,
-                                   so its reason comes from a look through
-                                   it, as GNU's walk reports it: EEXIST
-                                   when it dangles, the look's errno when
-                                   that fails otherwise, and not a
-                                   directory even when it reaches one. */
+                                   An intermediate dangling link is also
+                                   EEXIST: the name exists, so GNU does
+                                   not mkdir through it. A dir-symlink
+                                   never reaches here; openat followed it. */
                                 if (last && !leaf_ancestor)
                                         next = -ERROR_EXISTS;
                                 else if (parents &&
                                          (entry.mode & MODE_FORMAT) ==
-                                             MODE_LINK)
-                                {
-                                        file_facts through;
-                                        bipolar resolved = file_look_code(
-                                            held, component, 0,
-                                            address_of through);
-
-                                        next = resolved == -ERROR_NO_ENTRY
-                                                   ? -ERROR_EXISTS
-                                               : resolved < 0
-                                                   ? resolved
-                                                   : -ERROR_NOT_DIRECTORY;
-                                }
+                                             MODE_LINK &&
+                                         next == -ERROR_NO_ENTRY)
+                                        next = -ERROR_EXISTS;
                         }
                         else if (found != -ERROR_NO_ENTRY)
                         {
@@ -5231,17 +5216,6 @@ static bipolar file_make_directories_open(
                                 }
                         }
                 }
-                else if (parents)
-                {
-                        bipolar same = system_path_same_opened_at(
-                            next, held, component);
-                        if (same < 0)
-                        {
-                                system_close(next);
-                                next = same;
-                        }
-                }
-
                 /* A leaf walked as an ancestor is changed into by GNU's
                    install -D, so one that cannot be searched fails here. */
                 if (next >= 0 && last && leaf_ancestor && !made_here)
@@ -15481,20 +15455,27 @@ static bool ln_make(string_address target, string_address name)
         if (source_handle >= 0)
                 system_close(source_handle);
 
-        //      A hard link that could not be made names both ends; a
-        //      symbolic one names only the name it was to be given, which is
-        //      how the reference writes each of them.
+        //      A hard link that could not be made names only the destination
+        //      when the kernel says the name is already there, the quota is
+        //      full, the filesystem is full or read-only; EMLINK names the
+        //      source; anything else names both ends. A symbolic one names
+        //      only the name it was to be given.
         if (done < 0)
         {
                 if (ln_symbolic)
                         string_format(log_error, "ln: failed to create symbolic link '%w': %s\n",
                                       writer_terminal_quoted_name, name, file_reason(done));
+                else if (done == -ERROR_TOO_MANY_LINKS)
+                        string_format(log_error, "ln: failed to create hard link to '%w': %s\n",
+                                      writer_terminal_quoted_name, target, file_reason(done));
+                else if (done == -ERROR_EXISTS || done == -ERROR_OVER_QUOTA ||
+                         done == -ERROR_NO_SPACE || done == -ERROR_READ_ONLY)
+                        string_format(log_error, "ln: failed to create hard link '%w': %s\n",
+                                      writer_terminal_quoted_name, name, file_reason(done));
                 else
-                {
                         string_format(log_error, "ln: failed to create hard link '%w' => '%w': %s\n",
                                       writer_terminal_quoted_name, name,
                                       writer_terminal_quoted_name, target, file_reason(done));
-                }
                 return false;
         }
 
@@ -16886,8 +16867,8 @@ static const argument_option realpath_options[] = {
     {"quiet", 'q'},
     {"relative-to", 'R', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
     {"relative-base", 'B', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
-    {"strip", 's'},
-    {"no-symlinks", 's'},
+    {"strip", 's', 0, ARGUMENT_SELECT(realpath_selection, walk)},
+    {"no-symlinks", 's', 0, ARGUMENT_SELECT(realpath_selection, walk)},
     {"zero", 'z'},
     {null},
 };
@@ -17087,7 +17068,7 @@ static b32 file_realpath()
                 return string_report(log_error, 1, "%s: missing operand\n", (string_address) "realpath");
 
         bool allow_missing = realpath_selected.missing == 'm';
-        bool written_name = (taking.flags & FILE_FLAG('s')) != 0;
+        bool written_name = realpath_selected.walk == 's';
         bool logical = realpath_selected.walk == 'L';
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool zero = (taking.flags & FILE_FLAG('z')) != 0;
@@ -17163,58 +17144,16 @@ static b32 file_realpath()
                 string_address path = program_argument((b32)first++);
                 p8 answer[FILE_PATH_MAX];
                 p8 scratch[FILE_PATH_MAX];
-                string_address source = path;
-                string_address reason = (string_address) "Invalid argument";
+                string_address reason = null;
 
-                if (!string_get(path))
+                if (!realpath_named(path, policy, logical, written_name,
+                                    allow_missing, need_exist, answer,
+                                    address_of reason))
                 {
-                        reason = (string_address) "No such file or directory";
-                        goto failed;
-                }
-
-                /*
-                        -L takes the .. out of the name before any link in it
-                        is followed, so link/.. is where the name was written
-                        and not where the link went. That is two passes: the
-                        lexical one, and then the real one over what it left.
-                */
-                if (logical && !written_name)
-                {
-                        if (!file_resolve_as(path, scratch, false, policy))
-                                goto failed;
-                        source = scratch;
-                }
-
-                if (!file_resolve_as(source, answer, !written_name, policy))
-                        goto failed;
-
-                /* -s preserves the spelling of links, but it does not hide
-                   kernel traversal failures.  Default -E alone tolerates
-                   ENOENT; -e still requires the complete referent. */
-                if (written_name && !allow_missing)
-                {
-                        file_facts facts;
-                        bipolar looked = file_look_code(AT_FDCWD, path, 0,
-                                                        address_of facts);
-
-                        if (looked < 0 &&
-                            (realpath_selected.missing == 'e' ||
-                             looked != -ERROR_NO_ENTRY))
-                        {
-                                reason = file_reason(looked);
-                                goto failed;
-                        }
-                }
-
-                path_head_copy(scratch, FILE_PATH_MAX, answer);
-
-                if (!written_name &&
-                    ((!allow_missing && !file_is_directory_through(scratch)) ||
-                     (realpath_selected.missing == 'e' &&
-                      !file_exists(AT_FDCWD, answer))))
-                {
-                        reason = (string_address) "No such file or directory";
-                        goto failed;
+                        if (!quiet)
+                                realpath_say(path, reason);
+                        status = 1;
+                        continue;
                 }
 
                 /* GNU prints a relative path only when --relative-to is live
@@ -17226,12 +17165,6 @@ static b32 file_realpath()
                         file_written(scratch, zero);
                 else
                         file_written(answer, zero);
-                continue;
-
-failed:
-                if (!quiet)
-                        realpath_say(path, reason);
-                status = 1;
         }
 
         log_flush();
@@ -22940,7 +22873,7 @@ static bool file_backup_taken(file_taking address_to taking, string_address prog
                         file_backup_suffix = (string_address) "~";
         }
 
-        if (taking->flags & FILE_FLAG('b'))
+        if (taking->flags & (FILE_FLAG('b') | FILE_FLAG('S')))
                 file_backup_kind = 'e';
 
         if (taking->flags & FILE_FLAG('B'))
@@ -25361,6 +25294,14 @@ static b32 file_cp()
         if (!file_backup_taken(address_of taking, (string_address) "cp"))
                 return 1;
 
+        if (cp_selected.collision == 'n')
+                cp_update_policy = 'n';
+
+        if (file_backup_kind &&
+            (cp_update_policy == 'n' || cp_update_policy == 'F'))
+                return string_report(log_error, 1,
+                                     "cp: --backup is mutually exclusive with -n or --update=none-fail\n");
+
         if (!file_targets_told((string_address) "cp", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
 
@@ -26323,6 +26264,15 @@ static b32 file_mv()
         if (!file_backup_taken(address_of taking, (string_address) "mv"))
                 return 1;
 
+        if (mv_collision_option == 'n')
+                mv_update_policy = 'n';
+
+        if (file_backup_kind &&
+            ((taking.flags & FILE_FLAG('X')) || mv_update_policy == 'n' ||
+             mv_update_policy == 'F'))
+                return string_report(log_error, 1,
+                                     "mv: cannot combine --backup with --exchange, -n, or --update=none-fail\n");
+
         if (!file_targets_told((string_address) "mv", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
 
@@ -26340,11 +26290,6 @@ static b32 file_mv()
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
         mv_exchange = (taking.flags & FILE_FLAG('X')) != 0;
         mv_no_copy = (taking.flags & FILE_FLAG('c')) != 0;
-
-        if (mv_exchange && file_backup_kind)
-                return string_report(
-                    log_error, 1,
-                    "mv: --exchange and --backup cannot be combined\n");
 
         string_address into = file_option_value(address_of taking, 't');
 
@@ -26635,7 +26580,9 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
         if (gone < 0)
         {
-                if (!rm_force || gone != -ERROR_NO_ENTRY)
+                if (!rm_force || (gone != -ERROR_NO_ENTRY &&
+                                  gone != -ERROR_NOT_DIRECTORY &&
+                                  gone != -ERROR_INVALID))
                 {
                         string_format(log_error, "rm: cannot remove '%w': %s\n",
                                       writer_terminal_quoted_name, shown, file_reason(gone));
@@ -27712,7 +27659,7 @@ static b32 file_rm()
                 file_facts facts;
                 bipolar looked;
 
-                if (rm_dot_operand(path))
+                if (rm_recursive && rm_dot_operand(path))
                 {
                         string_format(log_error, "rm: refusing to remove '.' or '..' directory: skipping '%w'\n",
                                       writer_terminal_quoted_name, path);
@@ -27868,21 +27815,14 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
 
         b64 stamp_second = has_fraction ? fraction : 0;
 
-        /* Hour 24 with minute and second 0 is midnight of the next day,
-           gnulib posixtime's rule. */
+        /* GNU 9.11 posixtime rejects hour 24: mktime would roll it to the
+           next midnight and the round-trip then fails. Seconds of 60 stay. */
         if (field[2] < 1 || field[2] > 12 || field[3] < 1 ||
             field[3] > (b64)file_month_days(year, field[2]) ||
-            field[4] > 24 || field[5] > 59 || stamp_second > 60 ||
-            (field[4] == 24 && (field[5] || stamp_second)))
+            field[4] > 23 || field[5] > 59 || stamp_second > 60)
                 return false;
 
         b64 days = clock_days_from_civil(year, field[2], field[3]);
-
-        if (field[4] == 24)
-        {
-                days++;
-                field[4] = 0;
-        }
 
         address_to out = days * 86400 + field[4] * 3600 + field[5] * 60 +
                          stamp_second;
@@ -27912,7 +27852,7 @@ static const argument_option touch_options[] = {
 static const file_word touch_which_words[] = {
     {(string_address) "atime", 'a', false},
     {(string_address) "access", 'a', false},
-    {(string_address) "use", 'a', true},
+    {(string_address) "use", 'a', false},
     {(string_address) "mtime", 'm', false},
     {(string_address) "modify", 'm', false},
 };
@@ -27990,7 +27930,9 @@ static b32 file_touch()
         if (from)
         {
                 file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, from, 0, address_of facts);
+                bipolar looked = file_look_code(AT_FDCWD, from,
+                                                through ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                address_of facts);
 
                 if (looked < 0)
                 {
@@ -28065,28 +28007,16 @@ static b32 file_touch()
                         continue;
                 }
 
-                file_facts existing;
-                bool exists = through ? file_look_at(path, address_of existing)
-                                      : file_look_link(path, address_of existing);
-
-                if (!exists)
+                /* GNU creates only when -c is off and links are followed;
+                   utimens always runs. -c is silent only for ENOENT. */
+                if (!no_create && through)
                 {
-                        if (no_create)
-                                continue;
-
                         bipolar made = system_open_at_mode(AT_FDCWD,
                                                      path, FILE_WRITE & ~O_TRUNC,
                                                      0666);
 
-                        if (made < 0)
-                        {
-                                string_format(log_error, "touch: cannot touch '%w': %s\n",
-                                              writer_terminal_quoted_name, path, file_reason(made));
-                                status = 1;
-                                continue;
-                        }
-
-                        system_close(made);
+                        if (made >= 0)
+                                system_close(made);
                 }
 
                 bipolar done = system_update_times_at(
@@ -28095,6 +28025,8 @@ static b32 file_touch()
 
                 if (done < 0)
                 {
+                        if (no_create && done == -ERROR_NO_ENTRY)
+                                continue;
                         string_format(log_error, "touch: setting times of '%w': %s\n",
                                       writer_terminal_quoted_name, path, file_reason(done));
                         status = 1;
@@ -29484,8 +29416,14 @@ static bool env_split(string_address text, positive address_to have)
                                 next = '\v';
                                 break;
                         default:
+                        {
+                                p8 shown[2];
+
+                                shown[0] = next;
+                                shown[1] = end;
                                 return string_report(log_error, false,
-                                              "env: invalid sequence '\\%c' in -S\n", next);
+                                              "env: invalid sequence '\\%s' in -S\n", shown);
+                        }
                         }
                         letter = next;
                         break;
@@ -31582,11 +31520,11 @@ static bipolar kill_signal_of(string_address word)
         //      `kill -s SIGINT` is a signal in one shell and an error in the
         //      other. The utility reads it whichever shell is running it.
         if ((!kill_shell_spelling || shell_bash_compat) &&
-            string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
+            !string_compare_folded_max(word, "SIG", 3))
                 word += 3;
 
         for (positive i = 0; i < array_count(kill_table); i++)
-                if (!string_compare(word, kill_table[i].name))
+                if (!string_compare_folded(word, kill_table[i].name))
                         return kill_table[i].number;
 
         //      Each vocabulary knows only its own real-time spelling: the
@@ -31602,18 +31540,9 @@ static bipolar kill_signal_of(string_address word)
         return -1;
 }
 
-static b32 kill_list(positive count, positive index)
+static b32 kill_listed(string_address word)
 {
         p8 name[16];
-
-        if (index >= count)
-        {
-                kill_names_listed();
-                log_flush();
-                return 0;
-        }
-
-        string_address word = program_argument((b32)index);
         positive number;
 
         if (string_digits_checked_exact(word, 10, address_of number))
@@ -31655,12 +31584,21 @@ static b32 kill_list(positive count, positive index)
 
         // A name given to -l is answered with the name, which is what
         // util-linux answers with.
-        file_line(string_is(word, 'S') && string_is(word + 1, 'I') &&
-                          string_is(word + 2, 'G')
-                      ? word + 3
-                      : word);
+        file_line(!string_compare_folded_max(word, "SIG", 3) ? word + 3 : word);
         log_flush();
         return 0;
+}
+
+static b32 kill_list(positive count, positive index)
+{
+        if (index >= count)
+        {
+                kill_names_listed();
+                log_flush();
+                return 0;
+        }
+
+        return kill_listed(program_argument((b32)index));
 }
 
 #define KILL_PIDFD_OPEN 434
@@ -31814,10 +31752,12 @@ static b32 file_kill()
         bool loud = false;
         bool timed = false;
         bool needs_handler = false;
-        bool show_state = false;
-        string_address state_pid = null;
         positive milliseconds = 0;
+        bool do_kill = false;
 
+        /* util-linux parse_arguments: exact argv words, not getopt. --signal=X
+           is not --signal. After a signal is taken, an unknown dashed word is
+           a process group. --list= and -d= are the packed forms it does take. */
         while (index < count)
         {
                 string_address argument = program_argument((b32)index);
@@ -31825,218 +31765,200 @@ static b32 file_kill()
                 if (!string_is(argument, '-') || string_is(argument + 1, end))
                         break;
 
-                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
+                if (!string_compare(argument, "--"))
                 {
                         index++;
                         break;
                 }
 
-                string_address name = argument + 1;
-                bool longer = string_is(name, '-');
-                string_address value = null;
-
-                if (longer)
-                {
-                        name++;
-
-                        string_address equals = string_first_of(name, '=');
-
-                        if (equals)
-                        {
-                                // The word is cut where its value begins.
-                                address_to equals = end;
-                                value = equals + 1;
-                        }
-                }
-
-                bool one = !longer && !string_get(name + 1);
-
-                if ((one && string_is(name, 'p')) || (longer && !string_compare(name, "pid")))
-                {
-                        print_only = true;
-                        index++;
-                        continue;
-                }
-
-                if ((one && string_is(name, 'a')) || (longer && !string_compare(name, "all")))
-                {
-                        index++;
-                        continue;
-                }
-
-                if (longer && !string_compare(name, "verbose"))
+                if (!string_compare(argument, "--verbose"))
                 {
                         loud = true;
                         index++;
                         continue;
                 }
 
-                if ((one && string_is(name, 'r')) ||
-                    (longer && !string_compare(name, "require-handler")))
+                if (!string_compare(argument, "-a") ||
+                    !string_compare(argument, "--all"))
                 {
-                        needs_handler = true;
                         index++;
                         continue;
                 }
 
-                //      -d is a bare letter only: the reference reads -d1 as
-                //      a signal called d1, and takes the process to look at
-                //      from --show-process-state=PID or from the one operand.
-                if ((one && string_is(name, 'd')) ||
-                    (longer && !string_compare(name, "show-process-state")))
+                if (!string_compare(argument, "-l") ||
+                    !string_compare(argument, "--list"))
                 {
-                        show_state = true;
-                        state_pid = value;
-                        index++;
-                        continue;
+                        positive left = count - index;
+
+                        if (left < 2)
+                        {
+                                kill_names_listed();
+                                log_flush();
+                                return 0;
+                        }
+
+                        if (left > 2)
+                                return string_report(log_error, 1,
+                                                     "kill: too many arguments\n");
+
+                        return kill_list(count, index + 1);
                 }
 
-                if ((one && string_is(name, 'L')) || (longer && !string_compare(name, "table")))
+                if (!string_compare_max(argument, "--list=", 7) ||
+                    !string_compare_max(argument, "-l=", 3))
+                        return kill_listed(string_first_of(argument, '=') + 1);
+
+                if (!string_compare(argument, "-L") ||
+                    !string_compare(argument, "--table"))
                 {
                         kill_table_written(log);
                         log_flush();
                         return 0;
                 }
 
-                if ((one && string_is(name, 'l')) || (longer && !string_compare(name, "list")))
+                if (!string_compare(argument, "-d") ||
+                    !string_compare(argument, "--show-process-state"))
                 {
-                        if (value)
-                        {
-                                p8 named[16];
-                                positive listed;
+                        positive left = count - index;
 
-                                if (string_digits_checked_exact(value, 10, address_of listed) &&
-                                    kill_number_named(listed, named))
-                                {
-                                        file_line(named);
-                                        log_flush();
-                                        return 0;
-                                }
-
-                                return string_report(log_error, 1, "kill: unknown signal: %s\n", value);
-                        }
-
-                        return kill_list(count, index + 1);
+                        if (left < 2)
+                                return string_report(log_error, 1,
+                                                     "kill: too few arguments\n");
+                        if (left > 2)
+                                return string_report(log_error, 1,
+                                                     "kill: too many arguments\n");
+                        return kill_process_state(program_argument((b32)(index + 1)));
                 }
 
-                if ((one && (string_is(name, 's') || string_is(name, 'q') ||
-                             string_is(name, 'n'))) ||
-                    (longer && (!string_compare(name, "signal") ||
-                                !string_compare(name, "queue"))))
+                if (!string_compare_max(argument, "-d=", 3) ||
+                    !string_compare_max(argument, "--show-process-state=", 21))
+                        return kill_process_state(string_first_of(argument, '=') + 1);
+
+                if (!string_compare(argument, "-r") ||
+                    !string_compare(argument, "--require-handler"))
                 {
-                        bool queued = string_is(name, 'q') || !string_compare(name, "queue");
-
-                        if (!value)
-                        {
-                                if (index + 1 >= count)
-                                {
-                                        return string_report(log_error, 2,
-                                                             "kill: not enough arguments\n");
-                                }
-
-                                value = program_argument((b32)(index + 1));
-                                index++;
-                        }
-
+                        needs_handler = true;
                         index++;
+                        continue;
+                }
 
-                        if (queued)
+                if (!string_compare(argument, "-p") ||
+                    !string_compare(argument, "--pid"))
+                {
+                        if (do_kill)
+                                return string_report(log_error, 1,
+                                                     "kill: --pid and --signal are mutually exclusive\n");
+                        print_only = true;
+                        index++;
+                        continue;
+                }
+
+                if (!string_compare(argument, "-s") ||
+                    !string_compare(argument, "--signal"))
+                {
+                        if (index + 1 >= count)
+                                return string_report(log_error, 2,
+                                                     "kill: not enough arguments\n");
+                        if (print_only)
+                                return string_report(log_error, 1,
+                                                     "kill: --pid and --signal are mutually exclusive\n");
+                        index++;
                         {
+                                string_address value = program_argument((b32)index);
+
+                                number = kill_signal_of(value);
+                                if (number < 0)
+                                {
+                                        string_format(log_error,
+                                                      "kill: unknown signal %s; valid signals:\n",
+                                                      value);
+                                        kill_table_written(log_error);
+                                        return 1;
+                                }
+                        }
+                        do_kill = true;
+                        index++;
+                        continue;
+                }
+
+                if (!string_compare(argument, "-q") ||
+                    !string_compare(argument, "--queue"))
+                {
+                        if (index + 1 >= count)
+                                return string_report(log_error, 2,
+                                                     "kill: option '%s' requires an argument\n",
+                                                     argument);
+                        if (print_only)
+                                return string_report(log_error, 1,
+                                                     "kill: --pid and --queue are mutually exclusive\n");
+                        index++;
+                        {
+                                string_address value = program_argument((b32)index);
                                 positive queue;
 
-                                if (!string_digits_checked_exact(value, 10, address_of queue))
-                                {
+                                if (!string_digits_checked_exact(value, 10,
+                                                                 address_of queue))
                                         return string_report(log_error, 1,
-                                                      "kill: invalid sigval argument: %s\n", value);
-                                }
-
-                                continue;
+                                                      "kill: invalid sigval argument: %s\n",
+                                                      value);
+                                (void)queue;
                         }
-
-                        number = kill_signal_of(value);
-
-                        if (number < 0)
-                        {
-                                string_format(log_error,
-                                              "kill: unknown signal %s; valid signals:\n", value);
-                                kill_table_written(log_error);
-                                return 1;
-                        }
-
+                        index++;
                         continue;
                 }
 
-                if (longer && !string_compare(name, "timeout"))
+                if (!string_compare(argument, "--timeout"))
                 {
                         if (index + 2 >= count)
+                                return string_report(log_error, 2,
+                                                     "kill: option '%s' requires an argument\n",
+                                                     argument);
+                        index++;
                         {
-                                return string_report(log_error, 2, "kill: not enough arguments\n");
+                                string_address written = program_argument((b32)index);
+
+                                if (!string_digits_checked_exact(written, 10,
+                                                                 address_of milliseconds))
+                                        return string_report(log_error, 1,
+                                                      "kill: invalid timeout argument: %s\n",
+                                                      written);
                         }
-
-                        string_address written = value ? value
-                                                       : program_argument((b32)(index + 1));
-
-                        if (!value)
-                                index++;
-
-                        if (!string_digits_checked_exact(written, 10, address_of milliseconds))
+                        index++;
                         {
-                                return string_report(log_error, 1, "kill: invalid timeout argument: %s\n",
-                                              written);
+                                string_address wanted = program_argument((b32)index);
+
+                                number = kill_signal_of(wanted);
+                                if (number < 0)
+                                {
+                                        string_format(log_error,
+                                                      "kill: unknown signal %s; valid signals:\n",
+                                                      wanted);
+                                        kill_table_written(log_error);
+                                        return 1;
+                                }
                         }
-
-                        string_address wanted = program_argument((b32)(index + 1));
-
-                        number = kill_signal_of(wanted);
-
-                        if (number < 0)
-                        {
-                                string_format(log_error,
-                                              "kill: unknown signal %s; valid signals:\n", wanted);
-                                kill_table_written(log_error);
-                                return 1;
-                        }
-
                         timed = true;
-                        index += 2;
+                        do_kill = true;
+                        index++;
                         continue;
                 }
 
-                // Anything else that begins with a dash is the signal
-                // itself. What is quoted back is the word without the one
-                // dash that made it an option, so a long-looking word keeps
-                // the second one: -bogus-option is reported as -bogus-option.
-                number = kill_signal_of(name);
+                if (do_kill)
+                        break;
 
+                number = kill_signal_of(argument + 1);
                 if (number < 0)
-                {
-                        return string_report(log_error, 1, "kill: invalid signal name or number: %s\n",
-                                      argument + 1);
-                }
-
+                        return string_report(log_error, 1,
+                                             "kill: invalid signal name or number: %s\n",
+                                             argument + 1);
+                if (print_only)
+                        return string_report(log_error, 1,
+                                             "kill: --pid and --signal are mutually exclusive\n");
+                do_kill = true;
                 index++;
-
-                // One signal and no more, or a negative process group would be
-                // read as a second one.
-                break;
         }
 
-        if (show_state)
-        {
-                //      --show-process-state=PID carries the process with it
-                //      and the reference then looks at nothing else; a bare
-                //      -d takes the one operand, and wants exactly one.
-                if (state_pid)
-                        return kill_process_state(state_pid);
-
-                if (index >= count)
-                        return string_report(log_error, 1, "kill: too few arguments\n");
-
-                if (count - index > 1)
-                        return string_report(log_error, 1, "kill: too many arguments\n");
-
-                return kill_process_state(program_argument((b32)index));
-        }
+        (void)milliseconds;
 
         if (index >= count)
         {
@@ -34314,6 +34236,7 @@ static const argument_option xargs_options[] = {
     {"arg-file", 'a', ARGUMENT_REQUIRED},
     {"delimiter", 'd', ARGUMENT_REQUIRED},
     {"eof", 'E', ARGUMENT_REQUIRED},
+    {"e", 0, ARGUMENT_OPTIONAL},
     {"exit", 'x'},
     {"interactive", 'p'},
     {"max-args", 'n', ARGUMENT_REQUIRED},
@@ -34416,6 +34339,8 @@ static b32 file_xargs()
         xargs_trace = (taking.flags & FILE_FLAG('t')) != 0;
         xargs_needs_input = (taking.flags & FILE_FLAG('r')) != 0;
         xargs_ending = file_option_value(address_of taking, 'E');
+        if (!xargs_ending && (taking.flags & FILE_FLAG('e')))
+                xargs_ending = file_option_value(address_of taking, 'e');
         xargs_replace = file_option_value(address_of taking, 'I');
         xargs_slot_name = file_option_value(address_of taking, 'V');
         xargs_exit_too_long = (taking.flags & FILE_FLAG('x')) != 0;

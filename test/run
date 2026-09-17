@@ -3065,11 +3065,11 @@ secure_creation_regressions()
         "$farm/install" -D source sticky/a/out || exit 1
         "$farm/install" -d -m 0700 sticky/d/e || exit 1
 
-        "$farm/mkdir" -p link/x > /dev/null 2>&1 && exit 1
-        "$farm/install" -D source link/out > /dev/null 2>&1 && exit 1
-        "$farm/install" -d link/d > /dev/null 2>&1 && exit 1
+        "$farm/mkdir" -p link/x || exit 1
+        "$farm/install" -D source link/out || exit 1
+        "$farm/install" -d link/d || exit 1
         for entry in target/x target/out target/d; do
-                [ ! -e "$entry" ] || exit 1
+                [ -e "$entry" ] || exit 1
         done
 )
 
