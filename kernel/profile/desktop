@@ -71,6 +71,9 @@ CONFIG_TYPEC=y
 CONFIG_TYPEC_TCPM=y
 CONFIG_TYPEC_UCSI=y
 CONFIG_USB_ROLE_SWITCH=y
+# TYPEC is PD and alt-mode negotiation. USB4 is the tunnel that a
+# Thunderbolt dock actually is; without it a USB4 port is just USB.
+CONFIG_USB4=y
 
 # Above BITS_PER_LONG, small_cpumask_bits becomes the runtime nr_cpu_ids and
 # disables the single-word bitmap/find inlines: 727/1232 call sites reload it.

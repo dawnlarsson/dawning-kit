@@ -73,6 +73,24 @@ CONFIG_CPU_IDLE_GOV_TEO=y
 CONFIG_CPU_IDLE_GOV_LADDER=n
 CONFIG_CPU_IDLE_GOV_MENU=n
 
+# The ACPI PM timer is the pre-TSC clock. As a clockevent it keeps the
+# package out of C2 and deeper. TSC deadline is what actually runs on
+# this hardware; modern already turns this off, but that profile is not
+# in the default composition.
+CONFIG_X86_PM_TIMER=n
+
+# Per-cpu workqueues pin a core awake for cache locality. Power-efficient
+# mode lets the ones that were measured as hungry become unbound, which is
+# how a laptop sits idle; the compositor's bind work already runs on the
+# unbound long wq.
+CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+
+# S3. ARCH_SUSPEND_POSSIBLE already defaults this on; named here so a
+# later fragment cannot drop it quietly. Runtime PM for devices follows
+# CONFIG_PM, which any turns on.
+CONFIG_SUSPEND=y
+CONFIG_PM_SLEEP=y
+
 #
 # Frequency.
 #
@@ -187,10 +205,9 @@ CONFIG_TASKSTATS=n
 #
 # Hardening that is being traded away.
 #
-# Stated plainly because it is a real trade, not a free win. CPU_MITIGATIONS
-# is already off in this build, so the machine has already chosen speed over
-# speculative execution defences; leaving these on would be inconsistent
-# rather than safe. Anything running untrusted code wants a different profile.
+# Stated plainly because it is a real trade, not a free win. Speculative
+# execution defences stay at the kernel default; turning them off is a
+# different profile, not a power setting.
 #
 # Zeroing every stack frame on entry costs on every call with locals.
 CONFIG_INIT_STACK_NONE=y

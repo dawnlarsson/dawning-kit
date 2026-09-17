@@ -34,6 +34,11 @@ CONFIG_ACPI_APEI_GHES=y
 CONFIG_ACPI_APEI_PCIEAER=y
 CONFIG_ACPI_APEI_MEMORY_FAILURE=y
 CONFIG_ACPI_DPTF=y
+# DPTF is only the policy half. INT340X is the thermal zones and
+# cooling devices it acts on; without it the DPTF lines above do
+# not see a laptop's skin sensors or the display brightness cooler.
+CONFIG_INT340X_THERMAL=y
+CONFIG_INT3406_THERMAL=y
 CONFIG_ACPI_WATCHDOG=y
 CONFIG_ACPI_ADXL=y
 CONFIG_ACPI_FFH=y
