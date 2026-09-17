@@ -5538,6 +5538,114 @@ static bipolar file_make_directories_open(
 */
 static bool file_join_source_path;
 
+/* GNU make_dir_parents_private: mkdir each dest component after the named
+   target, with that source directory's mode, including in a world-writable
+   fixture. The owned-parent gate stays on mkdir/install. */
+static bipolar file_parents_ensure_open(string_address dest_dir,
+                                        string_address source_parent,
+                                        p8 address_to failed)
+{
+        p8 work[FILE_PATH_MAX];
+        p8 src_prefix[FILE_PATH_MAX];
+        p8 dest_prefix[FILE_PATH_MAX];
+        p8 joined[FILE_PATH_MAX];
+        p8 component[SYSTEM_PATH_LEAF_ROOM];
+        positive flags = O_PATH | O_DIRECTORY | O_CLOEXEC;
+
+        if (failed)
+                failed[0] = end;
+        if (!file_name_without_trailing_slashes(work, source_parent))
+                return -ERROR_NAME_TOO_LONG;
+        if (!string_get(work) || string_equals(work, (string_address) "."))
+                return 0;
+        if (!file_name_without_trailing_slashes(dest_prefix, dest_dir))
+                return -ERROR_NAME_TOO_LONG;
+
+        bipolar held = system_open_at(AT_FDCWD, dest_dir, flags);
+        if (held < 0)
+        {
+                if (failed)
+                        memory_copy_apart_end(failed, dest_dir,
+                                              string_length(dest_dir));
+                return held;
+        }
+
+        src_prefix[0] = end;
+        positive length = string_length(work);
+        positive at = 0;
+        while (at < length && work[at] == '/')
+                at++;
+        while (at < length)
+        {
+                positive start = at;
+                while (at < length && work[at] != '/')
+                        at++;
+                positive named = at - start;
+                while (at < length && work[at] == '/')
+                        at++;
+                if (!named)
+                        continue;
+                if (named >= sizeof(component))
+                {
+                        system_close(held);
+                        return -ERROR_NAME_TOO_LONG;
+                }
+                memory_copy_apart(component, work + start, named);
+                component[named] = end;
+
+                if (src_prefix[0])
+                {
+                        if (!file_path_join(joined, src_prefix, component))
+                        {
+                                system_close(held);
+                                return -ERROR_NAME_TOO_LONG;
+                        }
+                        memory_copy_apart_end(src_prefix, joined,
+                                              string_length(joined));
+                }
+                else
+                        memory_copy_apart_end(src_prefix, component, named);
+
+                if (!file_path_join(joined, dest_prefix, component))
+                {
+                        system_close(held);
+                        return -ERROR_NAME_TOO_LONG;
+                }
+                memory_copy_apart_end(dest_prefix, joined, string_length(joined));
+                if (failed)
+                        memory_copy_apart_end(failed, dest_prefix,
+                                              string_length(dest_prefix));
+
+                file_facts facts;
+                positive mode = 0777;
+                if (file_look(AT_FDCWD, src_prefix, AT_SYMLINK_NOFOLLOW,
+                              address_of facts) &&
+                    (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                        mode = facts.mode & 07777;
+
+                bipolar next = system_open_at(held, component, flags);
+                if (next < 0)
+                {
+                        bipolar made = system_make_directory_exact_at(
+                            held, component, mode);
+                        if (made < 0 && made != -ERROR_EXISTS)
+                        {
+                                system_close(held);
+                                return made;
+                        }
+                        next = system_open_at(held, component, flags);
+                        if (next < 0)
+                        {
+                                system_close(held);
+                                return next;
+                        }
+                }
+                system_close(held);
+                held = next;
+        }
+        return held;
+}
+
 static bool file_destination_in(string_address program, string_address directory,
                                 string_address source,
                                 p8 address_to destination)
@@ -5573,6 +5681,7 @@ static bool file_destination_in(string_address program, string_address directory
         /* GNU make_dir_parents_private creates dest components after the
            target directory and before the leaf. path_head_copy is dirname. */
         p8 parent[FILE_PATH_MAX];
+        p8 source_parent[FILE_PATH_MAX];
         p8 failing[FILE_PATH_MAX];
 
         path_head_copy(parent, FILE_PATH_MAX, destination);
@@ -5580,12 +5689,9 @@ static bool file_destination_in(string_address program, string_address directory
             string_equals(parent, (string_address) "."))
                 return true;
 
-        /* GNU cp --parents mkdirat in the named dest, including a
-           world-writable fixture directory. The owned-parent gate is for
-           mkdir/install in sticky or hostile parents, not this. */
-        bipolar made = file_make_directories_open(
-            parent, 0777, 0777, false, true, null, failing, null, null, null,
-            0, false, false);
+        path_head_copy(source_parent, FILE_PATH_MAX, piece);
+        bipolar made = file_parents_ensure_open(directory, source_parent,
+                                                failing);
         if (made < 0)
         {
                 string_format(log_error,
@@ -5595,7 +5701,8 @@ static bool file_destination_in(string_address program, string_address directory
                               file_reason(made));
                 return false;
         }
-        system_close(made);
+        if (made > 0)
+                system_close(made);
         return true;
 }
 
@@ -34014,6 +34121,19 @@ static b32 file_cal()
                 return 1;
         if (file_meta(address_of taking, "[-1|-3|-y|-Y] [-n MONTHS] [-Ssmj] [[MONTH] YEAR]", log_error))
                 return 0;
+        {
+                static const argument_exclusive_pair cal_months_twelve[] = {
+                    {'n', (string_address)"months"},
+                    {'Y', (string_address)"twelve"},
+                };
+
+                if (argument_exclusive_refuse(
+                        log_error, (string_address)"cal",
+                        (positive)program_argument_count(),
+                        program_argument_list(), cal_options, true,
+                        cal_months_twelve, array_count(cal_months_twelve)))
+                        return 1;
+        }
         if (taking.flags & (FILE_FLAG('w') | FILE_FLAG('v') |
                             FILE_FLAG('c')))
                 return string_report(log_error, 1, "cal: week numbers, vertical layout and custom columns are unsupported\n");
@@ -34148,21 +34268,6 @@ static b32 file_cal()
                 months = 1;
         if ((p64)months > 25769803776ULL)
                 return string_report(log_error, 1, "cal: requested calendar range is out of bounds\n");
-        /* GNU names --months vs --twelve in argv order; other range clashes
-           stay a single unsupported sentence. */
-        {
-                static const argument_exclusive_pair cal_months_twelve[] = {
-                    {'n', (string_address)"months"},
-                    {'Y', (string_address)"twelve"},
-                };
-
-                if (argument_exclusive_refuse(
-                        log_error, (string_address)"cal",
-                        (positive)program_argument_count(),
-                        program_argument_list(), cal_options, true,
-                        cal_months_twelve, array_count(cal_months_twelve)))
-                        return 1;
-        }
         if ((whole_year && (three || months_given || one || twelve)) ||
             (three && (months_given || twelve)) ||
             (one && (three || months_given || twelve)) ||
