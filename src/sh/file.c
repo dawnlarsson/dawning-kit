@@ -10039,16 +10039,36 @@ static b32 find_parse_primary()
         find_at++;
 
         // -newerXY is a family rather than a word: X says which of this
-        // file's times to take and Y which of the other's.
-        if (!string_compare_max(word, "-newer", 6) && string_length(word) == 8 &&
-            string_first_of((string_address) "aBcm", word[6]) &&
-            string_first_of((string_address) "aBcmt", word[7]))
+        // file's times to take and Y which of the other's. GNU parse_newerXY
+        // treats any eight-byte -newer?? as that family: a bad XY is an
+        // invalid predicate, and B is birth time, which Linux does not
+        // expose as st_birthtime.
+        if (!string_compare_max(word, "-newer", 6) && string_length(word) == 8)
         {
+                if (!string_first_of((string_address) "aBcm", word[6]) ||
+                    !string_first_of((string_address) "aBcmt", word[7]))
+                {
+                        string_format(log_error, "find: invalid predicate `%w'\n",
+                                      writer_terminal_quoted_name, word);
+                        find_bad = true;
+                        return -1;
+                }
+
                 string_address named = find_value(word);
                 b32 index = find_make('W');
 
                 if (!named || index < 0 || find_bad)
                         return -1;
+
+                if (word[6] == 'B' || word[7] == 'B')
+                {
+                        log_error("find: This system does not provide a way to find the birth time of a file.\n",
+                                  0);
+                        string_format(log_error, "find: invalid predicate `%w'\n",
+                                      writer_terminal_quoted_name, word);
+                        find_bad = true;
+                        return -1;
+                }
 
                 find_node address_to made = find_nodes + index;
 
@@ -10187,6 +10207,15 @@ static b32 find_parse_primary()
                                 {
                                         log_error("find: error: % at end of format string\n",
                                                   0);
+                                        goto bad;
+                                }
+                                p8 directive = string_get(at);
+                                if (directive == '{' || directive == '[' ||
+                                    directive == '(')
+                                {
+                                        string_format(log_error,
+                                                      "find: error: the format directive `%%%c' is reserved for future use\n",
+                                                      directive);
                                         goto bad;
                                 }
                         }
@@ -11061,9 +11090,17 @@ static bool find_printf_one(p8 letter, string_address format, positive address_t
                 positive_to_string(find_field_write, find_facts->hard_links);
                 return true;
         case 'D':
-                positive_to_string(find_field_write,
-                                   file_device_key(find_facts->device_major,
-                                                   find_facts->device_minor));
+                /* GNU %D is glibc makedev(st_dev), not our 64-bit identity key. */
+                {
+                        p32 major = find_facts->device_major;
+                        p32 minor = find_facts->device_minor;
+                        p64 packed = ((p64)(minor & 0xff)) |
+                                     ((p64)(major & 0xfff) << 8) |
+                                     ((p64)(minor & ~0xff) << 12) |
+                                     ((p64)(major & ~0xfff) << 32);
+
+                        positive_to_string(find_field_write, packed);
+                }
                 return true;
         case 'm':
                 find_field_write(name, positive_into_base(name, find_facts->mode & 07777, 8, false));
@@ -16157,9 +16194,11 @@ static bool ln_make(string_address target, string_address name)
         bool destination_exists = destination_look >= 0;
 
         // GNU do_link: a destination directory is refused before -i or
-        // backup, with the unquoted name the reference prints.
+        // backup only when -f/-i/backup will replace it. A symbolic link
+        // without those tries symlinkat and names File exists.
         if (destination_exists &&
-            (destination.mode & MODE_FORMAT) == MODE_DIRECTORY)
+            (destination.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+            (!ln_symbolic || ln_force || ln_ask || file_backup_kind))
         {
                 string_format(log_error, "ln: %w: cannot overwrite directory\n",
                               writer_terminal_name, name);
@@ -16271,9 +16310,22 @@ static bool ln_make(string_address target, string_address name)
         }
 
         if (ln_loud)
-                string_format(log, "'%w%s%w'\n", writer_terminal_quoted_name, name,
-                              ln_symbolic ? (string_address)"' -> '" : (string_address)"' => '",
-                              writer_terminal_quoted_name, target);
+        {
+                if (file_backup_did)
+                {
+                        string_format(log, "'%w' ~ '%w%s%w'\n",
+                                      writer_terminal_quoted_name, file_backup_shown,
+                                      writer_terminal_quoted_name, name,
+                                      ln_symbolic ? (string_address)"' -> '"
+                                                  : (string_address)"' => '",
+                                      writer_terminal_quoted_name, target);
+                        file_backup_did = false;
+                }
+                else
+                        string_format(log, "'%w%s%w'\n", writer_terminal_quoted_name, name,
+                                      ln_symbolic ? (string_address)"' -> '" : (string_address)"' => '",
+                                      writer_terminal_quoted_name, target);
+        }
 
         return true;
 }
@@ -16398,8 +16450,24 @@ static b32 file_ln()
 
         string_address last = into ? into : program_argument((b32)(count - 1));
         positive after = into ? count : count - 1;
-        bool directory = into || (through ? file_is_directory_through(last)
-                                          : file_is_directory(AT_FDCWD, last));
+        bool directory;
+
+        if (into)
+        {
+                file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, into, AT_SYMLINK_NOFOLLOW,
+                                                address_of facts);
+
+                if (looked < 0 || (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        return string_report(log_error, 1, "ln: target '%w': %s\n",
+                                      writer_terminal_quoted_name, into,
+                                      file_reason(looked < 0 ? looked
+                                                             : -ERROR_NOT_DIRECTORY));
+                directory = true;
+        }
+        else
+                directory = through ? file_is_directory_through(last)
+                                    : file_is_directory(AT_FDCWD, last);
 
         if (alone || !directory)
         {
@@ -20099,8 +20167,8 @@ static bool csplit_section(csplit_state address_to state, positive from,
             FILE_STAGED_STREAM_SPECIAL);
         if (out < 0)
         {
-                return string_report(log_error, false, "csplit: cannot open '%w': %s\n",
-                              writer_terminal_quoted_name, state->name, file_reason(out));
+                return string_report(log_error, false, "csplit: %w: %s\n",
+                              writer_terminal_name, state->name, file_reason(out));
         }
 
         file_facts made;
@@ -21814,6 +21882,20 @@ static b32 file_hardlink()
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
+        {
+                static const argument_exclusive_pair hardlink_quiet_verbose[] = {
+                    {'q', (string_address)"quiet"},
+                    {'v', (string_address)"verbose"},
+                };
+
+                if (argument_exclusive_refuse(
+                        log_error, (string_address)"hardlink",
+                        (positive)program_argument_count(),
+                        program_argument_list(), hardlink_options, true,
+                        hardlink_quiet_verbose,
+                        array_count(hardlink_quiet_verbose)))
+                        return 1;
+        }
         if (file_meta(address_of taking, "[options] FILE|DIRECTORY...\n"
                       "  -c content only  -n dry-run  -l list  -q quiet\n"
                       "  -s MIN  -S MAX  -f respect name", log))
@@ -23947,6 +24029,11 @@ static bool file_backup_made_at(string_address program, bipolar directory,
                 facts = *expected;
         else if (!file_look(directory, destination, AT_SYMLINK_NOFOLLOW,
                             address_of facts))
+                return true;
+
+        /* GNU copy.c backs up a dest directory only in move mode. */
+        if (string_equals(program, (string_address) "cp") &&
+            (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
                 return true;
 
         p8 kind = file_backup_kind;
@@ -26803,6 +26890,7 @@ static bipolar install_group;
 static bool install_parents;
 static bool install_preserve;
 static bool install_loud;
+static bool install_no_target;
 static bool install_compare;
 static b32 install_status;
 
@@ -27073,6 +27161,9 @@ static fn install_pair(string_address source, string_address destination)
         system_close(source_directory);
         if (source_handle < 0)
         {
+                if (install_loud)
+                        file_backup_told(source, destination, (string_address) "'",
+                                         (string_address) "' -> '");
                 string_format(log_error, "install: cannot open '%w' for reading: %s\n",
                               writer_terminal_quoted_name, source, file_reason(source_handle));
                 install_status = 1;
@@ -27130,10 +27221,15 @@ static fn install_pair(string_address source, string_address destination)
         if (destination_exists &&
             (to.mode & MODE_FORMAT) == MODE_DIRECTORY)
         {
-                string_format(log_error,
-                              "install: cannot create regular file '%w': %s\n",
-                              writer_terminal_quoted_name, destination,
-                              file_reason(-ERROR_IS_DIRECTORY));
+                if (install_no_target)
+                        (void)file_overwrite_kinds_ok(
+                            (string_address) "install", source, destination,
+                            from.mode, to.mode);
+                else
+                        string_format(log_error,
+                                      "install: cannot create regular file '%w': %s\n",
+                                      writer_terminal_quoted_name, destination,
+                                      file_reason(-ERROR_IS_DIRECTORY));
                 system_close(destination_directory);
                 system_close(source_handle);
                 install_status = 1;
@@ -27194,10 +27290,15 @@ static fn install_pair(string_address source, string_address destination)
             destination_exists ? address_of to : null, 0);
         system_close(destination_directory);
 
-        if (!copied || !attributed || published < 0)
+        if (!copied || published < 0)
         {
                 string_format(log_error, "install: cannot publish '%w'\n",
                               writer_terminal_quoted_name, destination);
+                install_status = 1;
+                return;
+        }
+        if (!attributed)
+        {
                 install_status = 1;
                 return;
         }
@@ -27268,6 +27369,7 @@ static b32 file_install()
         install_parents = (flags & FILE_FLAG('D')) != 0;
         install_preserve = (flags & FILE_FLAG('p')) != 0;
         install_loud = (flags & FILE_FLAG('v')) != 0;
+        install_no_target = (flags & FILE_FLAG('T')) != 0;
         install_compare = (flags & FILE_FLAG('C')) != 0;
 
         if (directories)
@@ -27857,7 +27959,9 @@ static string_address rm_wording(file_facts address_to facts)
 static string_address rm_prompt(bipolar directory, string_address name,
                                 file_facts address_to facts, bool descend)
 {
-        bool locked = system_access_at(directory, name, 2) != 0;
+        bool locked = (facts->mode & MODE_FORMAT) == MODE_LINK
+                          ? (facts->mode & 0222) == 0
+                          : system_access_at(directory, name, 2) != 0;
 
         if (descend)
                 return locked ? (string_address) "descend into write-protected directory"
@@ -29100,16 +29204,42 @@ static const file_word rm_whens[] = {
     {(string_address) "yes", 'i', false},
 };
 
+/* GNU rm.c: -f sets ignore_missing_files; -i/-I and --interactive=always/once
+   clear it; --interactive=never only changes prompting and leaves the
+   previous missing-name policy in place. Last collision cannot see a
+   --interactive=always that sat between -f and a later never. */
+static bool rm_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'f')
+        {
+                rm_force = true;
+                return true;
+        }
+        if (letter == 'i' || letter == 'I')
+        {
+                rm_force = false;
+                return true;
+        }
+        if (letter == 'W' &&
+            (!value || string_equals(value, (string_address)"always") ||
+             string_equals(value, (string_address)"yes") ||
+             string_equals(value, (string_address)"once")))
+                rm_force = false;
+        return true;
+}
+
 static b32 file_rm()
 {
         positive count = (positive)program_argument_count();
         rm_status = 0;
+        rm_force = false;
         rm_selected = (rm_selection){};
 
         file_taking taking = {
             .program = (string_address) "rm",
             .options = rm_options,
             .selection = (p8 address_to)address_of rm_selected,
+            .seen = rm_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -29162,9 +29292,6 @@ static b32 file_rm()
                 }
         }
 
-        rm_force = rm_selected.collision == 'f';
-        if (prompting == 'i' || prompting == 'I')
-                rm_force = false;
         rm_ask = prompting == 'i';
         rm_ask_once = prompting == 'I';
         rm_loud = (flags & FILE_FLAG('v')) != 0;
@@ -33325,7 +33452,8 @@ static b32 file_kill()
         positive count = (positive)program_argument_count();
         positive index = 1;
         bipolar number = 15;
-        b32 answer = 0;
+        positive kill_ok = 0;
+        positive kill_err = 0;
         bool print_only = false;
         bool loud = false;
         bool timed = false;
@@ -33555,7 +33683,7 @@ static b32 file_kill()
                     who < b32_min || who > b32_max)
                 {
                         string_format(log_error, "kill: cannot find process \"%s\"\n", word);
-                        answer = 1;
+                        kill_err++;
                         continue;
                 }
 
@@ -33565,13 +33693,17 @@ static b32 file_kill()
                         continue;
                 }
 
-                //      -r looks first and says nothing: a process with no
-                //      handler for this signal is left alone, and so is one
-                //      that is not there to be asked.
-                if (needs_handler && !kill_handled(word, number))
+                //      -r looks first and says nothing: a living process
+                //      with no handler for this signal is left alone.
+                //      A pid that is not there still fails; util-linux does
+                //      not count a handler-skip as an error.
+                if (needs_handler)
                 {
-                        answer = 1;
-                        continue;
+                        p8 text[8192];
+
+                        if (kill_process_status(word, text, sizeof(text)) >= 0 &&
+                            !kill_handled(word, number))
+                                continue;
                 }
 
                 if (loud)
@@ -33593,7 +33725,7 @@ static b32 file_kill()
                                               "kill: failed to obtain a valid file descriptor "
                                               "for PID %s: %s\n",
                                               word, file_reason(handle));
-                                answer = 1;
+                                kill_err++;
                                 continue;
                         }
 
@@ -33606,13 +33738,17 @@ static b32 file_kill()
                 {
                         string_format(log_error, "kill: sending signal to %s failed: %s\n",
                                       word, file_reason(done));
-                        answer = 1;
+                        kill_err++;
                 }
+                else
+                        kill_ok++;
         }
 
         log_flush();
 
-        return answer;
+        if (!kill_err)
+                return 0;
+        return kill_ok ? 64 : 1;
 }
 
 // rename ----------------------------------------------------------
@@ -34456,7 +34592,7 @@ static b32 file_cal()
         bool year_only = false;
 
         if (file_operand_count > 3)
-                return string_report(log_error, 1, "cal: too many operands\n");
+                return string_report(log_error, 1, "cal: bad usage\n");
         if (file_operand_count == 1)
         {
                 string_address word = file_operand_at(0);
