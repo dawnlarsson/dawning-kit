@@ -634,6 +634,8 @@ static fn path_found_take(address_any data, positive length)
         path_found_length = length;
 }
 
+PURE bool file_is_dot(string_address name);
+
 static string_address file_last_component(string_address path)
 {
         string_address last = string_last_of(path, '/');
@@ -666,14 +668,34 @@ static bool file_name_without_trailing_slashes(p8 address_to into,
 
 /* Linux rename/open accept a trailing slash on a directory. The pinned
    parent walk treats that spelling as an empty leaf, so strip separators
-   the way path_tail_copy does, keeping the original name for diagnostics. */
+   the way path_tail_copy does, keeping the original name for diagnostics.
+   A final "." or ".." names the directory itself (GNU cp dir/. into dest);
+   the pinned walk refuses that leaf when it is not creating a directory. */
 static bipolar file_parent_open_named(string_address path, p8 address_to leaf)
 {
         p8 trimmed[FILE_PATH_MAX];
+        p8 parent[FILE_PATH_MAX];
+        string_address last;
+        positive length;
 
         if (!file_name_without_trailing_slashes(trimmed, path))
                 return -ERROR_NAME_TOO_LONG;
-        return file_parent_open(trimmed, leaf);
+
+        last = file_last_component(trimmed);
+        if (!file_is_dot(last))
+                return file_parent_open(trimmed, leaf);
+
+        length = string_length(last);
+        memory_copy_apart(leaf, last, length);
+        leaf[length] = end;
+        path_head_copy(parent, FILE_PATH_MAX, trimmed);
+        if (!string_get(parent))
+        {
+                parent[0] = '.';
+                parent[1] = end;
+        }
+        return system_open_at(AT_FDCWD, parent,
+                              O_PATH | O_DIRECTORY | O_CLOEXEC);
 }
 
 /*
@@ -15912,6 +15934,7 @@ static b32 file_chgrp()
 // The backup a destination gets before it is written over, shared by cp,
 // mv, ln and install and defined where the copying is.
 static p8 file_backup_kind;
+static string_address file_backup_control_named;
 static string_address file_backup_suffix;
 static p8 file_backup_shown[FILE_PATH_MAX];
 static bool file_backup_did;
@@ -16247,6 +16270,7 @@ static b32 file_ln()
         positive count = (positive)program_argument_count();
         ln_selected = (ln_selection){};
         ln_target_directory = null;
+        file_backup_control_named = null;
 
         file_taking taking = {
             .program = (string_address) "ln",
@@ -23851,6 +23875,13 @@ static bool file_backup_made_at(string_address program, bipolar directory,
 // here rather than four times over.
 static bool file_backup_taken(file_taking address_to taking, string_address program)
 {
+        /* GNU last non-null --backup CONTROL wins: a later bare --backup
+           does not wipe an earlier --backup=numbered. seen() kept that
+           valued word; the last stored option value is only used when it
+           is itself non-empty. */
+        string_address named = file_backup_control_named;
+
+        file_backup_control_named = null;
         file_backup_kind = 0;
         (void)program;
         file_backup_suffix = file_option_value(taking, 'S');
@@ -23872,10 +23903,12 @@ static bool file_backup_taken(file_taking address_to taking, string_address prog
         {
                 string_address control = file_option_value(taking, 'B');
 
-                if (!control)
-                        control = file_environment((string_address) "VERSION_CONTROL");
+                if (control && string_get(control))
+                        named = control;
+                else if (!named)
+                        named = file_environment((string_address) "VERSION_CONTROL");
 
-                if (!file_backup_control(program, control))
+                if (!file_backup_control(program, named))
                         return false;
         }
 
@@ -24224,11 +24257,6 @@ static bool cp_linked(bipolar source_directory, string_address source,
                     writer_terminal_quoted_name, source_shown,
                     file_reason(done));
         }
-
-        if (cp_loud)
-                file_backup_told(source_shown, destination_shown,
-                                 (string_address) "'",
-                                 (string_address) "' -> '");
 
         return true;
 }
@@ -25337,7 +25365,7 @@ static bool cp_same_dirent(bipolar source_directory, string_address source,
         file_facts left;
         file_facts right;
 
-        if (!string_compare(source, destination))
+        if (!string_equals(source, destination))
                 return false;
         if (file_look_code(source_directory, (string_address)"", AT_EMPTY_PATH,
                            address_of left) < 0)
@@ -25549,6 +25577,13 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                                     address_of facts,
                                     address_of there, address_of cp_status))
                 return true;
+
+        /* GNU copy.c emit_verbose before the copy, so a later open/create
+           failure still writes the arrow. -n skip above does not. */
+        if (!moving && cp_loud)
+                file_backup_told(source_shown, destination_shown,
+                                 (string_address) "'",
+                                 (string_address) "' -> '");
 
         if (!moving && (cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
                 return cp_linked(source_directory, source, source_shown,
@@ -25867,11 +25902,6 @@ static bool file_copy_one(bipolar source_directory, string_address source,
             .at = 0,
         };
 
-        if (!moving && cp_loud)
-                file_backup_told(source_shown, destination_shown,
-                                 (string_address) "'",
-                                 (string_address) "' -> '");
-
         bool complete = true;
         positive skipped = 0;
         struct linux_dirent64 address_to child;
@@ -26024,13 +26054,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
 copied_without_metadata:
         if (!moving)
-        {
-                if (cp_loud)
-                        file_backup_told(source_shown, destination_shown,
-                                         (string_address) "'",
-                                         (string_address) "' -> '");
                 return true;
-        }
 
         return !remove_source || file_move_remove(
                                      source_directory, source, source_shown,
@@ -26261,6 +26285,8 @@ static bool file_backup_seen(string_address program, p8 letter,
 {
         if (letter != 'B' || !value)
                 return true;
+        if (string_get(value))
+                file_backup_control_named = value;
         return file_backup_control(program, value);
 }
 
@@ -26419,6 +26445,7 @@ static b32 file_cp()
         cp_update_fail = false;
         file_into_seen = null;
         file_join_source_path = false;
+        file_backup_control_named = null;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -27029,6 +27056,7 @@ static b32 file_install()
         install_status = 0;
         file_into_seen = null;
         file_join_source_path = false;
+        file_backup_control_named = null;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -27250,6 +27278,12 @@ static fn mv_one(string_address source, string_address destination)
                 mv_status = 1;
                 goto finished;
         }
+        if (!file_overwrite_allowed((string_address)"mv", destination,
+                                    destination_exists, mv_never_clobber,
+                                    mv_newer_only, mv_ask, mv_update_fail,
+                                    address_of from,
+                                    address_of to, address_of mv_status))
+                goto finished;
         if (destination_exists && !mv_exchange && !file_backup_kind &&
             !file_overwrite_kinds_ok((string_address) "mv", source, destination,
                                      from.mode, to.mode))
@@ -27257,12 +27291,6 @@ static fn mv_one(string_address source, string_address destination)
                 mv_status = 1;
                 goto finished;
         }
-        if (!file_overwrite_allowed((string_address)"mv", destination,
-                                    destination_exists, mv_never_clobber,
-                                    mv_newer_only, mv_ask, mv_update_fail,
-                                    address_of from,
-                                    address_of to, address_of mv_status))
-                goto finished;
 
         /* Cross-device fallback must honor the same destination inode/absence
            decision as the first rename attempt. */
@@ -27532,6 +27560,7 @@ static b32 file_mv()
         mv_update_fail = false;
         file_into_seen = null;
         file_join_source_path = false;
+        file_backup_control_named = null;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -35358,7 +35387,9 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code < 0)
         {
-                string_format(log_error, "xargs: %s: %s\n", command,
+                string_format(log_error,
+                              "xargs: failed to run command '%w': %s\n",
+                              writer_terminal_quoted_name, command,
                               file_reason(code));
                 xargs_answer_raise(code == -ERROR_NO_ENTRY ||
                                            code == -ERROR_NOT_DIRECTORY
@@ -35842,6 +35873,7 @@ static b32 file_xargs()
         {
                 log_error("xargs: warning: the -E option has no effect if -0 or -d is used.\n",
                           0);
+                log_error("\n", 1);
                 xargs_ending = null;
         }
         xargs_slot_name = file_option_value(address_of taking, 'V');
@@ -35926,6 +35958,14 @@ static b32 file_xargs()
 
         xargs_prefix_bytes = xargs_used;
         xargs_prefix_words = xargs_word_count;
+
+        if (xargs_prefix_bytes > xargs_most_bytes)
+        {
+                log_error("xargs: cannot fit single argument within argument list size limit\n",
+                          0);
+                xargs_answer_raise(1);
+                goto xargs_finished;
+        }
 
         if (!xargs_keep_template())
         {

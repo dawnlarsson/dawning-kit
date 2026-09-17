@@ -228,8 +228,8 @@ DOMAIN_FLOOR = {
                    "with the work under /tmp: a run whose root is on a "
                    "filesystem mounted without nosuid and nodev cannot see "
                    "the mounts this build used to break"),
-    "files": (71204, 74224, 150,
-              "3620 cases are still untriaged, and a dozen causes hold most "
+    "files": (71395, 74224, 150,
+              "2788 cases are still untriaged, and a dozen causes hold most "
               "of them. kill is 2942 of 2963: util-linux's exact-argv parse "
               "is in, including packed --list=/-l=/-d= and treating an "
               "unknown dashed word as a process after a signal is taken. "
@@ -245,14 +245,17 @@ DOMAIN_FLOOR = {
               "rows mix walk leftovers and reason_unverified. realpath, 62: -s/-P/-L "
               "last-win on the same walk byte is certified, named "
               "operands carry the kernel's reason, and further trailing-slash "
-              "and loop pins that now match are gone. cp 430, mv 248, ln "
-              "124, xargs 159, install 70 and split 11: GNU install compiles "
+              "and loop pins that now match are gone. cp 388, mv 245, ln "
+              "124, xargs 31, install 70 and split 11: GNU install compiles "
               "-m after the operand count, -D creates a missing -t directory, "
               "and cp replaces a live dest symlink while refusing a "
-              "dangling one, and --parents joins the source path onto the dest "
-              "directory with the source directory's mode. GNU xargs "
-              "still "
-              "warns that -I/-L/-n are mutually exclusive and last-wins, "
+              "dangling one, --parents joins the source path onto the dest "
+              "directory with the source directory's mode, and dir/. opens "
+              "the named directory through file_is_dot and path_head_copy. "
+              "GNU xargs names a missing command with failed to run command "
+              "via writer_terminal_quoted_name, and -s 0 warns then refuses "
+              "a prefix that cannot fit. -I/-L/-n are mutually exclusive "
+              "and last-wins, "
               "--eof is optional like --replace, and same-file under -l/-b/"
               "--remove-destination follows copy.c. ls 102, dir 116 and "
               "vdir 95: the "
@@ -30955,9 +30958,7 @@ PINNED = r"""
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"8b3d0de96e08f2d346d6d867e32229549b24f9de7fee1d30afd434d1cf4f2a61"},"case":{"argv":["-L"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","tier":"singles","utility":"vdir"},"domain":"files","id":"bebcdab80ce37a0c","kind":"bug","list":"ledger","reason_id":"r331","reference":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"8b3d0de96e08f2d346d6d867e32229549b24f9de7fee1d30afd434d1cf4f2a61"},"utility":"vdir"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"1e570c919f6c198084b623dc4e54aa4bbaf5e56bafc628bcf9c0b0f2cf6ac4fd"},"case":{"argv":["--indicator-style=file-type"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","tier":"singles","utility":"vdir"},"domain":"files","id":"fc7f5f5603d3783c","kind":"bug","list":"ledger","reason_id":"r329","reference":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"c6abe108360d42f7b16bf64b135b06ecb903cd9fc9c3518ed53ff3a2ed64e26f"},"utility":"vdir"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"ef186328ba1b8b1e3ae2ec629efa5708ea79f95701c330add29a70de4b93628e"},"case":{"argv":["-s","999999999"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_words","utility":"xargs"},"domain":"files","id":"0204ac9c6f2a6a3a","kind":"bug","list":"ledger","reason_id":"r137","utility":"xargs"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-s0"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_words","utility":"xargs"},"domain":"files","id":"205b3c42c376aa76","kind":"bug","list":"ledger","reason_id":"r137","utility":"xargs"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"ef186328ba1b8b1e3ae2ec629efa5708ea79f95701c330add29a70de4b93628e"},"case":{"argv":["-s999999999"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_words","utility":"xargs"},"domain":"files","id":"b6085fb89499966e","kind":"bug","list":"ledger","reason_id":"r137","utility":"xargs"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["-s","0"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"files_words","utility":"xargs"},"domain":"files","id":"cda58d1297654f46","kind":"bug","list":"ledger","reason_id":"r137","utility":"xargs"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--open-tty","reason_id":"r138","utility":"xargs"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--show-limits","reason_id":"r138","utility":"xargs"},
 {"domain":"misc","kind":"deliberate","list":"ledger","option":"--groups","reason_id":"r141","utility":"chroot"},
