@@ -647,6 +647,23 @@ static bipolar file_parent_open(string_address path, p8 address_to leaf)
                                          FILE_PATH_MAX);
 }
 
+/* Linux rename/open accept a trailing slash on a directory. The pinned
+   parent walk treats that spelling as an empty leaf, so strip separators
+   the way path_tail_copy does, keeping the original name for diagnostics. */
+static bipolar file_parent_open_named(string_address path, p8 address_to leaf)
+{
+        p8 trimmed[FILE_PATH_MAX];
+        positive length = string_length(path);
+
+        if (length >= sizeof(trimmed))
+                return -ERROR_NAME_TOO_LONG;
+        memory_copy_apart(trimmed, path, length);
+        while (length > 1 && trimmed[length - 1] == '/')
+                length--;
+        trimmed[length] = end;
+        return file_parent_open(trimmed, leaf);
+}
+
 /*
         path_join takes as much of a name as fits and says nothing about the
         rest.  A path cut to fit is some other path, so every walker asks
@@ -1990,6 +2007,19 @@ static bool file_same_word(string_address text, positive length, string_address 
                !memory_compare_ascii_case(text, word, length);
 }
 
+/* GNU parse-datetime to_hour: 12am is 0, 12pm is 12, 1-11pm is +12. */
+static bool file_hour_meridian(positive hour, bool afternoon,
+                               positive address_to into)
+{
+        if (!hour || hour > 12)
+                return false;
+        if (hour == 12)
+                address_to into = afternoon ? 12 : 0;
+        else
+                address_to into = afternoon ? hour + 12 : hour;
+        return true;
+}
+
 static const file_unit address_to file_unit_of(string_address text, positive length)
 {
         for (positive i = 0; file_units[i].name; i++)
@@ -2211,6 +2241,70 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
                                         continue;
                                 }
 
+                                /* GNU 9.11: N/N/N. Four or more leading digits
+                                   are YYYY/MM/DD; otherwise MM/DD/YY[YY]. */
+                                if (!marked && string_is(text + at, '/'))
+                                {
+                                        positive wide;
+                                        b64 rest;
+                                        b64 which;
+
+                                        if (dated)
+                                                return false;
+
+                                        at = file_read_number(text, at + 1,
+                                                              address_of rest,
+                                                              address_of wide);
+
+                                        if (!wide || !string_is(text + at, '/'))
+                                                return false;
+
+                                        at = file_read_number(text, at + 1,
+                                                              address_of which,
+                                                              address_of wide);
+
+                                        if (!wide)
+                                                return false;
+
+                                        if (digits >= 4)
+                                        {
+                                                year = value;
+                                                if (rest < 1 || rest > 12 ||
+                                                    which < 1 ||
+                                                    which > file_month_days(
+                                                                year, rest))
+                                                        return false;
+                                                month = (positive)rest;
+                                                day = (positive)which;
+                                        }
+                                        else
+                                        {
+                                                if (value < 1 || value > 12 ||
+                                                    rest < 1)
+                                                        return false;
+                                                year = wide <= 2
+                                                           ? (which <= 68
+                                                                  ? 2000 + which
+                                                                  : 1900 + which)
+                                                           : which;
+                                                if (rest > file_month_days(
+                                                               year, value))
+                                                        return false;
+                                                month = (positive)value;
+                                                day = (positive)rest;
+                                        }
+
+                                        dated = true;
+                                        if (!timed)
+                                        {
+                                                hour = 0;
+                                                minute = 0;
+                                                second = 0;
+                                                address_to nanoseconds = 0;
+                                        }
+                                        continue;
+                                }
+
                                 /* GNU 9.11: dd.mm.yy / dd.mm.yyyy, the European
                                    dotted form. Two dots are required so a
                                    fractional 1.5 is not stolen as a date. */
@@ -2357,6 +2451,63 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
 
                         if (!unit)
                         {
+                                bool afternoon =
+                                    file_same_word(text + at, length,
+                                                   (string_address) "pm");
+                                bool morning =
+                                    file_same_word(text + at, length,
+                                                   (string_address) "am");
+
+                                /* Glued or following meridian: 12pm, 1 am. */
+                                if (!marked && (afternoon || morning))
+                                {
+                                        if (timed)
+                                        {
+                                                if (!file_hour_meridian(
+                                                        hour, afternoon,
+                                                        address_of hour))
+                                                        return false;
+                                        }
+                                        else if (!file_hour_meridian(
+                                                     (positive)value, afternoon,
+                                                     address_of hour))
+                                                return false;
+                                        else
+                                        {
+                                                minute = 0;
+                                                second = 0;
+                                                address_to nanoseconds = 0;
+                                                timed = true;
+                                        }
+                                        at += length;
+                                        continue;
+                                }
+
+                                /* GNU digits_to_date_time: more than four
+                                   digits with no separator is YYYYMMDD. */
+                                if (!marked && !dated && digits == 8)
+                                {
+                                        b64 y = value / 10000;
+                                        b64 m = (value / 100) % 100;
+                                        b64 d = value % 100;
+
+                                        if (m < 1 || m > 12 || d < 1 ||
+                                            d > file_month_days(y, m))
+                                                return false;
+                                        year = y;
+                                        month = (positive)m;
+                                        day = (positive)d;
+                                        dated = true;
+                                        if (!timed)
+                                        {
+                                                hour = 0;
+                                                minute = 0;
+                                                second = 0;
+                                                address_to nanoseconds = 0;
+                                        }
+                                        continue;
+                                }
+
                                 // The day before its month's name, "9 Sep".
                                 bipolar named = file_name_among(text + at, length,
                                                                 file_month_names, 12);
@@ -2436,6 +2587,22 @@ static bool file_moment_read_from(string_address text, b64 now, positive fractio
                 if (file_same_word(word, length, (string_address) "now") ||
                     file_same_word(word, length, (string_address) "today"))
                         continue;
+
+                {
+                        bool afternoon =
+                            file_same_word(word, length, (string_address) "pm");
+                        bool morning =
+                            file_same_word(word, length, (string_address) "am");
+
+                        if (afternoon || morning)
+                        {
+                                if (!timed ||
+                                    !file_hour_meridian(hour, afternoon,
+                                                        address_of hour))
+                                        return false;
+                                continue;
+                        }
+                }
 
                 // A zone by name after a zone by number is a second zone,
                 // which the system's date refuses too.
@@ -5360,7 +5527,7 @@ static bool file_source_destination(string_address program, positive first,
         if (into && alone)
                 return string_report(
                     log_error, false,
-                    "%s: cannot combine --target-directory and --no-target-directory\n",
+                    "%s: cannot combine --target-directory (-t) and --no-target-directory (-T)\n",
                     program);
 
         if (first >= count)
@@ -5384,9 +5551,11 @@ static bool file_source_destination(string_address program, positive first,
         {
                 if (after - first != 1)
                 {
+                        /* GNU extra operand is files[2], the first name
+                           beyond the pair, not the destination. */
                         return string_report(log_error, false, "%s: extra operand '%w'\n", program,
                                       writer_terminal_quoted_name,
-                                      program_argument((b32)(first + 1)));
+                                      program_argument((b32)(first + 2)));
                 }
 
                 pair(program_argument((b32)first), last);
@@ -9271,11 +9440,47 @@ static bool find_size_holds(find_node address_to test, file_facts address_to fac
         return units == (p64)test->number;
 }
 
-static bool find_type_holds(p8 wanted, positive mode)
+static bool find_type_holds(b64 wanted, positive mode)
 {
-        p8 kind = wanted < 128 ? file_kind_from_letter[wanted] : 0;
+        p8 kind = (mode & MODE_FORMAT) >> 12;
 
-        return kind && kind == ((mode & MODE_FORMAT) >> 12);
+        return kind && (wanted & ((b64)1 << kind)) != 0;
+}
+
+static bool find_type_mask(string_address value, string_address word,
+                           b64 address_to mask)
+{
+        b64 bits = 0;
+        bool any = false;
+
+        for (; string_get(value); value++)
+        {
+                p8 letter = string_get(value);
+                p8 kind;
+
+                if (letter == ',')
+                        continue;
+                kind = letter < 128 ? file_kind_from_letter[letter] : 0;
+                if (!kind)
+                {
+                        string_format(log_error,
+                                      "find: Unknown argument to %s: %c\n", word,
+                                      letter);
+                        return false;
+                }
+                bits |= (b64)1 << kind;
+                any = true;
+        }
+
+        if (!any)
+        {
+                string_format(log_error, "find: Unknown argument to %s: %c\n",
+                              word, ',');
+                return false;
+        }
+
+        address_to mask = bits;
+        return true;
 }
 
 static bool find_empty(file_facts address_to facts)
@@ -9553,6 +9758,13 @@ static b32 find_parse_primary()
         {
                 find_at++;
 
+                if (find_is(find_word(), (string_address) ")"))
+                {
+                        log_error("find: empty parentheses are not allowed.\n", 0);
+                        find_bad = true;
+                        return -1;
+                }
+
                 b32 inside = find_parse_or();
 
                 if (find_bad)
@@ -9574,6 +9786,15 @@ static b32 find_parse_primary()
         {
                 find_at++;
 
+                if (!find_word())
+                {
+                        string_format(log_error,
+                                      "find: expected an expression after `%w'\n",
+                                      writer_terminal_quoted_name, word);
+                        find_bad = true;
+                        return -1;
+                }
+
                 b32 node = find_make('!');
                 b32 under = find_parse_primary();
 
@@ -9586,6 +9807,26 @@ static b32 find_parse_primary()
                 find_nodes[node].left = under;
 
                 return node;
+        }
+
+        if (find_is(word, (string_address) ")"))
+        {
+                log_error("find: you have too many ')'\n", 0);
+                find_bad = true;
+                return -1;
+        }
+
+        if (find_is(word, (string_address) "-o") ||
+            find_is(word, (string_address) "-or") ||
+            find_is(word, (string_address) "-a") ||
+            find_is(word, (string_address) "-and") ||
+            find_is(word, (string_address) ","))
+        {
+                string_format(log_error,
+                              "find: binary operator `%w' with nothing before it\n",
+                              writer_terminal_quoted_name, word);
+                find_bad = true;
+                return -1;
         }
 
         find_at++;
@@ -9692,7 +9933,8 @@ static b32 find_parse_primary()
                 break;
 
         case 'Y':
-                node->number = string_get(value);
+                if (!find_type_mask(value, word, address_of node->number))
+                        goto bad;
                 break;
 
         case 'S':
@@ -9727,6 +9969,21 @@ static b32 find_parse_primary()
                         node->output = -1;
 
                 node->text = value;
+                {
+                        string_address at = value;
+
+                        while (string_get(at))
+                        {
+                                if (string_get(at++) != '%')
+                                        continue;
+                                if (!string_get(at))
+                                {
+                                        log_error("find: error: % at end of format string\n",
+                                                  0);
+                                        goto bad;
+                                }
+                        }
+                }
                 break;
 
         case 'e':
@@ -9750,8 +10007,40 @@ static b32 find_parse_primary()
                 break;
 
         case 'v':
-                // -regextype names a dialect; only the one below is here,
-                // and a name for it is taken and passed over.
+                if (find_is(word, (string_address) "-regextype"))
+                {
+                        static const string_address types[] = {
+                            (string_address) "find",
+                            (string_address) "awk",
+                            (string_address) "egrep",
+                            (string_address) "ed",
+                            (string_address) "emacs",
+                            (string_address) "gnu-awk",
+                            (string_address) "grep",
+                            (string_address) "posix-awk",
+                            (string_address) "posix-basic",
+                            (string_address) "posix-egrep",
+                            (string_address) "posix-extended",
+                            (string_address) "posix-minimal-basic",
+                            (string_address) "sed",
+                        };
+                        bool known = false;
+
+                        for (positive i = 0; i < array_count(types); i++)
+                                if (string_equals(value, types[i]))
+                                {
+                                        known = true;
+                                        break;
+                                }
+                        if (!known)
+                        {
+                                string_format(
+                                    log_error,
+                                    "find: Unknown regular expression type %s; valid types are find, awk, egrep, ed, emacs, gnu-awk, grep, posix-awk, posix-basic, posix-egrep, posix-extended, posix-minimal-basic, sed.\n",
+                                    value);
+                                goto bad;
+                        }
+                }
                 break;
 
         case 'x':
@@ -9839,14 +10128,38 @@ static b32 find_parse_primary()
                 break;
 
         case 't':
-                node->number = string_get(value);
+                if (!find_type_mask(value, word, address_of node->number))
+                        goto bad;
                 break;
 
         case 'm':
         {
+                string_address given = value;
+
                 node->comparison = ' ';
                 if (string_is(value, '-') || string_is(value, '/'))
                         node->comparison = string_get(value++);
+                else if (string_is(value, '+'))
+                {
+                        string_address rest = value + 1;
+                        bool octal = string_get(rest) != 0;
+
+                        for (; string_get(rest); rest++)
+                                if (string_get(rest) < '0' ||
+                                    string_get(rest) > '7')
+                                {
+                                        octal = false;
+                                        break;
+                                }
+                        if (octal)
+                        {
+                                string_format(log_error,
+                                              "find: invalid mode %w\n",
+                                              writer_terminal_quoted_name,
+                                              given);
+                                goto bad;
+                        }
+                }
                 positive mode;
                 if (!file_mode_of(value, 0, false, address_of mode))
                 {
@@ -10873,7 +11186,7 @@ static bool find_true(b32 which)
         }
 
         case 't':
-                return find_type_holds((p8)node->number, find_facts->mode);
+                return find_type_holds(node->number, find_facts->mode);
 
         case 'z':
                 if (!find_facts_ready())
@@ -10995,7 +11308,7 @@ static bool find_true(b32 which)
                 else
                         mode = find_facts->mode;
 
-                return find_type_holds((p8)node->number, mode);
+                return find_type_holds(node->number, mode);
         }
 
         case 'B':
@@ -11424,7 +11737,7 @@ static bool find_tree_holds(b32 which, string_address path, positive length,
                 find_lowered(node->kind == 'N' ? name : path, lowered);
                 return shell_match(node->text, lowered);
         case 't':
-                return find_type_holds((p8)node->number, mode);
+                return find_type_holds(node->number, mode);
         case 'd':
         case '0':
                 if (!find_tree_print(output, open_at, path, length,
@@ -11961,8 +12274,13 @@ static b32 file_find()
                 }
                 else if (!string_compare_max(word, "-O", 2))
                 {
-                        // The optimisation level names how the reference
-                        // orders its own tests, which is not an answer.
+                        /* GNU process_optimisation_option: the integer is
+                           packed onto -O, not a following word. */
+                        if (string_length(word) == 2 ||
+                            !string_digits_checked_exact(word + 2, 10, null))
+                                return string_report(
+                                    log_error, 1,
+                                    "find: The -O option must be immediately followed by a decimal integer\n");
                 }
                 else if (find_is(word, (string_address) "-D"))
                 {
@@ -12018,8 +12336,8 @@ static b32 file_find()
 
         if (find_at < count)
         {
-                return string_report(log_error, 1, "find: paths must precede expression: %w\n",
-                              writer_terminal_name, program_argument((b32)find_at));
+                return string_report(log_error, 1, "find: paths must precede expression: `%w'\n",
+                              writer_terminal_quoted_name, program_argument((b32)find_at));
         }
 
         // The -print that is only there when nothing else acts.
@@ -14522,23 +14840,6 @@ static b32 file_chmod()
 
         string_address like = file_option_value(address_of taking, 'e');
 
-        // --reference says the mode without spelling it, and takes the place
-        // of the mode operand rather than standing beside it.
-        if (like)
-        {
-                file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, like, 0, address_of facts);
-
-                if (looked < 0)
-                {
-                        return string_report(log_error, 1, "chmod: failed to get attributes of '%w': %s\n",
-                                      writer_terminal_quoted_name, like, file_reason(looked));
-                }
-
-                chmod_referenced = true;
-                chmod_reference_mode = facts.mode;
-        }
-
         /*
                 "chmod -w file" is a mode and not an option, and the reference
                 chmod reads any word that begins with a minus and a mode
@@ -14569,7 +14870,7 @@ static b32 file_chmod()
                 break;
         }
 
-        if (minus_mode && chmod_referenced)
+        if (minus_mode && like)
                 return string_report(log_error, 1,
                                      "chmod: cannot combine mode and --reference options\n");
 
@@ -14585,11 +14886,27 @@ static b32 file_chmod()
         }
         else if (first >= count)
                 return file_need_operand((string_address) "chmod");
-        else if (!chmod_referenced && first + 1 >= count)
+        else if (!like && first + 1 >= count)
                 return file_need_operand_after((string_address) "chmod",
                                                program_argument((b32)first));
-        else if (!chmod_referenced)
+        else if (!like)
                 chmod_specification = program_argument((b32)first++);
+
+        /* GNU looks up --reference after it knows there is a file operand. */
+        if (like)
+        {
+                file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, like, 0, address_of facts);
+
+                if (looked < 0)
+                {
+                        return string_report(log_error, 1, "chmod: failed to get attributes of '%w': %s\n",
+                                      writer_terminal_quoted_name, like, file_reason(looked));
+                }
+
+                chmod_referenced = true;
+                chmod_reference_mode = facts.mode;
+        }
 
         /*
                 The mode is read once, before the first file is looked at.
@@ -23043,6 +23360,7 @@ static bool cp_newer_only;
 static bool cp_update_fail;
 static p8 cp_update_policy;
 static p8 mv_update_policy;
+static string_address file_into_seen;
 static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
@@ -25455,8 +25773,8 @@ static fn cp_pair(string_address source, string_address destination)
 {
         p8 source_leaf[FILE_PATH_MAX];
         p8 destination_leaf[FILE_PATH_MAX];
-        bipolar source_directory = file_parent_open(source, source_leaf);
-        bipolar destination_directory = file_parent_open(
+        bipolar source_directory = file_parent_open_named(source, source_leaf);
+        bipolar destination_directory = file_parent_open_named(
             destination, destination_leaf);
 
         if (source_directory < 0 || destination_directory < 0)
@@ -25678,11 +25996,11 @@ static bool file_backup_seen(string_address program, p8 letter,
 static bool file_update_seen(string_address program, p8 letter,
                              string_address value, p8 address_to policy)
 {
+        /* GNU cp.c/mv.c: -i/-f/-n only set interactive. After getopt,
+           I_ALWAYS_SKIP forces UPDATE_NONE. Writing policy here for -i/-f
+           wipes --update=none-fail. */
         if (letter == 'n' || letter == 'i' || letter == 'f')
-        {
-                address_to policy = letter == 'n' ? 'n' : 'a';
                 return true;
-        }
         if (letter != 'u')
                 return true;
         if (!value || !string_get(value))
@@ -25703,9 +26021,22 @@ static bool file_update_seen(string_address program, p8 letter,
         }
 }
 
+static bool file_into_option_seen(string_address program, p8 letter,
+                                  string_address value)
+{
+        if (letter != 't')
+                return true;
+        if (file_into_seen)
+                return file_targets_told(program, true);
+        file_into_seen = value;
+        return true;
+}
+
 static bool cp_option_seen(p8 letter, string_address value)
 {
         if (!file_backup_seen((string_address) "cp", letter, value))
+                return false;
+        if (!file_into_option_seen((string_address) "cp", letter, value))
                 return false;
         if (letter == 'p' &&
             !cp_words_read((string_address) "--preserve", value,
@@ -25732,6 +26063,8 @@ static bool cp_option_seen(p8 letter, string_address value)
 static bool mv_option_seen(p8 letter, string_address value)
 {
         if (!file_backup_seen((string_address) "mv", letter, value))
+                return false;
+        if (!file_into_option_seen((string_address) "mv", letter, value))
                 return false;
         return file_update_seen((string_address) "mv", letter, value,
                                 address_of mv_update_policy);
@@ -25813,6 +26146,7 @@ static b32 file_cp()
 
         cp_update_policy = 0;
         cp_update_fail = false;
+        file_into_seen = null;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -25823,7 +26157,7 @@ static b32 file_cp()
         if (cp_selected.collision == 'n')
                 cp_update_policy = 'n';
 
-        if (file_backup_kind &&
+        if ((taking.flags & (FILE_FLAG('b') | FILE_FLAG('B') | FILE_FLAG('S'))) &&
             (cp_update_policy == 'n' || cp_update_policy == 'F'))
                 return string_report(log_error, 1,
                                      "cp: --backup is mutually exclusive with -n or --update=none-fail\n");
@@ -26328,6 +26662,8 @@ static bool install_option_seen(p8 letter, string_address value)
 {
         if (!file_backup_seen((string_address) "install", letter, value))
                 return false;
+        if (!file_into_option_seen((string_address) "install", letter, value))
+                return false;
         if (letter == 'm' && value &&
             !file_mode_of(value, 0, false, address_of install_mode))
                 return false;
@@ -26354,6 +26690,7 @@ static b32 file_install()
         install_owner = -1;
         install_group = -1;
         install_status = 0;
+        file_into_seen = null;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -26472,9 +26809,9 @@ static fn mv_one(string_address source, string_address destination)
 {
         p8 source_leaf[FILE_PATH_MAX];
         p8 destination_leaf[FILE_PATH_MAX];
-        bipolar source_directory = file_parent_open(
+        bipolar source_directory = file_parent_open_named(
             source, source_leaf);
-        bipolar destination_directory = file_parent_open(
+        bipolar destination_directory = file_parent_open_named(
             destination, destination_leaf);
         bipolar source_handle = -1;
         bipolar destination_handle = -1;
@@ -26794,6 +27131,7 @@ static b32 file_mv()
 
         mv_update_policy = 0;
         mv_update_fail = false;
+        file_into_seen = null;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -26804,7 +27142,7 @@ static b32 file_mv()
         if (mv_collision_option == 'n')
                 mv_update_policy = 'n';
 
-        if (file_backup_kind &&
+        if ((taking.flags & (FILE_FLAG('b') | FILE_FLAG('B') | FILE_FLAG('S'))) &&
             ((taking.flags & FILE_FLAG('X')) || mv_update_policy == 'n' ||
              mv_update_policy == 'F'))
                 return string_report(log_error, 1,
@@ -34630,6 +34968,20 @@ static fn xargs_reset()
         utility_arena.used = xargs_mark;
 }
 
+/* GNU read_string increments lineno on each delimiter, including under -0/-d. */
+static fn xargs_line_tick()
+{
+        if (!xargs_lines || xargs_ended || xargs_done)
+                return;
+        xargs_line_count++;
+        if (xargs_line_count >= xargs_lines &&
+            xargs_word_count > xargs_prefix_words)
+        {
+                xargs_run();
+                xargs_reset();
+        }
+}
+
 /*
         The command as it was written down, kept where the built one cannot
         reach it. -I rebuilds the whole command for every item, and reading
@@ -34700,7 +35052,7 @@ static fn xargs_item_done()
 
         // The logical end of the input stops the reading; what was gathered
         // before it is still a command to run.
-        if (xargs_ending && !xargs_null &&
+        if (xargs_ending && !xargs_null && !xargs_delimited &&
             !string_compare(xargs_item, xargs_ending))
         {
                 xargs_ended = true;
@@ -34789,10 +35141,14 @@ static bool xargs_count_value(string_address value, p8 letter, positive address_
                               value, named);
         }
 
-        if (!made && letter != 'P' && letter != 's')
+        if (!made && letter != 'P')
         {
-                return string_report(log_error, false,
-                              "xargs: value 0 for -%s option should be >= 1\n", named);
+                string_format(log_error,
+                              "xargs: value 0 for -%s option should be >= 1\n",
+                              named);
+                if (letter != 's')
+                        return false;
+                made = 1;
         }
 
         if (letter == 'P' && made > 2147483647)
@@ -35059,8 +35415,17 @@ static b32 file_xargs()
                 xargs_ending = file_option_value(address_of taking, 'e');
         else
                 xargs_ending = null;
+        if (xargs_ending && !string_get(xargs_ending))
+                xargs_ending = null;
+        if (xargs_ending && (xargs_null || xargs_delimited))
+        {
+                log_error("xargs: warning: the -E option has no effect if -0 or -d is used.\n",
+                          0);
+                xargs_ending = null;
+        }
         xargs_slot_name = file_option_value(address_of taking, 'V');
-        xargs_exit_too_long = (taking.flags & FILE_FLAG('x')) != 0;
+        xargs_exit_too_long = (taking.flags & FILE_FLAG('x')) != 0 ||
+                              xargs_replace != null || xargs_lines != 0;
         xargs_said_nul = false;
         xargs_most_bytes = XARGS_BATCH_BYTES;
         xargs_input = 0;
@@ -35085,12 +35450,16 @@ static b32 file_xargs()
 
         if (taking.flags & FILE_FLAG('s'))
         {
-                if (!xargs_count_value(file_option_value(address_of taking, 's'), 's',
-                                       address_of xargs_most_bytes))
-                        return 1;
-
-                if (xargs_most_bytes > XARGS_BATCH_BYTES)
-                        xargs_most_bytes = XARGS_BATCH_BYTES;
+                /* seen() already named a zero; apply the last -s without
+                   repeating GNU's non-fatal warning. */
+                positive made = 0;
+                string_digits_checked_exact(file_option_value(address_of taking, 's'),
+                                            10, address_of made);
+                if (!made)
+                        made = 1;
+                if (made > XARGS_BATCH_BYTES)
+                        made = XARGS_BATCH_BYTES;
+                xargs_most_bytes = made;
         }
 
         string_address from = file_option_value(address_of taking, 'a');
@@ -35177,7 +35546,8 @@ static b32 file_xargs()
                 {
                         p8 letter = xargs_buffer[at];
 
-                        if (!letter && !xargs_null && !xargs_said_nul)
+                        if (!letter && !xargs_null && !xargs_delimited &&
+                            !xargs_said_nul)
                         {
                                 log_error("xargs: WARNING: a NUL character occurred in the "
                                           "input.  It cannot be passed through in the "
@@ -35197,6 +35567,7 @@ static b32 file_xargs()
 
                                 xargs_item[xargs_item_length] = end;
                                 xargs_item_done();
+                                xargs_line_tick();
                                 xargs_item_length = 0;
                                 started = false;
                                 continue;
@@ -35214,6 +35585,7 @@ static b32 file_xargs()
 
                                 xargs_item[xargs_item_length] = end;
                                 xargs_item_done();
+                                xargs_line_tick();
                                 xargs_item_length = 0;
                                 started = false;
                                 continue;
