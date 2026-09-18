@@ -449,6 +449,21 @@ static bipolar http_response_framing_from(p8 address_to bytes, positive size,
                         return scan == HTTP_HEAD_MAX ? HTTP_MALFORMED
                                                      : HTTP_NO_REPLY;
 
+#if MOONWATER_STRICT >= STRICT_SAFE
+                /* obs-fold. RFC 7230 retired header line folding, and the
+                   two readings of a folded field -- skip the continuation
+                   line, or join it -- give different values. Which one
+                   anything ahead of this client took is not knowable from
+                   here, so refuse the ambiguity rather than pick a reading.
+                   A resumed walk never returns to a block it has passed, so
+                   every complete block is read once. */
+                for (positive line = 0; line + 1 < (positive)header; line++)
+                        if (bytes[at + line] == '\n' &&
+                            (bytes[at + line + 1] == ' ' ||
+                             bytes[at + line + 1] == '\t'))
+                                return HTTP_MALFORMED;
+#endif
+
                 transfer = http_header(
                     bytes + at, (positive)header,
                     (string_address)"transfer-encoding",
