@@ -1146,11 +1146,19 @@ static fn storage_probe_swap(bipolar handle,
         }
 }
 
+/*
+        The superblock is at 0x10000, past the block every other recogniser
+        shares, so this reads its own. It used to read over the shared block
+        instead, which was only ever correct because it happened to be
+        ordered after the last recogniser that still wanted those bytes --
+        a fourteenth recogniser placed between them would have been handed
+        the Btrfs superblock and told it was sector zero.
+*/
 static fn storage_probe_btrfs(bipolar handle,
-                              storage_identity address_to identity,
-                              p8 address_to bytes)
+                              storage_identity address_to identity)
 {
-        positive have = storage_read(handle, bytes, STORAGE_PROBE_ROOM, 0x10000);
+        p8 bytes[STORAGE_PROBE_ROOM];
+        positive have = storage_read(handle, bytes, sizeof(bytes), 0x10000);
         positive sector_size;
         positive node_size;
 
@@ -1197,10 +1205,13 @@ static bool storage_iso_descriptor(bipolar handle, p8 address_to bytes,
         return true;
 }
 
+/* The volume descriptor is at 0x8000, and is likewise read apart from the
+   block the recognisers before this one are reading. */
 static fn storage_probe_iso9660(bipolar handle,
-                                storage_identity address_to identity,
-                                p8 address_to bytes)
+                                storage_identity address_to identity)
 {
+        p8 bytes[2048];
+
         if (!storage_iso_descriptor(handle, bytes, null, null))
                 return;
 
@@ -1356,9 +1367,9 @@ static fn storage_probe_kind(p8 kind, bipolar handle,
         case STORAGE_EXT: storage_probe_ext(identity, bytes, have); break;
         case STORAGE_EROFS: storage_probe_erofs(identity, bytes, have); break;
         case STORAGE_SWAP: storage_probe_swap(handle, identity, bytes, have, signature_offset); break;
-        case STORAGE_BTRFS: storage_probe_btrfs(handle, identity, bytes); break;
+        case STORAGE_BTRFS: storage_probe_btrfs(handle, identity); break;
         case STORAGE_UDF: storage_probe_udf(handle, identity, signature_offset); break;
-        case STORAGE_ISO9660: storage_probe_iso9660(handle, identity, bytes); break;
+        case STORAGE_ISO9660: storage_probe_iso9660(handle, identity); break;
         }
 }
 
