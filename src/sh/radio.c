@@ -165,6 +165,9 @@ static positive radio_wifi_load(radio_network address_to into, positive room)
         memory_fill(into, 0, sizeof(radio_network) * room);
         if (got <= 0)
                 return 0;
+        /* text holds the saved passphrases in the clear, exactly as the
+           radio_network array below does, so it is scrubbed the same way
+           before this frame is left to whatever runs in it next. */
 
         while (at < (positive)got && count < room)
         {
@@ -220,6 +223,7 @@ static positive radio_wifi_load(radio_network address_to into, positive room)
         if (!want_ssid && count < room && into[count].ssid_length)
                 count++;
 
+        crypto_forget(text, sizeof(text));
         return count;
 }
 
@@ -234,7 +238,10 @@ static bipolar radio_wifi_save(radio_network address_to networks, positive count
                 if (used + networks[at].ssid_length + networks[at].pass_length +
                         2 >=
                     sizeof(text))
+                {
+                        crypto_forget(text, sizeof(text));
                         return -1;
+                }
                 memory_copy(text + used, networks[at].ssid,
                             networks[at].ssid_length);
                 used += networks[at].ssid_length;
@@ -245,7 +252,13 @@ static bipolar radio_wifi_save(radio_network address_to networks, positive count
                 text[used++] = '\n';
         }
 
-        return host_write_file(NET_WIFI_LIST, text, used, 0600, true);
+        {
+                bipolar failed = host_write_file(NET_WIFI_LIST, text, used,
+                                                 0600, true);
+
+                crypto_forget(text, sizeof(text));
+                return failed;
+        }
 }
 
 static bipolar radio_wifi_join(string_address ssid, string_address pass)
