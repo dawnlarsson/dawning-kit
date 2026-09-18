@@ -131,14 +131,21 @@ static bipolar bowl_mkdir(string_address path)
 /* Pin every component with O_NOFOLLOW so a name such as /tmp/x -> /etc cannot
    redirect mkdir or chmod into a host tree the session denylist already refused
    by string. Missing components are created only relative to the directory
-   already held. */
-static bipolar bowl_open_directory(string_address path, bool create)
+   already held.
+
+   made says whether the last component is one this walk created, which is the
+   only directory a session may go on to change the mode of: a path that was
+   already there belongs to whoever put it there. */
+static bipolar bowl_open_directory(string_address path, bool create,
+                                   bool address_to made)
 {
         p8 name[256];
         bipolar held;
         positive flags = FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
         string_address at = path;
 
+        if (made)
+                address_to made = false;
         if (!path || !string_get(path))
                 return -22;
 
@@ -177,34 +184,46 @@ static bipolar bowl_open_directory(string_address path, bool create)
                         system_close(held);
                         return -22;
                 }
+                bool here = false;
+
                 next = system_open_at(held, name, flags);
                 if (next < 0 && create && next == -ERROR_NO_ENTRY)
                 {
-                        bipolar made = system_make_directory_at(held, name,
-                                                                0755);
+                        bipolar fresh = system_make_directory_at(held, name,
+                                                                 0755);
 
-                        next = made < 0 && made != -ERROR_EXISTS
-                                   ? made
+                        here = fresh >= 0;
+                        next = fresh < 0 && fresh != -ERROR_EXISTS
+                                   ? fresh
                                    : system_open_at(held, name, flags);
                 }
                 system_close(held);
                 if (next < 0)
                         return next;
                 held = next;
+                /* The last component to get here is the leaf. */
+                if (made)
+                        address_to made = here;
         }
 
         return held;
 }
 
 // A mount point below a directory Moonwater itself may not have.
-static bipolar bowl_mkdir_parents(string_address path)
+static bipolar bowl_mkdir_parents_made(string_address path,
+                                       bool address_to made)
 {
-        bipolar handle = bowl_open_directory(path, true);
+        bipolar handle = bowl_open_directory(path, true, made);
 
         if (handle < 0)
                 return handle;
         system_close(handle);
         return 0;
+}
+
+static bipolar bowl_mkdir_parents(string_address path)
+{
+        return bowl_mkdir_parents_made(path, null);
 }
 
 static bool bowl_root_path(p8 address_to into, positive room,
@@ -1242,7 +1261,7 @@ static string_address bowl_session_logname_assignment(void)
 
 static fn bowl_chmod_directory(string_address path, positive mode)
 {
-        bipolar handle = bowl_open_directory(path, false);
+        bipolar handle = bowl_open_directory(path, false, null);
 
         if (handle < 0)
                 return;
@@ -1270,14 +1289,23 @@ static fn bowl_session_home_dirs(string_address home)
 static fn bowl_session_prepare_at(string_address home, string_address runtime,
                                   bool user_dirs)
 {
+        bool made = false;
+
         bowl_session_fill();
 
         if (!runtime || bowl_path_steps(runtime) ||
             bowl_session_host_path(runtime))
                 runtime = bowl_runtime_path;
 
-        bowl_mkdir_parents(runtime);
-        if (!bowl_runtime_shared(runtime))
+        /*  0700 is Weston's requirement of the runtime directory it is
+            handed, and this makes the one it creates meet it. A directory
+            that was already there is not this session's to change: the name
+            comes from XDG_RUNTIME_DIR, so chmodding an existing path would
+            let any inherited environment take a host tree the string
+            denylist does not happen to name -- /home, /var, /opt -- down to
+            0700, from every shell start, not only from bowl. */
+        bowl_mkdir_parents_made(runtime, address_of made);
+        if (made && !bowl_runtime_shared(runtime))
                 bowl_chmod_directory(runtime, 0700);
         bowl_mkdir("/tmp");
         bowl_chmod_directory("/tmp", 01777);
