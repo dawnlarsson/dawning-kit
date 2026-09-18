@@ -83,7 +83,7 @@
         marks a compression pointer, so a longer one would be unreadable
         rather than merely unusual -- and the whole name may not exceed 255.
 */
-static bipolar dns_write_name(p8 address_to into, positive room, string_address name)
+static COLD bipolar dns_write_name(p8 address_to into, positive room, string_address name)
 {
         positive used = 0;
         positive mark;
@@ -125,7 +125,7 @@ static bipolar dns_write_name(p8 address_to into, positive room, string_address 
         same pointer again. The spelling is kept as sent; DNS names compare
         without regard to ASCII case.
 */
-static bipolar dns_copy_name(p8 address_to message, positive size,
+static COLD bipolar dns_copy_name(p8 address_to message, positive size,
                              positive at, p8 address_to into, positive room,
                              positive address_to ended)
 {
@@ -181,7 +181,7 @@ static bipolar dns_copy_name(p8 address_to message, positive size,
 }
 
 //      Where a name ends, for a caller with no use for its spelling.
-static bipolar dns_skip_name(p8 address_to message, positive size, positive at)
+static COLD bipolar dns_skip_name(p8 address_to message, positive size, positive at)
 {
         p8 name[256];
         positive ended;
@@ -196,7 +196,7 @@ static bipolar dns_skip_name(p8 address_to message, positive size, positive at)
    CNAME, so each bounded pass considers one link rather than trusting record
    order.  Unrelated A records are glue or attacker-controlled distractions,
    never an answer to the question. */
-static bipolar dns_answer_address(p8 address_to message, positive size,
+static COLD bipolar dns_answer_address(p8 address_to message, positive size,
                                   positive records_at, p16 answers,
                                   positive question_at,
                                   p32 address_to found)
@@ -308,7 +308,7 @@ static bipolar dns_answer_address(p8 address_to message, positive size,
 /* The transaction id and exact echoed question are the reply identity.  UDP
    uses this predicate to discard raced junk within the original deadline;
    TCP has one framed reply and treats an identity mismatch as malformed. */
-static bool dns_reply_identity(
+static COLD bool dns_reply_identity(
     p8 address_to reply, positive size, p16 id,
     p8 address_to request, positive question_length)
 {
@@ -322,7 +322,7 @@ static bool dns_reply_identity(
 /* UDP and TCP answers pass through the same response, rcode and record
    validation.  Only a validated truncation indication has a distinct internal
    result so the transport can retry it over TCP. */
-static bipolar dns_reply_result(
+static COLD bipolar dns_reply_result(
     p8 address_to reply, positive size, p16 id,
     p8 address_to request, positive question_length,
     p32 address_to found)
@@ -363,7 +363,7 @@ static bipolar dns_reply_result(
         return dns_answer_address(reply, size, at, answers, DNS_HEADER, found);
 }
 
-static bipolar dns_stream_connect_until(
+static COLD bipolar dns_stream_connect_until(
     socket_address_internet address_to where,
     const network_deadline address_to deadline)
 {
@@ -398,7 +398,7 @@ failed:
         return -1;
 }
 
-static bipolar dns_retry_tcp(
+static COLD bipolar dns_retry_tcp(
     socket_address_internet address_to where,
     p8 address_to request, positive request_length, p16 id,
     positive question_length, p32 address_to found,
@@ -450,7 +450,7 @@ done:
         list has no ceiling. Options, search domains and IPv6 servers are read
         past rather than understood.
 */
-static bipolar dns_server_at(string_address path, positive wanted)
+static COLD bipolar dns_server_at(string_address path, positive wanted)
 {
         p8 text[4096];
         bipolar got;
@@ -504,7 +504,7 @@ static bipolar dns_server_at(string_address path, positive wanted)
         gives up and says so. The wait is a poll on the socket rather than a
         receive timeout, which keeps a timeval out of the assembly graph.
 */
-static bipolar dns_resolve_at(p32 server, p16 port, string_address name,
+static COLD bipolar dns_resolve_at(p32 server, p16 port, string_address name,
                               p32 address_to found, positive seconds)
 {
         p8 request[DNS_MAX_MESSAGE];
@@ -635,7 +635,7 @@ failed:
 */
 #define DNS_FALLBACK 0x01010101u
 
-static bipolar dns_resolve_any(string_address path, string_address name,
+static COLD bipolar dns_resolve_any(string_address path, string_address name,
                                p32 address_to found, positive seconds)
 {
         bipolar definite = DNS_NO_SERVER;

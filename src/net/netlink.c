@@ -230,7 +230,7 @@ static bool netlink_begin(netlink_buffer address_to buffer, p16 type, p16 flags,
 }
 
 //      The body, for the caller to fill in by name rather than by offset.
-static PURE address_any netlink_body(netlink_buffer address_to buffer)
+static PURE COLD address_any netlink_body(netlink_buffer address_to buffer)
 {
         return buffer->bytes + NETLINK_HEADER;
 }
@@ -243,7 +243,7 @@ static PURE address_any netlink_body(netlink_buffer address_to buffer)
         rounded up to four. Writing the rounded length into the attribute is
         the error that makes a message the kernel accepts and misreads.
 */
-static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
+static COLD bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
                                   address_any data, positive size)
 {
         netlink_attribute address_to attribute;
@@ -363,7 +363,7 @@ static bool netlink_source_is_kernel(
                source->port == 0;
 }
 
-static bipolar netlink_receive_one(b32 handle,
+static COLD bipolar netlink_receive_one(b32 handle,
                                    netlink_buffer address_to buffer,
                                    bool require_kernel)
 {
@@ -423,7 +423,7 @@ static bipolar netlink_receive_one(b32 handle,
         return got;
 }
 
-static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer,
+static COLD bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer,
                                p32 address_to local_port)
 {
         socket_address_netlink self_address;
@@ -458,7 +458,7 @@ typedef bool (address_to netlink_visitor)(netlink_header address_to header,
    Multipart DONE may omit it; ERROR may not.  Optional extack data can follow
    the first word.  A positive value is neither success nor a Linux errno, so
    it is malformed rather than a successful transaction. */
-static bipolar netlink_status(netlink_header address_to header, bool empty_ok)
+static COLD bipolar netlink_status(netlink_header address_to header, bool empty_ok)
 {
         b32 status;
 
@@ -472,7 +472,7 @@ static bipolar netlink_status(netlink_header address_to header, bool empty_ok)
         return status <= 0 ? status : -1;
 }
 
-static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
+static COLD bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                             p32 sequence, netlink_buffer address_to reply,
                             netlink_visitor visit, address_any context);
 
@@ -480,7 +480,7 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
         The tail every acknowledged request shares: sent, answered, and both
         buffers given back whatever the answer was.
 */
-static bipolar netlink_transact(b32 handle, netlink_buffer address_to request,
+static COLD bipolar netlink_transact(b32 handle, netlink_buffer address_to request,
                                 p32 sequence, netlink_visitor visit,
                                 address_any context)
 {
@@ -612,7 +612,7 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
         payload is a chain all by itself. So the span is the routine and the
         message form is the address of its first attribute, worked out once.
 */
-static address_any netlink_find_span(p8 address_to bytes, positive length,
+static COLD address_any netlink_find_span(p8 address_to bytes, positive length,
                                      p16 type, positive address_to size)
 {
         positive at = 0;
@@ -637,7 +637,7 @@ static address_any netlink_find_span(p8 address_to bytes, positive length,
         return null;
 }
 
-static address_any netlink_find(netlink_header address_to header, positive body,
+static COLD address_any netlink_find(netlink_header address_to header, positive body,
                                 p16 type, positive address_to size)
 {
         positive at = NETLINK_HEADER + netlink_align(body);

@@ -97,7 +97,7 @@ typedef struct
         bool offload;
 } nl80211_wiphy_query;
 
-static bipolar nl80211_disconnect(nl80211 address_to session, p32 index);
+static COLD bipolar nl80211_disconnect(nl80211 address_to session, p32 index);
 
 typedef struct
 {
@@ -105,7 +105,7 @@ typedef struct
         p32 mlme;
 } nl80211_family_info;
 
-static bool nl80211_begin(netlink_buffer address_to buffer, p16 family, p8 command,
+static COLD bool nl80211_begin(netlink_buffer address_to buffer, p16 family, p8 command,
                           p16 flags, p32 sequence)
 {
         p8 address_to body;
@@ -121,13 +121,13 @@ static bool nl80211_begin(netlink_buffer address_to buffer, p16 family, p8 comma
         return true;
 }
 
-static bool nl80211_attribute_u32(netlink_buffer address_to buffer, p16 type,
+static COLD bool nl80211_attribute_u32(netlink_buffer address_to buffer, p16 type,
                                   p32 value)
 {
         return netlink_attribute_add(buffer, type, address_of value, 4);
 }
 
-static p32 nl80211_find_u32(netlink_header address_to header, p16 type, p32 missing)
+static COLD p32 nl80211_find_u32(netlink_header address_to header, p16 type, p32 missing)
 {
         positive size = 0;
         p8 address_to at = (p8 address_to)netlink_find(header, GENL_HEADER, type,
@@ -138,7 +138,7 @@ static p32 nl80211_find_u32(netlink_header address_to header, p16 type, p32 miss
         return memory_load_unaligned(p32, at);
 }
 
-static p16 nl80211_find_u16(netlink_header address_to header, p16 type,
+static COLD p16 nl80211_find_u16(netlink_header address_to header, p16 type,
                             p16 missing)
 {
         positive size = 0;
@@ -150,12 +150,12 @@ static p16 nl80211_find_u16(netlink_header address_to header, p16 type,
         return (p16)memory_load_unaligned(p16, at);
 }
 
-static bool nl80211_attr(netlink_header address_to header, p16 type)
+static COLD bool nl80211_attr(netlink_header address_to header, p16 type)
 {
         return netlink_find(header, GENL_HEADER, type, null) != null;
 }
 
-static bool nl80211_family_seen(netlink_header address_to header,
+static COLD bool nl80211_family_seen(netlink_header address_to header,
                                 address_any context)
 {
         nl80211_family_info address_to info = (nl80211_family_info address_to)context;
@@ -202,7 +202,7 @@ static bool nl80211_family_seen(netlink_header address_to header,
         return false;
 }
 
-static bipolar nl80211_open(nl80211 address_to session)
+static COLD bipolar nl80211_open(nl80211 address_to session)
 {
         netlink_buffer request = {0};
         p32 sequence;
@@ -246,14 +246,14 @@ static bipolar nl80211_open(nl80211 address_to session)
         return 0;
 }
 
-static fn nl80211_close(nl80211 address_to session)
+static COLD fn nl80211_close(nl80211 address_to session)
 {
         if (session->handle >= 0)
                 socket_close(session->handle);
         session->handle = -1;
 }
 
-static bool nl80211_iface_seen(netlink_header address_to header,
+static COLD bool nl80211_iface_seen(netlink_header address_to header,
                                address_any context)
 {
         nl80211_iface address_to found = (nl80211_iface address_to)context;
@@ -307,7 +307,7 @@ static bool nl80211_iface_seen(netlink_header address_to header,
         return type != NL80211_IFTYPE_STATION;
 }
 
-static bipolar nl80211_interface(nl80211 address_to session,
+static COLD bipolar nl80211_interface(nl80211 address_to session,
                                  nl80211_iface address_to found)
 {
         netlink_buffer request = {0};
@@ -327,7 +327,7 @@ static bipolar nl80211_interface(nl80211 address_to session,
 
 /* WPA's PBKDF2 and PRF are HMAC-SHA-1, which is crypto.c's HMAC under a
    different digest and nothing else. */
-static fn wifi_hmac_sha1(p8 address_to key, positive key_length,
+static COLD fn wifi_hmac_sha1(p8 address_to key, positive key_length,
                          p8 address_to data, positive length, p8 address_to out)
 {
         crypto_mac mac;
@@ -337,7 +337,7 @@ static fn wifi_hmac_sha1(p8 address_to key, positive key_length,
         crypto_hmac_close(address_of mac, out);
 }
 
-static p8 wifi_nibble(p8 byte)
+static COLD p8 wifi_nibble(p8 byte)
 {
         if (byte_is_digit(byte))
                 return (p8)(byte - '0');
@@ -345,7 +345,7 @@ static p8 wifi_nibble(p8 byte)
         return (p8)(byte - 'a' + 10);
 }
 
-static bool wifi_psk(p8 address_to ssid, positive ssid_length,
+static COLD bool wifi_psk(p8 address_to ssid, positive ssid_length,
                      p8 address_to pass, positive pass_length, p8 address_to pmk)
 {
         p8 block[36];
@@ -399,7 +399,7 @@ static bool wifi_psk(p8 address_to ssid, positive ssid_length,
    coefficients rotated, so the row it is wanted for says where to start
    reading them, and the multiply is crypto.c's constant-time one -- the
    same GF(2^8) its S-box inversion runs in. */
-static p8 wifi_unmix(p8 address_to column, positive row)
+static COLD p8 wifi_unmix(p8 address_to column, positive row)
 {
         static const p8 factor[4] = {0x0e, 0x0b, 0x0d, 0x09};
         p8 mixed = 0;
@@ -416,13 +416,13 @@ static p8 wifi_unmix(p8 address_to column, positive row)
    it lives in. Two hundred and fifty six hand-typed bytes are two hundred
    and fifty six chances to mistype one, and built this way the two boxes
    cannot disagree. The unwrap builds it once and lends it to every block. */
-static fn wifi_inverse_box(p8 address_to inverse)
+static COLD fn wifi_inverse_box(p8 address_to inverse)
 {
         for (positive at = 0; at < 256; at++)
                 inverse[crypto_aes_substitute((p8)at)] = (p8)at;
 }
 
-static fn wifi_aes_decrypt(p8 address_to key, p8 address_to in,
+static COLD fn wifi_aes_decrypt(p8 address_to key, p8 address_to in,
                            p8 address_to out, const p8 address_to inverse)
 {
         p8 round[176];
@@ -476,7 +476,7 @@ static fn wifi_aes_decrypt(p8 address_to key, p8 address_to in,
         crypto_forget(hold, sizeof(hold));
 }
 
-static bool wifi_kw_unwrap(p8 address_to kek, p8 address_to wrap, positive length,
+static COLD bool wifi_kw_unwrap(p8 address_to kek, p8 address_to wrap, positive length,
                            p8 address_to plain, positive address_to plain_length)
 {
         p8 block[16];
@@ -516,7 +516,7 @@ static bool wifi_kw_unwrap(p8 address_to kek, p8 address_to wrap, positive lengt
         return true;
 }
 
-static fn wifi_ptk(p8 address_to pmk, p8 address_to ap, p8 address_to sta,
+static COLD fn wifi_ptk(p8 address_to pmk, p8 address_to ap, p8 address_to sta,
                    p8 address_to anonce, p8 address_to snonce, p8 address_to ptk)
 {
         p8 label[] = "Pairwise key expansion";
@@ -574,12 +574,12 @@ static const p8 wifi_rsn_ie[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
                                  0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
                                  0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
 
-static bool nl80211_ext_bit(p8 address_to bits, positive length, positive which)
+static COLD bool nl80211_ext_bit(p8 address_to bits, positive length, positive which)
 {
         return which / 8 < length && (bits[which / 8] & (1u << (which % 8)));
 }
 
-static bool nl80211_wiphy_seen(netlink_header address_to header, address_any context)
+static COLD bool nl80211_wiphy_seen(netlink_header address_to header, address_any context)
 {
         nl80211_wiphy_query address_to query = (nl80211_wiphy_query address_to)context;
         p8 address_to body = (p8 address_to)header + NETLINK_HEADER;
@@ -606,7 +606,7 @@ static bool nl80211_wiphy_seen(netlink_header address_to header, address_any con
         return true;
 }
 
-static bool nl80211_psk_offload(nl80211 address_to session, p32 wiphy)
+static COLD bool nl80211_psk_offload(nl80211 address_to session, p32 wiphy)
 {
         netlink_buffer request = {0};
         p32 sequence;
@@ -624,7 +624,7 @@ static bool nl80211_psk_offload(nl80211 address_to session, p32 wiphy)
         return query.offload;
 }
 
-static bool nl80211_station_seen(netlink_header address_to header,
+static COLD bool nl80211_station_seen(netlink_header address_to header,
                                  address_any context)
 {
         p8 address_to body = (p8 address_to)header + NETLINK_HEADER;
@@ -647,7 +647,7 @@ static bool nl80211_station_seen(netlink_header address_to header,
         return true;
 }
 
-static bool nl80211_station(nl80211 address_to session, p32 index, p8 address_to mac)
+static COLD bool nl80211_station(nl80211 address_to session, p32 index, p8 address_to mac)
 {
         netlink_buffer request = {0};
         p32 sequence = netlink_sequence_take();
@@ -664,7 +664,7 @@ static bool nl80211_station(nl80211 address_to session, p32 index, p8 address_to
         return mac[0] | mac[1] | mac[2] | mac[3] | mac[4] | mac[5];
 }
 
-static bipolar nl80211_new_key(nl80211 address_to session, p32 index, p8 idx,
+static COLD bipolar nl80211_new_key(nl80211 address_to session, p32 index, p8 idx,
                                p32 type, p8 address_to mac, p8 address_to key,
                                positive key_length, p8 address_to seq,
                                positive seq_length, bool group_default)
@@ -695,7 +695,7 @@ static bipolar nl80211_new_key(nl80211 address_to session, p32 index, p8 idx,
                                 null, null);
 }
 
-static bipolar nl80211_authorize(nl80211 address_to session, p32 index,
+static COLD bipolar nl80211_authorize(nl80211 address_to session, p32 index,
                                  p8 address_to mac)
 {
         netlink_buffer request = {0};
@@ -716,7 +716,7 @@ static bipolar nl80211_authorize(nl80211 address_to session, p32 index,
                                 null, null);
 }
 
-static bipolar nl80211_eapol_open(p32 index)
+static COLD bipolar nl80211_eapol_open(p32 index)
 {
         socket_address_packet self = {
             .family = AF_PACKET,
@@ -736,7 +736,7 @@ static bipolar nl80211_eapol_open(p32 index)
         return handle;
 }
 
-static fn wifi_eapol_mic(p8 address_to kck, p8 address_to frame, positive length)
+static COLD fn wifi_eapol_mic(p8 address_to kck, p8 address_to frame, positive length)
 {
         p8 hash[20];
         p8 saved[16];
@@ -749,7 +749,7 @@ static fn wifi_eapol_mic(p8 address_to kck, p8 address_to frame, positive length
         crypto_forget(saved, sizeof(saved));
 }
 
-static bipolar wifi_eapol_send(b32 handle, p32 index, p8 address_to bssid,
+static COLD bipolar wifi_eapol_send(b32 handle, p32 index, p8 address_to bssid,
                                p8 address_to frame, positive length)
 {
         socket_address_packet to = {.family = AF_PACKET,
@@ -764,7 +764,7 @@ static bipolar wifi_eapol_send(b32 handle, p32 index, p8 address_to bssid,
                    : -1;
 }
 
-static bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 eapol,
+static COLD bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 eapol,
                               p8 address_to sta, p8 address_to bssid,
                               p8 address_to pmk)
 {
@@ -935,7 +935,7 @@ static bipolar wifi_handshake(nl80211 address_to session, p32 index, b32 eapol,
         return -110;
 }
 
-static bool wifi_link_mac(string_address name, p8 address_to mac)
+static COLD bool wifi_link_mac(string_address name, p8 address_to mac)
 {
         netlink_search search;
         bipolar handle = netlink_open_groups(0);
@@ -955,7 +955,7 @@ static bool wifi_link_mac(string_address name, p8 address_to mac)
         return true;
 }
 
-static bipolar nl80211_wait_associated(nl80211 address_to session, p32 sequence,
+static COLD bipolar nl80211_wait_associated(nl80211 address_to session, p32 sequence,
                                        p32 index, p8 address_to bssid)
 {
         netlink_buffer reply = {0};
@@ -1082,7 +1082,7 @@ static bipolar nl80211_wait_associated(nl80211 address_to session, p32 sequence,
         }
 }
 
-static bipolar nl80211_connect(nl80211 address_to session, p32 index,
+static COLD bipolar nl80211_connect(nl80211 address_to session, p32 index,
                                p8 address_to ssid, positive ssid_length,
                                p8 address_to pmk, bool offload)
 {
@@ -1136,7 +1136,7 @@ static bipolar nl80211_connect(nl80211 address_to session, p32 index,
         return sequence;
 }
 
-static bool nl80211_associated(void)
+static COLD bool nl80211_associated(void)
 {
         nl80211 session;
         nl80211_iface iface;
@@ -1151,7 +1151,7 @@ static bool nl80211_associated(void)
         return up;
 }
 
-static bipolar nl80211_join(p8 address_to ssid, positive ssid_length, p8 address_to pmk)
+static COLD bipolar nl80211_join(p8 address_to ssid, positive ssid_length, p8 address_to pmk)
 {
         nl80211 session;
         nl80211_iface iface;

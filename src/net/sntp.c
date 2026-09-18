@@ -120,7 +120,7 @@ static inline INLINE CONST bool sntp_short_ok(p32 word)
         return !(word & 0x80000000u) && word <= SNTP_SHORT_SECOND;
 }
 
-static fn sntp_split_offset(bipolar ns, bipolar address_to seconds,
+static COLD fn sntp_split_offset(bipolar ns, bipolar address_to seconds,
                             bipolar address_to nanoseconds)
 {
         bipolar sec = ns / (bipolar)SNTP_NANOSECONDS;
@@ -144,7 +144,7 @@ static inline INLINE fn sntp_offset_delay(bipolar t1, bipolar t2, bipolar t3,
         address_to delay_ns = (t4 - t1) - (t3 - t2);
 }
 
-static CONST bool sntp_sample_sane(bipolar t1, bipolar t2, bipolar t3,
+static CONST COLD bool sntp_sample_sane(bipolar t1, bipolar t2, bipolar t3,
                                    bipolar t4, bipolar offset_ns,
                                    bipolar delay_ns, bool tight)
 {
@@ -169,7 +169,7 @@ static CONST bool sntp_sample_sane(bipolar t1, bipolar t2, bipolar t3,
         return true;
 }
 
-static bool sntp_target_ok(bipolar now, bipolar offset_ns,
+static COLD bool sntp_target_ok(bipolar now, bipolar offset_ns,
                            bipolar address_to target)
 {
         if (offset_ns > 0 && now > bipolar_max - offset_ns)
@@ -180,7 +180,7 @@ static bool sntp_target_ok(bipolar now, bipolar offset_ns,
         return sntp_wall_ok(address_to target);
 }
 
-static PURE bipolar sntp_pick(sntp_sample address_to row, positive count)
+static PURE COLD bipolar sntp_pick(sntp_sample address_to row, positive count)
 {
         bipolar best = -1;
         positive at;
@@ -194,7 +194,7 @@ static PURE bipolar sntp_pick(sntp_sample address_to row, positive count)
         return best;
 }
 
-static bool sntp_math_ok(void)
+static COLD bool sntp_math_ok(void)
 {
         bipolar offset = 0;
         bipolar delay = 0;
@@ -369,7 +369,7 @@ static HOT bipolar sntp_exchange(b32 handle,
         }
 }
 
-static bipolar sntp_query_at(p32 server, bool filter, bool tight,
+static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
                              bipolar address_to offset_ns)
 {
         socket_address_internet where = {
@@ -419,7 +419,7 @@ static bipolar sntp_query_at(p32 server, bool filter, bool tight,
         return SNTP_OK;
 }
 
-static bipolar sntp_query(string_address name, bool filter, bool tight,
+static COLD bipolar sntp_query(string_address name, bool filter, bool tight,
                           bipolar address_to offset_ns)
 {
         bipolar numeric;

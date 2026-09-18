@@ -104,7 +104,7 @@ static bool dhcp_transaction_early(p32 address_to transaction)
 /* A subnet mask is a run of one bits followed by a run of zero bits.  Zero is
    retained as the existing "server omitted it" /24 policy; any other broken
    shape would silently configure a different network from the one offered. */
-static CONST bool dhcp_mask_valid(p32 mask)
+static CONST COLD bool dhcp_mask_valid(p32 mask)
 {
         p32 after = ~mask;
 
@@ -128,7 +128,7 @@ static const struct { p8 option, offset; bool multiple; } dhcp_fields[] = {
    default (one half and seven eighths of the lease); a supplied pair which
    breaks the ordering is discarded as a pair rather than creating a state
    machine which can skip RENEWING or outlive the lease. */
-static bool dhcp_lease_timers(dhcp_lease address_to lease)
+static COLD bool dhcp_lease_timers(dhcp_lease address_to lease)
 {
         p32 default_renewal;
         p32 default_rebinding;
@@ -174,7 +174,7 @@ static bool dhcp_lease_timers(dhcp_lease address_to lease)
         then the magic cookie that says the options which follow are DHCP's
         rather than BOOTP's, then the options themselves ending in 255.
 */
-static positive dhcp_build(p8 address_to into, positive room, p8 kind,
+static COLD positive dhcp_build(p8 address_to into, positive room, p8 kind,
                            p32 transaction, p8 address_to hardware, p32 wanted,
                            p32 server, p32 holding, bool broadcast)
 {
@@ -250,7 +250,7 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind,
         where the next one starts. A length that would run off the end is a
         corrupt packet and ends the walk rather than reading past it.
 */
-static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
+static COLD bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                          p8 address_to hardware, dhcp_lease address_to lease,
                          p8 address_to kind)
 {
@@ -318,7 +318,7 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
 }
 
 //      A mask of n leading bits, said as the prefix length a route wants.
-static CONST p8 dhcp_prefix_of(p32 mask)
+static CONST COLD p8 dhcp_prefix_of(p32 mask)
 {
         p8 bits = 0;
 
@@ -334,7 +334,7 @@ static CONST p8 dhcp_prefix_of(p32 mask)
    parsing itself stays replacement-based so unrelated packets cannot bleed
    into one another; only the stateful exchange chooses to retain an earlier
    nonzero field. */
-static fn dhcp_lease_merge(dhcp_lease address_to lease,
+static COLD fn dhcp_lease_merge(dhcp_lease address_to lease,
                            const dhcp_lease address_to fresh)
 {
         for (positive i = 0; i < array_count(dhcp_fields); i++)
@@ -345,7 +345,7 @@ static fn dhcp_lease_merge(dhcp_lease address_to lease,
         }
 }
 
-static bool dhcp_lease_usable(const dhcp_lease address_to lease)
+static COLD bool dhcp_lease_usable(const dhcp_lease address_to lease)
 {
         return lease->address && lease->server && lease->seconds &&
                dhcp_mask_valid(lease->mask);
@@ -354,7 +354,7 @@ static bool dhcp_lease_usable(const dhcp_lease address_to lease)
 /* Every ACK starts a new lease interval.  Timer values from the OFFER or the
    preceding lease are relative to that older interval and cannot be inherited
    when the ACK omits options 58/59, especially when option 51 changed. */
-static bool dhcp_lease_acknowledge(dhcp_lease address_to lease,
+static COLD bool dhcp_lease_acknowledge(dhcp_lease address_to lease,
                                    const dhcp_lease address_to answer)
 {
         lease->renewal = 0;
@@ -370,7 +370,7 @@ static bool dhcp_lease_acknowledge(dhcp_lease address_to lease,
    RENEWING are bound to that server, and an ACK must name the offered or held
    address.  REBINDING deliberately accepts an authoritative answer from any
    server, but its ACK must still name the address already in use. */
-static bool dhcp_reacquisition_answer_matches(
+static COLD bool dhcp_reacquisition_answer_matches(
     p8 kind, const dhcp_lease address_to answer,
     const dhcp_lease address_to lease, bool rebinding)
 {
@@ -382,7 +382,7 @@ static bool dhcp_reacquisition_answer_matches(
         return kind != DHCP_ACK || answer->address == lease->address;
 }
 
-static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
+static COLD bipolar dhcp_open(string_address device, p32 host, bool broadcast)
 {
         bipolar handle = socket_new(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         b32 one = 1;
@@ -417,7 +417,7 @@ static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
    itself a possible source and must become an exact peer once selected.
    This also binds a relayed exchange to the relay endpoint that supplied the
    offer rather than confusing option 54 with the UDP sender. */
-static bool dhcp_peer_matches(
+static COLD bool dhcp_peer_matches(
     const socket_address_internet address_to peer, p32 peer_size,
     const socket_address_internet address_to expected, bool any_host)
 {
@@ -427,7 +427,7 @@ static bool dhcp_peer_matches(
                (any_host || peer->host == expected->host);
 }
 
-static bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
+static COLD bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
                          p32 transaction, p8 address_to hardware,
                          dhcp_lease address_to lease, p8 address_to kind,
                          const socket_address_internet address_to expected_peer,
@@ -474,7 +474,7 @@ static bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
 /* The ACK or NAK that completes a REQUEST, from the peer the exchange is
    bound to. Acquisition completes the offer as a renewal would: same server,
    same address. Rebinding accepts any server's answer from any host. */
-static bipolar dhcp_complete(bipolar handle, p8 address_to packet,
+static COLD bipolar dhcp_complete(bipolar handle, p8 address_to packet,
                              positive room, p32 transaction,
                              p8 address_to hardware,
                              dhcp_lease address_to lease,
