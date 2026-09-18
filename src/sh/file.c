@@ -1734,11 +1734,37 @@ static RETURNS_NONNULL p8 address_to file_account_text(positive which)
 
         if (!cache->read)
         {
+                bipolar got = file_slurp(file_account_paths[which], cache->text,
+                                         FILE_ACCOUNTS_MAX);
+
                 cache->read = true;
 
-                if (file_slurp(file_account_paths[which], cache->text,
-                               FILE_ACCOUNTS_MAX) <= 0)
+                if (got <= 0)
                         cache->text[0] = end;
+                else if ((positive)got >= FILE_ACCOUNTS_MAX - 1)
+                {
+                        /*
+                                file_slurp keeps one byte for the terminator
+                                and stops, so a file that fills the buffer
+                                comes back cut at an arbitrary byte and says
+                                nothing about it. The cut lands inside a
+                                record, and the half left behind reads as a
+                                whole one: the reader below takes the rest of
+                                the buffer as the field, so "bigteam:x:100000"
+                                cut after "10" answers 10, and a name resolves
+                                to an id that is not its own. Ending the text
+                                at the last complete record is what makes the
+                                comment above true -- past this the numeric id
+                                is printed, because the lookup finds nothing
+                                rather than finding something wrong.
+                        */
+                        positive kept = (positive)got;
+
+                        while (kept && cache->text[kept - 1] != '\n')
+                                kept--;
+
+                        cache->text[kept] = end;
+                }
         }
 
         return cache->text;
