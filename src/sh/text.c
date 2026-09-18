@@ -16165,16 +16165,16 @@ static bool grep_line_matches(const grep_plan address_to plan,
                 answers only what the graph gives up on. The line's delimiter
                 is always the byte after it, in a span and in the line reader's
                 own copy alike, so the machine reads it whole.
-        */
-        /*
-                The graph gives up by spending its whole work budget, and that
-                is a fixed cost paid over again for every line: a pattern
-                whose required string holds no answer -- (a+)+b, whose string
-                is the a inside it -- hands the graph every line of a file of
-                a's and spends the budget on each. Once one line has proven
-                this program spends it and the machine answered anyway, the
-                rest go to the machine first. The machine is already trusted
-                with that same line here, and with whole spans above.
+
+                The graph gives up by spending its whole work budget, though,
+                and that is a fixed cost paid over again for every line: a
+                pattern whose required string holds no answer -- (a+)+b,
+                whose string is the a inside it -- hands the graph every line
+                of a file of a's and spends the budget on each. Once one line
+                has proven this program spends it and the machine answered
+                anyway, the rest go to the machine first. The machine is
+                already trusted with that same line here, and with whole
+                spans above.
         */
         if (state->machine_first && plan->dfa && !plan->dfa->failed)
         {
