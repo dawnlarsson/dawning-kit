@@ -160,6 +160,16 @@ static bool net_word_is(string_address word, const char *full, positive least)
                !string_compare_max(word, (string_address)full, length);
 }
 
+/* A refusal in ip's own voice, for the cases with no errno behind them: the
+   grammar it was given is not one it knows. */
+static COLD b32 net_ip_refused(const char address_to why)
+{
+        string_format(net_out, "ip: %s\n", (string_address)why);
+        net_flush();
+
+        return 1;
+}
+
 //      The errno the kernel gave, in the words libc gives it.
 static COLD b32 net_refused(string_address doing, bipolar status)
 {
@@ -1905,11 +1915,7 @@ static b32 net_ip(void)
         handle = netlink_open_groups(0);
 
         if (handle < 0)
-        {
-                string_format(net_out, "ip: %s\n", (string_address) "cannot open a netlink socket");
-                net_flush();
-                return 1;
-        }
+                return net_ip_refused("cannot open a netlink socket");
 
         //      auto ------------------------------------------------------
         if (net_word_is(object, "auto", 2))
@@ -1945,11 +1951,8 @@ static b32 net_ip(void)
                         }
                 }
                 else
-                {
-                        string_format(net_out, "ip: %s\n", (string_address) "link: only 'show' and 'set NAME up'");
-                        net_flush();
-                        status = 1;
-                }
+                        status = net_ip_refused(
+                            "link: only 'show' and 'set NAME up'");
         }
         //      addr ------------------------------------------------------
         else if (net_word_is(object, "addr", 1) || net_word_is(object, "address", 1))
@@ -1966,11 +1969,8 @@ static b32 net_ip(void)
 
                         if (!net_split_prefix(net_word(3), address_of host,
                                               address_of bits))
-                        {
-                                string_format(net_out, "ip: %s\n", (string_address) "addr add: not an address");
-                                net_flush();
-                                status = 1;
-                        }
+                                status = net_ip_refused(
+                                    "addr add: not an address");
                         else if ((index = net_index_of((b32)handle, net_word(5))) < 0)
                                 status = net_refused((string_address) "addr add", index);
                         else
@@ -1984,12 +1984,8 @@ static b32 net_ip(void)
                         }
                 }
                 else
-                {
-                        string_format(net_out, "ip: %s\n", (string_address)
-                                                             "addr: only 'show' and 'add A.B.C.D/N dev NAME'");
-                        net_flush();
-                        status = 1;
-                }
+                        status = net_ip_refused(
+                            "addr: only 'show' and 'add A.B.C.D/N dev NAME'");
         }
         //      route -----------------------------------------------------
         else if (net_word_is(object, "route", 1))
@@ -2007,11 +2003,8 @@ static b32 net_ip(void)
                         bipolar index = 0;
 
                         if (gateway < 0)
-                        {
-                                string_format(net_out, "ip: %s\n", (string_address) "route add: not an address");
-                                net_flush();
-                                status = 1;
-                        }
+                                status = net_ip_refused(
+                                    "route add: not an address");
                         else if (net_words() == 8 &&
                                  (index = net_index_of((b32)handle, net_word(7))) < 0)
                                 status = net_refused((string_address) "route add", index);
@@ -2025,19 +2018,12 @@ static b32 net_ip(void)
                         }
                 }
                 else
-                {
-                        string_format(net_out, "ip: %s\n", (string_address)
-                                                             "route: only 'show' and 'add default via A.B.C.D'");
-                        net_flush();
-                        status = 1;
-                }
+                        status = net_ip_refused(
+                            "route: only 'show' and 'add default via A.B.C.D'");
         }
         else
-        {
-                string_format(net_out, "ip: %s\n", (string_address) "unknown object; try link, addr or route");
-                net_flush();
-                status = 1;
-        }
+                status = net_ip_refused(
+                    "unknown object; try link, addr or route");
 
         log_flush();
         socket_close((b32)handle);
