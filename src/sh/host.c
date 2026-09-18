@@ -3140,56 +3140,14 @@ static string_address host_wipe_keep[] = {
     "ntp.server",
     "ntp.filter",
     "keyboard",
+    null,
 };
-
-static bool host_wipe_kept_name(string_address name)
-{
-        for (positive at = 0; at < array_count(host_wipe_keep); at++)
-                if (string_equals(name, host_wipe_keep[at]))
-                        return true;
-
-        return false;
-}
 
 static bipolar host_wipe_ensure(string_address path, positive mode)
 {
         bipolar made = system_make_directory_at(AT_FDCWD, path, mode);
 
         return made < 0 && made != -ERROR_EXISTS ? made : 0;
-}
-
-static bipolar host_wipe_root(void)
-{
-        file_walk walk;
-        struct linux_dirent64 address_to entry;
-        bipolar failed = 0;
-
-        if (!file_walk_open(address_of walk, AT_FDCWD, "/root"))
-                return walk.error == -ERROR_NO_ENTRY ? 0 : walk.error;
-
-        while (!failed && (entry = file_walk_next(address_of walk)))
-        {
-                if (file_is_dot(entry->d_name) || host_wipe_kept_name(entry->d_name))
-                        continue;
-
-                if (file_is_directory(walk.handle, entry->d_name))
-                {
-                        failed = bowl_reset_walk_at(walk.handle, entry->d_name, 0);
-                        if (!failed)
-                                failed = system_remove_at(walk.handle, entry->d_name,
-                                                          AT_REMOVEDIR);
-                }
-                else
-                        failed = system_remove_at(walk.handle, entry->d_name, 0);
-
-                if (failed == -ERROR_NO_ENTRY)
-                        failed = 0;
-        }
-
-        if (!failed)
-                failed = walk.error;
-        file_walk_close(address_of walk);
-        return failed;
 }
 
 static b32 host_wipe(void)
@@ -3207,7 +3165,7 @@ static b32 host_wipe(void)
         if (failed < 0)
                 return host_fail("/home", failed);
 
-        failed = host_wipe_root();
+        failed = bowl_reset_walk_at(AT_FDCWD, "/root", 0, true, host_wipe_keep);
         if (failed < 0)
                 return host_fail("/root", failed);
 

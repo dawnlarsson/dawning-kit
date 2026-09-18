@@ -52,8 +52,34 @@ static bool bowl_root_busy(string_address root)
 
 #define BOWL_RESET_DEPTH 48
 
+/* Entries a caller leaves where they are. Null ends the list, and a null
+   list keeps nothing. */
+static bool bowl_reset_kept(string_address address_to keep, string_address name)
+{
+        for (positive at = 0; keep && keep[at]; at++)
+                if (string_equals(name, keep[at]))
+                        return true;
+
+        return false;
+}
+
+/*
+        Everything under a directory, gone: a subdirectory emptied first and
+        then removed, anything else unlinked. An entry already missing is
+        somebody else having removed it, not a failure.
+
+        A name the walk itself found is opened with O_NOFOLLOW, so a
+        subdirectory swapped for a symlink between the stat and the open
+        fails closed instead of walking out of the tree. A path somebody
+        named is opened the way naming one means, following: that is how
+        moonwater wipe reaches a /root the machine has put something on.
+
+        keep names entries to leave, and only at this level -- the recursion
+        passes none, so a kept name further down is an ordinary entry.
+*/
 static bipolar bowl_reset_walk_at(bipolar directory, string_address name,
-                                   positive depth)
+                                  positive depth, bool named,
+                                  string_address address_to keep)
 {
         file_walk walk;
         struct linux_dirent64 address_to entry;
@@ -62,18 +88,23 @@ static bipolar bowl_reset_walk_at(bipolar directory, string_address name,
         if (depth >= BOWL_RESET_DEPTH)
                 return -ERROR_LOOP;
 
-        if (!file_walk_open_found(address_of walk, directory, name))
+        if (!(named ? file_walk_open(address_of walk, directory, name)
+                    : file_walk_open_found(address_of walk, directory, name)))
                 return walk.error == -ERROR_NO_ENTRY ? 0 : walk.error;
 
         while (!failed && (entry = file_walk_next(address_of walk)))
         {
-                if (file_is_dot(entry->d_name))
+                if (file_is_dot(entry->d_name) ||
+                    bowl_reset_kept(keep, entry->d_name))
                         continue;
 
                 if (file_is_directory(walk.handle, entry->d_name))
                 {
+                        /* A path somebody named is the tree's own root and
+                           not a step into it, so the cap counts from below. */
                         failed = bowl_reset_walk_at(walk.handle, entry->d_name,
-                                                    depth + 1);
+                                                    named ? depth : depth + 1,
+                                                    false, null);
                         if (!failed)
                                 failed = system_remove_at(walk.handle,
                                     entry->d_name, AT_REMOVEDIR);
@@ -98,7 +129,7 @@ static bipolar bowl_reset_walk(string_address path, positive depth)
                                                       leaf, sizeof(leaf));
         if (parent < 0)
                 return parent == -ERROR_NO_ENTRY ? 0 : parent;
-        bipolar failed = bowl_reset_walk_at(parent, leaf, depth);
+        bipolar failed = bowl_reset_walk_at(parent, leaf, depth, false, null);
         system_close(parent);
         return failed;
 }
@@ -123,7 +154,7 @@ static b32 bowl_forget_path(string_address path)
                 return parent == -ERROR_NO_ENTRY ? 0 : bowl_fail(path, parent);
         if (file_is_directory(parent, leaf))
         {
-                failed = bowl_reset_walk_at(parent, leaf, 0);
+                failed = bowl_reset_walk_at(parent, leaf, 0, false, null);
                 if (!failed)
                         failed = system_remove_at(parent, leaf, AT_REMOVEDIR);
         }
