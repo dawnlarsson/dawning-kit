@@ -90,19 +90,6 @@ static string_address shell_option_spelled(string_address room, p8 letter)
         return room;
 }
 
-/*
-        A letter no builtin would take.
-
-        The two houses answer a bad option differently: dash names it and
-        stops, while bash names it and then writes the line that says how
-        the builtin is called. Thirty builtins refuse a letter, and none of
-        them should have to know that, so the wording lives here. The answer
-        says whether a usage line is still owed, because a few builtins
-        spell their own name into it and cannot hand over a fixed string.
-
-        The option arrives already spelled, sign and all, since declare and
-        its family refuse a +x as readily as a -x.
-*/
 static COLD fn shell_diagnostic_where();
 bool word_is(string_address word, string_address text);
 
@@ -132,6 +119,19 @@ bool word_is(string_address word, string_address text);
 #define shell_answered(status, ...) \
         shell_answer(string_report(log_error, (status), __VA_ARGS__))
 
+/*
+        A letter no builtin would take.
+
+        The two houses answer a bad option differently: dash names it and
+        stops, while bash names it and then writes the line that says how
+        the builtin is called. Thirty builtins refuse a letter, and none of
+        them should have to know that, so the wording lives here. The answer
+        says whether a usage line is still owed, because a few builtins
+        spell their own name into it and cannot hand over a fixed string.
+
+        The option arrives already spelled, sign and all, since declare and
+        its family refuse a +x as readily as a -x.
+*/
 static COLD bool shell_option_bad(string_address name, string_address said)
 {
         //      The reference's own option reader names one byte behind the

@@ -2334,9 +2334,7 @@ static b32 parse_coproc()
 
         if (parse_look(0)->kind == PT_WORD && !parse_reserved(0) &&
             parse_at_compound(1))
-        {
                 parse_take_word(index);
-        }
         else
                 parse_attach_word(index, (string_address) "COPROC", 6);
 
