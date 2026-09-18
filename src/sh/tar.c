@@ -2928,19 +2928,28 @@ static b32 tar_read_archive(struct tar_options address_to options)
                         break;
                 }
 
+                /*      A record whose name we could not hold stops the
+                        archive, the way a pax header we could not read
+                        already does.  Carrying on would extract the member
+                        the record was written for under whatever its own
+                        header field happened to say, which is a name the
+                        archive never asked for; tar_read_payload has said
+                        why by the time it answers false. */
                 if (type == 'L')
                 {
-                        have_long_name = tar_read_payload(handle, size,
-                                                          long_name, TAR_PATH,
-                                                          seekable);
+                        if (!tar_read_payload(handle, size, long_name,
+                                              TAR_PATH, seekable))
+                                break;
+                        have_long_name = true;
                         continue;
                 }
 
                 if (type == 'K')
                 {
-                        have_long_link = tar_read_payload(handle, size,
-                                                          long_link, TAR_PATH,
-                                                          seekable);
+                        if (!tar_read_payload(handle, size, long_link,
+                                              TAR_PATH, seekable))
+                                break;
+                        have_long_link = true;
                         continue;
                 }
 
