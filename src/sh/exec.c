@@ -2137,7 +2137,7 @@ static COLD fn shell_jobs_replaced(positive at)
         static byte_store joined;
 
         if (!shell_argv_joined(at, address_of joined))
-                return shell_answer(string_report(log_error, 2, "%s: no room\n", "jobs"));
+                return shell_answered(2, "%s: no room\n", "jobs");
 
         //      Nested the way eval and fc nest: the parser is standing in
         //      the middle of the jobs that asked for this, and a line fed to
@@ -2218,9 +2218,8 @@ fn shell_jobs(writer write, string_address input)
                                 //      letter beside it.
                                 if (detailed || identifiers || running_only ||
                                     stopped_only || changed_only)
-                                        return shell_answer(string_report(
-                                            log_error, 1,
-                                            "jobs: no other options allowed with `-x'\n"));
+                                        return shell_answered(1,
+                                            "jobs: no other options allowed with `-x'\n");
 
                                 at = walk.index;
 
@@ -2238,19 +2237,17 @@ fn shell_jobs(writer write, string_address input)
                                         if (job_specified(shell_argv[at],
                                                           address_of found)
                                             != JOB_SPEC_FOUND)
-                                                return shell_answer(string_report(
-                                                    log_error, 1,
+                                                return shell_answered(1,
                                                     "jobs: %s: no such job\n",
-                                                    shell_argv[at]));
+                                                    shell_argv[at]);
                                 }
 
                                 return shell_jobs_replaced(at);
                         }
                 default:
-                        return shell_answer(shell_letter_refused(
-                            "jobs", letter,
+                        return shell_letter_refuse("jobs", letter,
                             "jobs [-lnprs] [jobspec ...] or "
-                            "jobs -x command [args]"));
+                            "jobs -x command [args]");
                 }
 
         job_reap();
@@ -2358,17 +2355,14 @@ fn shell_fg(writer write, string_address input)
                             string_get(word + 1) == '-' &&
                             !string_get(word + 2) && !job_previous &&
                             job_count != 1)
-                                return shell_answer(string_report(
-                                    log_error, 2, "fg: No previous job\n"));
+                                return shell_answered(2, "fg: No previous job\n");
 
-                        return shell_answer(string_report(
-                            log_error, 2,
+                        return shell_answered(2,
                             "fg: job %s not created under job control\n",
-                            word ? word : (string_address) "(null)"));
+                            word ? word : (string_address) "(null)");
                 }
 
-                return shell_answer(string_report(log_error, 1,
-                                                 "%s: no job control\n", "fg"));
+                return shell_answered(1, "%s: no job control\n", "fg");
         }
 
         job_reap();
@@ -2406,7 +2400,7 @@ fn shell_bg(writer write, string_address input)
         (void)input;
 
         if (!job_monitor())
-                return shell_answer(string_report(log_error, 1, "%s: no job control\n", "bg"));
+                return shell_answered(1, "%s: no job control\n", "bg");
 
         job_reap();
 
@@ -2494,9 +2488,8 @@ fn shell_disown(writer write, string_address input)
                         keep = true;
                         break;
                 default:
-                        return shell_answer(shell_letter_refused(
-                            "disown", letter,
-                            "disown [-h] [-ar] [jobspec ... | pid ...]"));
+                        return shell_letter_refuse("disown", letter,
+                            "disown [-h] [-ar] [jobspec ... | pid ...]");
                 }
 
         job_reap();
@@ -2547,8 +2540,7 @@ fn shell_disown(writer write, string_address input)
                 //      job it looked for and answers one. -a and -r ask for
                 //      whatever there is and are content with none.
                 if (!all && !running_only && !touched)
-                        return shell_answer(string_report(
-                            log_error, 1, "disown: current: no such job\n"));
+                        return shell_answered(1, "disown: current: no such job\n");
 
                 return shell_answer(answer);
         }
@@ -2609,8 +2601,7 @@ fn shell_suspend(writer write, string_address input)
 
                 while (shell_option_letter(address_of walk, address_of which))
                         if (which != 'f')
-                                return shell_answer(shell_letter_refused(
-                                    "suspend", which, "suspend [-f]"));
+                                return shell_letter_refuse("suspend", which, "suspend [-f]");
 
                 //      And no operands either: a word after the options is
                 //      one word too many, whatever it says.
@@ -2627,7 +2618,7 @@ fn shell_suspend(writer write, string_address input)
         }
 
         if (!job_monitor() || !shell_is_interactive)
-                return shell_answer(string_report(log_error, 1, "suspend: cannot suspend: no job control\n"));
+                return shell_answered(1, "suspend: cannot suspend: no job control\n");
 
         log_flush();
         job_signal(-job_shell_group, JOB_SIGNAL_STOP);
@@ -2791,8 +2782,7 @@ fn job_execute_tool(positive which, bool confined)
         bipolar child;
 
         if (!job_reserve(1, false))
-                return shell_answer(string_report(
-                    log_error, 2, "No room to retain foreground job\n"));
+                return shell_answered(2, "No room to retain foreground job\n");
 
         log_flush();
         child = confined ? shell_clone() : shell_clone_raw();
@@ -2882,7 +2872,7 @@ fn shell_kill(writer write, string_address input)
                      string_get(word + 1) == 'n') && !string_get(word + 2))
                 {
                         if (++at >= shell_argc)
-                                return shell_answer(string_report(log_error, 2, "kill: -s needs a signal\n"));
+                                return shell_answered(2, "kill: -s needs a signal\n");
 
                         number = kill_number(shell_argv[at]);
                 }
@@ -2890,13 +2880,13 @@ fn shell_kill(writer write, string_address input)
                         number = kill_number(word + 1);
 
                 if (number < 0)
-                        return shell_answer(string_report(log_error, 2, "kill: invalid signal\n"));
+                        return shell_answered(2, "kill: invalid signal\n");
 
                 at++;
         }
 
         if (at >= shell_argc)
-                return shell_answer(string_report(log_error, 2, "kill: no process named\n"));
+                return shell_answered(2, "kill: no process named\n");
 
         job_reap();
 
@@ -2921,10 +2911,9 @@ fn shell_kill(writer write, string_address input)
                         {
                                 shell_diagnostic_where();
                                 if (!shell_bash_compat)
-                                        return shell_answer(string_report(
-                                            log_error, 2,
+                                        return shell_answered(2,
                                             "kill: Illegal number: %s\n",
-                                            word + (string_get(word) == '-')));
+                                            word + (string_get(word) == '-'));
                                 answer = string_report(log_error,
                                     shell_posix_on() ? answer : 1,
                                     "kill: `%s': not a pid or valid job spec\n",
@@ -3214,9 +3203,8 @@ fn job_wait(writer write, string_address input)
                         if (letter == 'p')
                                 break;
 
-                        return shell_answer(shell_letter_refused(
-                            "wait", letter,
-                            "wait [-fn] [-p var] [id ...]"));
+                        return shell_letter_refuse("wait", letter,
+                            "wait [-fn] [-p var] [id ...]");
                 }
 
                 for (at = 1; string_get(word + at); at++)
@@ -3242,7 +3230,7 @@ fn job_wait(writer write, string_address input)
                         }
 
                         if (first + 1 >= shell_argc)
-                                return shell_answer(string_report(log_error, 2, "wait: -p wants a name\n"));
+                                return shell_answered(2, "wait: -p wants a name\n");
 
                         into = shell_argv[++first];
                         break;
@@ -3258,8 +3246,8 @@ fn job_wait(writer write, string_address input)
                 positive length = string_length(into);
 
                 if (!length || !shell_valid_name(into, length))
-                        return shell_answer(string_report(log_error, 2,
-                            "wait: %s: invalid identifier\n", into));
+                        return shell_answered(2,
+                            "wait: %s: invalid identifier\n", into);
         }
 
         if (next)
@@ -3394,12 +3382,10 @@ fn job_wait(writer write, string_address input)
                                 shell_diagnostic_where();
 
                                 if (!shell_bash_compat)
-                                        return shell_answer(string_report(
-                                            log_error, 2,
-                                            "wait: No such job: %s\n", word));
+                                        return shell_answered(2,
+                                            "wait: No such job: %s\n", word);
 
-                                return shell_answer(string_report(log_error,
-                                    127, "wait: %s: no such job\n", word));
+                                return shell_answered(127, "wait: %s: no such job\n", word);
                         }
                 }
                 else
@@ -3414,10 +3400,9 @@ fn job_wait(writer write, string_address input)
                                 shell_diagnostic_where();
 
                                 if (!shell_bash_compat)
-                                        return shell_answer(string_report(
-                                            log_error, 2,
+                                        return shell_answered(2,
                                             "wait: Illegal number: %s\n",
-                                            word));
+                                            word);
 
                                 //      Every word gets its own line: bash
                                 //      walks the rest of them and answers
@@ -4932,7 +4917,7 @@ fn shell_history(writer write, string_address input)
                         bipolar offset;
 
                         if (!named)
-                                return shell_answer(string_report(log_error, 2, "history: -d wants an offset\n"));
+                                return shell_answered(2, "history: -d wants an offset\n");
 
                         if (!exec_control_integer(named, address_of offset))
                         {
@@ -4946,9 +4931,9 @@ fn shell_history(writer write, string_address input)
                         offset -= (bipolar)history_first;
 
                         if (offset < 0 || (positive)offset >= history_used)
-                                return shell_answer(string_report(log_error, 1, "history: %s: not in the"
-                                              " history\n",
-                                              named));
+                                return shell_answered(1, "history: %s: not in the"
+                                           " history\n",
+                                           named);
 
                         history_drop((positive)offset, 1);
 
@@ -4963,16 +4948,15 @@ fn shell_history(writer write, string_address input)
                         string_address where = named ? named : path;
 
                         if (!where)
-                                return shell_answer(string_report(log_error, 1, "history: no history file\n"));
+                                return shell_answered(1, "history: no history file\n");
 
                         /* Restricted Bash permits its inherited HISTFILE but
                            does not let a command select another directory by
                            spelling an explicit filename with '/'. */
                         if (shell_restricted && named &&
                             string_first_of(named, '/'))
-                                return shell_answer(string_report(
-                                    log_error, 1,
-                                    "history: %s: restricted\n", named));
+                                return shell_answered(1,
+                                    "history: %s: restricted\n", named);
 
                         if (letter == 'a')
                                 return shell_answer(
@@ -5009,11 +4993,10 @@ fn shell_history(writer write, string_address input)
                 }
 
                 default:
-                        return shell_answer(shell_letter_refused(
-                            "history", letter,
+                        return shell_letter_refuse("history", letter,
                             "history [-c] [-d offset] [n] or "
                             "history -anrw [filename] or "
-                            "history -ps arg [arg...]"));
+                            "history -ps arg [arg...]");
                 }
         }
 
@@ -5027,9 +5010,9 @@ fn shell_history(writer write, string_address input)
 
                         //      Two, the status a usage error carries, and
                         //      not the one a failed listing would.
-                        return shell_answer(string_report(log_error, 2,
+                        return shell_answered(2,
                             "history: %s: numeric argument required\n",
-                            shell_argv[at]));
+                            shell_argv[at]);
                 }
 
                 if (wanted < show)
@@ -5428,7 +5411,7 @@ fn shell_fc(writer write, string_address input)
                 if (letter == 'e')
                 {
                         if (at + 1 >= shell_argc)
-                                return shell_answer(string_report(log_error, 2, "fc: -e wants an editor\n"));
+                                return shell_answered(2, "fc: -e wants an editor\n");
 
                         editor = shell_argv[++at];
 
@@ -5461,11 +5444,10 @@ fn shell_fc(writer write, string_address input)
                                 again = true;
                                 break;
                         default:
-                                return shell_answer(shell_letter_refused(
-                                    "fc",
+                                return shell_letter_refuse("fc",
                                     string_get(shell_argv[at] + step),
                                     "fc [-e ename] [-lnr] [first] [last] or "
-                                    "fc -s [pat=rep] [command]"));
+                                    "fc -s [pat=rep] [command]");
                         }
 
                 at++;
@@ -5493,7 +5475,7 @@ fn shell_fc(writer write, string_address input)
                 if (shell_bash_compat)
                         return shell_answer(0);
 
-                return shell_answer(string_report(log_error, 1, "fc: no command found\n"));
+                return shell_answered(1, "fc: no command found\n");
         }
 
         if (!history_locate(at < shell_argc ? shell_argv[at] : null,
@@ -5501,8 +5483,8 @@ fn shell_fc(writer write, string_address input)
                                   : listing ? (count > 16 ? count - 16 : 0)
                                             : count - 1,
                             address_of first))
-                return shell_answer(string_report(log_error, 1, "fc: %s: no such command\n",
-                              shell_argv[at]));
+                return shell_answered(1, "fc: %s: no such command\n",
+                           shell_argv[at]);
 
         if (at < shell_argc)
                 at++;
@@ -5510,8 +5492,8 @@ fn shell_fc(writer write, string_address input)
         if (!history_locate(at < shell_argc ? shell_argv[at] : null,
                             again ? first : listing ? count - 1 : first,
                             address_of last))
-                return shell_answer(string_report(log_error, 1, "fc: %s: no such command\n",
-                              shell_argv[at]));
+                return shell_answered(1, "fc: %s: no such command\n",
+                           shell_argv[at]);
 
         if (last < first)
         {

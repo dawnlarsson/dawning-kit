@@ -127,6 +127,10 @@ bool word_is(string_address word, string_address text);
          string_report(log_error, (status), __VA_ARGS__))
 #define shell_refuse(status, ...) \
         shell_answer(shell_reported((status), __VA_ARGS__))
+// The same refusal without a line in front of it: neither reference shell
+// names one for these, so neither does this.
+#define shell_answered(status, ...) \
+        shell_answer(string_report(log_error, (status), __VA_ARGS__))
 
 static COLD bool shell_option_bad(string_address name, string_address said)
 {
@@ -179,6 +183,13 @@ static COLD b32 shell_letter_refused(string_address name, p8 letter,
 
         return shell_option_refused(name, said, usage);
 }
+
+// Thirty builtins end their option walk this way: the complaint, the usage
+// line it owes, and the two the shell answers with.
+#define shell_letter_refuse(name, letter, usage) \
+        shell_answer(shell_letter_refused((name), (letter), (usage)))
+#define shell_option_refuse(name, said, usage) \
+        shell_answer(shell_option_refused((name), (said), (usage)))
 
 /*
         A name that will not be written to.
@@ -5029,9 +5040,8 @@ COLD fn shell_cd(writer write, string_address input)
                 else if (letter == 'e' && shell_bash_compat)
                         error_if_unnamed = true;
                 else
-                        return shell_answer(shell_letter_refused(
-                            "cd", letter,
-                            "cd [-L|[-P [-e]]] [-@] [dir]"));
+                        return shell_letter_refuse("cd", letter,
+                            "cd [-L|[-P [-e]]] [-@] [dir]");
         }
 
         positive index = walk.index;
@@ -5356,10 +5366,8 @@ COLD fn shell_dirs(writer write, string_address input)
                                 (void)letter;
 
                                 if (!shell_bash_compat)
-                                        return shell_answer(
-                                            shell_option_refused(
-                                                "dirs", word,
-                                                "dirs [-clpv] [+N] [-N]"));
+                                        return shell_option_refuse("dirs", word,
+                                                "dirs [-clpv] [+N] [-N]");
 
                                 return shell_answer(
                                     shell_dirstack_number_refused(
@@ -5394,9 +5402,8 @@ COLD fn shell_dirs(writer write, string_address input)
                                         "dirs", shell_argv[index],
                                         "dirs [-clpv] [+N] [-N]"));
 
-                        return shell_answer(shell_option_refused(
-                            "dirs", shell_argv[index],
-                            "dirs [-clpv] [+N] [-N]"));
+                        return shell_option_refuse("dirs", shell_argv[index],
+                            "dirs [-clpv] [+N] [-N]");
                 }
 
                 if (!shell_dirstack_index(shell_argv[index], count,
@@ -5409,13 +5416,12 @@ COLD fn shell_dirs(writer write, string_address input)
                         //      that it names the number, without the sign it
                         //      was given.
                         if (count < 2)
-                                return shell_answer(string_report(
-                                    log_error, 1,
-                                    "dirs: directory stack empty\n"));
+                                return shell_answered(1,
+                                    "dirs: directory stack empty\n");
 
-                        return shell_answer(string_report(log_error, 1,
+                        return shell_answered(1,
                             "dirs: %s: directory stack index out of range\n",
-                            shell_argv[index] + 1));
+                            shell_argv[index] + 1);
                 }
 
                 //      -v numbers one entry as it numbers a listing, in a
@@ -5535,7 +5541,7 @@ COLD fn shell_pushd(writer write, string_address input)
                                 kept[used++] = list[at];
 
                         if (!shell_dirstack_write(kept, used))
-                                return shell_answer(string_report(log_error, 1, "pushd: directory stack full\n"));
+                                return shell_answered(1, "pushd: directory stack full\n");
 
                         shell_dirstack_listed(write, false, false, false);
 
@@ -5559,7 +5565,7 @@ COLD fn shell_pushd(writer write, string_address input)
                 }
 
                 if (!shell_dirstack_write(rotated, count))
-                        return shell_answer(string_report(log_error, 1, "pushd: directory stack full\n"));
+                        return shell_answered(1, "pushd: directory stack full\n");
 
                 shell_dirstack_listed(write, false, false, false);
 
@@ -5571,7 +5577,7 @@ COLD fn shell_pushd(writer write, string_address input)
         if (!named)
         {
                 if (count < 2)
-                        return shell_answer(string_report(log_error, 1, "pushd: no other directory\n"));
+                        return shell_answered(1, "pushd: no other directory\n");
 
                 if (stack_only)
                 {
@@ -5609,12 +5615,12 @@ COLD fn shell_pushd(writer write, string_address input)
                 //      With nothing pushed there is no stack to index into,
                 //      and bash says that rather than naming the number.
                 if (count < 2)
-                        return shell_answer(string_report(log_error, 1,
-                            "pushd: directory stack empty\n"));
+                        return shell_answered(1,
+                            "pushd: directory stack empty\n");
 
-                return shell_answer(string_report(log_error, 1,
+                return shell_answered(1,
                     "pushd: %s: directory stack index out of range\n",
-                    named));
+                    named);
         }
 
         string_copy_max_end(wanted, rotated[0], sizeof(wanted) - 1);
@@ -5622,7 +5628,7 @@ COLD fn shell_pushd(writer write, string_address input)
         // Written before the move, because the kept part is read out of the
         // pool the move does not touch and the top is already in hand.
         if (!shell_dirstack_write(rotated + 1, count - 1))
-                return shell_answer(string_report(log_error, 1, "pushd: directory stack full\n"));
+                return shell_answered(1, "pushd: directory stack full\n");
 
         //      -n rotates and stays: the shell keeps the directory it is in,
         //      which is still the top of what is listed, so the entry the
@@ -5680,8 +5686,7 @@ COLD fn shell_popd(writer write, string_address input)
                             "popd", word, "popd [-n] [+N | -N]"));
 
                 if (named)
-                        return shell_answer(string_report(
-                            log_error, 1, "popd: too many arguments\n"));
+                        return shell_answered(1, "popd: too many arguments\n");
 
                 named = word;
         }
@@ -5692,8 +5697,8 @@ COLD fn shell_popd(writer write, string_address input)
         }
 
         if (named && !shell_dirstack_index(named, count, address_of index))
-                return shell_answer(string_report(log_error, 1, "popd: %s: directory stack index out of range\n",
-                              named));
+                return shell_answered(1, "popd: %s: directory stack index out of range\n",
+                           named);
 
         //      With -n the top is never the one that goes.
         if (stack_only && !index)
@@ -5710,11 +5715,11 @@ COLD fn shell_popd(writer write, string_address input)
                 string_copy_max_end(wanted, kept[0], sizeof(wanted) - 1);
 
                 if (!shell_dirstack_move(wanted))
-                        return shell_answer(string_report(log_error, 1, "popd: %s: No such file or directory\n", wanted));
+                        return shell_answered(1, "popd: %s: No such file or directory\n", wanted);
         }
 
         if (!shell_dirstack_write(kept + 1, used - 1))
-                return shell_answer(string_report(log_error, 1, "popd: directory stack full\n"));
+                return shell_answered(1, "popd: directory stack full\n");
 
         shell_dirstack_listed(write, false, false, false);
 
@@ -6067,7 +6072,7 @@ COLD fn shell_exec(writer write, string_address input)
                 if (found)
                         memory_free(found, found_room);
 
-                shell_answer(string_report(log_error, 2, "%s: no room\n", "exec"));
+                shell_answered(2, "%s: no room\n", "exec");
                 shell_stop_when_scripted(2);
 
                 return;
@@ -6189,8 +6194,7 @@ COLD fn shell_pwd(writer write, string_address input)
                 else if (letter == 'P')
                         physical = true;
                 else
-                        return shell_answer(shell_letter_refused(
-                            "pwd", letter, "pwd [-LP]"));
+                        return shell_letter_refuse("pwd", letter, "pwd [-LP]");
         }
 
         if (!physical && shell_directory_holds())
@@ -6312,7 +6316,7 @@ COLD fn shell_exit(writer write, string_address input)
 COLD fn shell_logout(writer write, string_address input)
 {
         if (!shell_bash_compat || !shell_shopt_on(LOGIN_SHELL))
-                return shell_answer(string_report(log_error, 1, "logout: not login shell: use `exit'\n"));
+                return shell_answered(1, "logout: not login shell: use `exit'\n");
 
         shell_exit(write, input);
 }
@@ -7323,16 +7327,15 @@ COLD fn shell_shopt(writer write, string_address input)
                 else if (which == 'o')
                         set_options = true;
                 else
-                        return shell_answer(shell_letter_refused(
-                            "shopt", which, "shopt [-pqsu] [-o] [optname ...]"));
+                        return shell_letter_refuse("shopt", which, "shopt [-pqsu] [-o] [optname ...]");
         }
 
         positive index = walk.index;
         // Both directions at once has no answer, so it is refused rather
         // than resolved into whichever was written last.
         if (set && unset)
-                return shell_answer(string_report(log_error, 1,
-                    "shopt: cannot set and unset shell options simultaneously\n"));
+                return shell_answered(1,
+                    "shopt: cannot set and unset shell options simultaneously\n");
 
         if (index >= shell_argc)
         {
@@ -7716,10 +7719,10 @@ COLD fn shell_set(writer write, string_address input)
         if (shell_argc < 2)
         {
                 if (!shell_inventory_sorted(write, 0, shell_set_written, false, false))
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "set"));
+                        return shell_answered(2, "%s: no room\n", "set");
                 if (shell_bash_compat && !shell_posix_on() &&
                     !shell_inventory_sorted(write, 0, null, true, true))
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "set"));
+                        return shell_answered(2, "%s: no room\n", "set");
 
                 return shell_answer(0);
         }
@@ -7887,7 +7890,7 @@ COLD fn shell_set(writer write, string_address input)
         //      go straight in rather than through a middleman with a size.
         if (operands &&
             !shell_parameters_set(shell_argv + index, shell_argc - index))
-                return shell_answer(string_report(log_error, 2, "set: no room for arguments\n"));
+                return shell_answered(2, "set: no room for arguments\n");
 
         if (operands)
         {
@@ -7980,7 +7983,7 @@ static bool shell_unset_variable(const_string name, positive length)
 
         b32 detached = exec_unset_prefix(name, length);
         if (detached < 0)
-                shell_answer(string_report(log_error, 2, "%s: no room\n", "unset"));
+                shell_answered(2, "%s: no room\n", "unset");
         else if (!detached)
                 env_unset_span((string_address)name, length);
         return detached >= 0;
@@ -8031,8 +8034,8 @@ COLD fn shell_unset(writer write, string_address input)
         //      Bash refuses to be told both at once; the reference shell lets
         //      the later letter win, so only the Bash personality complains.
         if (functions && variables && shell_bash_compat)
-                return shell_answer(string_report(log_error, 1,
-                    "unset: cannot simultaneously unset a function and a variable\n"));
+                return shell_answered(1,
+                    "unset: cannot simultaneously unset a function and a variable\n");
 
         index = walk.index;
 
@@ -8140,7 +8143,7 @@ COLD fn shell_unset(writer write, string_address input)
                         if (!key || detached < 0 ||
                             (!detached && !shell_array_forget(word, base, key, key_length)))
                         {
-                                shell_answer(string_report(log_error, 2, "%s: no room\n", "unset"));
+                                shell_answered(2, "%s: no room\n", "unset");
                                 return;
                         }
 
@@ -9077,7 +9080,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                                 {
                                         if (name_end)
                                                 *name_end = delimiter;
-                                        return shell_answer(string_report(log_error, 2, "local: too many\n"));
+                                        return shell_answered(2, "local: too many\n");
                                 }
                                 goto no_room;
                         }
@@ -9431,7 +9434,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
         no_room:
                 if (name_end)
                         address_to name_end = delimiter;
-                return shell_answer(string_report(log_error, 2, "%s: no room\n", local_mode ? (string_address)"local" : (string_address)"declare"));
+                return shell_answered(2, "%s: no room\n", local_mode ? (string_address)"local" : (string_address)"declare");
         }
 
         shell_answer(failed ? 1 : 0);
@@ -9527,8 +9530,8 @@ static fn shell_declare(writer write, string_address input)
                                    DECLARE_EXPORT | DECLARE_READONLY)) ||
                     state.attributes_set || state.attributes_clear ||
                     (state.clear & ~(DECLARE_FUNCTION_BODY | DECLARE_EXPORT)))
-                        return shell_answer(string_report(log_error, 2,
-                            "declare: function attribute combination is not supported\n"));
+                        return shell_answered(2,
+                            "declare: function attribute combination is not supported\n");
 
                 /* With an attribute, -f selects function targets instead of
                    asking for their bodies. The same export/readonly bits are
@@ -9546,8 +9549,8 @@ static fn shell_declare(writer write, string_address input)
                                                 shell_declare_function_written, true,
                                                 bodies)
                                                 ? 0 : 1);
-                                return shell_answer(string_report(log_error, 2,
-                                    "declare: function attribute removal wants a name\n"));
+                                return shell_answered(2,
+                                    "declare: function attribute removal wants a name\n");
                         }
 
                         while (state.index < shell_argc)
@@ -9579,7 +9582,7 @@ static fn shell_declare(writer write, string_address input)
 
                 listed = shell_declare_functions(write, state.index, bodies);
                 if (listed < 0)
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "declare"));
+                        return shell_answered(2, "%s: no room\n", "declare");
                 return shell_answer(listed ? 0 : 1);
         }
 
@@ -9702,13 +9705,12 @@ static COLD fn shell_marked(writer write, p8 mark)
                         //      a special builtin refused its options takes a
                         //      script with it wherever POSIX says so.
                         exec_special_error_note();
-                        return shell_answer(shell_letter_refused(
-                            command, option,
+                        return shell_letter_refuse(command, option,
                             word_is(command, "export")
                                 ? "export [-fn] [name[=value] ...] or "
                                   "export -p [-f]"
                                 : "readonly [-aAf] [name[=value] ...] or "
-                                  "readonly -p"));
+                                  "readonly -p");
                 }
         }
 
@@ -9771,7 +9773,7 @@ static COLD fn shell_marked(writer write, p8 mark)
         if (listed && index >= shell_argc)
         {
                 if (!shell_inventory_sorted(write, mark, shell_marked_written, false, false))
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", command));
+                        return shell_answered(2, "%s: no room\n", command);
 
                 return shell_answer(0);
         }
@@ -9846,7 +9848,7 @@ static COLD fn shell_marked(writer write, p8 mark)
                         address_to value = '=';
 
                 if (!kept)
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", command));
+                        return shell_answered(2, "%s: no room\n", command);
         }
 
         shell_answer(refused ? 1 : 0);
@@ -10623,13 +10625,11 @@ HOT fn shell_test(writer write, string_address input)
         if (name && string_is(name, '[') && !string_get(name + 1))
         {
                 if (argc < 2)
-                        return shell_answer(string_report(
-                            log_error, 2, "%s: missing `]'\n", name));
+                        return shell_answered(2, "%s: missing `]'\n", name);
 
                 last = shell_argv[argc - 1];
                 if (!last || string_not(last, ']') || string_get(last + 1))
-                        return shell_answer(string_report(
-                            log_error, 2, "%s: missing `]'\n", name));
+                        return shell_answered(2, "%s: missing `]'\n", name);
 
                 test_stop = argc - 1;
         }
@@ -11582,13 +11582,12 @@ fn shell_printf(writer write, string_address input)
         while (shell_option_letter(address_of walk, address_of letter))
         {
                 if (letter != 'v')
-                        return shell_answer(shell_letter_refused(
-                            "printf", letter, "printf [-v var] format [arguments]"));
+                        return shell_letter_refuse("printf", letter, "printf [-v var] format [arguments]");
 
                 into = shell_option_argument(address_of walk);
                 if (!into)
-                        return shell_answer(string_report(log_error, 2, "printf: -v: option requires an "
-                                         "argument\n"));
+                        return shell_answered(2, "printf: -v: option requires an "
+                                   "argument\n");
 
                 //      Bash refuses a name it could not assign as soon as it
                 //      reads it, before any later letter.
@@ -11660,13 +11659,13 @@ fn shell_printf(writer write, string_address input)
         {
                 if (!shell_array_room(printf_kept.bytes, printf_kept.room, printf_kept.used + 1))
                 {
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "printf"));
+                        return shell_answered(2, "%s: no room\n", "printf");
                 }
 
                 printf_kept.bytes[printf_kept.used] = end;
 
                 if (!env_assign_name(into, printf_kept.bytes))
-                        return shell_answer(string_report(log_error, 1, "printf: %s: cannot assign\n", into));
+                        return shell_answered(1, "printf: %s: cannot assign\n", into);
         }
 
         shell_answer(printf_status);
@@ -11973,7 +11972,7 @@ COLD fn shell_read(writer write, string_address input)
 
         if (!read_reserve(1))
         {
-                return shell_answer(string_report(log_error, 2, "%s: no room\n", "read"));
+                return shell_answered(2, "%s: no room\n", "read");
         }
 
         shell_option_walk options = {.index = 1};
@@ -11988,14 +11987,13 @@ COLD fn shell_read(writer write, string_address input)
                 }
                 p8 said[2] = {which, end};
                 if (!string_first_of("pnNdtaui", which))
-                        return shell_answer(shell_letter_refused(
-                            "read", which,
+                        return shell_letter_refuse("read", which,
                             "read [-Eers] [-a array] [-d delim] [-i text] "
                             "[-n nchars] [-N nchars] [-p prompt] "
-                            "[-t timeout] [-u fd] [name ...]"));
+                            "[-t timeout] [-u fd] [name ...]");
                 string_address value = shell_option_argument(address_of options);
                 if (!value)
-                        return shell_answer(string_report(log_error, 2, "read: option -%s wants a value\n", said));
+                        return shell_answered(2, "read: option -%s wants a value\n", said);
                 if (which == 'a')
                 {
                         if (!shell_valid_name(value,
@@ -12032,8 +12030,8 @@ COLD fn shell_read(writer write, string_address input)
 
                         if (!read_nonnegative(value, b32_max,
                                               address_of asked))
-                                return shell_answer(string_report(log_error, 1, "read: bad descriptor: %s\n",
-                                              value));
+                                return shell_answered(1, "read: bad descriptor: %s\n",
+                                           value);
 
                         descriptor = (b32)asked;
                 }
@@ -12043,7 +12041,7 @@ COLD fn shell_read(writer write, string_address input)
 
                         if (!read_nonnegative(value, positive_max,
                                               address_of asked))
-                                return shell_answer(string_report(log_error, 1, "read: bad count: %s\n", value));
+                                return shell_answered(1, "read: bad count: %s\n", value);
 
                         limited = true;
                         exact = which == 'N';
@@ -12054,7 +12052,7 @@ COLD fn shell_read(writer write, string_address input)
                 else
                 {
                         if (!read_timeout(value, address_of timeout))
-                                return shell_answer(string_report(log_error, 1, "read: bad timeout: %s\n", value));
+                                return shell_answered(1, "read: bad timeout: %s\n", value);
 
                         timed = true;
                 }
@@ -12147,7 +12145,7 @@ COLD fn shell_read(writer write, string_address input)
                                 system_control(descriptor, PTY_TCSETS,
                                                address_of quiet_held);
 
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "read"));
+                        return shell_answered(2, "%s: no room\n", "read");
                 }
 
                 if (timed)
@@ -12291,7 +12289,7 @@ COLD fn shell_read(writer write, string_address input)
                         if (length == positive_max ||
                             !shell_array_room(read_ifs, read_ifs_room, length + 1))
                         {
-                                return shell_answer(string_report(log_error, 2, "%s: no room\n", "read"));
+                                return shell_answered(2, "%s: no room\n", "read");
                         }
 
                         memory_copy(read_ifs, value, length + 1);
@@ -12310,12 +12308,12 @@ COLD fn shell_read(writer write, string_address input)
                 while ((field = read_field(ifs, address_of at, false)))
                 {
                         if (!shell_array_room(read_words, read_words_room, count + 1))
-                                return shell_answer(string_report(log_error, 2, "%s: no room\n", "read"));
+                                return shell_answered(2, "%s: no room\n", "read");
                         read_words[count++] = field;
                 }
                 if (!shell_array_words(array_name, string_length(array_name),
                                        read_words, count))
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "read"));
+                        return shell_answered(2, "%s: no room\n", "read");
         }
         else
                 while (names < shell_argc)
@@ -12391,8 +12389,8 @@ COLD fn shell_mapfile(writer write, string_address input)
                 }
                 string_address value = shell_option_argument(address_of options);
                 if (!value)
-                        return shell_answer(string_report(log_error, 2, "%s: option -%s wants a value\n",
-                                      shell_argv[0], said));
+                        return shell_answered(2, "%s: option -%s wants a value\n",
+                                   shell_argv[0], said);
                 positive asked;
                 if (which == 'd')
                 {
@@ -12409,16 +12407,15 @@ COLD fn shell_mapfile(writer write, string_address input)
                 {
                         if (!read_nonnegative(value, (positive)bipolar_max,
                                               address_of asked))
-                                return shell_answer(string_report(
-                                    log_error, 2, "%s: %s: bad number\n",
-                                    shell_argv[0], value));
+                                return shell_answered(2, "%s: %s: bad number\n",
+                                    shell_argv[0], value);
                         continue;
                 }
 
                 if (!read_nonnegative(value, which == 'u' ? b32_max : (positive)bipolar_max,
                                       address_of asked))
-                        return shell_answer(string_report(log_error, which == 'u' ? 1 : 2, "%s: %s: bad number\n",
-                                      shell_argv[0], value));
+                        return shell_answered(which == 'u' ? 1 : 2, "%s: %s: bad number\n",
+                                   shell_argv[0], value);
 
                 if (which == 'n')
                         wanted = asked;
@@ -12433,7 +12430,7 @@ COLD fn shell_mapfile(writer write, string_address input)
                 {
                         from = (b32)asked;
                         if (system_call_3(syscall(fcntl), from, FILE_F_GETFL, 0) < 0)
-                                return shell_answer(string_report(log_error, 1, "mapfile: bad descriptor\n"));
+                                return shell_answered(1, "mapfile: bad descriptor\n");
                 }
         }
         index = options.index;
@@ -12455,20 +12452,19 @@ COLD fn shell_mapfile(writer write, string_address input)
 
         if (env_assignment_readonly_destination(
                 name, name_length, env_name_hash(name, name_length), null))
-                return shell_answer(string_report(
-                    log_error, 1, "mapfile: %s: readonly variable\n", name));
+                return shell_answered(1, "mapfile: %s: readonly variable\n", name);
 
         p8 attributes = shell_array_attributes(name, name_length);
         if (attributes & (SHELL_ARRAY_READONLY | SHELL_ARRAY_ASSOCIATIVE))
-                return shell_answer(string_report(log_error, 1, "mapfile: %s: %s\n", name,
-                              attributes & SHELL_ARRAY_READONLY
-                                  ? "readonly variable" : "not an indexed array"));
+                return shell_answered(1, "mapfile: %s: %s\n", name,
+                           attributes & SHELL_ARRAY_READONLY
+                           ? "readonly variable" : "not an indexed array");
         if (!shell_variable_attribute_set(name, name_length,
                                           SHELL_ARRAY_INDEXED |
                                               SHELL_ARRAY_ASSIGNED,
                                           SHELL_ARRAY_ASSOCIATIVE) ||
             (!append && !shell_array_clear(name, name_length)))
-                return shell_answer(string_report(log_error, 2, "%s: no room\n", "mapfile"));
+                return shell_answered(2, "%s: no room\n", "mapfile");
 
         bool seekable = wanted && system_seek(from, 0, FILE_SEEK_CUR) >= 0;
         positive amount = wanted && !seekable ? 1 : 4096;
@@ -12525,7 +12521,7 @@ COLD fn shell_mapfile(writer write, string_address input)
         if (seekable && used > at)
                 system_seek(from, (positive)(-(bipolar)(used - at)), FILE_SEEK_CUR);
         if (failed)
-                return shell_answer(string_report(log_error, 2, "%s: no room\n", "mapfile"));
+                return shell_answered(2, "%s: no room\n", "mapfile");
         shell_answer(0);
 }
 
@@ -12669,9 +12665,8 @@ COLD fn shell_getopts(writer write, string_address input)
                 p8 which;
 
                 if (shell_option_letter(address_of walk, address_of which))
-                        return shell_answer(shell_letter_refused(
-                            "getopts", which,
-                            "getopts optstring name [arg ...]"));
+                        return shell_letter_refuse("getopts", which,
+                            "getopts optstring name [arg ...]");
         }
 
         if (shell_argc - first < 2)
@@ -13003,8 +12998,7 @@ COLD fn shell_umask(writer write, string_address input)
                 else if (option == 'p' && shell_bash_compat)
                         reproducible = true;
                 else
-                        return shell_answer(shell_letter_refused(
-                            "umask", option, "umask [-p] [-S] [mode]"));
+                        return shell_letter_refuse("umask", option, "umask [-p] [-S] [mode]");
         }
 
         index = walk.index;
@@ -13064,9 +13058,8 @@ COLD fn shell_umask(writer write, string_address input)
                         shell_diagnostic_where();
 
                         if (!shell_bash_compat)
-                                return shell_answer(string_report(
-                                    log_error, refused,
-                                    "umask: Illegal mode: %s\n", word));
+                                return shell_answered(refused,
+                                    "umask: Illegal mode: %s\n", word);
 
                         {
                                 //      Two bytes: the formatter has no %c.
@@ -13075,15 +13068,14 @@ COLD fn shell_umask(writer write, string_address input)
                                 string_address at = umask_symbolic_refused(
                                     word, address_of operator_here);
 
-                                return shell_answer(string_report(
-                                    log_error, refused,
+                                return shell_answered(refused,
                                     operator_here
                                         ? "umask: `%s': invalid symbolic "
                                           "mode operator\n"
                                         : "umask: `%s': invalid symbolic "
                                           "mode character\n",
                                     shell_option_spelled(
-                                        said, at ? string_get(at) : end)));
+                                        said, at ? string_get(at) : end));
                         }
                 }
         }
@@ -14086,8 +14078,7 @@ COLD fn shell_alias(writer write, string_address input)
                shell_option_letter(address_of walk, address_of letter))
         {
                 if (letter != 'p')
-                        return shell_answer(shell_letter_refused(
-                            "alias", letter, "alias [-p] [name[=value] ... ]"));
+                        return shell_letter_refuse("alias", letter, "alias [-p] [name[=value] ... ]");
                 prefixed = listed = true;
         }
 
@@ -14167,9 +14158,8 @@ COLD fn shell_unalias(writer write, string_address input)
         {
                 if (option != 'a')
                 {
-                        return shell_answer(shell_letter_refused(
-                            "unalias", option,
-                            "unalias [-a] name [name ...]"));
+                        return shell_letter_refuse("unalias", option,
+                            "unalias [-a] name [name ...]");
                 }
 
                 all = true;
@@ -14280,8 +14270,7 @@ COLD fn shell_eval(writer write, string_address input)
                 while (shell_option_letter(address_of walk, address_of option))
                 {
                         exec_special_error_note();
-                        return shell_answer(shell_letter_refused(
-                            "eval", option, "eval [arg ...]"));
+                        return shell_letter_refuse("eval", option, "eval [arg ...]");
                 }
 
                 index = walk.index;
@@ -14295,7 +14284,7 @@ COLD fn shell_eval(writer write, string_address input)
                 if (joined.bytes)
                         memory_free(joined.bytes, joined.room);
 
-                shell_answer(string_report(log_error, 2, "%s: no room\n", "eval"));
+                shell_answered(2, "%s: no room\n", "eval");
                 shell_stop_when_scripted(2);
 
                 return;
@@ -17133,7 +17122,7 @@ COLD fn shell_dot(writer write, string_address input)
                 if (source_text)
                         memory_free(source_text, source_room);
 
-                shell_answer(string_report(log_error, 2, "%s: no room\n", shell_argv[0]));
+                shell_answered(2, "%s: no room\n", shell_argv[0]);
                 shell_stop_when_scripted(2);
 
                 return;
@@ -17217,7 +17206,7 @@ COLD fn shell_dot(writer write, string_address input)
                                 shell_parameter_stack_used = held;
 
                         memory_free(source_text, source_room);
-                        return shell_answer(string_report(log_error, 2, "source: no room for arguments\n"));
+                        return shell_answered(2, "source: no room for arguments\n");
                 }
         }
 
@@ -17240,9 +17229,9 @@ COLD fn shell_dot(writer write, string_address input)
                         memory_free(source_text, source_room);
                         if (held != EXPAND_NO_ROOM)
                                 shell_parameter_stack_used = held;
-                        return shell_answer(string_report(log_error, 2,
-                                                          "%s: no room\n",
-                                                          shell_argv[0]));
+                        return shell_answered(2,
+                                   "%s: no room\n",
+                                   shell_argv[0]);
                 }
 
                 memory_copy(named, path, named_length);
@@ -17674,8 +17663,7 @@ static bool shell_completion_refused(string_address command,
                         p8 said[3] = {walk.direction ? walk.direction : '-',
                                       option, end};
 
-                        shell_answer(shell_option_refused(command, said,
-                                                          usage));
+                        shell_option_refuse(command, said, usage);
                         return true;
                 }
 
@@ -17686,8 +17674,7 @@ static bool shell_completion_refused(string_address command,
                             "%s: -%s: option requires an argument\n",
                             command,
                             shell_option_spelled(room, option));
-                        shell_answer(string_report(log_error, 2, "%s: usage: %s\n",
-                                                   command, usage));
+                        shell_answered(2, "%s: usage: %s\n", command, usage);
                         return true;
                 }
         }
@@ -17727,10 +17714,9 @@ static COLD fn shell_complete(writer write, string_address input)
                             !word_is(named, "nosort") &&
                             !word_is(named, "nospace") &&
                             !word_is(named, "plusdirs"))
-                                return shell_answer(string_report(
-                                    log_error, 2,
+                                return shell_answered(2,
                                     "complete: %s: invalid option name\n",
-                                    named));
+                                    named);
                 }
 
         shell_answer(0);
@@ -17763,9 +17749,8 @@ static COLD fn shell_compopt(writer write, string_address input)
                 return shell_answer(1);
         }
 
-        shell_answer(string_report(
-            log_error, 1,
-            "compopt: not currently executing completion function\n"));
+        shell_answered(1,
+            "compopt: not currently executing completion function\n");
 }
 
 static COLD fn shell_bind(writer write, string_address input)
@@ -18036,7 +18021,7 @@ fn shell_hash(writer write, string_address input)
         positive found_room = 0;
 
         if (!shell_hashall_on())
-                return shell_answer(string_report(log_error, 1, "hash: hashing disabled\n"));
+                return shell_answered(1, "hash: hashing disabled\n");
 
         while (shell_option_letter(address_of walk, address_of which))
         {
@@ -18055,8 +18040,8 @@ fn shell_hash(writer write, string_address input)
                 {
                         given = shell_option_argument(address_of walk);
                         if (!given)
-                                return shell_answer(string_report(log_error, 2, "hash: -p: option requires an "
-                                                 "argument\n"));
+                                return shell_answered(2, "hash: -p: option requires an "
+                                           "argument\n");
 
                         //      rbash: naming a path for a command is the same
                         //      reach a slash in the name would have been.
@@ -18067,9 +18052,8 @@ fn shell_hash(writer write, string_address input)
                         }
                 }
                 else
-                        return shell_answer(shell_letter_refused(
-                            "hash", which,
-                            "hash [-lr] [-p pathname] [-dt] [name ...]"));
+                        return shell_letter_refuse("hash", which,
+                            "hash [-lr] [-p pathname] [-dt] [name ...]");
         }
 
         positive index = walk.index;
@@ -18791,8 +18775,7 @@ COLD fn shell_type(writer write, string_address input)
                 else
                 {
 
-                        return shell_answer(shell_letter_refused(
-                            "type", which, "type [-afptP] name [name ...]"));
+                        return shell_letter_refuse("type", which, "type [-afptP] name [name ...]");
                 }
         }
 
@@ -18886,9 +18869,8 @@ fn shell_command_builtin(writer write, string_address input)
                         standard_path = true;
                 }
                 else
-                        return shell_answer(shell_letter_refused(
-                            "command", option,
-                            "command [-pVv] command [arg ...]"));
+                        return shell_letter_refuse("command", option,
+                            "command [-pVv] command [arg ...]");
         }
 
         index = walk.index;
@@ -18967,7 +18949,7 @@ fn shell_command_builtin(writer write, string_address input)
 
                 if (located < 0)
                 {
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "command"));
+                        return shell_answered(2, "%s: no room\n", "command");
                 }
 
                 if (!located)
@@ -18981,19 +18963,18 @@ fn shell_command_builtin(writer write, string_address input)
                                 //      The line a missing command gets, and
                                 //      command does not put its own name in
                                 //      front of it.
-                                return shell_answer(string_report(log_error,
-                                    127,
+                                return shell_answered(127,
                                     shell_bash_compat
                                         ? "%s: command not found\n"
                                         : "%s: not found\n",
-                                    name));
+                                    name);
                         }
                 }
 
                 if (located == 2)
                 {
                         memory_free(found, found_room);
-                        return shell_answer(string_report(log_error, 126, "command: %s: cannot run\n", name));
+                        return shell_answered(126, "command: %s: cannot run\n", name);
                 }
 
                 /* command's external tail bypasses ordinary dispatch, and
@@ -19089,7 +19070,7 @@ fn shell_which(writer write, string_address input)
                         if (found)
                                 memory_free(found, found_room);
 
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "which"));
+                        return shell_answered(2, "%s: no room\n", "which");
                 }
 
                 if (located)
@@ -19303,9 +19284,8 @@ fn shell_ulimit(writer write, string_address input)
                         for (positive back = 1; back < at; back++)
                                 if (string_is(shell_argv[back], '-') &&
                                     string_first_of(shell_argv[back] + 1, 'a'))
-                                        return shell_answer(string_report(
-                                            log_error, 2,
-                                            "ulimit: too many arguments\n"));
+                                        return shell_answered(2,
+                                            "ulimit: too many arguments\n");
                         break;
                 }
 
@@ -19340,9 +19320,8 @@ fn shell_ulimit(writer write, string_address input)
                         limit = shell_limit_by_letter(shell_extra_limits, which);
 
                 if (!limit->name)
-                        return shell_answer(shell_letter_refused(
-                            "ulimit", which,
-                            "ulimit [-SHabcdefiklmnpqrstuvxPRT] [limit]"));
+                        return shell_letter_refuse("ulimit", which,
+                            "ulimit [-SHabcdefiklmnpqrstuvxPRT] [limit]");
 
                 chosen = limit;
 
@@ -19527,8 +19506,7 @@ fn shell_builtin_run(writer write, string_address input)
         //      and the name behind it is the builtin to run.
         while (shell_option_letter(address_of walk, address_of option))
         {
-                return shell_answer(shell_letter_refused(
-                    "builtin", option, "builtin [shell-builtin [arg ...]]"));
+                return shell_letter_refuse("builtin", option, "builtin [shell-builtin [arg ...]]");
         }
 
         index = walk.index;
@@ -19582,12 +19560,11 @@ fn shell_enable(writer write, string_address input)
                 else if (which == 'f' || which == 'd' || which == 's')
                 {
                         // Dynamic builtin loading is not supported.
-                        return shell_answer(string_report(log_error, 2, "enable: not supported\n"));
+                        return shell_answered(2, "enable: not supported\n");
                 }
                 else
-                        return shell_answer(shell_letter_refused(
-                            "enable", which,
-                            "enable [-a] [-dnps] [-f filename] [name ...]"));
+                        return shell_letter_refuse("enable", which,
+                            "enable [-a] [-dnps] [-f filename] [name ...]");
         }
 
         positive index = walk.index;
@@ -19614,8 +19591,7 @@ fn shell_enable(writer write, string_address input)
            would let a script replace the fixed command surface after entry.
            No-name invocations above remain pure listings. */
         if (shell_restricted && !off)
-                return shell_answer(
-                    string_report(log_error, 1, "enable: restricted\n"));
+                return shell_answered(1, "enable: restricted\n");
 
         while (index < shell_argc)
         {
@@ -19766,10 +19742,9 @@ fn shell_compgen(writer write, string_address input)
                                         known = true;
 
                         if (!known)
-                                return shell_answer(string_report(
-                                    log_error, 2,
+                                return shell_answered(2,
                                     "compgen: %s: invalid action name\n",
-                                    value));
+                                    value);
 
                         if (word_is(value, "keyword"))
                                 keywords = true;
@@ -19809,12 +19784,11 @@ fn shell_compgen(writer write, string_address input)
                 else if (which == 'd')
                         directories = true;
                 else if (!string_first_of("AWPSXFCGoVegjksu", which))
-                        return shell_answer(shell_letter_refused(
-                            "compgen", which,
+                        return shell_letter_refuse("compgen", which,
                             "compgen [-V varname] [-abcdefgjksuv] "
                             "[-o option] [-A action] [-G globpat] "
                             "[-W wordlist] [-F function] [-C command] "
-                            "[-X filterpat] [-P prefix] [-S suffix] [word]"));
+                            "[-X filterpat] [-P prefix] [-S suffix] [word]");
         }
 
         positive index = walk.index;
@@ -19829,7 +19803,7 @@ fn shell_compgen(writer write, string_address input)
         {
                 if (!shell_inventory_sorted(write, 0, compgen_function, true,
                                             false))
-                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "compgen"));
+                        return shell_answered(2, "%s: no room\n", "compgen");
         }
 
         if (keywords)
@@ -20106,8 +20080,7 @@ fn shell_help(writer write, string_address input)
         //      letter is an error with the same status the reference gives.
         while (shell_option_letter(address_of walk, address_of letter))
                 if (!string_first_of("dsm", letter))
-                        return shell_answer(shell_letter_refused(
-                            "help", letter, "help [-dms] [pattern ...]"));
+                        return shell_letter_refuse("help", letter, "help [-dms] [pattern ...]");
 
         positive index = walk.index;
 
