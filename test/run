@@ -5562,6 +5562,20 @@ static fn kill_name(positive number, p8 address_to into)
 {
         positive_into_string(into, number);
 }
+// The launcher's session setup lives in bowl/runtime.c, which the fixture
+// leaves out for the same reason it stubs shell_exec_file: screen_term's
+// child never runs here, and pulling bowl in would drag the whole runtime
+// into a terminal fixture.
+static fn bowl_session_prepare(string_address home, string_address runtime)
+{
+        (void)home;
+        (void)runtime;
+}
+static string_address address_to bowl_environment(
+    string_address address_to inherited)
+{
+        return inherited;
+}
 #include "src/sh/screen.c"
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
