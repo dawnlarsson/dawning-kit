@@ -3852,7 +3852,13 @@ static fn edit_prompt_key(positive key)
 
         if (plain == EDIT_KEY_BACKSPACE)
         {
+                // A character, not a byte: one press takes the whole of
+                // whatever was typed, however many bytes it was spelled in.
                 if (edit_prompt_length)
+                        edit_prompt_length--;
+
+                while (edit_prompt_length &&
+                       edit_is_continuation(edit_prompt_text[edit_prompt_length]))
                         edit_prompt_length--;
 
                 return;
@@ -3876,9 +3882,32 @@ static fn edit_prompt_key(positive key)
                 return;
         }
 
-        if (plain >= ' ' && plain < 0x110000 && edit_prompt_length <
-                                                    sizeof(edit_prompt_text))
-                edit_prompt_text[edit_prompt_length++] = (p8)plain;
+        /*
+                Typed into the prompt, in the encoding the rest of the file
+                uses.
+
+                This truncated the scalar to its low byte, so a prompt was the
+                one place in the editor where typing a character put a
+                different one on the screen: U+4E2D arrived as 0x2D and was
+                drawn as a hyphen, U+00E9 as a lone 0xE9 that is no UTF-8 at
+                all and drew as the replacement glyph. Every other place a key
+                becomes text goes through memory_utf8_encode; so does this one
+                now, and it takes the character only when the whole of it
+                fits, since half a character in the buffer is the same bug
+                spelled differently.
+        */
+        if (plain >= ' ' && plain < 0x110000)
+        {
+                p8 built[4];
+                positive made = memory_utf8_encode(built, sizeof(built), plain);
+
+                if (made && edit_prompt_length <= sizeof(edit_prompt_text) - made)
+                {
+                        memory_copy_apart(edit_prompt_text + edit_prompt_length,
+                                          built, made);
+                        edit_prompt_length += made;
+                }
+        }
 }
 
 // Movement keys share one binding table; editing commands carry their actions.
