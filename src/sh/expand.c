@@ -6396,10 +6396,9 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
 
         for (positive at = 0; at < count; at++)
         {
-                if (at)
-                        if (between)
-                                expand_push(between,
-                                            form == '@' ? MARK_BREAK : mark);
+                if (at && between)
+                        expand_push(between,
+                                    form == '@' ? MARK_BREAK : mark);
 
                 expand_push_string(names[at], mark);
         }
