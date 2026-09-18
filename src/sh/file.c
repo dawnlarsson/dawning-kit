@@ -22320,8 +22320,26 @@ static inline INLINE p64 file_random_word(file_random_state address_to state)
         return result;
 }
 
-static fn shred_random_fill(file_random_state address_to state,
-                            p8 address_to bytes, positive length)
+/*
+        The two halves are promised apart, and that promise is what pays for
+        itself here.
+
+        shred_random_word_type carries may_alias, because the store is an
+        unaligned eight-byte write into a byte buffer. That attribute says the
+        store may touch an object of any type -- the generator's own four
+        words included -- so without a further promise every one of them has
+        to be reloaded from memory after every store, and the loop below is
+        nothing but stores.
+
+        restrict is the promise. It is closed rather than assumed: the only
+        call is shred_pass at the one site below, reached only from shred_one,
+        where state is address_of its own stack file_random_state and bytes is
+        always the file-scope file_transfer. A stack frame and a bss array
+        cannot overlap. The zero pass hands shred_pass a null state and never
+        arrives here at all.
+*/
+static fn shred_random_fill(file_random_state address_to restrict state,
+                            p8 address_to restrict bytes, positive length)
 {
         positive words = length / sizeof(p64);
         shred_random_word_type address_to output =
