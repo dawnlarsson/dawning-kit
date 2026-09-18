@@ -77,14 +77,6 @@ static inline INLINE bool network_transaction_secure(address_any into,
         return system_random_fill(into, width, 1) == 0;
 }
 
-static bipolar network_wait_readable(bipolar handle, positive seconds,
-                                     positive nanoseconds)
-{
-        timespec limit = {seconds, nanoseconds};
-
-        return descriptor_wait_readable(handle, address_of limit, null);
-}
-
 static bipolar network_wait_until(
     bipolar handle, b16 events,
     const network_deadline address_to deadline)
