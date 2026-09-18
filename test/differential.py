@@ -18515,6 +18515,65 @@ static void check_input_suspension(void) {
           "resume starts a terminal that never ran");
     memset(&desktop,0,sizeof(desktop));mock_taken=0;mock_resumes=0;
 }
+/* GET writes the script into a buffer the kernel is told the size of, and
+   refuses rather than writing past one too small. length carries the room in
+   and the script's own length back out, so a refused GET still says what to
+   allocate. A canary past the end catches the write the bound is for. */
+static void check_machine_script(void) {
+    static const char text[] = "moonwater_init() { :; }\n";
+    static char room[sizeof text + 16];
+    struct machine_script request;
+    unsigned int wrote = (unsigned int)(sizeof text - 1);
+    long answer;
+
+    power_admin = 1; power_capable = 1;
+    memset(&request, 0, sizeof request);
+    request.op = MOONWATER_SCRIPT_SET;
+    request.length = wrote;
+    request.address = (unsigned long)text;
+    check(!report_machine_script(&request) && machine_script_length == wrote,
+          "a script set through the device becomes the live one");
+
+    memset(room, '#', sizeof room);
+    memset(&request, 0, sizeof request);
+    request.op = MOONWATER_SCRIPT_GET;
+    request.address = (unsigned long)room;
+    request.length = wrote - 1;
+    answer = report_machine_script(&request);
+    check(answer == -ENOSPC && request.length == wrote && room[0] == '#',
+          "a GET with less room than the script refuses and says how much it needs");
+
+    memset(room, '#', sizeof room);
+    memset(&request, 0, sizeof request);
+    request.op = MOONWATER_SCRIPT_GET;
+    request.address = (unsigned long)room;
+    answer = report_machine_script(&request);
+    check(answer == -ENOSPC && room[0] == '#',
+          "a GET that names an address and no room at all is refused too");
+
+    memset(room, '#', sizeof room);
+    memset(&request, 0, sizeof request);
+    request.op = MOONWATER_SCRIPT_GET;
+    request.address = (unsigned long)room;
+    request.length = (unsigned int)sizeof room;
+    answer = report_machine_script(&request);
+    check(!answer && request.length == wrote &&
+          !memcmp(room, text, wrote) && room[wrote] == '#',
+          "a GET with the room named copies the script and nothing past it");
+
+    memset(&request, 0, sizeof request);
+    request.op = MOONWATER_SCRIPT_GET;
+    answer = report_machine_script(&request);
+    check(!answer && request.length == wrote,
+          "a GET for the overlay alone names no address and needs no room");
+
+    memset(&request, 0, sizeof request);
+    request.op = MOONWATER_SCRIPT_SET;
+    check(!report_machine_script(&request) &&
+          machine_script_length == machine_script_builtin,
+          "and setting nothing puts the built-in script back");
+}
+
 static void check_settings_sum(void) {
     static struct spark_settings slot;
     check(~hash_crc32(~0u, "123456789", 9) == 0xcbf43926u, "the reference CRC-32 is CRC-32");
@@ -19054,6 +19113,7 @@ int main(void) {
     check_bind();
     check_bind_edges();
     check_canvas_control();
+    check_machine_script();
     check_settings_sum();
     check_input_suspension();
     free(output);

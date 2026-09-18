@@ -120,10 +120,28 @@ static inline int moonwater_same_pair(unsigned int a, unsigned int b)
         machine both use; SET replaces the live copy. The module scans once;
         userspace does not.
 */
+/*
+        length carries the room, both ways.
+
+        On SET it is how many bytes are at address, which is what it always
+        meant. On GET it is how many bytes fit there, and the answer is the
+        script's own length: the kernel refuses with ENOSPC rather than
+        writing past a buffer, and the refused request still carries the
+        length so the caller knows what to allocate. Naming the room is not
+        optional -- a GET with an address and no room is refused -- because
+        the alternative is the kernel writing up to MOONWATER_SCRIPT_BYTES
+        into a buffer whose size it was never told, which is a bug the day
+        somebody writes a second caller rather than a bug today.
+        spark_settings_request writes its contract into the field's own
+        comment; this is the same contract, said the same way.
+
+        A caller that wants only the overlay passes address 0, and then the
+        room is not consulted.
+*/
 struct machine_script {
         unsigned int op;
         unsigned int origin;
-        unsigned int length;
+        unsigned int length; // SET: bytes at address. GET: room there
         unsigned int flags; // none; nonzero is refused
         unsigned long address;
         struct moonwater_overlay overlay;
@@ -1145,8 +1163,20 @@ static long report_machine_script(struct machine_script __user *out)
                 return -EINVAL;
 
         switch (request.op) {
-        case MOONWATER_SCRIPT_GET:
+        case MOONWATER_SCRIPT_GET: {
+                /* Taken before the answer overwrites the field: on the way
+                   in it is the caller's room, on the way out it is the
+                   script's length, and the two share one word. */
+                unsigned int room = request.length;
+
                 mutex_lock(&machine_script_lock);
+                if (request.address && machine_script_length > room) {
+                        machine_script_answer(&request);
+                        mutex_unlock(&machine_script_lock);
+                        return copy_to_user(out, &request, sizeof(request))
+                                       ? -EFAULT
+                                       : -ENOSPC;
+                }
                 machine_script_answer(&request);
                 if (request.address && machine_script_length &&
                     copy_to_user((void __user *)request.address,
@@ -1156,6 +1186,7 @@ static long report_machine_script(struct machine_script __user *out)
                 }
                 mutex_unlock(&machine_script_lock);
                 break;
+        }
         case MOONWATER_SCRIPT_SET:
                 if (!capable(CAP_SYS_ADMIN))
                         return -EPERM;
@@ -1892,6 +1923,7 @@ static b32 host_machine_source(void)
 
         memory_zero(address_of host_machine, sizeof(host_machine));
         host_machine.address = (unsigned long)host_machine_text;
+        host_machine.length = MOONWATER_SCRIPT_BYTES;
         failed = host_machine_script(MOONWATER_SCRIPT_GET);
         if (failed < 0)
                 return failed;
