@@ -562,15 +562,19 @@ static bool host_running_build(p8 address_to into, positive room)
 }
 
 /*
-        A version string an image carries is the image's, not this machine's,
-        and moonwater status writes it to a terminal beside the disk it came
-        from. A disk somebody plugged in is as free to put an escape sequence
-        there as a version, so every byte that is not plain text becomes one
-        that is before the line is written. A real banner is ASCII throughout,
-        so a legitimate image is unchanged and still compares equal to the
-        running build.
+        Bytes a disk chose, before a terminal reads them.
+
+        Two strings here are the medium's rather than this machine's: the
+        version an image carries in its setup header, and the model a device
+        answers an INQUIRY with under /sys. Both are written to a terminal --
+        one by moonwater status beside the disk it came from, the other in
+        the line asking whether to erase a disk -- and neither is filtered by
+        anything between the medium and here, so somebody who plugs in a disk
+        chooses what those lines do. A real banner and a real model are ASCII
+        throughout, so nothing legitimate changes and an image still compares
+        equal to the running build.
 */
-static fn host_build_plain(p8 address_to text)
+static fn host_plain_line(p8 address_to text)
 {
         for (positive at = 0; text[at]; at++)
                 if (text[at] < 0x20 || text[at] > 0x7e)
@@ -605,7 +609,7 @@ static bool host_image_build(string_address path, p8 address_to into,
                         into[got] = end;
                         found = into[0] && string_length(into) < (positive)got;
                         if (found)
-                                host_build_plain(into);
+                                host_plain_line(into);
                 }
         }
 
@@ -1381,6 +1385,7 @@ static b32 host_install_disk(string_address asked, bool removable)
         if (!host_join(path, sizeof(path), sysfs, "/device/model") ||
             host_read_text(path, text, sizeof(text)) <= 0)
                 string_copy(text, "a disk");
+        host_plain_line(text);
 
         string_format(log, host_label "Installing erases everything on %s: %s, %p GiB.\n"
                            host_label "Type %s to go on: ",
