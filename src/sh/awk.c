@@ -3803,23 +3803,9 @@ static awk_node address_to awk_relational_level();
 // ~ and !~ bind looser than a comparison, so "a" ~ "a" == 1 matches against
 // the comparison's answer; a chain of them reads left to right, as the
 // reference reads it.
-static awk_node address_to awk_compare_level()
-{
-        awk_node address_to node = awk_relational_level();
-
-        while (awk_token == T_MATCH || awk_token == T_UNMATCH)
-        {
-                awk_node address_to made = awk_node_new(N_MATCH);
-
-                made->sub = (p8)(awk_token == T_UNMATCH);
-                awk_next_token();
-                made->a = node;
-                made->b = awk_relational_level();
-                node = made;
-        }
-
-        return node;
-}
+AWK_BINARY_LEVEL(awk_compare_level, awk_relational_level, N_MATCH,
+                awk_token == T_MATCH || awk_token == T_UNMATCH,
+                awk_token == T_UNMATCH, false)
 
 static bool awk_relational_token(b32 which)
 {
@@ -4084,6 +4070,24 @@ static awk_node address_to awk_simple_statement()
         return node;
 }
 
+/* A loop's body. A semicolon where the statement would go is an empty one,
+   which while and the three-clause for spell the same way, and a body that is
+   there is parsed knowing a break has somewhere to go. */
+static awk_node address_to awk_loop_body(awk_node address_to node)
+{
+        if (awk_token == T_SEMICOLON)
+        {
+                awk_next_token();
+                awk_skip_terminators();
+                return node;
+        }
+
+        awk_loop_depth++;
+        node->d = awk_statement();
+        awk_loop_depth--;
+        return node;
+}
+
 static awk_node address_to awk_statement()
 {
         awk_node address_to node;
@@ -4133,18 +4137,7 @@ static awk_node address_to awk_statement()
                 node->b = awk_expression();
                 awk_expect(T_CLOSE, "expected ) after the condition");
                 awk_skip_newlines();
-
-                if (awk_token == T_SEMICOLON)
-                {
-                        awk_next_token();
-                        awk_skip_terminators();
-                        return node;
-                }
-
-                awk_loop_depth++;
-                node->d = awk_statement();
-                awk_loop_depth--;
-                return node;
+                return awk_loop_body(node);
 
         case T_DO:
                 awk_next_token();
@@ -4221,18 +4214,7 @@ static awk_node address_to awk_statement()
 
                 awk_expect(T_CLOSE, "expected ) after for");
                 awk_skip_newlines();
-
-                if (awk_token == T_SEMICOLON)
-                {
-                        awk_next_token();
-                        awk_skip_terminators();
-                        return node;
-                }
-
-                awk_loop_depth++;
-                node->d = awk_statement();
-                awk_loop_depth--;
-                return node;
+                return awk_loop_body(node);
         }
         }
 
