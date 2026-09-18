@@ -3840,6 +3840,18 @@ static fn(address_to file_change_tree)(string_address path);
         with the reference's "(same as '/')" after it when it was written some
         other way -- so the diagnostic names the word the caller typed rather
         than the place it landed.
+
+        AND IT ASKS ONLY ABOUT THE OPERAND, WHICH IS ENOUGH ONLY BECAUSE THE
+        WALK NEVER LEAVES THE TREE. The reference checks every entry it
+        traverses, because its -R -L follows a symlink found inside the tree
+        and so can arrive at / from below. This walk descends with O_NOFOLLOW
+        whatever was asked, -L is taken and changes nothing, and a link found
+        inside a tree is changed rather than followed -- so no traversed entry
+        can ever be the root, and the operand is the only place the root can
+        appear. Anyone implementing -L for real breaks that: the moment the
+        walk can follow an interior link, this check has to move into the walk
+        beside it, or chmod -R -L over a tree holding a link to / walks out of
+        the tree and the failsafe never sees it.
 */
 static bool file_change_preserve_root;
 
@@ -4078,6 +4090,11 @@ typedef struct
            later words for the caller. env -S needs that so options written
            after -S are not taken before the split string is spliced in. */
         bool stop;
+        /* Which spelling the option now being reported was written as, for a
+           callback whose complaint has to name it: the reference says
+           "invalid -B argument" for the letter and "invalid --block-size
+           argument" for the word, and only the scan knows which arrived. */
+        bool long_written;
 } file_taking;
 
 /* Help wins over version; callers retain their writer and flush/status policy. */
@@ -4294,6 +4311,7 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 if (long_option)
                         argument_select(taking->selection, match.selection, letter);
                 string_address seen_value = long_option || optional || valued ? taking->value[bit] : null;
+                taking->long_written = long_option;
                 if (taking->seen ? !taking->seen(letter, seen_value)
                     : taking->seen_in && !taking->seen_in(letter, seen_value, taking->context))
                         return false;
@@ -13526,6 +13544,14 @@ static file_identity_set du_seen;
 static bool du_seen_broken;
 static bool du_depth_broken;
 static p8 du_unit_option;
+/*
+        The letter --block-size=M asks for after every count. ls_block_size_read
+        already draws the line the reference draws -- a spelling that begins
+        with a number says what a block is worth and writes a plain number,
+        a bare unit writes its letter too -- so du only has to keep what it
+        was handed and print it, the way ls does.
+*/
+static p8 du_suffix[8];
 
 static bool du_already(file_facts address_to facts)
 {
@@ -13574,7 +13600,12 @@ static fn du_report(p64 bytes, string_address path)
         if (du_human)
                 positive_to_human_1024(log, bytes);
         else
+        {
                 positive_to_string(log, bytes / du_unit + (bytes % du_unit != 0));
+
+                if (du_suffix[0])
+                        log(du_suffix, string_length(du_suffix));
+        }
 
         string_format(log, "\t%w\n", writer_terminal_name, path);
 }
@@ -14379,8 +14410,41 @@ static p64 du_measure(string_address root)
 #endif
 }
 
+static file_taking address_to du_taking;
+
+/*
+        Every value as it arrives, rather than the one left standing.
+
+        The option machinery keeps the last value per letter, so a block size
+        that a later one overrides was never looked at -- du --block-size=x
+        --block-size=1 counted happily where the reference refuses the x. The
+        walk of the line is the only place each occurrence exists, so the
+        check belongs here, and the complaint names the spelling that was
+        actually written because the reference does.
+*/
+static bool du_block_size_seen(string_address value)
+{
+        positive unit;
+        bool human;
+        bool si;
+        p8 suffix[8];
+
+        if (value && ls_block_size_read(value, address_of unit, address_of human,
+                                        address_of si, suffix))
+                return true;
+
+        return string_report(log_error, false, "du: invalid %s argument '%s'\n",
+                             du_taking && du_taking->long_written
+                                 ? (string_address) "--block-size"
+                                 : (string_address) "-B",
+                             value ? value : (string_address) "");
+}
+
 static bool du_exclude_seen(p8 letter, string_address value)
 {
+        if (letter == 'B')
+                return du_block_size_seen(value);
+
         if (letter != 'e' || !value)
                 return true;
 
@@ -14395,17 +14459,7 @@ static bool du_exclude_seen(p8 letter, string_address value)
 static const argument_option du_options[] = {
     {"all", 'a'},
     {"apparent-size", 'A', ARGUMENT_LONG_ONLY},
-    /*
-            The short -B the reference also takes is deliberately not here
-            yet. Reaching it exposes two gaps that are older than this
-            selection and are still open either way: a bare unit prints
-            without its letter (--block-size=M answers 3 where the reference
-            answers 3M), and a value that a later one overrides is never
-            checked (--block-size=x --block-size=1 is accepted here and
-            refused there). Adding the spelling only lets the grammar walk
-            into both, so it waits for the pass that closes them.
-    */
-    {"block-size", 'B', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY, 1},
+    {"block-size", 'B', ARGUMENT_REQUIRED, 1},
     {"bytes", 'b', 0, 1},
     {"count-links", 'l'},
     {"dereference", 'L'},
@@ -14447,6 +14501,8 @@ static b32 file_du()
             .seen = du_exclude_seen,
             .selection = address_of du_unit_option,
         };
+
+        du_taking = address_of taking;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -14494,6 +14550,7 @@ static b32 file_du()
 
         positive block_unit = 0;
         bool block_human = false;
+        p8 block_suffix[8] = {0};
 
         if (flags & FILE_FLAG('B'))
         {
@@ -14513,6 +14570,7 @@ static b32 file_du()
 
                 block_unit = unit;
                 block_human = human;
+                string_copy_max_end(block_suffix, suffix, sizeof(block_suffix) - 1);
         }
 
         if (flags & FILE_FLAG('T'))
@@ -14537,6 +14595,7 @@ static b32 file_du()
                 the answer to the option the caller had overridden.
         */
         du_human = false;
+        du_suffix[0] = end;
 
         if (du_unit_option == 'b')
                 du_unit = 1;
@@ -14550,6 +14609,7 @@ static b32 file_du()
         {
                 du_unit = block_unit;
                 du_human = block_human;
+                string_copy_max_end(du_suffix, block_suffix, sizeof(du_suffix) - 1);
         }
 
         if (du_summary && du_all)
