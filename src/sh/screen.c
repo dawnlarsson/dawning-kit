@@ -125,7 +125,12 @@ static positive term_oom_kills(void)
                                          (string_address) "/proc/vmstat", text,
                                          sizeof(text));
 
-        for (positive at = 0; got > 0 && at < (positive)got; at++)
+        positive held = got > 0 ? (positive)got : 0;
+
+        // The name and its digits both have to fit in what was read: the
+        // compare walks nine bytes and the digits walked until one was not
+        // one, which off the end of a full buffer is a read past it.
+        for (positive at = 0; at + 9 <= held; at++)
         {
                 positive count = 0;
 
@@ -133,7 +138,7 @@ static positive term_oom_kills(void)
                     string_compare_max(text + at, (string_address) "oom_kill ", 9))
                         continue;
 
-                for (at += 9; text[at] >= '0' && text[at] <= '9'; at++)
+                for (at += 9; at < held && text[at] >= '0' && text[at] <= '9'; at++)
                         count = count * 10 + (text[at] - '0');
 
                 return count;
