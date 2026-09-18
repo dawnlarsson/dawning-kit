@@ -18680,12 +18680,12 @@ static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
                 if (command ? style == SHELL_KIND_LONG
                             : !terse && !path_only &&
                               !(flags & SHELL_QUERY_FORCE_PATH))
+                {
                         if (shell_bash_compat)
-                        {
                                 shell_told("type: %s: not found\n", name);
-                        }
                         else
                                 string_format(write, "%s: not found\n", name);
+                }
                 if (!command)
                         bad = shell_bash_compat ||
                               terse || path_only || no_functions || every
