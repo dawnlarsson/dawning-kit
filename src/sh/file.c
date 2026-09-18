@@ -10095,7 +10095,18 @@ static const struct
     {"-fprint0", 'e', FIND_SETS_ACTION | FIND_TAKES_VALUE},
 };
 
-static b32 find_parse_or();
+//      The three strengths of find's one operator parse, weakest first,
+//      and the node each makes.
+enum
+{
+        FIND_PARSE_COMMA = 0,
+        FIND_PARSE_OR,
+        FIND_PARSE_AND,
+};
+
+static const p8 find_parse_kinds[] = {',', '|', '&'};
+
+static b32 find_parse_level(positive level);
 
 // A time in whole units, the way find counts one: the fraction is dropped, so
 // a file touched thirty hours ago is one day old and not two.
@@ -10133,7 +10144,7 @@ static b32 find_parse_primary()
                         return -1;
                 }
 
-                b32 inside = find_parse_or();
+                b32 inside = find_parse_level(FIND_PARSE_OR);
 
                 if (find_bad)
                         return -1;
@@ -10698,11 +10709,26 @@ bad:
         return -1;
 }
 
-static b32 find_parse_and()
+/*
+        find's three operators are one left-associative parse said three
+        times over: a comma joins what -o joins, -o joins what -a joins, and
+        -a joins the primaries. What differs is the word that introduces the
+        operator and the node it makes, so the parse is written once and the
+        strength comes in. -a is the one that may be left out -- two tests
+        side by side are anded -- so at that strength a word which is neither
+        the operator nor one of the words that end an expression begins the
+        right side instead of stopping the loop, and only then is a missing
+        right side not worth a complaint about a word nobody wrote.
+*/
+static b32 find_parse_level(positive level)
 {
-        b32 left = find_parse_primary();
+        b32 left = level == FIND_PARSE_AND ? find_parse_primary()
+                                           : find_parse_level(level + 1);
 
-        if (find_bad)
+        //      The comma reads its left side without a word about it,
+        //      because the top of the parse answers for a bad expression to
+        //      its caller and not to itself.
+        if (level != FIND_PARSE_COMMA && find_bad)
                 return -1;
 
         while (1)
@@ -10710,19 +10736,37 @@ static b32 find_parse_and()
                 string_address word = find_word();
                 string_address operator = null;
 
-                if (find_is(word, (string_address) "-a") ||
-                    find_is(word, (string_address) "-and"))
+                if (level == FIND_PARSE_COMMA)
+                {
+                        if (find_bad || !find_is(word, (string_address) ","))
+                                break;
+                }
+                else if (level == FIND_PARSE_OR)
+                {
+                        if (!find_is(word, (string_address) "-o") &&
+                            !find_is(word, (string_address) "-or"))
+                                break;
+                }
+                else if (!find_is(word, (string_address) "-a") &&
+                         !find_is(word, (string_address) "-and"))
+                {
+                        if (!word || find_is(word, (string_address) ")") ||
+                            find_is(word, (string_address) ",") ||
+                            find_is(word, (string_address) "-o") ||
+                            find_is(word, (string_address) "-or"))
+                                break;
+
+                        word = null;
+                }
+
+                if (word)
                 {
                         operator = word;
                         find_at++;
                 }
-                else if (!word || find_is(word, (string_address) ")") ||
-                         find_is(word, (string_address) ",") ||
-                         find_is(word, (string_address) "-o") ||
-                         find_is(word, (string_address) "-or"))
-                        break;
 
-                b32 right = find_parse_primary();
+                b32 right = level == FIND_PARSE_AND ? find_parse_primary()
+                                                    : find_parse_level(level + 1);
 
                 if (find_bad)
                         return -1;
@@ -10737,87 +10781,7 @@ static b32 find_parse_and()
                         return -1;
                 }
 
-                b32 node = find_make('&');
-
-                if (node < 0)
-                        return -1;
-
-                find_nodes[node].left = left;
-                find_nodes[node].right = right;
-                left = node;
-        }
-
-        return left;
-}
-
-static b32 find_parse_or();
-
-static b32 find_parse_comma()
-{
-        b32 left = find_parse_or();
-
-        while (!find_bad && find_is(find_word(), (string_address) ","))
-        {
-                string_address operator = find_word();
-
-                find_at++;
-
-                b32 right = find_parse_or();
-
-                if (find_bad)
-                        return -1;
-
-                if (right < 0)
-                {
-                        string_format(log_error,
-                                      "find: expected an expression after '%s'\n",
-                                      operator);
-                        find_bad = true;
-                        return -1;
-                }
-
-                b32 node = find_make(',');
-
-                if (node < 0)
-                        return -1;
-
-                find_nodes[node].left = left;
-                find_nodes[node].right = right;
-                left = node;
-        }
-
-        return left;
-}
-
-static b32 find_parse_or()
-{
-        b32 left = find_parse_and();
-
-        if (find_bad)
-                return -1;
-
-        while (find_is(find_word(), (string_address) "-o") ||
-               find_is(find_word(), (string_address) "-or"))
-        {
-                string_address operator = find_word();
-
-                find_at++;
-
-                b32 right = find_parse_and();
-
-                if (find_bad)
-                        return -1;
-
-                if (right < 0)
-                {
-                        string_format(log_error,
-                                      "find: expected an expression after '%s'\n",
-                                      operator);
-                        find_bad = true;
-                        return -1;
-                }
-
-                b32 node = find_make('|');
+                b32 node = find_make(find_parse_kinds[level]);
 
                 if (node < 0)
                         return -1;
@@ -12755,7 +12719,7 @@ static b32 file_find()
 
         find_at = index;
         find_count = count;
-        find_root = find_parse_comma();
+        find_root = find_parse_level(FIND_PARSE_COMMA);
 
         if (find_bad)
                 return 1;
