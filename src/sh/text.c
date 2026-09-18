@@ -4940,6 +4940,115 @@ static const argument_option rev_options[] = {
     {null},
 };
 
+/*
+        A line reversed by its characters rather than by its bytes.
+
+        util-linux reads a line as wide characters and writes them back the
+        other way round, so an e-acute comes out an e-acute. Reversing the
+        bytes writes its two halves the wrong way round and the line stops
+        being text at all: hello with an e-acute came back with a byte pair
+        no decoder accepts, and three Japanese characters came back as nine
+        bytes of nothing.
+
+        Each character's own bytes are turned over where they stand and then
+        the whole line is turned over, which puts every one of them back the
+        right way round in the opposite order, in place and in one pass.
+
+        A byte that begins no character is a character of its own here. At
+        STRICT_REFERENCE the file stops at the first of them instead, which
+        is what util-linux's fgetwc does -- and what loses every other line
+        in the file to one byte that was probably never meant as text.
+*/
+static inline INLINE fn rev_characters(p8 address_to at, positive length)
+{
+        positive i = 0;
+
+        while (i < length)
+        {
+                // A run of plain bytes reverses with the line and needs
+                // no character found in it, so step over it eight at a
+                // time. The span engine is a call, and these lines are
+                // short enough that the call is the cost.
+                while (i + 8 <= length)
+                {
+                        p64 word;
+
+                        memory_copy_apart(address_of word, at + i, 8);
+
+                        if (word & 0x8080808080808080ull)
+                                break;
+
+                        i += 8;
+                }
+
+                while (i < length && at[i] < 0x80)
+                        i++;
+
+                if (i == length)
+                        break;
+
+                p32 code;
+                positive size;
+
+                if (wc_utf8_decode(at + i, length - i, address_of code,
+                                   address_of size) != WC_VALID)
+                {
+                        i++;
+                        continue;
+                }
+
+                memory_reverse(at + i, size);
+                i += size;
+        }
+
+        memory_reverse(at, length);
+}
+
+#if MOONWATER_STRICT == STRICT_REFERENCE
+// Whether every byte of a line begins or continues a character, which is
+// what util-linux asks before rev prints any of the file.
+static bool rev_text_whole(p8 address_to at, positive length)
+{
+        positive i = 0;
+
+        while (i < length)
+        {
+                // A run of plain bytes reverses with the line and needs
+                // no character found in it, so step over it eight at a
+                // time. The span engine is a call, and these lines are
+                // short enough that the call is the cost.
+                while (i + 8 <= length)
+                {
+                        p64 word;
+
+                        memory_copy_apart(address_of word, at + i, 8);
+
+                        if (word & 0x8080808080808080ull)
+                                break;
+
+                        i += 8;
+                }
+
+                while (i < length && at[i] < 0x80)
+                        i++;
+
+                if (i == length)
+                        break;
+
+                p32 code;
+                positive size;
+
+                if (wc_utf8_decode(at + i, length - i, address_of code,
+                                   address_of size) != WC_VALID)
+                        return false;
+
+                i += size;
+        }
+
+        return true;
+}
+#endif
+
 static b32 text_rev()
 {
         file_taking taking = {
@@ -4957,6 +5066,7 @@ static b32 text_rev()
                 text_delimiter = '\0';
 
         b32 inputs = text_input_count();
+        bool utf8 = text_locale_utf8();
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -4977,14 +5087,33 @@ static b32 text_rev()
                 while (text_line_view(address_of line, address_of length,
                                       null, 0, null))
                 {
+#if MOONWATER_STRICT == STRICT_REFERENCE
+                        if (utf8 && !rev_text_whole(line, length))
+                        {
+                                string_diagnostic(&text_diagnostic, 0, null,
+                                                  "fgetwc() failed: Invalid or incomplete multibyte or wide character");
+                                text_status = 1;
+                                break;
+                        }
+#endif
+
                         if (length <= TEXT_OUT_MAX)
                         {
                                 p8 address_to into = text_reserve(length);
                                 if (into)
                                 {
                                         memory_copy_apart(into, line, length);
-                                        memory_reverse(into, length);
+
+                                        if (utf8)
+                                                rev_characters(into, length);
+                                        else
+                                                memory_reverse(into, length);
                                 }
+                        }
+                        else if (utf8)
+                        {
+                                rev_characters(line, length);
+                                text_put(line, length);
                         }
                         else
                         {
