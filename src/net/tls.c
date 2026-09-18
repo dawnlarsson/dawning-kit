@@ -1515,9 +1515,14 @@ static COLD bool tls_cert_current(tls_cert address_to cert, p64 now)
                now <= cert->not_after;
 }
 
+/* A certificate that says it is a certificate authority is not an end
+   entity. Every issuer that means to authorize a server writes CA:FALSE or
+   leaves basicConstraints out, so refusing CA:TRUE here costs nothing real
+   and closes the case where an intermediate anywhere in a chain stands in
+   for a host its own key was only ever meant to sign for. */
 static COLD bool tls_leaf_authorized(tls_cert address_to cert, p64 now)
 {
-        return tls_cert_current(cert, now) &&
+        return tls_cert_current(cert, now) && !cert->ca &&
                (!cert->key_usage || cert->digital_signature) &&
                (!cert->extended_key_usage || cert->server_auth);
 }
