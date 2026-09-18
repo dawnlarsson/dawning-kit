@@ -748,69 +748,32 @@ static bipolar build_capture_words(string_address address_to words,
 /*
         Is that program installed.
 
-        `command -v` in one function. A name with a separator in it is a path
-        and is asked about directly; anything else is looked for along PATH,
-        which is what the shell would have done and what the build asks about
-        before it decides to install a compiler.
+        `command -v` in one function -- and it is the shell's own, because the
+        shell needs exactly this answer before it can run anything typed
+        without a slash. A name with a separator in it is a path and is asked
+        about directly; anything else is walked along PATH, an empty component
+        standing for the working directory, which is what the shell would have
+        done and what the build asks about before it decides to install a
+        compiler.
+
+        PATH is read out of the environment rather than left to the callee's
+        fallbacks: this program never starts the shell's variable table, and a
+        build with no PATH at all is one that should say the tool is missing
+        rather than guess at /bin.
 */
 static string_address build_resolve(string_address name)
 {
+        static p8 found[BUILD_WORD_ROOM];
         string_address path = string_get_environment(environ, "PATH");
-        string_address at;
 
-        if (!name || !*name)
+        if (!name || !*name || (!path && !string_first_of(name, '/')))
                 return null;
 
-        if (string_first_of(name, '/'))
-                return access(name, X_OK) >= 0 ? name : null;
-
-        if (!path)
+        if (!shell_find_in_path_mode(name, found, sizeof(found),
+                                     ACCESS_EXECUTE, false, path))
                 return null;
 
-        at = path;
-
-        while (true)
-        {
-                p8 address_to into = build_text_take(BUILD_WORD_ROOM);
-                positive span = 0;
-                positive kept;
-
-                while (at[span] && at[span] != ':')
-                        span++;
-
-                kept = span;
-
-                //      An empty entry in PATH means the working directory,
-                //      which is what every shell does with it.
-                if (!kept)
-                {
-                        into[0] = '.';
-                        kept = 1;
-                }
-                else
-                {
-                        if (kept > BUILD_WORD_ROOM - 2)
-                                kept = BUILD_WORD_ROOM - 2;
-                        memory_copy(into, at, kept);
-                }
-
-                into[kept] = end;
-
-                {
-                        string_address candidate =
-                                build_join((string_address)into, "/", name, null);
-
-                        if (access(candidate, X_OK) >= 0)
-                                return candidate;
-                }
-
-                if (!at[span])
-                        break;
-
-                at += span + 1;
-        }
-
-        return null;
+        return build_text_keep((string_address)found, string_length(found));
 }
 
 static bool build_have(string_address name)
@@ -2223,26 +2186,18 @@ static string_address build_hex(positive value)
         return (string_address)into;
 }
 
+//      Six letters out of the kernel's own entropy. The retry and the error
+//      that survives it are system_random_fill's, asked with no flags so it
+//      waits for the pool rather than mixing a fallback in: this names a
+//      directory a privileged build is about to trust.
 static bool build_random_marks(p8 address_to marks)
 {
-        positive filled = 0;
+        bipolar got = system_random_fill(marks, SPOOL_TEMPLATE_MARKS, 0);
 
-        while (filled < SPOOL_TEMPLATE_MARKS)
+        if (got)
         {
-                bipolar got = system_call_3(
-                    syscall(getrandom), (positive)(marks + filled),
-                    SPOOL_TEMPLATE_MARKS - filled, 0);
-
-                if (got == -EINTR)
-                        continue;
-
-                if (got <= 0)
-                {
-                        errno = got < 0 ? (b32)-got : EIO;
-                        return false;
-                }
-
-                filled += (positive)got;
+                errno = (b32)-got;
+                return false;
         }
 
         memory_translate(marks, SPOOL_TEMPLATE_MARKS,
