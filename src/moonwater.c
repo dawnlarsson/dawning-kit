@@ -1572,16 +1572,6 @@ static bool host_machine_file_allowed(p16 mode, p32 owner)
                (mode & 0022) == 0;
 }
 
-static bipolar host_machine_read_once(bipolar handle, void *into, positive room)
-{
-        bipolar got;
-
-        do
-                got = system_read_once(handle, into, room);
-        while (got == -4);
-        return got;
-}
-
 static p8 host_machine_read_file(string_address path, p8 address_to text,
                                  positive room, positive address_to used)
 {
@@ -1610,12 +1600,13 @@ static p8 host_machine_read_file(string_address path, p8 address_to text,
                 if (address_to used == room) {
                         p8 extra;
 
-                        got = host_machine_read_once(handle, address_of extra, 1);
+                        got = system_read_retry((positive)handle,
+                                                address_of extra, 1);
                         system_close(handle);
                         return (got < 0 || got) ? HOST_MACHINE_REFUSED : HOST_MACHINE_OK;
                 }
-                got = host_machine_read_once(handle, text + address_to used,
-                                             room - address_to used);
+                got = system_read_retry((positive)handle, text + address_to used,
+                                        room - address_to used);
                 if (got < 0) {
                         system_close(handle);
                         return HOST_MACHINE_REFUSED;
@@ -1724,7 +1715,6 @@ static fn host_machine_refused(string_address name, p16 line)
 {
         string_format(log_error, host_label "%s is %s:%p; change it there\n", name,
                       host_machine_where(), (positive)line);
-        log_flush();
 }
 
 static fn host_machine_wait_verdict(p8 address_to into, positive room)
