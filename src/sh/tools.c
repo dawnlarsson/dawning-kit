@@ -13497,13 +13497,23 @@ static fn tools_dmesg_emit(tools_dmesg_state address_to state,
                         writer_fill_bulk(text_put, 15, ' ');
                 else
                 {
+                        /* The reference writes both names through %-6s,
+                           which pads a short one and leaves a long one
+                           whole; authpriv is eight bytes, so a bare
+                           subtraction here wraps and fills forever. */
                         string_address name = tools_dmesg_facilities[facility];
                         text_put_string(name);
-                        writer_fill_bulk(text_put, 6 - string_length(name), ' ');
+                        writer_fill_bulk(text_put,
+                                         difference_or_zero((positive)6,
+                                                            string_length(name)),
+                                         ' ');
                         text_put_character(':');
                         name = tools_dmesg_levels[level];
                         text_put_string(name);
-                        writer_fill_bulk(text_put, 6 - string_length(name), ' ');
+                        writer_fill_bulk(text_put,
+                                         difference_or_zero((positive)6,
+                                                            string_length(name)),
+                                         ' ');
                         text_put_string(": ");
                 }
         }
