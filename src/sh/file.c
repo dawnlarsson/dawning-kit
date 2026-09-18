@@ -4460,10 +4460,21 @@ static PURE bool file_color_table_valid(string_address table, bool bare_flags)
         return true;
 }
 
+/* A span of no bytes is written as no bytes.  Spelling that out is the whole
+   of this guard: a writer reads a length of zero as "measure the pointer", and
+   an assigned-but-empty entry such as the rs= in LS_COLORS='rs=:di=01;34'
+   carries a real pointer -- at the colon that ends it -- with a length of
+   zero.  Handing that pair to the writer put the rest of the table inside the
+   envelope, so ls wrote ESC [ :di=01;34 m where the reference writes ESC [ m,
+   once per coloured name.  The empty reset is a spelling GNU accepts, so the
+   span is legitimate and it is the write that has to know better. */
 static fn file_color_sgr(writer write, file_color_span color)
 {
         write((address_any) "\033[", 2);
-        write((address_any)color.text, color.length);
+
+        if (color.length)
+                write((address_any)color.text, color.length);
+
         write((address_any) "m", 1);
 }
 
