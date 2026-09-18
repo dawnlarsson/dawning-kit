@@ -50,6 +50,31 @@
 #ifndef STANDARD_MODERN_C_STANDARD
 #define STANDARD_MODERN_C_STANDARD
 
+/*
+        A REFUSAL, WRITTEN ONCE
+
+        Every family below refuses the same way and for the same reason: the
+        number a caller reads back out of errno, and the value the standard
+        says that call answers with. Spelled out it is four lines of which
+        three are punctuation, and between the first descriptor entry and
+        realpath it happens forty six times.
+
+        A do-while so that it is one statement: an `if` in front of it needs
+        no braces of its own, and an `else` behind it still binds to that
+        `if`. The answer is an argument rather than a fixed minus one because
+        the families disagree about what a refusal looks like -- the
+        descriptor entries answer -1, the ones that hand back a pointer
+        answer null, and a handful answer false -- and the number is written
+        at the call site so that grepping for ENAMETOOLONG still finds every
+        place that raises it.
+*/
+#define errno_refuse(number, answer)                                          \
+        do                                                                    \
+        {                                                                     \
+                errno = (number);                                             \
+                return answer;                                                \
+        } while (0)
+
 #ifndef STANDARD_SKIP_ERROR
 /* ---- error.c ---- */
 /*
@@ -1051,10 +1076,7 @@ static b32 dup2(b32 from, b32 to)
                 //      cheapest way to find out whether the descriptor exists.
                 if (system_failed(system_call_3(syscall(fcntl),
                                                (positive)from, 1, 0)))
-                {
-                        errno = EBADF;
-                        return -1;
-                }
+                        errno_refuse(EBADF, -1);
 
                 return to;
         }
@@ -1234,10 +1256,7 @@ static string_address getcwd(string_address into, positive size)
         bipolar wrote;
 
         if (is_null(into))
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
 
         wrote = system_call_2(syscall(getcwd), (positive)into, size);
 
@@ -6803,10 +6822,7 @@ static bool clock_break_down(bipolar seconds, tm address_to broken)
         year_field = year - 1900;
 
         if (year_field > 2147483647 || year_field < -2147483647 - 1)
-        {
-                errno = EOVERFLOW;
-                return false;
-        }
+                errno_refuse(EOVERFLOW, false);
 
         broken->tm_sec = (b32)(rest % 60);
         broken->tm_min = (b32)((rest / 60) % 60);
@@ -12678,10 +12694,7 @@ SIGNAL_SET_CHANGE(signal_set_remove, &=, ~((positive)1 << (number - 1)))
 b32 signal_set_has(const signal_set address_to set, b32 number)
 {
         if (signal_number_bad(number))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         return (b32)((set->words[0] >> (number - 1)) & 1);
 }
@@ -13745,10 +13758,7 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
         bool close_on_exec = false;
 
         if (mode == null || mode[0] == end)
-        {
-                errno = EINVAL;
-                return false;
-        }
+                errno_refuse(EINVAL, false);
 
         for (index = 1; mode[index] != end; index++)
         {
@@ -13762,10 +13772,7 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
 
         p8 kind = mode[0];
         if (kind != 'r' && kind != 'w' && kind != 'a')
-        {
-                errno = EINVAL;
-                return false;
-        }
+                errno_refuse(EINVAL, false);
         address_to open_flags = update ? O_RDWR
                                 : kind == 'r' ? O_RDONLY
                                               : O_WRONLY;
@@ -13918,10 +13925,7 @@ stream address_to stream_adopt(b32 descriptor, string_address mode)
                 return null;
         if (((stream_flags & STREAM_READABLE) && (flags & 3) == 1) ||
             ((stream_flags & STREAM_WRITABLE) && (flags & 3) == 0))
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
         if ((stream_flags & STREAM_APPEND) && !(flags & O_APPEND) &&
             error_result(system_call_3(syscall(fcntl), (positive)descriptor, 4,
                                         (positive)flags | O_APPEND)) < 0)
@@ -14942,10 +14946,7 @@ b32 stream_seek(stream address_to handle, bipolar offset, b32 whence)
             __builtin_sub_overflow(offset,
                 (bipolar)((handle->read_tail - handle->read_head) +
                            handle->pushback_used), address_of offset))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         landed = stream_trap_seek(handle->descriptor, offset, whence);
 
@@ -14990,10 +14991,7 @@ bipolar stream_tell(stream address_to handle)
 
         if (__builtin_add_overflow(position, (bipolar)handle->write_used,
                                    address_of position))
-        {
-                errno = EOVERFLOW;
-                return -1;
-        }
+                errno_refuse(EOVERFLOW, -1);
         position -= (bipolar)(handle->read_tail - handle->read_head);
         position -= (bipolar)handle->pushback_used;
 
@@ -15434,10 +15432,7 @@ static inline INLINE bipolar format_answer(format_sink address_to sink)
                 return -1;
 
         if (sink->counted > (positive)b32_max)
-        {
-                errno = EOVERFLOW;
-                return -1;
-        }
+                errno_refuse(EOVERFLOW, -1);
 
         return (bipolar)sink->counted;
 }
@@ -20272,27 +20267,18 @@ static bipolar spool_template_marks(string_address form, positive suffix)
         positive length;
 
         if (is_null(form))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         length = string_length(form);
 
         if (length < SPOOL_TEMPLATE_MARKS + suffix)
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         length -= SPOOL_TEMPLATE_MARKS + suffix;
 
         if (memory_compare((address_any)(form + length), (address_any) "XXXXXX",
                            SPOOL_TEMPLATE_MARKS) != 0)
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         return (bipolar)length;
 }
@@ -20370,10 +20356,7 @@ static b32 spool_temporary_open_flagged(string_address form, b32 flags)
 static b32 spool_temporary_open_suffixed(string_address form, b32 suffix)
 {
         if (suffix < 0)
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         return spool_temporary_make(form, (positive)suffix, 0, false);
 }
@@ -20474,19 +20457,13 @@ static string_address spool_temporary_named(string_address directory,
                 at = SPOOL_PREFIX_MAX;
 
         if (length + 1 + at + SPOOL_TEMPLATE_MARKS + 1 > SPOOL_NAME_MAX)
-        {
-                errno = ENAMETOOLONG;
-                return null;
-        }
+                errno_refuse(ENAMETOOLONG, null);
 
         answer = (p8 address_to)malloc(length + 1 + at +
                                        SPOOL_TEMPLATE_MARKS + 1);
 
         if (is_null(answer))
-        {
-                errno = ENOMEM;
-                return null;
-        }
+                errno_refuse(ENOMEM, null);
 
         memory_copy((address_any)answer, (address_any)chosen, length);
         answer[length] = '/';
@@ -20679,20 +20656,14 @@ static stream address_to spool_open_process(string_address command,
         stream address_to answer;
 
         if (is_null(command) || is_null(mode))
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
 
         if (mode[0] == 'r')
                 reading = true;
         else if (mode[0] == 'w')
                 reading = false;
         else
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
 
         //      The only modifier POSIX 2008 gives popen is 'e', which asks
         //      that the caller's end not survive an exec. Anything else is a
@@ -20702,10 +20673,7 @@ static stream address_to spool_open_process(string_address command,
         while (mode[at] != end)
         {
                 if (mode[at] != 'e')
-                {
-                        errno = EINVAL;
-                        return null;
-                }
+                        errno_refuse(EINVAL, null);
 
                 pipe_flags = O_CLOEXEC;
                 at++;
@@ -20714,10 +20682,7 @@ static stream address_to spool_open_process(string_address command,
         slot = spool_pipeline_free_slot();
 
         if (slot < 0)
-        {
-                errno = EMFILE;
-                return null;
-        }
+                errno_refuse(EMFILE, null);
 
         if (pipe2(pair, pipe_flags) < 0)
                 return null;
@@ -20843,10 +20808,7 @@ static b32 spool_close_process(stream address_to handle)
         b32 child;
 
         if (is_null(handle) || slot < 0)
-        {
-                errno = ECHILD;
-                return -1;
-        }
+                errno_refuse(ECHILD, -1);
 
         child = spool_pipeline_table[slot].child;
         spool_pipeline_table[slot].handle = null;
@@ -20855,10 +20817,7 @@ static b32 spool_close_process(stream address_to handle)
         stream_close(handle);
 
         if (system_wait4_retry(child, address_of raw, 0, null) < 0)
-        {
-                errno = ECHILD;
-                return -1;
-        }
+                errno_refuse(ECHILD, -1);
 
         return (b32)raw;
 }
@@ -20936,10 +20895,7 @@ static b32 spool_get_position(stream address_to handle,
         bipolar where;
 
         if (is_null(into))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         where = stream_tell(handle);
 
@@ -20955,10 +20911,7 @@ static b32 spool_set_position(stream address_to handle,
                               const fpos_t address_to from)
 {
         if (is_null(from))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         return stream_seek(handle, from->spool_offset, SEEK_SET);
 }
@@ -21009,10 +20962,7 @@ static stream address_to spool_open_memory(address_any bytes, sized size,
         if (is_null(bytes) ||
             !stream_read_mode(mode, address_of open_flags, address_of stream_flags) ||
             stream_flags != STREAM_READABLE)
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
 
         handle = system_call_2(syscall(memfd_create),
                                (positive)(address_any) "fmemopen",
@@ -21493,18 +21443,12 @@ static DIR address_to process_directory_open(b32 descriptor)
                 return null;
 
         if (!S_ISDIR(facts.st_mode))
-        {
-                errno = ENOTDIR;
-                return null;
-        }
+                errno_refuse(ENOTDIR, null);
 
         folder = (DIR address_to)malloc(sizeof(DIR));
 
         if (is_null(folder))
-        {
-                errno = ENOMEM;
-                return null;
-        }
+                errno_refuse(ENOMEM, null);
 
         folder->descriptor = descriptor;
         folder->process_directory_padding = 0;
@@ -21534,10 +21478,7 @@ static DIR address_to opendir(string_address path)
         b32 saved;
 
         if (is_null(path))
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
 
         descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 
@@ -21560,10 +21501,7 @@ static DIR address_to opendir(string_address path)
 static DIR address_to fdopendir(b32 descriptor)
 {
         if (descriptor < 0)
-        {
-                errno = EBADF;
-                return null;
-        }
+                errno_refuse(EBADF, null);
 
         return process_directory_open(descriptor);
 }
@@ -21573,10 +21511,7 @@ static b32 closedir(DIR address_to folder)
         b32 descriptor;
 
         if (is_null(folder))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         descriptor = folder->descriptor;
         free(folder);
@@ -21587,10 +21522,7 @@ static b32 closedir(DIR address_to folder)
 static b32 dirfd(DIR address_to folder)
 {
         if (is_null(folder))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         return folder->descriptor;
 }
@@ -21624,10 +21556,7 @@ static process_dirent address_to readdir(DIR address_to folder)
         b32 taken;
 
         if (is_null(folder))
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
 
         while (folder->at >= folder->used)
         {
@@ -21740,10 +21669,7 @@ static fn rewinddir(DIR address_to folder)
 static bipolar telldir(DIR address_to folder)
 {
         if (is_null(folder))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         return (bipolar)folder->position;
 }
@@ -21931,10 +21857,7 @@ static b32 scandir(string_address path,
         b32 saved;
 
         if (is_null(list))
-        {
-                errno = EINVAL;
-                return -1;
-        }
+                errno_refuse(EINVAL, -1);
 
         folder = opendir(path);
 
@@ -21996,10 +21919,7 @@ static b32 scandir(string_address path,
                         malloc(sizeof(found[0]));
 
                 if (is_null(found))
-                {
-                        errno = ENOMEM;
-                        return -1;
-                }
+                        errno_refuse(ENOMEM, -1);
         }
 
         if (!is_null(order) && count > 1)
@@ -22158,10 +22078,7 @@ static b32 execvpe(string_address name, string_address address_to arguments,
         positive name_length;
 
         if (is_null(name) || string_get(name) == end)
-        {
-                errno = ENOENT;
-                return -1;
-        }
+                errno_refuse(ENOENT, -1);
 
         if (!is_null(string_first_of(name, '/')))
         {
@@ -22176,10 +22093,7 @@ static b32 execvpe(string_address name, string_address address_to arguments,
         name_length = string_length(name);
 
         if (name_length >= PATH_MAX)
-        {
-                errno = ENAMETOOLONG;
-                return -1;
-        }
+                errno_refuse(ENAMETOOLONG, -1);
 
         search = getenv((string_address) "PATH");
 
@@ -22502,22 +22416,13 @@ static string_address realpath(string_address path, string_address into)
         b32 saved;
 
         if (is_null(path))
-        {
-                errno = EINVAL;
-                return null;
-        }
+                errno_refuse(EINVAL, null);
 
         if (string_get(path) == end)
-        {
-                errno = ENOENT;
-                return null;
-        }
+                errno_refuse(ENOENT, null);
 
         if (string_length(path) >= PATH_MAX)
-        {
-                errno = ENAMETOOLONG;
-                return null;
-        }
+                errno_refuse(ENAMETOOLONG, null);
 
         if (path[0] == '/')
         {
@@ -22546,10 +22451,7 @@ static string_address realpath(string_address path, string_address into)
                         // A slash requires the preceding component to be a
                         // directory, including a trailing slash or slash-dot.
                         if (!last_was_directory)
-                        {
-                                errno = ENOTDIR;
-                                return null;
-                        }
+                                errno_refuse(ENOTDIR, null);
                         at++;
                         continue;
                 }
@@ -22581,10 +22483,7 @@ static string_address realpath(string_address path, string_address into)
                         p8 held[PATH_MAX];
 
                         if (piece >= PATH_MAX)
-                        {
-                                errno = ENAMETOOLONG;
-                                return null;
-                        }
+                                errno_refuse(ENAMETOOLONG, null);
 
                         memory_copy(held, rest + at, piece);
                         held[piece] = end;
@@ -22600,10 +22499,7 @@ static string_address realpath(string_address path, string_address into)
 
                                 if (answer_length == 0 ||
                                     answer_length >= PATH_MAX - 1)
-                                {
-                                        errno = ENAMETOOLONG;
-                                        return null;
-                                }
+                                        errno_refuse(ENAMETOOLONG, null);
 
                                 if (lstat(answer, address_of facts) < 0)
                                         return null;
@@ -22613,10 +22509,7 @@ static string_address realpath(string_address path, string_address into)
                                         bipolar wrote;
 
                                         if (++followed > PROCESS_SYMLINK_DEPTH)
-                                        {
-                                                errno = ELOOP;
-                                                return null;
-                                        }
+                                                errno_refuse(ELOOP, null);
 
                                         wrote = readlink(answer, link,
                                                          PATH_MAX - 1);
@@ -22637,10 +22530,7 @@ static string_address realpath(string_address path, string_address into)
                                                     string_length(rest + at) +
                                                     2 >
                                             PATH_MAX)
-                                        {
-                                                errno = ENAMETOOLONG;
-                                                return null;
-                                        }
+                                                errno_refuse(ENAMETOOLONG, null);
 
                                         {
                                                 p8 address_to tail =
@@ -22691,10 +22581,7 @@ static string_address realpath(string_address path, string_address into)
                 into = (string_address)malloc(answer_length + 1);
 
                 if (is_null(into))
-                {
-                        errno = ENOMEM;
-                        return null;
-                }
+                        errno_refuse(ENOMEM, null);
 
                 memory_copy(into, answer, answer_length + 1);
                 return into;
