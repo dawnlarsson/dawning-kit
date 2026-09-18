@@ -9798,7 +9798,7 @@ static string_address find_word()
 
 static bool find_is(string_address word, string_address name)
 {
-        return word && string_compare(word, name) == 0;
+        return word && string_equals(word, name);
 }
 
 static string_address find_value(string_address word)
@@ -24072,6 +24072,8 @@ static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
 static bool cp_reflink_always;
+static p8 cp_sparse_policy;
+static p8 cp_reflink_policy;
 static b32 cp_status;
 static bool cp_destination_decided;
 static bool cp_destination_existed;
@@ -26003,16 +26005,6 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                                      destination_shown, kind, there.mode))
                 return false;
 
-        /* GNU copy.c refuses a dangling destination symlink unless
-           POSIXLY_CORRECT; a live one is the thing written through. */
-        if (!moving && destination_is_link && !cp_force && !cp_replace &&
-            kind != MODE_DIRECTORY && !destination_exists)
-        {
-                return string_report(log_error, false,
-                                     "cp: not writing through dangling symlink '%w'\n",
-                              writer_terminal_quoted_name, destination_shown);
-        }
-
         if (!moving && named && kind == MODE_DIRECTORY)
         {
                 p8 from[FILE_PATH_MAX];
@@ -26046,6 +26038,17 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 file_backup_told(source_shown, destination_shown,
                                  (string_address) "'",
                                  (string_address) "' -> '");
+
+        /* GNU copy.c refuses a dangling destination symlink unless
+           POSIXLY_CORRECT; a live one is the thing written through.
+           Verbose already fired so -v still prints the arrow. */
+        if (!moving && destination_is_link && !cp_force && !cp_replace &&
+            kind != MODE_DIRECTORY && !destination_exists)
+        {
+                return string_report(log_error, false,
+                                     "cp: not writing through dangling symlink '%w'\n",
+                              writer_terminal_quoted_name, destination_shown);
+        }
 
         if (!moving && (cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
                 return cp_linked(source_directory, source, source_shown,
@@ -26688,12 +26691,19 @@ static fn cp_pair(string_address source, string_address destination)
         /* Collision options authorize the original destination.  Backing it
            up first would turn that decision into apparent absence, bypassing
            -n, -i and -u and mutating the namespace even when the copy should
-           be skipped. */
+           be skipped.  A dangling dest symlink is a collision for -n, but
+           GNU still refuses it rather than treating --update as a skip. */
         bool collision_exists = destination_exists || entry_exists;
         file_facts address_to collision_facts = destination_exists
                                                     ? address_of destination_facts
                                                     : address_of destination_entry;
-        if (kind != MODE_DIRECTORY &&
+        bool dangling_dest = entry_exists &&
+            (destination_entry.mode & MODE_FORMAT) == MODE_LINK &&
+            !destination_exists;
+        bool refuse_dangling = kind != MODE_DIRECTORY && dangling_dest &&
+                               !cp_force && !cp_replace && !cp_never_clobber &&
+                               !file_backup_kind;
+        if (kind != MODE_DIRECTORY && !refuse_dangling &&
             !file_overwrite_allowed((string_address)"cp", destination,
                                     collision_exists, cp_never_clobber,
                                     cp_newer_only, cp_ask, cp_update_fail,
@@ -26706,7 +26716,8 @@ static fn cp_pair(string_address source, string_address destination)
                 return;
         }
 
-        if (!file_backup_made_at((string_address)"cp",
+        if (!refuse_dangling &&
+            !file_backup_made_at((string_address)"cp",
                                  destination_directory, destination_leaf,
                                  destination,
                                  entry_exists ? address_of destination_entry
@@ -26751,10 +26762,10 @@ static const file_word cp_reflink_words[] = {
     {"auto", 'a'}, {"always", 'A'}, {"never", 'n'}};
 
 // Each of the four takes a comma-separated list, and every word in it has
-// to be one the option knows.
+// to be one the option knows. last receives the letter of the final word.
 static bool cp_words_read(string_address option, string_address value,
                           const file_word address_to words, positive count,
-                          bool address_to context)
+                          bool address_to context, p8 address_to last)
 {
         p8 one[64];
 
@@ -26780,6 +26791,8 @@ static bool cp_words_read(string_address option, string_address value,
 
                 if (context)
                         address_to context |= answer == 'c';
+                if (last)
+                        address_to last = (p8)answer;
         }
 
         return true;
@@ -26855,21 +26868,28 @@ static bool cp_option_seen(p8 letter, string_address value)
         if (letter == 'p' &&
             !cp_words_read((string_address) "--preserve", value,
                            cp_preserve_words, array_count(cp_preserve_words),
-                           null))
+                           null, 0))
                 return false;
         if (letter == 'N' &&
             !cp_words_read((string_address) "--no-preserve", value,
                            cp_preserve_words, array_count(cp_preserve_words),
-                           null))
+                           null, 0))
                 return false;
         if (letter == 'z' &&
             !cp_words_read((string_address) "--sparse", value, cp_sparse_words,
-                           array_count(cp_sparse_words), null))
+                           array_count(cp_sparse_words), null,
+                           address_of cp_sparse_policy))
                 return false;
-        if (letter == 'k' &&
-            !cp_words_read((string_address) "--reflink", value, cp_reflink_words,
-                           array_count(cp_reflink_words), null))
-                return false;
+        if (letter == 'k')
+        {
+                if (!value || !string_get(value))
+                        cp_reflink_policy = 'A';
+                else if (!cp_words_read((string_address) "--reflink", value,
+                                        cp_reflink_words,
+                                        array_count(cp_reflink_words), null,
+                                        address_of cp_reflink_policy))
+                        return false;
+        }
         return file_update_seen((string_address) "cp", letter, value,
                                 address_of cp_update_policy);
 }
@@ -26921,7 +26941,6 @@ static const argument_option cp_options[] = {
     {"sparse", 'z', ARGUMENT_REQUIRED},
     {"strip-trailing-slashes", 'w'},
     {"suffix", 'S', ARGUMENT_REQUIRED},
-    {"update", 'u', ARGUMENT_LONG_OPTIONAL},
     {"dereference", 'L', 0, ARGUMENT_SELECT(cp_selection, dereference)},
     {"force", 'f'},
     {"interactive", 'i', 0, ARGUMENT_SELECT(cp_selection, collision)},
@@ -26946,6 +26965,8 @@ static b32 file_cp()
         cp_status = 0;
         cp_destination_decided = false;
         cp_reflink_always = false;
+        cp_sparse_policy = 'a';
+        cp_reflink_policy = 0;
         file_strip_trailing = false;
         cp_selected = (cp_selection){};
 
@@ -26984,16 +27005,11 @@ static b32 file_cp()
         if (!cp_words_read((string_address) "--preserve",
                            file_option_value(address_of taking, 'p'),
                            cp_preserve_words, array_count(cp_preserve_words),
-                           address_of wants_context) ||
+                           address_of wants_context, 0) ||
             !cp_words_read((string_address) "--no-preserve",
                            file_option_value(address_of taking, 'N'),
-                           cp_preserve_words, array_count(cp_preserve_words), null) ||
-            !cp_words_read((string_address) "--sparse",
-                           file_option_value(address_of taking, 'z'),
-                           cp_sparse_words, array_count(cp_sparse_words), null) ||
-            !cp_words_read((string_address) "--reflink",
-                           file_option_value(address_of taking, 'k'),
-                           cp_reflink_words, array_count(cp_reflink_words), null))
+                           cp_preserve_words, array_count(cp_preserve_words),
+                           null, 0))
                 return 1;
 
         //      This image has no SELinux. -Z and a bare --context are
@@ -27022,38 +27038,9 @@ static b32 file_cp()
         }
 
         {
-                string_address sparse_opt = file_option_value(address_of taking, 'z');
-                string_address reflink_opt = file_option_value(address_of taking, 'k');
-                p8 sparse = 'a';
-                p8 reflink = 0;
+                p8 sparse = cp_sparse_policy;
+                p8 reflink = cp_reflink_policy;
 
-                if (sparse_opt && string_get(sparse_opt))
-                {
-                        string_address last = string_last_of(sparse_opt, ',');
-
-                        last = last ? last + 1 : sparse_opt;
-                        if (string_equals(last, (string_address) "never"))
-                                sparse = 'n';
-                        else if (string_equals(last, (string_address) "always"))
-                                sparse = 'A';
-                }
-                if (taking.flags & FILE_FLAG('k'))
-                {
-                        if (!reflink_opt || !string_get(reflink_opt))
-                                reflink = 'A';
-                        else
-                        {
-                                string_address last = string_last_of(reflink_opt, ',');
-
-                                last = last ? last + 1 : reflink_opt;
-                                if (string_equals(last, (string_address) "always"))
-                                        reflink = 'A';
-                                else if (string_equals(last, (string_address) "never"))
-                                        reflink = 'n';
-                                else
-                                        reflink = 'a';
-                        }
-                }
                 if (reflink == 'A' && sparse != 'a')
                 {
                         log_error("cp: --reflink can be used only with --sparse=auto\n", 0);
