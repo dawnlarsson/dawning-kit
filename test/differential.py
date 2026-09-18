@@ -26845,6 +26845,7 @@ typedef int bipolar;
 typedef char *string_address;
 #define fn void
 #define address_to *
+#define address_of &
 #define null ((void *)0)
 #define end '\0'
 #define TERM_NAME "xterm-256color"
@@ -26902,11 +26903,19 @@ static bipolar bowl_dev_link(string_address target, string_address name) {
     mkdirs++;
     return 0;
 }
-static bipolar bowl_open_directory(string_address path, bool create) {
+static bool mock_made = true;
+static bipolar bowl_open_directory(string_address path, bool create, bool *made) {
     (void)create;
+    if (made) *made = false;
     return system_open_at(-100, path, FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
 }
-static bipolar bowl_mkdir_parents(string_address path) { return bowl_mkdir(path); }
+static bipolar bowl_mkdir_parents_made(string_address path, bool *made) {
+    if (made) *made = mock_made;
+    return bowl_mkdir(path);
+}
+static bipolar bowl_mkdir_parents(string_address path) {
+    return bowl_mkdir_parents_made(path, null);
+}
 static bool bowl_root_path(p8 *into, positive room, string_address root, string_address path) {
     if (!room) return false;
     snprintf((char *)into, room, "%s%s", root, path);
@@ -27042,6 +27051,22 @@ int main(void) {
     bowl_session_prepare("/root", "/tmp");
     check(!modes, "/tmp as a runtime dir is not chmod 0700");
     check(sticky, "/tmp stays 1777 when named as the runtime dir");
+
+    /*  A runtime directory already standing is somebody else's, and the
+        name came from the environment: 0700 is only for the one this
+        session made. */
+    mkdirs = modes = sticky = 0;
+    last_private[0] = 0;
+    mock_made = false;
+    bowl_session_prepare("/root", "/home/a/xdg");
+    check(!modes && !last_private[0],
+          "a runtime dir that was already there is not chmod 0700");
+    mock_made = true;
+    mkdirs = modes = sticky = 0;
+    last_private[0] = 0;
+    bowl_session_prepare("/root", "/home/a/xdg");
+    check(modes && !strcmp(last_private, "/home/a/xdg"),
+          "a runtime dir this session made is chmod 0700");
 
     {
         string_address have[] = {"HOME=/etc", "XDG_RUNTIME_DIR=/etc", null};
