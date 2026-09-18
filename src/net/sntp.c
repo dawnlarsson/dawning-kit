@@ -265,6 +265,47 @@ static PURE COLD bipolar sntp_pick(sntp_sample address_to row, positive count)
         or a path that delivers no control message leaves the stamp unset,
         and the caller reads the clock itself exactly as before.
 */
+/*
+        The walk is apart from the trap because it is the half that fails
+        quietly: a wrong offset finds no message, and a receive that found
+        no message is indistinguishable from a kernel that sent none. That
+        reads as "the timestamp did not help" rather than as a mistake, so
+        it is reached here by its own name and sntp_math_ok hands it
+        buffers laid out by hand -- including ones whose length words lie.
+
+        Every field is read from a buffer the kernel filled, and the two
+        lengths are believed only as far as the buffer goes: a message
+        claiming to be longer than what is left ends the walk.
+*/
+static bool sntp_control_stamp(p8 address_to control, positive length,
+                               p64 address_to arrived)
+{
+        positive at = 0;
+
+        while (at + SNTP_CONTROL_DATA <= length)
+        {
+                positive size = address_to(positive address_to)(control + at);
+                b32 level = address_to(b32 address_to)(control + at +
+                                                       sizeof(positive));
+                b32 kind = address_to(b32 address_to)(control + at +
+                                                      sizeof(positive) + 4);
+
+                if (size < SNTP_CONTROL_DATA || size > length - at)
+                        break;
+                if (level == SOL_SOCKET && kind == SNTP_TIMESTAMPNS &&
+                    size - SNTP_CONTROL_DATA >= 2 * sizeof(p64))
+                {
+                        arrived[0] = address_to(p64 address_to)(
+                            control + at + SNTP_CONTROL_DATA);
+                        arrived[1] = address_to(p64 address_to)(
+                            control + at + SNTP_CONTROL_DATA + sizeof(p64));
+                        return true;
+                }
+                at += (size + sizeof(positive) - 1) & ~(sizeof(positive) - 1);
+        }
+        return false;
+}
+
 static HOT bipolar sntp_receive_stamped(b32 handle, p8 address_to reply,
                                         positive room,
                                         p64 address_to arrived,
@@ -273,10 +314,7 @@ static HOT bipolar sntp_receive_stamped(b32 handle, p8 address_to reply,
         positive message[SNTP_MESSAGE_WORDS];
         positive vector[2];
         positive control[SNTP_CONTROL_WORDS];
-        p8 address_to walk = (p8 address_to)control;
         bipolar got;
-        positive length;
-        positive at = 0;
 
         address_to stamped = false;
         memory_zero(message, sizeof(message));
@@ -293,29 +331,8 @@ static HOT bipolar sntp_receive_stamped(b32 handle, p8 address_to reply,
         if_rare (got < 0)
                 return got;
 
-        length = message[5];
-        while (at + SNTP_CONTROL_DATA <= length)
-        {
-                positive size = address_to(positive address_to)(walk + at);
-                b32 level = address_to(b32 address_to)(walk + at +
-                                                       sizeof(positive));
-                b32 kind = address_to(b32 address_to)(walk + at +
-                                                      sizeof(positive) + 4);
-
-                if (size < SNTP_CONTROL_DATA || size > length - at)
-                        break;
-                if (level == SOL_SOCKET && kind == SNTP_TIMESTAMPNS &&
-                    size - SNTP_CONTROL_DATA >= 2 * sizeof(p64))
-                {
-                        arrived[0] = address_to(p64 address_to)(
-                            walk + at + SNTP_CONTROL_DATA);
-                        arrived[1] = address_to(p64 address_to)(
-                            walk + at + SNTP_CONTROL_DATA + sizeof(p64));
-                        address_to stamped = true;
-                        break;
-                }
-                at += (size + sizeof(positive) - 1) & ~(sizeof(positive) - 1);
-        }
+        address_to stamped = sntp_control_stamp((p8 address_to)control,
+                                                message[5], arrived);
         return got;
 }
 
@@ -364,6 +381,37 @@ static COLD bool sntp_math_ok(void)
         positive at;
         p8 request[SNTP_PACKET];
         p8 reply[SNTP_PACKET];
+        p8 control[96];
+        p64 arrived[2];
+        static const struct
+        {
+                positive claimed; /* what the message says its length is */
+                b32 level;
+                b32 kind;
+                positive held;    /* what the buffer actually holds */
+                bool want;
+        } control_case[] = {
+            /* the message the kernel really sends */
+            {SNTP_CONTROL_DATA + 16, SOL_SOCKET, SNTP_TIMESTAMPNS,
+             SNTP_CONTROL_DATA + 16, true},
+            /* some other control message, of which there are many */
+            {SNTP_CONTROL_DATA + 16, SOL_SOCKET, SNTP_TIMESTAMPNS + 1,
+             SNTP_CONTROL_DATA + 16, false},
+            {SNTP_CONTROL_DATA + 16, 0, SNTP_TIMESTAMPNS,
+             SNTP_CONTROL_DATA + 16, false},
+            /* a length word smaller than the header it heads */
+            {SNTP_CONTROL_DATA - 8, SOL_SOCKET, SNTP_TIMESTAMPNS,
+             SNTP_CONTROL_DATA + 16, false},
+            /* a length word reaching past the end of the buffer */
+            {SNTP_CONTROL_DATA + 64, SOL_SOCKET, SNTP_TIMESTAMPNS,
+             SNTP_CONTROL_DATA + 16, false},
+            /* the right message with too little room for a timespec */
+            {SNTP_CONTROL_DATA + 8, SOL_SOCKET, SNTP_TIMESTAMPNS,
+             SNTP_CONTROL_DATA + 8, false},
+            /* nothing at all, which is what a kernel without the option
+               sends, and the case the caller falls back on */
+            {SNTP_CONTROL_DATA + 16, SOL_SOCKET, SNTP_TIMESTAMPNS, 0, false},
+        };
         static const struct
         {
                 p8 first;
@@ -553,6 +601,54 @@ static COLD bool sntp_math_ok(void)
                 if (sntp_reply_ok(reply, request) != reply_case[at].want)
                         return false;
         }
+
+        for (at = 0; at < array_count(control_case); at++)
+        {
+                memory_zero(control, sizeof(control));
+                address_to(positive address_to)control = control_case[at].claimed;
+                address_to(b32 address_to)(control + sizeof(positive)) =
+                    control_case[at].level;
+                address_to(b32 address_to)(control + sizeof(positive) + 4) =
+                    control_case[at].kind;
+                address_to(p64 address_to)(control + SNTP_CONTROL_DATA) =
+                    1700000000ull;
+                address_to(p64 address_to)(control + SNTP_CONTROL_DATA +
+                                           sizeof(p64)) = 250000000ull;
+                arrived[0] = 0;
+                arrived[1] = 0;
+                if (sntp_control_stamp(control, control_case[at].held,
+                                       arrived) != control_case[at].want)
+                        return false;
+                if (control_case[at].want &&
+                    (arrived[0] != 1700000000ull || arrived[1] != 250000000ull))
+                        return false;
+        }
+
+        /*
+                The kernel puts its messages in the order it likes, so the
+                one we want is not always first. A message of another kind
+                in front of it must be stepped over, not stopped at.
+        */
+        memory_zero(control, sizeof(control));
+        address_to(positive address_to)control = SNTP_CONTROL_DATA;
+        address_to(b32 address_to)(control + sizeof(positive)) = SOL_SOCKET;
+        address_to(b32 address_to)(control + sizeof(positive) + 4) =
+            SNTP_TIMESTAMPNS + 7;
+        address_to(positive address_to)(control + SNTP_CONTROL_DATA) =
+            SNTP_CONTROL_DATA + 16;
+        address_to(b32 address_to)(control + SNTP_CONTROL_DATA +
+                                   sizeof(positive)) = SOL_SOCKET;
+        address_to(b32 address_to)(control + SNTP_CONTROL_DATA +
+                                   sizeof(positive) + 4) = SNTP_TIMESTAMPNS;
+        address_to(p64 address_to)(control + 2 * SNTP_CONTROL_DATA) =
+            1700000001ull;
+        address_to(p64 address_to)(control + 2 * SNTP_CONTROL_DATA +
+                                   sizeof(p64)) = 750000000ull;
+        arrived[0] = 0;
+        arrived[1] = 0;
+        if (!sntp_control_stamp(control, 2 * SNTP_CONTROL_DATA + 16, arrived) ||
+            arrived[0] != 1700000001ull || arrived[1] != 750000000ull)
+                return false;
 
         /*
                 One bit of the echoed stamp flipped is still a forgery.
