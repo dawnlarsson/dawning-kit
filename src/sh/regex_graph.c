@@ -1547,11 +1547,28 @@ static rx_match regex_match = {
 #define regex_group_count regex_current.groups
 #define regex_boundary regex_current.boundary
 
+/*
+        The program that spent its whole budget and gave no answer.
+
+        A compile takes a hints block of its own and a kept program keeps
+        it, so the pointer names the program without holding a copy of it.
+        Callers with no machine to fall back on -- sed, awk, nl, ptx -- have
+        nothing to gain by spending the budget again on the next record, and
+        a pattern like (a+)+b over a file of a's spent forty seconds on six
+        kilobytes doing exactly that, reporting the same refusal per record.
+        The answer is the one the first record got: this program cannot say.
+*/
+static const rx_hints *regex_gave_up;
+
 /* Ordinary compilations borrow the space above the retained program mark. */
 static bool regex_compile(string_address pattern, bool extended, bool icase,
                           bool escapes, p8 policy)
 {
         regex_pool.used = regex_retained;
+
+        // The rewind can hand this compile the hints block the last one
+        // gave up with, so the mark goes with it.
+        regex_gave_up = null;
         return rx_compile(&regex_pool, &regex_current, pattern, extended,
                           icase, escapes, policy);
 }
@@ -1564,10 +1581,14 @@ static fn regex_keep(regex_program *into)
 
 static bool regex_find(p8 mode, string_address text, positive length, positive from)
 {
+        if (regex_gave_up && regex_gave_up == regex_current.hints)
+                return false;
+
         p8 result = rx_find(&regex_match, &regex_current,
                             mode & ~REGEX_CAPTURES, mode & REGEX_CAPTURES, text, length, from);
         if (result == RX_COMPLEX)
         {
+                regex_gave_up = regex_current.hints;
                 string_diagnostic(&text_diagnostic, 0, null, "regular expression too complex");
                 text_status = 2;
         }
