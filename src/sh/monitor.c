@@ -231,6 +231,17 @@ static fn monitor_cpus(system_snapshot address_to old,
         }
 }
 
+/*      One human-readable amount, with its length held inside the nine
+        bytes the formatter promises. */
+#define MONITOR_HUMAN 9
+
+static positive monitor_human(p8 address_to into, positive value)
+{
+        positive used = positive_into_human_nearest_string(into, value, true);
+
+        return used < MONITOR_HUMAN ? used : MONITOR_HUMAN - 1;
+}
+
 static fn monitor_memory(system_snapshot address_to sample,
                          positive bar_width)
 {
@@ -238,12 +249,16 @@ static fn monitor_memory(system_snapshot address_to sample,
         positive available = sample->header.memory_available;
         positive used = total >= available ? total - available : 0;
         positive percent = monitor_percent(used, total, 100);
-        p8 used_text[9];
-        p8 total_text[9];
-        positive used_length = positive_into_human_nearest_string(
-            used_text, used, true);
-        positive total_length = positive_into_human_nearest_string(
-            total_text, total, true);
+        /*      Nine bytes because the widest answer the formatter gives is
+                "1023 KiB" and its terminator. The lengths are clamped to that
+                rather than taken on trust: the formatter is an assembly
+                routine, so the compiler has no range for what it returns and
+                plans the wide copy paths for a length these buffers could
+                never hold. */
+        p8 used_text[MONITOR_HUMAN];
+        p8 total_text[MONITOR_HUMAN];
+        positive used_length = monitor_human(used_text, used);
+        positive total_length = monitor_human(total_text, total);
 
         text_put_string(" mem    ");
         monitor_bar(percent, bar_width);
@@ -261,9 +276,8 @@ static fn monitor_memory(system_snapshot address_to sample,
 
         if (swap_percent)
         {
-                p8 swap_text[9];
-                positive swap_length = positive_into_human_nearest_string(
-                    swap_text, swap_used, true);
+                p8 swap_text[MONITOR_HUMAN];
+                positive swap_length = monitor_human(swap_text, swap_used);
 
                 text_put_string(" swap   ");
                 monitor_bar(swap_percent, bar_width);
@@ -410,10 +424,9 @@ static bool monitor_processes(system_snapshot address_to old,
 
         for (positive i = 0; i < count; i++)
         {
-                p8 memory_text[9];
-                positive memory_length = positive_into_human_nearest_string(
-                    memory_text, (address_to top)[i].process->resident_bytes,
-                    true);
+                p8 memory_text[MONITOR_HUMAN];
+                positive memory_length = monitor_human(
+                    memory_text, (address_to top)[i].process->resident_bytes);
                 monitor_row_left = columns > 1 ? columns - 1 : 1;
                 monitor_row_write(" ", 1);
                 positive_to_base_field(
