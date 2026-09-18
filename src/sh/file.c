@@ -28402,10 +28402,20 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 return false;
         }
 
+        /* The one exit that used to leave the descriptor open. Reaching the
+           question at all means the directory was read, so `inside` is the
+           handle rm_contents just walked; answering no to a thousand of them
+           spent a thousand descriptors and the walk then stopped on EMFILE
+           partway through the tree. Every other exit here closes it. */
         if (rm_prompting == 'i' && !asked_remove &&
             !file_ask((string_address) "rm",
                       rm_prompt(directory, name, address_of facts, false), shown))
+        {
+                if (inside >= 0)
+                        system_close(inside);
+
                 return false;
+        }
 
         bipolar gone = file_remove_same(directory, name, AT_REMOVEDIR,
                                         address_of facts);
