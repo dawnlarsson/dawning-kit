@@ -598,41 +598,57 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
 }
 
 /*
-        The attributes of one message, found by type.
+        The attributes of a message, found by type.
 
-        The body length differs per message family, so the caller says where
-        the attributes begin. A length shorter than its own header would walk
-        backwards forever, which is the shape a corrupt or hostile message
-        takes, so it ends the walk.
+        Attributes are a length-prefixed chain: a header of four bytes, then
+        that many bytes of payload, then the next one at the aligned end of
+        this one. A length shorter than its own header would walk backwards
+        forever, which is the shape a corrupt or hostile message takes, so it
+        ends the walk rather than continuing it.
+
+        Two things hold such a chain and they differ only in where it starts.
+        A message's own attributes begin after the fixed body its family
+        defines, whose length only the caller knows; a nested attribute's
+        payload is a chain all by itself. So the span is the routine and the
+        message form is the address of its first attribute, worked out once.
 */
-static address_any netlink_find(netlink_header address_to header, positive body,
-                                p16 type, positive address_to size)
+static address_any netlink_find_span(p8 address_to bytes, positive length,
+                                     p16 type, positive address_to size)
 {
-        p8 address_to bytes = (p8 address_to)header;
-        positive at = NETLINK_HEADER + netlink_align(body);
+        positive at = 0;
         netlink_attribute address_to attribute;
 
-        while (at + sizeof(netlink_attribute) <= header->length)
+        while (at + sizeof(netlink_attribute) <= length)
         {
                 attribute = (netlink_attribute address_to)(bytes + at);
-
                 if (attribute->length < sizeof(netlink_attribute) ||
-                    at + attribute->length > header->length)
+                    at + attribute->length > length)
                         return null;
-
                 if ((attribute->type & NLA_TYPE_MASK) == type)
                 {
                         if (size)
                                 address_to size = attribute->length -
                                                   sizeof(netlink_attribute);
-
                         return bytes + at + sizeof(netlink_attribute);
                 }
-
                 at += netlink_align(attribute->length);
         }
 
         return null;
+}
+
+static address_any netlink_find(netlink_header address_to header, positive body,
+                                p16 type, positive address_to size)
+{
+        positive at = NETLINK_HEADER + netlink_align(body);
+
+        //      A message too short to hold its own body carries no
+        //      attributes; subtracting first would wrap the span's length.
+        if (header->length < at)
+                return null;
+
+        return netlink_find_span((p8 address_to)header + at,
+                                 header->length - at, type, size);
 }
 
 /*
@@ -709,31 +725,6 @@ static inline INLINE string_address netlink_link_name(
         name = (string_address)netlink_find(
             header, sizeof(netlink_link), IFLA_IFNAME, address_of length);
         return name && length && memory_first_of(name, 0, length) ? name : null;
-}
-
-static address_any netlink_find_span(p8 address_to bytes, positive length,
-                                     p16 type, positive address_to size)
-{
-        positive at = 0;
-        netlink_attribute address_to attribute;
-
-        while (at + sizeof(netlink_attribute) <= length)
-        {
-                attribute = (netlink_attribute address_to)(bytes + at);
-                if (attribute->length < sizeof(netlink_attribute) ||
-                    at + attribute->length > length)
-                        return null;
-                if ((attribute->type & NLA_TYPE_MASK) == type)
-                {
-                        if (size)
-                                address_to size = attribute->length -
-                                                  sizeof(netlink_attribute);
-                        return bytes + at + sizeof(netlink_attribute);
-                }
-                at += netlink_align(attribute->length);
-        }
-
-        return null;
 }
 
 static bool netlink_link_is_wireless(netlink_header address_to header,
