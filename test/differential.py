@@ -13687,6 +13687,13 @@ FIXTURES["text_wide"] = {
                  "\U0001f600 emoji \u0301\u200b zero\tTab\n").encode()
                 + b"bad\xff\xfe byte \xc3 cut \xed\xa0\x80 \xf4\x90\x80\x80 \xe2\x82\n",
     "utf8_edge.txt": b"a" * 65534 + "\u20ac\u65e5 x\u00a0y\n".encode() + b"z" * 70000 + b"\xe2\x82",
+    #       The same characters with every byte a character, for the readers
+    #       that ask where a word ended: a no-break space is not a blank and
+    #       an em space is, and neither answer depends on a byte that begins
+    #       no character.
+    "utf8_words.txt": ("caf\u00e9 na\u00efve \u65e5\u672c\u8a9e\n"
+                       "a\u00a0b c\u2003d e\u3000f g\u2007h\n"
+                       "\U0001f600 emoji \u0301\u200b zero\tTab\n").encode(),
 }
 
 
@@ -14585,8 +14592,18 @@ TEXT_UTILITIES = (
                       ("nonl",), ("empty",), ("wide",), ("tabs",), ("fields", "missing", "a.txt")),
             stdin=("fields", "text_cut", "tabs", "spaces", "empty", "nonl", "nul_lines", "high",
                    "edge_65537", "text", "words", "text_random_lines", "edge_65535", "edge_65536", "text_utf8"),
-            fixture="text", valid=text_cut_valid,
-            extra=(("-b", "2", "-c", "1-3"), ("-c", "1", "-f", "1"), ("-f", "1", "-c", "1"), ("-d", ",", "-c", "1"),
+            fixture="text_wide", valid=text_cut_valid,
+            #       -c is characters and -b is bytes, and the generator pairs
+            #       an option with the first input alone, which is ASCII. The
+            #       rows naming utf8.txt are the ones where the two counts
+            #       differ; in C they are the same count and agree anyway.
+            extra=(("-c", "1-3", "utf8.txt"), ("-c", "1-5", "utf8.txt"), ("-c", "2-4", "utf8.txt"),
+                   ("-c", "1,3,5", "utf8.txt"), ("-c", "3-", "utf8.txt"), ("-c", "-3", "utf8.txt"),
+                   ("-b", "1-3", "utf8.txt"), ("-b", "1-5", "utf8.txt"),
+                   ("--complement", "-c", "1-3", "utf8.txt"),
+                   ("-c", "1,3", "--output-delimiter=X", "utf8.txt"),
+                   ("-c", "1-5", "-n", "utf8.txt"), ("-c", "1-40", "utf8_edge.txt"),
+                   ("-b", "2", "-c", "1-3"), ("-c", "1", "-f", "1"), ("-f", "1", "-c", "1"), ("-d", ",", "-c", "1"),
                    ("-s", "-c", "1"), ("-w", "-c", "1"), ("-w", "-d", ":", "-f", "1"), ("-Z", "-c", "1"),
                    ("--nosuchflag", "-c", "1"), ("-c",), ("-f", "1", "-f", "3", "-d", ":"),
                    ("-d", ":", "-f", "1,1,1"), ("-d", ":", "-f", "3,1"), ("-d", ",", "-f", "2,2"),
@@ -14634,7 +14651,21 @@ TEXT_UTILITIES = (
                       ("empty",), ("tabs",), ("wide",), ("para",), ("a.txt", "missing", "b.txt")),
             stdin=("text", "tabs", "wide_words", "long", "nonl", "empty", "controls", "high", "edge_65537",
                    "text_fmt", "crlf", "text_random_lines", "spaces", "nul_lines", "edge_65535", "edge_65536", "text_utf8"),
-            fixture="text", extra=(("--nosuchflag",), ("-Q",), ("-w", "20", "-w", "60"), ("-c", "-w", "3", "tabs"))),
+            fixture="text_wide",
+            #       A width is columns, -c characters and -b bytes, and the
+            #       three are one count only while a byte is a character.
+            extra=(("--nosuchflag",), ("-Q",), ("-w", "20", "-w", "60"), ("-c", "-w", "3", "tabs"),
+                   ("-w", "2", "utf8.txt"), ("-w", "3", "utf8.txt"), ("-w", "4", "utf8.txt"),
+                   ("-w", "5", "utf8.txt"), ("-w", "8", "utf8.txt"),
+                   ("-b", "-w", "3", "utf8.txt"), ("-b", "-w", "5", "utf8.txt"),
+                   ("-c", "-w", "3", "utf8.txt"), ("-c", "-w", "5", "utf8.txt"),
+                   #       -s asks where the last blank was, and over a run of
+                   #       bytes that are no character at all GNU's answer
+                   #       comes from mbrtowc's shift state rather than from
+                   #       the bytes; utf8_words holds the blanks a locale
+                   #       adds and no such run.
+                   ("-s", "-w", "6", "utf8_words.txt"), ("-s", "-w", "4", "utf8_words.txt"),
+                   ("-w", "20", "utf8_edge.txt"))),
     Utility("grep", options=_TEXT_GREP_OPTIONS, operands=_TEXT_GREP_OPERANDS, stdin=_TEXT_GREP_STDIN,
             fixture="text", valid=text_grep_valid, walks=text_grep_walks,
             extra=_TEXT_GREP_EXTRA + _TEXT_GREP_BINARY_EXTRA,

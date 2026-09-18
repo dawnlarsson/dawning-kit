@@ -12430,6 +12430,7 @@ static b32 text_fold()
                                         p8 character = text_line[at];
                                         positive size = 1;
                                         positive after = column + 1;
+                                        bool blank = byte_is_blank(character);
 
                                         if (!bytes)
                                         {
@@ -12460,6 +12461,23 @@ static b32 text_fold()
                                                                      : unicode_width(
                                                                            code,
                                                                            UNICODE_WIDTH_WCWIDTH));
+                                                        /*
+                                                                -s breaks at
+                                                                the last
+                                                                blank, and a
+                                                                locale holds
+                                                                more of them
+                                                                than a byte
+                                                                can: an em
+                                                                space is one
+                                                                and a
+                                                                no-break
+                                                                space is not,
+                                                                which is the
+                                                                rule wc's own
+                                                                reader keeps.
+                                                        */
+                                                        blank = wc_wide_space(code, true);
                                                 }
                                         }
 
@@ -12469,7 +12487,7 @@ static b32 text_fold()
                                         column = after;
                                         at += size;
 
-                                        if (spaces && byte_is_blank(character))
+                                        if (spaces && blank)
                                                 gap = at;
                                 }
 
