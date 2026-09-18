@@ -663,7 +663,20 @@ static inline unsigned int spark_settings_sum(const struct spark_settings *slot)
         0 for a slot never written, 1 for one whose settings check, -1 for
         anything else: another format, a torn write, a length past the slot, a
         sum that disagrees, or entries that do not walk exactly to the end
-        within their limits.
+        within their limits, or an entry naming a kind or an id this version
+        does not have.
+
+        Every field of an entry is checked, not only the two the walk needs.
+        The walk used to read list and length and step over kind, id and the
+        reserved halfword, so a slot carrying kind 200, or a bind row for
+        event 4000 when there are twenty-two events, was answered as
+        well-formed and handed on. Each consumer bounded it again -- bind_row
+        refuses an event outside the table, host_settings_text treats an
+        unknown kind as literal text -- but a checker whose whole job is to
+        say whether a slot is well-formed should not be saying yes to slots
+        that are not. The bind table holds forty-eight rows against
+        twenty-two events, so an out-of-range event is expressible here by
+        construction rather than by accident.
 */
 static inline int spark_settings_check(const struct spark_settings *slot)
 {
@@ -687,12 +700,16 @@ static inline int spark_settings_check(const struct spark_settings *slot)
         {
                 const unsigned char *entry = slot->payload + at;
                 unsigned int list;
+                unsigned int kind;
+                unsigned int id;
                 unsigned int length;
 
                 if (slot->length - at < SPARK_SETTINGS_ENTRY)
                         return -1;
 
                 list = entry[0];
+                kind = entry[1];
+                id = entry[2] | (unsigned int)entry[3] << 8;
                 length = entry[4] | (unsigned int)entry[5] << 8;
                 at += SPARK_SETTINGS_ENTRY;
 
@@ -704,6 +721,19 @@ static inline int spark_settings_check(const struct spark_settings *slot)
                                   ? SPARK_SETTINGS_BIND_TEXT_MOST
                                   : SPARK_SETTINGS_TEXT_MOST) ||
                     slot->length - at < spark_settings_padded(length))
+                        return -1;
+
+                /* The list is known good from here, so the rest of the entry
+                   is judged against it: a kind names how the text runs and
+                   there are three of them; in the bind table the id is the
+                   event, bounded the way the kernel's own table bounds it,
+                   and in every other list it is the number that list handed
+                   out, which is never zero. The halfword after the length
+                   belongs to a later version, and a later version would have
+                   said so in the header this already checked. */
+                if (!kind || kind > SPARK_SETTINGS_KERNEL_SHELL ||
+                    entry[6] || entry[7] || !id ||
+                    (list == SPARK_SETTINGS_BIND && id > SPARK_BIND_EVENTS))
                         return -1;
 
                 at += spark_settings_padded(length);
