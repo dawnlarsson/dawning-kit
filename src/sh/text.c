@@ -2535,6 +2535,11 @@ static positive join_output_count;
 static bool join_output_auto;
 static positive join_order_mode;
 static b32 join_separator;
+/* The byte -t actually carried, which is not always the field separator it
+   names: -t '' names the newline that makes the whole line one field but
+   writes no byte, so the output stays blank-separated. One written byte
+   settles the output for every spelling, whichever order they came in. */
+static b32 join_output_written;
 
 static bool join_order_check(bool unpaired)
 {
@@ -2652,10 +2657,12 @@ static bool join_option_seen(p8 letter, string_address value)
 
                 if (value[0] && value[1] && !zero)
                         return false;
-                b32 separator = zero || !value[0] ? 0 : value[0];
+                b32 separator = zero ? 0 : value[0] ? value[0] : '\n';
                 if (join_separator >= 0 && join_separator != separator)
                         return false;
                 join_separator = separator;
+                if (value[0])
+                        join_output_written = separator;
         }
         else if (letter == '1' || letter == '2')
         {
@@ -2883,7 +2890,12 @@ static fn join_emit(p8 address_to left, positive left_length,
                     p8 delimiter)
 {
         bool first = true;
-        p8 output_separator = separated ? separator : ' ';
+        /* Measured against GNU: -t : writes colons, -t '\\0' writes NULs, a
+           -t carrying a real newline writes newlines, and -t '' writes the
+           blank it would have written with no -t at all. */
+        p8 output_separator = join_output_written >= 0
+                                  ? (p8)join_output_written
+                                  : ' ';
 
         if (join_output_count)
         {
@@ -3075,6 +3087,7 @@ static b32 text_join()
         join_output_auto = false;
         join_order_mode = RELATION_ORDER_DEFAULT;
         join_separator = -1;
+        join_output_written = -1;
 
         if (!text_took(address_of taking))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "invalid option value"));
@@ -13956,13 +13969,30 @@ static bool uniq_option_seen(p8 letter, string_address value)
                                          : letter == 's' ? "invalid number of bytes to skip"
                                                          : "invalid number of bytes to compare");
 
-        if (letter == 'A' && value &&
-            !uniq_grouping_of(value, false, address_of uniq_all_how))
-                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
+        /*
+                Both words are optional and the last spelling wins, so a
+                spelling that carries no word puts its own default back rather
+                than leaving the earlier answer standing: --group=both --group
+                separates groups with nothing before the first, and -D after
+                --all-repeated=prepend separates them with nothing at all.
+                -D is the short spelling that can carry no word, so it is
+                always the default.
+        */
+        if (letter == 'A' || letter == 'D')
+        {
+                if (letter == 'D' || !value)
+                        uniq_all_how = UNIQ_GROUP_NONE;
+                else if (!uniq_grouping_of(value, false, address_of uniq_all_how))
+                        return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
+        }
 
-        if (letter == 'G' && value &&
-            !uniq_grouping_of(value, true, address_of uniq_group_how))
-                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
+        if (letter == 'G')
+        {
+                if (!value)
+                        uniq_group_how = UNIQ_GROUP_SEPARATE;
+                else if (!uniq_grouping_of(value, true, address_of uniq_group_how))
+                        return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
+        }
 
         return true;
 }
