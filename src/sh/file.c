@@ -14395,12 +14395,12 @@ static bool du_exclude_seen(p8 letter, string_address value)
 static const argument_option du_options[] = {
     {"all", 'a'},
     {"apparent-size", 'A', ARGUMENT_LONG_ONLY},
-    {"block-size", 'B', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
+    {"block-size", 'B', ARGUMENT_REQUIRED, 1},
     {"bytes", 'b', 0, 1},
     {"count-links", 'l'},
     {"dereference", 'L'},
     {"exclude", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
-    {"human-readable", 'h'},
+    {"human-readable", 'h', 0, 1},
     {"max-depth", 'd', ARGUMENT_REQUIRED},
     {"one-file-system", 'x'},
     {"separate-dirs", 'S'},
@@ -14446,7 +14446,6 @@ static b32 file_du()
 
         du_all = (flags & FILE_FLAG('a')) != 0;
         du_summary = (flags & FILE_FLAG('s')) != 0;
-        du_human = (flags & FILE_FLAG('h')) != 0;
         du_apparent = (flags & (FILE_FLAG('b') | FILE_FLAG('A'))) != 0;
         du_total = (flags & FILE_FLAG('c')) != 0;
         du_separate = (flags & FILE_FLAG('S')) != 0;
@@ -14483,6 +14482,9 @@ static b32 file_du()
                 du_maximum = negative ? 0 : maximum;
         }
 
+        positive block_unit = 0;
+        bool block_human = false;
+
         if (flags & FILE_FLAG('B'))
         {
                 string_address given = file_option_value(address_of taking, 'B');
@@ -14499,9 +14501,8 @@ static b32 file_du()
                             "du: invalid --block-size argument '%s'\n",
                             given ? given : (string_address) "");
 
-                du_unit = unit;
-                if (human)
-                        du_human = true;
+                block_unit = unit;
+                block_human = human;
         }
 
         if (flags & FILE_FLAG('T'))
@@ -14516,10 +14517,30 @@ static b32 file_du()
                         return 1;
         }
 
+        /*
+                -b, -k, -m and --block-size all say the same thing, so the
+                one written last is the one that holds -- the rule df states
+                a few lines down and the reference follows for all four.
+                --block-size used to sit outside the selection and win by
+                being parsed afterwards, so du --block-size=1M -k counted in
+                mebibytes and du -b --block-size=1M counted in bytes, each
+                the answer to the option the caller had overridden.
+        */
+        du_human = false;
+
         if (du_unit_option == 'b')
                 du_unit = 1;
-        else if (du_unit_option == 'm' && !(flags & FILE_FLAG('B')))
+        else if (du_unit_option == 'k')
+                du_unit = 1024;
+        else if (du_unit_option == 'm')
                 du_unit = 1048576;
+        else if (du_unit_option == 'h')
+                du_human = true;
+        else if (du_unit_option == 'B')
+        {
+                du_unit = block_unit;
+                du_human = block_human;
+        }
 
         if (du_summary && du_all)
                 return string_report(log_error, 1,
