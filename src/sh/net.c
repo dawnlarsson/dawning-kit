@@ -97,13 +97,13 @@ static positive net_kmsg_used;
 #define NET_KMSG_LEVEL "<6>"
 #define NET_KMSG_LEVEL_BYTES 3
 
-static fn net_kmsg_begin(void)
+static COLD fn net_kmsg_begin(void)
 {
         memory_copy(net_kmsg_line, NET_KMSG_LEVEL, NET_KMSG_LEVEL_BYTES);
         net_kmsg_used = NET_KMSG_LEVEL_BYTES;
 }
 
-static fn net_kmsg(address_any data, positive length)
+static COLD fn net_kmsg(address_any data, positive length)
 {
         p8 address_to bytes = (p8 address_to)data;
         positive at;
@@ -135,7 +135,7 @@ static fn net_kmsg(address_any data, positive length)
 //      The terminal by default; the kernel log once init owns this.
 static writer net_out = log;
 
-static fn net_kmsg_close(void)
+static COLD fn net_kmsg_close(void)
 {
         if (net_kmsg_handle >= 0)
                 (void)system_close(net_kmsg_handle);
@@ -150,7 +150,7 @@ static fn net_flush(void)
                 log_flush();
 }
 
-static bool net_word_is(string_address word, const char *full, positive least)
+static COLD bool net_word_is(string_address word, const char *full, positive least)
 {
         if (!word)
                 return false;
@@ -194,7 +194,7 @@ static COLD b32 net_refused(string_address doing, bipolar status)
         eight chances to write it one byte early or one byte late, in a buffer
         whose length only the call site knows.
 */
-static string_address net_host_text(p8 address_to into, p32 host)
+static COLD string_address net_host_text(p8 address_to into, p32 host)
 {
         into[host_into(into, host)] = end;
 
@@ -209,7 +209,7 @@ static string_address net_host_text(p8 address_to into, p32 host)
         octet is the classful arithmetic that stopped being true in 1993, so
         the answer is to be literal and let the user say.
 */
-static bool net_split_prefix(string_address text, p32 address_to host,
+static COLD bool net_split_prefix(string_address text, p32 address_to host,
                              p8 address_to bits)
 {
         string_address slash = string_first_of(text, '/');
@@ -258,7 +258,7 @@ static bool net_split_prefix(string_address text, p32 address_to host,
 }
 
 // The flags of a link, in the shape iproute2 writes them.
-static fn net_say_flags(p32 flags)
+static COLD fn net_say_flags(p32 flags)
 {
         static const struct { p32 bit; const char address_to name; } names[] = {
             {IFF_UP, "UP"}, {IFF_BROADCAST, "BROADCAST"},
@@ -294,7 +294,7 @@ typedef struct
 
 static netlink_buffer net_names;
 
-static bool net_name_seen(netlink_header address_to header, address_any context)
+static COLD bool net_name_seen(netlink_header address_to header, address_any context)
 {
         netlink_buffer address_to names =
             (netlink_buffer address_to)context;
@@ -322,7 +322,7 @@ static bool net_name_seen(netlink_header address_to header, address_any context)
         return true;
 }
 
-static bool net_names_commit(netlink_buffer address_to next, bipolar status)
+static COLD bool net_names_commit(netlink_buffer address_to next, bipolar status)
 {
         if (status < 0 || next->failed)
         {
@@ -336,7 +336,7 @@ static bool net_names_commit(netlink_buffer address_to next, bipolar status)
         return true;
 }
 
-static bipolar net_names_gather(b32 handle)
+static COLD bipolar net_names_gather(b32 handle)
 {
         netlink_buffer next = {0};
         bipolar status = netlink_dump(
@@ -348,7 +348,7 @@ static bipolar net_names_gather(b32 handle)
         return status < 0 ? status : -ERROR_NO_MEMORY;
 }
 
-static PURE string_address net_name_of(p32 index)
+static PURE COLD string_address net_name_of(p32 index)
 {
         positive at;
         positive count = net_names.used / sizeof(net_name);
@@ -364,7 +364,7 @@ static PURE string_address net_name_of(p32 index)
         return null;
 }
 
-static bool net_link_line(netlink_header address_to header, address_any context)
+static COLD bool net_link_line(netlink_header address_to header, address_any context)
 {
         netlink_link address_to link;
         string_address name = netlink_link_name(header, address_of link);
@@ -383,7 +383,7 @@ static bool net_link_line(netlink_header address_to header, address_any context)
 //      An address line wants the interface's name, and the address dump gives
 //      only its index, so the name is looked up once per line rather than the
 //      whole link table being held.
-static bool net_address_line(netlink_header address_to header, address_any context)
+static COLD bool net_address_line(netlink_header address_to header, address_any context)
 {
         netlink_address address_to body;
         positive size = 0;
@@ -420,7 +420,7 @@ static bool net_address_line(netlink_header address_to header, address_any conte
         return true;
 }
 
-static bool net_route_line(netlink_header address_to header, address_any context)
+static COLD bool net_route_line(netlink_header address_to header, address_any context)
 {
         netlink_route address_to body;
         positive gateway_size = 0;
@@ -487,7 +487,7 @@ static bool net_route_line(netlink_header address_to header, address_any context
 }
 
 //      The index of the link the user named.
-static bipolar net_index_of(b32 handle, string_address name)
+static COLD bipolar net_index_of(b32 handle, string_address name)
 {
         netlink_search search = {.wanted = name};
         bipolar status = netlink_link_find(handle, address_of search);
@@ -505,7 +505,7 @@ static bipolar net_index_of(b32 handle, string_address name)
         which is exactly when someone is trying to find out whether the
         network works at all.
 */
-static b32 net_host(void)
+static COLD b32 net_host(void)
 {
         p32 found = 0;
         p8 written[32];
@@ -676,7 +676,7 @@ static const argument_option wget_options[] = {
    tools. They add a data sync before publication because a downloaded image
    and resolv.conf must survive the power loss that may immediately follow
    boot-time networking. */
-static bipolar net_staged_name_publish(file_staged_name address_to stage)
+static COLD bipolar net_staged_name_publish(file_staged_name address_to stage)
 {
         bipolar directory = system_open_at(
             stage->directory, (string_address)".",
@@ -870,7 +870,7 @@ static b32 net_wget(void)
         resolver means changing which server is preferred is one line in a
         file, not a rebuild.
 */
-static bipolar net_write_resolv_to(string_address path, p32 nameserver)
+static COLD bipolar net_write_resolv_to(string_address path, p32 nameserver)
 {
         const p32 servers[2] = {
             DNS_FALLBACK, nameserver == DNS_FALLBACK ? 0 : nameserver};
@@ -901,7 +901,7 @@ static bipolar net_write_resolv_to(string_address path, p32 nameserver)
         return net_staged_name_publish(address_of staged);
 }
 
-static bipolar net_write_resolv(p32 nameserver)
+static COLD bipolar net_write_resolv(p32 nameserver)
 {
         return net_write_resolv_to((string_address) "/etc/resolv.conf",
                                    nameserver);
@@ -959,13 +959,13 @@ static positive net_seconds(void)
 /* Deleting state which the kernel already discarded is the same outcome as
    deleting it ourselves. A vanished interface reports ENODEV; absent
    addresses and routes are reported as ENOENT or ESRCH. */
-static bool net_change_gone(bipolar status)
+static COLD bool net_change_gone(bipolar status)
 {
         return status >= 0 || status == -ERROR_NO_ENTRY ||
                status == -ERROR_NO_PROCESS || status == -ERROR_NO_DEVICE;
 }
 
-static bool net_holds_address(const net_holding address_to held, p32 index,
+static COLD bool net_holds_address(const net_holding address_to held, p32 index,
                               const dhcp_lease address_to lease)
 {
         return held && held->index == index &&
@@ -973,7 +973,7 @@ static bool net_holds_address(const net_holding address_to held, p32 index,
                dhcp_prefix_of(held->lease.mask) == dhcp_prefix_of(lease->mask);
 }
 
-static bool net_holds_route(const net_holding address_to held, p32 index,
+static COLD bool net_holds_route(const net_holding address_to held, p32 index,
                             const dhcp_lease address_to lease)
 {
         if (!held)
@@ -986,18 +986,18 @@ static bool net_holds_route(const net_holding address_to held, p32 index,
 /* Kernel objects are removed only when an exclusive create, or a transition
    from an object already owned here, established that right.  A matching
    address or route discovered at process start remains somebody else's. */
-static bool net_owns_address(const net_holding address_to held)
+static COLD bool net_owns_address(const net_holding address_to held)
 {
         return held && held->index && held->lease.address &&
                held->address_owned;
 }
 
-static bool net_owns_route(const net_holding address_to held)
+static COLD bool net_owns_route(const net_holding address_to held)
 {
         return held && held->index && held->lease.router && held->route_owned;
 }
 
-static bool net_ownership_next(bool owned, bool changed, bool installed,
+static COLD bool net_ownership_next(bool owned, bool changed, bool installed,
                                bool exists)
 {
         return exists && (changed ? installed : owned);
@@ -1006,7 +1006,7 @@ static bool net_ownership_next(bool owned, bool changed, bool installed,
 /* Unsigned subtraction deliberately treats a clock failure or regression as
    an expired lease: keeping an address past the server's deadline can create
    an address collision, while releasing it merely requires reacquisition. */
-static bool net_lease_expired_at(const net_holding address_to held,
+static COLD bool net_lease_expired_at(const net_holding address_to held,
                                  positive now)
 {
         if (!held || !held->index || !held->lease.seconds)
@@ -1016,7 +1016,7 @@ static bool net_lease_expired_at(const net_holding address_to held,
                now - held->taken >= held->lease.seconds;
 }
 
-static positive net_lease_due_in(const net_holding address_to held,
+static COLD positive net_lease_due_in(const net_holding address_to held,
                                  positive now)
 {
         positive gone;
@@ -1036,7 +1036,7 @@ static positive net_lease_due_in(const net_holding address_to held,
         return gone >= retry ? 1 : retry - gone;
 }
 
-static bool net_lease_rebinding_at(const net_holding address_to held,
+static COLD bool net_lease_rebinding_at(const net_holding address_to held,
                                    positive now)
 {
         return held && held->index && held->taken && held->lease.rebinding &&
@@ -1047,7 +1047,7 @@ static bool net_lease_rebinding_at(const net_holding address_to held,
 /* A request never waits beyond the next state boundary.  This is observable
    for very short but legal leases: a four-second socket deadline must not keep
    using an address after T2 or expiry. */
-static positive net_lease_attempt_time(const net_holding address_to held,
+static COLD positive net_lease_attempt_time(const net_holding address_to held,
                                        positive now, bool rebinding)
 {
         positive gone;
@@ -1067,7 +1067,7 @@ static positive net_lease_attempt_time(const net_holding address_to held,
 /* RFC 2131 retries half way to the next state boundary, with sixty seconds as
    the normal floor.  A short remaining lease clamps that floor at the boundary
    so RENEWING cannot run past T2 and REBINDING cannot run past expiry. */
-static fn net_lease_retry_after(net_holding address_to held, positive now,
+static COLD fn net_lease_retry_after(net_holding address_to held, positive now,
                                 bool attempted_rebinding)
 {
         positive gone;
@@ -1097,14 +1097,14 @@ static fn net_lease_retry_after(net_holding address_to held, positive now,
         held->retry = (p32)(gone + delay);
 }
 
-static fn net_rollback_record(bipolar status,
+static COLD fn net_rollback_record(bipolar status,
                               bipolar address_to first)
 {
         if (!net_change_gone(status) && !*first)
                 *first = status;
 }
 
-static bipolar net_holding_release(b32 handle, net_holding address_to held)
+static COLD bipolar net_holding_release(b32 handle, net_holding address_to held)
 {
         bipolar failed = 0;
 
@@ -1144,7 +1144,7 @@ static bipolar net_holding_release(b32 handle, net_holding address_to held)
    old address is restored before its route; a new route is removed before
    its address. Failures are remembered, but every independent cleanup is
    still attempted so one refusal cannot strand the rest. */
-static bipolar net_lease_rollback(
+static COLD bipolar net_lease_rollback(
     b32 handle, const net_holding address_to previous,
     p32 index, const dhcp_lease address_to lease,
     bool address_changed, bool route_changed)
@@ -1196,7 +1196,7 @@ static bipolar net_lease_rollback(
         return failed;
 }
 
-static b32 net_apply_lease(b32 handle, p32 index, string_address name,
+static COLD b32 net_apply_lease(b32 handle, p32 index, string_address name,
                            p8 address_to hardware,
                            const dhcp_lease address_to lease,
                            net_holding address_to held, bool announce)
@@ -1346,7 +1346,7 @@ failed:
         return net_refused(doing, status);
 }
 
-static p8 net_internet_prefer(void)
+static COLD p8 net_internet_prefer(void)
 {
         p8 text[16];
         bipolar got = file_slurp_once_at(AT_FDCWD, NET_INTERNET_RUN, text,
@@ -1365,7 +1365,7 @@ static p8 net_internet_prefer(void)
                                            : NETLINK_PREFER_WIRED;
 }
 
-static b32 net_auto(b32 handle, net_holding address_to held)
+static COLD b32 net_auto(b32 handle, net_holding address_to held)
 {
         netlink_search search;
         dhcp_lease lease;
@@ -1428,7 +1428,7 @@ static b32 net_auto(b32 handle, net_holding address_to held)
                                search.hardware, address_of lease, held, true);
 }
 
-static b32 net_reconfigure(b32 handle, net_holding address_to held)
+static COLD b32 net_reconfigure(b32 handle, net_holding address_to held)
 {
         if (held && held->lost)
         {
@@ -1491,7 +1491,7 @@ static netlink_buffer net_states;
 /* Remember every carrier transition, but reconfigure only when no lease is
    active or its interface actually loses carrier. A newly probed down link
    is actionable while unconfigured; a second live interface is not. */
-static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
+static COLD bool net_link_news(p32 index, p32 flags, net_holding address_to held)
 {
         net_state address_to entry;
         positive count = net_states.used / sizeof(net_state);
@@ -1530,7 +1530,7 @@ changed:
         return (flags & IFF_RUNNING) != 0 && index != held->index;
 }
 
-static bool net_link_removed(p32 index, net_holding address_to held)
+static COLD bool net_link_removed(p32 index, net_holding address_to held)
 {
         net_state address_to states = (net_state address_to)net_states.bytes;
         positive count = net_states.used / sizeof(net_state);
@@ -1557,7 +1557,7 @@ static bool net_link_removed(p32 index, net_holding address_to held)
 /* Link multicast records are untrusted variable-length netlink messages.
    DELLINK needs only the fixed interface index; it must not consult flags or
    optional attributes from a device which no longer exists. */
-static bool net_link_event(netlink_header address_to header,
+static COLD bool net_link_event(netlink_header address_to header,
                            net_holding address_to held)
 {
         netlink_link address_to link;
@@ -1576,7 +1576,7 @@ static bool net_link_event(netlink_header address_to header,
 }
 
 //      Discovery again, on a routing socket of its own, if one will open.
-static fn net_reconfigure_fresh(net_holding address_to held)
+static COLD fn net_reconfigure_fresh(net_holding address_to held)
 {
         bipolar handle = netlink_open_groups(0);
 
@@ -1587,7 +1587,7 @@ static fn net_reconfigure_fresh(net_holding address_to held)
         }
 }
 
-static bipolar net_wake_listen(void)
+static COLD bipolar net_wake_listen(void)
 {
         system_make_directory_at(AT_FDCWD, "/run", 0755);
         system_make_directory_at(AT_FDCWD, NET_STATE_DIR, 0755);
@@ -1598,7 +1598,7 @@ static bipolar net_wake_listen(void)
                               FILE_READ_WRITE | O_NONBLOCK | O_CLOEXEC);
 }
 
-static fn net_wake_drain(b32 handle)
+static COLD fn net_wake_drain(b32 handle)
 {
         p8 sink[64];
         bipolar got;
@@ -1612,7 +1612,7 @@ static fn net_wake_drain(b32 handle)
         }
 }
 
-static b32 net_watch(void)
+static COLD b32 net_watch(void)
 {
         netlink_buffer message = {0};
         net_holding held;
@@ -1874,7 +1874,7 @@ static b32 net_watch(void)
 }
 
 //      One table dumped, one line per entry; routes print interface names.
-static b32 net_show(b32 handle, p16 type, positive body, p8 family,
+static COLD b32 net_show(b32 handle, p16 type, positive body, p8 family,
                     netlink_visitor line, const char address_to doing)
 {
         bipolar shown = type == RTM_GETROUTE ? net_names_gather(handle) : 0;
@@ -1884,7 +1884,7 @@ static b32 net_show(b32 handle, p16 type, positive body, p8 family,
         return shown < 0 ? net_refused((string_address)doing, shown) : 0;
 }
 
-static b32 net_ip(void)
+static COLD b32 net_ip(void)
 {
         bipolar handle;
         string_address object = net_words() > 1 ? net_word(1) : null;
