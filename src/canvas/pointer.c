@@ -550,7 +550,7 @@ static unsigned int keyboard_modifiers(void)
                 held |= pointer->modifiers;
         return ((held | (held >> 4)) &
                 (WINDOW_KEY_SHIFT | WINDOW_KEY_CONTROL | WINDOW_KEY_ALT)) |
-               (held & WINDOW_KEY_ALTGR);
+               ((held & KEY_HELD_ALTGR) ? WINDOW_KEY_ALTGR : 0);
 }
 
 static HOT void pointer_event(struct input_handle *handle, unsigned int type,

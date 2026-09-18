@@ -30,13 +30,43 @@
         and treats 8 as an ordinary character -- so sending 8 echoed as ^H and
         made the line two characters longer for every press.
 */
-static unsigned char key_mod[KEY_TABLE] = {
+/*
+        Which modifier a key is, in the held word's own spelling.
+
+        A right-hand key is its left-hand flag moved up four bits, so
+        keyboard_modifiers can put the side back by shifting down and one word
+        carries both hands. That works for shift, control and alt because
+        their flags are 2, 4 and 8 and nothing else lives at 32, 64 and 128.
+
+        AltGr is the one that does not fit. WINDOW_KEY_CONTROL << 4 is 64 and
+        WINDOW_KEY_ALTGR is 64, so right Control and right Alt were the same
+        bit in this table: holding right Control selected the AltGr level of
+        the map, holding right Alt read as Control -- so Control chords fired
+        on it and Alt-Tab did not -- and either key held made the other's
+        release go out on disconnect. AltGr is also not the other side of
+        Alt, which is why it cannot simply be WINDOW_KEY_ALT << 4: since
+        af20afca right Alt means level three of the map, not compositor Alt.
+
+        So the held word gets a bit of its own, above everything the shift can
+        reach and deliberately not a window flag, and keyboard_modifiers
+        spells it as WINDOW_KEY_ALTGR on the way out. The flag itself does not
+        move: it is in window_key.flags, which is what every client reads.
+
+        WINDOW_KEY_SHIFT << 4 is 32, which is also WINDOW_KEY_POINTER_MOVE,
+        and that one is harmless rather than lucky: a held word is never a
+        client's flags. What reaches window_key.flags is keyboard_modifiers'
+        answer, which carries no bit above 8 but the one it puts there, and a
+        pointer's flags never enter a keyboard's held word.
+*/
+#define KEY_HELD_ALTGR 256u
+
+static unsigned short key_mod[KEY_TABLE] = {
     [KEY_LEFTSHIFT] = WINDOW_KEY_SHIFT,
     [KEY_RIGHTSHIFT] = WINDOW_KEY_SHIFT << 4,
     [KEY_LEFTCTRL] = WINDOW_KEY_CONTROL,
     [KEY_RIGHTCTRL] = WINDOW_KEY_CONTROL << 4,
     [KEY_LEFTALT] = WINDOW_KEY_ALT,
-    [KEY_RIGHTALT] = WINDOW_KEY_ALTGR,
+    [KEY_RIGHTALT] = KEY_HELD_ALTGR,
 };
 static unsigned short key_live[KEY_TABLE][KEY_LEVELS];
 static char canvas_layout_held[8] = "us";
@@ -359,7 +389,7 @@ static void keyboard_event(struct input_handle *handle, unsigned int code, int v
                         flags of ordinary keys, but consume its own events.
                 */
                 if (bit & (WINDOW_KEY_ALT | (WINDOW_KEY_ALT << 4) |
-                           WINDOW_KEY_ALTGR))
+                           KEY_HELD_ALTGR))
                 {
                         if (!(modifiers & WINDOW_KEY_ALT) &&
                             atomic_xchg(&desktop.focus_cycling, 0))

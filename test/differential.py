@@ -17707,7 +17707,17 @@ static void check_keyboard_state(void) {
         memset(&desktop,0,sizeof(desktop));closed=0;
         struct pointer_handle *a=keyboard_attach(0),*b=keyboard_attach(-EIO);
         struct pointer_handle *devices[]={a,split?b:a};
-        unsigned codes[]={pairs[family][order],pairs[family][!order]},flag=2u<<family;
+        //      What each of the two keys, in the order this presses them,
+        //      puts in desktop.modifiers. Shift and control are one modifier
+        //      on both hands, so left and right are the same flag and the row
+        //      reads exactly as it always did. Right Alt has been AltGr since
+        //      af20afca -- level three of the map rather than compositor Alt
+        //      -- so the alt row is the one pair whose two keys are different
+        //      modifiers, and what survives a release is the surviving key's
+        //      own flag rather than always the pair's.
+        unsigned left=2u<<family,right=family==2?WINDOW_KEY_ALTGR:2u<<family;
+        unsigned codes[]={pairs[family][order],pairs[family][!order]};
+        unsigned sides[]={order?right:left,order?left:right},flag=left|right;
         keyboard_send(devices[0],codes[0],1);
         keyboard_send(devices[1],codes[1],1);
         for(unsigned repeat=0;repeat<4;repeat++)keyboard_send(devices[repeat%2],codes[repeat%2],2);
@@ -17715,9 +17725,14 @@ static void check_keyboard_state(void) {
         check((unsigned)desktop.modifiers==flag,"both modifier sides and repeats");
         keyboard_send(devices[release],codes[release],0);
         keyboard_send(devices[release],codes[release],0);
-        check((unsigned)desktop.modifiers==flag,"one side and duplicate release preserve other");
-        check(family!=2 || (desktop.focus_cycling && !desktop.focus_commit),
-              "first Alt release preserves traversal");
+        check((unsigned)desktop.modifiers==sides[!release],"one side and duplicate release preserve other");
+        //      A traversal ends when Alt itself is let go, and AltGr is not
+        //      Alt: letting go of right Alt leaves it running, letting go of
+        //      left Alt commits it whether or not AltGr is still down.
+        check(family!=2 || ((sides[!release] & WINDOW_KEY_ALT)
+                                ? (desktop.focus_cycling && !desktop.focus_commit)
+                                : (!desktop.focus_cycling && desktop.focus_commit)),
+              "first release preserves traversal while Alt is held");
         keyboard_send(a,30,1);
         if(family!=2) {
             struct window_key *key=&desktop.key_ring[(desktop.key_head-1)%WINDOW_KEYS];
