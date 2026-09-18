@@ -2814,8 +2814,18 @@ static inline INLINE bool environment_key_is(string_address entry,
 /* Linux errno text shared by libc and descriptor-oriented diagnostics.
    Numbering and wording match glibc; 41 and 58 are unassigned. A negative
    kernel result must be normalized by its caller. Unknown codes return null
-   so each interface retains its own fallback and buffer policy. */
-static inline CONST string_address system_error_message(bipolar code)
+   so each interface retains its own fallback and buffer policy.
+
+   PURE and not CONST. The answer is a load out of the table below, and a
+   const function is the one kind gcc is told reads no memory at all -- not
+   through a pointer argument and not out of a global, a read-only global
+   included. The table can never change, so nothing gcc does with const would
+   be wrong today; what it would be is a claim the body does not support, and
+   the next reader would carry it to a table that is not const. size_suffix_power
+   up the file is the same shape -- a static table indexed by the argument --
+   and is spelled PURE, which is the mark that says "reads memory, writes
+   none" and is what this is. */
+static inline PURE string_address system_error_message(bipolar code)
 {
         static const char address_to const messages[] = {
                 "Success",
