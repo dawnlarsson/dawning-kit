@@ -3449,23 +3449,6 @@ static fn cat_number()
         cat_line_number++;
 }
 
-/* Shared state transition for a byte at the start of a physical line.
-   False means the newline belongs to an already-emitted blank run. */
-static inline INLINE bool cat_line_start(bool blank)
-{
-        if ((cat_flags & CAT_SQUEEZE) && blank && cat_blank_before)
-                return false;
-
-        cat_blank_before = blank;
-
-        if ((cat_flags & CAT_NUMBER_FULL) ? !blank
-                                          : (cat_flags & CAT_NUMBER))
-                cat_number();
-
-        cat_at_line_start = false;
-        return true;
-}
-
 // A byte as -v spells it: control characters as ^X, the high half as M- and
 // then the same rule again. Tab and newline are touched separately by -T.
 static fn cat_walked()
@@ -4999,69 +4982,6 @@ static b32 text_rev()
 }
 
 /*
-        Lines held whole, because sort and tail both need every line at once
-        and a line is a slice of the arena rather than a string: nothing here
-        writes a terminator, so a line with a NUL in it survives.
-*/
-#define TEXT_LINES_MAX (1 << 20)
-
-typedef struct
-{
-        p8 address_to at;
-        positive length;
-        bool ended;
-} text_slice;
-
-static text_slice address_to text_lines;
-static positive text_lines_count;
-
-static bool text_lines_ready()
-{
-        if (text_lines)
-                return true;
-
-        text_lines = (text_slice address_to)utility_arena_take(TEXT_LINES_MAX * sizeof(text_slice));
-        return text_lines != null;
-}
-
-// An empty table with the arena cut back to just past it, wherever it was
-// taken: a shell runs tail and then sort in one process, and the second must
-// not gather its lines after the first's.
-static fn text_lines_reset()
-{
-        text_lines_count = 0;
-        utility_arena.used =
-            text_lines ? (positive)((p8 address_to)(text_lines + TEXT_LINES_MAX) -
-                                    utility_arena.bytes)
-                       : 0;
-}
-
-static bool text_lines_gather()
-{
-        if (!text_lines_ready())
-                return false;
-
-        while (text_line_next(text_line, 0))
-        {
-                if (text_lines_count >= TEXT_LINES_MAX)
-                        return string_diagnostic(&text_diagnostic, 0, null, "too many lines");
-
-                p8 address_to room = (p8 address_to)utility_arena_take(text_line_length + 1);
-
-                if (!room)
-                        return false;
-
-                memory_copy(room, text_line, text_line_length);
-                text_lines[text_lines_count].at = room;
-                text_lines[text_lines_count].length = text_line_length;
-                text_lines[text_lines_count].ended = text_line_ended;
-                text_lines_count++;
-        }
-
-        return true;
-}
-
-/*
         Whatever is left of the input, held whole in the arena, for the byte
         counts head and tail can only answer once a pipe has ended.
 
@@ -5644,7 +5564,7 @@ static fn text_head_short(positive count, bool by_bytes)
 {
         positive size = 0;
 
-        text_lines_reset();
+        utility_arena.used = 0;
 
         if (text_regular_size(text_input.handle, address_of size))
         {
@@ -5883,7 +5803,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         continue;
                 }
 
-                text_lines_reset();
+                utility_arena.used = 0;
 
                 positive size = 0;
                 bool seekable = !marked &&
@@ -6459,11 +6379,8 @@ static bool text_tab_repeat_said;
 static bool text_tab_custom;
 static bool text_tab_option_seen;
 
-// Bytes expand copies as they are, the same without the space for unexpand,
-// and the space alone.
+// Bytes expand copies as they are, and the space alone.
 static const b8 text_tab_expand_span[256] = {[0 ... 7] = 1, [11 ... 255] = 1};
-static const b8 text_tab_unexpand_span[256] = {
-    [0 ... 7] = 1, [11 ... 31] = 1, [33 ... 255] = 1};
 static const b8 text_tab_space_span[256] = {[' '] = 1};
 
 static fn text_tab_reset()
@@ -26011,7 +25928,7 @@ static b32 text_sort()
         };
 
         text_begin("sort");
-        text_lines_reset();
+        utility_arena.used = 0;
         sort_outputs = 0;
         sort_option_status = 2;
         sort_tab_seen = false;
@@ -26561,8 +26478,8 @@ static b32 text_cmp()
 
                 answer = 1;
 
-                p8 left[8];
-                p8 right[8];
+                p8 left[TEXT_VISIBLE_MAX];
+                p8 right[TEXT_VISIBLE_MAX];
                 positive wide = 0;
 
                 if (shown)
