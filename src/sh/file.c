@@ -8500,6 +8500,36 @@ static bool ls_count_option(string_address value, string_address what,
         return true;
 }
 
+//      The options whose value is one word among several spellings. They
+//      differ in nothing but the name the complaint gives, the spellings
+//      allowed and the letter the answer is kept in, so they are a table and
+//      not eight cases that read the same.
+static const struct
+{
+        p8 letter;
+        string_address option;
+        const file_word address_to words;
+        positive count;
+        p8 address_to into;
+} ls_option_words[] = {
+    {'J', (string_address) "--format", ls_format_words, array_count(ls_format_words),
+     address_of ls_format_word},
+    {'3', (string_address) "--sort", ls_sort_words, array_count(ls_sort_words),
+     address_of ls_sort_word},
+    {'4', (string_address) "--time", ls_time_words, array_count(ls_time_words),
+     address_of ls_time_word},
+    {'z', (string_address) "--quoting-style", ls_quoting_words, array_count(ls_quoting_words),
+     address_of ls_quote_word},
+    {'Y', (string_address) "--indicator-style", ls_indicator_words, array_count(ls_indicator_words),
+     address_of ls_indicator_word},
+    {'K', (string_address) "--color", ls_when_words, array_count(ls_when_words),
+     address_of ls_color_when},
+    {'y', (string_address) "--hyperlink", ls_when_words, array_count(ls_when_words),
+     address_of ls_hyperlink_when},
+    {'E', (string_address) "--classify", ls_when_words, array_count(ls_when_words),
+     address_of ls_classify_when},
+};
+
 static b32 ls_option_status;
 
 static bool ls_option_word(p8 letter, string_address value)
@@ -8515,80 +8545,24 @@ static bool ls_option_word(p8 letter, string_address value)
                 return true;
         }
 
+        for (positive i = 0; i < array_count(ls_option_words); i++)
+        {
+                if (ls_option_words[i].letter != letter)
+                        continue;
+
+                b32 word = ls_word_among(ls_option_words[i].option, value,
+                                         ls_option_words[i].words,
+                                         ls_option_words[i].count);
+
+                if (word < 0)
+                        return false;
+
+                address_to ls_option_words[i].into = (p8)word;
+                return true;
+        }
+
         switch (letter)
         {
-        case 'J':
-        {
-                b32 word = ls_word_among((string_address) "--format", value,
-                                         ls_format_words, array_count(ls_format_words));
-                if (word < 0)
-                        return false;
-                ls_format_word = (p8)word;
-                return true;
-        }
-        case '3':
-        {
-                b32 word = ls_word_among((string_address) "--sort", value,
-                                         ls_sort_words, array_count(ls_sort_words));
-                if (word < 0)
-                        return false;
-                ls_sort_word = (p8)word;
-                return true;
-        }
-        case '4':
-        {
-                b32 word = ls_word_among((string_address) "--time", value,
-                                         ls_time_words, array_count(ls_time_words));
-                if (word < 0)
-                        return false;
-                ls_time_word = (p8)word;
-                return true;
-        }
-        case 'z':
-        {
-                b32 word = ls_word_among((string_address) "--quoting-style", value,
-                                         ls_quoting_words, array_count(ls_quoting_words));
-                if (word < 0)
-                        return false;
-                ls_quote_word = (p8)word;
-                return true;
-        }
-        case 'Y':
-        {
-                b32 word = ls_word_among((string_address) "--indicator-style", value,
-                                         ls_indicator_words, array_count(ls_indicator_words));
-                if (word < 0)
-                        return false;
-                ls_indicator_word = (p8)word;
-                return true;
-        }
-        case 'K':
-        {
-                b32 word = ls_word_among((string_address) "--color", value,
-                                         ls_when_words, array_count(ls_when_words));
-                if (word < 0)
-                        return false;
-                ls_color_when = (p8)word;
-                return true;
-        }
-        case 'y':
-        {
-                b32 word = ls_word_among((string_address) "--hyperlink", value,
-                                         ls_when_words, array_count(ls_when_words));
-                if (word < 0)
-                        return false;
-                ls_hyperlink_when = (p8)word;
-                return true;
-        }
-        case 'E':
-        {
-                b32 word = ls_word_among((string_address) "--classify", value,
-                                         ls_when_words, array_count(ls_when_words));
-                if (word < 0)
-                        return false;
-                ls_classify_when = (p8)word;
-                return true;
-        }
         case 'w':
                 if (ls_count_option(value, (string_address) "line width",
                                     address_of ls_width_option))
