@@ -16720,6 +16720,9 @@ def harness_core_state(argv):
     """Kernel snapshot allocation and Canvas geometry, with syscall/DRM-free mocks."""
     root = HARNESS_ROOT
     core = (root / "src/core.c").read_text()
+    # The bind subsystem and the machine script moved out of core.c into
+    # moonwater.c; core.c includes it. The slices below follow them.
+    moonwater = (root / "src/moonwater.c").read_text()
     pane = (root / "src/canvas/pane.c").read_text()
     canvas = (root / "src/canvas/canvas.c").read_text()
     compose = (root / "src/canvas/compose.c").read_text()
@@ -17070,7 +17073,16 @@ static long stat_task_ns, stat_spawns;
     source += r'''
 static long report_stats(struct stats *out) { (void)out; return 322; }
 '''
+    # The machine control ABI the bind rows and report_machine both name:
+    # ioctl numbers, struct machine_control, the overlay and the script,
+    # then the script scanner itself -- the real lexer, not a mock, because
+    # the overlay lines a bind row reads come out of it.
+    source += section(moonwater, "#define MOONWATER_ATTACH",
+                      "#if defined(STANDARD_MODERN_C_KERNEL) || defined(MOONWATER_SCAN)")
+    source += section(moonwater, "#define SCRIPT_WORD 64", "#endif /* scan */")
     source += "static long report_bind(struct bind_control *out);\n"
+    source += ("static long report_machine_script("
+               "struct machine_script __user *out);\n")
     source += "static long report_machine(struct file *file, struct machine_control __user *out);\n"
     # The settings requests are checked where they are written, not here:
     # device_ioctl only has to reach them.
@@ -17183,6 +17195,25 @@ static void check_spawn_dispatch(void) {
 #define COLD
 #define KEY_LEFTSHIFT 42
 #define KEY_RIGHTSHIFT 54
+#define KEY_MICMUTE 248
+#define KEY_RFKILL 247
+#define KEY_WLAN 238
+#define SW_TABLET_MODE 1
+#define SW_HEADPHONE_INSERT 2
+#define SW_DOCK 5
+#define WINDOW_KEY_POINTER 16u
+#define WINDOW_KEY_POINTER_MOVE 32u
+#define WINDOW_KEY_ALTGR 64u
+/* The kernel's bounded copy, ahead of the canvas slices that call it. The
+   bind preamble below redefines it onto its own counting version. */
+static void state_strscpy(char *to, const char *from, unsigned long size) {
+    unsigned long at=0; for (;at+1<size && from[at];at++) to[at]=from[at];
+    if (size) to[at]=0;
+}
+#define strscpy(to,from,size) state_strscpy((to),(from),(size))
+#define wait_event_interruptible_timeout(wq,cond,to) ((void)(wq),(cond)?1:0)
+static const char moonwater_machine_builtin[]="";
+static const char moonwater_machine_builtin_end[]="";
 #define KEY_LEFTCTRL 29
 #define KEY_RIGHTCTRL 97
 #define KEY_LEFTALT 56
@@ -17389,6 +17420,15 @@ static void desktop_set_awake(_Bool awake) { assert(desktop.lock);desktop.awake=
 #ifndef pr_warn
 #define pr_warn(...) ((void)0)
 #endif
+#ifndef pr_alert
+#define pr_alert(...) ((void)0)
+#endif
+/* bind_start registers the input handler and the two notifiers; the handler
+   object and bind_connect/bind_disconnect live outside the slices above. */
+static struct { int registered; } bind_handler;
+static int input_register_handler(void *handler) { (void)handler; return 0; }
+#define register_keyboard_notifier(nb) ((void)(nb),0)
+#define register_pm_notifier(nb) ((void)(nb),0)
 #define ATOMIC_INIT(value) (value)
 #define msecs_to_jiffies(ms) ((unsigned long)(ms))
 #define time_before(a,b) ((long)((a)-(b))<0)
@@ -17435,12 +17475,13 @@ static void init_waitqueue_head(wait_queue_head_t *w) { if (w) *w = 0; }
 static void wake_up(wait_queue_head_t *w) { (void)w; wakes++; }
 #define wait_event_interruptible(wq, condition) ((condition) ? 0 : 1)
 """
-    source += section(core, "#define BIND_MOD_CTRL", "static int bind_connect")
-    source += section(core, "#ifdef CONFIG_VT\nstatic int bind_keyboard_notify",
+    source += section(moonwater, "#define BIND_MOD_CTRL", "static int bind_connect")
+    source += section(moonwater, "#ifdef CONFIG_VT\nstatic int bind_keyboard_notify",
                       "static void bind_start(void)")
-    source += section(core, "static void bind_start(void)", "static void bind_stop(void)")
-    source += section(core, "static void bind_answer",
-                      "#ifdef CONFIG_MOONWATER_CANVAS\n#define REPORT_CANVAS")
+    source += section(moonwater, "static void bind_start(void)",
+                      "static void bind_stop(void)")
+    source += section(moonwater, "static void bind_answer",
+                      "#endif /* STANDARD_MODERN_C_KERNEL */")
     source += r"""
 static pid_t user_mode_thread(int (*fn)(void *), void *arg, unsigned long sig) {
     struct bind_spawn *spawn=arg;
@@ -17449,7 +17490,8 @@ static pid_t user_mode_thread(int (*fn)(void *), void *arg, unsigned long sig) {
     snprintf(bind_argv[0],sizeof(bind_argv[0]),"%s",SPARK_TOOL_PROGRAM);
     snprintf(bind_argv[1],sizeof(bind_argv[1]),"-c");
     snprintf(bind_argv[2],sizeof(bind_argv[2]),"%s",spawn->command);
-    if (bind_thread_pid>0) kfree(spawn);
+    /* The request rides bind_run's own stack now, so the helper copies what
+       it wants out of it and frees nothing. */
     return bind_thread_pid;
 }
 static int kernel_wait(pid_t pid, int *stat) {
@@ -17781,8 +17823,11 @@ static void check_bind(void) {
     check(!strcmp(power->command,"poweroff") && !strcmp(reset->command,"reboot") &&
           !strcmp(cad->command,"reboot") && !sleep->command[0] && !vol->command[0],
           "poweroff, reset and ctrl_alt_delete have defaults; the rest start empty");
-    check(!strcmp(power->name,"poweroff") && !strcmp(on->name,"canvas on") &&
-          !strcmp(off->name,"canvas off"),
+    /* The name a row carries is the shared table's entry for its event
+       rather than a field of its own, so the table is what is read here. */
+    check(!strcmp(spark_bind_event_name[power->event-1],"poweroff") &&
+          !strcmp(spark_bind_event_name[on->event-1],"canvas on") &&
+          !strcmp(spark_bind_event_name[off->event-1],"canvas off"),
           "canvas on and canvas off are the names, not start and stop");
 
     bind_press(SPARK_BIND_POWEROFF,"poweroff",42,0);
@@ -18006,7 +18051,7 @@ static void check_bind_edges(void) {
               request.count==SPARK_BIND_EVENTS &&
               !strcmp(request.command,row->def) &&
               !!(request.flags & SPARK_BIND_DEFAULT) &&
-              !!(request.flags & SPARK_BIND_BOOT)==!!row->boot &&
+              !!(request.flags & SPARK_BIND_BOOT)==!!(row->flags & BIND_BOOT) &&
               atomic_read(&row->bound)==(row->def[0]!=0),
               who);
         for (other=event+1; other<=SPARK_BIND_EVENTS; other++)
@@ -18455,7 +18500,9 @@ static void check_canvas_control(void) {
     check(report_canvas(&control)==-EPERM && !canvas_offs,
           "CAP_SYS_BOOT is not enough to turn Canvas off");
     power_admin=1;
-    memset(&control,0,sizeof(control));control.request=3;
+    /* One past the last request there is: 3 became SPARK_CANVAS_LAYOUT, so
+       the sentinel follows the enum rather than naming a number. */
+    memset(&control,0,sizeof(control));control.request=SPARK_CANVAS_LAYOUT+1;
     check(report_canvas(&control)==-EINVAL && !canvas_ons && !canvas_offs,
           "an unknown Canvas request is refused");
     canvas_on_answer=-EBUSY;
