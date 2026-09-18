@@ -10957,6 +10957,27 @@ static fn find_batch_add(find_node address_to node, string_address path)
         positive length = string_length(subject);
         positive room = (b32)node->extra - (b32)node->number;
 
+        /* The flush below empties the batch; it cannot make it bigger. A
+           subject longer than the whole batch would not fit an empty one
+           either, and the copy at the end ran regardless -- so this is the
+           byte bound, checked where it can still refuse.
+
+           It is reachable because the two walks do not agree on how long a
+           path may be. The serial walk joins through file_path_join and stops
+           at FILE_PATH_MAX; the pool walk composes its own and says outright
+           that it has no depth limit, so `find . -exec echo {} +` over a tree
+           of 200 nested 250-byte names handed 50201 bytes to a memcpy into
+           text[32768]. The walk already refuses a name it cannot join with
+           the kernel's own word for it, and so does this. */
+        if (length + 1 > FIND_BATCH_BYTES)
+        {
+                string_format(log_error, "find: '%w': %s\n",
+                              writer_terminal_quoted_name, subject,
+                              file_reason(-ERROR_NAME_TOO_LONG));
+                find_status = 1;
+                return;
+        }
+
         bipolar directory = -1;
         if (in_directory)
         {
