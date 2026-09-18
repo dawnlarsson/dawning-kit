@@ -13384,13 +13384,25 @@ static fn text_set_build(string_address spec, p8 address_to into, p8 address_to 
                                 }
                                 else
                                 {
-                                        positive room = TEXT_SET_MAX - address_to have;
+                                        /*
+                                                A repeat longer than the pairing
+                                                can read is the same set. Only
+                                                other_length bytes of a second
+                                                set are ever looked at, and a
+                                                first set is read against a
+                                                second no longer than the room
+                                                here, so every position past
+                                                that maps the way the last one
+                                                does. GNU builds the whole of
+                                                [x*4294967296] and reads no more
+                                                than this either.
+                                        */
+                                        if (other_length > address_to have &&
+                                            count > other_length - address_to have)
+                                                count = other_length - address_to have;
 
-                                        if (count > room)
-                                        {
-                                                text_set_broken = true;
-                                                count = room;
-                                        }
+                                        if (count > TEXT_SET_MAX - address_to have)
+                                                count = TEXT_SET_MAX - address_to have;
 
                                         memory_fill(into + address_to have, spec[at + 1], count);
                                         memory_fill(classes + address_to have, 0, count);
