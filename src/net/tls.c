@@ -144,7 +144,7 @@ static fn tls_forget(tls_conn address_to tls)
         tls->handle = -1;
 }
 
-static fn tls_expand_label(p8 address_to secret, string_address label,
+static COLD fn tls_expand_label(p8 address_to secret, string_address label,
                            p8 address_to context, positive context_length,
                            p8 address_to out, positive out_length)
 {
@@ -176,7 +176,7 @@ static fn tls_expand_label(p8 address_to secret, string_address label,
         crypto_forget(info, sizeof info);
 }
 
-static fn tls_derive_secret(p8 address_to secret, string_address label,
+static COLD fn tls_derive_secret(p8 address_to secret, string_address label,
                             crypto_sha256 address_to transcript,
                             p8 address_to out)
 {
@@ -189,7 +189,7 @@ static fn tls_derive_secret(p8 address_to secret, string_address label,
         crypto_forget(hash, sizeof hash);
 }
 
-static fn tls_empty_hash(p8 address_to out)
+static COLD fn tls_empty_hash(p8 address_to out)
 {
         crypto_sha256 hash;
 
@@ -198,7 +198,7 @@ static fn tls_empty_hash(p8 address_to out)
         crypto_forget(address_of hash, sizeof hash);
 }
 
-static fn tls_traffic_keys(p8 address_to traffic, p8 address_to key,
+static COLD fn tls_traffic_keys(p8 address_to traffic, p8 address_to key,
                            p8 address_to iv)
 {
         tls_expand_label(traffic, "key", null, 0, key, 16);
@@ -219,7 +219,7 @@ static fn tls_nonce(p8 address_to iv, p64 seq, p8 address_to nonce)
 
 /* A record leaves in one send. Sent in pieces, everything after the first
    piece waits under Nagle for the peer to acknowledge it. */
-static bipolar tls_send_plain(tls_conn address_to tls, p8 type, p8 address_to body,
+static COLD bipolar tls_send_plain(tls_conn address_to tls, p8 type, p8 address_to body,
                               positive length)
 {
         p8 record[5 + TLS_HS_MAX];
@@ -506,7 +506,7 @@ static fn tls_transcript_add(tls_conn address_to tls, p8 address_to msg,
         crypto_sha256_write(address_of tls->transcript, msg, length);
 }
 
-static bipolar tls_asn1_length(p8 address_to bytes, positive size,
+static COLD bipolar tls_asn1_length(p8 address_to bytes, positive size,
                                positive address_to at, positive address_to length)
 {
         positive i = address_to at;
@@ -541,7 +541,7 @@ static bipolar tls_asn1_length(p8 address_to bytes, positive size,
         return TLS_OK;
 }
 
-static bipolar tls_asn1_enter(p8 address_to bytes, positive size, p8 tag,
+static COLD bipolar tls_asn1_enter(p8 address_to bytes, positive size, p8 tag,
                               positive address_to at, positive address_to stop)
 {
         positive i = address_to at;
@@ -561,7 +561,7 @@ static bipolar tls_asn1_enter(p8 address_to bytes, positive size, p8 tag,
 
 /* Past one value of whatever tag it carries: entering it and then taking its
    end for the next value's start is the whole of skipping it. */
-static bipolar tls_asn1_skip(p8 address_to bytes, positive size, positive address_to at)
+static COLD bipolar tls_asn1_skip(p8 address_to bytes, positive size, positive address_to at)
 {
         positive stop = 0;
 
@@ -574,7 +574,7 @@ static bipolar tls_asn1_skip(p8 address_to bytes, positive size, positive addres
         return TLS_OK;
 }
 
-static bool tls_oid_is(const p8 address_to bytes, positive length,
+static COLD bool tls_oid_is(const p8 address_to bytes, positive length,
                        const p8 address_to oid, positive oid_length)
 {
         return length == oid_length && !memory_compare(bytes, oid, oid_length);
@@ -583,7 +583,7 @@ static bool tls_oid_is(const p8 address_to bytes, positive length,
 /* DER INTEGERs used for keys and ECDSA signatures are strictly positive and
    minimally encoded.  Return the magnitude without the one permitted sign
    octet. */
-static bool tls_positive_integer(p8 address_to bytes, positive at,
+static COLD bool tls_positive_integer(p8 address_to bytes, positive at,
                                  positive stop, positive address_to value_at,
                                  positive address_to value_length)
 {
@@ -605,7 +605,7 @@ static bool tls_positive_integer(p8 address_to bytes, positive at,
 /* The verifier implements these three certificate signature algorithms.
    ECDSA parameters must be absent; RSA's historical NULL may be present or
    absent, but no other parameter or trailing value is accepted. */
-static bool tls_signature_algorithm(p8 address_to der, positive size,
+static COLD bool tls_signature_algorithm(p8 address_to der, positive size,
                                     positive address_to at,
                                     p8 address_to address_to oid,
                                     positive address_to oid_length)
@@ -646,7 +646,7 @@ static bool tls_signature_algorithm(p8 address_to der, positive size,
         return true;
 }
 
-static bool tls_host_match(string_address host, p8 address_to name,
+static COLD bool tls_host_match(string_address host, p8 address_to name,
                            positive name_length)
 {
         positive host_length = string_length(host);
@@ -668,7 +668,7 @@ static bool tls_host_match(string_address host, p8 address_to name,
                                           name_length - 1);
 }
 
-static bool tls_general_name_match(string_address host, p8 tag,
+static COLD bool tls_general_name_match(string_address host, p8 tag,
                                    p8 address_to name, positive name_length)
 {
         bipolar address = string_to_host(host);
@@ -683,7 +683,7 @@ static bool tls_general_name_match(string_address host, p8 tag,
 /* Parse the signed GeneralNames value once, all the way to its declared end.
    A matching first entry does not authorize the certificate until every
    later entry and the outer DER framing have also been validated. */
-static bool tls_parse_san(p8 address_to value, positive length,
+static COLD bool tls_parse_san(p8 address_to value, positive length,
                           string_address host, bool address_to matched)
 {
         positive at = 0;
@@ -725,7 +725,7 @@ static bool tls_parse_san(p8 address_to value, positive length,
         return at == stop;
 }
 
-static bipolar tls_parse_ecdsa_sig(p8 address_to sig, positive length,
+static COLD bipolar tls_parse_ecdsa_sig(p8 address_to sig, positive length,
                                    p8 address_to r, positive address_to r_length,
                                    p8 address_to s, positive address_to s_length)
 {
@@ -793,7 +793,7 @@ typedef struct
         bool unsupported_critical;
 } tls_cert;
 
-static bool tls_date_value(p8 tag, p8 address_to text, positive length,
+static COLD bool tls_date_value(p8 tag, p8 address_to text, positive length,
                            p64 address_to value)
 {
         static const p8 days_in_month[12] = {31, 28, 31, 30, 31, 30,
@@ -857,7 +857,7 @@ static bool tls_date_value(p8 tag, p8 address_to text, positive length,
         return true;
 }
 
-static bipolar tls_parse_validity(p8 address_to der, positive size,
+static COLD bipolar tls_parse_validity(p8 address_to der, positive size,
                                   positive address_to at, tls_cert address_to cert)
 {
         positive validity_stop = 0;
@@ -885,7 +885,7 @@ static bipolar tls_parse_validity(p8 address_to der, positive size,
         return TLS_OK;
 }
 
-static bipolar tls_parse_basic_constraints(p8 address_to value, positive length,
+static COLD bipolar tls_parse_basic_constraints(p8 address_to value, positive length,
                                             tls_cert address_to cert)
 {
         positive at = 0;
@@ -929,7 +929,7 @@ static bipolar tls_parse_basic_constraints(p8 address_to value, positive length,
         return TLS_OK;
 }
 
-static bipolar tls_parse_key_usage(p8 address_to value, positive length,
+static COLD bipolar tls_parse_key_usage(p8 address_to value, positive length,
                                    tls_cert address_to cert)
 {
         positive at = 0;
@@ -948,7 +948,7 @@ static bipolar tls_parse_key_usage(p8 address_to value, positive length,
         return TLS_OK;
 }
 
-static bipolar tls_parse_extended_key_usage(p8 address_to value, positive length,
+static COLD bipolar tls_parse_extended_key_usage(p8 address_to value, positive length,
                                             tls_cert address_to cert)
 {
         positive at = 0;
@@ -971,7 +971,7 @@ static bipolar tls_parse_extended_key_usage(p8 address_to value, positive length
         return TLS_OK;
 }
 
-static bipolar tls_parse_extensions(p8 address_to der, positive tbs_stop,
+static COLD bipolar tls_parse_extensions(p8 address_to der, positive tbs_stop,
                                     positive at, tls_cert address_to cert,
                                     string_address host)
 {
@@ -1086,7 +1086,7 @@ static bipolar tls_parse_extensions(p8 address_to der, positive tbs_stop,
         return TLS_OK;
 }
 
-static bipolar tls_parse_cert(p8 address_to der, positive length,
+static COLD bipolar tls_parse_cert(p8 address_to der, positive length,
                               tls_cert address_to cert, string_address host)
 {
         positive at = 0;
@@ -1267,7 +1267,7 @@ static bipolar tls_parse_cert(p8 address_to der, positive length,
 }
 
 /* An anchor's key laid out the way tls_parse_cert lays out a served one. */
-static bool tls_anchor_key(const tls_anchor address_to anchor,
+static COLD bool tls_anchor_key(const tls_anchor address_to anchor,
                            tls_cert address_to root)
 {
         positive length = anchor->key_length;
@@ -1305,7 +1305,7 @@ static bool tls_anchor_key(const tls_anchor address_to anchor,
 
 /* A served certificate carrying an anchor's key ends the chain, whoever
    signed it: the key hash finds candidates and the whole key decides. */
-static bool tls_spki_is_anchor(tls_cert address_to cert)
+static COLD bool tls_spki_is_anchor(tls_cert address_to cert)
 {
         p8 key[96];
         p8 digest[32];
@@ -1350,7 +1350,7 @@ static bool tls_spki_is_anchor(tls_cert address_to cert)
         return false;
 }
 
-static bool tls_certificate_names_chain(const tls_cert address_to child,
+static COLD bool tls_certificate_names_chain(const tls_cert address_to child,
                                         const tls_cert address_to issuer)
 {
         /* The server provides an already ordered path.  A signature made by
@@ -1365,7 +1365,7 @@ static bool tls_certificate_names_chain(const tls_cert address_to child,
                                child->issuer_length);
 }
 
-static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer)
+static COLD bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer)
 {
         p8 hash[48];
         p8 r[48];
@@ -1437,7 +1437,7 @@ static bool tls_verify_one(tls_cert address_to child, tls_cert address_to issuer
 /* The last certificate served names its issuer.  Each anchor with that
    subject Name is tried, and one signature that verifies ends the chain; a
    Name no anchor carries fails without any signature check. */
-static bool tls_anchor_verifies(tls_cert address_to child)
+static COLD bool tls_anchor_verifies(tls_cert address_to child)
 {
         p8 digest[32];
 
@@ -1458,7 +1458,7 @@ static bool tls_anchor_verifies(tls_cert address_to child)
         return false;
 }
 
-static fn tls_keep_leaf(tls_conn address_to tls, tls_cert address_to leaf)
+static COLD fn tls_keep_leaf(tls_conn address_to tls, tls_cert address_to leaf)
 {
         tls->leaf_curve = leaf->curve;
         tls->leaf_n_length = 0;
@@ -1479,7 +1479,7 @@ static fn tls_keep_leaf(tls_conn address_to tls, tls_cert address_to leaf)
         }
 }
 
-static bool tls_date_now(p64 address_to value)
+static COLD bool tls_date_now(p64 address_to value)
 {
         time_t stamp = time(null);
         tm calendar;
@@ -1497,20 +1497,20 @@ static bool tls_date_now(p64 address_to value)
         return true;
 }
 
-static bool tls_cert_current(tls_cert address_to cert, p64 now)
+static COLD bool tls_cert_current(tls_cert address_to cert, p64 now)
 {
         return !cert->unsupported_critical && cert->not_before <= now &&
                now <= cert->not_after;
 }
 
-static bool tls_leaf_authorized(tls_cert address_to cert, p64 now)
+static COLD bool tls_leaf_authorized(tls_cert address_to cert, p64 now)
 {
         return tls_cert_current(cert, now) &&
                (!cert->key_usage || cert->digital_signature) &&
                (!cert->extended_key_usage || cert->server_auth);
 }
 
-static bool tls_issuer_authorized(tls_cert address_to cert, positive ca_below,
+static COLD bool tls_issuer_authorized(tls_cert address_to cert, positive ca_below,
                                   p64 now)
 {
         return tls_cert_current(cert, now) && cert->basic_constraints && cert->ca &&
@@ -1519,7 +1519,7 @@ static bool tls_issuer_authorized(tls_cert address_to cert, positive ca_below,
                (!cert->path_length_present || ca_below <= cert->path_length);
 }
 
-static bool tls_certificate_body_open(p8 address_to body,
+static COLD bool tls_certificate_body_open(p8 address_to body,
                                       positive body_length,
                                       positive address_to entries_at,
                                       positive address_to list_end)
@@ -1544,7 +1544,7 @@ static bool tls_certificate_body_open(p8 address_to body,
         return true;
 }
 
-static bool tls_verify_chain(p8 address_to body, positive body_length,
+static COLD bool tls_verify_chain(p8 address_to body, positive body_length,
                              string_address host, tls_conn address_to tls)
 {
         tls_cert certs[8];
@@ -1617,7 +1617,7 @@ static bool tls_verify_chain(p8 address_to body, positive body_length,
         return false;
 }
 
-static bool tls_hello_append(p8 address_to out, positive room,
+static COLD bool tls_hello_append(p8 address_to out, positive room,
                              positive address_to at,
                              const p8 address_to bytes, positive length)
 {
@@ -1629,7 +1629,7 @@ static bool tls_hello_append(p8 address_to out, positive room,
         return true;
 }
 
-static bipolar tls_client_hello(tls_conn address_to tls, p8 address_to out,
+static COLD bipolar tls_client_hello(tls_conn address_to tls, p8 address_to out,
                                 positive room, positive address_to used)
 {
         static const p8 prefix[] = {
@@ -1767,7 +1767,7 @@ done:
         return status;
 }
 
-static bipolar tls_server_hello_keys(p8 address_to hello, positive length,
+static COLD bipolar tls_server_hello_keys(p8 address_to hello, positive length,
                                      p8 address_to peer, positive room,
                                      positive address_to share_length,
                                      positive address_to group)
@@ -1868,7 +1868,7 @@ static bipolar tls_server_hello_keys(p8 address_to hello, positive length,
    may therefore cross record boundaries, but it is the last plaintext
    handshake message: bytes after its declared end cannot legally share that
    plaintext stream. */
-static bipolar tls_handshake_one_append(p8 address_to held, positive room,
+static COLD bipolar tls_handshake_one_append(p8 address_to held, positive room,
                                         positive address_to held_length,
                                         p8 address_to fragment,
                                         positive length)
@@ -1898,7 +1898,7 @@ static bipolar tls_handshake_one_append(p8 address_to held, positive room,
                                                    : TLS_FAIL;
 }
 
-static bipolar tls_install_handshake_keys(tls_conn address_to tls,
+static COLD bipolar tls_install_handshake_keys(tls_conn address_to tls,
                                           p8 address_to shared,
                                           positive shared_length)
 {
@@ -1932,7 +1932,7 @@ static bipolar tls_install_handshake_keys(tls_conn address_to tls,
         return TLS_OK;
 }
 
-static fn tls_derive_app_keys(tls_conn address_to tls)
+static COLD fn tls_derive_app_keys(tls_conn address_to tls)
 {
         p8 zeros[32];
         p8 derived[32];
@@ -1954,7 +1954,7 @@ static fn tls_derive_app_keys(tls_conn address_to tls)
         crypto_forget(master, sizeof master);
 }
 
-static fn tls_use_app_keys(tls_conn address_to tls)
+static COLD fn tls_use_app_keys(tls_conn address_to tls)
 {
         tls_traffic_keys(tls->c_ap_traffic, tls->c_key, tls->c_iv);
         tls_traffic_keys(tls->s_ap_traffic, tls->s_key, tls->s_iv);
@@ -1972,7 +1972,7 @@ static fn tls_use_app_keys(tls_conn address_to tls)
         crypto_forget(address_of tls->transcript, sizeof tls->transcript);
 }
 
-static bipolar tls_check_finished(tls_conn address_to tls, p8 address_to verify,
+static COLD bipolar tls_check_finished(tls_conn address_to tls, p8 address_to verify,
                                   positive length)
 {
         p8 finished_key[32];
@@ -1996,7 +1996,7 @@ done:
         return status;
 }
 
-static bipolar tls_send_finished(tls_conn address_to tls)
+static COLD bipolar tls_send_finished(tls_conn address_to tls)
 {
         p8 finished_key[32];
         p8 verify[32];
@@ -2027,7 +2027,7 @@ done:
         return status;
 }
 
-static bipolar tls_check_cert_verify(tls_conn address_to tls, p8 address_to msg,
+static COLD bipolar tls_check_cert_verify(tls_conn address_to tls, p8 address_to msg,
                                      positive length)
 {
         p8 signed_bytes[130];
@@ -2112,7 +2112,7 @@ static bipolar tls_check_cert_verify(tls_conn address_to tls, p8 address_to msg,
    flight has exactly one legal shape.  Keeping that shape in one transition
    function prevents a duplicate message from overwriting parsed certificate
    state or an early Finished from authenticating an incomplete transcript. */
-static bool tls_server_flight_step(p8 address_to state, p8 type)
+static COLD bool tls_server_flight_step(p8 address_to state, p8 type)
 {
         static const p8 expected[] = {
             TLS_HS_ENCRYPTED_EXTS,
@@ -2138,7 +2138,7 @@ static bool tls_server_flight_step(p8 address_to state, p8 type)
    nested scan's own framing tests were unreachable -- it only ever visited
    offsets this walk had already validated and placed -- so the predicate is
    the same one. */
-static bool tls_encrypted_extensions_valid(p8 address_to body,
+static COLD bool tls_encrypted_extensions_valid(p8 address_to body,
                                            positive length)
 {
         p8 seen[8192];
@@ -2173,7 +2173,7 @@ static bool tls_encrypted_extensions_valid(p8 address_to body,
         return at == length;
 }
 
-static bool tls_new_session_ticket_valid(p8 address_to body,
+static COLD bool tls_new_session_ticket_valid(p8 address_to body,
                                          positive length)
 {
         positive at = 8;
@@ -2203,7 +2203,7 @@ static bool tls_new_session_ticket_valid(p8 address_to body,
    Ignore only complete, well-framed NewSessionTicket messages.  KeyUpdate and
    every other unsupported post-handshake transition fail instead of leaving
    traffic keys or authentication state silently stale. */
-static bipolar tls_post_handshake_append(p8 address_to held,
+static COLD bipolar tls_post_handshake_append(p8 address_to held,
                                          positive address_to held_length,
                                          p8 address_to fragment,
                                          positive length)
@@ -2253,7 +2253,7 @@ static bipolar tls_post_handshake_append(p8 address_to held,
         return TLS_OK;
 }
 
-static bool tls_post_handshake_valid(p8 address_to messages,
+static COLD bool tls_post_handshake_valid(p8 address_to messages,
                                      positive length)
 {
         p8 held[TLS_HS_MAX];
@@ -2267,7 +2267,7 @@ static bool tls_post_handshake_valid(p8 address_to messages,
         return valid;
 }
 
-static bipolar tls_handshake(
+static COLD bipolar tls_handshake(
     tls_conn address_to tls, const network_deadline address_to deadline)
 {
         p8 hello[1024];
@@ -2453,7 +2453,7 @@ done:
         return status;
 }
 
-static bipolar tls_connect(tls_conn address_to tls, bipolar handle,
+static COLD bipolar tls_connect(tls_conn address_to tls, bipolar handle,
                            string_address host, bool check_cert)
 {
         bipolar status;
