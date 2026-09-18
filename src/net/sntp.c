@@ -20,6 +20,14 @@
         worse than a second abandons that server rather than collecting more
         samples from it.
 
+        SNTP_WALL_MOST ends that window at 2036-01-01, which is before the
+        NTP era rolls over rather than because of it: sntp_load_stamp reads
+        the era from the top of the seconds field and converts either one.
+        Moving the window is therefore the single edit that date needs, and
+        it is safe to move. The offset sum is two differences of four terms
+        the window bounds, and carrying the window all the way to 2104, the
+        end of era 1, leaves that sum at 8.47 of the 9.22 the type holds.
+
         T1 is read, the originate stamp is written, and the packet is sent
         with nothing else in between. T4 is read the moment recv returns.
         The conversion of those timespecs into nanoseconds waits until after
@@ -722,8 +730,19 @@ static HOT bipolar sntp_exchange(b32 handle,
                         return SNTP_MALFORMED;
                 t2 = sntp_load_stamp(reply + 32);
                 t3 = sntp_load_stamp(reply + 40);
+                /*
+                        The reference stamp is when the server last set
+                        its own clock, so it sits at or before the stamp
+                        it transmits. A second of slack, because the two
+                        are read at different moments and a server whose
+                        reference is one tick the wrong side of transmit
+                        would otherwise be refused for ever: the sample
+                        loop stops on BAD_SERVER, so that server is not
+                        asked again.
+                */
                 reference = sntp_load_stamp(reply + 16);
-                if_rare (!sntp_wall_ok(reference) || reference > t3)
+                if_rare (!sntp_wall_ok(reference) ||
+                         reference > t3 + (bipolar)SNTP_NANOSECONDS)
                         return SNTP_BAD_SERVER;
                 sntp_offset_delay(t1, t2, t3, t4, address_of offset,
                                   address_of delay);
