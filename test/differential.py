@@ -27048,18 +27048,36 @@ static bipolar bowl_dev_link(string_address target, string_address name) {
     mkdirs++;
     return 0;
 }
+#define BOWL_MAKE_NONE 0
+#define BOWL_MAKE_LEAF 1
+#define BOWL_MAKE_CHAIN 2
+/*  The strictness tiers as library.common.c spells them, so this window
+    reads the same answer the build would give it. */
+#define STRICT_REFERENCE 0
+#define STRICT_SAFE 1
+#define STRICT_TIGHT 2
+#ifndef MOONWATER_STRICT
+#define MOONWATER_STRICT STRICT_SAFE
+#endif
 static bool mock_made = true;
-static bipolar bowl_open_directory(string_address path, bool create, bool *made) {
+/*  The mode the first make of a prepare asked for, which is the runtime
+    directory's: the home directories come after it and would otherwise
+    overwrite the answer. */
+static p8 mock_make;
+static int mock_make_seen;
+static bipolar bowl_open_directory(string_address path, p8 create, bool *made) {
     (void)create;
     if (made) *made = false;
     return system_open_at(-100, path, FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
 }
-static bipolar bowl_mkdir_parents_made(string_address path, bool *made) {
-    if (made) *made = mock_made;
+static bipolar bowl_mkdir_parents_made(string_address path, p8 create, bool *made) {
+    if (!mock_make_seen) { mock_make = create; mock_make_seen = 1; }
+    if (made) *made = mock_made && create != BOWL_MAKE_NONE;
+    if (create == BOWL_MAKE_NONE) return 0;
     return bowl_mkdir(path);
 }
 static bipolar bowl_mkdir_parents(string_address path) {
-    return bowl_mkdir_parents_made(path, null);
+    return bowl_mkdir_parents_made(path, BOWL_MAKE_CHAIN, null);
 }
 static bool bowl_root_path(p8 *into, positive room, string_address root, string_address path) {
     if (!room) return false;
@@ -27209,9 +27227,21 @@ int main(void) {
     mock_made = true;
     mkdirs = modes = sticky = 0;
     last_private[0] = 0;
+    mock_make = 0xff;
+    mock_make_seen = 0;
     bowl_session_prepare("/root", "/home/a/xdg");
     check(modes && !strcmp(last_private, "/home/a/xdg"),
           "a runtime dir this session made is chmod 0700");
+    /*  A name the environment chose may have its last directory made and
+        no more; the session's own /run/user/<uid> is made in full, because
+        /run/user is this file's to make. */
+    check(mock_make == BOWL_MAKE_LEAF,
+          "an inherited runtime dir is made a leaf at a time");
+    mock_make = 0xff;
+    mock_make_seen = 0;
+    bowl_session_prepare("/root", null);
+    check(mock_make == BOWL_MAKE_CHAIN,
+          "the session's own runtime dir is made in full");
 
     {
         string_address have[] = {"HOME=/etc", "XDG_RUNTIME_DIR=/etc", null};
