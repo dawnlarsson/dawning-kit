@@ -71587,7 +71587,7 @@ b32 main(void)
 #define COMPARE_MAX_SHORT 23
 #define COMPARE_MAX_LONG 256
 
-typedef b32 (*compare_max_call)(string_address, string_address, positive);
+typedef b32 (*compare_max_call)(const_string, const_string, positive);
 typedef b32 (*compare_max_traffic)(const address_any, const address_any,
                                    positive);
 
@@ -71596,7 +71596,7 @@ static p8 compare_max_left[COMPARE_MAX_LONG + 1] __attribute__((aligned(64)));
 static p8 compare_max_right[COMPARE_MAX_LONG + 1] __attribute__((aligned(64)));
 
 static __attribute__((noinline, noclone)) b32
-compare_max_empty(string_address left, string_address right, positive size)
+compare_max_empty(const_string left, const_string right, positive size)
 {
         (void)left;
         (void)right;
@@ -71606,7 +71606,7 @@ compare_max_empty(string_address left, string_address right, positive size)
 
 /* Exact minimum semantics for the mismatch-at-byte-zero corpus. */
 static __attribute__((noinline, noclone)) b32
-compare_max_first_floor(string_address left, string_address right, positive size)
+compare_max_first_floor(const_string left, const_string right, positive size)
 {
         if (!size)
                 return 0;
@@ -71791,7 +71791,7 @@ b32 main(void)
 
 typedef fn (*copy_bench_work)(positive, positive);
 typedef string_address (*copy_bench_call)(string_address, string_address);
-typedef address_any (*copy_bench_traffic_call)(address_any, address_any,
+typedef address_any (*copy_bench_traffic_call)(address_any, const address_any,
                                                positive);
 
 static volatile positive copy_bench_sink;
