@@ -3462,6 +3462,25 @@ static b32 ul_table_column_list(
             definition_count, columns, count, unknown, UL_COLUMN_NAME);
 }
 
+/*      Every one of these programs asks for its columns the same way: room
+        for the selection, the count the reader fills in, and the bytes it
+        writes the name nobody knew into.  Declaring the three together
+        keeps one spelling of the request beside one spelling of the
+        refusal, so a program's own lines are the table it reads, the
+        defaults it falls back to and the name it complains as. */
+#define ul_columns_take(program, definitions, maximum, defaults, \
+                        default_count, text) \
+        p8 columns[maximum]; \
+        positive column_count = 0; \
+        p8 unknown[UL_COLUMN_NAME]; \
+        { \
+                b32 fault = ul_table_column_list(text, definitions, maximum, \
+                    defaults, default_count, columns, \
+                    address_of column_count, unknown); \
+                if (fault) \
+                        return ul_columns_refused(program, fault, unknown); \
+        }
+
 static b32 ul_refuse_exclusive(file_taking address_to taking,
                                const argument_exclusive_pair address_to group,
                                positive count)
@@ -4130,18 +4149,10 @@ static b32 util_linux_lsns()
         static const p8 inode_defaults[] = {
             UL_LSNS_PID, UL_LSNS_PPID, UL_LSNS_USER, UL_LSNS_COMMAND,
         };
-        p8 columns[UL_LSNS_COLUMNS];
-        positive column_count = 0;
-        string_address output = file_option_value(address_of taking, 'o');
-
-        p8 unknown[UL_COLUMN_NAME];
-        b32 fault = ul_table_column_list(
-            output, ul_lsns_columns, UL_LSNS_COLUMNS,
+        ul_columns_take("lsns", ul_lsns_columns, UL_LSNS_COLUMNS,
             inode_selected ? inode_defaults : defaults,
             inode_selected ? array_count(inode_defaults) : array_count(defaults),
-            columns, address_of column_count, unknown);
-        if (fault)
-                return ul_columns_refused("lsns", fault, unknown);
+            file_option_value(address_of taking, 'o'));
 
         text_begin("lsns");
         utility_arena.used = 0;
@@ -4578,16 +4589,9 @@ static b32 util_linux_lslocks()
             UL_LOCKS_MODE, UL_LOCKS_MANDATORY, UL_LOCKS_START, UL_LOCKS_END,
             UL_LOCKS_PATH,
         };
-        p8 columns[UL_LOCKS_COLUMNS];
-        positive column_count = 0;
-        string_address output = file_option_value(address_of taking, 'o');
-
-        p8 unknown[UL_COLUMN_NAME];
-        b32 fault = ul_table_column_list(
-            output, ul_lslocks_columns, UL_LOCKS_COLUMNS, defaults,
-            array_count(defaults), columns, address_of column_count, unknown);
-        if (fault)
-                return ul_columns_refused("lslocks", fault, unknown);
+        ul_columns_take("lslocks", ul_lslocks_columns, UL_LOCKS_COLUMNS,
+            defaults, array_count(defaults),
+            file_option_value(address_of taking, 'o'));
 
         for (positive i = 0; i < column_count; i++)
                 if (columns[i] == UL_LOCKS_HOLDERS)
@@ -5082,16 +5086,9 @@ static b32 util_linux_lsfd()
             UL_LSFD_COMMAND, UL_LSFD_PID, UL_LSFD_USER, UL_LSFD_FD,
             UL_LSFD_MODE, UL_LSFD_TYPE, UL_LSFD_INODE, UL_LSFD_NAME,
         };
-        p8 columns[UL_LSFD_COLUMNS];
-        positive column_count = 0;
-        string_address output = file_option_value(address_of taking, 'o');
-
-        p8 unknown[UL_COLUMN_NAME];
-        b32 fault = ul_table_column_list(
-            output, ul_lsfd_columns, UL_LSFD_COLUMNS, defaults,
-            array_count(defaults), columns, address_of column_count, unknown);
-        if (fault)
-                return ul_columns_refused("lsfd", fault, unknown);
+        ul_columns_take("lsfd", ul_lsfd_columns, UL_LSFD_COLUMNS,
+            defaults, array_count(defaults),
+            file_option_value(address_of taking, 'o'));
         p8 requires = 0;
         for (positive at = 0; at < column_count; at++)
                 requires |= ul_lsfd_columns[columns[at]].requires;
@@ -8780,17 +8777,9 @@ static b32 util_linux_wipefs()
                     ? parsable_defaults : defaults;
                 positive base_count = parsable
                     ? array_count(parsable_defaults) : array_count(defaults);
-                p8 columns[UL_WIPEFS_COLUMNS];
-                positive column_count = 0;
-                string_address selected = file_option_value(address_of taking, 'O');
-
-                p8 unknown[UL_COLUMN_NAME];
-                b32 fault = ul_table_column_list(
-                    selected, ul_wipefs_columns, UL_WIPEFS_COLUMNS,
-                    base, base_count, columns, address_of column_count,
-                    unknown);
-                if (fault)
-                        return ul_columns_refused("wipefs", fault, unknown);
+                ul_columns_take("wipefs", ul_wipefs_columns,
+                    UL_WIPEFS_COLUMNS, base, base_count,
+                    file_option_value(address_of taking, 'O'));
 
                 if (parsable)
                         ul_wipefs_parsable(address_of work, columns,
@@ -10230,18 +10219,12 @@ static b32 util_linux_lscpu()
                     UL_LSCPU_C_WAYS, UL_LSCPU_C_TYPE, UL_LSCPU_C_LEVEL,
                     UL_LSCPU_C_SETS, UL_LSCPU_C_PHY, UL_LSCPU_C_COHERENCY,
                 };
-                p8 columns[UL_LSCPU_C_COLUMNS];
-                positive count = 0;
-                p8 unknown[UL_COLUMN_NAME];
-                b32 fault = ul_table_column_list(
-                    selected, ul_lscpu_cache_columns, UL_LSCPU_C_COLUMNS,
-                    defaults, array_count(defaults), columns,
-                    address_of count, unknown);
-                if (fault)
-                        return ul_columns_refused("lscpu", fault, unknown);
+                ul_columns_take("lscpu", ul_lscpu_cache_columns,
+                    UL_LSCPU_C_COLUMNS, defaults, array_count(defaults),
+                    selected);
                 ul_table(json ? "caches" : null, ul_lscpu.caches,
                          ul_lscpu.cache_count, ul_lscpu_cache_columns,
-                         columns, count, true, raw, ul_lscpu_cache_field);
+                         columns, column_count, true, raw, ul_lscpu_cache_field);
         }
         else
         {
@@ -10260,17 +10243,11 @@ static b32 util_linux_lscpu()
                 positive default_count = ul_lscpu.cluster_count
                                              ? array_count(cluster_defaults)
                                              : array_count(socket_defaults);
-                p8 columns[UL_LSCPU_COLUMNS];
-                positive count = 0;
-                p8 unknown[UL_COLUMN_NAME];
-                b32 fault = ul_table_column_list(
-                    selected, ul_lscpu_columns, UL_LSCPU_COLUMNS, defaults,
-                    default_count, columns, address_of count, unknown);
-                if (fault)
-                        return ul_columns_refused("lscpu", fault, unknown);
+                ul_columns_take("lscpu", ul_lscpu_columns, UL_LSCPU_COLUMNS,
+                                defaults, default_count, selected);
 
                 if (taking.flags & FILE_FLAG('p'))
-                        ul_lscpu_parse(columns, count, !selected, filter);
+                        ul_lscpu_parse(columns, column_count, !selected, filter);
                 else
                 {
                         positive shown = 0;
@@ -10278,7 +10255,7 @@ static b32 util_linux_lscpu()
                                 if (ul_lscpu_show(ul_lscpu.cpus + i, filter))
                                         ul_lscpu.cpus[shown++] = ul_lscpu.cpus[i];
                         ul_table(json ? "cpus" : null, ul_lscpu.cpus, shown,
-                                 ul_lscpu_columns, columns, count,
+                                 ul_lscpu_columns, columns, column_count,
                                  true, raw, ul_lscpu_cpu_field);
                 }
         }
@@ -10687,15 +10664,8 @@ static b32 util_linux_lsmem()
             UL_LSMEM_RANGE, UL_LSMEM_SIZE, UL_LSMEM_STATE,
             UL_LSMEM_REMOVABLE, UL_LSMEM_BLOCK,
         };
-        p8 columns[UL_LSMEM_COLUMNS];
-        positive column_count = 0;
-        p8 unknown[UL_COLUMN_NAME];
-        b32 fault = ul_table_column_list(selected, ul_lsmem_columns,
-                                         UL_LSMEM_COLUMNS, defaults,
-                                         array_count(defaults), columns,
-                                         address_of column_count, unknown);
-        if (fault)
-                return ul_columns_refused("lsmem", fault, unknown);
+        ul_columns_take("lsmem", ul_lsmem_columns, UL_LSMEM_COLUMNS,
+                        defaults, array_count(defaults), selected);
 
         positive split = ((positive)1 << UL_LSMEM_STATE) |
                          ((positive)1 << UL_LSMEM_REMOVABLE);
@@ -11965,16 +11935,9 @@ static b32 util_linux_lsblk()
             taking.flags & FILE_FLAG('t') ? array_count(topology_defaults) :
             taking.flags & FILE_FLAG('S') ? array_count(scsi_defaults) :
                                              array_count(defaults);
-        p8 columns[UL_LSBLK_COLUMNS];
-        positive column_count = 0;
-        string_address selected = file_option_value(address_of taking, 'o');
-        p8 unknown[UL_COLUMN_NAME];
-        b32 fault = ul_table_column_list(selected, ul_lsblk_columns,
-                                         UL_LSBLK_COLUMNS, chosen,
-                                         chosen_count, columns,
-                                         address_of column_count, unknown);
-        if (fault)
-                return ul_columns_refused("lsblk", fault, unknown);
+        ul_columns_take("lsblk", ul_lsblk_columns, UL_LSBLK_COLUMNS,
+                        chosen, chosen_count,
+                        file_option_value(address_of taking, 'o'));
 
         bool scsi = (taking.flags & FILE_FLAG('S')) != 0;
         p8 requires = scsi ? UL_LSBLK_NEED_METADATA : 0;
@@ -12742,16 +12705,8 @@ static b32 util_linux_lsipc()
             ? array_count(ul_lsipc_msg_defaults)
             : type == UL_IPC_SHARED ? array_count(ul_lsipc_shm_defaults)
                                     : array_count(ul_lsipc_sem_defaults);
-        p8 columns[UL_IPC_COLUMNS];
-        positive column_count = 0;
-        string_address output = file_option_value(address_of taking, 'o');
-        p8 unknown[UL_COLUMN_NAME];
-        b32 fault = ul_table_column_list(output, ul_ipc_columns,
-                                         UL_IPC_COLUMNS, defaults,
-                                         default_count, columns,
-                                         address_of column_count, unknown);
-        if (fault)
-                return ul_columns_refused("lsipc", fault, unknown);
+        ul_columns_take("lsipc", ul_ipc_columns, UL_IPC_COLUMNS, defaults,
+                        default_count, file_option_value(address_of taking, 'o'));
         if (taking.flags & FILE_FLAG('c'))
         {
                 static const p8 creators[] = {
@@ -13542,15 +13497,8 @@ static b32 util_linux_rfkill()
             ? all_columns : defaults;
         positive base_count = taking.flags & FILE_FLAG('A')
             ? array_count(all_columns) : array_count(defaults);
-        p8 columns[UL_RFKILL_COLUMNS];
-        positive column_count = 0;
-
-        p8 unknown[UL_COLUMN_NAME];
-        b32 fault = ul_table_column_list(
-            selected, ul_rfkill_columns, UL_RFKILL_COLUMNS,
-            base, base_count, columns, address_of column_count, unknown);
-        if (fault)
-                return ul_columns_refused("rfkill", fault, unknown);
+        ul_columns_take("rfkill", ul_rfkill_columns, UL_RFKILL_COLUMNS,
+                        base, base_count, selected);
 
         ul_table(taking.flags & FILE_FLAG('J') ? "rfkilldevices" : null,
                  ul_rfkill_views, view_count, ul_rfkill_columns,
