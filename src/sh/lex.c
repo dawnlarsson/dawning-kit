@@ -1074,7 +1074,18 @@ b32 lex_unfinished(string_address line)
                                 return LEX_COMPLETE;
                 }
 
-                if (string_set_blanks[c] || lex_operator[c])
+                //      A blank only ends a word and marks where another
+                //      may begin; nothing about the byte behind it matters.
+                //      It is much the commonest byte to reach here, so it
+                //      answers before the look-ahead the operators need.
+                if (string_set_blanks[c])
+                {
+                        fresh = true;
+                        step++;
+                        continue;
+                }
+
+                if (lex_operator[c])
                 {
                         //      A process substitution holds a command, and
                         //      the line is not finished until it closes.
@@ -1453,17 +1464,16 @@ static KEEP b32 lex_word(string_address address_to at)
 
                 lex_line_floor reads the position back out of here and asks
                 again from wherever this left it, and it has no progress test
-                of its own on any of the three architectures: a word of no
-                bytes is therefore not an empty token but an endless loop at
-                one byte. The one shape that reached here without taking
-                anything was `<(` or `>(` with no closing parenthesis -- the
-                nesting walk refuses it, and the terminator test below sends
-                `<` straight back as an operator byte. `sh -c '((#))<('`
-                burned a core on that forever.
+                of its own: a word of no bytes is therefore not an empty
+                token but an endless loop at one byte. The one shape that
+                reached here without taking anything was `<(` or `>(` with no
+                closing parenthesis -- the nesting walk refuses it, and the
+                terminator test below it sends `<` straight back as an
+                operator byte. `sh -c '((#))<('` spun a core on that forever.
 
                 Whatever arrives here unconsumed is a byte of the word: the
-                parser is what decides an unfinished construct is a syntax
-                error, and it needs a token to say so.
+                parser is the one that decides an unfinished construct is a
+                syntax error, and it needs the token to say so.
         */
         if (step == start && string_get(step))
                 step++;
