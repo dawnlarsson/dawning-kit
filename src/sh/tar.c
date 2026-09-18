@@ -1035,11 +1035,9 @@ static bipolar tar_stack_parent(string_address path, p8 address_to leaf,
 
         while (at < parent_length)
         {
-                positive stop = at;
                 p8 component[256];
-
-                while (stop < parent_length && path[stop] != '/')
-                        stop++;
+                positive stop = at + memory_span_without_byte(
+                    path + at, '/', parent_length - at);
                 if (stop - at >= sizeof(component))
                         return -ERROR_NAME_TOO_LONG;
                 memory_copy(component, path + at, stop - at);

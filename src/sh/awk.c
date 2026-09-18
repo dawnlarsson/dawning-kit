@@ -6497,7 +6497,7 @@ static bool awk_option_seen(p8 letter, string_address value)
 
         for (;;)
         {
-                p8 room[65536];
+                static p8 room[65536];
                 bipolar got = system_read_retry((positive)handle, room, sizeof(room));
 
                 if (got < 0)

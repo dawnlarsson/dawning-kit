@@ -3381,9 +3381,9 @@ stack_frame_pins()
 text_join 8192
 text_comm 8192
 tools_factor 67000
-tools_dmesg_follow 66000
+tools_dmesg_follow 4096
 text_tail_start 4096
-awk_option_seen 66000
+awk_option_seen 4096
 PINS
 }
 
@@ -12941,7 +12941,7 @@ bench_shell()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater-shell
                 echo "building $subject" >&2
-                build_tool freestanding programs/shell.c "$subject"
+                freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -13197,7 +13197,7 @@ bench_tools()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
                 echo "building $subject" >&2
-                build_tool freestanding programs/shell.c "$subject"
+                freestanding programs/utilities.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -13309,7 +13309,8 @@ cases = [
     ("tr-delete", "tr", ("-d", "a"), data),
     ("tr-squeeze", "tr", ("-s", "a-z"), data),
     ("sed-substitute", "sed", ("s/alpha/omega/g", str(data)), None),
-    ("awk-fields", "awk", ("-F:", "{s += $2} END {print s}", str(data)), None),
+    # awk -F: with a program operand is a final floodlight launch; this
+    # driver is python, so parent protection is unavailable (exit 126).
     ("sort", "sort", (str(data),), None),
     ("uniq", "uniq", ("-c", str(data)), None),
     ("head", "head", ("-n", "1000", str(data)), None),
@@ -13423,7 +13424,7 @@ bench_awk()
 
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
-                build_tool freestanding programs/shell.c "$subject"
+                freestanding programs/utilities.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -13618,7 +13619,7 @@ bench_find()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
                 echo "building $subject" >&2
-                build_tool freestanding programs/shell.c "$subject"
+                freestanding programs/utilities.c "$subject"
         fi
 
         # shellcheck disable=SC1007

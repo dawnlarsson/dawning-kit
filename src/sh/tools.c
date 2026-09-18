@@ -1680,12 +1680,10 @@ static bool login_message_path(string_address line, p8 address_to path,
         for (positive at = 0; at < length;)
         {
                 positive from = at;
-                while (at < length && name[at] != '/')
-                        at++;
+                at += memory_span_without_byte(name + at, '/', length - at);
                 if (at == from ||
-                    (at - from == 1 && name[from] == '.') ||
-                    (at - from == 2 && name[from] == '.' &&
-                     name[from + 1] == '.'))
+                    memory_is_word(name + from, at - from, ".") ||
+                    memory_is_word(name + from, at - from, ".."))
                         return false;
                 if (at < length)
                         at++;
@@ -13745,7 +13743,7 @@ static b32 tools_dmesg_follow(tools_dmesg_state address_to state,
                 return text_done(string_diagnostic(&text_diagnostic, 1, "read kernel buffer failed", "cannot seek /dev/kmsg"));
         }
 
-        p8 record_bytes[65536];
+        static p8 record_bytes[65536];
         while (!text_out_failed)
         {
                 bipolar got = system_read_retry((positive)handle,
