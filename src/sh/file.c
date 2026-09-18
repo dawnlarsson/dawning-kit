@@ -6796,7 +6796,7 @@ static b32 ls_version_order_byte(p8 byte)
         return byte + 256;
 }
 
-static b32 ls_version_run(string_address left, positive left_length, string_address right,
+static PURE b32 ls_version_run(string_address left, positive left_length, string_address right,
                           positive right_length)
 {
         positive l = 0;
@@ -6844,7 +6844,7 @@ static b32 ls_version_run(string_address left, positive left_length, string_addr
         return 0;
 }
 
-static positive ls_version_prefix(string_address name, positive length)
+static PURE positive ls_version_prefix(string_address name, positive length)
 {
         positive prefix = 0;
 
