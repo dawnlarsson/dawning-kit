@@ -3795,6 +3795,54 @@ static file_change_tree_node address_to file_change_tree_node_new(
 //      it has one; the serial walk below otherwise.
 static fn(address_to file_change_tree)(string_address path);
 
+/*
+        The root failsafe chmod, chown and chgrp offer, which is rm's with
+        three differences the reference insists on.
+
+        It is off unless --preserve-root asks for it. rm's is on unless
+        --no-preserve-root takes it off, and getting that backwards either
+        breaks every script that walks a tree it owns or leaves the hole
+        open, so the two defaults are deliberately opposite here.
+
+        It applies only under -R. A plain chmod 755 / changes one directory
+        the caller has the right to change, and the reference allows it; what
+        the failsafe is about is the walk underneath.
+
+        It asks about the operand the caller wrote, resolved. Following the
+        link is what makes //, /., /tmp/.. and a symlink aimed at the root all
+        answer as root, and the operand is echoed back as it was written --
+        with the reference's "(same as '/')" after it when it was written some
+        other way -- so the diagnostic names the word the caller typed rather
+        than the place it landed.
+*/
+static bool file_change_preserve_root;
+
+static bool file_change_root_refused(string_address path, string_address program,
+                                     b32 address_to status)
+{
+        file_facts root;
+        file_facts named;
+
+        if (!file_change_preserve_root)
+                return false;
+
+        if (file_look_code(AT_FDCWD, (string_address) "/", 0, address_of root) < 0 ||
+            file_look_code(AT_FDCWD, path, 0, address_of named) < 0 ||
+            !file_same_identity(address_of named, address_of root))
+                return false;
+
+        string_format(log_error,
+                      "%s: it is dangerous to operate recursively on '%w'%s\n",
+                      program, writer_terminal_quoted_name, path,
+                      string_equals(path, "/") ? (string_address) ""
+                                               : (string_address) " (same as '/')");
+        string_format(log_error,
+                      "%s: use --no-preserve-root to override this failsafe\n",
+                      program);
+        address_to status = 1;
+        return true;
+}
+
 // The operand list those three read, which is the same list every time: each
 // name is visited, and under -R so is everything under it.
 static fn file_change_paths(positive first, positive count, bool recursive,
@@ -3817,6 +3865,9 @@ static fn file_change_paths(positive first, positive count, bool recursive,
                         ended = true;
                         continue;
                 }
+
+                if (recursive && file_change_root_refused(path, program, status))
+                        continue;
 
                 if (recursive && file_change_tree)
                         file_change_tree(path);
@@ -14788,7 +14839,7 @@ static b32 chmod_status;
 
 static bool chmod_quiet;
 static bool chmod_referenced;
-typedef struct { p8 dereference, loudness, traverse; } chmod_selection;
+typedef struct { p8 dereference, loudness, traverse, root; } chmod_selection;
 _Static_assert(sizeof(chmod_selection) <= 16, "selection mask covers every field");
 static chmod_selection chmod_selected;
 static positive chmod_reference_mode;
@@ -15217,8 +15268,10 @@ static const argument_option chmod_options[] = {
     {"changes", 'c', 0, ARGUMENT_SELECT(chmod_selection, loudness)},
     {"dereference", 'd', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(chmod_selection, dereference)},
     {"no-dereference", 'h', 0, ARGUMENT_SELECT(chmod_selection, dereference)},
-    {"no-preserve-root", 'N'},
-    {"preserve-root", 'N'},
+    {"no-preserve-root", 'N', ARGUMENT_LONG_ONLY,
+     ARGUMENT_SELECT(chmod_selection, root)},
+    {"preserve-root", 'p', ARGUMENT_LONG_ONLY,
+     ARGUMENT_SELECT(chmod_selection, root)},
     {"quiet", 'f'},
     {"recursive", 'R'},
     {"reference", 'e', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
@@ -15366,6 +15419,7 @@ static b32 file_chmod()
 #if defined(LIBRARY_THREAD_RUNTIME)
         file_change_tree = chmod_tree;
 #endif
+        file_change_preserve_root = chmod_selected.root == 'p';
         file_change_paths(first, count, (taking.flags & FILE_FLAG('R')) != 0,
                           (string_address) "chmod", address_of chmod_status,
                           chmod_one);
@@ -15389,7 +15443,7 @@ static bool chown_group_words(void)
 static b32 chown_status;
 static positive chown_flags;
 static bool chown_quiet;
-typedef struct { p8 dereference, traverse, loudness; } chown_selection;
+typedef struct { p8 dereference, traverse, loudness, root; } chown_selection;
 _Static_assert(sizeof(chown_selection) <= 16, "selection mask covers every field");
 static chown_selection chown_selected;
 static string_address chown_program;
@@ -15894,8 +15948,10 @@ static fn chown_tree(string_address path)
 static const argument_option chown_options[] = {
     {"changes", 'c', 0, ARGUMENT_SELECT(chown_selection, loudness)},
     {"from", 'F', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
-    {"no-preserve-root", 'N'},
-    {"preserve-root", 'N'},
+    {"no-preserve-root", 'N', ARGUMENT_LONG_ONLY,
+     ARGUMENT_SELECT(chown_selection, root)},
+    {"preserve-root", 'p', ARGUMENT_LONG_ONLY,
+     ARGUMENT_SELECT(chown_selection, root)},
     {"dereference", 'd', ARGUMENT_LONG_ONLY, ARGUMENT_SELECT(chown_selection, dereference)},
     {"no-dereference", 'h', 0, ARGUMENT_SELECT(chown_selection, dereference)},
     {"quiet", 'f'},
@@ -15973,6 +16029,7 @@ static fn chown_paths(positive first, positive count)
 #if defined(LIBRARY_THREAD_RUNTIME)
         file_change_tree = chown_tree;
 #endif
+        file_change_preserve_root = chown_selected.root == 'p';
         file_change_paths(first, count, (chown_flags & FILE_FLAG('R')) != 0,
                           chown_program, address_of chown_status, chown_one);
         file_change_tree = null;
