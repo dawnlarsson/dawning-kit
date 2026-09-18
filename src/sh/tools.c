@@ -2923,7 +2923,26 @@ static positive login_last_duration(p8 address_to into, b64 start, b64 finish)
         becomes a backslash and three octal digits. Column widths and the
         truncation star are still counted in raw bytes, which is what the
         reference measures; only what reaches the writer is respelled.
-        Without this an ESC out of ut_host arrives whole. */
+        Without this an ESC out of ut_host arrives whole.
+
+        Which of the four the reference keeps whole is the build's to say.
+        Newline and return are the two that matter: a host name a remote
+        peer chose carries one and forges a line of last's own output, and
+        no benign name holds either, so safe spells them in the same star
+        grammar rather than inventing a second one. Tight spells the bell
+        as well -- a terminal still answers it, and an operator who asked
+        for tight does not want a listing that can ring. Tab stays whole
+        at every tier: escaping it would move the columns of output that
+        was never hostile, which is the one thing no tier may do. */
+#if MOONWATER_STRICT >= STRICT_TIGHT
+#define LOGIN_LAST_WHOLE(one) ((one) == '\t')
+#elif MOONWATER_STRICT >= STRICT_SAFE
+#define LOGIN_LAST_WHOLE(one) ((one) == '\t' || (one) == '\a')
+#else
+#define LOGIN_LAST_WHOLE(one)                                                \
+        ((one) == '\t' || (one) == '\a' || (one) == '\n' || (one) == '\r')
+#endif
+
 static fn login_last_put(string_address value, positive length)
 {
         p8 address_to bytes = (p8 address_to)value;
@@ -2933,8 +2952,7 @@ static fn login_last_put(string_address value, positive length)
         {
                 p8 one = bytes[at];
 
-                if ((one >= ' ' && one < 0x7f) || one == '\a' ||
-                    one == '\t' || one == '\n' || one == '\r')
+                if ((one >= ' ' && one < 0x7f) || LOGIN_LAST_WHOLE(one))
                 {
                         run++;
                         continue;
