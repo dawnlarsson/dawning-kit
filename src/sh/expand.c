@@ -6979,6 +6979,35 @@ static shell_array_item address_to expand_array_items_take(
         return items;
 }
 
+// The subscript a row answers to, spelled the way its transform spells one:
+// as it stands for @k, quoted as declare would for @K and for the declare
+// text itself. A row with no key of its own is an index.
+static COLD fn expand_array_subscript(shell_array_item address_to item,
+                                      p8 address_to written, p8 mark,
+                                      bool declared)
+{
+        if (!item->key)
+                expand_push_run(written,
+                                bipolar_into_string(written,
+                                                    (bipolar)item->index),
+                                mark);
+        else if (declared)
+                transform_declare_key(item->key, item->key_length, mark);
+        else
+                expand_push_run(item->key, item->key_length, mark);
+}
+
+// What goes between a subscript and its value, and between one pair and the
+// next: a field boundary for @k, a plain space for @K.
+static COLD fn expand_array_apart(bool declared, bool fields, p8 between,
+                                  p8 mark)
+{
+        if (declared)
+                expand_push(' ', mark);
+        else
+                expand_sequence_between(fields, between, mark);
+}
+
 static COLD fn expand_array_whole_transform(string_address name, positive length,
                                             p8 form, p8 which, bool quoted)
 {
@@ -7006,8 +7035,13 @@ static COLD fn expand_array_whole_transform(string_address name, positive length
         flags = shell_attribute_letters(letters, attributes, readonly, exported);
         count = shell_array_length(name, length);
 
-        if (which == 'k')
+        //      @k and @K are one walk written two ways: @k puts subscript
+        //      and value in as they stand, so IFS parts them, while @K
+        //      quotes both the way declare would and puts a space between.
+        if (which == 'k' || which == 'K')
         {
+                bool declared = which == 'K';
+
                 if (!count)
                 {
                         if (form == '@')
@@ -7022,59 +7056,22 @@ static COLD fn expand_array_whole_transform(string_address name, positive length
                 for (at = 0; at < count && !expand_failed; at++)
                 {
                         if (at)
-                                expand_sequence_between(fields, between,
-                                                        mark_body);
-                        if (items[at].key)
-                                expand_push_run(items[at].key,
-                                                items[at].key_length,
+                                expand_array_apart(declared, fields, between,
+                                                   mark_body);
+                        expand_array_subscript(items + at, written, mark_body,
+                                               declared);
+                        expand_array_apart(declared, fields, between,
+                                           mark_body);
+                        if (declared)
+                                transform_declare_quoted(
+                                    items[at].value, items[at].value_length,
+                                    mark_body);
+                        else
+                                expand_push_run(items[at].value,
+                                                items[at].value_length,
                                                 mark_body);
-                        else
-                                expand_push_run(
-                                    written,
-                                    bipolar_into_string(
-                                        written, (bipolar)items[at].index),
-                                    mark_body);
-                        expand_sequence_between(fields, between, mark_body);
-                        expand_push_run(items[at].value, items[at].value_length,
-                                        mark_body);
                 }
-                shell_store_rewind(address_of expand_store, held);
-                return;
-        }
-
-        if (which == 'K')
-        {
-                if (!count)
-                {
-                        if (form == '@')
-                                expand_name_at_empty = true;
-                        return;
-                }
-
-                items = expand_array_items_take(name, length, count,
-                                                address_of held);
-                if (!items)
-                        return;
-                for (at = 0; at < count && !expand_failed; at++)
-                {
-                        if (at)
-                                expand_push(' ', mark_body);
-                        if (items[at].key)
-                                transform_declare_key(items[at].key,
-                                                      items[at].key_length,
-                                                      mark_body);
-                        else
-                                expand_push_run(
-                                    written,
-                                    bipolar_into_string(
-                                        written, (bipolar)items[at].index),
-                                    mark_body);
-                        expand_push(' ', mark_body);
-                        transform_declare_quoted(items[at].value,
-                                                 items[at].value_length,
-                                                 mark_body);
-                }
-                if (keyed && count)
+                if (declared && keyed)
                         expand_push(' ', mark_body);
                 shell_store_rewind(address_of expand_store, held);
                 return;
@@ -7103,16 +7100,8 @@ static COLD fn expand_array_whole_transform(string_address name, positive length
                         if (at)
                                 expand_push(' ', mark_body);
                         expand_push('[', mark_body);
-                        if (items[at].key)
-                                transform_declare_key(items[at].key,
-                                                      items[at].key_length,
-                                                      mark_body);
-                        else
-                                expand_push_run(
-                                    written,
-                                    bipolar_into_string(
-                                        written, (bipolar)items[at].index),
-                                    mark_body);
+                        expand_array_subscript(items + at, written, mark_body,
+                                               true);
                         expand_push_run((string_address) "]=", 2, mark_body);
                         transform_declare_quoted(items[at].value,
                                                  items[at].value_length,
