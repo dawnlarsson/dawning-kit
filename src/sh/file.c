@@ -6096,6 +6096,20 @@ static ls_selection ls_selected;
 //      --zero read while --format=WORD stood: whether the word was the long
 //      one is not known until the word is read, so the question waits.
 static bool ls_zero_after_word;
+// Last --format/--sort/--time/--quoting-style/--indicator-style word letter,
+// filled in seen so post-take does not parse the same word again.
+static p8 ls_format_word;
+static p8 ls_sort_word;
+static p8 ls_time_word;
+static p8 ls_quote_word;
+static p8 ls_indicator_word;
+static p8 ls_color_when;
+static p8 ls_hyperlink_when;
+static p8 ls_classify_when;
+static bool ls_width_said;
+static bool ls_tabsize_said;
+static positive ls_width_option;
+static positive ls_tabsize_option;
 
 bool shell_match(string_address pattern, string_address text);
 
@@ -8404,44 +8418,106 @@ static b32 ls_option_status;
 static bool ls_option_word(p8 letter, string_address value)
 {
         if (!value)
+        {
+                if (letter == 'K')
+                        ls_color_when = 'a';
+                else if (letter == 'y')
+                        ls_hyperlink_when = 'a';
+                else if (letter == 'E')
+                        ls_classify_when = 'a';
                 return true;
+        }
 
         switch (letter)
         {
         case 'J':
-                return ls_word_among((string_address) "--format", value,
-                                     ls_format_words, array_count(ls_format_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--format", value,
+                                         ls_format_words, array_count(ls_format_words));
+                if (word < 0)
+                        return false;
+                ls_format_word = (p8)word;
+                return true;
+        }
         case '3':
-                return ls_word_among((string_address) "--sort", value,
-                                     ls_sort_words, array_count(ls_sort_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--sort", value,
+                                         ls_sort_words, array_count(ls_sort_words));
+                if (word < 0)
+                        return false;
+                ls_sort_word = (p8)word;
+                return true;
+        }
         case '4':
-                return ls_word_among((string_address) "--time", value,
-                                     ls_time_words, array_count(ls_time_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--time", value,
+                                         ls_time_words, array_count(ls_time_words));
+                if (word < 0)
+                        return false;
+                ls_time_word = (p8)word;
+                return true;
+        }
         case 'z':
-                return ls_word_among((string_address) "--quoting-style", value,
-                                     ls_quoting_words, array_count(ls_quoting_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--quoting-style", value,
+                                         ls_quoting_words, array_count(ls_quoting_words));
+                if (word < 0)
+                        return false;
+                ls_quote_word = (p8)word;
+                return true;
+        }
         case 'Y':
-                return ls_word_among((string_address) "--indicator-style", value,
-                                     ls_indicator_words, array_count(ls_indicator_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--indicator-style", value,
+                                         ls_indicator_words, array_count(ls_indicator_words));
+                if (word < 0)
+                        return false;
+                ls_indicator_word = (p8)word;
+                return true;
+        }
         case 'K':
-                return ls_word_among((string_address) "--color", value,
-                                     ls_when_words, array_count(ls_when_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--color", value,
+                                         ls_when_words, array_count(ls_when_words));
+                if (word < 0)
+                        return false;
+                ls_color_when = (p8)word;
+                return true;
+        }
         case 'y':
-                return ls_word_among((string_address) "--hyperlink", value,
-                                     ls_when_words, array_count(ls_when_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--hyperlink", value,
+                                         ls_when_words, array_count(ls_when_words));
+                if (word < 0)
+                        return false;
+                ls_hyperlink_when = (p8)word;
+                return true;
+        }
         case 'E':
-                return ls_word_among((string_address) "--classify", value,
-                                     ls_when_words, array_count(ls_when_words)) >= 0;
+        {
+                b32 word = ls_word_among((string_address) "--classify", value,
+                                         ls_when_words, array_count(ls_when_words));
+                if (word < 0)
+                        return false;
+                ls_classify_when = (p8)word;
+                return true;
+        }
         case 'w':
                 if (ls_count_option(value, (string_address) "line width",
-                                    address_of ls_width))
+                                    address_of ls_width_option))
+                {
+                        ls_width_said = true;
                         return true;
+                }
                 ls_option_status = 2;
                 return false;
         case 'T':
                 if (ls_count_option(value, (string_address) "tab size",
-                                    address_of ls_tabsize))
+                                    address_of ls_tabsize_option))
+                {
+                        ls_tabsize_said = true;
                         return true;
+                }
                 ls_option_status = 2;
                 return false;
         default:
@@ -8492,12 +8568,7 @@ static bool ls_option_seen(p8 letter, string_address value)
         */
         if (letter == 'E')
         {
-                b32 when = value ? ls_word_among((string_address) "--classify", value,
-                                                 ls_when_words,
-                                                 array_count(ls_when_words))
-                                 : 'a';
-
-                if (when >= 0 && ls_when_active((p8)when))
+                if (ls_when_active(ls_classify_when))
                         ls_selected.indicator = 'E';
 
                 return true;
@@ -8631,6 +8702,16 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         ls_selected = (ls_selection){};
         ls_terminal = stream_is_terminal(1);
         ls_zero_after_word = false;
+        ls_format_word = 0;
+        ls_sort_word = 0;
+        ls_time_word = 0;
+        ls_quote_word = 0;
+        ls_indicator_word = 0;
+        ls_color_when = 0;
+        ls_hyperlink_when = 0;
+        ls_classify_when = 0;
+        ls_width_said = false;
+        ls_tabsize_said = false;
         ls_option_status = 0;
         ls_ignore_count = 0;
         ls_hide_count = 0;
@@ -8665,14 +8746,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         // all ways of asking for the long one.
         ls_format = default_format ? default_format : ls_terminal ? 'C' : '1';
         if (ls_selected.format == 'J')
-        {
-                b32 word = ls_word_among((string_address) "--format",
-                                         file_option_value(address_of taking, 'J'),
-                                         ls_format_words, array_count(ls_format_words));
-                if (word < 0)
-                        return 1;
-                ls_format = (p8)word;
-        }
+                ls_format = ls_format_word;
         else if (ls_selected.format && string_first_of((string_address) "lgonMD", ls_selected.format))
                 ls_format = 'l';
         else if (ls_selected.format)
@@ -8716,14 +8790,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         // The order.
         ls_sorting = 'n';
         if (ls_selected.sort == '3')
-        {
-                b32 word = ls_word_among((string_address) "--sort",
-                                         file_option_value(address_of taking, '3'),
-                                         ls_sort_words, array_count(ls_sort_words));
-                if (word < 0)
-                        return 1;
-                ls_sorting = (p8)word;
-        }
+                ls_sorting = ls_sort_word;
         else if (ls_selected.sort == 'f')
                 ls_sorting = 'U';
         else if (ls_selected.sort)
@@ -8732,14 +8799,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         // Which time.
         ls_time_key = 'm';
         if (ls_selected.time == '4')
-        {
-                b32 word = ls_word_among((string_address) "--time",
-                                         file_option_value(address_of taking, '4'),
-                                         ls_time_words, array_count(ls_time_words));
-                if (word < 0)
-                        return 1;
-                ls_time_key = (p8)word;
-        }
+                ls_time_key = ls_time_word;
         else if (ls_selected.time == 'c')
                 ls_time_key = 'c';
         else if (ls_selected.time == 'u')
@@ -8821,14 +8881,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         // How a name is spelled.
         ls_quoting = default_quoting ? default_quoting : ls_terminal ? 'e' : 'L';
         if (ls_selected.quote == 'z')
-        {
-                b32 word = ls_word_among((string_address) "--quoting-style",
-                                         file_option_value(address_of taking, 'z'),
-                                         ls_quoting_words, array_count(ls_quoting_words));
-                if (word < 0)
-                        return 1;
-                ls_quoting = (p8)word;
-        }
+                ls_quoting = ls_quote_word;
         else if (ls_selected.quote == 'N')
                 ls_quoting = 'L';
         else if (ls_selected.quote == 'Q')
@@ -8844,14 +8897,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         // The letter after a name.
         ls_indicator = 0;
         if (ls_selected.indicator == 'Y')
-        {
-                b32 word = ls_word_among((string_address) "--indicator-style",
-                                         file_option_value(address_of taking, 'Y'),
-                                         ls_indicator_words, array_count(ls_indicator_words));
-                if (word < 0)
-                        return 1;
-                ls_indicator = word == 'N' ? 0 : (p8)word;
-        }
+                ls_indicator = ls_indicator_word == 'N' ? 0 : ls_indicator_word;
         else if (ls_selected.indicator == 'E')
                 ls_indicator = 'F';
         else if (ls_selected.indicator == 'p')
@@ -8910,20 +8956,8 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         }
 
         // The line.
-        ls_width = ls_column_limit();
-        if (flags & FILE_FLAG('w'))
-        {
-                if (!ls_count_option(file_option_value(address_of taking, 'w'),
-                                     (string_address) "line width", address_of ls_width))
-                        return 2;
-        }
-        ls_tabsize = 8;
-        if (flags & FILE_FLAG('T'))
-        {
-                if (!ls_count_option(file_option_value(address_of taking, 'T'),
-                                     (string_address) "tab size", address_of ls_tabsize))
-                        return 2;
-        }
+        ls_width = ls_width_said ? ls_width_option : ls_column_limit();
+        ls_tabsize = ls_tabsize_said ? ls_tabsize_option : 8;
 
         // Colour.
         ls_coloring = false;
@@ -8939,17 +8973,8 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         }
 
         if (flags & FILE_FLAG('K'))
-        {
-                string_address when_text = file_option_value(address_of taking, 'K');
-                b32 when = when_text ? ls_word_among((string_address) "--color", when_text,
-                                                     ls_when_words, array_count(ls_when_words))
-                                     : 'a';
-
-                if (when < 0)
-                        return 1;
-
-                ls_coloring = ls_colors && string_get(ls_colors) && ls_when_active((p8)when);
-        }
+                ls_coloring = ls_colors && string_get(ls_colors) &&
+                              ls_when_active(ls_color_when);
 
         //      A run of names with nothing between them but a zero byte is
         //      not a place for colour, whichever order the two were asked in.
@@ -8961,15 +8986,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
 
         if (flags & FILE_FLAG('y'))
         {
-                string_address when_text = file_option_value(address_of taking, 'y');
-                b32 when = when_text ? ls_word_among((string_address) "--hyperlink", when_text,
-                                                     ls_when_words, array_count(ls_when_words))
-                                     : 'a';
-
-                if (when < 0)
-                        return 2;
-
-                ls_hyperlink = ls_when_active((p8)when);
+                ls_hyperlink = ls_when_active(ls_hyperlink_when);
 
                 if (ls_hyperlink)
                 {
@@ -28170,10 +28187,9 @@ static b32 file_mv()
 static bool rm_force;
 static bool rm_recursive;
 static bool rm_empty_directories;
-static bool rm_ask;
-static bool rm_ask_once;
 static bool rm_preserve_all;
 static bool rm_loud;
+static p8 rm_prompting;
 /*
         "." and ".." name the directory a relative path is measured from and
         the one above it, so removing either is a request to remove what the
@@ -28360,7 +28376,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         }
         else if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
         {
-                if (rm_ask && !file_ask((string_address) "rm",
+                if (rm_prompting == 'i' && !file_ask((string_address) "rm",
                                         rm_prompt(directory, name, address_of facts,
                                                   false),
                                         shown))
@@ -28429,7 +28445,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
                 bool empty_directory = false;
 
-                if (rm_ask)
+                if (rm_prompting == 'i')
                 {
                         bipolar emptiness = file_directory_empty_same(
                             directory, name, address_of facts, O_NOFOLLOW);
@@ -28493,7 +28509,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 return false;
         }
 
-        if (rm_ask && !asked_remove &&
+        if (rm_prompting == 'i' && !asked_remove &&
             !file_ask((string_address) "rm",
                       rm_prompt(directory, name, address_of facts, false), shown))
                 return false;
@@ -29497,6 +29513,7 @@ static b32 file_rm()
         positive count = (positive)program_argument_count();
         rm_status = 0;
         rm_force = false;
+        rm_prompting = 0;
         rm_selected = (rm_selection){};
 
         file_taking taking = {
@@ -29556,13 +29573,12 @@ static b32 file_rm()
                 }
         }
 
-        rm_ask = prompting == 'i';
-        rm_ask_once = prompting == 'I';
+        rm_prompting = prompting;
         rm_loud = (flags & FILE_FLAG('v')) != 0;
         rm_one_system = (flags & FILE_FLAG('o')) != 0;
         rm_empty_directories = (flags & FILE_FLAG('d')) != 0;
         rm_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
-        rm_careful = rm_ask || rm_loud || rm_one_system;
+        rm_careful = rm_prompting == 'i' || rm_loud || rm_one_system;
         rm_preserve_root = rm_recursive && !(flags & FILE_FLAG('N'));
 
         if (first >= count)
@@ -29579,7 +29595,7 @@ static b32 file_rm()
                 under -r. A no here is not a failure, it is the batch not
                 being taken.
         */
-        if (rm_ask_once)
+        if (rm_prompting == 'I')
         {
                 positive named = count - first;
 
@@ -29700,7 +29716,7 @@ static b32 file_rm()
                 rm_device_major = facts.device_major;
                 rm_device_minor = facts.device_minor;
 
-                if (here && rm_recursive && !rm_ask && !rm_one_system)
+                if (here && rm_recursive && rm_prompting != 'i' && !rm_one_system)
                         rm_batched(path, address_of facts);
                 else
                         rm_tree(AT_FDCWD, path, path, FILE_MAX_DEPTH);

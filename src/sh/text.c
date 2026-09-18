@@ -4334,15 +4334,30 @@ static fn wc_bytes_general(const p8 address_to at, positive left, bool want_line
         address_to inside_out = inside;
 }
 
+static positive wc_total_mode;
+
+static bool wc_option_seen(p8 letter, string_address value)
+{
+        if (letter != 'T' || !value)
+                return true;
+
+        if (!text_word_of(value, wc_totals, 4, address_of wc_total_mode))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
+
+        return true;
+}
+
 static b32 text_wc()
 {
         file_taking taking = {
             .program = (string_address) "wc",
             .options = wc_options,
             .operand = text_file_add,
+            .seen = wc_option_seen,
         };
 
         text_begin("wc");
+        wc_total_mode = WC_TOTAL_AUTO;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -4369,7 +4384,7 @@ static b32 text_wc()
         bool want_bytes = (flags & FILE_FLAG('c')) != 0;
         bool want_chars = (flags & FILE_FLAG('m')) != 0;
         bool want_longest = (flags & FILE_FLAG('L')) != 0;
-        positive total_mode = WC_TOTAL_AUTO;
+        positive total_mode = wc_total_mode;
         positive total_lines = 0, total_words = 0, total_chars = 0, total_bytes = 0;
         positive total_longest = 0;
         positive width = 1;
@@ -4382,11 +4397,6 @@ static b32 text_wc()
                 want_words = true;
                 want_bytes = true;
         }
-
-        if ((flags & FILE_FLAG('T')) &&
-            !text_word_of(file_option_value(address_of taking, 'T'),
-                          wc_totals, 4, address_of total_mode))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'T'), "invalid argument"));
 
         b32 selected = (b32)want_lines + (b32)want_words + (b32)want_bytes +
                        (b32)want_chars + (b32)want_longest;
@@ -14024,6 +14034,8 @@ static bool uniq_grouping_of(string_address word, bool ends, positive address_to
 static positive uniq_fields;
 static positive uniq_characters;
 static positive uniq_width;
+static positive uniq_all_how;
+static positive uniq_group_how;
 
 static bool uniq_option_seen(p8 letter, string_address value)
 {
@@ -14036,6 +14048,14 @@ static bool uniq_option_seen(p8 letter, string_address value)
                                          letter == 'f' ? "invalid number of fields to skip"
                                          : letter == 's' ? "invalid number of bytes to skip"
                                                          : "invalid number of bytes to compare");
+
+        if (letter == 'A' && value &&
+            !uniq_grouping_of(value, false, address_of uniq_all_how))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
+
+        if (letter == 'G' && value &&
+            !uniq_grouping_of(value, true, address_of uniq_group_how))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument");
 
         return true;
 }
@@ -14082,6 +14102,8 @@ static b32 text_uniq()
         uniq_fields = 0;
         uniq_characters = 0;
         uniq_width = 0;
+        uniq_all_how = UNIQ_GROUP_NONE;
+        uniq_group_how = UNIQ_GROUP_SEPARATE;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -14097,23 +14119,14 @@ static b32 text_uniq()
         bool all_repeated = (flags & (FILE_FLAG('D') | FILE_FLAG('A'))) != 0;
         bool grouping = (flags & FILE_FLAG('G')) != 0;
         bool bounded = (flags & FILE_FLAG('w')) != 0;
-        positive all_how = UNIQ_GROUP_NONE;
-        positive group_how = UNIQ_GROUP_SEPARATE;
+        positive all_how = uniq_all_how;
+        positive group_how = uniq_group_how;
         positive skip_fields = uniq_fields;
         positive skip_characters = uniq_characters;
         positive compare_width = uniq_width;
-        string_address said = file_option_value(address_of taking, 'A');
 
         if (flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
-
-        if (said && !uniq_grouping_of(said, false, address_of all_how))
-                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument"));
-
-        said = file_option_value(address_of taking, 'G');
-
-        if (said && !uniq_grouping_of(said, true, address_of group_how))
-                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument"));
 
         if (all_repeated && counting)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "printing all duplicated lines and repeat counts is meaningless"));
