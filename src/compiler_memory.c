@@ -551,65 +551,51 @@ static inline INLINE address_any copy_running_windows(address_any destination,
         p8 address_to from = (p8 address_to)source;
         p64 a, b, c, d, e, f, g, h;
 
+        //      Every load of a rung before any store of it, which is what
+        //      makes one of these correct over an overlapping span. Written
+        //      as two rows rather than as twenty four separate sentences: the
+        //      order of the rows is the whole of the argument and the order
+        //      within a row is nothing at all.
+#define COPY_LOAD(word, at)  word = memory_load_unaligned(p64, from + (at))
+#define COPY_STORE(at, word) __builtin_memcpy(to + (at), address_of word, 8)
+
         if (size >= 32) {
 #if LIBRARY_RUNNING_MAX > 64
                 if (size >= 64) {
                         p64 i, j, k, l;
 
-                        a = memory_load_unaligned(p64, from);
-                        b = memory_load_unaligned(p64, from + 8);
-                        c = memory_load_unaligned(p64, from + 16);
-                        d = memory_load_unaligned(p64, from + 24);
-                        i = memory_load_unaligned(p64, from + 32);
-                        j = memory_load_unaligned(p64, from + 40);
-                        k = memory_load_unaligned(p64, from + 48);
-                        l = memory_load_unaligned(p64, from + 56);
-                        e = memory_load_unaligned(p64, from + size - 32);
-                        f = memory_load_unaligned(p64, from + size - 24);
-                        g = memory_load_unaligned(p64, from + size - 16);
-                        h = memory_load_unaligned(p64, from + size - 8);
-                        __builtin_memcpy(to, address_of a, 8);
-                        __builtin_memcpy(to + 8, address_of b, 8);
-                        __builtin_memcpy(to + 16, address_of c, 8);
-                        __builtin_memcpy(to + 24, address_of d, 8);
-                        __builtin_memcpy(to + 32, address_of i, 8);
-                        __builtin_memcpy(to + 40, address_of j, 8);
-                        __builtin_memcpy(to + 48, address_of k, 8);
-                        __builtin_memcpy(to + 56, address_of l, 8);
-                        __builtin_memcpy(to + size - 32, address_of e, 8);
-                        __builtin_memcpy(to + size - 24, address_of f, 8);
-                        __builtin_memcpy(to + size - 16, address_of g, 8);
-                        __builtin_memcpy(to + size - 8, address_of h, 8);
+                        COPY_LOAD(a, 0); COPY_LOAD(b, 8);
+                        COPY_LOAD(c, 16); COPY_LOAD(d, 24);
+                        COPY_LOAD(i, 32); COPY_LOAD(j, 40);
+                        COPY_LOAD(k, 48); COPY_LOAD(l, 56);
+                        COPY_LOAD(e, size - 32); COPY_LOAD(f, size - 24);
+                        COPY_LOAD(g, size - 16); COPY_LOAD(h, size - 8);
+                        COPY_STORE(0, a); COPY_STORE(8, b);
+                        COPY_STORE(16, c); COPY_STORE(24, d);
+                        COPY_STORE(32, i); COPY_STORE(40, j);
+                        COPY_STORE(48, k); COPY_STORE(56, l);
+                        COPY_STORE(size - 32, e); COPY_STORE(size - 24, f);
+                        COPY_STORE(size - 16, g); COPY_STORE(size - 8, h);
                         return destination;
                 }
 #endif
-                a = memory_load_unaligned(p64, from);
-                b = memory_load_unaligned(p64, from + 8);
-                c = memory_load_unaligned(p64, from + 16);
-                d = memory_load_unaligned(p64, from + 24);
-                e = memory_load_unaligned(p64, from + size - 32);
-                f = memory_load_unaligned(p64, from + size - 24);
-                g = memory_load_unaligned(p64, from + size - 16);
-                h = memory_load_unaligned(p64, from + size - 8);
-                __builtin_memcpy(to, address_of a, 8);
-                __builtin_memcpy(to + 8, address_of b, 8);
-                __builtin_memcpy(to + 16, address_of c, 8);
-                __builtin_memcpy(to + 24, address_of d, 8);
-                __builtin_memcpy(to + size - 32, address_of e, 8);
-                __builtin_memcpy(to + size - 24, address_of f, 8);
-                __builtin_memcpy(to + size - 16, address_of g, 8);
-                __builtin_memcpy(to + size - 8, address_of h, 8);
+                COPY_LOAD(a, 0); COPY_LOAD(b, 8);
+                COPY_LOAD(c, 16); COPY_LOAD(d, 24);
+                COPY_LOAD(e, size - 32); COPY_LOAD(f, size - 24);
+                COPY_LOAD(g, size - 16); COPY_LOAD(h, size - 8);
+                COPY_STORE(0, a); COPY_STORE(8, b);
+                COPY_STORE(16, c); COPY_STORE(24, d);
+                COPY_STORE(size - 32, e); COPY_STORE(size - 24, f);
+                COPY_STORE(size - 16, g); COPY_STORE(size - 8, h);
                 return destination;
         }
-        a = memory_load_unaligned(p64, from);
-        b = memory_load_unaligned(p64, from + 8);
-        c = memory_load_unaligned(p64, from + size - 16);
-        d = memory_load_unaligned(p64, from + size - 8);
-        __builtin_memcpy(to, address_of a, 8);
-        __builtin_memcpy(to + 8, address_of b, 8);
-        __builtin_memcpy(to + size - 16, address_of c, 8);
-        __builtin_memcpy(to + size - 8, address_of d, 8);
+        COPY_LOAD(a, 0); COPY_LOAD(b, 8);
+        COPY_LOAD(c, size - 16); COPY_LOAD(d, size - 8);
+        COPY_STORE(0, a); COPY_STORE(8, b);
+        COPY_STORE(size - 16, c); COPY_STORE(size - 8, d);
         return destination;
+#undef COPY_LOAD
+#undef COPY_STORE
 #endif
 }
 #endif
@@ -754,21 +740,25 @@ static inline INLINE bool decimal_short_placed(string_address input,
         decimal_short_placed((input), (stopped), (answer))
 #endif
 
+/*
+        The same, for a copy that promises the two spans do not overlap.
+
+        Under the cutoff there is nothing to promise: both windows load every
+        byte before they store any of them, so copy_running is already the
+        correct answer for an overlapping span and is therefore the correct
+        answer for one that does not overlap either. Only the long run wants
+        a different routine, and that is the whole of the difference between
+        these two entries.
+*/
 static inline INLINE address_any copy_apart_running(address_any destination,
                                                     const address_any source,
                                                     positive size)
 {
-#if !LIBRARY_INLINE_COPY
+#if LIBRARY_INLINE_COPY
+        if (size < LIBRARY_RUNNING_MAX)
+                return copy_running(destination, source, size);
+#endif
         return memory_copy_apart(destination, source, size);
-#else
-        if (size >= LIBRARY_RUNNING_MAX)
-                return memory_copy_apart(destination, source, size);
-#if LIBRARY_RUNNING_MAX > 16
-        if (size >= 16)
-                return copy_running_windows(destination, source, size);
-#endif
-        return copy_running_small(destination, source, size);
-#endif
 }
 
 /*
@@ -820,39 +810,29 @@ static inline INLINE address_any fill_running_windows(address_any destination,
 #else
         p64 wide = (p64)(p8)value * (p64)0x0101010101010101ull;
 
+        //      A rung is a row of words at offsets the compiler already
+        //      knows, and a row reads as a row rather than as twelve decisions.
+#define FILL_WORD(at) __builtin_memcpy(to + (at), address_of wide, 8)
+
         if (size >= 32) {
 #if LIBRARY_RUNNING_MAX > 64
                 if (size >= 64) {
-                        __builtin_memcpy(to, address_of wide, 8);
-                        __builtin_memcpy(to + 8, address_of wide, 8);
-                        __builtin_memcpy(to + 16, address_of wide, 8);
-                        __builtin_memcpy(to + 24, address_of wide, 8);
-                        __builtin_memcpy(to + 32, address_of wide, 8);
-                        __builtin_memcpy(to + 40, address_of wide, 8);
-                        __builtin_memcpy(to + 48, address_of wide, 8);
-                        __builtin_memcpy(to + 56, address_of wide, 8);
-                        __builtin_memcpy(to + size - 32, address_of wide, 8);
-                        __builtin_memcpy(to + size - 24, address_of wide, 8);
-                        __builtin_memcpy(to + size - 16, address_of wide, 8);
-                        __builtin_memcpy(to + size - 8, address_of wide, 8);
+                        FILL_WORD(0); FILL_WORD(8); FILL_WORD(16); FILL_WORD(24);
+                        FILL_WORD(32); FILL_WORD(40); FILL_WORD(48); FILL_WORD(56);
+                        FILL_WORD(size - 32); FILL_WORD(size - 24);
+                        FILL_WORD(size - 16); FILL_WORD(size - 8);
                         return destination;
                 }
 #endif
-                __builtin_memcpy(to, address_of wide, 8);
-                __builtin_memcpy(to + 8, address_of wide, 8);
-                __builtin_memcpy(to + 16, address_of wide, 8);
-                __builtin_memcpy(to + 24, address_of wide, 8);
-                __builtin_memcpy(to + size - 32, address_of wide, 8);
-                __builtin_memcpy(to + size - 24, address_of wide, 8);
-                __builtin_memcpy(to + size - 16, address_of wide, 8);
-                __builtin_memcpy(to + size - 8, address_of wide, 8);
+                FILL_WORD(0); FILL_WORD(8); FILL_WORD(16); FILL_WORD(24);
+                FILL_WORD(size - 32); FILL_WORD(size - 24);
+                FILL_WORD(size - 16); FILL_WORD(size - 8);
                 return destination;
         }
-        __builtin_memcpy(to, address_of wide, 8);
-        __builtin_memcpy(to + 8, address_of wide, 8);
-        __builtin_memcpy(to + size - 16, address_of wide, 8);
-        __builtin_memcpy(to + size - 8, address_of wide, 8);
+        FILL_WORD(0); FILL_WORD(8);
+        FILL_WORD(size - 16); FILL_WORD(size - 8);
         return destination;
+#undef FILL_WORD
 #endif
 }
 #endif
@@ -2571,31 +2551,13 @@ static inline INLINE p32 top_bit_known(positive value)
 #else
         p32 top = 0;
 
-        if (value >> 32)
-        {
-                value >>= 32;
-                top += 32;
-        }
-        if (value >> 16)
-        {
-                value >>= 16;
-                top += 16;
-        }
-        if (value >> 8)
-        {
-                value >>= 8;
-                top += 8;
-        }
-        if (value >> 4)
-        {
-                value >>= 4;
-                top += 4;
-        }
-        if (value >> 2)
-        {
-                value >>= 2;
-                top += 2;
-        }
+        //      One rung to a line, because the ladder is one thought and
+        //      five spellings of it read as five.
+        if (value >> 32) { value >>= 32; top += 32; }
+        if (value >> 16) { value >>= 16; top += 16; }
+        if (value >> 8)  { value >>= 8;  top += 8;  }
+        if (value >> 4)  { value >>= 4;  top += 4;  }
+        if (value >> 2)  { value >>= 2;  top += 2;  }
         return top + (p32)(value >> 1);
 #endif
 }
