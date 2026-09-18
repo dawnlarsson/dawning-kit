@@ -21180,11 +21180,26 @@ static bool truncate_size(string_address text, b64 address_to out,
                 text++;
         }
 
-        // Nineteen digits always fit; twenty are either past the unsigned
-        // range or past the signed one every answer is checked against
-        // below, so a run that reaches twenty is refused before it can wrap.
+        /*
+                Nineteen digits always fit; twenty are either past the
+                unsigned range or past the signed one every answer is checked
+                against below, so a run that reaches twenty is refused before
+                it can wrap.
+
+                A leading zero is not magnitude, though, and the count was of
+                written digits rather than meant ones -- so
+                truncate -s 00000000000000000001 was refused as too large for
+                the size one. Step over the zeros first, keeping the last one
+                so a bare 0 is still a digit, and count from there.
+        */
+        positive zeros = 0;
+
+        while (string_is(text + zeros, '0') &&
+               byte_is_digit(string_get(text + zeros + 1)))
+                zeros++;
+
         positive digits;
-        p64 magnitude = string_digits_max(text, 20, address_of digits);
+        p64 magnitude = string_digits_max(text + zeros, 20, address_of digits);
 
         if (digits == 20)
         {
@@ -21192,7 +21207,7 @@ static bool truncate_size(string_address text, b64 address_to out,
                 return false;
         }
 
-        text += digits;
+        text += zeros + digits;
 
         positive power = size_suffix_power(string_get(text), false);
 
