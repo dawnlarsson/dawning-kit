@@ -610,6 +610,26 @@ static bool file_same_identity(const file_facts address_to one, const file_facts
                one->device_minor == two->device_minor;
 }
 
+/* Same leaf name under the same parent directory. ln opens the source
+   parent first; cp and mv already have both fds. */
+static bool file_same_dirent(bipolar source_directory, string_address source,
+                             bipolar destination_directory,
+                             string_address destination)
+{
+        file_facts left;
+        file_facts right;
+
+        if (!string_equals(source, destination))
+                return false;
+        if (file_look_code(source_directory, (string_address)"", AT_EMPTY_PATH,
+                           address_of left) < 0)
+                return false;
+        if (file_look_code(destination_directory, (string_address)"",
+                           AT_EMPTY_PATH, address_of right) < 0)
+                return false;
+        return file_same_identity(address_of left, address_of right);
+}
+
 // The access and modification times in the shape utimensat takes, which is
 // what cp -p and a move across devices both carry over.
 static fn file_times_of(file_facts address_to facts, p64 address_to times)
@@ -664,6 +684,42 @@ static bool file_name_without_trailing_slashes(p8 address_to into,
                 length--;
         into[length] = end;
         return true;
+}
+
+static bool file_strip_trailing;
+
+static bool file_name_has_trailing_slash(string_address path)
+{
+        positive length = string_length(path);
+
+        return length > 1 && path[length - 1] == '/';
+}
+
+/* GNU strip_trailing_slashes is sources only. Extra follow look only
+   when a trailing slash remains, so a dangling link is not a directory. */
+static bipolar file_source_slash(string_address path, p8 address_to into,
+                                 string_address address_to used)
+{
+        if (file_strip_trailing)
+        {
+                if (!file_name_without_trailing_slashes(into, path))
+                        return -ERROR_NAME_TOO_LONG;
+                address_to used = into;
+                return 0;
+        }
+
+        address_to used = path;
+        if (!file_name_has_trailing_slash(path))
+                return 0;
+
+        file_facts facts;
+        bipolar looked = file_look_code(AT_FDCWD, path, 0, address_of facts);
+
+        if (looked < 0)
+                return looked;
+        if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return -ERROR_NOT_DIRECTORY;
+        return 0;
 }
 
 /* Linux rename/open accept a trailing slash on a directory. The pinned
@@ -16135,15 +16191,8 @@ static bool ln_same_dirent(string_address source, bipolar dest_dir,
         if (source_dir < 0)
                 return false;
 
-        file_facts source_parent;
-        file_facts dest_parent;
-        bool same = file_look_code(source_dir, (string_address) "", AT_EMPTY_PATH,
-                                   address_of source_parent) >= 0 &&
-                    file_look_code(dest_dir, (string_address) "", AT_EMPTY_PATH,
-                                   address_of dest_parent) >= 0 &&
-                    file_same_identity(address_of source_parent,
-                                       address_of dest_parent);
-
+        bool same = file_same_dirent(source_dir, source_leaf, dest_dir,
+                                     dest_leaf);
         system_close(source_dir);
         return same;
 }
@@ -17028,6 +17077,7 @@ static b32 file_namei()
 
                 positive hops = 0;
                 p8 resolved[FILE_PATH_MAX];
+                file_facts follow;
                 string_address cwd = working_directory_get();
                 if (!cwd || !namei_walk(namei_operand, cwd, 0,
                                          address_of hops, resolved))
@@ -17036,6 +17086,12 @@ static b32 file_namei()
                         if (namei_mount_failed)
                                 continue;
                 }
+
+                /* util-linux follow-stats the operand for exit status.
+                   -n still lists the link; a broken target is 1. */
+                if (file_look_code(AT_FDCWD, namei_operand, 0,
+                                   address_of follow) < 0)
+                        status = 1;
 
                 string_format(log, "f: %w\n", writer_terminal_name, namei_operand);
                 namei_show(modes, owners, vertical);
@@ -20364,6 +20420,17 @@ static bool csplit_repeat(string_address word, bool address_to forever,
         return true;
 }
 
+static fn csplit_skip_line(csplit_state address_to state, positive at,
+                           positive next_line)
+{
+        p8 address_to newline = memory_first_of(
+            state->input + at, '\n', state->length - at);
+
+        state->cursor = newline ? (positive)(newline - state->input) + 1
+                                : state->length;
+        state->cursor_line = next_line;
+}
+
 static b32 csplit_execute_line(csplit_state address_to state,
                                csplit_pattern address_to pattern,
                                bool repeated)
@@ -20387,16 +20454,8 @@ static b32 csplit_execute_line(csplit_state address_to state,
                         return CSPLIT_FAILED;
                 pattern->line_target = target;
                 if (state->suppress_matched)
-                {
-                        p8 address_to newline = memory_first_of(
-                            state->input + state->cursor, '\n',
-                            state->length - state->cursor);
-
-                        state->cursor = newline
-                                            ? (positive)(newline - state->input) + 1
-                                            : state->length;
-                        state->cursor_line++;
-                }
+                        csplit_skip_line(state, state->cursor,
+                                         state->cursor_line + 1);
                 return CSPLIT_EXECUTED;
         }
 
@@ -20411,11 +20470,7 @@ static b32 csplit_execute_line(csplit_state address_to state,
         {
                 /* Omit the matched line from every section, then continue
                    after it. GNU's --suppress-matched on a line number. */
-                p8 address_to newline = memory_first_of(
-                    state->input + boundary, '\n', state->length - boundary);
-                state->cursor = newline ? (positive)(newline - state->input) + 1
-                                        : state->length;
-                state->cursor_line = target + 1;
+                csplit_skip_line(state, boundary, target + 1);
         }
         else
         {
@@ -25694,23 +25749,6 @@ added:
 /* cp and cross-device mv copy the same object graph. Only source removal,
    dereferencing, overwrite policy and metadata policy differ. */
 
-static bool cp_same_dirent(bipolar source_directory, string_address source,
-                           bipolar destination_directory, string_address destination)
-{
-        file_facts left;
-        file_facts right;
-
-        if (!string_equals(source, destination))
-                return false;
-        if (file_look_code(source_directory, (string_address)"", AT_EMPTY_PATH,
-                           address_of left) < 0)
-                return false;
-        if (file_look_code(destination_directory, (string_address)"", AT_EMPTY_PATH,
-                           address_of right) < 0)
-                return false;
-        return file_same_identity(address_of left, address_of right);
-}
-
 /* GNU copy.c same_file_ok after the UPDATE_NONE skip. True proceeds
    (and *done is -l already linked). False is the same-file refuse. */
 static bool cp_same_file_ok(bipolar source_directory, string_address source,
@@ -25726,8 +25764,8 @@ static bool cp_same_file_ok(bipolar source_directory, string_address source,
                 return true;
         }
 
-        bool same_name = cp_same_dirent(source_directory, source,
-                                        destination_directory, destination);
+        bool same_name = file_same_dirent(source_directory, source,
+                                          destination_directory, destination);
 
         if (file_backup_kind && !same_name)
                 return true;
@@ -26417,6 +26455,20 @@ static fn cp_pair(string_address source, string_address destination)
 {
         p8 source_leaf[FILE_PATH_MAX];
         p8 destination_leaf[FILE_PATH_MAX];
+        p8 stripped[FILE_PATH_MAX];
+        string_address named = source;
+        bipolar slashed = file_source_slash(source, stripped, address_of named);
+
+        if (slashed < 0)
+        {
+                string_format(log_error, "cp: cannot stat '%w': %s\n",
+                              writer_terminal_quoted_name, source,
+                              file_reason(slashed));
+                cp_status = 1;
+                return;
+        }
+        source = named;
+
         bipolar source_directory = file_parent_open_named(source, source_leaf);
         bipolar destination_directory = file_parent_open_named(
             destination, destination_leaf);
@@ -26800,6 +26852,7 @@ static b32 file_cp()
         cp_status = 0;
         cp_destination_decided = false;
         cp_reflink_always = false;
+        file_strip_trailing = false;
         cp_selected = (cp_selection){};
 
         file_taking taking = {
@@ -26933,6 +26986,7 @@ static b32 file_cp()
         cp_hard = (flags & FILE_FLAG('l')) != 0;
         cp_symbolic = (flags & FILE_FLAG('s')) != 0;
         cp_loud = (flags & FILE_FLAG('v')) != 0;
+        file_strip_trailing = (flags & FILE_FLAG('w')) != 0;
         cp_umask = file_umask();
 
         // A link named as a source is followed, because copying a file is
@@ -27622,12 +27676,27 @@ static fn mv_one(string_address source, string_address destination)
 {
         p8 source_leaf[FILE_PATH_MAX];
         p8 destination_leaf[FILE_PATH_MAX];
-        bipolar source_directory = file_parent_open_named(
-            source, source_leaf);
-        bipolar destination_directory = file_parent_open_named(
-            destination, destination_leaf);
+        p8 stripped[FILE_PATH_MAX];
+        bipolar source_directory = -1;
+        bipolar destination_directory = -1;
         bipolar source_handle = -1;
         bipolar destination_handle = -1;
+        string_address named = source;
+        bipolar slashed = file_source_slash(source, stripped, address_of named);
+
+        if (slashed < 0)
+        {
+                string_format(log_error, "mv: cannot stat '%w': %s\n",
+                              writer_terminal_quoted_name, source,
+                              file_reason(slashed));
+                mv_status = 1;
+                goto finished;
+        }
+        source = named;
+
+        source_directory = file_parent_open_named(source, source_leaf);
+        destination_directory = file_parent_open_named(
+            destination, destination_leaf);
         if (source_directory < 0 || destination_directory < 0)
         {
                 string_format(log_error, "mv: cannot move '%w' to '%w': %s\n",
@@ -27668,9 +27737,9 @@ static fn mv_one(string_address source, string_address destination)
         {
                 /* GNU same_file_ok: -b of a distinct dirent proceeds. */
                 if (!(file_backup_kind &&
-                      !cp_same_dirent(source_directory, source_leaf,
-                                      destination_directory,
-                                      destination_leaf)))
+                      !file_same_dirent(source_directory, source_leaf,
+                                        destination_directory,
+                                        destination_leaf)))
                 {
                         string_format(log_error, "mv: '%w' and '%w' are the same file\n",
                                       writer_terminal_quoted_name, source,
@@ -27953,6 +28022,7 @@ static b32 file_mv()
         positive count = (positive)program_argument_count();
         mv_status = 0;
         mv_collision_option = 0;
+        file_strip_trailing = false;
 
         file_taking taking = {
             .program = (string_address) "mv",
@@ -28001,6 +28071,7 @@ static b32 file_mv()
         mv_never_clobber = mv_update_policy == 'n' || mv_update_policy == 'F';
         mv_update_fail = mv_update_policy == 'F';
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
+        file_strip_trailing = (taking.flags & FILE_FLAG('w')) != 0;
         mv_exchange = (taking.flags & FILE_FLAG('X')) != 0;
         mv_no_copy = (taking.flags & FILE_FLAG('c')) != 0;
 
@@ -28095,9 +28166,6 @@ static string_address rm_prompt(bipolar directory, string_address name,
                 return rm_recursive
                            ? (string_address) "remove write-protected directory"
                            : (string_address) "attempt removal of inaccessible directory";
-
-        if (kind == MODE_LINK)
-                return (string_address) "remove write-protected symbolic link";
 
         if (kind != MODE_FILE)
                 return (string_address) "remove write-protected";
@@ -34214,7 +34282,7 @@ static b32 file_rename()
                                     (no_overwrite || (interactive && no_act) ||
                                      (interactive && !rename_ask((string_address)destination))))
                                 {
-                                        if (no_overwrite)
+                                        if (no_overwrite || (interactive && no_act))
                                                 string_format(log, "Skipping existing link: `%w' -> `%w'\n",
                                                               writer_terminal_name, source,
                                                               writer_terminal_name, target);

@@ -228,11 +228,12 @@ DOMAIN_FLOOR = {
                    "with the work under /tmp: a run whose root is on a "
                    "filesystem mounted without nosuid and nodev cannot see "
                    "the mounts this build used to break"),
-    "files": (71566, 74224, 150,
-              "2658 cases are still untriaged, and a dozen causes hold most "
-              "of them. kill is 2953 of 2963: util-linux's exact-argv parse "
-              "is in, including packed --list=/-l=/-d= and treating an "
-              "unknown dashed word as a process after a signal is taken. "
+    "files": (71779, 74220, 150,
+              "2441 cases are still untriaged, and a dozen causes hold most "
+              "of them. kill is 2963 of 2963. leftover13 folded "
+              "file_same_dirent and csplit_skip_line, follow-stats namei "
+              "operands, and applies GNU strip_trailing_slashes to cp/mv "
+              "sources. "
               "mkdir, 180: GNU mkdir -p follows "
               "an existing directory symlink in a leading component, and "
               "the 127 ledger rows that pinned the old refusal are gone; "
@@ -268,7 +269,7 @@ DOMAIN_FLOOR = {
               "The rest is a long tail of tools each with a handful of "
               "orderings and features left -- env 148, hardlink "
               "121, rm 113, chmod 16, cal 42, csplit 30, chown 58, "
-              "namei 45, seq 22, chgrp 48, readlink 0, du 25, rename "
+              "namei 0, seq 22, chgrp 48, readlink 0, du 25, rename "
               "11, shuf 2, pathchk 6. Touch agrees on all 1309. Mknod agrees "
               "on all 762. Env's leftover is "
               "--block-signal/--default-signal/--ignore-signal, still "
