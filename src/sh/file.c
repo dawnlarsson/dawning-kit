@@ -10685,9 +10685,26 @@ static b32 find_parse_primary(positive depth)
         case 'P':
         case 'L':
         case 'I':
-                // Fold invariant patterns once, not on every visited entry.
+                /*
+                        Fold invariant patterns once, not on every visited
+                        entry -- in place, because the pattern is already
+                        where it belongs.
+
+                        This used to fold by handing find_lowered the same
+                        pointer twice, which routed the word through
+                        string_copy_max_end. That routine is declared
+                        WRITES(1, 3), the spelling for "argument one is
+                        written and never read", so a call whose source and
+                        destination are one object is a promise broken at the
+                        call site rather than a bug in the routine. It also
+                        cut the pattern at FILE_PATH_MAX and said nothing,
+                        which quietly widened what a long -iname matched.
+                        Lowering the bytes where they already are is the
+                        whole operation, and it has neither problem.
+                */
                 if (node->kind == 'N' || node->kind == 'P' || node->kind == 'I')
-                        find_lowered(value, (p8 address_to)value);
+                        memory_to_lower_ascii((p8 address_to)value,
+                                              string_length(value));
                 node->text = value;
                 find_pattern_prepare(node);
                 break;
