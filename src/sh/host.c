@@ -201,19 +201,30 @@ static bipolar host_read_text(string_address path, p8 address_to into,
         return got;
 }
 
-static bipolar host_write_text(string_address path, string_address text)
+/* Bytes over a state file, made if it is not there. A choice that has to
+   survive the power going is synced; a /run file that only says what this
+   session is doing does not need to be. */
+static bipolar host_write_file(string_address path, p8 address_to bytes,
+                               positive length, positive mode, bool sync)
 {
         bipolar handle = system_open_at_mode(AT_FDCWD, path,
-                                             FILE_WRITE | O_CLOEXEC, 0644);
+                                             FILE_WRITE | O_CLOEXEC, mode);
         bipolar failed;
 
         if (handle < 0)
                 return handle;
 
-        failed = storage_format_write(handle, (p8 address_to)text,
-                                      string_length(text), 0);
+        failed = storage_format_write(handle, bytes, length, 0);
+        if (!failed && sync)
+                failed = system_call_1(syscall(fsync), (positive)handle);
         system_close(handle);
         return failed;
+}
+
+static bipolar host_write_text(string_address path, string_address text)
+{
+        return host_write_file(path, (p8 address_to)text, string_length(text),
+                               0644, false);
 }
 
 /* One line from standard input, or negative at its end. */

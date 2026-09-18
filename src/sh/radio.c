@@ -44,23 +44,6 @@ static fn radio_net_wake(void)
         system_close(handle);
 }
 
-static bipolar radio_write_file(string_address path, p8 address_to text,
-                                positive length, positive mode)
-{
-        bipolar handle = system_open_at_mode(AT_FDCWD, path,
-                                             FILE_WRITE | O_CLOEXEC, mode);
-        bipolar failed;
-
-        if (handle < 0)
-                return handle;
-
-        failed = length ? storage_format_write(handle, text, length, 0) : 0;
-        if (!failed)
-                failed = system_call_1(syscall(fsync), (positive)handle);
-        system_close(handle);
-        return failed;
-}
-
 /* One word and its newline over a state file. The room is a timezone name's
    room, because the clock's words come through here too. */
 static bipolar radio_write_word(string_address path, string_address word)
@@ -69,7 +52,7 @@ static bipolar radio_write_word(string_address path, string_address word)
 
         string_copy_bounded(line, word, sizeof(line));
         string_append_bounded(line, "\n", sizeof(line));
-        return radio_write_file(path, line, string_length(line), 0644);
+        return host_write_file(path, line, string_length(line), 0644, true);
 }
 
 static bool radio_word_is(string_address path, string_address word)
@@ -262,7 +245,7 @@ static bipolar radio_wifi_save(radio_network address_to networks, positive count
                 text[used++] = '\n';
         }
 
-        return radio_write_file(NET_WIFI_LIST, text, used, 0600);
+        return host_write_file(NET_WIFI_LIST, text, used, 0600, true);
 }
 
 static bipolar radio_wifi_join(string_address ssid, string_address pass)
@@ -567,7 +550,8 @@ static b32 radio_bluetooth_add(string_address identity)
                                            "");
                 memory_copy(text + used, line, string_length(line));
                 used += string_length(line);
-                if (radio_write_file(NET_BLUETOOTH_LIST, text, used, 0644) < 0)
+                if (host_write_file(NET_BLUETOOTH_LIST, text, used, 0644,
+                                    true) < 0)
                         return host_fail("bluetooth", -1);
         }
 
@@ -632,7 +616,8 @@ static b32 radio_internet_set(string_address which)
         host_state_ready();
         if (host_write_text(NET_INTERNET_RUN, line) < 0)
                 return host_fail("internet", -1);
-        if (radio_write_file(NET_INTERNET_ROOT, line, string_length(line), 0644) < 0)
+        if (host_write_file(NET_INTERNET_ROOT, line, string_length(line),
+                            0644, true) < 0)
                 return host_fail("internet", -1);
         radio_net_wake();
 
