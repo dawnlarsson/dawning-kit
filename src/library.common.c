@@ -1512,44 +1512,6 @@ static inline bool byte_store_append_exact(byte_store address_to store,
         return byte_store_append_span(store, data, length);
 }
 
-#ifndef KERNEL_MODE
-/* Where a codec's compressed bytes go: a bounded buffer the caller named or a
-   descriptor, never both, with one sticky refusal so that a caller still
-   emitting after a short buffer gets a cheap false and not a second
-   diagnostic per block.  why points at the codec's own reason word and the
-   two sentences are its own, set once with the sink, which is what leaves an
-   emitted run carrying nothing but its bytes. */
-typedef struct
-{
-        byte_store address_to store;
-        bipolar fd;
-        bool failed;
-        string_address address_to why;
-        string_address full, unwritable;
-} codec_output;
-
-static inline bool codec_output_emit(codec_output address_to out,
-                                     address_any bytes, positive length)
-{
-        if (out->failed)
-                return false;
-        if (out->store)
-        {
-                if (byte_store_append_exact(out->store, bytes, length))
-                        return true;
-                address_to out->why = out->full;
-        }
-        else if (out->fd >= 0 &&
-                 system_write_all((positive)out->fd, bytes, length) !=
-                         (bipolar)length)
-                address_to out->why = out->unwritable;
-        else
-                return true;
-        out->failed = true;
-        return false;
-}
-#endif // KERNEL_MODE
-
 /* Stable storage owns its mapping outside these mechanisms. Unlike a moving
    byte_store, every successful take preserves all earlier addresses. The
    owner chooses alignment and which marks may be rewound. */
