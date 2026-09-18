@@ -13033,6 +13033,22 @@ static PURE bool ul_rfkill_matches(ul_rfkill_row address_to row,
                (kind == UL_RFKILL_MATCH_ID && row->id == value);
 }
 
+/*      A radio's name and type are whatever its driver registered, and the
+        listing puts them on a terminal.  The table this same tool writes
+        for --output already spells the bytes a terminal would act on, and
+        the plain listing wrote them whole: one tool with two answers for
+        the same field.  Safe settles it the table's way; reference keeps
+        the reference's answer, which is to write them out. */
+static fn ul_rfkill_spell(string_address text)
+{
+#if MOONWATER_STRICT >= STRICT_SAFE
+        writer_hex_escaped(log, text, string_length(text),
+                           HEX_CONTROL | HEX_TAB);
+#else
+        log(text, 0);
+#endif
+}
+
 static fn ul_rfkill_legacy(ul_rfkill_row address_to rows, positive count,
                            p8 kind, positive value)
 {
@@ -13041,11 +13057,13 @@ static fn ul_rfkill_legacy(ul_rfkill_row address_to rows, positive count,
                 {
                         string_address description =
                             ul_rfkill_description(rows[i].type_id);
-                        string_format(log, "%p: %s: %s\n",
-                                      rows[i].id, rows[i].device,
-                                      string_get(description)
-                                          ? description
-                                          : (string_address)rows[i].type);
+                        string_format(log, "%p: ", rows[i].id);
+                        ul_rfkill_spell((string_address)rows[i].device);
+                        log(": ", 2);
+                        ul_rfkill_spell(string_get(description)
+                                            ? description
+                                            : (string_address)rows[i].type);
+                        log("\n", 1);
                         string_format(log, "\tSoft blocked: %s\n",
                                       rows[i].soft ? (string_address)"yes"
                                                    : (string_address)"no");
