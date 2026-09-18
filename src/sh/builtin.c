@@ -11013,57 +11013,60 @@ fn printf_number(writer write, positive magnitude, p8 sign, positive base, bool 
 // An argument that is not a number is still printed, as zero, and the status
 // says so afterwards; that is what the reference shell does.
 /*
-        The number an integer conversion reads out of its argument.
+        Where the digits of a printf argument begin, for both readers below.
 
-        strtoimax's grammar, which is what the reference shell reads with:
-        blanks in front, a sign, 0x for sixteen and a leading 0 for eight --
-        and before any of that, a quote, which means the byte after it. An
-        missing argument is zero and no complaint. Bash diagnoses an explicitly
-        empty operand; dash accepts that operand but diagnoses blanks alone.
-        What the digits
-        leave behind is a complaint and not a refusal: the number read is
-        printed, and "not completely converted" is said afterwards with the
-        status, the same as no digits at all is zero and "expected numeric
-        value". A conversion that refused every one of those printed nothing
-        for "$maybe_empty" and set the status where every other shell did not.
+        Blanks in front, and before any of them a quote, which means the byte
+        after it. An missing argument is zero and no complaint. Bash
+        diagnoses an explicitly empty operand; dash accepts that operand but
+        diagnoses blanks alone. False when there is nothing to convert, with
+        quoted holding what a quote named and zero for the rest, so the
+        caller answers with it either way.
 */
-static positive printf_integer(string_address word, bool signed_value)
+static bool printf_number_at(string_address word, string_address address_to at,
+                             positive address_to quoted)
 {
-        string_address at = word;
-        string_address stopped;
-        positive value;
-        b32 out_of_range;
+        address_to quoted = 0;
+        address_to at = word;
 
         if (!word)
-                return 0;
+                return false;
 
-        at += string_span(at, string_set_blanks);
+        address_to at = word + string_span(word, string_set_blanks);
 
-        if (!string_get(at))
+        if (!string_get(address_to at))
         {
                 if (word != printf_nothing &&
                     (shell_bash_compat || string_get(word)))
                         printf_status = shell_printf_number_refused(word);
-                return 0;
+                return false;
         }
 
-        if (string_is(at, '\'') || string_is(at, '"'))
-                return (positive)string_get(at + 1);
+        if (string_is(address_to at, '\'') || string_is(address_to at, '"'))
+        {
+                address_to quoted = string_get(address_to at + 1);
+                return false;
+        }
 
-        /* The standard layer's checked strtoimax/strtoumax cores already
-           carry this exact prefix/sign grammar in one assembly scan. Keep
-           printf on that path too: the old digit-count readers wrapped a
-           long operand and lost the one bit that says to clamp and report. */
-        value = signed_value
-                    ? (positive)string_to_number_checked(
-                          at, address_of stopped, 0, address_of out_of_range)
-                    : string_to_number_unsigned_checked(
-                          at, address_of stopped, 0, address_of out_of_range);
+        return true;
+}
 
+/*
+        What the digits left behind, which is one complaint for both readers.
+
+        It is a complaint and not a refusal: the number read is printed, and
+        "not completely converted" is said afterwards with the status, the
+        same as no digits at all is zero and "expected numeric value". A
+        conversion that refused every one of those printed nothing for
+        "$maybe_empty" and set the status where every other shell did not.
+        False only when there were no digits, the one case the caller drops.
+*/
+static bool printf_number_done(string_address word, string_address at,
+                               string_address stopped, b32 out_of_range)
+{
         if (stopped == at)
         {
                 printf_status = shell_printf_number_refused(word);
-                return 0;
+                return false;
         }
 
         if (out_of_range)
@@ -11088,7 +11091,38 @@ static positive printf_integer(string_address word, bool signed_value)
                 printf_status = 1;
         }
 
-        return value;
+        return true;
+}
+
+/*
+        The number an integer conversion reads out of its argument.
+
+        strtoimax's grammar, which is what the reference shell reads with:
+        blanks in front, a sign, 0x for sixteen and a leading 0 for eight --
+        and before any of that, a quote, which means the byte after it.
+*/
+static positive printf_integer(string_address word, bool signed_value)
+{
+        string_address at;
+        string_address stopped;
+        positive quoted;
+        positive value;
+        b32 out_of_range;
+
+        if (!printf_number_at(word, address_of at, address_of quoted))
+                return quoted;
+
+        /* The standard layer's checked strtoimax/strtoumax cores already
+           carry this exact prefix/sign grammar in one assembly scan. Keep
+           printf on that path too: the old digit-count readers wrapped a
+           long operand and lost the one bit that says to clamp and report. */
+        value = signed_value
+                    ? (positive)string_to_number_checked(
+                          at, address_of stopped, 0, address_of out_of_range)
+                    : string_to_number_unsigned_checked(
+                          at, address_of stopped, 0, address_of out_of_range);
+
+        return printf_number_done(word, at, stopped, out_of_range) ? value : 0;
 }
 
 /*
@@ -11099,56 +11133,21 @@ static positive printf_integer(string_address word, bool signed_value)
         %g and %a with it, so "0x10" is sixteen, "1e3" is a thousand, and
         "inf" and "nan" are themselves. The quote that means the byte after
         it is read here too, because a format is free to spell the same
-        argument either way. Empty or missing is zero and no complaint;
-        digits that were never there, and digits with something left after
-        them, complain in the two spellings the integer reader uses.
+        argument either way. Nothing here is out of range.
 */
 static decimal printf_decimal(string_address word)
 {
-        string_address at = word;
+        string_address at;
         string_address stopped = null;
+        positive quoted;
         decimal value;
 
-        if (!word)
-                return 0.0;
-
-        at += string_span(at, string_set_blanks);
-
-        if (!string_get(at))
-        {
-                if (word != printf_nothing &&
-                    (shell_bash_compat || string_get(word)))
-                        printf_status = shell_printf_number_refused(word);
-                return 0.0;
-        }
-
-        if (string_is(at, '\'') || string_is(at, '"'))
-                return (decimal)(positive)string_get(at + 1);
+        if (!printf_number_at(word, address_of at, address_of quoted))
+                return (decimal)quoted;
 
         value = string_to_decimal(at, address_of stopped);
 
-        if (stopped == at)
-        {
-                printf_status = shell_printf_number_refused(word);
-                return 0.0;
-        }
-
-        if (string_get(stopped))
-        {
-                //      A number with a tail on it is no number at all to
-                //      bash, which says so in the same words it uses for a
-                //      word that was never one.
-                if (shell_bash_compat)
-                        shell_printf_number_refused(word);
-                else
-                {
-                        shell_told("printf: %s: not completely converted\n", word);
-                }
-
-                printf_status = 1;
-        }
-
-        return value;
+        return printf_number_done(word, at, stopped, 0) ? value : 0.0;
 }
 
 fn printf_one(writer write, string_address format)
