@@ -51755,6 +51755,84 @@ static fn pax_records(void)
         }
 }
 
+/*
+        Which of a member's three name sources wins.
+
+        A member can carry a pax path record, a GNU long-name member and the
+        header's own fields all at once, and they rank in that order: the
+        reference reads a pax record over a long name whichever of the two
+        the archive wrote first, a local pax record over a global one, and
+        the header only once neither pax state said anything.  A link target
+        ranks the same three ways.  Every combination is walked because an
+        archive carrying two of them is an archive built to be read two ways,
+        and the name extracted has to be the one the archiver meant.
+*/
+static fn name_precedence(void)
+{
+        p8 block[TAR_BLOCK];
+        p8 into[TAR_PATH];
+        p8 given[TAR_PATH];
+        positive shape;
+
+        string_copy_max_end(given, (string_address) "long", sizeof(given) - 1);
+
+        for (shape = 0; shape < 8; shape++)
+        {
+                bool by_local = (shape & 1) != 0;
+                bool by_global = (shape & 2) != 0;
+                bool by_long = (shape & 4) != 0;
+                string_address want =
+                    by_local ? (string_address) "local"
+                    : by_global ? (string_address) "global"
+                    : by_long ? (string_address) "long"
+                              : (string_address) "header";
+
+                memory_fill(block, 0, sizeof(block));
+                memory_copy(block, "header", 6);
+                memory_copy(block + 157, "header", 6);
+                memory_copy(block + 257, "ustar", 5);
+                memory_copy(block + 263, "00", 2);
+
+                tar_pax_clear(address_of tar_pax_local);
+                tar_pax_clear(address_of tar_pax_global);
+                if (by_local)
+                {
+                        string_copy_max_end(tar_pax_local.path,
+                                            (string_address) "local",
+                                            TAR_PATH - 1);
+                        string_copy_max_end(tar_pax_local.link,
+                                            (string_address) "local",
+                                            TAR_PATH - 1);
+                        tar_pax_local.has_path = true;
+                        tar_pax_local.has_link = true;
+                }
+                if (by_global)
+                {
+                        string_copy_max_end(tar_pax_global.path,
+                                            (string_address) "global",
+                                            TAR_PATH - 1);
+                        string_copy_max_end(tar_pax_global.link,
+                                            (string_address) "global",
+                                            TAR_PATH - 1);
+                        tar_pax_global.has_path = true;
+                        tar_pax_global.has_link = true;
+                }
+
+                into[0] = end;
+                check("a pax path outranks a GNU long name, which outranks the header",
+                      tar_member_name(block, into, by_long ? given : null) &&
+                          string_equals(into, want));
+
+                into[0] = end;
+                check("a pax linkpath ranks the same three ways",
+                      tar_member_link(block, into, by_long ? given : null) &&
+                          string_equals(into, want));
+        }
+
+        tar_pax_clear(address_of tar_pax_local);
+        tar_pax_clear(address_of tar_pax_global);
+}
+
 b32 main(void)
 {
         checksums();
@@ -51762,6 +51840,7 @@ b32 main(void)
         paths();
         packs();
         pax_records();
+        name_precedence();
         return test_report(null);
 }
 #endif /* CHECK_tar */

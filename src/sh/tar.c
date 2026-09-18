@@ -543,6 +543,72 @@ static p8 tar_pack_from_magic(p8 address_to magic, positive n)
         return TAR_PACK_NONE;
 }
 
+static bool tar_header_gnu_old(p8 address_to block)
+{
+        return !memory_compare(block + 257, "ustar ", 6) &&
+               block[263] == ' ' && !block[264];
+}
+
+/*
+        A member can carry its name three ways at once, and they rank: a pax
+        path record, then the GNU long-name member before it, then the
+        header's own fields.  The reference reads a pax record over a long
+        name whichever of the two the archive wrote first, and over a global
+        pax record as well, so an archive built to be read both ways gives up
+        the same name here as there.  long_name is the long name this member
+        was given, or null when it had none.
+*/
+static bool tar_member_name(p8 address_to block, p8 address_to into,
+                            string_address long_name)
+{
+        tar_pax_state address_to state =
+            tar_pax_local.has_path ? address_of tar_pax_local
+                                   : address_of tar_pax_global;
+        if (state->has_path)
+        {
+                string_copy_max_end(into, state->path, TAR_PATH - 1);
+                return into[0] != end;
+        }
+
+        if (long_name)
+        {
+                string_copy_max_end(into, long_name, TAR_PATH - 1);
+                return true;
+        }
+
+        /* GNU old format stores atime/sparse maps where ustar keeps prefix. */
+        if (tar_header_gnu_old(block))
+        {
+                tar_field_text(block, TAR_NAME, into, TAR_PATH);
+                return into[0] != end;
+        }
+
+        return tar_join_name(block + 345, block, into, TAR_PATH);
+}
+
+/* A link target ranks the same three ways, for the same reason. */
+static bool tar_member_link(p8 address_to block, p8 address_to into,
+                            string_address long_link)
+{
+        tar_pax_state address_to state =
+            tar_pax_local.has_link ? address_of tar_pax_local
+                                   : address_of tar_pax_global;
+        if (state->has_link)
+        {
+                string_copy_max_end(into, state->link, TAR_PATH - 1);
+                return true;
+        }
+
+        if (long_link)
+        {
+                string_copy_max_end(into, long_link, TAR_PATH - 1);
+                return true;
+        }
+
+        tar_field_text(block + 157, TAR_NAME, into, TAR_PATH);
+        return true;
+}
+
 #ifndef TAR_PARSE_ONLY
 
 #define TAR_CREATE 'c'
@@ -2649,48 +2715,6 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         tar_skip(archive, tar_padded(size), seekable);
 }
 
-static bool tar_header_gnu_old(p8 address_to block)
-{
-        return !memory_compare(block + 257, "ustar ", 6) &&
-               block[263] == ' ' && !block[264];
-}
-
-static bool tar_member_name(p8 address_to block, p8 address_to into)
-{
-        tar_pax_state address_to state =
-            tar_pax_local.has_path ? address_of tar_pax_local
-                                   : address_of tar_pax_global;
-        if (state->has_path)
-        {
-                string_copy_max_end(into, state->path, TAR_PATH - 1);
-                return into[0] != end;
-        }
-
-        /* GNU old format stores atime/sparse maps where ustar keeps prefix. */
-        if (tar_header_gnu_old(block))
-        {
-                tar_field_text(block, TAR_NAME, into, TAR_PATH);
-                return into[0] != end;
-        }
-
-        return tar_join_name(block + 345, block, into, TAR_PATH);
-}
-
-static bool tar_member_link(p8 address_to block, p8 address_to into)
-{
-        tar_pax_state address_to state =
-            tar_pax_local.has_link ? address_of tar_pax_local
-                                   : address_of tar_pax_global;
-        if (state->has_link)
-        {
-                string_copy_max_end(into, state->link, TAR_PATH - 1);
-                return true;
-        }
-
-        tar_field_text(block + 157, TAR_NAME, into, TAR_PATH);
-        return true;
-}
-
 static b32 tar_read_archive(struct tar_options address_to options)
 {
         bipolar handle;
@@ -2950,18 +2974,15 @@ static b32 tar_read_archive(struct tar_options address_to options)
                         break;
                 }
 
-                if (have_long_name)
-                        string_copy_max_end(tar_name, long_name, TAR_PATH - 1);
-                else if (!tar_member_name(block, tar_name))
+                if (!tar_member_name(block, tar_name,
+                                     have_long_name ? long_name : null))
                 {
                         tar_refuse("member name is too long");
                         break;
                 }
 
-                if (have_long_link)
-                        string_copy_max_end(tar_link, long_link, TAR_PATH - 1);
-                else
-                        tar_member_link(block, tar_link);
+                tar_member_link(block, tar_link,
+                                have_long_link ? long_link : null);
 
                 have_long_name = false;
                 have_long_link = false;
