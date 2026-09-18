@@ -16007,6 +16007,18 @@ static bool grep_binary_holes(const grep_binary address_to binary,
         return hole >= 0 && (positive)hole < facts->size;
 }
 
+/*
+        What the graph may spend on one line while a machine that reads every
+        byte once is standing by. Generous on purpose: a pattern that was
+        going to answer has never needed a thousandth of this, and the one
+        that will not answer gives up here instead of at a hundred million.
+*/
+enum
+{
+        GREP_GRAPH_YIELD = 1u << 16,
+        GREP_GRAPH_YIELD_BYTE = 1u << 12
+};
+
 typedef struct
 {
         const regex_program address_to program;
@@ -16199,8 +16211,25 @@ static bool grep_line_matches(const grep_plan address_to plan,
                         return hit != null;
         }
 
+        /*
+                A line the graph answers inside its budget costs nothing to
+                ask, and one it answers just inside costs the whole budget
+                and is asked again on the next line: (aa+)+b over a file of
+                a's finishes every line and takes thirty milliseconds doing
+                it. Where the machine is standing by, the graph gets what a
+                line this long could honestly need and the machine gets the
+                rest -- and the first line that hits the cap latches the
+                machine ahead of the graph for the rest of the file.
+        */
+        bool yielding = plan->dfa && !plan->dfa->failed;
+
+        state->match->work_yield =
+            yielding ? GREP_GRAPH_YIELD + length * GREP_GRAPH_YIELD_BYTE : 0;
+
         p8 result = rx_find(state->match, plan->program, REGEX_FIRST, false,
                             line, length, 0);
+
+        state->match->work_yield = 0;
 
         if (result == RX_COMPLEX && plan->dfa && !plan->dfa->failed)
         {
@@ -16212,6 +16241,13 @@ static bool grep_line_matches(const grep_plan address_to plan,
                         return hit != null;
                 }
         }
+
+        // The machine was there when the cap was set and is not there now,
+        // so the cap took an answer away rather than saving a search. The
+        // graph's own budget is the only answer left.
+        if (result == RX_COMPLEX && yielding)
+                result = rx_find(state->match, plan->program, REGEX_FIRST, false,
+                                 line, length, 0);
 
         if (result == RX_COMPLEX)
                 state->complex++;

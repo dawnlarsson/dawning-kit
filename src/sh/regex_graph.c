@@ -608,6 +608,15 @@ typedef struct {
         string_address bytes;
         positive length, slots[20], best_slots[20];
         positive best_stop, best_limit, work_used, work_limit;
+        /*
+                A second, lower ceiling that only the walk below honours,
+                set by a caller holding a machine that reads every byte
+                once. work_limit stays what it was: the fixed-literal gate
+                in rx_find divides by it to decide whether a prepared
+                string can answer the whole line, and lowering that would
+                send fixed strings to the graph. Zero is no second ceiling.
+        */
+        positive work_yield;
         p32 frame_used, choice_used, undo_used;
         p8 selection, active_captures;
         bool pending_exhaustion, first_exhausted;
@@ -701,6 +710,9 @@ static bool rx_run(rx_match *match, positive start)
         p32 continuation = 0;
         positive position = start, repetitions = 0, previous = positive_max;
         positive work = match->work_used, work_limit = match->work_limit;
+
+        if (match->work_yield && match->work_yield < work_limit)
+                work_limit = match->work_yield;
         bool accepted = false;
         match->frame_used = match->choice_used = match->undo_used = 0;
         memory_fill(match->slots, -1, match->active_captures * sizeof(positive));
