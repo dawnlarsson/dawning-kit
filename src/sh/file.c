@@ -19841,8 +19841,24 @@ static bool split_lines_chunk(p8 address_to input, positive length,
 
                         while (next || chunk_end <= n_written)
                         {
+                                /*
+                                        chunk_no is the chunk still to be
+                                        written, and everything below keeps
+                                        it that way. Input that stops without
+                                        a separator leaves through here, so
+                                        it has to count the chunk it just
+                                        finished too -- otherwise the padding
+                                        at the end begins at a chunk already
+                                        on disk and writes one file more than
+                                        was asked for. split -n l/3 over
+                                        three lines with no final newline
+                                        made four.
+                                */
                                 if (!next && bp == eob)
+                                {
+                                        chunk_no++;
                                         break;
+                                }
                                 if (k && k == chunk_no)
                                         return true;
                                 chunk_end += chunk_size + (positive)(chunk_no < rem);
