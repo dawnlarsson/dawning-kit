@@ -33,8 +33,8 @@
 // the shell PID 1, so the kernel panics the moment the shell exits, and
 // nothing is left to reap anything.
 
-string_address init_argv[] = {init_program, null};
-string_address init_envp[] = {null};
+static string_address init_argv[] = {init_program, null};
+static string_address init_envp[] = {null};
 
 /*
         The network, brought up by the system rather than by whoever logs in.
@@ -54,7 +54,7 @@ string_address init_envp[] = {null};
 */
 #define network_program "/ip"
 
-string_address network_argv[] = {(string_address)network_program,
+static string_address network_argv[] = {(string_address)network_program,
                                  (string_address) "watch", null};
 
 /*
@@ -71,7 +71,7 @@ string_address network_argv[] = {(string_address)network_program,
 #define SETTLE_WAIT_NS 20000000000
 #define WAIT_NO_HANG 1
 
-string_address settle_argv[] = {(string_address)settle_program,
+static string_address settle_argv[] = {(string_address)settle_program,
                                 (string_address) "boot", null};
 
 /*
@@ -86,7 +86,7 @@ string_address settle_argv[] = {(string_address)settle_program,
 #define MACHINE_SETTLED_NS 1000000000
 #define MACHINE_GIVE_UP 5
 
-string_address machine_argv[] = {(string_address)machine_program,
+static string_address machine_argv[] = {(string_address)machine_program,
                                  (string_address) "-c",
                                  (string_address) "moonwater machine", null};
 
