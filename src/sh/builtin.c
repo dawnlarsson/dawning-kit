@@ -10534,82 +10534,50 @@ HOT fn shell_test(writer write, string_address input)
         /* `[ a -lt b ]` and `[ -n x ]` after expansion. Decide from argc
            before touching the expression cursor: a loop condition is five
            argv words, a unary two-word form is four, and neither needs the
-           general walker. */
-        if (name && string_is(name, '[') && !string_get(name + 1))
+           general walker.
+
+           A bracket carries one word that test does not -- the closing one --
+           so the two spellings are the same shapes counted from a different
+           place, and the closing word is proved once for both. */
+        bool bracket = name && string_is(name, '[') && !string_get(name + 1);
+
+        if (!bracket || (argc > 1 && (last = shell_argv[argc - 1]) &&
+                         string_is(last, ']') && !string_get(last + 1)))
         {
-                if (argc == 5)
-                {
-                        last = shell_argv[4];
-                        if (last && string_is(last, ']') && !string_get(last + 1) &&
-                            test_integer_pair(shell_argv[1], shell_argv[2],
-                                              shell_argv[3], address_of status))
-                                return shell_answer(status);
-                }
-                else if (argc == 4)
+                positive words = argc - bracket;
+
+                if (words == 4 &&
+                    test_integer_pair(shell_argv[1], shell_argv[2],
+                                      shell_argv[3], address_of status))
+                        return shell_answer(status);
+
+                if (words == 3)
                 {
                         string_address op = shell_argv[1];
                         string_address operand = shell_argv[2];
 
-                        last = shell_argv[3];
                         if (op && string_is(op, '-') && string_get(op + 1) &&
-                            !string_get(op + 2) && last && string_is(last, ']') &&
-                            !string_get(last + 1))
+                            !string_get(op + 2))
                         {
                                 p8 letter = string_get(op + 1);
 
                                 if (letter == 'n')
-                                {
-                                        shell_status =
-                                            operand && string_not(operand, end)
-                                                ? 0
-                                                : 1;
-                                        return;
-                                }
+                                        return shell_answer(
+                                            operand &&
+                                            string_not(operand, end) ? 0 : 1);
 
                                 if (letter == 'z')
-                                {
-                                        shell_status =
-                                            !operand || string_is(operand, end)
-                                                ? 0
-                                                : 1;
-                                        return;
-                                }
+                                        return shell_answer(
+                                            !operand ||
+                                            string_is(operand, end) ? 0 : 1);
                         }
 
-                        if (last && string_is(last, ']') && !string_get(last + 1) &&
-                            op && string_is(op, '!') && !string_get(op + 1))
-                        {
-                                shell_status =
-                                    string_get(operand) == end ? 0 : 1;
-                                return;
-                        }
-                }
-        }
-        else if (argc == 4)
-        {
-                if (test_integer_pair(shell_argv[1], shell_argv[2],
-                                      shell_argv[3], address_of status))
-                        return shell_answer(status);
-        }
-        else if (argc == 3)
-        {
-                string_address op = shell_argv[1];
-                string_address operand = shell_argv[2];
-
-                if (op && string_is(op, '-') && string_get(op + 1) &&
-                    !string_get(op + 2))
-                {
-                        p8 letter = string_get(op + 1);
-
-                        if (letter == 'n')
+                        //      `test ! x` is left to the walker, as it was:
+                        //      only the bracket form is taken here.
+                        if (bracket && op && string_is(op, '!') &&
+                            !string_get(op + 1))
                                 return shell_answer(
-                                    operand && string_not(operand, end) ? 0
-                                                                        : 1);
-
-                        if (letter == 'z')
-                                return shell_answer(
-                                    !operand || string_is(operand, end) ? 0
-                                                                        : 1);
+                                    string_get(operand) == end ? 0 : 1);
                 }
         }
 
@@ -10622,7 +10590,7 @@ HOT fn shell_test(writer write, string_address input)
         //      a script that only looks at the status still cares that the
         //      channel spoke: silence here was the one place test differed
         //      from every shell it is compared against.
-        if (name && string_is(name, '[') && !string_get(name + 1))
+        if (bracket)
         {
                 if (argc < 2)
                         return shell_answered(2, "%s: missing `]'\n", name);
