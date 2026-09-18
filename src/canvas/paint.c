@@ -183,8 +183,25 @@ static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
 static void cursor_cell(struct drm_rect *rect, int x, int y,
                         unsigned int shape, unsigned int scale)
 {
-        int hx = canvas_cursor_hot[shape][0] * (int)scale;
-        int hy = canvas_cursor_hot[shape][1] * (int)scale;
+        int hx, hy;
+
+        /*
+                A shape nobody drew.
+
+                desktop_resume writes ~0u into every output's cursor_shape to
+                mean "whatever is on the plane is stale, paint it again", and
+                plane_update works out the cell before it knows whether the
+                cursor is being shown -- so a hide, and the plane_drop that a
+                failed repaint goes through, read the hotspot of a shape that
+                is not one. Unsigned, that is a read tens of gigabytes past a
+                five entry table in ring 0. Bounded here because this is the
+                one place the table is read.
+        */
+        if (shape >= CURSOR_SHAPES)
+                shape = CURSOR_ARROW;
+
+        hx = canvas_cursor_hot[shape][0] * (int)scale;
+        hy = canvas_cursor_hot[shape][1] * (int)scale;
 
         drm_rect_init(rect, x - hx, y - hy, CURSOR_W * (int)scale,
                       CURSOR_H * (int)scale);
@@ -199,6 +216,10 @@ static HOT void canvas_draw_cursor(const struct target *t, int x, int y,
                                    unsigned int shape, unsigned int scale)
 {
         struct drm_rect cell;
+
+        // The same bound, for the same reason: the bitmaps are indexed by it.
+        if (shape >= CURSOR_SHAPES)
+                shape = CURSOR_ARROW;
 
         cursor_cell(&cell, x, y, shape, scale);
         bits_draw(t, cell.x1, cell.y1, (int)scale, (const u8 *)cursor_fill[shape],
