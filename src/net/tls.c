@@ -659,6 +659,18 @@ static COLD bool tls_host_match(string_address host, p8 address_to name,
         if (!name_length || name[0] != '*' || name_length < 3 || name[1] != '.')
                 return false;
 
+        /* A wildcard leaves at least two labels beneath it. "*.com" is one
+           label, and a certificate carrying it would stand for every host in
+           a whole public suffix; no issuer means to say that, and a client
+           that reads it as written hands one certificate the internet. */
+        {
+                positive rest = name_length - 2;
+                positive dot = memory_span_without_byte(name + 2, '.', rest);
+
+                if (dot + 1 >= rest)
+                        return false;
+        }
+
         star = string_first_of(host, '.');
         if (!star || !star[1])
                 return false;
