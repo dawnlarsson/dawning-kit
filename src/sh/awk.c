@@ -6399,7 +6399,18 @@ static fn awk_stack_measure()
         positive limits[2] = {0, 0};
         b32 here = 0;
 
-        awk_stack_start = (positive)address_of here;
+        /*
+                The top of the stack, not the frame awk started in. The
+                reserve below is measured down from this, and a frame is as
+                deep as the shell already was when it reached awk: a
+                thousand nested shell functions spent the whole megabyte
+                before awk read a byte, and a program that should have been
+                refused faulted instead. The stack _start was handed is the
+                real top and does not move. Where no entry recorded one,
+                the frame is all there is to measure from.
+        */
+        awk_stack_start = program_stack_base ? (positive)program_stack_base
+                                             : (positive)address_of here;
         awk_stack_room_set(6u << 20);
 
         if (system_call_4(syscall(prlimit64), 0, 3, 0, (positive)limits))
