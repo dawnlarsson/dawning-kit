@@ -51833,6 +51833,68 @@ static fn name_precedence(void)
         tar_pax_clear(address_of tar_pax_global);
 }
 
+/*
+        Where a long name splits, and how a directory member is spelled.
+
+        The piece after a split is the member's own last component, so a
+        directory member's trailing slash is never the split point: splitting
+        there leaves the leaf field empty and the name unreadable.  Names are
+        walked with a trailing slash and without, with the slash at every
+        position and with none at all, and the split is compared against a
+        scan written the other way round.
+*/
+static fn name_spelling(void)
+{
+        static string_address names[] = {
+            "", "a", "a/", "/a", "a/b", "a/b/", "a//b", "a//b/", "/", "//",
+            "abc/def/ghi", "abc/def/ghi/", "dir/sub/", "x/y/z/", "xyz"};
+        p8 spelled[TAR_PATH];
+        p8 wide[TAR_PATH];
+        positive at;
+
+        for (at = 0; at < array_count(names); at++)
+        {
+                string_address name = names[at];
+                positive length = string_length(name);
+                positive body = length && name[length - 1] == '/' ? length - 1
+                                                                  : length;
+                string_address want = null;
+                positive scan;
+
+                for (scan = body; scan; scan--)
+                        if (name[scan - 1] == '/')
+                        {
+                                want = name + scan - 1;
+                                break;
+                        }
+
+                check("a name splits at the last slash that is not its own trailing one",
+                      tar_split_at(name, length) == want);
+        }
+
+        for (at = 0; at < array_count(names); at++)
+        {
+                string_address name = names[at];
+                positive length = string_length(name);
+                bool made = tar_spell_directory(name, spelled,
+                                                sizeof(spelled));
+
+                if (!length || name[length - 1] == '/')
+                        check("an empty name, or one already ending in a slash, is left alone",
+                              !made);
+                else
+                        check("a directory member gains exactly one trailing slash",
+                              made && !memory_compare(spelled, name, length) &&
+                                  spelled[length] == '/' &&
+                                  spelled[length + 1] == end);
+        }
+
+        memory_fill(wide, 'x', TAR_PATH - 1);
+        wide[TAR_PATH - 1] = end;
+        check("a name with no room for the slash keeps its plain spelling",
+              !tar_spell_directory(wide, spelled, TAR_PATH));
+}
+
 b32 main(void)
 {
         checksums();
@@ -51841,6 +51903,7 @@ b32 main(void)
         packs();
         pax_records();
         name_precedence();
+        name_spelling();
         return test_report(null);
 }
 #endif /* CHECK_tar */

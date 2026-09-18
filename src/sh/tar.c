@@ -550,6 +550,45 @@ static bool tar_header_gnu_old(p8 address_to block)
 }
 
 /*
+        Where a name too long for one field splits.
+
+        The piece after the split is the member's own last component, so a
+        directory member's trailing slash is not a split point: it belongs to
+        that last piece.  Without this a long directory name split at its own
+        trailing slash and left the leaf field empty.
+*/
+static string_address tar_split_at(string_address name, positive length)
+{
+        positive at = length;
+
+        if (at && name[at - 1] == '/')
+                at--;
+        while (at)
+                if (name[--at] == '/')
+                        return name + at;
+        return null;
+}
+
+/*
+        A directory member is spelled with a trailing slash: ustar says a
+        directory's name ends in one and the reference writes it that way.
+        False when the name has no room for it, and the caller keeps the
+        plain spelling, which the type flag still marks as a directory.
+*/
+static bool tar_spell_directory(string_address name, p8 address_to into,
+                                positive room)
+{
+        positive length = string_length(name);
+
+        if (!length || name[length - 1] == '/' || length + 2 > room)
+                return false;
+        memory_copy(into, name, length);
+        into[length] = '/';
+        into[length + 1] = end;
+        return true;
+}
+
+/*
         A member can carry its name three ways at once, and they rank: a pax
         path record, then the GNU long-name member before it, then the
         header's own fields.  The reference reads a pax record over a long
@@ -2505,7 +2544,7 @@ static bipolar tar_extract_directory(bipolar parent, bool parent_owned,
 
 static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                              string_address link, p64 size, p64 mode,
-                             p64 major, p64 minor, bool seekable, bool verbose,
+                             p64 major, p64 minor, bool seekable,
                              tar_member_meta address_to meta)
 {
         positive final_mode = (positive)mode & (tar_preserve ? 07777 : 0777);
@@ -2521,9 +2560,6 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         if (!tar_preserve && (directory || regular ||
                               type == '3' || type == '4' || type == '6'))
                 final_mode &= ~tar_session_mask;
-
-        if (verbose)
-                tar_name_line(log_error, path);
 
         if (!directory && !regular && type != '1' && type != '2' &&
             type != '3' && type != '4' && type != '6')
@@ -2870,6 +2906,7 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 tar_member_meta meta;
                 p8 kept[TAR_PATH];
                 p8 kept_link[TAR_PATH];
+                p8 shown[TAR_PATH];
                 bool escaped;
 
                 if (tar_header_zero(block))
@@ -3042,10 +3079,25 @@ static b32 tar_read_archive(struct tar_options address_to options)
                 else
                         string_copy_max_end(kept_link, tar_link, TAR_PATH - 1);
 
+                /*      The reference names a member exactly as the archive
+                        spells it, so a directory written with its trailing
+                        slash keeps it and one written without stays without.
+                        The slash is not on kept, which is the path every
+                        openat and every remembered directory is keyed by. */
+                {
+                        positive length = string_length(tar_name);
+                        bool trailing = length &&
+                                        tar_name[length - 1] == '/';
+
+                        if (!trailing ||
+                            !tar_spell_directory(kept, shown, sizeof(shown)))
+                                string_copy_max_end(shown, kept, TAR_PATH - 1);
+                }
+
                 listed = true;
                 if (options->mode == TAR_LIST)
                 {
-                        tar_name_line(log, kept);
+                        tar_name_line(log, shown);
                         tar_skip(handle, tar_padded(size), seekable);
                 }
                 else
@@ -3070,9 +3122,11 @@ static b32 tar_read_archive(struct tar_options address_to options)
                         meta.timed = said->has_time ||
                                      (stamped &&
                                       stamp <= 0x7fffffffffffffffull);
+                        if (options->verbose)
+                                tar_name_line(log_error, shown);
                         tar_extract_member(handle, type, kept, kept_link, size,
                                            mode, major, minor, seekable,
-                                           options->verbose, address_of meta);
+                                           address_of meta);
                 }
 
                 tar_pax_clear(address_of tar_pax_local);
@@ -3113,9 +3167,9 @@ static fn tar_header_ustar(p8 address_to block, string_address name,
                 string_copy_max_end(leaf, name, TAR_NAME);
         else
         {
-                slash = string_last_of(name, '/');
+                slash = tar_split_at(name, length);
                 if (!slash || (positive)(slash - name) >= TAR_PREFIX ||
-                    string_length(slash + 1) >= TAR_NAME)
+                    length - (positive)(slash - name) - 1 >= TAR_NAME)
                 {
                         tar_refuse("member name is too long for ustar");
                         return;
@@ -3148,13 +3202,14 @@ static fn tar_header_ustar(p8 address_to block, string_address name,
 
 static bool tar_ustar_fits(string_address name)
 {
+        positive length = string_length(name);
         string_address slash;
 
-        if (string_length(name) < TAR_NAME)
+        if (length < TAR_NAME)
                 return true;
-        slash = string_last_of(name, '/');
+        slash = tar_split_at(name, length);
         return slash && (positive)(slash - name) < TAR_PREFIX &&
-               string_length(slash + 1) < TAR_NAME;
+               length - (positive)(slash - name) - 1 < TAR_NAME;
 }
 
 /* A name or link target ustar cannot hold goes ahead of its header as a
@@ -3255,7 +3310,13 @@ static b32 tar_add_directory(bipolar archive, bipolar directory,
                                        facts))
                 return tar_fail(member, walk.error), tar_status;
 
-        if (!tar_put_header(archive, member, '5', 0, facts->mode & 07777,
+        p8 spelled[TAR_PATH];
+
+        if (!tar_put_header(archive,
+                            tar_spell_directory(member, spelled,
+                                                sizeof(spelled))
+                                ? (string_address)spelled : member,
+                            '5', 0, facts->mode & 07777,
                             (p64)facts->modified.seconds, null))
         {
                 file_walk_close(address_of walk);
@@ -3332,7 +3393,15 @@ static b32 tar_add_named(bipolar archive, bipolar directory,
         }
 
         if (verbose)
-                tar_name_line(log_error, member);
+        {
+                p8 spelled[TAR_PATH];
+
+                tar_name_line(log_error,
+                              (facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+                                      tar_spell_directory(member, spelled,
+                                                          sizeof(spelled))
+                                  ? (string_address)spelled : member);
+        }
 
         if ((facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
                 return tar_add_directory(archive, directory, name, member,
