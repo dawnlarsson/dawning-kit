@@ -64,6 +64,13 @@
 #define SNTP_ERA ((bipolar)4294967296)
 #define SNTP_SHORT_SECOND 0x10000u
 #define SNTP_RANDOM_NONBLOCK 1
+#define SNTP_TIMESTAMPNS 35
+#define SNTP_MESSAGE_WORDS 7
+#define SNTP_CONTROL_WORDS 8
+#define SNTP_CONTROL_HEAD (sizeof(positive) + 8)
+#define SNTP_CONTROL_DATA                          \
+        ((SNTP_CONTROL_HEAD + sizeof(positive) - 1) & \
+         ~(sizeof(positive) - 1))
 #define SNTP_TEST_NOW \
         ((bipolar)1700000000 * (bipolar)SNTP_NANOSECONDS)
 
@@ -231,6 +238,85 @@ static PURE COLD bipolar sntp_pick(sntp_sample address_to row, positive count)
                       (bipolar)at > best)))
                         best = (bipolar)at;
         return best;
+}
+
+/*
+        t4 is meant to be when the reply arrived. Read after recv returns
+        it is when this process next ran, which is the arrival plus however
+        long the packet waited in the socket and however long the scheduler
+        took to wake us. Half of that lands in the offset, and on an idle
+        machine talking to a real server it measured a shade over eleven
+        microseconds -- four hundred times the whole of the arithmetic that
+        follows, and nothing the arithmetic can do anything about.
+
+        SO_TIMESTAMPNS makes the kernel record the arrival in the softirq
+        that takes the packet off the device and hand it over as a control
+        message. Reading it needs recvmsg rather than recvfrom, and the
+        socket calls in library.c are recvfrom, so the trap is made here
+        the way this file already traps for clock_gettime.
+
+        msghdr is seven pointer-width words -- the name and its length,
+        the vector and its count, the control buffer and its length, and
+        the flags -- which is its shape on every target this tree builds.
+        A control message is a pointer-width length, then a level and a
+        type of four bytes each, then the payload at the next word.
+
+        Nothing here is required to work. A kernel that refuses the option
+        or a path that delivers no control message leaves the stamp unset,
+        and the caller reads the clock itself exactly as before.
+*/
+static HOT bipolar sntp_receive_stamped(b32 handle, p8 address_to reply,
+                                        positive room,
+                                        p64 address_to arrived,
+                                        bool address_to stamped)
+{
+        positive message[SNTP_MESSAGE_WORDS];
+        positive vector[2];
+        positive control[SNTP_CONTROL_WORDS];
+        p8 address_to walk = (p8 address_to)control;
+        bipolar got;
+        positive length;
+        positive at = 0;
+
+        address_to stamped = false;
+        memory_zero(message, sizeof(message));
+        memory_zero(control, sizeof(control));
+        vector[0] = (positive)reply;
+        vector[1] = room;
+        message[2] = (positive)vector;
+        message[3] = 1;
+        message[4] = (positive)control;
+        message[5] = sizeof(control);
+
+        got = system_call_3(syscall(recvmsg), (positive)handle,
+                            (positive)message, 0);
+        if_rare (got < 0)
+                return got;
+
+        length = message[5];
+        while (at + SNTP_CONTROL_DATA <= length)
+        {
+                positive size = address_to(positive address_to)(walk + at);
+                b32 level = address_to(b32 address_to)(walk + at +
+                                                       sizeof(positive));
+                b32 kind = address_to(b32 address_to)(walk + at +
+                                                      sizeof(positive) + 4);
+
+                if (size < SNTP_CONTROL_DATA || size > length - at)
+                        break;
+                if (level == SOL_SOCKET && kind == SNTP_TIMESTAMPNS &&
+                    size - SNTP_CONTROL_DATA >= 2 * sizeof(p64))
+                {
+                        arrived[0] = address_to(p64 address_to)(
+                            walk + at + SNTP_CONTROL_DATA);
+                        arrived[1] = address_to(p64 address_to)(
+                            walk + at + SNTP_CONTROL_DATA + sizeof(p64));
+                        address_to stamped = true;
+                        break;
+                }
+                at += (size + sizeof(positive) - 1) & ~(sizeof(positive) - 1);
+        }
+        return got;
 }
 
 /*
@@ -498,6 +584,7 @@ static HOT bipolar sntp_exchange(b32 handle,
         bipolar received;
         bipolar verdict;
         bipolar reference;
+        bool stamped;
         bipolar offset = 0;
         bipolar delay = 0;
 
@@ -520,10 +607,12 @@ static HOT bipolar sntp_exchange(b32 handle,
                 wait = network_wait_readable_until(handle, deadline);
                 if_rare (wait <= 0)
                         return SNTP_NO_REPLY;
-                received = socket_receive(handle, reply, sizeof(reply), 0, 0,
-                                          0);
-                if (system_call_2(syscall(clock_gettime), CLOCK_REALTIME,
-                                  (positive)got) < 0)
+                received = sntp_receive_stamped(handle, reply,
+                                                sizeof(reply), got,
+                                                address_of stamped);
+                if_rare (!stamped &&
+                         system_call_2(syscall(clock_gettime), CLOCK_REALTIME,
+                                       (positive)got) < 0)
                         return SNTP_NO_REPLY;
                 if_rare (received < SNTP_PACKET)
                         continue;
@@ -563,6 +652,7 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
         network_deadline deadline;
         sntp_sample row[SNTP_SAMPLES];
         positive want = filter ? SNTP_SAMPLES : 1;
+        b32 want_stamp = 1;
         positive at;
         bipolar handle;
         bipolar best;
@@ -584,6 +674,8 @@ static COLD bipolar sntp_query_at(p32 server, bool filter, bool tight,
                 socket_close((b32)handle);
                 return SNTP_NO_SERVER;
         }
+        (void)socket_option_set((b32)handle, SOL_SOCKET, SNTP_TIMESTAMPNS,
+                                address_of want_stamp, sizeof(want_stamp));
 
         memory_zero(row, sizeof(row));
         for (at = 0; at < want; at++)
