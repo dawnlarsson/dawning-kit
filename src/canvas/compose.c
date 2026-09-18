@@ -298,95 +298,52 @@ static unsigned int glyph_box_nsew_from(unsigned int c)
         return c - 0x2500 < sizeof(box_nsew) ? box_nsew[c - 0x2500] : 0;
 }
 
+/*
+        The block elements, each of which is one rectangle of the cell filled.
+
+        A run of rows and a column mask is the whole of what any of them is,
+        so they are a table of the two rather than a test apiece: 2581 to 2587
+        are the eighths growing up from the floor, 2589 to 258f the eighths
+        growing in from the right edge -- which is where 258c, the left half,
+        already came from -- and the quadrants and the one eighth bars are
+        each a rectangle of their own. The shades are the exception, being a
+        pattern per row rather than a fill, and anything with no rectangle
+        here is the full block: that is what the quadrant pairs 2599 to 259c,
+        259e and 259f have always been drawn as.
+*/
 static void glyph_block(unsigned int c, unsigned char *bits)
 {
-        unsigned int y, n;
-        unsigned char left, shade;
-
-        if (c == 0x2588)
-        {
-                memory_fill(bits, 0xff, WINDOW_CELL_H);
-                return;
-        }
-
-        if (c == 0x2580)
-        {
-                memory_fill(bits, 0xff, 8);
-                return;
-        }
-
-        if (c >= 0x2581 && c <= 0x2587)
-        {
-                n = (c - 0x2580) * 2;
-                memory_fill(bits + (WINDOW_CELL_H - n), 0xff, n);
-                return;
-        }
-
-        if (c >= 0x2589 && c <= 0x258f)
-        {
-                left = (unsigned char)(0xffu << (c - 0x2588));
-                memory_fill(bits, left, WINDOW_CELL_H);
-                return;
-        }
-
-        if (c == 0x2590)
-        {
-                memory_fill(bits, 0x0f, WINDOW_CELL_H);
-                return;
-        }
-
-        if (c == 0x258c)
-        {
-                memory_fill(bits, 0xf0, WINDOW_CELL_H);
-                return;
-        }
+        static const struct { unsigned char from, rows, mask; } filled[0x20] = {
+            [0x00] = {0, 8, 0xff},   [0x01] = {14, 2, 0xff},
+            [0x02] = {12, 4, 0xff},  [0x03] = {10, 6, 0xff},
+            [0x04] = {8, 8, 0xff},   [0x05] = {6, 10, 0xff},
+            [0x06] = {4, 12, 0xff},  [0x07] = {2, 14, 0xff},
+            [0x08] = {0, 16, 0xff},  [0x09] = {0, 16, 0xfe},
+            [0x0a] = {0, 16, 0xfc},  [0x0b] = {0, 16, 0xf8},
+            [0x0c] = {0, 16, 0xf0},  [0x0d] = {0, 16, 0xe0},
+            [0x0e] = {0, 16, 0xc0},  [0x0f] = {0, 16, 0x80},
+            [0x10] = {0, 16, 0x0f},  [0x14] = {0, 2, 0xff},
+            [0x15] = {0, 16, 0x01},  [0x16] = {8, 8, 0xf0},
+            [0x17] = {8, 8, 0x0f},   [0x18] = {0, 8, 0xf0},
+            [0x1d] = {0, 8, 0x0f},
+        };
+        unsigned int at = c - 0x2580;
+        unsigned int y;
 
         if (c >= 0x2591 && c <= 0x2593)
         {
-                shade = c == 0x2591 ? 0x44 : c == 0x2592 ? 0xaa : 0xee;
+                unsigned char shade = c == 0x2591 ? 0x44 : c == 0x2592 ? 0xaa : 0xee;
+
                 for (y = 0; y < WINDOW_CELL_H; y++)
                         bits[y] = (unsigned char)(y & 1 ? shade >> 1 : shade);
                 return;
         }
 
-        if (c == 0x2594)
-        {
-                bits[0] = 0xff;
-                bits[1] = 0xff;
-                return;
-        }
-
-        if (c == 0x2595)
-        {
-                memory_fill(bits, 0x01, WINDOW_CELL_H);
-                return;
-        }
-
-        if (c == 0x2596)
-        {
-                memory_fill(bits + 8, 0xf0, 8);
-                return;
-        }
-
-        if (c == 0x2597)
-        {
-                memory_fill(bits + 8, 0x0f, 8);
-                return;
-        }
-
-        if (c == 0x2598)
-        {
-                memory_fill(bits, 0xf0, 8);
-                return;
-        }
-
-        if (c == 0x259d)
-        {
-                memory_fill(bits, 0x0f, 8);
-                return;
-        }
-
-        memory_fill(bits, 0xff, WINDOW_CELL_H);
+        if (at < sizeof(filled) / sizeof(filled[0]) && filled[at].rows)
+                memory_fill(bits + filled[at].from, filled[at].mask,
+                            filled[at].rows);
+        else
+                memory_fill(bits, 0xff, WINDOW_CELL_H);
 }
 
 static void glyph_braille(unsigned int dots, unsigned char *bits)
