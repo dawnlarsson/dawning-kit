@@ -2100,6 +2100,7 @@ static b32 text_comm()
 
         text_begin("comm");
         text_delimiter = '\n';
+        utility_arena.used = 0;
 
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
@@ -2122,7 +2123,11 @@ static b32 text_comm()
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
 
-        text_record_cursor sides[2];
+        text_record_cursor address_to sides =
+            (text_record_cursor address_to)utility_arena_take(
+                2 * sizeof(text_record_cursor));
+        if (!sides)
+                return text_done(1);
 
         if (!text_record_open(sides, left_name, text_line))
                 return text_done(1);
@@ -3080,7 +3085,11 @@ static b32 text_join()
         positive fold = (taking.flags & FILE_FLAG('i')) ? SORT_FOLD : 0;
         bool header = (taking.flags & FILE_FLAG('H')) != 0;
         string_address empty = file_option_value(address_of taking, 'e');
-        text_record_cursor sides[2];
+        text_record_cursor address_to sides =
+            (text_record_cursor address_to)utility_arena_take(
+                2 * sizeof(text_record_cursor));
+        if (!sides)
+                return text_done(1);
 
         if (!text_record_open(sides, left_name, text_line))
                 return text_done(1);
@@ -5210,7 +5219,7 @@ static positive text_stream_floor()
 static positive text_tail_start(positive handle, positive size, positive count,
                                 positive floor)
 {
-        p8 window[TEXT_READ_MAX];
+        static p8 window[TEXT_READ_MAX];
         positive at = size;
         positive found = 0;
 
@@ -26036,7 +26045,6 @@ static b32 text_sort()
         checking = check_loud || check_quiet;
         checking_quiet = check_quiet;
         string_address output = file_option_value(address_of taking, 'o');
-        string_address said = file_option_value(address_of taking, 'K');
 
         if (sort_outputs > 1)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "multiple output files specified"));
@@ -26046,11 +26054,6 @@ static b32 text_sort()
 
         if (checking && output)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-co' are incompatible"));
-
-
-
-
-        said = file_option_value(address_of taking, 'K');
 
         if (flags & FILE_FLAG('Z'))
         {
@@ -26112,16 +26115,7 @@ static b32 text_sort()
                 defaults.kind = letter;
         }
 
-        if (said)
-        {
-                checking_quiet = string_equals(said, "quiet") ||
-                                 string_equals(said, "silent");
-
-                if (!checking_quiet && !string_equals(said, "diagnose-first"))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --check"));
-        }
-
-        said = file_option_value(address_of taking, 'W');
+        string_address said = file_option_value(address_of taking, 'W');
 
         if (said)
         {
@@ -26758,7 +26752,7 @@ static bool expr_is(string_address text)
 {
         string_address word = expr_word();
 
-        return word && !string_compare(word, text);
+        return word && string_equals(word, text);
 }
 
 /*

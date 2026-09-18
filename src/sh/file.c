@@ -1505,20 +1505,18 @@ static bool file_resolve_as(string_address path, p8 address_to into,
 
         while (rest[at])
         {
-                while (rest[at] == '/')
-                        at++;
+                at += string_span_of_set(rest + at, "/");
 
                 if (!rest[at])
                         break;
 
                 positive start = at;
 
-                while (rest[at] && rest[at] != '/')
-                        at++;
+                at += span_without_byte_known(rest + at, '/');
 
                 positive piece = at - start;
 
-                if (piece == 1 && rest[start] == '.')
+                if (memory_is_word(rest + start, piece, "."))
                 {
                         /* A final dot says the preceding component itself
                            must be a directory.  An interior dot adds no such
@@ -1533,7 +1531,7 @@ static bool file_resolve_as(string_address path, p8 address_to into,
                         continue;
                 }
 
-                if (piece == 2 && rest[start] == '.' && rest[start + 1] == '.')
+                if (memory_is_word(rest + start, piece, ".."))
                 {
                         if (missing_walk)
                                 return false;
@@ -3009,13 +3007,9 @@ fn file_walk_close(file_walk address_to walk)
 
 PURE bool file_is_dot(string_address name)
 {
-        if (!string_is(name, '.'))
-                return false;
-
-        if (string_is(name + 1, end))
-                return true;
-
-        return string_is(name + 1, '.') && string_is(name + 2, end);
+        return string_is(name, '.') &&
+               (name[1] == end ||
+                (string_is(name + 1, '.') && name[2] == end));
 }
 
 // Walking a tree --------------------------------------------
@@ -5418,8 +5412,7 @@ static bipolar file_make_directories_open(
 
         positive at = 0;
         positive held_stop = 0;
-        while (at < length && work[at] == '/')
-                at++;
+        at += memory_span_byte(work + at, '/', length - at);
 
         /* A path made only of slashes already names the held root. */
         if (at == length)
@@ -5435,11 +5428,9 @@ static bipolar file_make_directories_open(
         while (at < length)
         {
                 positive start = at;
-                while (at < length && work[at] != '/')
-                        at++;
+                at += memory_span_without_byte(work + at, '/', length - at);
                 positive stop = at;
-                while (at < length && work[at] == '/')
-                        at++;
+                at += memory_span_byte(work + at, '/', length - at);
                 bool last = at == length;
                 positive named = stop - start;
 
@@ -5671,16 +5662,13 @@ static bipolar file_parents_ensure_open(string_address dest_dir,
         src_prefix[0] = end;
         positive length = string_length(work);
         positive at = 0;
-        while (at < length && work[at] == '/')
-                at++;
+        at += memory_span_byte(work + at, '/', length - at);
         while (at < length)
         {
                 positive start = at;
-                while (at < length && work[at] != '/')
-                        at++;
+                at += memory_span_without_byte(work + at, '/', length - at);
                 positive named = at - start;
-                while (at < length && work[at] == '/')
-                        at++;
+                at += memory_span_byte(work + at, '/', length - at);
                 if (!named)
                         continue;
                 if (named >= sizeof(component))
@@ -8780,9 +8768,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         {
                 string_address style = file_option_value(address_of taking, '5');
 
-                if (string_is(style, 'p') && string_is(style + 1, 'o') &&
-                    string_is(style + 2, 's') && string_is(style + 3, 'i') &&
-                    string_is(style + 4, 'x') && string_is(style + 5, '-'))
+                if (string_has_prefix(style, "posix-"))
                         style = (string_address) "locale";
 
                 if (string_is(style, '+'))
@@ -8802,21 +8788,21 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                 ls_time_format_recent = newline + 1;
                         }
                 }
-                else if (!string_compare(style, "full-iso"))
+                else if (string_equals(style, "full-iso"))
                         ls_time_style = 'f';
-                else if (!string_compare(style, "long-iso"))
+                else if (string_equals(style, "long-iso"))
                 {
                         ls_time_style = '+';
                         ls_time_format_old = (string_address)"%Y-%m-%d %H:%M";
                         ls_time_format_recent = ls_time_format_old;
                 }
-                else if (!string_compare(style, "iso"))
+                else if (string_equals(style, "iso"))
                 {
                         ls_time_style = '+';
                         ls_time_format_old = (string_address)"%Y-%m-%d ";
                         ls_time_format_recent = (string_address)"%m-%d %H:%M";
                 }
-                else if (string_compare(style, "locale"))
+                else if (!string_equals(style, "locale"))
                 {
                         return string_report(log_error, 2,
                                       "%s: invalid argument '%s' for 'time style'\n"
@@ -16907,14 +16893,12 @@ static bool namei_walk(string_address path, string_address base,
         namei_row address_to last = null;
         while (at < length)
         {
-                while (at < length && path[at] == '/')
-                        at++;
+                at += memory_span_byte(path + at, '/', length - at);
                 if (at == length)
                         break;
 
                 positive start = at;
-                while (at < length && path[at] != '/')
-                        at++;
+                at += memory_span_without_byte(path + at, '/', length - at);
                 positive part = at - start;
                 p8 candidate[FILE_PATH_MAX];
                 p8 component[FILE_PATH_MAX];
@@ -16986,9 +16970,9 @@ static bool namei_walk(string_address path, string_address base,
                         }
                 }
 
-                if (part == 1 && path[start] == '.')
+                if (memory_is_word(path + start, part, "."))
                         continue;
-                if (part == 2 && path[start] == '.' && path[start + 1] == '.')
+                if (memory_is_word(path + start, part, ".."))
                 {
                         p8 actual[FILE_PATH_MAX];
                         if (!file_real(candidate, actual))
@@ -18336,20 +18320,19 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                 if (at >= length)
                         break;
 
-                string_address stop = string_first_of_or_end(path + at, '/');
-                positive component = (positive)(stop - path) - at;
+                positive start = at;
+                at += memory_span_without_byte(path + at, '/', length - at);
+                positive component = at - start;
 
-                if (extra && string_is(path + at, '-'))
+                if (extra && string_is(path + start, '-'))
                         return pathchk_rule(
                             (string_address) "leading '-' in a component of file name", path);
 
                 if (component > longest)
                 {
                         longest = component;
-                        longest_at = at;
+                        longest_at = start;
                 }
-
-                at += component;
         }
 
         if (basic && !pathchk_portable_chars(path, length))
@@ -18422,18 +18405,19 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                 if (at >= length)
                         break;
 
-                string_address stop = string_first_of_or_end(path + at, '/');
-                positive component = (positive)(stop - path) - at;
+                positive start = at;
+                at += memory_span_without_byte(path + at, '/', length - at);
+                positive component = at - start;
 
                 if (component > name_max)
                         return pathchk_limit(name_max, component,
                                              (string_address) "file name component",
-                                             path + at, component);
+                                             path + start, component);
 
                 if (filled && prefix[filled - 1] != '/')
                         prefix[filled++] = '/';
 
-                memory_copy_apart(prefix + filled, path + at, component);
+                memory_copy_apart(prefix + filled, path + start, component);
                 filled += component;
                 prefix[filled] = end;
 
@@ -18444,8 +18428,6 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                         name_max = (positive)mount.name_length;
                 else if (mounted < 0 && mounted != -ERROR_NO_ENTRY)
                         return pathchk_bad(path, file_reason(mounted));
-
-                at += component;
         }
 
         return true;
@@ -24071,7 +24053,6 @@ static string_address file_into_seen;
 static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
-static bool cp_reflink_always;
 static p8 cp_sparse_policy;
 static p8 cp_reflink_policy;
 static b32 cp_status;
@@ -25160,8 +25141,7 @@ static bipolar cp_tree_open_below(bipolar root, string_address path, positive le
                         return next;
                 at = next;
                 done += take;
-                while (done < length && path[done] == '/')
-                        done++;
+                done += memory_span_byte(path + done, '/', length - done);
         }
         return at;
 }
@@ -26197,7 +26177,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
         {
                 /* This image has no FICLONE. GNU --reflink=always fails
                    closed; auto/never still copy. */
-                if (!moving && cp_reflink_always && kind == MODE_FILE)
+                if (!moving && cp_reflink_policy == 'A' && kind == MODE_FILE)
                         return string_report(
                             log_error, false,
                             "cp: failed to clone '%w' from '%w': %s\n",
@@ -26964,7 +26944,6 @@ static b32 file_cp()
         positive count = (positive)program_argument_count();
         cp_status = 0;
         cp_destination_decided = false;
-        cp_reflink_always = false;
         cp_sparse_policy = 'a';
         cp_reflink_policy = 0;
         file_strip_trailing = false;
@@ -26996,9 +26975,6 @@ static b32 file_cp()
             (cp_update_policy == 'n' || cp_update_policy == 'F'))
                 return string_report(log_error, 1,
                                      "cp: --backup is mutually exclusive with -n or --update=none-fail\n");
-
-        if (!file_targets_told((string_address) "cp", (taking.repeated & FILE_FLAG('t')) != 0))
-                return 1;
 
         bool wants_context = false;
 
@@ -27047,7 +27023,6 @@ static b32 file_cp()
                         return string_report(log_error, 1,
                                              "Try 'cp --help' for more information.\n");
                 }
-                cp_reflink_always = reflink == 'A';
         }
 
         cp_attributes_only = (taking.flags & FILE_FLAG('A')) != 0;
@@ -27604,8 +27579,6 @@ static b32 file_install()
         file_backup_control_named = null;
 
         if (!file_take(address_of taking))
-                return 1;
-        if (!file_targets_told((string_address) "install", (taking.repeated & FILE_FLAG('t')) != 0))
                 return 1;
         if (!file_backup_taken(address_of taking,
                                (string_address)"install"))
@@ -28176,9 +28149,6 @@ static b32 file_mv()
              mv_update_policy == 'F'))
                 return string_report(log_error, 1,
                                      "mv: cannot combine --backup with --exchange, -n, or --update=none-fail\n");
-
-        if (!file_targets_told((string_address) "mv", (taking.repeated & FILE_FLAG('t')) != 0))
-                return 1;
 
         mv_newer_only = mv_update_policy == 'u';
         // A tree mv copies across devices is made under the same mask cp

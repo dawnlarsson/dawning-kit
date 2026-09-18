@@ -3378,11 +3378,11 @@ STACK_FRAME_NOTICE=32768
 stack_frame_pins()
 {
         cat <<'PINS'
-text_join 133000
-text_comm 133000
+text_join 8192
+text_comm 8192
 tools_factor 67000
 tools_dmesg_follow 66000
-text_tail_start 66000
+text_tail_start 4096
 awk_option_seen 66000
 PINS
 }

@@ -4733,23 +4733,18 @@ fn shell_path_tidy(p8 address_to path)
                 positive begin;
                 positive length;
 
-                while (path[read] == '/')
-                        read++;
-
+                read += string_span_of_set(path + read, "/");
                 begin = read;
-
-                while (path[read] && path[read] != '/')
-                        read++;
-
+                read += span_without_byte_known(path + read, '/');
                 length = read - begin;
 
                 if (!length)
                         continue;
 
-                if (length == 1 && path[begin] == '.')
+                if (memory_is_word(path + begin, length, "."))
                         continue;
 
-                if (length == 2 && path[begin] == '.' && path[begin + 1] == '.')
+                if (memory_is_word(path + begin, length, ".."))
                 {
                         positive back = write_at;
 
@@ -6429,7 +6424,7 @@ COLD fn shell_poweroff(writer write, string_address input)
 
 PURE bool word_is(string_address word, string_address text)
 {
-        return word && !string_compare(word, text);
+        return word && string_equals(word, text);
 }
 
 static COLD fn env_unset_noted(string_address name, positive length)
