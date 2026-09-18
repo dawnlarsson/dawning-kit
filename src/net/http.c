@@ -407,12 +407,13 @@ static bool http_response_is_success(b32 code)
 /* Status and body framing have one interpretation in both clients.  This
    rejects duplicate or conflicting declarations before either the buffered
    or streaming body path acts on them. */
-static bipolar http_response_framing(p8 address_to bytes, positive size,
-                                     positive address_to header_length,
-                                     http_response address_to response)
+static bipolar http_response_framing_from(p8 address_to bytes, positive size,
+                                          positive address_to resume,
+                                          positive address_to header_length,
+                                          http_response address_to response)
 {
         positive scan = size;
-        positive at = 0;
+        positive at = address_to resume;
 
         if (!size)
                 return HTTP_NO_REPLY;
@@ -497,6 +498,15 @@ static bipolar http_response_framing(p8 address_to bytes, positive size,
                             response->body_kind != HTTP_BODY_CLOSE)
                                 return HTTP_MALFORMED;
                         at += (positive)header;
+                        /* Only here. An informational response that is
+                           whole stays whole however many bytes arrive after
+                           it -- http_header_end answers with the FIRST
+                           terminator, so a longer buffer cannot produce an
+                           earlier one -- so the walk resumes past it rather
+                           than deciding it again on every read. Writing the
+                           mark anywhere else would skip the final response's
+                           own start. */
+                        address_to resume = at;
                         continue;
                 }
 
@@ -523,6 +533,19 @@ static bipolar http_response_framing(p8 address_to bytes, positive size,
                 address_to header_length = at + (positive)header;
                 return HTTP_OK;
         }
+}
+
+/* One whole head in one buffer, for a caller with nothing to resume: the
+   checks read a response entire, and a peer that trickles one has
+   http_response_head holding the mark for it instead. */
+static bipolar http_response_framing(p8 address_to bytes, positive size,
+                                     positive address_to header_length,
+                                     http_response address_to response)
+{
+        positive resume = 0;
+
+        return http_response_framing_from(bytes, size, address_of resume,
+                                          header_length, response);
 }
 
 static bipolar http_get_request(p8 address_to request, positive room,
@@ -640,6 +663,10 @@ static bipolar http_response_head(
     bool incomplete_is_malformed)
 {
         network_deadline deadline;
+        /* Carried across the reads: the head is walked once in total rather
+           than from byte zero on every read, which is what a peer sending
+           informational responses one byte at a time was buying. */
+        positive resume = 0;
 
         address_to used = 0;
         if (!network_deadline_begin(address_of deadline, seconds, nanoseconds))
@@ -648,8 +675,9 @@ static bipolar http_response_head(
         for (;;)
         {
                 positive got = 0;
-                bipolar status = http_response_framing(
-                    head, address_to used, header, response);
+                bipolar status = http_response_framing_from(
+                    head, address_to used, address_of resume, header,
+                    response);
 
                 if (status != HTTP_NO_REPLY)
                         return status;
