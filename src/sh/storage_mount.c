@@ -28,6 +28,24 @@
 
 typedef byte_store storage_mount_word;
 
+/* util-linux's answer to an option it does not know, worded the same by
+   mount and umount: the cluster letter the cursor has just stepped past for
+   a short spelling, the whole word for a long one, then --help either way. */
+static COLD fn storage_option_unknown(writer diagnostic, string_address program,
+                                      argument_cursor address_to taking)
+{
+        p8 letter[2] = {(p8)(taking->letters ? taking->letters[-1] : end), end};
+
+        string_format(diagnostic,
+                      taking->letters ? "%s: invalid option -- '%s'\n"
+                                        "Try '%s --help' for more information.\n"
+                                      : "%s: unrecognized option '%s'\n"
+                                        "Try '%s --help' for more information.\n",
+                      program,
+                      taking->letters ? (string_address)letter : taking->word,
+                      program);
+}
+
 static bool storage_mount_tag(storage_mount_word address_to word,
                               string_address tag, positive tag_length,
                               string_address value)
@@ -652,19 +670,9 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         goto missing_option;
                 else if (option == ARGUMENT_UNKNOWN)
                 {
-                        if (taking.letters)
-                        {
-                                p8 letter[2] = {(p8)taking.letters[-1], end};
-                                string_format(diagnostic,
-                                              "mount: invalid option -- '%s'\n"
-                                              "Try 'mount --help' for more information.\n",
-                                              letter);
-                        }
-                        else
-                                string_format(diagnostic,
-                                              "mount: unrecognized option '%s'\n"
-                                              "Try 'mount --help' for more information.\n",
-                                              taking.word);
+                        storage_option_unknown(diagnostic,
+                                               (string_address)"mount",
+                                               address_of taking);
                         goto done;
                 }
                 else if (option == 'a')
@@ -1254,19 +1262,9 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         goto missing_option;
                 else if (option == ARGUMENT_UNKNOWN)
                 {
-                        if (taking.letters)
-                        {
-                                p8 letter[2] = {(p8)taking.letters[-1], end};
-                                string_format(diagnostic,
-                                              "umount: invalid option -- '%s'\n"
-                                              "Try 'umount --help' for more information.\n",
-                                              letter);
-                        }
-                        else
-                                string_format(diagnostic,
-                                              "umount: unrecognized option '%s'\n"
-                                              "Try 'umount --help' for more information.\n",
-                                              taking.word);
+                        storage_option_unknown(diagnostic,
+                                               (string_address)"umount",
+                                               address_of taking);
                         goto failed_early;
                 }
                 else if (option == 'a')
