@@ -801,6 +801,20 @@ static bool ul_options_done(file_taking address_to taking, string_address syntax
         return true;
 }
 
+/*      Nearly every one of them opens the same way: its name, the table of
+        options it answers and the syntax line its --help prints, then the
+        shared reader's verdict.  Taking the three together leaves an
+        applet's first lines about what it is rather than about how options
+        are read; anything with parsing or status of its own -- setarch,
+        getopt, flock -- still spells it out.  Extra fields of the taking,
+        an operand walker or a seen callback, follow the syntax. */
+#define ul_taking(name, table, syntax, ...) \
+        file_taking taking = {.program = (string_address)name, \
+                              .options = table, __VA_ARGS__}; \
+        b32 answer; \
+        if (ul_options_done(address_of taking, syntax, address_of answer)) \
+                return answer;
+
 // taskset ---------------------------------------------------------
 typedef struct
 {
@@ -880,21 +894,13 @@ static const argument_option ul_taskset_options[] = {
 
 static b32 util_linux_taskset()
 {
-        file_taking taking = {
-            .program = (string_address)"taskset",
-            .options = ul_taskset_options,
-        };
+        ul_taking("taskset", ul_taskset_options,
+                  "[options] [mask | cpu-list] [pid | command ...]");
         positive count = (positive)program_argument_count();
         ul_taskset_work work = {.list = false, .setting = false, .report = true};
-        b32 answer;
         b32 pid = 0;
         bool by_pid;
         bool all;
-
-        if (ul_options_done(address_of taking,
-                    "[options] [mask | cpu-list] [pid | command ...]",
-                    address_of answer))
-                return answer;
 
         by_pid = (taking.flags & FILE_FLAG('p')) != 0;
         all = (taking.flags & FILE_FLAG('a')) != 0;
@@ -1366,16 +1372,8 @@ static __attribute__((flatten)) fn ul_limit_table(ul_limit_row address_to rows,
 
 static b32 util_linux_prlimit()
 {
-        file_taking taking = {
-            .program = (string_address)"prlimit",
-            .options = ul_prlimit_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking,
-                    "[options] [--resource[=limit]] [command ...]",
-                    address_of answer))
-                return answer;
+        ul_taking("prlimit", ul_prlimit_options,
+                  "[options] [--resource[=limit]] [command ...]");
 
         positive count = (positive)program_argument_count();
         b32 pid = 0;
@@ -1632,17 +1630,9 @@ static b32 ul_chrt_max()
 static b32 util_linux_chrt()
 {
         p8 chosen = 0;
-        file_taking taking = {
-            .program = (string_address)"chrt",
-            .options = ul_chrt_options,
-            .selection = address_of chosen,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking,
-                    "[options] [priority] command | -p [priority] PID",
-                    address_of answer))
-                return answer;
+        ul_taking("chrt", ul_chrt_options,
+                  "[options] [priority] command | -p [priority] PID",
+                  .selection = address_of chosen);
         if (taking.flags & FILE_FLAG('m'))
                 return ul_chrt_max();
 
@@ -1816,16 +1806,8 @@ static const argument_option ul_uclamp_options[] = {
 
 static b32 util_linux_uclampset()
 {
-        file_taking taking = {
-            .program = (string_address)"uclampset",
-            .options = ul_uclamp_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking,
-                    "[options] --pid PID | command [argument ...] | --system",
-                    address_of answer))
-                return answer;
+        ul_taking("uclampset", ul_uclamp_options,
+                  "[options] --pid PID | command [argument ...] | --system");
 
         ul_uclamp_work work = {
             .setting = false,
@@ -2683,17 +2665,9 @@ static const argument_option ul_waitpid_options[] = {
 
 static b32 util_linux_waitpid()
 {
-        file_taking taking = {
-            .program = (string_address)"waitpid",
-            .options = ul_waitpid_options,
-            .operand = file_operand,
-        };
-        b32 answer;
-
         file_operands_begin();
-        if (ul_options_done(address_of taking, "[options] PID[:inode]...",
-                    address_of answer))
-                return answer;
+        ul_taking("waitpid", ul_waitpid_options, "[options] PID[:inode]...",
+                  .operand = file_operand);
         if (file_operand_failed)
                 return string_report(log_error, 1, "%s: %s\n", "waitpid", "not enough memory");
         if (!file_operand_count)
@@ -3115,15 +3089,10 @@ static const argument_option ul_setpriv_options[] = {
 static b32 util_linux_setpriv()
 {
         ul_setpriv_given given = {0};
-        file_taking taking = {
-            .program = "setpriv",
-            .options = ul_setpriv_options,
-            .seen_in = ul_setpriv_take,
-            .context = address_of given,
-        };
+        ul_taking("setpriv", ul_setpriv_options,
+                  "[options] program [argument ...]",
+                  .seen_in = ul_setpriv_take, .context = address_of given);
         ul_setpriv set = {0};
-        b32 answer;
-        if (ul_options_done(address_of taking, "[options] program [argument ...]", address_of answer)) return answer;
 
         if (given.dumps)
         {
@@ -3489,6 +3458,20 @@ static b32 ul_refuse_exclusive(file_taking address_to taking,
             (positive)program_argument_count(), program_argument_list(),
             taking->options, true, group, count);
 }
+
+/*      Four of the listing programs say exactly the same thing about --json
+        beside --raw, so they say it from one place; a program with a pair of
+        its own writes that pair and asks the same way. */
+static const argument_exclusive_pair ul_json_raw[] = {
+    {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
+
+#define ul_refuse_group(taking, group) \
+        { \
+                b32 clash = ul_refuse_exclusive(address_of taking, group, \
+                                                array_count(group)); \
+                if (clash) \
+                        return clash; \
+        }
 
 static string_address ul_lsns_table_field(address_any row, p8 column,
                                           p8 address_to scratch)
@@ -4089,22 +4072,9 @@ static b32 util_linux_lsclocks()
 
 static b32 util_linux_lsns()
 {
-        file_taking taking = {
-            .program = (string_address)"lsns",
-            .options = ul_lsns_options,
-        };
-        b32 answer;
+        ul_taking("lsns", ul_lsns_options, "[options] [namespace]");
 
-        if (ul_options_done(address_of taking, "[options] [namespace]",
-                    address_of answer))
-                return answer;
-
-        static const argument_exclusive_pair lsns_formats[] = {
-            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
-        b32 clash = ul_refuse_exclusive(address_of taking, lsns_formats,
-                                        array_count(lsns_formats));
-        if (clash)
-                return clash;
+        ul_refuse_group(taking, ul_json_raw);
 
         if (taking.flags & FILE_FLAG('T'))
                 return string_report(log_error, 1, "%s: %s\n", "lsns", "tree output is not supported");
@@ -4554,21 +4524,9 @@ static string_address ul_lslocks_field(address_any row, p8 column,
 
 static b32 util_linux_lslocks()
 {
-        file_taking taking = {
-            .program = (string_address)"lslocks",
-            .options = ul_lslocks_options,
-        };
-        b32 answer;
+        ul_taking("lslocks", ul_lslocks_options, "[options]");
 
-        if (ul_options_done(address_of taking, "[options]", address_of answer))
-                return answer;
-
-        static const argument_exclusive_pair lslocks_formats[] = {
-            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
-        b32 clash = ul_refuse_exclusive(address_of taking, lslocks_formats,
-                                        array_count(lslocks_formats));
-        if (clash)
-                return clash;
+        ul_refuse_group(taking, ul_json_raw);
         /* Operands mean nothing to lslocks and the reference ignores them. */
         if (taking.flags & FILE_FLAG('Q'))
                 return string_report(log_error, 1, "%s: %s\n", "lslocks", "display filters are not supported");
@@ -5051,15 +5009,8 @@ static string_address ul_lsfd_field(address_any row, p8 column,
 
 static b32 util_linux_lsfd()
 {
-        file_taking taking = {
-            .program = (string_address)"lsfd",
-            .options = ul_lsfd_options,
-        };
-        b32 answer;
-
         ul_lsfd_release();
-        if (ul_options_done(address_of taking, "[options]", address_of answer))
-                return answer;
+        ul_taking("lsfd", ul_lsfd_options, "[options]");
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "lsfd", "unexpected operand");
         if ((taking.flags & FILE_FLAG('J')) &&
@@ -5710,18 +5661,10 @@ static b32 util_linux_unshare()
         ul_unshare_selection ul_unshare_selected = {.uid = 0, .gid = 0};
         ul_user_mapping map = {.uid_ranges = uid_ranges, .gid_ranges = gid_ranges};
 
-        file_taking taking = {
-            .program = (string_address)"unshare",
-            .options = ul_unshare_options,
-            .seen_in = ul_unshare_seen,
-            .context = address_of map,
-            .selection = (p8 address_to)address_of ul_unshare_selected,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] [program [argument ...]]",
-                    address_of answer))
-                return answer;
+        ul_taking("unshare", ul_unshare_options,
+                  "[options] [program [argument ...]]",
+                  .seen_in = ul_unshare_seen, .context = address_of map,
+                  .selection = (p8 address_to)address_of ul_unshare_selected);
 
         positive flags = 0;
         for (positive at = 0; at < UL_NS_COUNT; at++)
@@ -5920,16 +5863,9 @@ static const argument_option ul_nsenter_options[] = {
 
 static b32 util_linux_nsenter()
 {
-        file_taking taking = {
-            .program = (string_address)"nsenter",
-            .options = ul_nsenter_options,
-        };
-        b32 answer;
+        ul_taking("nsenter", ul_nsenter_options,
+                  "[options] [program [argument ...]]");
         positive count = (positive)program_argument_count();
-
-        if (ul_options_done(address_of taking, "[options] [program [argument ...]]",
-                    address_of answer))
-                return answer;
 
         b32 target = 0;
         bipolar target_handle = -1;
@@ -6180,17 +6116,10 @@ static const argument_option ul_setsid_options[] = {
 
 static b32 util_linux_setsid()
 {
-        file_taking taking = {
-            .program = (string_address)"setsid",
-            .options = ul_setsid_options,
-        };
-        b32 answer;
+        ul_taking("setsid", ul_setsid_options,
+                  "[options] program [argument ...]");
         bipolar pid;
         bool waiting;
-
-        if (ul_options_done(address_of taking,
-                    "[options] program [argument ...]", address_of answer))
-                return answer;
         if (taking.first >= (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "setsid", "no command specified");
 
@@ -6237,16 +6166,9 @@ static const argument_option ul_setpgid_options[] = {
 
 static b32 util_linux_setpgid()
 {
-        file_taking taking = {
-            .program = (string_address)"setpgid",
-            .options = ul_setpgid_options,
-        };
-        b32 answer;
+        ul_taking("setpgid", ul_setpgid_options,
+                  "[options] program [argument ...]");
         bipolar changed;
-
-        if (ul_options_done(address_of taking,
-                    "[options] program [argument ...]", address_of answer))
-                return answer;
         if (taking.first >= (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "setpgid", "no command specified");
 
@@ -6394,20 +6316,13 @@ static const argument_option ul_fallocate_options[] = {
 */
 static b32 util_linux_fallocate()
 {
-        file_taking taking = {
-            .program = (string_address)"fallocate",
-            .options = ul_fallocate_options,
-        };
+        ul_taking("fallocate", ul_fallocate_options, "[options] filename");
         positive count = (positive)program_argument_count();
         positive length;
         positive offset = 0;
         positive flags;
         positive operations;
         positive mode = 0;
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] filename", address_of answer))
-                return answer;
         if (taking.first >= count)
                 return string_report(log_error, 1, "%s: %s\n", "fallocate", "no filename specified");
         if (taking.first + 1 != count)
@@ -6600,17 +6515,9 @@ static bool ul_copyfilerange_range(string_address written, bipolar in,
 
 static b32 util_linux_copyfilerange()
 {
-        file_taking taking = {
-            .program = (string_address)"copyfilerange",
-            .options = ul_copyfilerange_options,
-        };
+        ul_taking("copyfilerange", ul_copyfilerange_options,
+                  "[options] source destination range...");
         positive count = (positive)program_argument_count();
-        b32 answer;
-
-        if (ul_options_done(address_of taking,
-                    "[options] source destination range...",
-                    address_of answer))
-                return answer;
         if (count - taking.first < 3)
                 return string_report(log_error, 1, "%s: %s\n", "copyfilerange", "too few arguments");
 
@@ -6690,20 +6597,13 @@ static PURE b32 ul_fadvise_kind(string_address name)
 
 static b32 util_linux_fadvise()
 {
-        file_taking taking = {
-            .program = (string_address)"fadvise",
-            .options = ul_fadvise_options,
-        };
+        ul_taking("fadvise", ul_fadvise_options,
+                  "[options] file | --fd descriptor");
         positive offset = 0;
         positive length = 0;
         bipolar handle = -1;
         b32 advice = 4;
-        b32 answer;
         bool close_handle = false;
-
-        if (ul_options_done(address_of taking,
-                    "[options] file | --fd descriptor", address_of answer))
-                return answer;
 
         if (file_option_value(address_of taking, 'a'))
         {
@@ -6868,25 +6768,17 @@ static b32 ul_ionice_set(b32 which, b32 id, b32 class, b32 data,
 static b32 util_linux_ionice()
 {
         p8 identity = 0;
-        file_taking taking = {
-            .program = (string_address)"ionice",
-            .options = ul_ionice_options,
-            .seen_in = ul_ionice_seen,
-            .context = address_of identity,
-        };
+        ul_taking("ionice", ul_ionice_options,
+                  "[options] [-p pid ... | command]",
+                  .seen_in = ul_ionice_seen, .context = address_of identity);
         positive count = (positive)program_argument_count();
         b32 class = 2;
         b32 data = 4;
         b32 which = 0;
         b32 id = 0;
-        b32 answer;
         b32 setting = 0;
         string_address id_kind = null;
         bool tolerant;
-
-        if (ul_options_done(address_of taking,
-                    "[options] [-p pid ... | command]", address_of answer))
-                return answer;
 
         if (file_option_value(address_of taking, 'c'))
         {
@@ -6996,16 +6888,8 @@ static bool ul_choom_write(string_address path, b32 value)
 
 static b32 util_linux_choom()
 {
-        file_taking taking = {
-            .program = "choom",
-            .options = ul_choom_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking,
-                    "[options] -p PID | -n NUMBER command [argument ...]",
-                    address_of answer))
-                return answer;
+        ul_taking("choom", ul_choom_options,
+                  "[options] -p PID | -n NUMBER command [argument ...]");
 
         positive count = (positive)program_argument_count();
         string_address pid_text = file_option_value(address_of taking, 'p');
@@ -7077,15 +6961,7 @@ static const argument_option ul_exch_options[] = {
 
 static b32 util_linux_exch()
 {
-        file_taking taking = {
-            .program = "exch",
-            .options = ul_exch_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] OLDPATH NEWPATH",
-                    address_of answer))
-                return answer;
+        ul_taking("exch", ul_exch_options, "[options] OLDPATH NEWPATH");
 
         positive count = (positive)program_argument_count();
         if (count - taking.first != 2)
@@ -7120,16 +6996,9 @@ static const p16 ul_getino_requests[] = {
 
 static b32 util_linux_getino()
 {
-        file_taking taking = {
-            .program = "getino",
-            .options = ul_getino_options, .operand = file_operand,
-        };
-        b32 answer;
-
         file_operands_begin();
-        if (ul_options_done(address_of taking, "[options] PID[:inode]...",
-                    address_of answer))
-                return answer;
+        ul_taking("getino", ul_getino_options, "[options] PID[:inode]...",
+                  .operand = file_operand);
         if (file_operand_failed)
                 return string_report(log_error, 1, "%s: %s\n", "getino", "not enough memory");
         if (!file_operand_count)
@@ -8340,17 +8209,9 @@ static bool ul_blockdev_report_visit(string_address path, address_any opaque)
 static b32 util_linux_blockdev()
 {
         ul_blockdev_run run = {0};
-        file_taking taking = {
-            .program = "blockdev",
-            .options = ul_blockdev_options,
-            .seen_in = ul_blockdev_seen,
-            .context = address_of run,
-            .selection = address_of run.verbosity,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "[-v|-q] commands devices",
-                    address_of answer))
-                return answer;
+        ul_taking("blockdev", ul_blockdev_options, "[-v|-q] commands devices",
+                  .seen_in = ul_blockdev_seen, .context = address_of run,
+                  .selection = address_of run.verbosity);
 
         bool report = (taking.flags & FILE_FLAG('R')) != 0;
         positive count = (positive)program_argument_count();
@@ -8396,15 +8257,8 @@ static const argument_option ul_isosize_options[] = {
 
 static b32 util_linux_isosize()
 {
-        file_taking taking = {
-            .program = "isosize",
-            .options = ul_isosize_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] <iso9660_image_file> ...",
-                    address_of answer))
-                return answer;
+        ul_taking("isosize", ul_isosize_options,
+                  "[options] <iso9660_image_file> ...");
 
         positive count = (positive)program_argument_count();
         if (taking.first == count)
@@ -8691,22 +8545,11 @@ static const argument_option ul_wipefs_options[] = {
 
 static b32 util_linux_wipefs()
 {
-        file_taking taking = {
-            .program = "wipefs",
-            .options = ul_wipefs_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] <device>",
-                    address_of answer))
-                return answer;
+        ul_taking("wipefs", ul_wipefs_options, "[options] <device>");
         static const argument_exclusive_pair wipefs_pair[] = {
             {'o', (string_address)"offset"},
             {'O', (string_address)"output"}};
-        b32 clash = ul_refuse_exclusive(address_of taking, wipefs_pair,
-                                        array_count(wipefs_pair));
-        if (clash)
-                return clash;
+        ul_refuse_group(taking, wipefs_pair);
         if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('f') |
                             FILE_FLAG('k')))
                 return string_report(log_error, 1, "%s: %s\n", "wipefs", "backup, force and lock modes are not supported");
@@ -8889,15 +8732,7 @@ static const argument_option ul_mkswap_options[] = {
 
 static b32 util_linux_mkswap()
 {
-        file_taking taking = {
-            .program = "mkswap",
-            .options = ul_mkswap_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] device [size]",
-                    address_of answer))
-                return answer;
+        ul_taking("mkswap", ul_mkswap_options, "[options] device [size]");
         if (taking.flags & (FILE_FLAG('c') | FILE_FLAG('F') |
                             FILE_FLAG('k')) ||
             file_option_value(address_of taking, 'o') ||
@@ -9041,15 +8876,7 @@ static const argument_option ul_swaplabel_options[] = {
 
 static b32 util_linux_swaplabel()
 {
-        file_taking taking = {
-            .program = "swaplabel",
-            .options = ul_swaplabel_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] <device>",
-                    address_of answer))
-                return answer;
+        ul_taking("swaplabel", ul_swaplabel_options, "[options] <device>");
         positive count = (positive)program_argument_count();
         /* One device is read; util-linux ignores whatever follows it. */
         if (taking.first >= count)
@@ -10154,13 +9981,7 @@ static const argument_option ul_lscpu_options[] = {
 
 static b32 util_linux_lscpu()
 {
-        file_taking taking = {
-            .program = "lscpu",
-            .options = ul_lscpu_options,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "[options]", address_of answer))
-                return answer;
+        ul_taking("lscpu", ul_lscpu_options, "[options]");
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "lscpu", "unexpected operand");
         if (taking.flags & FILE_FLAG('y'))
@@ -10629,26 +10450,15 @@ static const argument_option ul_lsmem_options[] = {
 
 static b32 util_linux_lsmem()
 {
-        file_taking taking = {
-            .program = "lsmem",
-            .options = ul_lsmem_options,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "[options]", address_of answer))
-                return answer;
+        ul_taking("lsmem", ul_lsmem_options, "[options]");
 
         static const argument_exclusive_pair lsmem_formats[] = {
             {'J', (string_address)"json"}, {'P', (string_address)"pairs"},
             {'r', (string_address)"raw"}};
         static const argument_exclusive_pair lsmem_split[] = {
             {'a', (string_address)"all"}, {'S', (string_address)"split"}};
-        b32 clash = ul_refuse_exclusive(address_of taking, lsmem_formats,
-                                        array_count(lsmem_formats));
-        if (!clash)
-                clash = ul_refuse_exclusive(address_of taking, lsmem_split,
-                                            array_count(lsmem_split));
-        if (clash)
-                return clash;
+        ul_refuse_group(taking, lsmem_formats);
+        ul_refuse_group(taking, lsmem_split);
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "lsmem", "unexpected operand");
         if (taking.flags & FILE_FLAG('P'))
@@ -11857,27 +11667,15 @@ static fn ul_lsblk_counter(string_address text, positive name_length,
 
 static b32 util_linux_lsblk()
 {
-        file_taking taking = {
-            .program = "lsblk",
-            .options = ul_lsblk_options,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "[options] [device ...]",
-                    address_of answer))
-                return answer;
+        ul_taking("lsblk", ul_lsblk_options, "[options] [device ...]");
         static const argument_exclusive_pair lsblk_formats[] = {
             {'J', (string_address)"json"}, {'P', (string_address)"pairs"},
             {'r', (string_address)"raw"}};
         static const argument_exclusive_pair lsblk_shapes[] = {
             {'l', (string_address)"list"}, {'P', (string_address)"pairs"},
             {'r', (string_address)"raw"}};
-        b32 clash = ul_refuse_exclusive(address_of taking, lsblk_formats,
-                                        array_count(lsblk_formats));
-        if (!clash)
-                clash = ul_refuse_exclusive(address_of taking, lsblk_shapes,
-                                            array_count(lsblk_shapes));
-        if (clash)
-                return clash;
+        ul_refuse_group(taking, lsblk_formats);
+        ul_refuse_group(taking, lsblk_shapes);
         if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('z')))
                 return string_report(log_error, 1, "%s: %s\n", "lsblk", "discard/zoned fields are not supported");
         if (taking.flags & (FILE_FLAG('O') | FILE_FLAG('P')))
@@ -12398,13 +12196,7 @@ static const argument_option ul_ipcmk_options[] = {
 
 static b32 util_linux_ipcmk()
 {
-        file_taking taking = {
-            .program = "ipcmk",
-            .options = ul_ipcmk_options,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "[options]", address_of answer))
-                return answer;
+        ul_taking("ipcmk", ul_ipcmk_options, "[options]");
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "ipcmk", "unexpected operand");
         if (taking.flags &
@@ -12531,14 +12323,7 @@ static b32 ul_ipcrm_remove(p8 type, string_address text, bool key,
 
 static b32 util_linux_ipcrm()
 {
-        file_taking taking = {
-            .program = "ipcrm",
-            .options = ul_ipcrm_options,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "[options] | shm|msg|sem id ...",
-                    address_of answer))
-                return answer;
+        ul_taking("ipcrm", ul_ipcrm_options, "[options] | shm|msg|sem id ...");
         if (taking.flags &
             (FILE_FLAG('x') | FILE_FLAG('y') | FILE_FLAG('z')))
                 return string_report(log_error, 1, "%s: %s\n", "ipcrm", "POSIX IPC is not supported");
@@ -12651,25 +12436,12 @@ static fn ul_lsipc_newline(p8 address_to columns, positive column_count)
 
 static b32 util_linux_lsipc()
 {
-        file_taking taking = {
-            .program = "lsipc",
-            .options = ul_lsipc_options,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "-m|-q|-s [options]", address_of answer))
-                return answer;
+        ul_taking("lsipc", ul_lsipc_options, "-m|-q|-s [options]");
         static const argument_exclusive_pair lsipc_pairs[] = {
             {'c', (string_address)"creator"}, {'t', (string_address)"time"},
             {'o', (string_address)"output"}};
-        static const argument_exclusive_pair lsipc_formats[] = {
-            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
-        b32 clash = ul_refuse_exclusive(address_of taking, lsipc_pairs,
-                                        array_count(lsipc_pairs));
-        if (!clash)
-                clash = ul_refuse_exclusive(address_of taking, lsipc_formats,
-                                            array_count(lsipc_formats));
-        if (clash)
-                return clash;
+        ul_refuse_group(taking, lsipc_pairs);
+        ul_refuse_group(taking, ul_json_raw);
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "lsipc", "unexpected operand");
         /* An empty column list is refused without a word, as the reference
@@ -12878,13 +12650,7 @@ static const argument_option ul_ipcs_options[] = {
 
 static b32 util_linux_ipcs()
 {
-        file_taking taking = {
-            .program = "ipcs",
-            .options = ul_ipcs_options,
-        };
-        b32 answer;
-        if (ul_options_done(address_of taking, "[-m|-q|-s] [options]",
-                    address_of answer)) return answer;
+        ul_taking("ipcs", ul_ipcs_options, "[-m|-q|-s] [options]");
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "ipcs", "unexpected operand");
         if (taking.flags &
@@ -12929,15 +12695,7 @@ static const argument_option ul_mesg_options[] = {
 
 static b32 util_linux_mesg()
 {
-        file_taking taking = {
-            .program = "mesg",
-            .options = ul_mesg_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking, "[options] [y | n]",
-                    address_of answer))
-                return answer;
+        ul_taking("mesg", ul_mesg_options, "[options] [y | n]");
 
         positive count = (positive)program_argument_count();
         string_address wanted = taking.first < count
@@ -13380,22 +13138,9 @@ static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
 
 static b32 util_linux_rfkill()
 {
-        file_taking taking = {
-            .program = "rfkill",
-            .options = ul_rfkill_options,
-        };
-        b32 answer;
-
-        if (ul_options_done(address_of taking,
-                    "[options] command [identifier ...]",
-                    address_of answer))
-                return answer;
-        static const argument_exclusive_pair rfkill_formats[] = {
-            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
-        b32 clash = ul_refuse_exclusive(address_of taking, rfkill_formats,
-                                        array_count(rfkill_formats));
-        if (clash)
-                return clash;
+        ul_taking("rfkill", ul_rfkill_options,
+                  "[options] command [identifier ...]");
+        ul_refuse_group(taking, ul_json_raw);
         /*  An empty column list is refused before the command word and the
             identifiers are looked at, and without a word. */
         if (file_option_value(address_of taking, 'o') &&
