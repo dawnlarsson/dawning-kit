@@ -63,6 +63,7 @@
 #define SNTP_TIMESPEC_SECONDS_MOST 9223372035ull
 #define SNTP_ERA ((bipolar)4294967296)
 #define SNTP_SHORT_SECOND 0x10000u
+#define SNTP_RANDOM_NONBLOCK 1
 #define SNTP_TEST_NOW \
         ((bipolar)1700000000 * (bipolar)SNTP_NANOSECONDS)
 
@@ -110,12 +111,31 @@ static inline INLINE bipolar sntp_now_ns(void)
         return sntp_timespec_ns(now[0], now[1]);
 }
 
+/*
+        The transmit stamp goes out to be echoed back, and the echo is the
+        only thing telling us a reply is ours. Sending the clock puts a
+        number an off-path attacker can estimate into the one field it has
+        to guess, and its low half is the whole of the guess: the seconds
+        it already knows.
+
+        Nothing reads this field back. t1 is taken from the timespec the
+        trap filled, never from the packet, so the fraction carries no
+        accuracy and a random one costs none. Thirty-two bits of it, on
+        top of the source port the connected socket already randomises,
+        is what the forgery has to match. The clock's own fraction is the
+        fallback if the pool has no bytes to give, which is where this
+        started.
+*/
 static inline INLINE fn sntp_put_stamp(p8 address_to field, p64 unix_seconds,
                                        p64 unix_nsec)
 {
         p32 ntp_seconds = (p32)(unix_seconds + SNTP_UNIX);
         p32 ntp_frac =
             (p32)(((p64)unix_nsec << 32) / SNTP_NANOSECONDS);
+
+        if (system_random_fill(address_of ntp_frac, sizeof(ntp_frac),
+                               SNTP_RANDOM_NONBLOCK) < 0)
+                ntp_frac = (p32)(((p64)unix_nsec << 32) / SNTP_NANOSECONDS);
 
         network_store_32(field, ntp_seconds);
         network_store_32(field + 4, ntp_frac);
