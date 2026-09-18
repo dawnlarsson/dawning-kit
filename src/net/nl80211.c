@@ -325,48 +325,16 @@ static bipolar nl80211_interface(nl80211 address_to session,
                    : (found->found ? 0 : -19);
 }
 
+/* WPA's PBKDF2 and PRF are HMAC-SHA-1, which is crypto.c's HMAC under a
+   different digest and nothing else. */
 static fn wifi_hmac_sha1(p8 address_to key, positive key_length,
                          p8 address_to data, positive length, p8 address_to out)
 {
-        digest_state inner;
-        digest_state outer;
-        p8 pad[64];
-        p8 inner_sum[20];
-        p8 key_block[64];
-        p8 hashed[20];
-        positive i;
+        crypto_mac mac;
 
-        memory_fill(key_block, 0, 64);
-        if (key_length > 64)
-        {
-                digest_open(address_of inner, DIGEST_SHA1, 20);
-                digest_write(address_of inner, key, key_length);
-                digest_close(address_of inner, hashed);
-                memory_copy(key_block, hashed, 20);
-        }
-        else
-                memory_copy(key_block, key, key_length);
-
-        for (i = 0; i < 64; i++)
-                pad[i] = key_block[i] ^ 0x36;
-
-        digest_open(address_of inner, DIGEST_SHA1, 20);
-        digest_write(address_of inner, pad, 64);
-        digest_write(address_of inner, data, length);
-        digest_close(address_of inner, inner_sum);
-
-        for (i = 0; i < 64; i++)
-                pad[i] = key_block[i] ^ 0x5c;
-
-        digest_open(address_of outer, DIGEST_SHA1, 20);
-        digest_write(address_of outer, pad, 64);
-        digest_write(address_of outer, inner_sum, 20);
-        digest_close(address_of outer, out);
-
-        crypto_forget(key_block, sizeof(key_block));
-        crypto_forget(pad, sizeof(pad));
-        crypto_forget(inner_sum, sizeof(inner_sum));
-        crypto_forget(hashed, sizeof(hashed));
+        crypto_hmac_open(address_of mac, DIGEST_SHA1, 20, key, key_length);
+        crypto_hmac_write(address_of mac, data, length);
+        crypto_hmac_close(address_of mac, out);
 }
 
 static p8 wifi_nibble(p8 byte)

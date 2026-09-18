@@ -102,49 +102,93 @@ static fn crypto_sha384(p8 address_to data, positive length, p8 address_to out)
 
 static fn crypto_forget(address_any secret, positive length);
 
+/*
+        HMAC, streamed.
+
+        RFC 2104 is one machine whichever digest runs inside it: the key
+        padded out to the digest's block, that block xored with 0x36 opening
+        the inner hash and xored with 0x5c opening the outer one over the
+        inner sum. Only the digest changes, so only the digest is a
+        parameter. SHA-1 and SHA-256 -- WPA's PRF and TLS's key schedule,
+        which is every caller here -- share the 64 byte block; the SHA-512
+        family's is 128 and does not belong in this pad, which is why the
+        block is a constant rather than a field.
+
+        It streams because HKDF's expand hashes three spans in a row: a
+        one-shot form would make that caller join them in a buffer first,
+        which is a copy and a length limit for nothing. The digest remembers
+        which one it is, so the closing pass keeps nothing beside it but the
+        padded key.
+*/
+typedef struct
+{
+        digest_state hash;
+        p8 key_block[64];
+} crypto_mac;
+
+static inline INLINE fn crypto_hmac_open(crypto_mac address_to mac,
+                                         positive algorithm, positive size,
+                                         p8 address_to key,
+                                         positive key_length)
+{
+        p8 pad[64];
+
+        digest_open(address_of mac->hash, algorithm, size);
+        memory_fill(mac->key_block, 0, 64);
+
+        //      A key longer than the block stands for its own digest.
+        if (key_length > 64)
+        {
+                digest_write(address_of mac->hash, key, key_length);
+                digest_close(address_of mac->hash, mac->key_block);
+                digest_open(address_of mac->hash, algorithm, size);
+        }
+        else
+                memory_copy(mac->key_block, key, key_length);
+
+        for (positive i = 0; i < 64; i++)
+                pad[i] = mac->key_block[i] ^ 0x36;
+        digest_write(address_of mac->hash, pad, 64);
+        crypto_forget(pad, sizeof pad);
+}
+
+static fn crypto_hmac_write(crypto_mac address_to mac, p8 address_to data,
+                            positive length)
+{
+        digest_write(address_of mac->hash, data, length);
+}
+
+static inline INLINE fn crypto_hmac_close(crypto_mac address_to mac,
+                                          p8 address_to out)
+{
+        positive algorithm = mac->hash.algorithm;
+        positive size = mac->hash.size;
+        p8 pad[64];
+        p8 inner[64];
+
+        digest_close(address_of mac->hash, inner);
+        for (positive i = 0; i < 64; i++)
+                pad[i] = mac->key_block[i] ^ 0x5c;
+
+        digest_open(address_of mac->hash, algorithm, size);
+        digest_write(address_of mac->hash, pad, 64);
+        digest_write(address_of mac->hash, inner, size);
+        digest_close(address_of mac->hash, out);
+
+        crypto_forget(mac, sizeof(*mac));
+        crypto_forget(pad, sizeof pad);
+        crypto_forget(inner, sizeof inner);
+}
+
 static fn crypto_hmac_sha256(p8 address_to key, positive key_length,
                              p8 address_to data, positive length,
                              p8 address_to out)
 {
-        crypto_sha256 inner;
-        crypto_sha256 outer;
-        p8 pad[64];
-        p8 inner_sum[32];
-        p8 key_block[64];
-        p8 hashed[32];
-        positive i;
+        crypto_mac mac;
 
-        memory_fill(key_block, 0, 64);
-        if (key_length > 64)
-        {
-                crypto_sha256_of(key, key_length, hashed);
-                memory_copy(key_block, hashed, 32);
-        }
-        else
-                memory_copy(key_block, key, key_length);
-
-        for (i = 0; i < 64; i++)
-                pad[i] = key_block[i] ^ 0x36;
-
-        crypto_sha256_open(address_of inner);
-        crypto_sha256_write(address_of inner, pad, 64);
-        crypto_sha256_write(address_of inner, data, length);
-        crypto_sha256_close(address_of inner, inner_sum);
-
-        for (i = 0; i < 64; i++)
-                pad[i] = key_block[i] ^ 0x5c;
-
-        crypto_sha256_open(address_of outer);
-        crypto_sha256_write(address_of outer, pad, 64);
-        crypto_sha256_write(address_of outer, inner_sum, 32);
-        crypto_sha256_close(address_of outer, out);
-
-        crypto_forget(address_of inner, sizeof inner);
-        crypto_forget(address_of outer, sizeof outer);
-        crypto_forget(pad, sizeof pad);
-        crypto_forget(inner_sum, sizeof inner_sum);
-        crypto_forget(key_block, sizeof key_block);
-        crypto_forget(hashed, sizeof hashed);
+        crypto_hmac_open(address_of mac, DIGEST_SHA256, 32, key, key_length);
+        crypto_hmac_write(address_of mac, data, length);
+        crypto_hmac_close(address_of mac, out);
 }
 
 static fn crypto_hkdf_extract(p8 address_to salt, positive salt_length,
@@ -173,50 +217,25 @@ static fn crypto_hkdf_expand(p8 address_to prk, p8 address_to info,
 
         while (have < out_length)
         {
-                crypto_sha256 hash;
-                p8 pad[64];
-                p8 inner[32];
-                positive i;
-                p8 key_block[64];
+                crypto_mac mac;
+                positive take = out_length - have;
 
-                memory_copy(key_block, prk, 32);
-                memory_fill(key_block + 32, 0, 32);
-
-                for (i = 0; i < 64; i++)
-                        pad[i] = key_block[i] ^ 0x36;
-
-                crypto_sha256_open(address_of hash);
-                crypto_sha256_write(address_of hash, pad, 64);
+                //      T(1) has no predecessor; every later block is keyed
+                //      by the one before it, which is what chains them.
+                crypto_hmac_open(address_of mac, DIGEST_SHA256, 32, prk, 32);
                 if (counter > 1)
-                        crypto_sha256_write(address_of hash, previous, 32);
-                crypto_sha256_write(address_of hash, info, info_length);
-                crypto_sha256_write(address_of hash, address_of counter, 1);
-                crypto_sha256_close(address_of hash, inner);
+                        crypto_hmac_write(address_of mac, previous, 32);
+                crypto_hmac_write(address_of mac, info, info_length);
+                crypto_hmac_write(address_of mac, address_of counter, 1);
+                crypto_hmac_close(address_of mac, block);
 
-                for (i = 0; i < 64; i++)
-                        pad[i] = key_block[i] ^ 0x5c;
-
-                crypto_sha256_open(address_of hash);
-                crypto_sha256_write(address_of hash, pad, 64);
-                crypto_sha256_write(address_of hash, inner, 32);
-                crypto_sha256_close(address_of hash, block);
-
-                {
-                        positive take = out_length - have;
-
-                        if (take > 32)
-                                take = 32;
-                        memory_copy(out + have, block, take);
-                        have += take;
-                }
+                if (take > 32)
+                        take = 32;
+                memory_copy(out + have, block, take);
+                have += take;
 
                 memory_copy(previous, block, 32);
                 counter++;
-
-                crypto_forget(address_of hash, sizeof hash);
-                crypto_forget(pad, sizeof pad);
-                crypto_forget(inner, sizeof inner);
-                crypto_forget(key_block, sizeof key_block);
         }
 
         crypto_forget(previous, sizeof previous);
