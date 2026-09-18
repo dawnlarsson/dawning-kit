@@ -473,7 +473,7 @@ static b32 radio_wifi_add(string_address ssid, string_address pass)
                         crypto_forget(networks, sizeof(networks));
                         return host_fail("wifi", lock);
                 }
-                failed = radio_wifi_join(ssid, pass ? pass : "");
+                failed = radio_wifi_join(ssid, pass);
                 radio_unlock(lock);
 
                 radio_net_wake();
@@ -796,7 +796,8 @@ static b32 host_radio(string_address address_to arguments, positive count)
                 if (string_equals(word, "add") && count >= 4 && count <= 5)
                 {
                         p8 pass[RADIO_PASS_MOST + 1];
-                        string_address secret = count == 5 ? arguments[4] : "";
+                        string_address secret = count == 5 ? arguments[4]
+                                                           : (string_address)"";
                         positive length = string_length(secret);
                         b32 result;
 

@@ -1789,12 +1789,14 @@ static fn host_machine_lock_fns(void)
 
         for (event = 0; event < SPARK_BIND_EVENTS; event++)
         {
-                host_machine_bind_fn(fn, sizeof(fn), spark_bind_event_name[event]);
+                host_machine_bind_fn(fn, sizeof(fn),
+                                     (string_address)spark_bind_event_name[event]);
                 exec_function_readonly_set(fn);
         }
         for (i = 0; i < MOONWATER_PAIRS; i++)
         {
-                host_machine_bind_fn(fn, sizeof(fn), moonwater_pairs[i].name);
+                host_machine_bind_fn(fn, sizeof(fn),
+                                     (string_address)moonwater_pairs[i].name);
                 exec_function_readonly_set(fn);
         }
         host_machine_bind_fn(fn, sizeof(fn), "recover");
@@ -1827,11 +1829,13 @@ static fn host_machine_emit(positive event_slot, unsigned int event,
                         p8 rest[24];
 
                         rest[0] = end;
-                        string_append_bounded(rest, pair->name, sizeof(rest));
+                        string_append_bounded(rest, (string_address)pair->name,
+                                              sizeof(rest));
                         string_append_bounded(rest, "_", sizeof(rest));
                         string_append_bounded(rest, extra, sizeof(rest));
                         if (!host_machine_try(rest, extra, null))
-                                host_machine_try(pair->name, extra, null);
+                                host_machine_try((string_address)pair->name, extra,
+                                                 null);
                 }
                 else
                         host_machine_try(name, name, extra);
