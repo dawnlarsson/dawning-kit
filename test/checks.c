@@ -55991,7 +55991,7 @@ static fn storage_test_copy_faults(void)
                 copy_test_seek_failure = cases[i].seek_failure;
                 copy_test_active = copy_test_explicit = true;
                 bool okay = file_copy_stream(12345, 54321, 12, true,
-                                             &range, &send, offsets);
+                                             &range, &send, offsets, null);
                 copy_test_active = false;
                 check("copy cascade result and cached capability flags",
                       okay == cases[i].okay && range == cases[i].range && send == cases[i].send);
@@ -56007,7 +56007,8 @@ static fn storage_test_copy_faults(void)
         copy_test_at = copy_test_used = copy_test_seeks = 0;
         copy_test_active = true;
         copy_test_explicit = false;
-        bool okay = file_copy_stream(12345, 54321, 0, false, &range, &send, null);
+        bool okay = file_copy_stream(12345, 54321, 0, false, &range, &send, null,
+                                     null);
         copy_test_active = false;
         check("unbounded copy accepts EOF without descriptor seeks", okay && !copy_test_seeks);
 }
