@@ -1384,8 +1384,19 @@ static string_address address_to bowl_environment(
                         else if (bowl_env_named(inherited[at], "TMPDIR"))
                                 have_tmpdir = true;
 
+                        /*  Out of room. Handing back the block as it
+                            arrived is only safe while nothing has been
+                            dropped from it: once an entry has been refused,
+                            returning the original puts that entry back into
+                            the guest, which is the whole of what the refusal
+                            was for. What fit is then what is passed. */
                         if (n + 1 >= BOWL_ENV_ROOM)
-                                return inherited;
+                        {
+                                if (!skipped)
+                                        return inherited;
+                                mixed[n] = null;
+                                return mixed;
+                        }
 
                         mixed[n++] = inherited[at];
                 }
@@ -1396,7 +1407,12 @@ static string_address address_to bowl_environment(
                         return inherited;
 
                 if (n + BOWL_ENV_DEFAULTS >= BOWL_ENV_ROOM)
-                        return inherited;
+                {
+                        if (!skipped)
+                                return inherited;
+                        mixed[n] = null;
+                        return mixed;
+                }
         }
 
         if (!have_term)
