@@ -18082,6 +18082,12 @@ static rx_match address_to grep_slot_match(grep_slot address_to scratch)
                 match->choice_capacity = REGEX_SCRATCH_MAX;
                 match->undo_capacity = REGEX_SCRATCH_MAX;
                 match->work_limit = grep_slots_work_limit;
+
+                // grep_line_matches sets this before every search it makes,
+                // so this is the promise rather than the value: a slot taken
+                // from memory that was not clean has no second ceiling until
+                // somebody asks for one.
+                match->work_yield = 0;
                 scratch->match = match;
         }
 
