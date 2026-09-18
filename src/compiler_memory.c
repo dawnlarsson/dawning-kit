@@ -243,6 +243,38 @@
         } while (0)
 #endif
 
+#if KNOWN_NEON
+/*
+        The same sentence on arm64, and it is the one worth naming twice.
+
+        Every rung of the NEON fill below was written out twice -- once for a
+        zero, which the machine makes out of nothing with movi, and once for a
+        byte it has to duplicate across the register with dup -- and the two
+        copies differ in that single instruction and in nothing else at all.
+        The stores are the argument here and the seed is the macro, which is
+        exactly the shape KNOWN_FILL_ASM already has one screen up.
+
+        The value operand appears only on the side that names it. Handing it
+        to the zero side as well would be shorter still and would materialise
+        a register holding nothing in front of every zero fill on the machine,
+        which is the one cost this shape could have introduced and does not.
+*/
+#define KNOWN_FILL_NEON(stores, size, ...)                                    \
+        do {                                                                  \
+                if (zero)                                                     \
+                        __asm__("   movi v0.16b, #0\n" stores                 \
+                                : "=m"(*(p8(address_to)[size])(destination))  \
+                                : [to] "r"(destination), ##__VA_ARGS__        \
+                                : "v0");                                      \
+                else                                                          \
+                        __asm__("   dup v0.16b, %w[val]\n" stores             \
+                                : "=m"(*(p8(address_to)[size])(destination))  \
+                                : [to] "r"(destination), [val] "r"(value),    \
+                                  ##__VA_ARGS__                               \
+                                : "v0");                                      \
+        } while (0)
+#endif
+
 /*
         The size classes, chosen by a number the compiler has already folded.
         Each returns the destination, which is what the routines return.
@@ -915,117 +947,47 @@ static inline INLINE address_any fill_known(address_any destination,
         if (size >= 16) {
 #if KNOWN_SIZE_MAX >= 16
                 if (size <= 16) {
-                        if (zero)
-                                __asm__("movi v0.16b, #0\n   str q0, [%[to]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination)
-                                        : "v0");
-                        else
-                                __asm__("dup v0.16b, %w[val]\n   str q0, [%[to]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination), [val] "r"(value)
-                                        : "v0");
+                        KNOWN_FILL_NEON("   str q0, [%[to]]\n", size);
                         return destination;
                 }
 #endif
 #if KNOWN_SIZE_MAX > 16
                 if (size <= 32) {
-                        if (zero)
-                                __asm__("movi v0.16b, #0\n   str q0, [%[to]]\n"
-                                        "str q0, [%[to], %[back]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination),
-                                          [back] "r"(size - 16)
-                                        : "v0");
-                        else
-                                __asm__("dup v0.16b, %w[val]\n   str q0, [%[to]]\n"
-                                        "str q0, [%[to], %[back]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination), [val] "r"(value),
-                                          [back] "r"(size - 16)
-                                        : "v0");
+                        KNOWN_FILL_NEON("   str q0, [%[to]]\n"
+                                        "   str q0, [%[to], %[back]]\n",
+                                        size, [back] "r"(size - 16));
                         return destination;
                 }
 #endif
 #if KNOWN_SIZE_MAX > 32
                 if (size <= 64) {
-                        if (zero)
-                                __asm__("movi v0.16b, #0\n"
-                                        "str q0, [%[to]]\n"
-                                        "str q0, [%[to], #16]\n"
-                                        "str q0, [%[to], %[lo]]\n"
-                                        "str q0, [%[to], %[hi]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination),
-                                          [lo] "r"(size - 32),
-                                          [hi] "r"(size - 16)
-                                        : "v0");
-                        else
-                                __asm__("dup v0.16b, %w[val]\n"
-                                        "str q0, [%[to]]\n"
-                                        "str q0, [%[to], #16]\n"
-                                        "str q0, [%[to], %[lo]]\n"
-                                        "str q0, [%[to], %[hi]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination), [val] "r"(value),
-                                          [lo] "r"(size - 32),
-                                          [hi] "r"(size - 16)
-                                        : "v0");
+                        KNOWN_FILL_NEON("   str q0, [%[to]]\n"
+                                        "   str q0, [%[to], #16]\n"
+                                        "   str q0, [%[to], %[lo]]\n"
+                                        "   str q0, [%[to], %[hi]]\n",
+                                        size, [lo] "r"(size - 32),
+                                        [hi] "r"(size - 16));
                         return destination;
                 }
 #endif
 #if KNOWN_SIZE_MAX > 64
                 if (size <= 96) {
-                        if (zero)
-                                __asm__("movi v0.16b, #0\n"
-                                        "stp q0, q0, [%[to]]\n"
-                                        "stp q0, q0, [%[to], #32]\n"
-                                        "str q0, [%[to], %[lo]]\n"
-                                        "str q0, [%[to], %[hi]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination),
-                                          [lo] "r"(size - 32),
-                                          [hi] "r"(size - 16)
-                                        : "v0");
-                        else
-                                __asm__("dup v0.16b, %w[val]\n"
-                                        "stp q0, q0, [%[to]]\n"
-                                        "stp q0, q0, [%[to], #32]\n"
-                                        "str q0, [%[to], %[lo]]\n"
-                                        "str q0, [%[to], %[hi]]\n"
-                                        : "=m"(*(p8(address_to)[size])(destination))
-                                        : [to] "r"(destination), [val] "r"(value),
-                                          [lo] "r"(size - 32),
-                                          [hi] "r"(size - 16)
-                                        : "v0");
+                        KNOWN_FILL_NEON("   stp q0, q0, [%[to]]\n"
+                                        "   stp q0, q0, [%[to], #32]\n"
+                                        "   str q0, [%[to], %[lo]]\n"
+                                        "   str q0, [%[to], %[hi]]\n",
+                                        size, [lo] "r"(size - 32),
+                                        [hi] "r"(size - 16));
                         return destination;
                 }
 #endif
 #if KNOWN_SIZE_MAX > 96
-                if (zero)
-                        __asm__("movi v0.16b, #0\n"
-                                "stp q0, q0, [%[to]]\n"
-                                "stp q0, q0, [%[to], #32]\n"
-                                "stp q0, q0, [%[to], #64]\n"
-                                "str q0, [%[to], %[lo]]\n"
-                                "str q0, [%[to], %[hi]]\n"
-                                : "=m"(*(p8(address_to)[size])(destination))
-                                : [to] "r"(destination),
-                                  [lo] "r"(size - 32),
-                                  [hi] "r"(size - 16)
-                                : "v0");
-                else
-                        __asm__("dup v0.16b, %w[val]\n"
-                                "stp q0, q0, [%[to]]\n"
-                                "stp q0, q0, [%[to], #32]\n"
-                                "stp q0, q0, [%[to], #64]\n"
-                                "str q0, [%[to], %[lo]]\n"
-                                "str q0, [%[to], %[hi]]\n"
-                                : "=m"(*(p8(address_to)[size])(destination))
-                                : [to] "r"(destination), [val] "r"(value),
-                                  [lo] "r"(size - 32),
-                                  [hi] "r"(size - 16)
-                                : "v0");
+                KNOWN_FILL_NEON("   stp q0, q0, [%[to]]\n"
+                                "   stp q0, q0, [%[to], #32]\n"
+                                "   stp q0, q0, [%[to], #64]\n"
+                                "   str q0, [%[to], %[lo]]\n"
+                                "   str q0, [%[to], %[hi]]\n",
+                                size, [lo] "r"(size - 32), [hi] "r"(size - 16));
                 return destination;
 #endif
         }
