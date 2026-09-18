@@ -857,7 +857,11 @@ static void compose_cells(struct pane *pane, const struct target *t,
         while (row < last_row && line != pane->head)
         {
                 unsigned int slot = line % pane->history;
-                unsigned int length = min(pane->lengths[slot], pane->stride);
+                // The program's word, taken once: it is writable behind us,
+                // and the fold count and the run drawn in each fold are both
+                // measured from this one. pane_length says the rest.
+                unsigned int written = READ_ONCE(pane->lengths[slot]);
+                unsigned int length = min(written, pane->stride);
                 unsigned int folds = length ? (length + width - 1) / width : 1;
                 const struct window_cell *cells =
                     pane->cells + (size_t)slot * pane->stride;

@@ -59970,6 +59970,9 @@ void canvas_glyph2(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u3
 void canvas_cell(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_cell2(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_row_blit(u32 *,const u32 *,unsigned long,u32);
+// The ring reads the program's line lengths through the kernel's single-load
+// spelling; hosted, one load is all there is.
+#define READ_ONCE(a) (a)
 #include "canvas-cells.inc"
 
 static unsigned checks;

@@ -302,9 +302,20 @@ static void pane_ring(unsigned int max_columns, unsigned int max_rows,
 
 // One line of the ring, and how much of it was written. Any index: it is
 // taken modulo the history, which is what makes head a count and not a cursor.
+//
+// Read once, and that is the whole point of the local. pane->lengths points
+// into pane->mapping, which window_mmap hands to the program through
+// remap_vmalloc_range, so every one of these words is writable by the program
+// while this runs and reading one twice can answer twice. Clamping a value the
+// compiler is free to fetch again clamps the first fetch and draws with the
+// second: the bound and the use have to be the same load, or the bound is not
+// one. Nothing in the source said so before, which left it a property of what
+// GCC happened to emit rather than of what is written here.
 static unsigned int pane_length(struct pane *pane, unsigned int index)
 {
-        return min(pane->lengths[index % pane->history], pane->stride);
+        unsigned int written = READ_ONCE(pane->lengths[index % pane->history]);
+
+        return min(written, pane->stride);
 }
 
 /*

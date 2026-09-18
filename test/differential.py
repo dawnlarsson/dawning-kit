@@ -21601,6 +21601,7 @@ def harness_canvas_view(argv):
 #define true 1
 #define false 0
 #define PANE_LIVE ((unsigned int)-1)
+#define READ_ONCE(a) (a)
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
 #define clamp(v,lo,hi) max(lo,min(v,hi))
