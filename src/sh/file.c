@@ -5634,10 +5634,10 @@ static bipolar file_parents_ensure_open(string_address dest_dir,
                                         string_address source_parent,
                                         p8 address_to failed)
 {
-        p8 work[FILE_PATH_MAX];
-        p8 src_prefix[FILE_PATH_MAX];
-        p8 dest_prefix[FILE_PATH_MAX];
-        p8 joined[FILE_PATH_MAX];
+        static p8 work[FILE_PATH_MAX];
+        static p8 src_prefix[FILE_PATH_MAX];
+        static p8 dest_prefix[FILE_PATH_MAX];
+        static p8 joined[FILE_PATH_MAX];
         p8 component[SYSTEM_PATH_LEAF_ROOM];
         positive flags = O_PATH | O_DIRECTORY | O_CLOEXEC;
 
@@ -5736,7 +5736,7 @@ static bool file_destination_in(string_address program, string_address directory
                                 string_address source,
                                 p8 address_to destination)
 {
-        p8 piece[FILE_PATH_MAX];
+        static p8 piece[FILE_PATH_MAX];
 
         if (file_join_source_path)
         {
@@ -5766,9 +5766,9 @@ static bool file_destination_in(string_address program, string_address directory
 
         /* GNU make_dir_parents_private creates dest components after the
            target directory and before the leaf. path_head_copy is dirname. */
-        p8 parent[FILE_PATH_MAX];
-        p8 source_parent[FILE_PATH_MAX];
-        p8 failing[FILE_PATH_MAX];
+        static p8 parent[FILE_PATH_MAX];
+        static p8 source_parent[FILE_PATH_MAX];
+        static p8 failing[FILE_PATH_MAX];
 
         path_head_copy(parent, FILE_PATH_MAX, destination);
         if (string_equals(parent, directory) ||
@@ -5880,7 +5880,7 @@ static bool file_source_destination(string_address program, positive first,
         while (first < after)
         {
                 string_address source = program_argument((b32)first++);
-                p8 destination[FILE_PATH_MAX];
+                static p8 destination[FILE_PATH_MAX];
 
                 if (!file_destination_in(program, last, source, destination))
                 {
@@ -14697,8 +14697,6 @@ static b32 file_df()
 static string_address chmod_specification;
 static b32 chmod_status;
 
-static bool chmod_loud;
-static bool chmod_changes;
 static bool chmod_quiet;
 static bool chmod_referenced;
 typedef struct { p8 dereference, loudness, traverse; } chmod_selection;
@@ -14722,7 +14720,8 @@ static fn chmod_mode_said(positive mode)
 
 static fn chmod_said(string_address shown, positive was, positive now)
 {
-        if (!chmod_loud && !(chmod_changes && (was & 07777) != (now & 07777)))
+        if (chmod_selected.loudness != 'v' &&
+            !(chmod_selected.loudness == 'c' && (was & 07777) != (now & 07777)))
                 return;
 
         string_format(log, "mode of '%w' ", writer_terminal_quoted_name, shown);
@@ -14862,10 +14861,10 @@ static fn chmod_decide(bipolar directory, string_address name,
 static bool chmod_outcome_heard(chmod_outcome address_to out)
 {
         if (out->kind == CHMOD_LINK_KEPT)
-                return chmod_loud;
+                return chmod_selected.loudness == 'v';
         if (out->kind != CHMOD_DONE)
                 return true;
-        return chmod_loud || chmod_changes ||
+        return chmod_selected.loudness == 'v' || chmod_selected.loudness == 'c' ||
                (chmod_surprising && (out->wanted & ~out->naive));
 }
 
@@ -14874,7 +14873,7 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
         switch (out->kind)
         {
         case CHMOD_DANGLING:
-                if (chmod_loud)
+                if (chmod_selected.loudness == 'v')
                         string_format(log, "'%w' could not be accessed\n",
                                       writer_terminal_quoted_name, shown);
                 if (!chmod_quiet)
@@ -14887,7 +14886,7 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
                 // -v says what it could not do on the output stream as well,
                 // because it reports on every file it was handed and not
                 // only on the ones it changed.
-                if (chmod_loud)
+                if (chmod_selected.loudness == 'v')
                         string_format(log, "'%w' could not be accessed\n",
                                       writer_terminal_quoted_name, shown);
                 if (!chmod_quiet)
@@ -14898,7 +14897,7 @@ static fn chmod_report(string_address shown, chmod_outcome address_to out)
                 return;
 
         case CHMOD_LINK_KEPT:
-                if (chmod_loud)
+                if (chmod_selected.loudness == 'v')
                         string_format(log, "neither symbolic link '%w' nor referent has been changed\n",
                                       writer_terminal_quoted_name, shown);
                 return;
@@ -15219,8 +15218,6 @@ static b32 file_chmod()
 
         positive first = taking.first;
 
-        chmod_loud = chmod_selected.loudness == 'v';
-        chmod_changes = chmod_selected.loudness == 'c';
         chmod_quiet = (taking.flags & FILE_FLAG('f')) != 0;
 
         /*
@@ -15355,8 +15352,6 @@ static bool chown_group_words(void)
 }
 static b32 chown_status;
 static positive chown_flags;
-static bool chown_loud;
-static bool chown_changes;
 static bool chown_quiet;
 typedef struct { p8 dereference, traverse, loudness; } chown_selection;
 _Static_assert(sizeof(chown_selection) <= 16, "selection mask covers every field");
@@ -15398,7 +15393,8 @@ static fn chown_who(positive user, positive group, p8 address_to into)
 
 static fn chown_said(string_address shown, file_facts address_to was, bool changed)
 {
-        if (!chown_loud && !(chown_changes && changed))
+        if (chown_selected.loudness != 'v' &&
+            !(chown_selected.loudness == 'c' && changed))
                 return;
 
         p8 who[FILE_PATH_MAX];
@@ -15481,7 +15477,8 @@ static fn chown_decide(bipolar directory, string_address name,
                 through it: the reference does not look at such a name
                 either, and the tree costs one call a name. */
         if (trusted && through == AT_SYMLINK_NOFOLLOW &&
-            directory != AT_FDCWD && !chown_loud && !chown_changes &&
+            directory != AT_FDCWD && chown_selected.loudness != 'v' &&
+            chown_selected.loudness != 'c' &&
             chown_from_user < 0 && chown_from_group < 0)
         {
                 bipolar done = system_change_owner_at(
@@ -15559,9 +15556,10 @@ static fn chown_decide(bipolar directory, string_address name,
 static bool chown_outcome_heard(chown_outcome address_to out)
 {
         if (out->kind == CHOWN_DONE)
-                return chown_loud || (chown_changes && out->changed);
+                return chown_selected.loudness == 'v' ||
+                       (chown_selected.loudness == 'c' && out->changed);
         if (out->kind == CHOWN_KEPT)
-                return chown_loud;
+                return chown_selected.loudness == 'v';
         return true;
 }
 
@@ -15576,7 +15574,7 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
         switch (out->kind)
         {
         case CHOWN_UNREACHED:
-                if (chown_loud)
+                if (chown_selected.loudness == 'v')
                 {
                         string_format(log, "%s%w' to %s\n",
                                       chown_group_words() ? (string_address)"failed to change group of '" : (string_address) "failed to change ownership of '",
@@ -15598,7 +15596,7 @@ static fn chown_report(string_address shown, chown_outcome address_to out)
 
         case CHOWN_REFUSED:
         case CHOWN_REFUSED_UNLOOKED:
-                if (chown_loud && out->kind == CHOWN_REFUSED)
+                if (chown_selected.loudness == 'v' && out->kind == CHOWN_REFUSED)
                 {
                         p8 before[FILE_PATH_MAX];
 
@@ -16044,8 +16042,6 @@ static b32 file_chown_common(string_address program, bool groups_only)
         positive first = taking.first;
 
         chown_flags = taking.flags;
-        chown_loud = chown_selected.loudness == 'v';
-        chown_changes = chown_selected.loudness == 'c';
         chown_quiet = (taking.flags & FILE_FLAG('f')) != 0;
 
         string_address like = file_option_value(address_of taking, 'e');
@@ -16191,8 +16187,6 @@ static bool ln_option_seen(p8 letter, string_address value);
 // ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
 static bool ln_symbolic;
 static bool ln_directories;
-static bool ln_force;
-static bool ln_ask;
 static bool ln_loud;
 static bool ln_relative;
 static bool ln_through;
@@ -16326,7 +16320,8 @@ static bool ln_make(string_address target, string_address name)
         // without those tries symlinkat and names File exists.
         if (destination_exists &&
             (destination.mode & MODE_FORMAT) == MODE_DIRECTORY &&
-            (!ln_symbolic || ln_force || ln_ask || file_backup_kind))
+            (!ln_symbolic || ln_selected.collision == 'f' ||
+             ln_selected.collision == 'i' || file_backup_kind))
         {
                 string_format(log_error, "ln: %w: cannot overwrite directory\n",
                               writer_terminal_name, name);
@@ -16336,7 +16331,7 @@ static bool ln_make(string_address target, string_address name)
                 return false;
         }
 
-        if (ln_ask && destination_exists &&
+        if (ln_selected.collision == 'i' && destination_exists &&
             !file_ask((string_address)"ln", (string_address)"replace", name))
         {
                 system_close(destination_directory);
@@ -16349,7 +16344,7 @@ static bool ln_make(string_address target, string_address name)
            shown.  An object that appears after an absent -i check is left in
            place and makes the exclusive link fail. */
         bool make_backup = file_backup_kind &&
-                           (!ln_ask || destination_exists);
+                           (ln_selected.collision != 'i' || destination_exists);
         if (make_backup &&
             !file_backup_made_at(
                 (string_address)"ln", destination_directory,
@@ -16371,7 +16366,7 @@ static bool ln_make(string_address target, string_address name)
                 -i without -f/-b does not take that path.
         */
         if (!ln_symbolic && destination_exists &&
-            (ln_force || file_backup_kind) &&
+            (ln_selected.collision == 'f' || file_backup_kind) &&
             file_same_identity(address_of source, address_of destination) &&
             (source.hard_links == 1 ||
              ln_same_dirent(target, destination_directory, destination_leaf)))
@@ -16384,7 +16379,8 @@ static bool ln_make(string_address target, string_address name)
                 return false;
         }
 
-        if ((ln_force || ln_ask) && destination_exists)
+        if ((ln_selected.collision == 'f' || ln_selected.collision == 'i') &&
+            destination_exists)
         {
                 bipolar removed = file_remove_same(
                     destination_directory, destination_leaf, 0,
@@ -16507,8 +16503,6 @@ static b32 file_ln()
 
         ln_symbolic = (flags & FILE_FLAG('s')) != 0;
         ln_directories = (flags & (FILE_FLAG('d') | FILE_FLAG('F'))) != 0;
-        ln_force = ln_selected.collision == 'f';
-        ln_ask = ln_selected.collision == 'i';
         ln_loud = (flags & FILE_FLAG('v')) != 0;
         ln_relative = (flags & FILE_FLAG('r')) != 0;
 
@@ -26515,10 +26509,10 @@ copied_without_metadata:
 // pair it hands over is a named one at full depth.
 static fn cp_pair(string_address source, string_address destination)
 {
-        p8 source_leaf[FILE_PATH_MAX];
-        p8 destination_leaf[FILE_PATH_MAX];
-        p8 stripped[FILE_PATH_MAX];
-        p8 dest_stripped[FILE_PATH_MAX];
+        static p8 source_leaf[FILE_PATH_MAX];
+        static p8 destination_leaf[FILE_PATH_MAX];
+        static p8 stripped[FILE_PATH_MAX];
+        static p8 dest_stripped[FILE_PATH_MAX];
         string_address named = source;
         bipolar slashed = file_source_slash(source, stripped, address_of named);
 
@@ -27328,7 +27322,7 @@ static bool install_unchanged(bipolar source, file_facts address_to from,
 
 static fn install_pair(string_address source, string_address destination)
 {
-        p8 source_leaf[FILE_PATH_MAX];
+        static p8 source_leaf[FILE_PATH_MAX];
         file_facts from;
         bipolar source_directory = file_parent_open(source, source_leaf);
         bipolar looked = source_directory < 0 ? source_directory :
@@ -27367,7 +27361,7 @@ static fn install_pair(string_address source, string_address destination)
                 return;
         }
 
-        p8 destination_leaf[FILE_PATH_MAX];
+        static p8 destination_leaf[FILE_PATH_MAX];
         bipolar destination_directory = install_parents
                                             ? install_leading(
                                                   destination,
@@ -27744,10 +27738,10 @@ static p8 mv_collision_option;
 
 static fn mv_one(string_address source, string_address destination)
 {
-        p8 source_leaf[FILE_PATH_MAX];
-        p8 destination_leaf[FILE_PATH_MAX];
-        p8 stripped[FILE_PATH_MAX];
-        p8 dest_stripped[FILE_PATH_MAX];
+        static p8 source_leaf[FILE_PATH_MAX];
+        static p8 destination_leaf[FILE_PATH_MAX];
+        static p8 stripped[FILE_PATH_MAX];
+        static p8 dest_stripped[FILE_PATH_MAX];
         bipolar source_directory = -1;
         bipolar destination_directory = -1;
         bipolar source_handle = -1;
@@ -33634,8 +33628,7 @@ static bool kill_status_mask(string_address text, string_address label,
 
                 positive from = at + string_length(label);
 
-                while (text[from] == ' ' || text[from] == '\t')
-                        from++;
+                from += string_span_of_set(text + from, " \t");
 
                 positive value = 0;
                 bool any = false;
@@ -33678,6 +33671,8 @@ static fn kill_mask_written(string_address label, positive mask)
         log("\n", 1);
 }
 
+static p8 kill_status_text[8192];
+
 static b32 kill_process_state(string_address pid)
 {
         positive used;
@@ -33687,8 +33682,8 @@ static b32 kill_process_state(string_address pid)
                 return string_report(log_error, 1,
                                      "kill: invalid PID argument: '%s'\n", pid);
 
-        p8 text[8192];
-        bipolar got = kill_process_status(pid, text, sizeof(text));
+        bipolar got = kill_process_status(pid, kill_status_text,
+                                          sizeof(kill_status_text));
 
         if (got < 0)
                 return string_report(log_error, 1,
@@ -33709,7 +33704,7 @@ static b32 kill_process_state(string_address pid)
         {
                 positive mask = 0;
 
-                kill_status_mask(text, wanted[i].label, address_of mask);
+                kill_status_mask(kill_status_text, wanted[i].label, address_of mask);
                 kill_mask_written(wanted[i].line, mask);
         }
 
@@ -33720,16 +33715,17 @@ static b32 kill_process_state(string_address pid)
 // -r: a signal with no handler on the other side is not sent at all.
 static bool kill_handled(string_address pid, bipolar number)
 {
-        p8 text[8192];
         positive mask = 0;
 
         if (number <= 0 || number > KILL_MOST)
                 return false;
 
-        if (kill_process_status(pid, text, sizeof(text)) < 0)
+        if (kill_process_status(pid, kill_status_text,
+                                sizeof(kill_status_text)) < 0)
                 return false;
 
-        if (!kill_status_mask(text, (string_address) "SigCgt:", address_of mask))
+        if (!kill_status_mask(kill_status_text, (string_address) "SigCgt:",
+                              address_of mask))
                 return false;
 
         return (mask >> (number - 1) & 1) != 0;
@@ -33987,14 +33983,8 @@ static b32 file_kill()
                 //      skipped without a diagnostic. util-linux does not
                 //      count a skip as an error; if nothing was signalled,
                 //      the exit is still 1.
-                if (needs_handler)
-                {
-                        p8 text[8192];
-
-                        if (kill_process_status(word, text, sizeof(text)) < 0 ||
-                            !kill_handled(word, number))
-                                continue;
-                }
+                if (needs_handler && !kill_handled(word, number))
+                        continue;
 
                 if (loud)
                 {

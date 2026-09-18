@@ -4833,7 +4833,7 @@ bool shell_cd_try(string_address candidate, bool physical,
                   bool address_to variables_set,
                   string_address unnamed)
 {
-        p8 wanted[4096];
+        static p8 wanted[4096];
 
         string_copy_max_end(wanted, candidate, sizeof(wanted) - 1);
 
@@ -4888,7 +4888,7 @@ bool shell_cd_walk(bool physical, bool address_to say,
                    bool address_to physical_named,
                    bool address_to variables_set)
 {
-        p8 candidate[4096];
+        static p8 candidate[4096];
 
         if (shell_cd_target[0] == '/')
                 return shell_cd_try(shell_cd_target, physical, physical_named,
@@ -4911,7 +4911,7 @@ bool shell_cd_walk(bool physical, bool address_to say,
                 if (value && string_get(value))
                 {
                         path_walk walk = {search, null, 0, false};
-                        p8 under[4096];
+                        static p8 under[4096];
 
                         string_copy_max_end(search, value, sizeof(search) - 1);
 
@@ -5456,7 +5456,7 @@ static COLD bool shell_dirstack_move(string_address where)
 {
         bool physical_named = true;
         bool variables_set = true;
-        p8 joined[4096];
+        static p8 joined[4096];
 
         //      A relative name is joined onto where the shell is, which is
         //      what cd does with it. Handed to shell_cd_try as written it

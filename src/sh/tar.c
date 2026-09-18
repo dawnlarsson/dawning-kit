@@ -71,8 +71,7 @@ static bool tar_field_value(p8 address_to field, positive width,
         memory_copy(digits, field, width);
         digits[width] = end;
 
-        while (at < width && digits[at] == ' ')
-                at++;
+        at += memory_span_byte(digits + at, ' ', width - at);
 
         if (at >= width || !digits[at] || digits[at] == ' ')
         {

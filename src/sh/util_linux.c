@@ -11299,7 +11299,7 @@ static fn ul_lsblk_identity(ul_lsblk_device address_to device,
                             bool probe_identity)
 {
         p8 path[96];
-        p8 text[16384];
+        static p8 text[16384];
         positive used = sizeof("/run/udev/data/b") - 1;
         memory_copy(path, "/run/udev/data/b", used);
         used += positive_into_string(path + used, device->major);

@@ -13293,8 +13293,7 @@ static bool tools_dmesg_legacy_record(p8 address_to bytes, positive length,
         if (at < stop && *at == '[')
         {
                 at++;
-                while (at < stop && *at == ' ')
-                        at++;
+                at += memory_span_byte(at, ' ', (positive)(stop - at));
                 positive seconds = 0;
                 bool any = false;
                 while (at < stop && byte_is_digit(*at))

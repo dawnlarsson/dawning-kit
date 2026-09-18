@@ -2000,7 +2000,7 @@ static b32 process_script_record(process_script_state address_to state,
         bipolar pidfd = system_call_2(syscall(pidfd_open), (positive)child, 0);
 
         state->began = state->last_event = clock_monotonic_nanoseconds();
-        p8 input[4096], output[16384];
+        static p8 input[4096], output[16384];
         positive input_at = 0, input_length = 0;
         bool input_end = false, eot = false, master_end = false;
         bool child_done = false, failed = false;
