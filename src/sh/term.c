@@ -710,35 +710,14 @@ static fn emit(unsigned int byte)
         emit_bytes(address_of one, 1);
 }
 
+/* One scalar on its way to the shell, in the library's spelling of UTF-8 --
+   the same one memory_utf8_feed reads back. A scalar no encoding exists for
+   is nothing to send, and a keymap holds none. */
 static fn SPARE emit_character(unsigned int character)
 {
         p8 bytes[4];
-        positive n = 0;
 
-        if (character < 0x80)
-        {
-                emit(character);
-                return;
-        }
-        if (character < 0x800)
-        {
-                bytes[n++] = (p8)(0xC0 | (character >> 6));
-                bytes[n++] = (p8)(0x80 | (character & 0x3F));
-        }
-        else if (character < 0x10000)
-        {
-                bytes[n++] = (p8)(0xE0 | (character >> 12));
-                bytes[n++] = (p8)(0x80 | ((character >> 6) & 0x3F));
-                bytes[n++] = (p8)(0x80 | (character & 0x3F));
-        }
-        else
-        {
-                bytes[n++] = (p8)(0xF0 | (character >> 18));
-                bytes[n++] = (p8)(0x80 | ((character >> 12) & 0x3F));
-                bytes[n++] = (p8)(0x80 | ((character >> 6) & 0x3F));
-                bytes[n++] = (p8)(0x80 | (character & 0x3F));
-        }
-        emit_bytes(bytes, n);
+        emit_bytes(bytes, memory_utf8_encode(bytes, sizeof(bytes), character));
 }
 
 #define emit_literal(text) \
@@ -2300,57 +2279,33 @@ static positive text_ascii(const p8 address_to bytes, positive count)
 /* A whole, valid UTF-8 character of two to four bytes, just as
    memory_utf8_feed would finish it and utf8_byte would draw it, or 0 for one
    it would refuse, one that is not drawn, or one the bytes do not hold all
-   of. */
+   of. It is that feed, run over the bytes the read already holds rather than
+   over the terminal's own state, so an overlong form, a surrogate, anything
+   past U+10FFFF and a lead byte that is not one have one spelling between the
+   two paths. U+0080 to U+009F are C1 controls, which utf8_byte drops rather
+   than draws -- consume() says what becomes of them -- and no longer form
+   reaches below U+00A0 without being an overlong the feed has already
+   refused, so the one test covers every width. */
 static unsigned int text_utf8(const p8 address_to bytes, positive count,
                               unsigned int address_to character)
 {
-        unsigned int lead = bytes[0];
-        unsigned int value;
+        memory_utf8_state state = {0, 0, 0};
 
-        if (lead >= 0xc2 && lead < 0xe0)
+        for (unsigned int at = 0; at < count && at < 4; at++)
         {
-                if (count < 2 || (bytes[1] & 0xc0) != 0x80)
+                b32 whole = memory_utf8_feed(address_of state, bytes[at]);
+
+                if (whole < 0)
                         return 0;
 
-                // U+0080 to U+009F are C1 controls, which utf8_byte drops
-                // rather than draws: consume() says what becomes of them.
-                if (lead == 0xc2 && bytes[1] < 0xa0)
+                if (!whole)
+                        continue;
+
+                if (state.value < 0xa0)
                         return 0;
 
-                address_to character = ((lead & 0x1f) << 6) | (bytes[1] & 0x3f);
-                return 2;
-        }
-
-        if (lead >= 0xe0 && lead < 0xf0)
-        {
-                if (count < 3 || (bytes[1] & 0xc0) != 0x80 ||
-                    (bytes[2] & 0xc0) != 0x80)
-                        return 0;
-
-                value = ((lead & 0x0f) << 12) | ((bytes[1] & 0x3f) << 6) |
-                        (bytes[2] & 0x3f);
-
-                if (value < 0x800 || (value >= 0xd800 && value <= 0xdfff))
-                        return 0;
-
-                address_to character = value;
-                return 3;
-        }
-
-        if (lead >= 0xf0 && lead < 0xf5)
-        {
-                if (count < 4 || (bytes[1] & 0xc0) != 0x80 ||
-                    (bytes[2] & 0xc0) != 0x80 || (bytes[3] & 0xc0) != 0x80)
-                        return 0;
-
-                value = ((lead & 0x07) << 18) | ((bytes[1] & 0x3f) << 12) |
-                        ((bytes[2] & 0x3f) << 6) | (bytes[3] & 0x3f);
-
-                if (value < 0x10000 || value > 0x10ffff)
-                        return 0;
-
-                address_to character = value;
-                return 4;
+                address_to character = state.value;
+                return at + 1;
         }
 
         return 0;
