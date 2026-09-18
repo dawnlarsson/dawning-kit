@@ -9540,38 +9540,10 @@ static b32 exec_dispatch(b32 command_word)
 
                 if (located == 1)
                 {
-                        string_address address_to saved_argv = shell_argv;
-                        positive saved_argc = shell_argc;
-                        bool monitored = job_monitor();
-                        b32 policy;
-
-                        /* A monitored external skips the Spark preflight and
-                           forks directly.  Freeze a regular reader here only
-                           when its nonfinal policy proves confinement is
-                           required; the final child merely verifies it. */
-                        policy = floodlight_launch_decide(
-                            found, shell_argv, shell_argc, false,
-                            false, false, null);
-
-                        if (!bowl_wrap_command(found, shell_directory,
-                                               address_of shell_argv,
-                                               address_of shell_argc))
-                                shell_argv[0] = found;
-
-                        if (shell_tail_command &&
-                            policy != FLOODLIGHT_LAUNCH_REFUSE &&
-                            exec_inplace_ready(
-                                floodlight_parent_supervised))
-                                shell_thread_instance_mode(exec_asynchronous);
-                        else if (monitored)
-                                job_execute_tool(
-                                    SHELL_TOOLS,
-                                    policy != FLOODLIGHT_LAUNCH_ALLOW);
-                        else
-                                shell_execute_command();
-                        shell_argv = saved_argv;
-                        shell_argc = saved_argc;
-                        shell_argv[0] = name;
+                        //      A monitored external skips the Spark
+                        //      preflight and forks directly.
+                        shell_execute_found(found, name, exec_asynchronous,
+                                            job_monitor());
                         return shell_status;
                 }
         }

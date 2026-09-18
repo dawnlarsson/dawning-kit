@@ -18810,6 +18810,47 @@ COLD fn shell_type(writer write, string_address input)
 }
 
 /*
+        The external at a resolved path, run in place of the command word.
+
+        Ordinary dispatch and `command` both arrive here with the PATH answer
+        in hand and both have to put the word vector back afterwards: the
+        launcher is handed the resolved path, and a bowl wrapper may replace
+        the whole vector, so the caller's own name goes back over argv[0]
+        whichever way the command was started. What is left for the caller to
+        say is how the final child was reached, and whether job control wants
+        the fork rather than the Spark preflight.
+*/
+static fn shell_execute_found(string_address found, string_address name,
+                              bool asynchronous, bool monitored)
+{
+        string_address address_to saved_argv = shell_argv;
+        positive saved_argc = shell_argc;
+        b32 policy;
+
+        /* Freeze a regular reader here only when its nonfinal policy proves
+           confinement is required; the final child merely verifies it. */
+        policy = floodlight_launch_decide(found, shell_argv, shell_argc,
+                                          false, false, false, null);
+
+        if (!bowl_wrap_command(found, shell_directory, address_of shell_argv,
+                               address_of shell_argc))
+                shell_argv[0] = found;
+
+        if (shell_tail_command && policy != FLOODLIGHT_LAUNCH_REFUSE &&
+            exec_inplace_ready(floodlight_parent_supervised))
+                shell_thread_instance_mode(asynchronous);
+        else if (monitored)
+                job_execute_tool(SHELL_TOOLS,
+                                 policy != FLOODLIGHT_LAUNCH_ALLOW);
+        else
+                shell_execute_command();
+
+        shell_argv = saved_argv;
+        shell_argc = saved_argc;
+        shell_argv[0] = name;
+}
+
+/*
         command: run a name as the shell would, and never as a function.
 
         command -v prints what would run rather than running it, which is what
@@ -18955,35 +18996,11 @@ fn shell_command_builtin(writer write, string_address input)
                         return shell_answer(string_report(log_error, 126, "command: %s: cannot run\n", name));
                 }
 
-                {
-                        string_address address_to saved_argv = shell_argv;
-                        positive saved_argc = shell_argc;
-                        b32 policy;
-
-                        /* command's external tail bypasses ordinary dispatch.
-                           Give a regular parser source the same lazy parent
-                           preflight before either fork or in-place exec. */
-                        policy = floodlight_launch_decide(
-                            found, shell_argv, shell_argc, false,
-                            false, false, null);
-
-                        if (!bowl_wrap_command(found, shell_directory,
-                                               address_of shell_argv,
-                                               address_of shell_argc))
-                                shell_argv[0] = found;
-
-                        if (shell_tail_command &&
-                            policy != FLOODLIGHT_LAUNCH_REFUSE &&
-                            exec_inplace_ready(
-                                floodlight_parent_supervised))
-                                shell_thread_instance_mode(true);
-                        else
-                                shell_execute_command();
-                        shell_argv = saved_argv;
-                        shell_argc = saved_argc;
-                        shell_argv[0] = name;
-                        memory_free(found, found_room);
-                }
+                /* command's external tail bypasses ordinary dispatch, and
+                   job control never reaches it: the jobs a monitored shell
+                   starts are pipelines, and this is the tail of one. */
+                shell_execute_found(found, name, true, false);
+                memory_free(found, found_room);
         }
 }
 
