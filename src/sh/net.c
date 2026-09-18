@@ -609,17 +609,19 @@ static b32 net_fetch(void)
         status = http_split_into(net_word(1), name, sizeof name, address_of port,
                                  address_of path, address_of tls);
 
-        if (tls)
-        {
-                string_format(net_out, "fetch: https is not implemented; this speaks "
-                                   "http only. use wget\n");
-                goto failed;
-        }
-
+        //      A url that did not come apart is not a url whose scheme is
+        //      worth reporting, so the shape is answered before the scheme.
         if (status < 0)
         {
                 string_format(net_out, "fetch: %w is not a url this understands\n",
                               writer_terminal_quoted_name, net_word(1));
+                goto failed;
+        }
+
+        if (tls)
+        {
+                string_format(net_out, "fetch: https is not implemented; this speaks "
+                                   "http only. use wget\n");
                 goto failed;
         }
 
