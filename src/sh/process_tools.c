@@ -1833,7 +1833,12 @@ static bool process_script_command_text(p8 address_to into, positive room,
         {
                 string_address word = program_argument((b32)at);
                 positive length = string_length(word);
-                if ((used && used == room - 1) || length >= room - used)
+                /*      The separator is part of what this word costs, so it
+                        is counted before the room is judged: measured after
+                        it, a join landing exactly on `room` passed the test
+                        and the terminator below went one byte past `into`. */
+                positive needed = length + (used ? 1 : 0);
+                if (needed >= room - used)
                         return false;
                 if (used)
                         into[used++] = ' ';
