@@ -33542,7 +33542,21 @@ static fn kill_mask_written(string_address label, positive mask)
         for (positive i = 1; i <= KILL_MOST; i++)
                 if (mask >> (i - 1) & 1)
                 {
-                        kill_number_named(i, name);
+                        /* 32 and 33 are the two glibc keeps for itself, and
+                           the table has no row for either: they sit in the
+                           gap between SYS and RTMIN. kill_number_named says
+                           so by answering false, and it says it without
+                           writing, so the buffer still held whichever name
+                           the previous bit put there -- a thread-using
+                           process read "Caught: INT TERM TERM" where the
+                           reference reads "Caught: INT TERM 33", and a mask
+                           whose lowest set bit is one of the two read an
+                           uninitialised frame for a terminator. The number is
+                           what the reference prints for a signal it cannot
+                           name. */
+                        if (!kill_number_named(i, name))
+                                positive_into_string(name, i);
+
                         string_format(log, "%s ", name);
                 }
 
