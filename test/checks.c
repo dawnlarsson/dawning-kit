@@ -50069,16 +50069,20 @@ static fn fetching_for_real(void)
                 p8 address_to prior;
                 positive began;
                 positive elapsed;
+                p8 url[64];
+                positive url_used = sizeof("http://127.0.0.1:") - 1;
+
+                memory_copy(url, "http://127.0.0.1:", url_used);
+                url_used += positive_into(url + url_used, port);
+                url[url_used++] = '/';
+                url[url_used] = end;
 
                 check("the caller buffer can be primed",
                       byte_store_reserve(address_of body, 16, 16));
                 prior = body.bytes;
 
                 began = clock_monotonic_nanoseconds();
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 elapsed = clock_monotonic_nanoseconds() - began;
 
                 check("the fetch succeeds", status == HTTP_OK);
@@ -50091,102 +50095,62 @@ static fn fetching_for_real(void)
                 check("the response allocation becomes the body",
                       body.bytes && body.bytes != prior);
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a body split after a header prefix is reassembled",
                       status == HTTP_OK && code == 200 && body.used == 13 &&
                           body.bytes &&
                           !memory_compare(body.bytes, "split-payload", 13));
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a buffered chunked body is decoded through its trailers",
                       status == HTTP_OK && code == 200 && body.used == 5 &&
                           body.bytes &&
                           !memory_compare(body.bytes, "hello", 5));
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a buffered close-delimited body ends at EOF",
                       status == HTTP_OK && code == 200 && body.used == 11 &&
                           body.bytes &&
                           !memory_compare(body.bytes, "until-close", 11));
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a short Content-Length body is refused",
                       status == HTTP_MALFORMED);
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("case-insensitive repeated lengths are refused",
                       status == HTTP_MALFORMED);
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("conflicting response framing is refused",
                       status == HTTP_MALFORMED);
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a numeric Content-Length prefix is refused",
                       status == HTTP_MALFORMED);
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("an overflowing Content-Length is refused",
                       status == HTTP_MALFORMED);
                 check("a rejected response leaves the prior body owned",
                       body.used == 11 && body.bytes &&
                       !memory_compare(body.bytes, "until-close", 11));
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a malformed HTTP version is refused",
                       status == HTTP_MALFORMED);
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a buffered fetch skips informational responses",
                       status == HTTP_OK && code == 200 && body.used == 5 &&
                           body.bytes &&
                           !memory_compare(body.bytes, "final", 5));
 
-                status = http_get(HOST_LOOPBACK, port,
-                                  (string_address) "127.0.0.1",
-                                  (string_address) "/", address_of body,
-                                  address_of code);
+                status = http_get(url, address_of body, address_of code);
                 check("a 204 response publishes an empty buffered body",
                       status == HTTP_OK && code == 204 && !body.used);
 
                 {
-                        p8 url[64];
-                        positive url_used = sizeof("http://127.0.0.1:") - 1;
-
-                        memory_copy(url, "http://127.0.0.1:", url_used);
-                        url_used += positive_into(url + url_used, port);
-                        url[url_used++] = '/';
-                        url[url_used] = end;
                         status = http_fetch_to(url, -1, false,
                                                address_of code);
                         check("a streaming 204 succeeds without writing its forbidden body",
@@ -50225,8 +50189,8 @@ static fn fetching_for_real(void)
                             status_truncations[edge -
                                                array_count(status_mutations)] < 13)
                                 expected = HTTP_NO_REPLY;
-                        status = http_get(HOST_LOOPBACK, port, "127.0.0.1", "/",
-                                          address_of body, address_of code);
+                        status = http_get(url, address_of body,
+                                          address_of code);
                         check("a damaged or truncated status line is refused",
                               status == expected);
                         check("a refused status line preserves the prior body",

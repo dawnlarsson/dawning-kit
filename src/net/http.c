@@ -604,6 +604,25 @@ static bipolar http_link_read_until(
         return HTTP_OK;
 }
 
+/* The request built and put on the wire. Both clients send the same GET and
+   differ only in what they call themselves and which minor version they
+   claim, so the two words they disagree about are arguments and the wire
+   format is not written twice. */
+static bipolar http_send_get(http_link address_to link, string_address host,
+                             p16 port, string_address path, bool tls,
+                             p8 version_minor, string_address agent)
+{
+        p8 request[2048];
+        positive used = 0;
+        bipolar built = http_get_request(
+            request, sizeof request, host, port, path, tls, version_minor,
+            agent, address_of used);
+        bipolar status = built ? built : http_link_write(link, request, used);
+
+        crypto_forget(request, sizeof request);
+        return status;
+}
+
 static bipolar http_response_head(
     http_link address_to link, p8 address_to head, positive room,
     positive address_to used, positive address_to header,
@@ -678,90 +697,6 @@ static bipolar http_copy_body(http_body address_to body, bipolar dest,
                 return http_copy_chunked(body, dest);
         return http_copy(body, dest,
                          exact ? response->body_length : positive_max, exact);
-}
-
-static bipolar http_get(p32 host, p16 port, string_address name,
-                        string_address path, http_buffer address_to body,
-                        b32 address_to code)
-{
-        http_buffer whole = {0};
-        p8 head[HTTP_HEAD_MAX];
-        http_link link;
-        positive header = 0;
-        bipolar status;
-        positive length = 0;
-        positive used = 0;
-        http_response response;
-
-        status = http_link_open(address_of link, host, port, name, false, false);
-        if (status)
-                return status;
-
-        {
-                p8 request[2048];
-                positive request_used = 0;
-
-                status = http_get_request(
-                    request, sizeof request, name, port, path, false, '0',
-                    (string_address)"dawning", address_of request_used);
-                if (!status)
-                        status = http_link_write(address_of link, request,
-                                                 request_used);
-                crypto_forget(request, sizeof request);
-                if (status)
-                        goto done;
-        }
-
-        status = http_response_head(
-            address_of link, head, sizeof head, address_of used,
-            address_of header, address_of response, HTTP_HEAD_SECONDS, 0,
-            true);
-        if (status)
-                goto done;
-        if (code)
-                address_to code = response.code;
-
-        if (http_response_has_no_body(response.code))
-                goto publish;
-
-        {
-                http_body source = {
-                    .link = address_of link,
-                    .stash = head + header,
-                    .stash_used = used - header,
-                    .scratch = head,
-                    .store = address_of whole,
-                    .store_limit = HTTP_FETCH_MAX,
-                };
-
-                status = response.body_kind == HTTP_BODY_LENGTH &&
-                                 response.body_length > HTTP_FETCH_MAX
-                             ? HTTP_MALFORMED
-                             : http_copy_body(address_of source, -1,
-                                              address_of response);
-                if (status)
-                        goto done;
-                length = whole.used;
-        }
-
-publish:
-        whole.used = length;
-        if (whole.bytes)
-                whole.bytes[length] = end;
-
-        byte_store_release(body);
-        address_to body = whole;
-        whole.bytes = null;
-        whole.room = 0;
-        whole.used = 0;
-
-        status = HTTP_OK;
-
-done:
-        http_link_close(address_of link);
-        byte_store_release(address_of whole);
-
-        return status;
 }
 
 static bipolar http_body_read(http_body address_to body, p8 address_to into,
@@ -1243,20 +1178,6 @@ static bool http_transport_allowed(bool address_to secure, bool tls)
         return true;
 }
 
-static bipolar http_send_get(http_link address_to link, string_address host, p16 port,
-                             string_address path, bool tls)
-{
-        p8 request[2048];
-        positive used = 0;
-        bipolar built = http_get_request(
-            request, sizeof request, host, port, path, tls, '1',
-            (string_address)"Wget", address_of used);
-        bipolar status = built ? built : http_link_write(link, request, used);
-
-        crypto_forget(request, sizeof request);
-        return status;
-}
-
 static bipolar http_status_code(p8 address_to bytes, positive size, b32 address_to code)
 {
         if (size < 13)
@@ -1312,12 +1233,46 @@ static fn http_url_leaf(string_address path, p8 address_to into, positive room)
         string_copy_max_end(into, path, room - 1);
 }
 
-static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert,
-                             b32 address_to code)
+/*
+        The two clients, written as the five words they disagree about.
+
+        Everything under this -- the connection, the request, the head, the
+        framing and the body -- is one machine, and what is left is manners.
+        fetch is the plaintext slurp: dawning over HTTP/1.0, no TLS at all,
+        no redirect followed, and a head that stops early is a lie about the
+        framing, because a plaintext peer that meant to answer had no reason
+        to hang up mid-sentence. wget is the streaming download: Wget over
+        HTTP/1.1, TLS, ten hops and never a step back down to plain, and a
+        head that stops early is a peer that went away.
+*/
+typedef struct
+{
+        string_address agent;
+        p8 version_minor;
+        bool follow;
+        bool allow_tls;
+        bool head_cut_is_malformed;
+} http_manners;
+
+static const http_manners http_manners_fetch = {
+    (string_address)"dawning", '0', false, false, true};
+static const http_manners http_manners_wget = {
+    (string_address)"Wget", '1', true, true, false};
+
+/* One URL fetched under one client's manners, into exactly one sink: a
+   descriptor, or a buffer filled here and handed over only on success, so a
+   refused response leaves whatever the caller already held. A memory body is
+   bounded by HTTP_FETCH_MAX both by what Content-Length claims and by what
+   actually arrives. */
+static bipolar http_run(string_address start, const http_manners address_to how,
+                        bool check_cert, bipolar dest,
+                        http_buffer address_to into, b32 address_to code)
 {
         p8 url[HTTP_URL_MAX];
+        http_buffer whole = {0};
         positive hop;
         bool secure = false;
+        bipolar status = HTTP_REDIRECTS;
 
         if (string_length(start) >= sizeof url)
                 return HTTP_BAD_URL;
@@ -1331,39 +1286,40 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 string_address path;
                 p16 port;
                 bool tls;
-                p32 ip;
+                p32 ip = 0;
                 http_link link;
                 http_response response;
                 positive header = 0;
-                bipolar status;
                 positive used = 0;
 
                 status = http_split_into(url, host, sizeof host, address_of port,
                                          address_of path, address_of tls);
+                if (!status && tls && !how->allow_tls)
+                        status = HTTP_TLS;
+                if (!status && !http_transport_allowed(address_of secure, tls))
+                        status = HTTP_DOWNGRADE;
+                if (!status && !(ip = http_lookup(host)))
+                        status = HTTP_NO_HOST;
                 if (status)
-                        return status;
-                if (!http_transport_allowed(address_of secure, tls))
-                        return HTTP_DOWNGRADE;
-
-                ip = http_lookup(host);
-                if (!ip)
-                        return HTTP_NO_HOST;
+                        goto done;
 
                 status = http_link_open(address_of link, ip, port, host, tls,
                                         check_cert);
                 if (status)
-                        return status;
+                        goto done;
 
-                status = http_send_get(address_of link, host, port, path, tls);
+                status = http_send_get(address_of link, host, port, path, tls,
+                                       how->version_minor, how->agent);
                 if (!status)
                         status = http_response_head(
                             address_of link, head, sizeof head, address_of used,
                             address_of header, address_of response,
-                            HTTP_HEAD_SECONDS, 0, false);
+                            HTTP_HEAD_SECONDS, 0, how->head_cut_is_malformed);
                 if (!status && code)
                         address_to code = response.code;
 
-                if (!status && http_response_is_redirect(response.code))
+                if (!status && how->follow &&
+                    http_response_is_redirect(response.code))
                 {
                         status = !response.location_length ? HTTP_MALFORMED
                                  : response.location_length >= sizeof next
@@ -1380,7 +1336,7 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                         }
                         http_link_close(address_of link);
                         if (status)
-                                return status;
+                                goto done;
                         //      http_absolutize terminates inside next, which is
                         //      exactly as large as url.
                         string_copy(url, next);
@@ -1396,17 +1352,50 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                             .stash = head + header,
                             .stash_used = used - header,
                             .scratch = head,
+                            .store = into ? address_of whole : null,
+                            .store_limit = HTTP_FETCH_MAX,
                         };
 
-                        status = http_copy_body(address_of body, dest,
-                                                address_of response);
+                        status = into &&
+                                         response.body_kind == HTTP_BODY_LENGTH &&
+                                         response.body_length > HTTP_FETCH_MAX
+                                     ? HTTP_MALFORMED
+                                     : http_copy_body(address_of body, dest,
+                                                      address_of response);
                 }
 
                 http_link_close(address_of link);
-                return status;
+                break;
         }
 
-        return HTTP_REDIRECTS;
+done:
+        if (into && !status)
+        {
+                if (whole.bytes)
+                        whole.bytes[whole.used] = end;
+                byte_store_release(into);
+                address_to into = whole;
+                memory_fill(address_of whole, 0, sizeof whole);
+        }
+        byte_store_release(address_of whole);
+
+        return status;
+}
+
+//      fetch: no TLS, no redirect followed, and the body only once it is whole.
+static bipolar http_get(string_address url, http_buffer address_to body,
+                        b32 address_to code)
+{
+        return http_run(url, address_of http_manners_fetch, false, -1, body,
+                        code);
+}
+
+//      wget: TLS, redirects, and the body written as it arrives.
+static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert,
+                             b32 address_to code)
+{
+        return http_run(start, address_of http_manners_wget, check_cert, dest,
+                        null, code);
 }
 
 #endif // STANDARD_MODERN_C_NET_HTTP

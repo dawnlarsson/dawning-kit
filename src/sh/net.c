@@ -597,7 +597,6 @@ static b32 net_fetch(void)
         string_address path;
         p16 port;
         bool tls;
-        p32 host;
         bipolar status;
         b32 code = 0;
 
@@ -624,32 +623,28 @@ static b32 net_fetch(void)
                 goto failed;
         }
 
-        //      A literal address needs no resolver, which is what makes the
-        //      test able to fetch from a socket on loopback with no nameserver
-        //      anywhere in sight.
-        host = http_lookup(name);
-        if (!host)
-        {
+        //      The url is handed over whole rather than the pieces above: the
+        //      client resolves it, and a literal address needs no resolver,
+        //      which is what makes the test able to fetch from a socket on
+        //      loopback with no nameserver anywhere in sight.
+        status = http_get(net_word(1), address_of body, address_of code);
+
+        if (status == HTTP_NO_HOST)
                 string_format(net_out, "fetch: cannot resolve %w\n",
                               writer_terminal_quoted_name, name);
-                goto failed;
-        }
-
-        status = http_get(host, port, name, path, address_of body, address_of code);
-
-        if (status == HTTP_NO_ROUTE)
+        else if (status == HTTP_NO_ROUTE)
                 string_format(net_out, "fetch: cannot reach %w\n",
                               writer_terminal_quoted_name, name);
         else if (status == HTTP_NO_REPLY)
                 string_format(net_out, "fetch: no reply from %w\n",
                               writer_terminal_quoted_name, name);
-        else if (status < 0)
-                string_format(net_out, "fetch: the reply made no sense\n");
-        else if (http_response_is_redirect(code))
+        else if (status == HTTP_STATUS && http_response_is_redirect(code))
                 string_format(net_out, "fetch: %p, which is a redirect this does not "
                                    "follow\n", (positive)code);
-        else if (!http_response_is_success(code))
+        else if (status == HTTP_STATUS)
                 string_format(net_out, "fetch: the server answered %p\n", (positive)code);
+        else if (status < 0)
+                string_format(net_out, "fetch: the reply made no sense\n");
         else
         {
                 bool short_write = body.used &&
