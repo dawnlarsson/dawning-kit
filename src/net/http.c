@@ -81,6 +81,21 @@ static bipolar http_split_into(string_address url, p8 address_to host, positive 
         else if (!string_compare_max(url, (string_address) "http://", 7))
                 at = url + 7;
 
+        /* The authority's userinfo is not part of the host, and RFC 3986 ends
+           it at the LAST '@' so a '@' written inside it cannot move the
+           boundary. A client that keeps it looks "evil.com@good.com" up as a
+           name and sends it as the Host, which is the shape the deprecation
+           was about. */
+        length = string_span_without_set(at, "/?#");
+        {
+                positive mark = 0;
+
+                for (positive byte = 0; byte < length; byte++)
+                        if (at[byte] == '@')
+                                mark = byte + 1;
+                at += mark;
+        }
+
         length = string_span_without_set(at, "/:?#");
         if (length + 1 >= room)
                 return HTTP_BAD_URL;
