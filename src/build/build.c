@@ -396,10 +396,8 @@ static fn build_label(string_address colour, string_address text)
 
 static b32 build_die(string_address text)
 {
-        log_flush();
         string_format(log_error, BUILD_RED "build failed: %s" BUILD_RESET "\n",
                       text);
-        log_flush();
         exit(1);
 
         return 1;
@@ -419,7 +417,6 @@ static fn build_size(string_address path)
         if (stat(path, address_of status) < 0)
         {
                 string_format(log_error, "size: cannot stat '%s'\n", path);
-                log_flush();
                 return;
         }
 
@@ -629,11 +626,7 @@ static b32 build_start(build_command address_to what)
         path = build_resolve(words[0]);
 
         if (!path)
-        {
-                string_format(log_error, "build: %s not found\n", words[0]);
-                log_flush();
-                return -1;
-        }
+                return string_report(log_error, -1, "build: %s not found\n", words[0]);
 
         //      BUILD_TRACE prints every command before it runs. A build tool
         //      that drives six other programs has to be able to say exactly
@@ -1128,7 +1121,6 @@ static string_address build_key_one(string_address name, bool address_to good)
                 string_format(log_error,
                               "config: '%s' is set %p times; expected one value\n",
                               name, matched);
-                log_flush();
 
                 if (good)
                         address_to good = false;
@@ -1468,10 +1460,8 @@ static b32 build_config(string_address address_to profiles, positive count)
         {
                 string_format(log_error,
                               "Usage: build config <profile1> [profile2] [profile3] ...\n");
-                string_format(log_error,
-                              "Example: build config any arch/x64 debug_none\n");
-                log_flush();
-                return 1;
+                return string_report(log_error, 1,
+                                     "Example: build config any arch/x64 debug_none\n");
         }
 
         //      A missing profile used to print a warning and carry on,
@@ -1647,20 +1637,12 @@ static b32 build_verify_config(string_address config,
         build_name_storage.used = 0;
 
         if (!build_is_file(config))
-        {
-                string_format(log_error, "verify_config: no such config: %s\n",
-                              config);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "verify_config: no such config: %s\n",
+                                     config);
 
         if (file_slurp(config, build_file_one, BUILD_FILE_ROOM) < 0)
-        {
-                string_format(log_error, "verify_config: cannot read %s\n",
-                              config);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "verify_config: cannot read %s\n",
+                                     config);
 
         build_lines_open(address_of walk, (string_address)build_file_one);
 
@@ -1887,9 +1869,7 @@ static string_address build_asm_normalize(string_address name)
 static bool build_asm_fail(string_address source, positive line,
                            string_address message)
 {
-        log_flush();
         string_format(log_error, "asm: %s:%p: %s\n", source, line, message);
-        log_flush();
 
         return false;
 }
@@ -1914,13 +1894,11 @@ static bool build_asm_pass(string_address text, string_address target,
                             build_asm_groups[at].other)
                                 continue;
 
-                        log_flush();
                         string_format(log_error, "asm: %s has no block for %s\n",
                                       source, target);
                         string_format(log_error,
                                       "asm: add \"#> arch %s\", or \"#> arch other\" to say there is nothing to do here\n",
                                       target);
-                        log_flush();
 
                         return false;
                 }
@@ -2155,34 +2133,20 @@ static b32 build_asm(string_address arch, string_address input,
         {
                 string_format(log_error,
                               "asm: no target architecture given for %s\n", input);
-                string_format(log_error,
-                              "asm: nothing in the kernel config names an architecture this knows\n");
-                log_flush();
-                return 1;
+                return string_report(log_error, 1,
+                                     "asm: nothing in the kernel config names an architecture this knows\n");
         }
 
         if (!build_is_file(input))
-        {
-                string_format(log_error, "asm: no such file: %s\n", input);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "asm: no such file: %s\n", input);
 
         target = build_asm_normalize(arch);
 
         if (!target)
-        {
-                string_format(log_error, "asm: unknown architecture: %s\n", arch);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "asm: unknown architecture: %s\n", arch);
 
         if (file_slurp(input, build_file_one, BUILD_FILE_ROOM) < 0)
-        {
-                string_format(log_error, "asm: cannot read %s\n", input);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "asm: cannot read %s\n", input);
 
         build_asm_group_count = 0;
         memory_zero(build_asm_groups, sizeof(build_asm_groups));
@@ -2231,19 +2195,13 @@ static b32 build_asm(string_address arch, string_address input,
         //      run leaves the previous .S alone rather than a half written one
         //      the build would trust.
         if (!build_write_file(temporary, (string_address)build_file_two, used))
-        {
-                string_format(log_error, "asm: cannot write %s\n", temporary);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "asm: cannot write %s\n", temporary);
 
         if (rename(temporary, output) < 0)
         {
                 unlink(temporary);
-                string_format(log_error, "asm: cannot rename %s to %s\n",
-                              temporary, output);
-                log_flush();
-                return 1;
+                return string_report(log_error, 1, "asm: cannot rename %s to %s\n",
+                                     temporary, output);
         }
 
         return 0;
@@ -2482,7 +2440,6 @@ static string_address build_binutil(string_address compiler,
 
         string_format(log_error, "spark: neither %s%s nor %s found\n",
                       (string_address)prefix, name, name);
-        log_flush();
 
         return null;
 }
@@ -2577,12 +2534,8 @@ static b32 build_spark(string_address source, string_address output,
         struct header head;
 
         if (!arch || !*arch)
-        {
-                string_format(log_error, "spark: no '#> arch' in %s\n",
-                              build_in("artifacts", ".config"));
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "spark: no '#> arch' in %s\n",
+                                     build_in("artifacts", ".config"));
 
         objdump = build_binutil(compiler, "objdump");
         readelf = build_binutil(compiler, "readelf");
@@ -2592,12 +2545,8 @@ static b32 build_spark(string_address source, string_address output,
                 return 1;
 
         if (!build_is_file(script))
-        {
-                string_format(log_error, "spark: missing linker script at %s\n",
-                              script);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "spark: missing linker script at %s\n",
+                                     script);
 
         build_label(BUILD_YELLOW, "EXPERIMENTAL! C compiled to spark format");
         string_format(log, BUILD_BOLD "Compiling %s" BUILD_RESET "\n", output);
@@ -2653,9 +2602,7 @@ static b32 build_spark(string_address source, string_address output,
         if (build_run_words((string_address address_to)words))
         {
                 build_remove_tree(work);
-                string_format(log_error, "spark: compilation failed\n");
-                log_flush();
-                return 1;
+                return string_report(log_error, 1, "spark: compilation failed\n");
         }
 
         count = 0;
@@ -2714,10 +2661,8 @@ static b32 build_spark(string_address source, string_address output,
         if (!text_where || !entry)
         {
                 build_remove_tree(work);
-                string_format(log_error,
-                              "spark: could not read base/entry from the linked image\n");
-                log_flush();
-                return 1;
+                return string_report(log_error, 1,
+                                     "spark: could not read base/entry from the linked image\n");
         }
 
         //      A program need not have every section: duck has no .data at
@@ -2737,11 +2682,9 @@ static b32 build_spark(string_address source, string_address output,
         if (!text_size)
         {
                 build_remove_tree(work);
-                string_format(log_error,
-                              "spark: computed a non positive text size (%p)\n",
-                              text_size);
-                log_flush();
-                return 1;
+                return string_report(log_error, 1,
+                                     "spark: computed a non positive text size (%p)\n",
+                                     text_size);
         }
 
         if (build_run(objcopy, "-O", "binary", "--only-section=.text", elf,
@@ -2774,10 +2717,8 @@ static b32 build_spark(string_address source, string_address output,
                 if (handle < 0)
                 {
                         build_remove_tree(work);
-                        string_format(log_error, "spark: cannot write %s\n",
-                                      output);
-                        log_flush();
-                        return 1;
+                        return string_report(log_error, 1, "spark: cannot write %s\n",
+                                             output);
                 }
 
                 //      The header occupies the first SPARK_HEADER_SIZE bytes of
@@ -2812,12 +2753,8 @@ static b32 build_spark(string_address source, string_address output,
                 build_remove_tree(work);
 
                 if (!good)
-                {
-                        string_format(log_error, "spark: writing %s failed\n",
-                                      output);
-                        log_flush();
-                        return 1;
-                }
+                        return string_report(log_error, 1, "spark: writing %s failed\n",
+                                             output);
         }
 
         string_format(log, "spark: base=%s entry=%s text=%p data=%p bss=%p\n",
@@ -2933,11 +2870,7 @@ static b32 build_freestanding_link(string_address source, string_address output,
         words[count] = null;
 
         if (build_run_words((string_address address_to)words))
-        {
-                string_format(log_error, "build: compilation failed\n");
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "build: compilation failed\n");
 
         build_tool("chmod", "+x", output, null);
 
@@ -3027,12 +2960,8 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                         }
 
                         if (word[0] == '-' && word[1] == '-')
-                        {
-                                string_format(log_error,
-                                              "build: unknown option %s\n", word);
-                                log_flush();
-                                return 1;
-                        }
+                                return string_report(log_error, 1,
+                                                     "build: unknown option %s\n", word);
                 }
 
                 if (positional == 0)
@@ -3040,11 +2969,7 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                 else if (positional == 1)
                         output = word;
                 else
-                {
-                        string_format(log_error, "build: too many paths\n");
-                        log_flush();
-                        return 1;
-                }
+                        return string_report(log_error, 1, "build: too many paths\n");
 
                 positional++;
         }
@@ -3066,12 +2991,8 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                 output = build_join("./", output, null);
 
         if (!build_is_file(source))
-        {
-                string_format(log_error, "build: no such source file: %s\n",
-                              source);
-                log_flush();
-                return 1;
-        }
+                return string_report(log_error, 1, "build: no such source file: %s\n",
+                                     source);
 
         if (!watch)
         {
@@ -3104,12 +3025,8 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                 else if (build_have("fswatch"))
                         watcher = "fswatch";
                 else
-                {
-                        string_format(log_error,
-                                      "build: --watch needs inotifywait (inotify-tools) or fswatch\n");
-                        log_flush();
-                        return 1;
-                }
+                        return string_report(log_error, 1,
+                                             "build: --watch needs inotifywait (inotify-tools) or fswatch\n");
 
                 if (system_pipe(pair, O_CLOEXEC) < 0)
                         return 1;
@@ -3158,11 +3075,8 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                                 build_watch_application = build_start(address_of run);
                         }
                         else
-                        {
                                 string_format(log_error,
                                               "build: waiting for the next change\n");
-                                log_flush();
-                        }
 
                         //      One line of the watcher's output is one change.
                         //      A byte at a time, because a buffered read can
@@ -3758,7 +3672,6 @@ static b32 build_kernel_source()
                         string_format(log_error,
                                       "%s is required to build the kernel. Please install it and try again.\n",
                                       names[at]);
-                        log_flush();
                         exit(1);
                 }
 
@@ -3791,7 +3704,6 @@ static b32 build_kernel_source()
                 {
                         string_format(log_error, "ERROR: failed to download %s\n",
                                       download);
-                        log_flush();
                         build_tool("rm", "-f", archive, null);
                         exit(1);
                 }
@@ -3823,7 +3735,6 @@ static b32 build_kernel_source()
                                       keys);
                         string_format(log_error,
                                       "Refusing to build an unverified kernel." BUILD_RESET "\n");
-                        log_flush();
                         exit(1);
                 }
         }
@@ -3833,7 +3744,6 @@ static b32 build_kernel_source()
                 string_format(log_error,
                               BUILD_RED "ERROR: could not decompress %s" BUILD_RESET "\n",
                               archive);
-                log_flush();
                 exit(1);
         }
 
@@ -3855,7 +3765,6 @@ static b32 build_kernel_source()
                 string_format(log_error,
                               "Refusing to extract or build it. Delete %s and retry."
                               BUILD_RESET "\n", archive);
-                log_flush();
                 build_tool("rm", "-f", tarball, null);
                 exit(1);
         }
@@ -3866,7 +3775,6 @@ static b32 build_kernel_source()
                 string_format(log_error,
                               BUILD_RED "ERROR: could not extract %s" BUILD_RESET "\n",
                               tarball);
-                log_flush();
                 build_tool("rm", "-f", tarball, null);
                 exit(1);
         }
@@ -4110,7 +4018,6 @@ static b32 build_local(string_address address_to profiles, positive count)
                 build_label("", BUILD_YELLOW " WARNING !!!");
                 string_format(log_error,
                               "Building here wants root: sudo sh build.sh\n");
-                log_flush();
                 string_format(log, "\n");
                 log_flush();
         }
@@ -5307,7 +5214,6 @@ static fn build_is_safe()
         string_format(log_error,
                       "This tool expects to run from the directory holding\n");
         string_format(log_error, "build.sh, kernel/ and src/.\n");
-        log_flush();
         exit(1);
 }
 
@@ -5453,10 +5359,7 @@ b32 main()
                     (build_commands[mode].maximum && count > build_commands[mode].maximum))
                 {
                         if (build_commands[mode].usage)
-                        {
                                 string_format(log_error, "%s", build_commands[mode].usage);
-                                log_flush();
-                        }
                         return 1;
                 }
 
