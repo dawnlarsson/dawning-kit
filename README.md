@@ -34,6 +34,16 @@ moonwater bind exit remove ID|"command"
 
 moonwater canvas                       whether the desktop is on, and on which screens
 moonwater canvas on|off                start or stop the desktop [on]
+
+moonwater wifi                         the wireless radio, and saved networks
+moonwater wifi on|off                  unblock or block wifi
+moonwater wifi add SSID [PASSWORD]     remember a network and join it [open if no password]
+moonwater bluetooth                    the bluetooth radio, and remembered devices
+moonwater bluetooth on|off             unblock or block bluetooth
+moonwater bluetooth add NAME           remember a bluetooth device
+moonwater priority internet            which link to use when cable and wifi are both up
+moonwater priority internet wired|wifi wired wins by default
+moonwater wipe                         forget /home and extra /root; keep the machine
 ```
 
 Commands given to `moonwater` run as root through the shell, exactly as if typed
@@ -48,6 +58,29 @@ and cannot be bound. Bound keys go only to the binding; keys are not grabbed, so
 unbound one still types. `/root/main.moonwater.sh` overlays the kernel's builtin
 machine script: see `main.moonwater.sh` in this repository.
 
+Wifi passwords and the internet preference live on the data partition (`/root/wifi`,
+`/root/internet`), not in the image, so `moonwater update` keeps them. When a cable
+and wifi both have carrier, `/ip watch` uses the preference (`wired` if unset).
+Steam Deck radios (RTL8822CE, MT7921) also need the matching linux-firmware files
+under `/lib/firmware`; the drivers are in the image, the blobs are not.
+
+The same one-line shape covers the rest of the machine through bind events already:
+`mute`, `micmute`, `volume_up`, `volume_down`, `brightness_up`, `brightness_down`,
+`lid_close`, `lid_open`, `sleep`, `rfkill`, `tablet on`/`tablet off`,
+`headphone on`/`headphone off`, `dock on`/`dock off`, `resume`. Those stay events
+rather than a second config system. `moonwater bind tablet on` is the same
+two-word shape as `moonwater bind canvas on`.
+
+A kiosk is the machine script after wipe, not a second verb. `moonwater wipe`
+empties `/home` and everything under `/root` except the overlay
+(`/root/main.moonwater.sh`) and the radio files (`wifi`, `wifi.power`,
+`bluetooth`, `bluetooth.power`, `internet`). `/bowls` is left alone, so
+pre-installed software survives. The builtin `moonwater_init` always wipes
+once the boot verdict is `live` or `disk`. Overlay the script and start
+whatever is already there after that line: Chromium, Weston, a bowl binary.
+A machine that should keep `/home` overlays a script without
+`moonwater_init`; bind init then still runs.
+
 Canvas, the desktop, is part of the kernel: a compositor that draws with the CPU
 through DRM, so it works on any display the kernel can drive.
 
@@ -61,19 +94,23 @@ keyboard and mouse until it lets go.
 
 `main.moonwater.sh` at the repository root is the machine script. Clone the
 repo, edit that file, rebuild. It is the working example: the three optional
-hooks, the bind arms, `canvas)` / `*)` / `recover`, and the poweroff and reset
-fallback. The kernel bakes it into the module. `CONFIG_MOONWATER_MACHINE_SCRIPT`
+hooks, per-event functions, `moonwater_event` for every event, and the poweroff
+and reset fallback. The kernel bakes it into the module. `CONFIG_MOONWATER_MACHINE_SCRIPT`
 can point at another path relative to the repository root.
 
 Init starts `/shell -c 'moonwater machine'` with the network, not after the
 disks: the process attaches immediately, waits for a boot verdict, then
 overlays `/root/main.moonwater.sh` when that file is present and allowed. If
 the disks never appear, the builtin still runs. Copying this file to
-`/root/main.moonwater.sh` overlays the builtin without rebuilding.
+`/root/main.moonwater.sh` overlays the builtin without rebuilding. The builtin
+init wipes userspace on every settled boot; the overlay is how a machine
+chooses a kiosk command or keeps `/home`.
 
 `moonwater bind` and `moonwater machine` both ask the module for the overlay.
-They do not each scan a private copy. A literal arm owns that event at that
-line; `canvas)` owns both `canvas on` and `canvas off`; `*)` owns the rest.
+They do not each scan a private copy. `function moonwater_mute` owns mute at
+that line; `function moonwater_canvas` owns both `canvas on` and `canvas off`;
+a literal `mute)` arm still owns that event. `moonwater_event`, when present,
+runs for every event and does not own the bind table: `*)` is not ownership.
 Events the overlay does not name still use the image binds.
 
 The disk file must be a regular file, owned by root, and not group- or
@@ -82,8 +119,8 @@ Larger than 64 KiB is refused. A refused file is left alone: the builtin
 stays, and a line goes to the kernel log.
 
 `moonwater bind mute` then reads as `mute: /root/main.moonwater.sh:8` when
-that arm is on disk, or `mute: builtin:8` when it is the baked copy, and SET
-is refused:
+that function or arm is on disk, or `mute: builtin:8` when it is the baked
+copy, and SET is refused:
 
 ```
 [Moonwater] mute is /root/main.moonwater.sh:8; change it there

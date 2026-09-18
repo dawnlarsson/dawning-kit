@@ -201,7 +201,7 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
         /*      The profiles composed ahead of whatever was asked for, in this
                 order, so the last two win the choices the earlier ones touch. */
         {"profiles_always", "any general gpu guests latency prod"},
-        {"profiles_default", "arch/x64 debug_none limbo desktop serial"},
+        {"profiles_default", "arch/x64 debug_none limbo desktop wifi serial"},
 
         {null, null},
 };

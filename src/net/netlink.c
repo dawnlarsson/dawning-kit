@@ -69,6 +69,14 @@
 #define IFLA_ADDRESS 1
 #define IFLA_IFNAME 3
 #define IFLA_MTU 4
+#define IFLA_WIRELESS 11
+#define IFLA_LINKINFO 18
+#define IFLA_INFO_KIND 1
+#define NLA_TYPE_MASK 0x3fff
+
+#define NETLINK_PREFER_ANY 0
+#define NETLINK_PREFER_WIRED 1
+#define NETLINK_PREFER_WIFI 2
 
 #define IFA_ADDRESS 1
 #define IFA_LOCAL 2
@@ -313,10 +321,10 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
 */
 #define RTNLGRP_LINK_MASK 1
 
-static bipolar netlink_open_groups(p32 groups)
+static bipolar netlink_open_protocol(p32 protocol, p32 groups)
 {
         bipolar handle = socket_new(
-            AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_ROUTE);
+            AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, protocol);
         b32 want = 1;
 
         if (handle < 0)
@@ -335,6 +343,8 @@ static bipolar netlink_open_groups(p32 groups)
 
         return handle;
 }
+
+#define netlink_open_groups(groups) netlink_open_protocol(NETLINK_ROUTE, groups)
 
 /*
         One datagram, however big it turns out to be.
@@ -610,7 +620,7 @@ static address_any netlink_find(netlink_header address_to header, positive body,
                     at + attribute->length > header->length)
                         return null;
 
-                if (attribute->type == type)
+                if ((attribute->type & NLA_TYPE_MASK) == type)
                 {
                         if (size)
                                 address_to size = attribute->length -
@@ -668,9 +678,11 @@ typedef struct
         string_address wanted;
         p32 index;
         p32 flags;
+        p8 prefer;
         bool found;
         bool skip_loopback;
         bool has_hardware;
+        bool wireless;
         p8 name[IFNAME_SIZE];
         p8 hardware[6];
 } netlink_search;
@@ -699,11 +711,59 @@ static inline INLINE string_address netlink_link_name(
         return name && length && memory_first_of(name, 0, length) ? name : null;
 }
 
+static address_any netlink_find_span(p8 address_to bytes, positive length,
+                                     p16 type, positive address_to size)
+{
+        positive at = 0;
+        netlink_attribute address_to attribute;
+
+        while (at + sizeof(netlink_attribute) <= length)
+        {
+                attribute = (netlink_attribute address_to)(bytes + at);
+                if (attribute->length < sizeof(netlink_attribute) ||
+                    at + attribute->length > length)
+                        return null;
+                if ((attribute->type & NLA_TYPE_MASK) == type)
+                {
+                        if (size)
+                                address_to size = attribute->length -
+                                                  sizeof(netlink_attribute);
+                        return bytes + at + sizeof(netlink_attribute);
+                }
+                at += netlink_align(attribute->length);
+        }
+
+        return null;
+}
+
+static bool netlink_link_is_wireless(netlink_header address_to header,
+                                     string_address name)
+{
+        positive size = 0;
+        p8 address_to info = (p8 address_to)netlink_find(
+            header, sizeof(netlink_link), IFLA_LINKINFO, address_of size);
+        p8 address_to kind;
+        positive kind_length = 0;
+
+        if (info)
+        {
+                kind = (p8 address_to)netlink_find_span(info, size, IFLA_INFO_KIND,
+                                                        address_of kind_length);
+                if (kind && kind_length >= 4 && !memory_compare(kind, "wlan", 4))
+                        return true;
+        }
+
+        if (netlink_find(header, sizeof(netlink_link), IFLA_WIRELESS, null))
+                return true;
+        return string_has_prefix(name, "wl") || string_has_prefix(name, "wifi");
+}
+
 static bool netlink_link_seen(netlink_header address_to header, address_any context)
 {
         netlink_search address_to search = (netlink_search address_to)context;
         netlink_link address_to link;
         string_address name = netlink_link_name(header, address_of link);
+        bool wireless = false;
 
         if (!name)
                 return true;
@@ -723,24 +783,47 @@ static bool netlink_link_seen(netlink_header address_to header, address_any cont
                         that does not, whatever order the dump arrived in, and
                         the walk goes all the way to the end rather than
                         stopping at whatever came first.
+
+                        When both have carrier, prefer picks wired or wifi.
+                        moonwater priority internet writes that choice;
+                        missing it means wired.
                 */
+                wireless = netlink_link_is_wireless(header, name);
                 if (search->found)
                 {
                         bool had = (search->flags & IFF_RUNNING) != 0;
                         bool has = (link->flags & IFF_RUNNING) != 0;
 
-                        if (had || !has)
+                        if (had && !has)
                                 return true;
+                        if (had == has)
+                        {
+                                if (search->prefer == NETLINK_PREFER_WIFI)
+                                {
+                                        if (!(wireless && !search->wireless))
+                                                return true;
+                                }
+                                else if (search->prefer == NETLINK_PREFER_WIRED)
+                                {
+                                        if (!(!wireless && search->wireless))
+                                                return true;
+                                }
+                                else
+                                        return true;
+                        }
                 }
         }
         else if (search->found || !string_equals(name, search->wanted))
         {
                 return true;
         }
+        else
+                wireless = netlink_link_is_wireless(header, name);
 
         search->index = link->index;
         search->flags = link->flags;
         search->found = true;
+        search->wireless = wireless;
         search->has_hardware = false;
         string_copy_max_end(search->name, name, IFNAME_SIZE - 1);
 

@@ -17,6 +17,15 @@
 #include "../net/http.c"
 #include "../net/dhcp.c"
 
+#define NET_STATE_DIR "/run/moonwater"
+#define NET_WAKE_PATH NET_STATE_DIR "/net.wake"
+#define NET_INTERNET_RUN NET_STATE_DIR "/internet"
+#define NET_INTERNET_ROOT "/root/internet"
+#define NET_WIFI_LIST "/root/wifi"
+#define NET_WIFI_POWER "/root/wifi.power"
+#define NET_BLUETOOTH_LIST "/root/bluetooth"
+#define NET_BLUETOOTH_POWER "/root/bluetooth.power"
+
 /*
         The words this was called with come from the process, not from the
         shell's own table.
@@ -1332,6 +1341,25 @@ failed:
         return net_refused(doing, status);
 }
 
+static p8 net_internet_prefer(void)
+{
+        p8 text[16];
+        bipolar got = file_slurp_once_at(AT_FDCWD, NET_INTERNET_RUN, text,
+                                         sizeof(text));
+
+        if (got < 0)
+                got = file_slurp_once_at(AT_FDCWD, NET_INTERNET_ROOT, text,
+                                         sizeof(text));
+        if (got < 0)
+                return NETLINK_PREFER_WIRED;
+
+        while (got > 0 && (text[got - 1] == '\n' || text[got - 1] == ' '))
+                got--;
+        text[got] = end;
+        return string_equals(text, "wifi") ? NETLINK_PREFER_WIFI
+                                           : NETLINK_PREFER_WIRED;
+}
+
 static b32 net_auto(b32 handle, net_holding address_to held)
 {
         netlink_search search;
@@ -1340,6 +1368,7 @@ static b32 net_auto(b32 handle, net_holding address_to held)
 
         memory_fill(address_of search, 0, sizeof search);
         search.skip_loopback = true;
+        search.prefer = net_internet_prefer();
 
         if (netlink_link_find(handle, address_of search) < 0)
         {
@@ -1347,6 +1376,9 @@ static b32 net_auto(b32 handle, net_holding address_to held)
                 net_flush();
                 return 1;
         }
+
+        if (held && held->index == search.index && !held->lost)
+                return 0;
 
         if (!search.has_hardware)
         {
@@ -1411,9 +1443,9 @@ static b32 net_reconfigure(b32 handle, net_holding address_to held)
 
         The kernel will tell you when a link gains or loses carrier if you ask
         it to: a netlink socket bound to the RTNLGRP_LINK multicast group
-        receives an RTM_NEWLINK every time an interface changes state. No
-        polling, no timer, nothing to tune -- the read simply blocks until
-        something actually happens.
+        receives an RTM_NEWLINK every time an interface changes state. A
+        machine that boots with a cable in is configured before the first
+        event, and a cable that moves is followed without anybody typing.
 
         What counts as "something" is deliberately narrow. An RTM_NEWLINK
         arrives for changes nobody cares about here, so only a change in
@@ -1423,13 +1455,25 @@ static b32 net_reconfigure(b32 handle, net_holding address_to held)
 
         On such a change the whole of ip auto runs again, which re-picks the
         best link rather than assuming the one that changed is the one to use.
-        That is what makes the wired-to-wireless case work without any code
-        that knows what wireless is: pull the cable, the wired link loses
-        carrier, the walk picks whatever else has it.
+        Pull the cable, the wired link loses carrier, the walk picks whatever
+        else has it. Plug a cable in while wifi is up, and prefer (wired by
+        default, or wifi if `moonwater priority internet wifi` said so) is
+        what breaks the tie. A second live link is therefore worth a look,
+        not ignored because a lease is already held.
+
+        Preference can change without a carrier event, so the watcher also
+        reads /run/moonwater/net.wake. moonwater writes a byte there after
+        it changes the radio or the preference file. If the fifo is missing
+        at start, the watcher opens it again on the next idle pass.
+
+        With no lease, idle is a few seconds and grows to half a minute, so a
+        DHCP server that comes back, or a wireless interface that appears
+        after firmware, is configured without waiting for a cable event.
 
         Re-running is safe to do at any time. Adding an address uses REPLACE
         and adding a route is idempotent, so a spurious run costs a DHCP
-        exchange and changes nothing else.
+        exchange and changes nothing else. If the preferred link is already
+        the one with the lease, auto does not ask again.
 */
 typedef struct
 {
@@ -1476,7 +1520,9 @@ static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
 changed:
         if (held && held->index == index && !(flags & IFF_RUNNING))
                 held->lost = true;
-        return !held || held->index == 0 || held->lost;
+        if (!held || held->index == 0 || held->lost)
+                return true;
+        return (flags & IFF_RUNNING) != 0 && index != held->index;
 }
 
 static bool net_link_removed(p32 index, net_holding address_to held)
@@ -1536,12 +1582,39 @@ static fn net_reconfigure_fresh(net_holding address_to held)
         }
 }
 
+static bipolar net_wake_listen(void)
+{
+        system_make_directory_at(AT_FDCWD, "/run", 0755);
+        system_make_directory_at(AT_FDCWD, NET_STATE_DIR, 0755);
+        system_call_4(syscall(mknodat), AT_FDCWD,
+                      (positive)(string_address)NET_WAKE_PATH,
+                      S_IFIFO | 0600, 0);
+        return system_open_at(AT_FDCWD, NET_WAKE_PATH,
+                              FILE_READ_WRITE | O_NONBLOCK | O_CLOEXEC);
+}
+
+static fn net_wake_drain(b32 handle)
+{
+        p8 sink[64];
+        bipolar got;
+
+        for (;;)
+        {
+                got = system_call_3(syscall(read), (positive)handle,
+                                    (positive)sink, sizeof(sink));
+                if (got <= 0)
+                        return;
+        }
+}
+
 static b32 net_watch(void)
 {
         netlink_buffer message = {0};
         net_holding held;
         bipolar events;
+        bipolar wake;
         bipolar handle;
+        positive retry_seconds = 4;
 
         /* A watcher may return to the hosting shell after a descriptor
            failure and later be started again.  Its carrier snapshots belong
@@ -1570,6 +1643,8 @@ static b32 net_watch(void)
                 return 1;
         }
 
+        wake = net_wake_listen();
+
         //      Configure whatever is already plugged in before waiting for
         //      anything to change, or a machine that boots with its cable in
         //      would wait forever for an event that already happened.
@@ -1581,9 +1656,12 @@ static b32 net_watch(void)
                 netlink_header address_to header;
                 positive at = 0;
                 bipolar got;
+                bool link_ready = false;
+                bool woken = false;
 
                 /*
-                        Wait for a link to change, or for the lease to reach
+                        Wait for a link to change, for moonwater to say the
+                        preferred internet changed, or for the lease to reach
                         the point where it should be renewed, whichever comes
                         first. Without the second, a machine that nobody
                         touches keeps an address the server has long since
@@ -1593,13 +1671,31 @@ static b32 net_watch(void)
                 {
                         positive due = 0;
                         bipolar ready;
+                        timespec limit;
+                        system_poll_descriptor waited[2];
+                        positive count = 1;
 
                         if (held.index && held.lease.seconds)
                                 due = net_lease_due_in(address_of held,
                                                        net_seconds());
+                        else
+                                due = retry_seconds;
 
-                        ready = network_wait_readable(
-                            events, due ? due : 3600, 0);
+                        waited[0].descriptor = (b32)events;
+                        waited[0].events = SYSTEM_POLL_READ;
+                        waited[0].returned = 0;
+                        if (wake >= 0)
+                        {
+                                waited[1].descriptor = (b32)wake;
+                                waited[1].events = SYSTEM_POLL_READ;
+                                waited[1].returned = 0;
+                                count = 2;
+                        }
+
+                        limit.tv_sec = (b64)(due ? due : retry_seconds);
+                        limit.tv_nsec = 0;
+                        ready = system_poll_wait(waited, count, address_of limit,
+                                                 null);
                         if (ready < 0)
                         {
                                 /* A signal does not turn the following
@@ -1611,15 +1707,38 @@ static b32 net_watch(void)
                                 break;
                         }
 
+                        if (ready > 0)
+                        {
+                                if (waited[0].returned & SYSTEM_POLL_INVALID)
+                                        break;
+                                link_ready = (waited[0].returned &
+                                              SYSTEM_POLL_READ) != 0;
+                                if (count == 2 &&
+                                    (waited[1].returned & SYSTEM_POLL_READ))
+                                {
+                                        net_wake_drain((b32)wake);
+                                        woken = true;
+                                }
+                        }
+
                         if (!ready)
                         {
-                                /* Nothing arrived, so the current lease state
-                                   is due.  Unicast the renewal before T2,
-                                   broadcast the rebind after T2, and keep the
-                                   address across ordinary timeouts.  Only a
-                                   NAK or expiry starts discovery again. */
+                                if (wake < 0)
+                                        wake = net_wake_listen();
+
                                 if (!held.index || !held.lease.seconds)
+                                {
+                                        net_reconfigure_fresh(address_of held);
+                                        if (!held.index || !held.lease.seconds)
+                                        {
+                                                retry_seconds *= 2;
+                                                if (retry_seconds > 30)
+                                                        retry_seconds = 30;
+                                        }
+                                        else
+                                                retry_seconds = 4;
                                         continue;
+                                }
 
                                 /* A renewal timeout must not extend a lease.
                                    At the actual deadline first remove the old
@@ -1693,38 +1812,56 @@ static b32 net_watch(void)
                         }
                 }
 
-                got = netlink_receive((b32)events, address_of message, null);
-
-                /* recvfrom can still be interrupted in the narrow interval
-                   after the readiness poll.  Nothing was consumed, and the
-                   lease deadline is recomputed at the top of the loop. */
-                if (got == NETWORK_INTERRUPTED)
-                        continue;
-                if (got < 0)
-                        break;
-
-                while (at + NETLINK_HEADER <= message.used)
+                if (link_ready)
                 {
-                        bool interesting = false;
+                        got = netlink_receive((b32)events, address_of message,
+                                              null);
 
-                        header = (netlink_header address_to)(message.bytes + at);
-
-                        if (header->length < NETLINK_HEADER ||
-                            at + header->length > message.used)
+                        /* recvfrom can still be interrupted in the narrow
+                           interval after the readiness poll.  Nothing was
+                           consumed, and the lease deadline is recomputed at
+                           the top of the loop. */
+                        if (got == NETWORK_INTERRUPTED)
+                                continue;
+                        if (got < 0)
                                 break;
 
-                        interesting = net_link_event(header,
-                                                     address_of held);
+                        while (at + NETLINK_HEADER <= message.used)
+                        {
+                                bool interesting = false;
 
-                        at += netlink_align(header->length);
+                                header = (netlink_header address_to)(
+                                    message.bytes + at);
 
-                        if (interesting)
-                                net_reconfigure_fresh(address_of held);
+                                if (header->length < NETLINK_HEADER ||
+                                    at + header->length > message.used)
+                                        break;
+
+                                interesting = net_link_event(header,
+                                                             address_of held);
+
+                                at += netlink_align(header->length);
+
+                                if (interesting)
+                                {
+                                        retry_seconds = 4;
+                                        net_reconfigure_fresh(address_of held);
+                                        woken = false;
+                                }
+                        }
+                }
+
+                if (woken)
+                {
+                        retry_seconds = 4;
+                        net_reconfigure_fresh(address_of held);
                 }
         }
 
         netlink_forget(address_of message);
         socket_close((b32)events);
+        if (wake >= 0)
+                system_close((b32)wake);
         net_kmsg_close();
         netlink_forget(address_of net_states);
 

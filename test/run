@@ -122,7 +122,7 @@ describe()
         checksum) echo "the cksum CRC against a bitwise model, in every mode, on three machines" ;;
         storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
         storage_format) echo "GPT, FAT32 and ext4 as an install writes them, checked by sfdisk and e2fsck" ;;
-        machine) echo "the machine script: hooks, case arms, overlay lines and file policy" ;;
+        machine) echo "the machine script: hooks, functions, case arms, overlay lines and file policy" ;;
         term)     echo "the emulator driven a byte and a read at a time, and the line being edited" ;;
         edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
         kit)      echo "build, source-inventory, remote-host and firmware tooling" ;;
@@ -10270,9 +10270,9 @@ asked("a machine script overlays mute at its case arm",
 asked("canvas on and canvas off share the canvas arm",
       "moonwater bind canvas on | grep -c 'canvas on: /root/main.moonwater.sh:7' | sed 's/^/no-/' | rev",
       b"1-on")
-asked("poweroff is the star arm",
-      "moonwater bind poweroff | grep -c 'poweroff: /root/main.moonwater.sh:8' | sed 's/^/rats-/' | rev",
-      b"1-star")
+asked("star does not own poweroff",
+      "moonwater bind poweroff | grep -c 'poweroff: /root/main.moonwater.sh' | sed 's/^/rats-/' | rev",
+      b"0-star")
 asked("SET is refused at the script line",
       "moonwater bind mute true 2>&1 | grep -c 'mute is /root/main.moonwater.sh:6; change it there' | sed 's/^/esufer-/' | rev",
       b"1-refuse")
@@ -10307,6 +10307,9 @@ else:
 asked("a command longer than a bound event holds is refused",
       "moonwater bind mute \"$(printf '%0300d' 0)\" 2>&1 | grep -c 'longer than' | sed 's/^/gnol-/' | rev",
       b"1-long")
+asked("a moonwater_mute function owns mute",
+      "printf '%s\\n' 'function moonwater_mute {' '  :' '}' > /root/main.moonwater.sh; chmod 600 /root/main.moonwater.sh; moonwater bind mute | grep -c 'mute: /root/main.moonwater.sh:1' | sed 's/^/nf-/' | rev",
+      b"1-fn")
 asked("the power button takes a command",
       "printf '%s\\n' 'function moonwater_event {' '  :' '}' > /root/main.moonwater.sh; chmod 600 /root/main.moonwater.sh; moonwater bind mute >/dev/null; moonwater bind poweroff 'echo NOTTUB | rev > /dev/ttyS0' | grep -c NOTTUB | sed 's/^/tes-/' | rev",
       b"1-set")

@@ -387,10 +387,11 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
         Every event has a name and an id, and an id is never given to another
         event, so an old program asking for one can never reach a new one.
         A bound event runs its line the way `/shell -c` does, as root with
-        every capability -- unless a machine-script arm owns that event, in
-        which case it is queued into the attached process and `$1` is this
-        name.
-        The line lasts until the machine stops; keeping it
+        every capability -- unless a machine-script function or case arm owns
+        that event, in which case it is queued into the attached process.
+        `function moonwater_poweroff` is the hard binding; `moonwater_event`
+        still runs for every event when that hook exists. The line lasts until
+        the machine stops; keeping it
         across a boot belongs to whoever sets it at boot. An empty line puts
         back the event's default, which for most events is nothing.
 
@@ -405,13 +406,15 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
         SPARK_BIND_BOOT, which stop, sleep or restart the machine: a process
         allowed only to stop the machine must not choose what runs.
 
-        A machine-script arm, or *), owns that event while the kernel holds
-        the script: bind_fire queues into the attached process instead of
+        A machine-script function `moonwater_<event>`, or a literal case arm
+        in `moonwater_event`, owns that event while the kernel holds the
+        script: bind_fire queues into the attached process instead of
         spawning the image line, and `moonwater bind` prints the script line
-        rather than SET. Events the overlay does not name still use the image
-        binds. SET of the image line is still allowed (the fallback if the
-        machine process is not attached); the CLI refuses to change an owned
-        event so the two copies cannot drift from the keyboard.
+        rather than SET. `moonwater_event` itself, when present, is queued
+        every event; `*)` is not ownership. Events the overlay does not name
+        still use the image binds. SET of the image line is still allowed (the
+        fallback if the machine process is not attached); the CLI refuses to
+        change an owned event so the two copies cannot drift from the keyboard.
 
         The 312-byte request is a different ioctl from the 272-byte power
         button that used this number; a stale caller gets ENOTTY.
@@ -440,12 +443,22 @@ _Static_assert(sizeof(struct canvas_control) == 192, "spark canvas control ABI")
 #define SPARK_BIND_BRIGHTNESS_DOWN 11u
 #define SPARK_BIND_CANVAS_ON 12u
 #define SPARK_BIND_CANVAS_OFF 13u
-#define SPARK_BIND_EVENTS 13u
+#define SPARK_BIND_MICMUTE 14u
+#define SPARK_BIND_RFKILL 15u
+#define SPARK_BIND_TABLET_ON 16u
+#define SPARK_BIND_TABLET_OFF 17u
+#define SPARK_BIND_HEADPHONE_ON 18u
+#define SPARK_BIND_HEADPHONE_OFF 19u
+#define SPARK_BIND_DOCK_ON 20u
+#define SPARK_BIND_DOCK_OFF 21u
+#define SPARK_BIND_RESUME 22u
+#define SPARK_BIND_EVENTS 22u
 
 /*
         Names in event-id order, the same strings the kernel table uses.
         Userspace matches a typed word against this rather than opening
-        /dev/spark once per event.
+        /dev/spark once per event. An id is never reused; new events
+        append. Two-word names (canvas on) are `moonwater bind canvas on`.
 */
 static const char spark_bind_event_name[SPARK_BIND_EVENTS][SPARK_BIND_NAME_MAX] = {
         "poweroff",
@@ -461,6 +474,15 @@ static const char spark_bind_event_name[SPARK_BIND_EVENTS][SPARK_BIND_NAME_MAX] 
         "brightness_down",
         "canvas on",
         "canvas off",
+        "micmute",
+        "rfkill",
+        "tablet on",
+        "tablet off",
+        "headphone on",
+        "headphone off",
+        "dock on",
+        "dock off",
+        "resume",
 };
 
 static const unsigned char spark_bind_stop[SPARK_BIND_EVENTS] = {

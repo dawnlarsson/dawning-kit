@@ -57808,11 +57808,12 @@ b32 main(void)
 
 /*
         The machine script is scanned once, in moonwater.c, for the kernel overlay.
-        These cases are the contract: hooks, case arms, canvas) owning both
-        desktop events, *) covering the rest, first arm and first hook
-        keeping the line, recover not being a bind row, comments and quotes
-        not inventing functions, and the file policy that keeps the one
-        auditable path from being a symlink or a world-writable file.
+        These cases are the contract: hooks, per-event functions, case arms,
+        canvas) owning both desktop events, *) not owning the rest, first
+        arm and first hook keeping the line, recover not being a bind row,
+        comments and quotes not inventing functions, and the file policy that
+        keeps the one auditable path from being a symlink or a world-writable
+        file.
 */
 
 static fn machine_scan(string_address text, struct moonwater_overlay address_to into)
@@ -57878,10 +57879,10 @@ static fn machine_arms(void)
               moonwater_bind_line(address_of script, SPARK_BIND_CANVAS_ON) == 4);
         check("canvas off is the same canvas arm",
               moonwater_bind_line(address_of script, SPARK_BIND_CANVAS_OFF) == 4);
-        check("poweroff is the star arm",
-              moonwater_bind_line(address_of script, SPARK_BIND_POWEROFF) == 5);
-        check("reset is also the star arm",
-              moonwater_bind_line(address_of script, SPARK_BIND_RESET) == 5);
+        check("poweroff is not owned by star",
+              moonwater_bind_line(address_of script, SPARK_BIND_POWEROFF) == 0);
+        check("reset is not owned by star",
+              moonwater_bind_line(address_of script, SPARK_BIND_RESET) == 0);
         check("star was seen", script.star_line == 5);
 
         machine_scan("function moonwater_event {\n"
@@ -57970,8 +57971,8 @@ static fn machine_arms(void)
               moonwater_bind_line(address_of script, SPARK_BIND_CANVAS_ON) == 5 &&
                   moonwater_bind_line(address_of script,
                                              SPARK_BIND_CANVAS_OFF) == 5);
-        check("poweroff stays on the star that came first",
-              moonwater_bind_line(address_of script, SPARK_BIND_POWEROFF) == 3);
+        check("poweroff is still not owned after star",
+              moonwater_bind_line(address_of script, SPARK_BIND_POWEROFF) == 0);
 
         machine_scan("function moonwater_event {\n"
                      "  case $1 in\n"
@@ -58021,6 +58022,35 @@ static fn machine_arms(void)
                      address_of script);
         check("a recover arm is not a bind row",
               moonwater_bind_line(address_of script, SPARK_BIND_POWEROFF) == 0);
+
+        machine_scan("function moonwater_mute {\n  :\n}\n"
+                     "function moonwater_canvas {\n  :\n}\n"
+                     "function moonwater_event {\n  :\n}\n",
+                     address_of script);
+        check("moonwater_mute owns mute",
+              moonwater_bind_line(address_of script, SPARK_BIND_MUTE) == 1);
+        check("moonwater_canvas owns canvas on",
+              moonwater_bind_line(address_of script, SPARK_BIND_CANVAS_ON) == 4);
+        check("and canvas off at the same line",
+              moonwater_bind_line(address_of script, SPARK_BIND_CANVAS_OFF) == 4);
+        check("moonwater_event without arms owns nothing else",
+              moonwater_bind_line(address_of script, SPARK_BIND_POWEROFF) == 0 &&
+                  (script.hooks & MOONWATER_HOOK_EVENT));
+
+        machine_scan("function moonwater_canvas_on {\n  :\n}\n",
+                     address_of script);
+        check("moonwater_canvas_on owns only canvas on",
+              moonwater_bind_line(address_of script, SPARK_BIND_CANVAS_ON) == 1 &&
+                  !moonwater_bind_line(address_of script, SPARK_BIND_CANVAS_OFF));
+
+        machine_scan("function moonwater_tablet {\n  :\n}\n"
+                     "function moonwater_resume {\n  :\n}\n",
+                     address_of script);
+        check("moonwater_tablet owns both tablet events",
+              moonwater_bind_line(address_of script, SPARK_BIND_TABLET_ON) == 1 &&
+                  moonwater_bind_line(address_of script, SPARK_BIND_TABLET_OFF) == 1);
+        check("moonwater_resume owns resume",
+              moonwater_bind_line(address_of script, SPARK_BIND_RESUME) == 4);
 }
 
 static fn machine_policy(void)
@@ -58056,17 +58086,17 @@ static fn machine_policy(void)
               string_equals(HOST_MACHINE_RUNTIME, "/run/moonwater/machine.sh"));
         check("the machine ioctl request is 64 bytes",
               sizeof(struct machine_control) == 64);
-        check("the machine script ioctl request is 64 bytes",
-              sizeof(struct machine_script) == 64);
-        check("the overlay inside it is 36 bytes",
-              sizeof(struct moonwater_overlay) == 36);
+        check("the machine script ioctl request is 80 bytes",
+              sizeof(struct machine_script) == 80);
+        check("the overlay inside it is 56 bytes",
+              sizeof(struct moonwater_overlay) == 56);
         check("the overlay sits at byte 24 of the script request",
               __builtin_offsetof(struct machine_script, overlay) == 24);
         check("GET and SET are distinct script ops",
               MOONWATER_SCRIPT_GET != MOONWATER_SCRIPT_SET);
         check("builtin origin is not disk",
               MOONWATER_ORIGIN_BUILTIN != MOONWATER_ORIGIN_DISK);
-        check("there are thirteen bind events", SPARK_BIND_EVENTS == 13);
+        check("there are twenty-two bind events", SPARK_BIND_EVENTS == 22);
         check("poweroff, reset and ctrl_alt_delete stop the machine",
               spark_bind_is_stop(SPARK_BIND_POWEROFF) &&
                   spark_bind_is_stop(SPARK_BIND_RESET) &&
@@ -58083,6 +58113,8 @@ static fn machine_policy(void)
                 bool named_recover = false;
                 bool named_canvas_on = false;
                 bool named_canvas_off = false;
+                bool named_micmute = false;
+                bool named_resume = false;
 
                 for (event = 0; event < SPARK_BIND_EVENTS; event++)
                 {
@@ -58095,11 +58127,19 @@ static fn machine_policy(void)
                         if (string_equals((string_address)spark_bind_event_name[event],
                                           "canvas off"))
                                 named_canvas_off = true;
+                        if (string_equals((string_address)spark_bind_event_name[event],
+                                          "micmute"))
+                                named_micmute = true;
+                        if (string_equals((string_address)spark_bind_event_name[event],
+                                          "resume"))
+                                named_resume = true;
                 }
 
                 check("recover is not a bind name", !named_recover);
                 check("canvas on is a bind name", named_canvas_on);
                 check("canvas off is a bind name", named_canvas_off);
+                check("micmute is a bind name", named_micmute);
+                check("resume is a bind name", named_resume);
         }
 }
 

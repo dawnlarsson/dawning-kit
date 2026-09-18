@@ -139,6 +139,10 @@ static string_address host_machine_where(void);
 static fn host_machine_refused(string_address name, p16 line);
 static bool host_machine_stop(void);
 static b32 host_machine_run(void);
+static b32 host_radio(string_address address_to arguments, positive count);
+static fn radio_restore(void);
+static fn radio_recover(void);
+static b32 host_wipe(void);
 
 static b32 host_refuse(string_address text, string_address name)
 {
@@ -952,6 +956,7 @@ static b32 host_take(host_install address_to install, bool update)
         string_format(log, host_label "%s, /root and /home are kept on %s\n",
                       BOWL_ROOT_DIRECTORY, install->disk);
         log_flush();
+        radio_restore();
         return 0;
 }
 
@@ -1546,7 +1551,7 @@ fn host_quiesce(void)
         the kernel copies the row back. A command too long is handed over
         whole, cut at the size without a terminator, so the kernel's own
         refusal answers. The listing and boot apply keep the file open;
-        opening once per event was thirteen trips through /dev/spark for
+        opening once per event was twenty-two trips through /dev/spark for
         `moonwater bind` with no arguments.
 */
 static bipolar host_spark_once(unsigned int command, void *request, unsigned int flags)
@@ -3091,6 +3096,103 @@ static b32 host_canvas(string_address address_to arguments, positive count)
         return host_usage();
 }
 
+#include "radio.c"
+
+/*
+        Forget userspace, keep the machine.
+
+        /home is emptied. /root is emptied except the overlay and the radio
+        files an image update already leaves on the data partition. /bowls
+        stays: that is the pre-installed software a kiosk starts after wipe.
+        The builtin machine script calls this at every settled boot.
+*/
+static string_address host_wipe_keep[] = {
+    "main.moonwater.sh",
+    "wifi",
+    "wifi.power",
+    "bluetooth",
+    "bluetooth.power",
+    "internet",
+};
+
+static bool host_wipe_kept_name(string_address name)
+{
+        for (positive at = 0; at < array_count(host_wipe_keep); at++)
+                if (string_equals(name, host_wipe_keep[at]))
+                        return true;
+
+        return false;
+}
+
+static bipolar host_wipe_ensure(string_address path, positive mode)
+{
+        bipolar made = system_make_directory_at(AT_FDCWD, path, mode);
+
+        return made < 0 && made != -ERROR_EXISTS ? made : 0;
+}
+
+static bipolar host_wipe_root(void)
+{
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
+        bipolar failed = 0;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, "/root"))
+                return walk.error == -ERROR_NO_ENTRY ? 0 : walk.error;
+
+        while (!failed && (entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name) || host_wipe_kept_name(entry->d_name))
+                        continue;
+
+                if (file_is_directory(walk.handle, entry->d_name))
+                {
+                        failed = bowl_reset_walk_at(walk.handle, entry->d_name, 0);
+                        if (!failed)
+                                failed = system_remove_at(walk.handle, entry->d_name,
+                                                          AT_REMOVEDIR);
+                }
+                else
+                        failed = system_remove_at(walk.handle, entry->d_name, 0);
+
+                if (failed == -ERROR_NO_ENTRY)
+                        failed = 0;
+        }
+
+        if (!failed)
+                failed = walk.error;
+        file_walk_close(address_of walk);
+        return failed;
+}
+
+static b32 host_wipe(void)
+{
+        bipolar failed;
+
+        if (!bowl_is_root())
+                return host_refuse("%s needs root\n", "moonwater wipe");
+
+        failed = bowl_reset_walk("/home", 0);
+        if (failed < 0)
+                return host_fail("/home", failed);
+
+        failed = host_wipe_ensure("/home", 0755);
+        if (failed < 0)
+                return host_fail("/home", failed);
+
+        failed = host_wipe_root();
+        if (failed < 0)
+                return host_fail("/root", failed);
+
+        failed = host_wipe_ensure("/root", 0700);
+        if (failed < 0)
+                return host_fail("/root", failed);
+
+        string_format(log, host_label "userspace forgotten\n");
+        log_flush();
+        return 0;
+}
+
 /*
         Bound events, and the init and exit lists, as one verb.
 
@@ -3321,18 +3423,20 @@ static b32 host_bind(string_address address_to arguments, positive count)
                 return host_settings_command(arguments, count - 1);
         }
 
-        if (string_equals(arguments[2], "canvas"))
+        event = 0;
+        words = 3;
+        if (count >= 4)
         {
-                if (count < 4 ||
-                    (!string_equals(arguments[3], "on") && !string_equals(arguments[3], "off")))
-                        return host_usage();
-                second = arguments[3];
-                words = 4;
+                event = host_bind_named(arguments[2], arguments[3]);
+                if (event)
+                {
+                        second = arguments[3];
+                        words = 4;
+                }
         }
-        else
-                words = 3;
+        if (!event)
+                event = host_bind_named(arguments[2], null);
 
-        event = host_bind_named(arguments[2], second);
         if (!event)
         {
                 if (host_bind_request(SPARK_BIND_GET, 1, null, address_of probe) < 0)
@@ -3340,8 +3444,8 @@ static b32 host_bind(string_address address_to arguments, positive count)
 
                 if (second)
                         string_format(log_error,
-                                      host_label "canvas %s is not a bound event; the events are ",
-                                      arguments[3]);
+                                      host_label "%s %s is not a bound event; the events are ",
+                                      arguments[2], arguments[3]);
                 else
                         string_format(log_error, host_label "%s is not a bound event; the events are ",
                                       arguments[2]);
@@ -3409,6 +3513,18 @@ static fn host_usage_write(writer out)
                       "  " TERM_DIM "what runs when the machine stops" TERM_RESET "\n"
                       TERM_BOLD "  canvas [on|off]" TERM_RESET
                       "             " TERM_DIM "the desktop" TERM_RESET "\n"
+                      TERM_BOLD "  wifi [on|off]" TERM_RESET
+                      "               " TERM_DIM "the wireless radio" TERM_RESET "\n"
+                      TERM_BOLD "  wifi add SSID [PASSWORD]" TERM_RESET
+                      "    " TERM_DIM "remember a network and join it" TERM_RESET "\n"
+                      TERM_BOLD "  bluetooth [on|off]" TERM_RESET
+                      "          " TERM_DIM "the bluetooth radio" TERM_RESET "\n"
+                      TERM_BOLD "  bluetooth add NAME" TERM_RESET
+                      "          " TERM_DIM "remember a bluetooth device" TERM_RESET "\n"
+                      TERM_BOLD "  priority internet [wired|wifi]" TERM_RESET
+                      " " TERM_DIM "which link when both are up [wired]" TERM_RESET "\n"
+                      TERM_BOLD "  wipe" TERM_RESET
+                      "                        " TERM_DIM "forget /home and /root, keep the machine" TERM_RESET "\n"
                       "\n"
                       TERM_DIM                       "  Settings stay in the image this session started from.\n"
                       "  install takes this session's; update keeps the disk's.\n"
@@ -3615,6 +3731,13 @@ static b32 host_main()
 
         if (string_equals(verb, "canvas"))
                 return host_canvas(arguments, count);
+
+        if (string_equals(verb, "wifi") || string_equals(verb, "bluetooth") ||
+            string_equals(verb, "priority"))
+                return host_radio(arguments, count);
+
+        if (string_equals(verb, "wipe") && count == 2)
+                return host_wipe();
 
         if (string_equals(verb, "machine") && count == 2)
                 return host_machine_run();

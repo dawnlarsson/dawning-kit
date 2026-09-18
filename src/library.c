@@ -48482,6 +48482,7 @@ __asm__(
 #define AF_INET 2
 #define AF_INET6 10
 #define AF_NETLINK 16
+#define AF_PACKET 17
 
 #define SOCK_STREAM 1
 #define SOCK_DGRAM 2
@@ -48514,8 +48515,11 @@ __asm__(
 #define SHUT_BOTH 2
 
 #define NETLINK_ROUTE 0
+#define NETLINK_GENERIC 16
 #define SOL_NETLINK 270
+#define NETLINK_ADD_MEMBERSHIP 1
 #define NETLINK_EXT_ACK 11
+#define ETH_P_PAE 0x888e
 
 #define HOST_ANY 0x00000000u
 #define HOST_LOOPBACK 0x7f000001u
@@ -48561,6 +48565,17 @@ typedef struct
         p32 port;
         p32 groups;
 } socket_address_netlink;
+
+typedef struct
+{
+        p16 family;
+        p16 protocol;
+        p32 index;
+        p16 hatype;
+        p8 pkttype;
+        p8 halen;
+        p8 addr[8];
+} socket_address_packet;
 
 bipolar socket_new(b32 family, b32 kind, b32 protocol);
 bipolar socket_bind(b32 handle, address_any address, positive size);
