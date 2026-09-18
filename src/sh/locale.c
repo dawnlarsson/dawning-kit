@@ -29,15 +29,6 @@ static bipolar locale_ntp_child;
 
 static fn locale_ntp_keep(void);
 
-static bipolar locale_write_word(string_address path, string_address word)
-{
-        p8 line[96];
-
-        string_copy_bounded(line, word, sizeof(line));
-        string_append_bounded(line, "\n", sizeof(line));
-        return radio_write_file(path, line, string_length(line), 0644);
-}
-
 static fn locale_word(string_address path, p8 address_to into, positive room)
 {
         bipolar got = host_read_text(path, into, room);
@@ -120,7 +111,7 @@ static b32 locale_zone_set(string_address name)
 {
         if (!locale_zone_ok(name) || !radio_text_plain(name, string_length(name)))
                 return host_refuse("unknown timezone %s\n", name);
-        if (locale_write_word(LOCALE_ZONE_PATH, name) < 0)
+        if (radio_write_word(LOCALE_ZONE_PATH, name) < 0)
                 return host_fail("timezone", -1);
         tzset();
         string_format(log, host_label "timezone %s\n", name);
@@ -266,7 +257,7 @@ static COLD b32 locale_ntp_filter_set(string_address word)
 {
         if (!string_equals(word, "on") && !string_equals(word, "off"))
                 return host_usage();
-        if (locale_write_word(LOCALE_NTP_FILTER_PATH, word) < 0)
+        if (radio_write_word(LOCALE_NTP_FILTER_PATH, word) < 0)
                 return host_fail("ntp", -1);
         string_format(log, host_label "ntp filter %s\n", word);
         log_flush();
@@ -277,7 +268,7 @@ static b32 locale_ntp_set(string_address word)
 {
         if (!string_equals(word, "on") && !string_equals(word, "off"))
                 return host_usage();
-        if (locale_write_word(LOCALE_NTP_PATH, word) < 0)
+        if (radio_write_word(LOCALE_NTP_PATH, word) < 0)
                 return host_fail("ntp", -1);
         if (string_equals(word, "on"))
         {
@@ -351,7 +342,7 @@ static b32 locale_keyboard_set(string_address name)
 {
         if (!locale_keyboard_ok(name))
                 return host_refuse("unknown keyboard layout %s\n", name);
-        if (locale_write_word(LOCALE_KEYBOARD_PATH, name) < 0)
+        if (radio_write_word(LOCALE_KEYBOARD_PATH, name) < 0)
                 return host_fail("keyboard", -1);
         (void)locale_keyboard_live(name);
         string_format(log, host_label "keyboard %s\n", name);

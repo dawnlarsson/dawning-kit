@@ -61,9 +61,11 @@ static bipolar radio_write_file(string_address path, p8 address_to text,
         return failed;
 }
 
+/* One word and its newline over a state file. The room is a timezone name's
+   room, because the clock's words come through here too. */
 static bipolar radio_write_word(string_address path, string_address word)
 {
-        p8 line[32];
+        p8 line[96];
 
         string_copy_bounded(line, word, sizeof(line));
         string_append_bounded(line, "\n", sizeof(line));
@@ -519,25 +521,17 @@ static b32 radio_wifi_status(void)
         return 0;
 }
 
-static b32 radio_bluetooth_on(bool say)
+/* The remembered word and the rfkill switch, set together. say is for the
+   person who asked; restoring the machine's own choice stays quiet. */
+static b32 radio_bluetooth_power(bool on, bool say)
 {
-        radio_write_word(NET_BLUETOOTH_POWER, "on");
-        radio_rfkill(RADIO_RFKILL_BLUETOOTH, false);
-        if (say)
-        {
-                string_format(log, host_label "bluetooth on\n");
-                log_flush();
-        }
-        return 0;
-}
+        string_address word = on ? (string_address)"on" : (string_address)"off";
 
-static b32 radio_bluetooth_off(bool say)
-{
-        radio_write_word(NET_BLUETOOTH_POWER, "off");
-        radio_rfkill(RADIO_RFKILL_BLUETOOTH, true);
+        radio_write_word(NET_BLUETOOTH_POWER, word);
+        radio_rfkill(RADIO_RFKILL_BLUETOOTH, !on);
         if (say)
         {
-                string_format(log, host_label "bluetooth off\n");
+                string_format(log, host_label "bluetooth %s\n", word);
                 log_flush();
         }
         return 0;
@@ -577,7 +571,7 @@ static b32 radio_bluetooth_add(string_address identity)
                         return host_fail("bluetooth", -1);
         }
 
-        radio_bluetooth_on(false);
+        radio_bluetooth_power(true, false);
         string_format(log, host_label "bluetooth remembered %s\n", identity);
         log_flush();
         return 0;
@@ -737,9 +731,9 @@ static fn radio_restore(void)
                 radio_wifi_on(false);
 
         if (radio_word_is(NET_BLUETOOTH_POWER, "off"))
-                radio_bluetooth_off(false);
+                radio_bluetooth_power(false, false);
         else if (radio_word_is(NET_BLUETOOTH_POWER, "on"))
-                radio_bluetooth_on(false);
+                radio_bluetooth_power(true, false);
 }
 
 static fn radio_recover(void)
@@ -818,9 +812,9 @@ static b32 host_radio(string_address address_to arguments, positive count)
         if (count < 3)
                 return radio_bluetooth_status();
         if (string_equals(word, "on") && count == 3)
-                return radio_bluetooth_on(true);
+                return radio_bluetooth_power(true, true);
         if (string_equals(word, "off") && count == 3)
-                return radio_bluetooth_off(true);
+                return radio_bluetooth_power(false, true);
         if (string_equals(word, "add") && count == 4)
                 return radio_bluetooth_add(arguments[3]);
         return host_usage();
