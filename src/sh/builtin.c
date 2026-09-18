@@ -8913,7 +8913,7 @@ static COLD fn shell_declare_function_written(writer write,
                                               positive length, b32 mark)
 {
         positive2 named = {
-            memory_hash_33((address_any)name, length), length};
+            {memory_hash_33((address_any)name, length), length}};
         b32 attributes = exec_function_attributes_hashed(name, named);
 
         if (mark && !(attributes & mark))
