@@ -3520,6 +3520,9 @@ static bool build_moon_shell;
 static bool build_moon_utilities;
 static bool build_moon_util_linux;
 static bool build_moon_shell_monitor;
+//      Not a switch but a level, so it is read past the =y test the
+//      switches share rather than through it.
+static positive build_moon_strict;
 
 //      An existing build tree has no lines for newly added symbols until
 //      olddefconfig next runs; their Kconfig defaults are y, while the core
@@ -3533,6 +3536,7 @@ static fn build_components(string_address config)
         build_moon_utilities = true;
         build_moon_util_linux = true;
         build_moon_shell_monitor = true;
+        build_moon_strict = STRICT_SAFE;
 
         if (file_slurp(config, build_file_two, BUILD_FILE_ROOM) < 0)
                 return;
@@ -3546,16 +3550,40 @@ static fn build_components(string_address config)
                 positive length;
                 bool on;
 
+                if (!build_config_name(walk.line, walk.length, address_of pair) ||
+                    !string_has_prefix(pair.name, "CONFIG_MOONWATER_"))
+                        continue;
+
+                name = pair.name + 17;
+                length = pair.name_length - 17;
+
+                //      The strictness level is a number, so it is taken here
+                //      rather than through the =y test below. A value that is
+                //      not a level leaves the default standing, the way an
+                //      unreadable switch does.
+                if (memory_is_word(name, length, "STRICT"))
+                {
+                        positive used = 0;
+                        positive level;
+
+                        if (!pair.value)
+                                continue;
+
+                        level = string_digits_max(pair.value, pair.value_length,
+                                                  address_of used);
+
+                        if (used == pair.value_length && level <= STRICT_TIGHT)
+                                build_moon_strict = level;
+
+                        continue;
+                }
+
                 //      =y is on and "is not set" is off; any other value, =m
                 //      included, leaves the default alone.
-                if (!build_config_name(walk.line, walk.length, address_of pair) ||
-                    !string_has_prefix(pair.name, "CONFIG_MOONWATER_") ||
-                    (pair.value && !memory_is_word(pair.value, pair.value_length, "y")))
+                if (pair.value && !memory_is_word(pair.value, pair.value_length, "y"))
                         continue;
 
                 on = pair.value != null;
-                name = pair.name + 17;
-                length = pair.name_length - 17;
 
                 if (memory_is_word(name, length, "CORE"))
                         build_moon_core = on;
@@ -3812,6 +3840,12 @@ static b32 build_userspace()
 
                 if (!build_moon_shell_monitor)
                         flags = build_join(flags, " -DSHELL_NO_MONITOR", null);
+
+                //      Only when it differs from the compiled-in default, so
+                //      an ordinary build's command line stays as it was.
+                if (build_moon_strict != STRICT_SAFE)
+                        flags = build_join(flags, " -DMOONWATER_STRICT=",
+                                           build_number(build_moon_strict), null);
 
                 build_setting_set("spark_cppflags", flags);
 
