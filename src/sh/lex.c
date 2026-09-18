@@ -1087,18 +1087,56 @@ b32 lex_unfinished(string_address line)
 
                 if (lex_operator[c])
                 {
-                        //      A process substitution holds a command, and
-                        //      the line is not finished until it closes.
-                        if ((c == '<' || c == '>') && string_is(step + 1, '('))
+                        /*
+                                An arithmetic command, on exactly the terms
+                                lex_line_floor takes it: two parentheses, and
+                                lex_arithmetic_end willing to close them. No
+                                further condition, because the floor has
+                                none -- a test of its own here is a way for
+                                the two walks to disagree again.
+
+                                They did disagree about one byte. `#` inside
+                                `(( ))` is an arithmetic operator to the
+                                floor, which keeps the whole `((...))`
+                                together; here it was a line comment, so
+                                `((#))<(` looked finished and the floor went
+                                on to an unclosed `<(` nobody had asked the
+                                reader about.
+                        */
+                        //      Three bytes can be followed by a `(` that
+                        //      means something; every other operator skips
+                        //      the look-ahead entirely.
+                        if ((c == '(' || c == '<' || c == '>') &&
+                            string_is(step + 1, '('))
                         {
-                                string_address stop = lex_nesting(step + 1);
+                                if (c == '(')
+                                {
+                                        string_address stop =
+                                            lex_arithmetic_end(step);
 
-                                if (stop == step + 1)
-                                        return lex_open_match(LEX_OPEN, ')');
+                                        if (stop)
+                                        {
+                                                step = stop;
+                                                fresh = false;
+                                                continue;
+                                        }
+                                }
+                                else
+                                {
+                                        //      A process substitution holds
+                                        //      a command, and the line is
+                                        //      not finished until it closes.
+                                        string_address stop =
+                                            lex_nesting(step + 1);
 
-                                step = stop;
-                                fresh = false;
-                                continue;
+                                        if (stop == step + 1)
+                                                return lex_open_match(LEX_OPEN,
+                                                                      ')');
+
+                                        step = stop;
+                                        fresh = false;
+                                        continue;
+                                }
                         }
 
                         fresh = true;
