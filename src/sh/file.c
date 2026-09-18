@@ -9958,8 +9958,31 @@ static bool find_empty(file_facts address_to facts)
 
 // Building the tree -------------------------------------------------
 
+/*
+        What an expression may be, so that walking it cannot run off the end
+        of the stack.
+
+        A node is a frame in the evaluator, and the depth of the tree is at
+        most the number of nodes in it, so one ceiling on the count is a
+        ceiling on the recursion too -- and it catches the shape a depth
+        count cannot see, because -o builds its spine in a loop rather than
+        by recursing: a thousand alternations are a thousand nodes deep and
+        the parser never nests at all. Fifty thousand operator frames are two
+        and a half megabytes on the eight the smallest of the two stacks this
+        is walked on has, and fifty thousand terms is past what a command
+        line can carry anyway.
+*/
+#define FIND_NODE_MAX 50000
+
 static b32 find_make(p8 kind)
 {
+        if (find_used >= FIND_NODE_MAX)
+        {
+                log_error("find: expression is too large\n", 0);
+                find_bad = true;
+                return -1;
+        }
+
         if (!shell_array_room(find_nodes, find_node_room, find_used + 1))
         {
                 log_error("find: out of memory while reading expression\n", 0);
@@ -10202,7 +10225,16 @@ enum
 
 static const p8 find_parse_kinds[] = {',', '|', '&'};
 
-static b32 find_parse_level(positive level);
+static b32 find_parse_level(positive level, positive depth);
+
+/*
+        And what it may nest, which is the parser's own recursion rather than
+        the tree's: a parenthesis costs a find_parse_primary frame and one
+        find_parse_level frame per precedence, a leading ! costs another
+        find_parse_primary, and neither makes enough nodes for the ceiling
+        above to notice. Twenty thousand parentheses faulted.
+*/
+#define FIND_PARSE_DEPTH 1000
 
 // A time in whole units, the way find counts one: the fraction is dropped, so
 // a file touched thirty hours ago is one day old and not two.
@@ -10222,8 +10254,15 @@ static b64 find_age(p8 which, b64 scale)
         return (find_moment - file_moment_of(find_facts, which)->seconds) / scale;
 }
 
-static b32 find_parse_primary()
+static b32 find_parse_primary(positive depth)
 {
+        if (depth >= FIND_PARSE_DEPTH)
+        {
+                log_error("find: expression is nested too deep\n", 0);
+                find_bad = true;
+                return -1;
+        }
+
         string_address word = find_word();
 
         if (!word)
@@ -10240,7 +10279,7 @@ static b32 find_parse_primary()
                         return -1;
                 }
 
-                b32 inside = find_parse_level(FIND_PARSE_OR);
+                b32 inside = find_parse_level(FIND_PARSE_OR, depth + 1);
 
                 if (find_bad)
                         return -1;
@@ -10271,7 +10310,7 @@ static b32 find_parse_primary()
                 }
 
                 b32 node = find_make('!');
-                b32 under = find_parse_primary();
+                b32 under = find_parse_primary(depth + 1);
 
                 if (find_bad || node < 0 || under < 0)
                 {
@@ -10816,10 +10855,10 @@ bad:
         right side instead of stopping the loop, and only then is a missing
         right side not worth a complaint about a word nobody wrote.
 */
-static b32 find_parse_level(positive level)
+static b32 find_parse_level(positive level, positive depth)
 {
-        b32 left = level == FIND_PARSE_AND ? find_parse_primary()
-                                           : find_parse_level(level + 1);
+        b32 left = level == FIND_PARSE_AND ? find_parse_primary(depth)
+                                           : find_parse_level(level + 1, depth);
 
         //      The comma reads its left side without a word about it,
         //      because the top of the parse answers for a bad expression to
@@ -10861,8 +10900,8 @@ static b32 find_parse_level(positive level)
                         find_at++;
                 }
 
-                b32 right = level == FIND_PARSE_AND ? find_parse_primary()
-                                                    : find_parse_level(level + 1);
+                b32 right = level == FIND_PARSE_AND ? find_parse_primary(depth)
+                                                    : find_parse_level(level + 1, depth);
 
                 if (find_bad)
                         return -1;
@@ -11625,13 +11664,26 @@ static bool find_regex_holds(find_node address_to node, string_address text)
 // through. Declared here rather than defined because expand.c is read last.
 bool shell_match(string_address pattern, string_address text);
 
+/*
+        The operators recurse and the tests do not, so they are two functions.
+
+        Every test below wants room -- a path to fold, a link to read, a name
+        to look up -- and while they all sat in one body, every frame of the
+        recursion carried all of it: twelve and a half kilobytes for a frame
+        whose whole job was to evaluate -o and hand the answer back. Eight
+        hundred alternations were enough to walk off the stack. Split, the
+        operator frame is the pointer and the return address, and what an
+        expression may nest is a number this file chooses rather than a
+        number the stack happens to run out at.
+*/
+static __attribute__((noinline)) bool find_true_test(find_node address_to node);
+
 static bool find_true(b32 which)
 {
         if (which < 0)
                 return true;
 
         find_node address_to node = address_of find_nodes[which];
-        p8 name[FILE_PATH_MAX];
 
         switch (node->kind)
         {
@@ -11647,7 +11699,17 @@ static bool find_true(b32 which)
 
         case '!':
                 return !find_true(node->left);
+        }
 
+        return find_true_test(node);
+}
+
+static __attribute__((noinline)) bool find_true_test(find_node address_to node)
+{
+        p8 name[FILE_PATH_MAX];
+
+        switch (node->kind)
+        {
         case 'v':
                 return true;
 
@@ -12201,6 +12263,14 @@ static bool find_tree_print(parallel_output address_to output, positive address_
 }
 
 //      The expression decided in the job: names, paths, kinds and printing.
+// The pool evaluator, split the same way and for the same reason: the
+// operators are the part that recurses, and a worker's stack is the smaller
+// of the two this expression can be walked on.
+static __attribute__((noinline)) bool find_tree_test(
+    find_node address_to node, string_address path, positive length,
+    string_address name, positive mode, parallel_output address_to output,
+    positive address_to open_at, bool address_to failed);
+
 static bool find_tree_holds(b32 which, string_address path, positive length,
                             string_address name, positive mode,
                             parallel_output address_to output,
@@ -12210,7 +12280,6 @@ static bool find_tree_holds(b32 which, string_address path, positive length,
                 return true;
 
         find_node address_to node = address_of find_nodes[which];
-        p8 lowered[FILE_PATH_MAX];
 
         switch (node->kind)
         {
@@ -12225,6 +12294,20 @@ static bool find_tree_holds(b32 which, string_address path, positive length,
                 return find_tree_holds(node->right, path, length, name, mode, output, open_at, failed);
         case '!':
                 return !find_tree_holds(node->left, path, length, name, mode, output, open_at, failed);
+        }
+
+        return find_tree_test(node, path, length, name, mode, output, open_at, failed);
+}
+
+static __attribute__((noinline)) bool find_tree_test(
+    find_node address_to node, string_address path, positive length,
+    string_address name, positive mode, parallel_output address_to output,
+    positive address_to open_at, bool address_to failed)
+{
+        p8 lowered[FILE_PATH_MAX];
+
+        switch (node->kind)
+        {
         case 'v':
                 return true;
         case 'f':
@@ -12836,7 +12919,7 @@ static b32 file_find()
 
         find_at = index;
         find_count = count;
-        find_root = find_parse_level(FIND_PARSE_COMMA);
+        find_root = find_parse_level(FIND_PARSE_COMMA, 0);
 
         if (find_bad)
                 return 1;
