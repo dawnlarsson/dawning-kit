@@ -2916,6 +2916,52 @@ static positive login_last_duration(p8 address_to into, b64 start, b64 finish)
         return made;
 }
 
+/*      A utmp field is another program's bytes and last writes them to a
+        terminal, so the reference spells the ones a terminal would act on:
+        an ASCII control other than bell, tab, newline and return becomes a
+        star and the letter it carries, and a byte with the high bit set
+        becomes a backslash and three octal digits. Column widths and the
+        truncation star are still counted in raw bytes, which is what the
+        reference measures; only what reaches the writer is respelled.
+        Without this an ESC out of ut_host arrives whole. */
+static fn login_last_put(string_address value, positive length)
+{
+        p8 address_to bytes = (p8 address_to)value;
+        positive run = 0;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 one = bytes[at];
+
+                if ((one >= ' ' && one < 0x7f) || one == '\a' ||
+                    one == '\t' || one == '\n' || one == '\r')
+                {
+                        run++;
+                        continue;
+                }
+
+                if (run)
+                        text_put(bytes + at - run, run);
+                run = 0;
+
+                if (one & 0x80)
+                {
+                        p8 shown[4] = {'\\', (p8)('0' + ((one >> 6) & 3)),
+                                       (p8)('0' + ((one >> 3) & 7)),
+                                       (p8)('0' + (one & 7))};
+                        text_put(shown, sizeof(shown));
+                }
+                else
+                {
+                        p8 shown[2] = {'*', (p8)(one ^ 0x40)};
+                        text_put(shown, sizeof(shown));
+                }
+        }
+
+        if (run)
+                text_put(bytes + length - run, run);
+}
+
 static fn login_last_field(string_address value, positive minimum,
                            bool star, bool full, p8 separator)
 {
@@ -2924,14 +2970,18 @@ static fn login_last_field(string_address value, positive minimum,
         {
                 if (star && minimum)
                 {
-                        text_put((p8 address_to)value, minimum - 1);
+                        login_last_put(value, minimum - 1);
                         text_put_character('*');
                 }
                 else
-                        text_put((p8 address_to)value, minimum);
+                        login_last_put(value, minimum);
         }
         else
-                login_put_width(value, length, max(length, minimum), false);
+        {
+                login_last_put(value, length);
+                writer_fill_bulk(text_put,
+                                 difference_or_zero(minimum, length), ' ');
+        }
         text_put_character(separator);
 }
 
@@ -3066,7 +3116,7 @@ static fn login_last_line(string_address user, string_address line,
                                 : end_kind == LOGIN_LAST_END_LOGGED ? 9
                                                                      : 11;
                 writer_fill_bulk(text_put, word < 13 ? 13 - word : 1, ' ');
-                text_put_string(host);
+                login_last_put(host, string_length(host));
         }
         text_put_character('\n');
 }
