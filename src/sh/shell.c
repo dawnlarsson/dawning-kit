@@ -330,20 +330,16 @@ static inline INLINE fn shell_scratch_bytes(positive want)
                     address_of (second_room), (want), 1))
 
 //      Bytes that will not move for as long as the line lasts.
-static p8 address_to shell_store_take(shell_store address_to store, positive room)
+/*
+        The block in hand is almost always the one the bytes come from, and
+        the bump is four instructions. Everything below -- the free-list walk
+        and the mapping behind it -- happens once per block, so it is a call
+        the fast path never makes rather than a tail it always carries.
+*/
+static __attribute__((noinline)) COLD p8 address_to
+shell_store_take_block(shell_store address_to store, positive room)
 {
         shell_block address_to block = store->here;
-
-        if (!room)
-                room = 1;
-
-        if (block && block->used <= block->size &&
-            room <= block->size - block->used)
-        {
-                p8 address_to bytes = (p8 address_to)(block + 1) + block->used;
-                block->used += room;
-                return bytes;
-        }
 
         /* Claim the first large-enough released block, wherever it is in the
            tail. The same link insertion serves reused and newly mapped blocks,
@@ -380,6 +376,25 @@ static p8 address_to shell_store_take(shell_store address_to store, positive roo
         block->used = room;
         store->here = block;
         return (p8 address_to)(block + 1);
+}
+
+static inline INLINE p8 address_to
+shell_store_take(shell_store address_to store, positive room)
+{
+        shell_block address_to block = store->here;
+
+        if (!room)
+                room = 1;
+
+        if (likely(block && block->used <= block->size &&
+                   room <= block->size - block->used))
+        {
+                p8 address_to bytes = (p8 address_to)(block + 1) + block->used;
+                block->used += room;
+                return bytes;
+        }
+
+        return shell_store_take_block(store, room);
 }
 
 /* Stable, terminated spans share the arena's allocation and overflow policy. */
