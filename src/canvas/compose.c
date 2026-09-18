@@ -457,8 +457,9 @@ static unsigned int glyph_in_face(unsigned int c)
         pair of rows and of columns folded into one, in the top or the bottom
         half of the cell. btop names every box with a superscript digit.
 */
-static _Bool glyph_script_digit(unsigned int c, const unsigned char *face,
-                                size_t glyph_size, unsigned char *bits)
+static __attribute__((__cold__)) _Bool
+glyph_script_digit(unsigned int c, const unsigned char *face,
+                   size_t glyph_size, unsigned char *bits)
 {
         static const unsigned short raised[10] = {
             0x2070, 0x00b9, 0x00b2, 0x00b3, 0x2074,
@@ -497,7 +498,8 @@ static _Bool glyph_script_digit(unsigned int c, const unsigned char *face,
         return true;
 }
 
-static _Bool glyph_synthesize(unsigned int c, unsigned char *bits)
+static __attribute__((__cold__)) _Bool
+glyph_synthesize(unsigned int c, unsigned char *bits)
 {
         unsigned int nsew;
 
