@@ -12260,152 +12260,146 @@ static fn find_tree_enter(address_any context, address_any node_address,
         positive depth = node->depth + 1;
         bool follow = find_follow;
         bool joint = node->length && node->path[node->length - 1] != '/';
-        bipolar got = 0;
 
-        for (;;)
+        positive have = 0;
+        positive at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to record;
+
+        while ((record = file_directory_next(directory, records, sizeof(records),
+                                             address_of have, address_of at,
+                                             address_of error)))
         {
-                got = system_read_directory(directory, records, sizeof(records));
-                bipolar at = 0;
+                string_address name = (string_address)record->d_name;
+                p8 type = record->d_type;
+                positive name_length;
+                positive length;
+                p8 small[FILE_PATH_MAX];
+                p8 address_to path;
+                file_facts facts;
+                bool looked = false;
+                bool said = true;
 
-                if (got <= 0)
-                        break;
+                if (file_is_dot(name))
+                        continue;
 
-                while (at < got)
+                name_length = string_length(name);
+                length = node->length + joint + name_length;
+                path = length < sizeof(small) ? small : memory_take(length + 1);
+                if (!path)
                 {
-                        struct linux_dirent64 address_to record =
-                            (struct linux_dirent64 address_to)(records + at);
-                        string_address name = (string_address)record->d_name;
-                        p8 type = record->d_type;
-                        positive name_length;
-                        positive length;
-                        p8 small[FILE_PATH_MAX];
-                        p8 address_to path;
-                        file_facts facts;
-                        bool looked = false;
-                        bool said = true;
+                        parallel_stop();
+                        return;
+                }
+                memory_copy(path, node->path, node->length);
+                if (joint)
+                        path[node->length] = '/';
+                memory_copy(path + node->length + joint, name, name_length);
+                path[length] = end;
 
-                        at += record->d_reclen;
-                        if (file_is_dot(name))
-                                continue;
+                positive mode = file_mode_from_type(type);
+                bool structural = type == 0 || (follow && type == DT_LNK) ||
+                                  (type == DT_DIR && (follow || find_one_system));
 
-                        name_length = string_length(name);
-                        length = node->length + joint + name_length;
-                        path = length < sizeof(small) ? small : memory_take(length + 1);
-                        if (!path)
+                if (structural || find_tree_wants_facts)
+                {
+                        bipolar code = file_look_code(directory, name,
+                                                      follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                      address_of facts);
+
+                        /* -L follows links that have targets. A dangling
+                           link is still an entry and is tested as a link. */
+                        if (code < 0 && follow &&
+                            file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts))
+                                code = 0;
+                        if (code >= 0)
                         {
-                                parallel_stop();
-                                return;
+                                looked = true;
+                                mode = facts.mode;
                         }
-                        memory_copy(path, node->path, node->length);
-                        if (joint)
-                                path[node->length] = '/';
-                        memory_copy(path + node->length + joint, name, name_length);
-                        path[length] = end;
-
-                        positive mode = file_mode_from_type(type);
-                        bool structural = type == 0 || (follow && type == DT_LNK) ||
-                                          (type == DT_DIR && (follow || find_one_system));
-
-                        if (structural || find_tree_wants_facts)
+                        else if (structural)
                         {
-                                bipolar code = file_look_code(directory, name,
-                                                              follow ? 0 : AT_SYMLINK_NOFOLLOW,
-                                                              address_of facts);
-
-                                /* -L follows links that have targets. A dangling
-                                   link is still an entry and is tested as a link. */
-                                if (code < 0 && follow &&
-                                    file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts))
-                                        code = 0;
-                                if (code >= 0)
-                                {
-                                        looked = true;
-                                        mode = facts.mode;
-                                }
-                                else if (structural)
-                                {
-                                        said = find_tree_note(output, address_of open_at,
-                                                              FIND_TREE_FAILED, code,
-                                                              (string_address)path, length, 0,
-                                                              depth, 0, null);
-                                        goto next;
-                                }
+                                said = find_tree_note(output, address_of open_at,
+                                                      FIND_TREE_FAILED, code,
+                                                      (string_address)path, length, 0,
+                                                      depth, 0, null);
+                                goto next;
                         }
+                }
 
-                        bool directory_entry = (mode & MODE_FORMAT) == MODE_DIRECTORY;
-                        p64 device = looked ? file_device_key(facts.device_major, facts.device_minor)
-                                            : 0;
+                bool directory_entry = (mode & MODE_FORMAT) == MODE_DIRECTORY;
+                p64 device = looked ? file_device_key(facts.device_major, facts.device_minor)
+                                    : 0;
 
-                        if (directory_entry && follow && looked)
+                if (directory_entry && follow && looked)
+                {
+                        bool cycle = false;
+
+                        for (find_tree_node address_to up = node; up && !cycle; up = up->parent)
+                                cycle = up->identified && up->device == device &&
+                                        up->inode == facts.inode;
+                        if (cycle)
                         {
-                                bool cycle = false;
-
-                                for (find_tree_node address_to up = node; up && !cycle; up = up->parent)
-                                        cycle = up->identified && up->device == device &&
-                                                up->inode == facts.inode;
-                                if (cycle)
-                                {
-                                        said = find_tree_note(output, address_of open_at,
-                                                              FIND_TREE_CYCLE, 0,
-                                                              (string_address)path, length, 0,
-                                                              depth, 0, null);
-                                        goto next;
-                                }
+                                said = find_tree_note(output, address_of open_at,
+                                                      FIND_TREE_CYCLE, 0,
+                                                      (string_address)path, length, 0,
+                                                      depth, 0, null);
+                                goto next;
                         }
+                }
 
-                        bool descend = directory_entry && depth < find_maximum &&
-                                       (!find_one_system || (looked && device == find_device));
-                        bool wanted = depth >= find_minimum && depth <= find_maximum;
-                        bool later = find_deepest && descend;
+                bool descend = directory_entry && depth < find_maximum &&
+                               (!find_one_system || (looked && device == find_device));
+                bool wanted = depth >= find_minimum && depth <= find_maximum;
+                bool later = find_deepest && descend;
 
-                        if (wanted && !later)
-                                said = find_tree_decide(output, address_of open_at,
-                                                        (string_address)path, length,
-                                                        length - name_length, depth, type, mode,
-                                                        looked ? address_of facts : null);
+                if (wanted && !later)
+                        said = find_tree_decide(output, address_of open_at,
+                                                (string_address)path, length,
+                                                length - name_length, depth, type, mode,
+                                                looked ? address_of facts : null);
 
-                        if (said && descend)
+                if (said && descend)
+                {
+                        find_tree_node address_to child =
+                            find_tree_node_new(node, name, name_length, depth);
+
+                        if (!child)
+                                said = false;
+                        else
                         {
-                                find_tree_node address_to child =
-                                    find_tree_node_new(node, name, name_length, depth);
-
-                                if (!child)
-                                        said = false;
+                                child->type = type;
+                                child->looked = looked;
+                                child->deferred = later && wanted;
+                                if (looked)
+                                {
+                                        child->facts = facts;
+                                        child->identified = true;
+                                        child->device = device;
+                                        child->inode = facts.inode;
+                                }
                                 else
+                                        child->facts.mode = (p16)mode;
+                                open_at = positive_max;
+                                if (!parallel_child(output, name, child))
                                 {
-                                        child->type = type;
-                                        child->looked = looked;
-                                        child->deferred = later && wanted;
-                                        if (looked)
-                                        {
-                                                child->facts = facts;
-                                                child->identified = true;
-                                                child->device = device;
-                                                child->inode = facts.inode;
-                                        }
-                                        else
-                                                child->facts.mode = (p16)mode;
-                                        open_at = positive_max;
-                                        if (!parallel_child(output, name, child))
-                                        {
-                                                memory_give(child);
-                                                said = false;
-                                        }
+                                        memory_give(child);
+                                        said = false;
                                 }
                         }
+                }
 next:
-                        if (path != small)
-                                memory_give(path);
-                        if (!said)
-                        {
-                                parallel_stop();
-                                return;
-                        }
+                if (path != small)
+                        memory_give(path);
+                if (!said)
+                {
+                        parallel_stop();
+                        return;
                 }
         }
 
-        if (got < 0)
-                (void)find_tree_note(output, address_of open_at, FIND_TREE_FAILED, got,
+        if (error < 0)
+                (void)find_tree_note(output, address_of open_at, FIND_TREE_FAILED, error,
                                      (string_address)node->path, node->length, 0,
                                      node->depth, 0, null);
 }
@@ -13564,139 +13558,133 @@ static fn du_tree_enter(address_any context, address_any node_address,
         if (!du_tree_put(output, address_of record, null, 0))
                 return;
 
-        for (;;)
+        positive have = 0;
+        positive at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_directory_next(directory, records, sizeof(records),
+                                            address_of have, address_of at,
+                                            address_of error)))
         {
-                bipolar got = system_read_directory(directory, records, sizeof(records));
-                bipolar at = 0;
+                string_address name = (string_address)entry->d_name;
 
-                if (got <= 0)
+                if (file_is_dot(name))
+                        continue;
+
+                positive name_length = string_length(name);
+                positive length = 0;
+                p8 small[FILE_PATH_MAX];
+                p8 address_to path = null;
+                file_facts facts;
+                bool kept = true;
+
+                //      The path is made only for what reads it: an
+                //      exclusion, an -a line or a complaint.
+                if (du_exclude_have || shown)
                 {
-                        if (got < 0)
-                        {
-                                memory_fill(address_of record, 0, sizeof(record));
-                                record.kind = DU_TREE_READ;
-                                record.error = (b32)got;
-                                (void)du_tree_put(output, address_of record, null, 0);
-                        }
-                        break;
-                }
-
-                while (at < got)
-                {
-                        struct linux_dirent64 address_to entry =
-                            (struct linux_dirent64 address_to)(records + at);
-                        string_address name = (string_address)entry->d_name;
-
-                        at += entry->d_reclen;
-                        if (file_is_dot(name))
-                                continue;
-
-                        positive name_length = string_length(name);
-                        positive length = 0;
-                        p8 small[FILE_PATH_MAX];
-                        p8 address_to path = null;
-                        file_facts facts;
-                        bool kept = true;
-
-                        //      The path is made only for what reads it: an
-                        //      exclusion, an -a line or a complaint.
-                        if (du_exclude_have || shown)
-                        {
-                                path = du_tree_path(node, name, name_length, small,
-                                                    address_of length);
-                                if (!path)
-                                {
-                                        parallel_stop();
-                                        return;
-                                }
-                                if (du_exclude_have && du_excluded((string_address)path))
-                                {
-                                        if (path != small)
-                                                memory_give(path);
-                                        continue;
-                                }
-                        }
-
-                        bipolar looked = file_look_code(directory, name,
-                                                        du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
-                                                        address_of facts);
-
-                        memory_fill(address_of record, 0, sizeof(record));
-
-                        if (looked < 0)
-                        {
-                                if (!path)
-                                        path = du_tree_path(node, name, name_length, small,
-                                                            address_of length);
-                                //      -L through a link that dangles has no
-                                //      reason to give, and GNU's du gives none.
-                                record.kind = DU_TREE_FAILED;
-                                record.error = du_follow && looked == -ERROR_NO_ENTRY
-                                                   ? 0 : (b32)looked;
-                                kept = path && du_tree_put(output, address_of record,
-                                                           (string_address)path, length);
-                        }
-                        else
-                        {
-                                p64 device = file_device_key(facts.device_major,
-                                                             facts.device_minor);
-
-                                if (du_one_system && device != du_device)
-                                        ;
-                                else if ((facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
-                                {
-                                        bool cycle = false;
-
-                                        for (du_tree_node address_to up = node;
-                                             du_follow && up && !cycle; up = up->parent)
-                                                cycle = up->device == device &&
-                                                        up->inode == facts.inode;
-
-                                        if (!cycle)
-                                        {
-                                                du_tree_node address_to child =
-                                                    du_tree_node_new(node, name, name_length);
-
-                                                kept = child != null;
-                                                if (child)
-                                                {
-                                                        child->own = du_apparent ? 0
-                                                                                 : facts.blocks * 512;
-                                                        child->device = device;
-                                                        child->inode = facts.inode;
-                                                        child->device_major = facts.device_major;
-                                                        child->device_minor = facts.device_minor;
-                                                        if (!parallel_child(output, name, child))
-                                                        {
-                                                                memory_give(child);
-                                                                kept = false;
-                                                        }
-                                                }
-                                        }
-                                }
-                                else
-                                {
-                                        record.kind = DU_TREE_ENTRY;
-                                        record.links = facts.hard_links;
-                                        record.device_major = facts.device_major;
-                                        record.device_minor = facts.device_minor;
-                                        record.inode = facts.inode;
-                                        record.cost = du_apparent ? (p64)facts.size
-                                                                  : facts.blocks * 512;
-                                        kept = du_tree_put(output, address_of record,
-                                                           shown ? (string_address)path : null,
-                                                           length);
-                                }
-                        }
-
-                        if (path && path != small)
-                                memory_give(path);
-                        if (!kept)
+                        path = du_tree_path(node, name, name_length, small,
+                                            address_of length);
+                        if (!path)
                         {
                                 parallel_stop();
                                 return;
                         }
+                        if (du_exclude_have && du_excluded((string_address)path))
+                        {
+                                if (path != small)
+                                        memory_give(path);
+                                continue;
+                        }
                 }
+
+                bipolar looked = file_look_code(directory, name,
+                                                du_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                address_of facts);
+
+                memory_fill(address_of record, 0, sizeof(record));
+
+                if (looked < 0)
+                {
+                        if (!path)
+                                path = du_tree_path(node, name, name_length, small,
+                                                    address_of length);
+                        //      -L through a link that dangles has no
+                        //      reason to give, and GNU's du gives none.
+                        record.kind = DU_TREE_FAILED;
+                        record.error = du_follow && looked == -ERROR_NO_ENTRY
+                                           ? 0 : (b32)looked;
+                        kept = path && du_tree_put(output, address_of record,
+                                                   (string_address)path, length);
+                }
+                else
+                {
+                        p64 device = file_device_key(facts.device_major,
+                                                     facts.device_minor);
+
+                        if (du_one_system && device != du_device)
+                                ;
+                        else if ((facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                        {
+                                bool cycle = false;
+
+                                for (du_tree_node address_to up = node;
+                                     du_follow && up && !cycle; up = up->parent)
+                                        cycle = up->device == device &&
+                                                up->inode == facts.inode;
+
+                                if (!cycle)
+                                {
+                                        du_tree_node address_to child =
+                                            du_tree_node_new(node, name, name_length);
+
+                                        kept = child != null;
+                                        if (child)
+                                        {
+                                                child->own = du_apparent ? 0
+                                                                         : facts.blocks * 512;
+                                                child->device = device;
+                                                child->inode = facts.inode;
+                                                child->device_major = facts.device_major;
+                                                child->device_minor = facts.device_minor;
+                                                if (!parallel_child(output, name, child))
+                                                {
+                                                        memory_give(child);
+                                                        kept = false;
+                                                }
+                                        }
+                                }
+                        }
+                        else
+                        {
+                                record.kind = DU_TREE_ENTRY;
+                                record.links = facts.hard_links;
+                                record.device_major = facts.device_major;
+                                record.device_minor = facts.device_minor;
+                                record.inode = facts.inode;
+                                record.cost = du_apparent ? (p64)facts.size
+                                                          : facts.blocks * 512;
+                                kept = du_tree_put(output, address_of record,
+                                                   shown ? (string_address)path : null,
+                                                   length);
+                        }
+                }
+
+                if (path && path != small)
+                        memory_give(path);
+                if (!kept)
+                {
+                        parallel_stop();
+                        return;
+                }
+        }
+
+        if (error < 0)
+        {
+                memory_fill(address_of record, 0, sizeof(record));
+                record.kind = DU_TREE_READ;
+                record.error = (b32)error;
+                (void)du_tree_put(output, address_of record, null, 0);
         }
 }
 
@@ -15100,60 +15088,55 @@ static fn chmod_tree_enter(address_any context, address_any node_address,
                                 !(opened.mode & 0022);
         }
 
-        for (;;)
+        positive have = 0;
+        positive at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_directory_next(directory, records, sizeof(records),
+                                            address_of have, address_of at,
+                                            address_of error)))
         {
-                bipolar got = system_read_directory(directory, records, sizeof(records));
-                bipolar at = 0;
+                string_address name = (string_address)entry->d_name;
+                p8 type = entry->d_type;
 
-                if (got <= 0)
-                        break;
+                if (file_is_dot(name))
+                        continue;
 
-                while (at < got)
+                file_facts facts;
+                chmod_outcome outcome;
+                positive name_length = string_length(name);
+                bool looked = (type == 0 || type == DT_DIR) &&
+                              file_look(directory, name, AT_SYMLINK_NOFOLLOW,
+                                        address_of facts);
+                bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                chmod_decide(directory, name, looked ? address_of facts : null,
+                             node->trusted, address_of outcome);
+
+                if (chmod_outcome_heard(address_of outcome) &&
+                    !chmod_tree_put(output, address_of outcome, node, name, name_length))
                 {
-                        struct linux_dirent64 address_to entry =
-                            (struct linux_dirent64 address_to)(records + at);
-                        string_address name = (string_address)entry->d_name;
-                        p8 type = entry->d_type;
+                        parallel_stop();
+                        return;
+                }
 
-                        at += entry->d_reclen;
-                        if (file_is_dot(name))
-                                continue;
+                if (!here)
+                        continue;
 
-                        file_facts facts;
-                        chmod_outcome outcome;
-                        positive name_length = string_length(name);
-                        bool looked = (type == 0 || type == DT_DIR) &&
-                                      file_look(directory, name, AT_SYMLINK_NOFOLLOW,
-                                                address_of facts);
-                        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+                chmod_tree_node address_to child = chmod_tree_node_new(node, name, name_length);
 
-                        chmod_decide(directory, name, looked ? address_of facts : null,
-                                     node->trusted, address_of outcome);
-
-                        if (chmod_outcome_heard(address_of outcome) &&
-                            !chmod_tree_put(output, address_of outcome, node, name, name_length))
-                        {
-                                parallel_stop();
-                                return;
-                        }
-
-                        if (!here)
-                                continue;
-
-                        chmod_tree_node address_to child = chmod_tree_node_new(node, name, name_length);
-
-                        if (!child)
-                        {
-                                parallel_stop();
-                                return;
-                        }
-                        child->expected = facts;
-                        if (!parallel_child(output, name, child))
-                        {
-                                memory_give(child);
-                                parallel_stop();
-                                return;
-                        }
+                if (!child)
+                {
+                        parallel_stop();
+                        return;
+                }
+                child->expected = facts;
+                if (!parallel_child(output, name, child))
+                {
+                        memory_give(child);
+                        parallel_stop();
+                        return;
                 }
         }
 }
@@ -15784,76 +15767,71 @@ static fn chown_tree_enter(address_any context, address_any node_address,
                                 !(opened.mode & 0022);
         }
 
-        for (;;)
+        positive have = 0;
+        positive at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_directory_next(directory, records, sizeof(records),
+                                            address_of have, address_of at,
+                                            address_of error)))
         {
-                bipolar got = system_read_directory(directory, records, sizeof(records));
-                bipolar at = 0;
+                string_address name = (string_address)entry->d_name;
+                p8 type = entry->d_type;
 
-                if (got <= 0)
-                        break;
+                if (file_is_dot(name))
+                        continue;
 
-                while (at < got)
+                file_facts facts;
+                positive name_length = string_length(name);
+                bool looked = (type == 0 || type == DT_DIR) &&
+                              file_look(directory, name, AT_SYMLINK_NOFOLLOW,
+                                        address_of facts);
+                bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                if (!here)
                 {
-                        struct linux_dirent64 address_to entry =
-                            (struct linux_dirent64 address_to)(records + at);
-                        string_address name = (string_address)entry->d_name;
-                        p8 type = entry->d_type;
+                        chown_outcome outcome;
 
-                        at += entry->d_reclen;
-                        if (file_is_dot(name))
-                                continue;
-
-                        file_facts facts;
-                        positive name_length = string_length(name);
-                        bool looked = (type == 0 || type == DT_DIR) &&
-                                      file_look(directory, name, AT_SYMLINK_NOFOLLOW,
-                                                address_of facts);
-                        bool here = looked && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
-
-                        if (!here)
+                        chown_decide(directory, name, looked ? address_of facts : null,
+                                     node->trusted, true, address_of outcome);
+                        if (chown_outcome_heard(address_of outcome) &&
+                            !chown_tree_put(output, address_of outcome,
+                                            (string_address)node->path, node->length,
+                                            name, name_length))
                         {
-                                chown_outcome outcome;
-
-                                chown_decide(directory, name, looked ? address_of facts : null,
-                                             node->trusted, true, address_of outcome);
-                                if (chown_outcome_heard(address_of outcome) &&
-                                    !chown_tree_put(output, address_of outcome,
-                                                    (string_address)node->path, node->length,
-                                                    name, name_length))
-                                {
-                                        parallel_stop();
-                                        return;
-                                }
-                                continue;
-                        }
-
-                        chown_tree_node address_to child = chown_tree_node_new(node, name, name_length);
-                        chown_tree_node address_to leaf = child ? chown_tree_node_new(node, name, name_length)
-                                                                : null;
-
-                        if (!child || !leaf)
-                        {
-                                memory_give(child);
-                                memory_give(leaf);
                                 parallel_stop();
                                 return;
                         }
-                        child->expected = facts;
-                        leaf->expected = facts;
-                        leaf->trusted = node->trusted;
-                        if (!parallel_child(output, name, child))
-                        {
-                                memory_give(child);
-                                memory_give(leaf);
-                                parallel_stop();
-                                return;
-                        }
-                        if (!parallel_leaf(output, chown_tree_leaf, leaf))
-                        {
-                                memory_give(leaf);
-                                parallel_stop();
-                                return;
-                        }
+                        continue;
+                }
+
+                chown_tree_node address_to child = chown_tree_node_new(node, name, name_length);
+                chown_tree_node address_to leaf = child ? chown_tree_node_new(node, name, name_length)
+                                                        : null;
+
+                if (!child || !leaf)
+                {
+                        memory_give(child);
+                        memory_give(leaf);
+                        parallel_stop();
+                        return;
+                }
+                child->expected = facts;
+                leaf->expected = facts;
+                leaf->trusted = node->trusted;
+                if (!parallel_child(output, name, child))
+                {
+                        memory_give(child);
+                        memory_give(leaf);
+                        parallel_stop();
+                        return;
+                }
+                if (!parallel_leaf(output, chown_tree_leaf, leaf))
+                {
+                        memory_give(leaf);
+                        parallel_stop();
+                        return;
                 }
         }
 }
@@ -25241,82 +25219,76 @@ static fn cp_tree_enter(address_any context, address_any node_address,
                 return;
         }
 
-        for (;;)
+        positive have = 0;
+        positive at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to record;
+
+        while ((record = file_directory_next(directory, records, sizeof(records),
+                                             address_of have, address_of at,
+                                             address_of error)))
         {
-                bipolar got = system_read_directory(directory, records, sizeof(records));
-                bipolar at = 0;
+                string_address name = (string_address)record->d_name;
+                positive name_length;
+                bool said = true;
 
-                if (got <= 0)
+                if (file_is_dot(name))
+                        continue;
+
+                name_length = string_length(name);
+
+                if (record->d_type == DT_REG)
                 {
-                        if (got < 0)
-                                node->read_error = (b32)got;
-                        break;
-                }
-
-                while (at < got)
-                {
-                        struct linux_dirent64 address_to record =
-                            (struct linux_dirent64 address_to)(records + at);
-                        string_address name = (string_address)record->d_name;
-                        positive name_length;
-                        bool said = true;
-
-                        at += record->d_reclen;
-                        if (file_is_dot(name))
-                                continue;
-
-                        name_length = string_length(name);
-
-                        if (record->d_type == DT_REG)
-                        {
-                                if (!cp_tree_file(directory, copy, name))
-                                {
-                                        node->deferred = true;
-                                        said = cp_tree_put(output, CP_TREE_SERIAL, 0, node,
-                                                           name, name_length);
-                                }
-                                else if (cp_loud)
-                                        said = cp_tree_put(output, CP_TREE_FILE, 0, node,
-                                                           name, name_length);
-                        }
-                        else if (record->d_type == DT_DIR &&
-                                 system_access_at(directory, name, 5) == 0)
-                        {
-                                bipolar made = file_copy_directory_fresh(copy, name);
-
-                                if (made < 0)
-                                        said = cp_tree_put(output, CP_TREE_DIRECTORY_FAILED, made,
-                                                           node, name, name_length);
-                                else
-                                {
-                                        cp_tree_node address_to child;
-
-                                        system_close(made);
-                                        child = cp_tree_node_new(node, name, name_length);
-                                        said = child != null &&
-                                               (!cp_loud ||
-                                                cp_tree_put(output, CP_TREE_DIRECTORY, 0, node,
-                                                            name, name_length)) &&
-                                               parallel_child(output, name, child);
-                                        if (!said)
-                                                memory_give(child);
-                                }
-                        }
-                        else
+                        if (!cp_tree_file(directory, copy, name))
                         {
                                 node->deferred = true;
-                                said = cp_tree_put(output, CP_TREE_SERIAL, 0, node, name,
-                                                   name_length);
+                                said = cp_tree_put(output, CP_TREE_SERIAL, 0, node,
+                                                   name, name_length);
                         }
+                        else if (cp_loud)
+                                said = cp_tree_put(output, CP_TREE_FILE, 0, node,
+                                                   name, name_length);
+                }
+                else if (record->d_type == DT_DIR &&
+                         system_access_at(directory, name, 5) == 0)
+                {
+                        bipolar made = file_copy_directory_fresh(copy, name);
 
-                        if (!said)
+                        if (made < 0)
+                                said = cp_tree_put(output, CP_TREE_DIRECTORY_FAILED, made,
+                                                   node, name, name_length);
+                        else
                         {
-                                system_close(copy);
-                                parallel_stop();
-                                return;
+                                cp_tree_node address_to child;
+
+                                system_close(made);
+                                child = cp_tree_node_new(node, name, name_length);
+                                said = child != null &&
+                                       (!cp_loud ||
+                                        cp_tree_put(output, CP_TREE_DIRECTORY, 0, node,
+                                                    name, name_length)) &&
+                                       parallel_child(output, name, child);
+                                if (!said)
+                                        memory_give(child);
                         }
                 }
+                else
+                {
+                        node->deferred = true;
+                        said = cp_tree_put(output, CP_TREE_SERIAL, 0, node, name,
+                                           name_length);
+                }
+
+                if (!said)
+                {
+                        system_close(copy);
+                        parallel_stop();
+                        return;
+                }
         }
+
+        if (error < 0)
+                node->read_error = (b32)error;
         system_close(copy);
 }
 
@@ -28875,137 +28847,131 @@ static fn rm_tree_enter(address_any context, address_any node_address,
                                 !(node->facts.mode & 0022);
         }
 
-        for (;;)
-        {
-                bipolar got = system_read_directory(directory, records, sizeof(records));
-                bipolar at = 0;
+        positive have = 0;
+        positive at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to record;
 
-                if (got <= 0)
+        while ((record = file_directory_next(directory, records, sizeof(records),
+                                             address_of have, address_of at,
+                                             address_of error)))
+        {
+                string_address name = (string_address)record->d_name;
+                positive name_length;
+                bool said = true;
+
+                if (file_is_dot(name))
+                        continue;
+
+                name_length = string_length(name);
+
+                //      A kind the listing would not give is unlinked
+                //      first, as a serial rm does: for a file that is
+                //      all of it.
+                if (record->d_type != DT_DIR)
                 {
-                        if (got < 0)
-                                node->read_error = (b32)got;
-                        break;
+                        bipolar gone = system_remove_at(directory, name, 0);
+                        file_facts entry;
+                        bipolar seen;
+
+                        if (gone == 0)
+                        {
+                                if (rm_loud)
+                                        said = rm_tree_put(output, RM_TREE_REMOVED, 0,
+                                                           (string_address)node->path,
+                                                           node->length, name, name_length);
+                                goto next;
+                        }
+
+                        seen = file_look_code(directory, name, AT_SYMLINK_NOFOLLOW,
+                                              address_of entry);
+                        if (!(record->d_type == 0 && seen >= 0 &&
+                              (entry.mode & MODE_FORMAT) == MODE_DIRECTORY))
+                        {
+                                // -f forgives only a name that is not
+                                // there, and a name that is not there
+                                // holds nothing up.
+                                if (rm_force && gone == -ERROR_NO_ENTRY)
+                                        goto next;
+                                said = rm_tree_put(output, RM_TREE_CANNOT_REMOVE,
+                                                   seen < 0 ? seen : gone,
+                                                   (string_address)node->path,
+                                                   node->length, name, name_length);
+                                atomic_exchange(address_of node->kept, 1);
+                                goto next;
+                        }
                 }
 
-                while (at < got)
+                //      A directory this caller cannot read is not
+                //      one the pool could open: it is removed here
+                //      if it is empty, as the reference rm removes
+                //      it, and reported if it is not.
+                if (system_access_at(directory, name, 5) < 0)
                 {
-                        struct linux_dirent64 address_to record =
-                            (struct linux_dirent64 address_to)(records + at);
-                        string_address name = (string_address)record->d_name;
-                        positive name_length;
-                        bool said = true;
+                        bipolar opened = system_open_at(directory, name,
+                                                        FILE_READ | O_DIRECTORY |
+                                                            O_NOFOLLOW | O_CLOEXEC);
 
-                        at += record->d_reclen;
-                        if (file_is_dot(name))
-                                continue;
-
-                        name_length = string_length(name);
-
-                        //      A kind the listing would not give is unlinked
-                        //      first, as a serial rm does: for a file that is
-                        //      all of it.
-                        if (record->d_type != DT_DIR)
+                        if (opened >= 0)
+                                system_close(opened);
+                        else
                         {
-                                bipolar gone = system_remove_at(directory, name, 0);
                                 file_facts entry;
-                                bipolar seen;
+                                bipolar gone;
+
+                                if (rm_force && opened == -ERROR_NO_ENTRY)
+                                        goto next;
+
+                                gone = file_look_code(directory, name,
+                                                      AT_SYMLINK_NOFOLLOW,
+                                                      address_of entry);
+                                if (gone >= 0 &&
+                                    (entry.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                                        gone = file_remove_same(directory, name,
+                                                                AT_REMOVEDIR,
+                                                                address_of entry);
+                                else if (gone >= 0)
+                                        gone = -ERROR_NOT_DIRECTORY;
 
                                 if (gone == 0)
                                 {
                                         if (rm_loud)
-                                                said = rm_tree_put(output, RM_TREE_REMOVED, 0,
+                                                said = rm_tree_put(output,
+                                                                   RM_TREE_REMOVED_DIRECTORY, 0,
                                                                    (string_address)node->path,
-                                                                   node->length, name, name_length);
+                                                                   node->length, name,
+                                                                   name_length);
                                         goto next;
                                 }
 
-                                seen = file_look_code(directory, name, AT_SYMLINK_NOFOLLOW,
-                                                      address_of entry);
-                                if (!(record->d_type == 0 && seen >= 0 &&
-                                      (entry.mode & MODE_FORMAT) == MODE_DIRECTORY))
-                                {
-                                        // -f forgives only a name that is not
-                                        // there, and a name that is not there
-                                        // holds nothing up.
-                                        if (rm_force && gone == -ERROR_NO_ENTRY)
-                                                goto next;
-                                        said = rm_tree_put(output, RM_TREE_CANNOT_REMOVE,
-                                                           seen < 0 ? seen : gone,
-                                                           (string_address)node->path,
-                                                           node->length, name, name_length);
-                                        atomic_exchange(address_of node->kept, 1);
-                                        goto next;
-                                }
-                        }
-
-                        //      A directory this caller cannot read is not
-                        //      one the pool could open: it is removed here
-                        //      if it is empty, as the reference rm removes
-                        //      it, and reported if it is not.
-                        if (system_access_at(directory, name, 5) < 0)
-                        {
-                                bipolar opened = system_open_at(directory, name,
-                                                                FILE_READ | O_DIRECTORY |
-                                                                    O_NOFOLLOW | O_CLOEXEC);
-
-                                if (opened >= 0)
-                                        system_close(opened);
-                                else
-                                {
-                                        file_facts entry;
-                                        bipolar gone;
-
-                                        if (rm_force && opened == -ERROR_NO_ENTRY)
-                                                goto next;
-
-                                        gone = file_look_code(directory, name,
-                                                              AT_SYMLINK_NOFOLLOW,
-                                                              address_of entry);
-                                        if (gone >= 0 &&
-                                            (entry.mode & MODE_FORMAT) == MODE_DIRECTORY)
-                                                gone = file_remove_same(directory, name,
-                                                                        AT_REMOVEDIR,
-                                                                        address_of entry);
-                                        else if (gone >= 0)
-                                                gone = -ERROR_NOT_DIRECTORY;
-
-                                        if (gone == 0)
-                                        {
-                                                if (rm_loud)
-                                                        said = rm_tree_put(output,
-                                                                           RM_TREE_REMOVED_DIRECTORY, 0,
-                                                                           (string_address)node->path,
-                                                                           node->length, name,
-                                                                           name_length);
-                                                goto next;
-                                        }
-
-                                        said = rm_tree_put(output, RM_TREE_CANNOT_REMOVE, opened,
-                                                           (string_address)node->path,
-                                                           node->length, name, name_length);
-                                        atomic_exchange(address_of node->kept, 1);
-                                        goto next;
-                                }
-                        }
-
-                        {
-                                rm_tree_node address_to child =
-                                    rm_tree_node_new(node, name, name_length);
-
-                                if (!child || !parallel_child(output, name, child))
-                                {
-                                        memory_give(child);
-                                        said = false;
-                                }
-                        }
-next:
-                        if (!said)
-                        {
-                                parallel_stop();
-                                return;
+                                said = rm_tree_put(output, RM_TREE_CANNOT_REMOVE, opened,
+                                                   (string_address)node->path,
+                                                   node->length, name, name_length);
+                                atomic_exchange(address_of node->kept, 1);
+                                goto next;
                         }
                 }
+
+                {
+                        rm_tree_node address_to child =
+                            rm_tree_node_new(node, name, name_length);
+
+                        if (!child || !parallel_child(output, name, child))
+                        {
+                                memory_give(child);
+                                said = false;
+                        }
+                }
+next:
+                if (!said)
+                {
+                        parallel_stop();
+                        return;
+                }
         }
+
+        if (error < 0)
+                node->read_error = (b32)error;
 }
 
 static fn rm_tree_leave(address_any context, address_any node_address,
