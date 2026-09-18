@@ -1268,6 +1268,15 @@ static fn parse_attach_word(b32 index, string_address text, positive length)
         parse_nodes[index].word_count++;
 }
 
+// The word the reader is standing on, put on a node and stepped past. Every
+// construct that names something -- for's variable, case's subject and each
+// of an item's patterns, a function, a coproc -- takes its word this way.
+static fn parse_take_word(b32 index)
+{
+        parse_attach_word(index, parse_look(0)->text, parse_look(0)->length);
+        parse_position++;
+}
+
 static fn parse_skip_newlines()
 {
         while (parse_look(0)->kind == PT_NEWLINE)
@@ -1286,6 +1295,21 @@ static fn parse_skip_separators()
 static COLD fn parse_fail()
 {
         parse_state = parse_look(0)->kind == PT_END ? PARSE_INCOMPLETE : PARSE_SYNTAX;
+}
+
+// A word the grammar requires: taken as above when one is there, and a
+// syntax error when it is not, which leaves the caller nothing to parse.
+static bool parse_want_word(b32 index)
+{
+        if (parse_look(0)->kind != PT_WORD)
+        {
+                parse_fail();
+                return false;
+        }
+
+        parse_take_word(index);
+
+        return true;
 }
 
 static bool parse_expect_word_length(string_address text, positive length)
@@ -1913,9 +1937,7 @@ static b32 parse_simple()
                 if (parse_look(0)->kind != PT_WORD)
                         break;
 
-                parse_attach_word(index, parse_look(0)->text,
-                                  parse_look(0)->length);
-                parse_position++;
+                parse_take_word(index);
         }
 
         if (parse_state)
@@ -2034,9 +2056,7 @@ static b32 parse_for(b32 kind)
         if (kind == NODE_FOR && parse_look(0)->kind == PT_ARITHMETIC)
         {
                 parse_nodes[index].kind = NODE_CFOR;
-                parse_attach_word(index, parse_look(0)->text,
-                                  parse_look(0)->length);
-                parse_position++;
+                parse_take_word(index);
 
                 if (parse_look(0)->kind == PT_OP &&
                     parse_look(0)->op == OP_SEMI)
@@ -2047,15 +2067,8 @@ static b32 parse_for(b32 kind)
                 return parse_do_body(index);
         }
 
-        if (parse_look(0)->kind != PT_WORD)
-        {
-                parse_fail();
+        if (!parse_want_word(index))
                 return 0;
-        }
-
-        parse_attach_word(index, parse_look(0)->text,
-                          parse_look(0)->length);
-        parse_position++;
 
         /* The linebreak production is allowed between the loop variable and
            `in` (or `do`). Without consuming it here, a perfectly ordinary
@@ -2080,11 +2093,7 @@ static b32 parse_for(b32 kind)
                         walk one item and then fail to find its own do.
                 */
                 while (parse_look(0)->kind == PT_WORD)
-                {
-                        parse_attach_word(index, parse_look(0)->text,
-                                          parse_look(0)->length);
-                        parse_position++;
-                }
+                        parse_take_word(index);
         }
 
         parse_skip_separators();
@@ -2103,15 +2112,9 @@ static b32 parse_case()
 
         parse_position++;
 
-        if (parse_look(0)->kind != PT_WORD)
-        {
-                parse_fail();
+        if (!parse_want_word(index))
                 return 0;
-        }
 
-        parse_attach_word(index, parse_look(0)->text,
-                          parse_look(0)->length);
-        parse_position++;
         parse_skip_newlines();
 
         if (!parse_expect_word("in"))
@@ -2141,15 +2144,8 @@ static b32 parse_case()
 
                 while (1)
                 {
-                        if (parse_look(0)->kind != PT_WORD)
-                        {
-                                parse_fail();
+                        if (!parse_want_word(item))
                                 return 0;
-                        }
-
-                        parse_attach_word(item, parse_look(0)->text,
-                                          parse_look(0)->length);
-                        parse_position++;
 
                         if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_PIPE)
                         {
@@ -2339,9 +2335,7 @@ static b32 parse_coproc()
         if (parse_look(0)->kind == PT_WORD && !parse_reserved(0) &&
             parse_at_compound(1))
         {
-                parse_attach_word(index, parse_look(0)->text,
-                                  parse_look(0)->length);
-                parse_position++;
+                parse_take_word(index);
         }
         else
                 parse_attach_word(index, (string_address) "COPROC", 6);
@@ -2373,11 +2367,7 @@ static b32 parse_command()
                 index = parse_node_new(parse_look(0)->kind == PT_ARITHMETIC
                                            ? NODE_ARITHMETIC : NODE_CONDITIONAL);
                 if (!parse_state)
-                {
-                        parse_attach_word(index, parse_look(0)->text,
-                                          parse_look(0)->length);
-                        parse_position++;
-                }
+                        parse_take_word(index);
                 goto command_done;
         }
 
