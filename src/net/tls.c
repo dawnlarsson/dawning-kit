@@ -559,20 +559,18 @@ static bipolar tls_asn1_enter(p8 address_to bytes, positive size, p8 tag,
         return TLS_OK;
 }
 
+/* Past one value of whatever tag it carries: entering it and then taking its
+   end for the next value's start is the whole of skipping it. */
 static bipolar tls_asn1_skip(p8 address_to bytes, positive size, positive address_to at)
 {
-        positive length = 0;
-        positive i = address_to at;
+        positive stop = 0;
 
-        if (i >= size)
+        if (address_to at >= size ||
+            tls_asn1_enter(bytes, size, bytes[address_to at], at,
+                           address_of stop))
                 return TLS_FAIL;
-        i++;
-        address_to at = i;
-        if (tls_asn1_length(bytes, size, at, address_of length))
-                return TLS_FAIL;
-        if (address_to at + length > size)
-                return TLS_FAIL;
-        address_to at += length;
+
+        address_to at = stop;
         return TLS_OK;
 }
 
@@ -1172,6 +1170,19 @@ static bipolar tls_parse_cert(p8 address_to der, positive length,
         if (tls_asn1_enter(der, alg_stop, 0x06, address_of param_at, address_of oid_stop))
                 return TLS_FAIL;
 
+        /* Whichever algorithm the OID turns out to name, the key itself is
+           the SubjectPublicKey BIT STRING filling the rest of the SPKI, and
+           its first content octet counts unused bits -- zero for every key
+           shape this verifier accepts. Reading it here rather than twice
+           below is the same three refusals in the same order. */
+        at = alg_stop;
+        if (tls_asn1_enter(der, spki_stop, 0x03, address_of at,
+                           address_of bit_stop) ||
+            bit_stop != spki_stop)
+                return TLS_FAIL;
+        if (at >= bit_stop || der[at++] != 0)
+                return TLS_FAIL;
+
         if (tls_oid_is(der + param_at, oid_stop - param_at, tls_oid_ec, 7))
         {
                 positive curve_stop = 0;
@@ -1189,13 +1200,6 @@ static bipolar tls_parse_cert(p8 address_to der, positive length,
                 else
                         return TLS_FAIL;
 
-                at = alg_stop;
-                if (tls_asn1_enter(der, spki_stop, 0x03, address_of at,
-                                   address_of bit_stop) ||
-                    bit_stop != spki_stop)
-                        return TLS_FAIL;
-                if (at >= bit_stop || der[at++] != 0)
-                        return TLS_FAIL;
                 if (at >= bit_stop || der[at++] != 0x04)
                         return TLS_FAIL;
                 coord = cert->curve == 1 ? 32 : 48;
@@ -1218,13 +1222,6 @@ static bipolar tls_parse_cert(p8 address_to der, positive length,
                         return TLS_FAIL;
 
                 cert->curve = 3;
-                at = alg_stop;
-                if (tls_asn1_enter(der, spki_stop, 0x03, address_of at,
-                                   address_of bit_stop) ||
-                    bit_stop != spki_stop)
-                        return TLS_FAIL;
-                if (at >= bit_stop || der[at++] != 0)
-                        return TLS_FAIL;
                 if (tls_asn1_enter(der, bit_stop, 0x30, address_of at,
                                    address_of rsa_stop) ||
                     rsa_stop != bit_stop)
