@@ -12391,6 +12391,12 @@ static b32 text_fold()
         // tabs, backspaces and carriage returns. Only -b makes each byte a
         // column; treating -c as its alias was observably wrong for controls.
         bool bytes = fold_counting == 'b';
+        // -c is one for each character where the default is its width on a
+        // terminal, and both are one for each byte only while a byte is a
+        // character. -b stays bytes at every locale, and stops short of a
+        // character rather than writing half of one, as GNU's does.
+        bool counting = fold_counting == 'c';
+        bool utf8 = text_locale_utf8();
 
         if ((taking.flags & FILE_FLAG('w')) &&
             (!text_unsigned_option(file_option_value(address_of taking, 'w'), false,
@@ -12422,6 +12428,7 @@ static b32 text_fold()
                                 while (at < text_line_length)
                                 {
                                         p8 character = text_line[at];
+                                        positive size = 1;
                                         positive after = column + 1;
 
                                         if (!bytes)
@@ -12434,11 +12441,33 @@ static b32 text_fold()
                                                         after = 0;
                                         }
 
+                                        if (utf8 && character >= 0x80)
+                                        {
+                                                p32 code;
+                                                positive got;
+
+                                                if (wc_utf8_decode(
+                                                        text_line + at,
+                                                        text_line_length - at,
+                                                        address_of code,
+                                                        address_of got) == WC_VALID)
+                                                {
+                                                        size = got;
+                                                        after = column +
+                                                                (bytes ? got
+                                                                 : counting
+                                                                     ? 1
+                                                                     : unicode_width(
+                                                                           code,
+                                                                           UNICODE_WIDTH_WCWIDTH));
+                                                }
+                                        }
+
                                         if (after > width && at > from)
                                                 break;
 
                                         column = after;
-                                        at++;
+                                        at += size;
 
                                         if (spaces && byte_is_blank(character))
                                                 gap = at;
@@ -12950,6 +12979,13 @@ static b32 text_cut()
         bool spans = by_character &&
                      !(text_list_single && (!complement || !separator)) &&
                      text_spans_build(complement);
+        /*
+                -c counts characters and -b counts bytes, and they are the
+                same count only while every byte is one character. Under a
+                UTF-8 locale a line where they differ is walked a character
+                at a time below; -b never is, at any locale.
+        */
+        bool characters = (flags & FILE_FLAG('c')) && text_locale_utf8();
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -12968,6 +13004,54 @@ static b32 text_cut()
 
                         if (by_character)
                         {
+                                /*
+                                        A line whose characters are not its
+                                        bytes asks the list about each
+                                        character and writes the bytes that
+                                        one holds. The three paths below are
+                                        this same answer where a character is
+                                        a byte, and they keep the line: the
+                                        walk that decides costs one pass of
+                                        eight ASCII bytes at a time, and says
+                                        nothing new about an ASCII line.
+                                */
+                                if (characters &&
+                                    memory_utf8_span(line, line_length,
+                                                     positive_max).y != line_length)
+                                {
+                                        bool wrote = false;
+                                        bool ran = false;
+                                        positive at = 0;
+                                        positive which = 1;
+
+                                        while (at < line_length)
+                                        {
+                                                positive size = memory_utf8_span(
+                                                    line + at, line_length - at, 1).x;
+                                                bool take = text_list_has(which) != complement;
+
+                                                if (take)
+                                                {
+                                                        if (separator && wrote &&
+                                                            (!ran ||
+                                                             (!complement &&
+                                                              text_list_begins[which])))
+                                                                text_put(separator,
+                                                                         separator_length);
+
+                                                        text_put(line + at, size);
+                                                        wrote = true;
+                                                }
+
+                                                ran = take;
+                                                at += size;
+                                                which++;
+                                        }
+
+                                        text_put_character(text_delimiter);
+                                        continue;
+                                }
+
                                 /* One range is one or two contiguous spans,
                                    not a membership question for every byte.
                                    Keep the bitmap loop for lists and for a
