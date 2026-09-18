@@ -4031,6 +4031,22 @@ lane_text()
         python3 test/differential.py "$farm" --domain text --utility wc \
                 --locale C.UTF-8 --no-pinned --budget singles \
                 --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}"
+        text_lane_status=$?
+
+        #       cut -c and fold -w are widths in characters where LC_CTYPE
+        #       says a character is more than a byte, and the walk above is
+        #       the C locale, where a byte is a character and every answer
+        #       agrees. The multibyte inputs are already in both sets; only
+        #       the locale to read them under was missing, which is why a
+        #       green suite said nothing about either one. Pins and budget
+        #       as wc's, and for the same reasons.
+        python3 test/differential.py "$farm" --domain text \
+                --utility cut --utility fold \
+                --locale C.UTF-8 --no-pinned --budget singles \
+                --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}" ||
+                [ "$text_lane_status" != 0 ] || text_lane_status=1
+
+        return "$text_lane_status"
 }
 lane_files()
 {
