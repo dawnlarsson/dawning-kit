@@ -278,15 +278,36 @@ static address_any shell_map(positive size)
         return got;
 }
 
-//      Room for want entries of unit bytes each, moving the table if it must.
-static bool shell_room(address_any address_to held, positive address_to have,
-                       positive want, positive unit)
+/*
+        The table is almost always already big enough.
+
+        Every push into a growing store asks this, twice for a byte pair, so
+        it is the most-executed predicate in the shell. Splitting the growth
+        off keeps the answer in the caller as one compare and a fall-through:
+        the arguments no longer have to be set up for a call that is not
+        going to happen, and memory_reserve's register pressure stops
+        reaching into the loop that asked.
+*/
+static __attribute__((noinline)) COLD bool
+shell_room_grow(address_any address_to held, positive address_to have,
+                positive want, positive unit)
 {
-        if (want <= *have || memory_reserve(held, have, *have, want, unit, 64))
+        if (memory_reserve(held, have, *have, want, unit, 64))
                 return true;
 
         shell_memory_failed = true;
         return false;
+}
+
+//      Room for want entries of unit bytes each, moving the table if it must.
+static inline INLINE bool shell_room(address_any address_to held,
+                                     positive address_to have,
+                                     positive want, positive unit)
+{
+        if (likely(want <= *have))
+                return true;
+
+        return shell_room_grow(held, have, want, unit);
 }
 
 static inline INLINE fn shell_scratch_bytes(positive want)
