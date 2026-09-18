@@ -24,37 +24,6 @@ static p32 cksum_crc_length(p32 crc, p64 length)
         return hash_crc32_msb(crc, counted, places);
 }
 
-static bool cksum_crc_path(string_address path, p32 address_to result,
-                           p64 address_to size)
-{
-        bool standard;
-        bipolar input = checksum_open(path, address_of standard);
-
-        if (input < 0)
-                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(input));
-
-        p32 crc = 0;
-        p64 bytes = 0;
-        bipolar got;
-
-        while ((got = system_read_retry((positive)input, file_transfer,
-                                        FILE_TRANSFER_SIZE)) > 0)
-        {
-                crc = hash_crc32_msb(crc, file_transfer, (positive)got);
-                bytes += (positive)got;
-        }
-
-        if (!standard)
-                system_close((positive)input);
-
-        if (got < 0)
-                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(got));
-
-        address_to result = ~cksum_crc_length(crc, bytes);
-        address_to size = bytes;
-        return true;
-}
-
 static fn cksum_crc_put(p32 crc, p64 bytes, string_address name, bool named)
 {
         positive_to_string(text_put, crc);
@@ -71,12 +40,17 @@ static fn cksum_crc_put(p32 crc, p64 bytes, string_address name, bool named)
 }
 
 /*
-        -a crc32b, bsd and sysv: the other three sums that are not digests.
+        Every serial sum cksum can be asked for, which is every sum that is
+        not a digest: the POSIX CRC as 'p', and -a crc32b, bsd and sysv as
+        'c', 'b' and 's'.  One reader serves all four because they differ
+        only in the word they carry and what they do to it at the ends --
+        the kind is read once per FILE_TRANSFER_SIZE block, never per byte.
 
-        crc32b is the reflected IEEE CRC gzip uses, hash_crc32, without the
-        length the POSIX CRC folds in. bsd is sum -r's rotating 16-bit sum
-        and sysv is sum -s's byte total folded to 16 bits, over 1024- and
-        512-byte blocks; text.c's sum computes both the same way.
+        'p' is the POSIX CRC, hash_crc32_msb with the length folded in after
+        the bytes.  crc32b is the reflected IEEE CRC gzip uses, hash_crc32,
+        without that length. bsd is sum -r's rotating 16-bit sum and sysv is
+        sum -s's byte total folded to 16 bits, over 1024- and 512-byte
+        blocks; text.c's sum computes both the same way.
 */
 static bool cksum_other_path(p8 kind, string_address path, bool debug,
                              p32 address_to result, p64 address_to size)
@@ -105,7 +79,9 @@ static bool cksum_other_path(p8 kind, string_address path, bool debug,
         while ((got = system_read_retry((positive)input, file_transfer,
                                         FILE_TRANSFER_SIZE)) > 0)
         {
-                if (kind == 'c')
+                if (kind == 'p')
+                        sum = hash_crc32_msb(sum, file_transfer, (positive)got);
+                else if (kind == 'c')
                         sum = hash_crc32(sum, file_transfer, (positive)got);
                 else if (kind == 'b')
                         sum = memory_checksum_bsd16(file_transfer, (positive)got, sum);
@@ -120,7 +96,9 @@ static bool cksum_other_path(p8 kind, string_address path, bool debug,
         if (got < 0)
                 return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(got));
 
-        if (kind == 'c')
+        if (kind == 'p')
+                sum = ~cksum_crc_length(sum, bytes);
+        else if (kind == 'c')
                 sum = ~sum;
         else if (kind == 's')
         {
@@ -142,7 +120,7 @@ static fn cksum_other_put(p8 kind, p32 sum, p64 bytes, string_address name,
         {
                 p8 wire[4];
 
-                if (kind == 'c')
+                if (kind == 'c' || kind == 'p')
                 {
                         network_store_32(wire, sum);
                         text_put(wire, 4);
@@ -155,7 +133,7 @@ static fn cksum_other_put(p8 kind, p32 sum, p64 bytes, string_address name,
                 return;
         }
 
-        if (kind == 'c')
+        if (kind == 'c' || kind == 'p')
         {
                 cksum_crc_put(sum, bytes, name, named);
                 return;
@@ -195,17 +173,21 @@ static b32 cksum_others(p8 kind, bool debug)
         for (b32 i = 0; i < inputs; i++)
         {
                 string_address name = text_file_name(i);
+                string_address said = name ? name : (string_address) "-";
                 p32 sum;
                 p64 bytes;
 
-                if (!cksum_other_path(kind, name ? name : (string_address) "-",
-                                      debug, address_of sum, address_of bytes))
+                /* A standard input the POSIX CRC cannot read has always been
+                   left unnamed in the diagnostic, where the other sums name
+                   it by the dash the operand would have carried. */
+                if (!cksum_other_path(kind, kind == 'p' ? name : said, debug,
+                                      address_of sum, address_of bytes))
                 {
                         answer = 1;
                         continue;
                 }
 
-                cksum_other_put(kind, sum, bytes, name ? name : (string_address) "-", named);
+                cksum_other_put(kind, sum, bytes, said, named);
         }
 
         return text_done(answer);
@@ -418,33 +400,5 @@ static b32 cksum_main()
                               machinery);
         }
 
-        bool named = text_files_count != 0;
-        b32 inputs = text_input_count();
-        b32 answer = 0;
-
-        for (b32 i = 0; i < inputs; i++)
-        {
-                string_address name = text_file_name(i);
-                p32 crc;
-                p64 bytes;
-
-                if (!cksum_crc_path(name, address_of crc, address_of bytes))
-                {
-                        answer = 1;
-                        continue;
-                }
-
-                // --raw is the CRC's four bytes, most significant first.
-                if (raw)
-                {
-                        p8 wire[4];
-
-                        network_store_32(wire, crc);
-                        text_put(wire, 4);
-                }
-                else
-                        cksum_crc_put(crc, bytes, name, named);
-        }
-
-        return text_done(answer);
+        return cksum_others('p', debug);
 }
