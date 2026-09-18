@@ -13694,6 +13694,13 @@ FIXTURES["text_wide"] = {
     "utf8_words.txt": ("caf\u00e9 na\u00efve \u65e5\u672c\u8a9e\n"
                        "a\u00a0b c\u2003d e\u3000f g\u2007h\n"
                        "\U0001f600 emoji \u0301\u200b zero\tTab\n").encode(),
+    #       Short lines whose character count and byte count differ by a
+    #       known amount, for the readers that ask how many of either a
+    #       pattern stands for: hello with a two-byte e beside its plain
+    #       spelling, a three-byte and a four-byte character, and words of
+    #       one byte each to compare them against.
+    "utf8_dot.txt": ("h\u00e9llo\nhello\n\u65e5\u672c\u8a9e\nabc\n"
+                     "\U0001f600\nab\nca\u00e9\nxyz\n").encode(),
 }
 
 
@@ -13999,6 +14006,19 @@ _TEXT_GREP_STDIN = (
 )
 
 _TEXT_GREP_EXTRA = (
+    #       A dot stands for one character where LC_CTYPE says a character
+    #       is more than a byte, and so does a bracket naming what it will
+    #       not match. text_grep_valid only finds a pattern behind -e, -f or
+    #       in its own operand list, so each of these names it with -e; each
+    #       carries the set its file is in so no other row of grep moves.
+    *({"fixture": "text_wide", "argv": argv} for argv in (
+        ("-c", "-e", "^h.llo$", "utf8_dot.txt"), ("-c", "-e", "^h..llo$", "utf8_dot.txt"),
+        ("-cE", "-e", "^.{5}$", "utf8_dot.txt"), ("-cE", "-e", "^.{6}$", "utf8_dot.txt"),
+        ("-cE", "-e", "^.{2,4}$", "utf8_dot.txt"), ("-oE", "-e", ".", "utf8_dot.txt"),
+        ("-cE", "-e", "^h[^x]llo$", "utf8_dot.txt"), ("-oE", "-e", "[^l]", "utf8_dot.txt"),
+        ("-cE", "-e", "^.*llo$", "utf8_dot.txt"), ("-cE", "-e", "h.+o", "utf8_dot.txt"),
+        ("-c", "-e", "^..$", "utf8_dot.txt"), ("-oE", "-e", "..", "utf8_dot.txt"),
+        ("-nE", "-e", ".", "utf8_words.txt"), ("-cE", "-e", "^.{3}$", "utf8_words.txt"))),
     ("alpha",), ("alpha", "a.txt"), ("-c", "alpha", "a.txt", "b.txt"), ("-in", "ALPHA"),
     ("--", "--nosuchflag"), ("-N", "a"), ("--nosuchflag", "a"), ("-Q", "a"),
     ("-e", "alpha", "-e", "beta"), ("-e", "\\(a\\)\\1", "-e", "\\(b\\)\\1", "regex"),
@@ -14138,6 +14158,16 @@ def text_sed_valid(argv):
 
 
 _TEXT_SED_EXTRA = (
+    #       The same question of sed's own reader, on the same engine. A
+    #       bare script extra is dropped by text_sed_valid, so each of these
+    #       is spelled with -e, and each carries its own set.
+    *({"fixture": "text_wide", "argv": argv} for argv in (
+        ("-n", "-e", "/^h.llo$/p", "utf8_dot.txt"), ("-n", "-e", "/^h..llo$/p", "utf8_dot.txt"),
+        ("-n", "-E", "-e", "/^.{5}$/p", "utf8_dot.txt"),
+        ("-n", "-E", "-e", "/^.{6}$/p", "utf8_dot.txt"),
+        ("-n", "-e", "/^h[^x]llo$/p", "utf8_dot.txt"), ("-e", "s/./X/g", "utf8_dot.txt"),
+        ("-e", "s/[^l]/X/g", "utf8_dot.txt"),
+        ("-n", "-E", "-e", "/^.{3}$/p", "utf8_words.txt"))),
     ("s/a/A/", "a.txt"), ("-n", "$p", "a.txt", "b.txt"), ("p",), ("-s", "-n", "$p", "a.txt", "b.txt"),
     ("-s", "-n", "=", "a.txt", "b.txt"), ("-s", "-n", "N;$p", "a.txt", "b.txt"),
     ("-s", "-n", "n;$p", "a.txt", "b.txt"), ("-n", "N;$p", "a.txt", "b.txt"),
@@ -14592,17 +14622,19 @@ TEXT_UTILITIES = (
                       ("nonl",), ("empty",), ("wide",), ("tabs",), ("fields", "missing", "a.txt")),
             stdin=("fields", "text_cut", "tabs", "spaces", "empty", "nonl", "nul_lines", "high",
                    "edge_65537", "text", "words", "text_random_lines", "edge_65535", "edge_65536", "text_utf8"),
-            fixture="text_wide", valid=text_cut_valid,
+            fixture="text", valid=text_cut_valid,
             #       -c is characters and -b is bytes, and the generator pairs
             #       an option with the first input alone, which is ASCII. The
-            #       rows naming utf8.txt are the ones where the two counts
-            #       differ; in C they are the same count and agree anyway.
-            extra=(("-c", "1-3", "utf8.txt"), ("-c", "1-5", "utf8.txt"), ("-c", "2-4", "utf8.txt"),
-                   ("-c", "1,3,5", "utf8.txt"), ("-c", "3-", "utf8.txt"), ("-c", "-3", "utf8.txt"),
-                   ("-b", "1-3", "utf8.txt"), ("-b", "1-5", "utf8.txt"),
-                   ("--complement", "-c", "1-3", "utf8.txt"),
-                   ("-c", "1,3", "--output-delimiter=X", "utf8.txt"),
-                   ("-c", "1-5", "-n", "utf8.txt"), ("-c", "1-40", "utf8_edge.txt"),
+            #       rows naming utf8.txt carry the set those files are in, so
+            #       the rest of cut keeps the identities its pins were taken
+            #       against; in C the two counts agree and so do these.
+            extra=(*({"fixture": "text_wide", "argv": argv} for argv in (
+                       ("-c", "1-3", "utf8.txt"), ("-c", "1-5", "utf8.txt"), ("-c", "2-4", "utf8.txt"),
+                       ("-c", "1,3,5", "utf8.txt"), ("-c", "3-", "utf8.txt"), ("-c", "-3", "utf8.txt"),
+                       ("-b", "1-3", "utf8.txt"), ("-b", "1-5", "utf8.txt"),
+                       ("--complement", "-c", "1-3", "utf8.txt"),
+                       ("-c", "1,3", "--output-delimiter=X", "utf8.txt"),
+                       ("-c", "1-5", "-n", "utf8.txt"), ("-c", "1-40", "utf8_edge.txt"))),
                    ("-b", "2", "-c", "1-3"), ("-c", "1", "-f", "1"), ("-f", "1", "-c", "1"), ("-d", ",", "-c", "1"),
                    ("-s", "-c", "1"), ("-w", "-c", "1"), ("-w", "-d", ":", "-f", "1"), ("-Z", "-c", "1"),
                    ("--nosuchflag", "-c", "1"), ("-c",), ("-f", "1", "-f", "3", "-d", ":"),
@@ -14651,21 +14683,24 @@ TEXT_UTILITIES = (
                       ("empty",), ("tabs",), ("wide",), ("para",), ("a.txt", "missing", "b.txt")),
             stdin=("text", "tabs", "wide_words", "long", "nonl", "empty", "controls", "high", "edge_65537",
                    "text_fmt", "crlf", "text_random_lines", "spaces", "nul_lines", "edge_65535", "edge_65536", "text_utf8"),
-            fixture="text_wide",
+            fixture="text",
             #       A width is columns, -c characters and -b bytes, and the
-            #       three are one count only while a byte is a character.
+            #       three are one count only while a byte is a character. The
+            #       rows below carry the set their files are in rather than
+            #       moving every other row of fold into it.
             extra=(("--nosuchflag",), ("-Q",), ("-w", "20", "-w", "60"), ("-c", "-w", "3", "tabs"),
-                   ("-w", "2", "utf8.txt"), ("-w", "3", "utf8.txt"), ("-w", "4", "utf8.txt"),
-                   ("-w", "5", "utf8.txt"), ("-w", "8", "utf8.txt"),
-                   ("-b", "-w", "3", "utf8.txt"), ("-b", "-w", "5", "utf8.txt"),
-                   ("-c", "-w", "3", "utf8.txt"), ("-c", "-w", "5", "utf8.txt"),
-                   #       -s asks where the last blank was, and over a run of
-                   #       bytes that are no character at all GNU's answer
-                   #       comes from mbrtowc's shift state rather than from
-                   #       the bytes; utf8_words holds the blanks a locale
-                   #       adds and no such run.
-                   ("-s", "-w", "6", "utf8_words.txt"), ("-s", "-w", "4", "utf8_words.txt"),
-                   ("-w", "20", "utf8_edge.txt"))),
+                   *({"fixture": "text_wide", "argv": argv} for argv in (
+                       ("-w", "2", "utf8.txt"), ("-w", "3", "utf8.txt"), ("-w", "4", "utf8.txt"),
+                       ("-w", "5", "utf8.txt"), ("-w", "8", "utf8.txt"),
+                       ("-b", "-w", "3", "utf8.txt"), ("-b", "-w", "5", "utf8.txt"),
+                       ("-c", "-w", "3", "utf8.txt"), ("-c", "-w", "5", "utf8.txt"),
+                       #       -s asks where the last blank was, and over a
+                       #       run of bytes that are no character at all
+                       #       GNU's answer comes from mbrtowc's shift state
+                       #       rather than from the bytes; utf8_words holds
+                       #       the blanks a locale adds and no such run.
+                       ("-s", "-w", "6", "utf8_words.txt"), ("-s", "-w", "4", "utf8_words.txt"),
+                       ("-w", "20", "utf8_edge.txt"))))),
     Utility("grep", options=_TEXT_GREP_OPTIONS, operands=_TEXT_GREP_OPERANDS, stdin=_TEXT_GREP_STDIN,
             fixture="text", valid=text_grep_valid, walks=text_grep_walks,
             extra=_TEXT_GREP_EXTRA + _TEXT_GREP_BINARY_EXTRA,

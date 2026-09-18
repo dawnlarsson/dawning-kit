@@ -4046,6 +4046,22 @@ lane_text()
                 --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}" ||
                 [ "$text_lane_status" != 0 ] || text_lane_status=1
 
+        #       grep and sed ask the same of a pattern: a dot stands for one
+        #       character, and so does a bracket naming what it will not
+        #       match. One engine answers for both, and for awk.
+        #
+        #       Their pins are kept here where cut's and fold's are dropped.
+        #       A pinned row of theirs is a difference that has nothing to
+        #       do with the locale -- grep -P, a backreference diagnostic,
+        #       sed's e command -- and dropping the ledger would read every
+        #       one of them as a failure of this pass rather than of the
+        #       thing it is looking at.
+        python3 test/differential.py "$farm" --domain text \
+                --utility grep --utility sed \
+                --locale C.UTF-8 --budget singles \
+                --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}" ||
+                [ "$text_lane_status" != 0 ] || text_lane_status=1
+
         return "$text_lane_status"
 }
 lane_files()
