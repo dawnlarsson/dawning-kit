@@ -106,6 +106,28 @@ static string_address shell_option_spelled(string_address room, p8 letter)
 static COLD fn shell_diagnostic_where();
 bool word_is(string_address word, string_address text);
 
+/*
+        A complaint that begins where the shell is.
+
+        Every diagnostic a builtin writes is the same three things in the
+        same order: the line a script is on, the words, and -- for the ones
+        that refuse -- the status the builtin then answers with. Written out
+        at each site that was two statements with a blank line between them,
+        and the `where` was the piece each new complaint had to remember; the
+        ones that forgot it named no line at all in a sourced file.
+
+        shell_told keeps whatever status the caller was going to set,
+        shell_reported hands the status back, and shell_refuse is the one
+        that also answers with it.
+*/
+#define shell_told(...) \
+        (shell_diagnostic_where(), string_format(log_error, __VA_ARGS__))
+#define shell_reported(status, ...) \
+        (shell_diagnostic_where(), \
+         string_report(log_error, (status), __VA_ARGS__))
+#define shell_refuse(status, ...) \
+        shell_answer(shell_reported((status), __VA_ARGS__))
+
 static COLD bool shell_option_bad(string_address name, string_address said)
 {
         //      The reference's own option reader names one byte behind the
@@ -195,11 +217,9 @@ static bool test_said;
 static COLD fn shell_test_number_refused(string_address word)
 {
         test_said = true;
-        shell_diagnostic_where();
-        string_format(log_error,
-                      shell_bash_compat ? "%s: %s: integer expected\n"
-                                        : "%s: Illegal number: %s\n",
-                      shell_argv[0], word);
+        shell_told(shell_bash_compat ? "%s: %s: integer expected\n"
+                                     : "%s: Illegal number: %s\n",
+                   shell_argv[0], word);
 }
 
 /*
@@ -235,13 +255,11 @@ static COLD fn shell_exec_refused(string_address name, bipolar answer)
 //      invalid number; dash says it expected a numeric value.
 static COLD b32 shell_printf_number_refused(string_address word)
 {
-        shell_diagnostic_where();
-
-        return string_report(log_error, 1,
-                             shell_bash_compat
-                                 ? "printf: %s: invalid number\n"
-                                 : "printf: %s: expected numeric value\n",
-                             word);
+        return shell_reported(1,
+                   shell_bash_compat
+                       ? "printf: %s: invalid number\n"
+                       : "printf: %s: expected numeric value\n",
+                   word);
 }
 
 //      A name read could not write to. Readonly is one reason and no room
@@ -250,8 +268,7 @@ static COLD bool shell_read_refused(string_address name)
 {
         if (!env_readonly(name))
         {
-                shell_diagnostic_where();
-                return string_report(log_error, false, "read: no room for %s\n", name);
+                return shell_reported(false, "read: no room for %s\n", name);
         }
 
         shell_readonly_refused(null, (string_address) "read", name,
@@ -265,8 +282,7 @@ static COLD bool shell_read_refused(string_address name)
 static COLD fn shell_unset_readonly_refused(string_address name,
                                             positive length)
 {
-        shell_diagnostic_where();
-        string_format(log_error, "unset: ");
+        shell_told("unset: ");
         log_error(name, length);
         log_error(shell_bash_compat
                       ? ": cannot unset: readonly variable\n"
@@ -4991,9 +5007,7 @@ COLD fn shell_cd(writer write, string_address input)
         //      follows from it.
         if (shell_restricted)
         {
-                shell_diagnostic_where();
-                return shell_answer(
-                    string_report(log_error, 1, "cd: restricted\n"));
+                return shell_refuse(1, "cd: restricted\n");
         }
 
         shell_option_walk walk = {1};
@@ -5042,10 +5056,7 @@ COLD fn shell_cd(writer write, string_address input)
         //      dash reads the first and pays no attention to what follows it.
         if (index < shell_argc && shell_bash_compat)
         {
-                shell_diagnostic_where();
-
-                return shell_answer(string_report(log_error, 1,
-                    "cd: too many arguments\n"));
+                return shell_refuse(1, "cd: too many arguments\n");
         }
 
         if (!name)
@@ -5058,9 +5069,7 @@ COLD fn shell_cd(writer write, string_address input)
                 {
                         if (shell_bash_compat)
                         {
-                                shell_diagnostic_where();
-                                return shell_answer(string_report(
-                                    log_error, 1, "cd: HOME not set\n"));
+                                return shell_refuse(1, "cd: HOME not set\n");
                         }
 
                         name = ".";
@@ -5078,9 +5087,7 @@ COLD fn shell_cd(writer write, string_address input)
                 {
                         if (shell_bash_compat)
                         {
-                                shell_diagnostic_where();
-                                return shell_answer(string_report(
-                                    log_error, 1, "cd: OLDPWD not set\n"));
+                                return shell_refuse(1, "cd: OLDPWD not set\n");
                         }
 
                         name = shell_directory;
@@ -5250,8 +5257,7 @@ static COLD b32 shell_dirstack_number_refused(string_address command,
                                               string_address word,
                                               string_address usage)
 {
-        shell_diagnostic_where();
-        string_report(log_error, 2, "%s: %s: invalid number\n", command, word);
+        shell_reported(2, "%s: %s: invalid number\n", command, word);
 
         return string_report(log_error, 2, "%s: usage: %s\n", command, usage);
 }
@@ -5517,10 +5523,7 @@ COLD fn shell_pushd(writer write, string_address input)
                 //      not read.
                 if (named)
                 {
-                        shell_diagnostic_where();
-
-                        return shell_answer(string_report(
-                            log_error, 1, "pushd: too many arguments\n"));
+                        return shell_refuse(1, "pushd: too many arguments\n");
                 }
 
                 if (!shell_dirstack_spec(word) && !word_is(word, "-") &&
@@ -5565,10 +5568,8 @@ COLD fn shell_pushd(writer write, string_address input)
 
                 if (!shell_dirstack_move(wanted))
                 {
-                        shell_diagnostic_where();
-
-                        return shell_answer(string_report(log_error, 1,
-                            "pushd: %s: No such file or directory\n", named));
+                        return shell_refuse(1,
+                            "pushd: %s: No such file or directory\n", named);
                 }
 
                 if (!shell_dirstack_write(rotated, count))
@@ -5642,10 +5643,8 @@ COLD fn shell_pushd(writer write, string_address input)
         //      rotation brought up is written under it rather than moved to.
         if (!stack_only && !shell_dirstack_move(wanted))
         {
-                shell_diagnostic_where();
-
-                return shell_answer(string_report(log_error, 1,
-                    "pushd: %s: No such file or directory\n", wanted));
+                return shell_refuse(1,
+                    "pushd: %s: No such file or directory\n", wanted);
         }
 
         //      A rotation asked to leave the shell where it is says nothing:
@@ -5703,10 +5702,7 @@ COLD fn shell_popd(writer write, string_address input)
 
         if (count < 2)
         {
-                shell_diagnostic_where();
-
-                return shell_answer(string_report(log_error, 1,
-                    "popd: directory stack empty\n"));
+                return shell_refuse(1, "popd: directory stack empty\n");
         }
 
         if (named && !shell_dirstack_index(named, count, address_of index))
@@ -6000,9 +5996,7 @@ COLD fn shell_exec(writer write, string_address input)
         //      with whatever was named.
         if (shell_restricted)
         {
-                shell_diagnostic_where();
-                return shell_answer(
-                    string_report(log_error, 1, "exec: restricted\n"));
+                return shell_refuse(1, "exec: restricted\n");
         }
 
         p8 address_to found = null;
@@ -6296,12 +6290,10 @@ COLD fn shell_exit(writer write, string_address input)
                 if (!good || (!shell_bash_compat &&
                               (exit_code < 0 || exit_code > 0x7fffffff)))
                 {
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                                      shell_bash_compat
-                                          ? "%s: %s: numeric argument required\n"
-                                          : "%s: Illegal number: %s\n",
-                                      shell_argv[0], shell_argv[first]);
+                        shell_told(shell_bash_compat
+                                       ? "%s: %s: numeric argument required\n"
+                                       : "%s: Illegal number: %s\n",
+                                   shell_argv[0], shell_argv[first]);
                         exec_special_error_note();
                         if (shell_bash_compat)
                         {
@@ -6313,9 +6305,7 @@ COLD fn shell_exit(writer write, string_address input)
 
                 if (shell_bash_compat && shell_argc > first + 1)
                 {
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                                      "%s: too many arguments\n", shell_argv[0]);
+                        shell_told("%s: too many arguments\n", shell_argv[0]);
                         expand_fatal_status(1);
                         return;
                 }
@@ -7263,10 +7253,8 @@ static COLD fn shell_optlist_apply(string_address list, bool shopts)
                                         shell_option_named(name, true);
                                 else
                                 {
-                                        shell_diagnostic_where();
-                                        string_format(log_error,
-                                                      "%s: invalid option name\n",
-                                                      name);
+                                        shell_told("%s: invalid option name\n",
+                                            name);
                                 }
                         }
                 }
@@ -7458,12 +7446,11 @@ COLD fn shell_shopt(writer write, string_address input)
                         //      answers zero for it when it was told to set
                         //      or clear one. Only the query form carries
                         //      the failure out.
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                                      set_options
-                                          ? "shopt: %s: invalid option name\n"
-                                          : "shopt: %s: invalid shell option name\n",
-                                      name);
+                        shell_told(set_options
+                                       ? "shopt: %s: invalid option name\n"
+                                       : "shopt: %s: invalid shell option "
+                                         "name\n",
+                                   name);
 
                         if (!(set_options && (set || unset)))
                                 bad = true;
@@ -7951,15 +7938,14 @@ fn shell_shift(writer write, string_address input)
                 {
                         if (shell_bash_compat)
                         {
-                                shell_diagnostic_where();
-                                return shell_answer(string_report(log_error, good ? 1 : 2, "shift: %s: %s\n",
-                                              shell_argv[first],
-                                              good ? "shift count out of range"
-                                                   : "numeric argument required"));
+                                return shell_refuse(
+                                    good ? 1 : 2, "shift: %s: %s\n",
+                                    shell_argv[first],
+                                    good ? "shift count out of range"
+                                         : "numeric argument required");
                         }
-                        shell_diagnostic_where();
-                        string_format(log_error, "shift: Illegal number: %s\n",
-                                      shell_argv[first]);
+                        shell_told("shift: Illegal number: %s\n",
+                            shell_argv[first]);
                         exec_special_error_note();
                         return shell_answer(2);
                 }
@@ -7973,12 +7959,11 @@ fn shell_shift(writer write, string_address input)
                 {
                         if (shell_shopt_on(SHIFT_VERBOSE))
                         {
-                                shell_diagnostic_where();
-                                string_format(log_error,
-                                              "shift: %s: shift count out of range\n",
-                                              shell_argc > first
-                                                  ? shell_argv[first]
-                                                  : (string_address)"1");
+                                shell_told(
+                                    "shift: %s: shift count out of range\n",
+                                    shell_argc > first
+                                        ? shell_argv[first]
+                                        : (string_address)"1");
                         }
                         return shell_answer(1);
                 }
@@ -10684,11 +10669,8 @@ HOT fn shell_test(writer write, string_address input)
                         if (test_said)
                                 return shell_answer(2);
 
-                        shell_diagnostic_where();
-
-                        return shell_answer(string_report(
-                            log_error, 2, "%s: %s: unexpected operator\n",
-                            shell_argv[0], shell_argv[test_at]));
+                        return shell_refuse(2, "%s: %s: unexpected operator\n",
+                            shell_argv[0], shell_argv[test_at]);
                 }
         }
 
@@ -10699,15 +10681,12 @@ HOT fn shell_test(writer write, string_address input)
                 if (test_said)
                         return shell_answer(2);
 
-                shell_diagnostic_where();
-
-                return shell_answer(string_report(
-                    log_error, 2,
-                    test_bad ? "%s: %s: unexpected operator\n"
-                             : "%s: too many arguments\n",
+                return shell_refuse(
+                    2, test_bad ? "%s: %s: unexpected operator\n"
+                                : "%s: too many arguments\n",
                     shell_argv[0],
                     test_at < test_stop ? shell_argv[test_at]
-                                        : shell_argv[shell_argc - 1]));
+                                        : shell_argv[shell_argc - 1]);
         }
 
         shell_answer(value ? 0 : 1);
@@ -11103,9 +11082,7 @@ static positive printf_integer(string_address word, bool signed_value)
                         shell_printf_number_refused(word);
                 else
                 {
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                            "printf: %s: not completely converted\n", word);
+                        shell_told("printf: %s: not completely converted\n", word);
                 }
 
                 printf_status = 1;
@@ -11165,9 +11142,7 @@ static decimal printf_decimal(string_address word)
                         shell_printf_number_refused(word);
                 else
                 {
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                            "printf: %s: not completely converted\n", word);
+                        shell_told("printf: %s: not completely converted\n", word);
                 }
 
                 printf_status = 1;
@@ -11464,9 +11439,7 @@ fn printf_one(writer write, string_address format)
                 {
                         p8 said[3] = {'%', conversion, end};
 
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                                      "printf: %s: invalid directive\n", said);
+                        shell_told("printf: %s: invalid directive\n", said);
                 }
 
                 printf_format_failed();
@@ -12679,9 +12652,7 @@ static COLD b32 shell_getopts_usage()
                 return string_report(log_error, 2,
                     "getopts: usage: getopts optstring name [arg ...]\n");
 
-        shell_diagnostic_where();
-
-        return string_report(log_error, 2,
+        return shell_reported(2,
             "getopts: Usage: getopts optstring var [arg...]\n");
 }
 
@@ -13089,15 +13060,12 @@ COLD fn shell_umask(writer write, string_address input)
 
                         if (string_get(word))
                         {
-                                shell_diagnostic_where();
-
-                                return shell_answer(string_report(
-                                    log_error, refused,
+                                return shell_refuse(refused,
                                     shell_bash_compat
-                                        ? "umask: %s: octal number out of "
-                                          "range\n"
-                                        : "umask: Illegal number: %s\n",
-                                    shell_argv[index]));
+                                    ? "umask: %s: octal number out of "
+                                    "range\n"
+                                    : "umask: Illegal number: %s\n",
+                                    shell_argv[index]);
                         }
 
                         mask = value;
@@ -13300,12 +13268,10 @@ static fn trap_refused(string_address word)
         //      dash writes this one without naming the script first, alone
         //      among its diagnostics.
         if (shell_bash_compat)
-                shell_diagnostic_where();
-
-        string_format(log_error, shell_bash_compat
-                                     ? "trap: %s: invalid signal specification\n"
-                                     : "trap: %s: bad trap\n",
-                      word);
+        shell_told(shell_bash_compat
+                       ? "trap: %s: invalid signal specification\n"
+                       : "trap: %s: bad trap\n",
+            word);
 }
 
 bipolar trap_number(string_address word)
@@ -17161,9 +17127,7 @@ COLD fn shell_dot(writer write, string_address input)
         //      was left, which is the whole of what the restriction holds.
         if (shell_restricted && string_first_of(path, '/'))
         {
-                shell_diagnostic_where();
-                return shell_answer(string_report(log_error, 1,
-                                                  ".: %s: restricted\n", path));
+                return shell_refuse(1, ".: %s: restricted\n", path);
         }
 
         handle = shell_source_open(path, address_of found, address_of found_room,
@@ -17521,9 +17485,7 @@ static COLD fn shell_wait_not_child(bipolar job)
         if (!shell_bash_compat)
                 return;
 
-        shell_diagnostic_where();
-        string_format(log_error,
-                      "wait: pid %b is not a child of this shell\n", job);
+        shell_told("wait: pid %b is not a child of this shell\n", job);
 }
 
 /* One job, waited. forget is what POSIX requires of a successful wait, and
@@ -17735,11 +17697,10 @@ static bool shell_completion_refused(string_address command,
                 if (string_first_of(valued, option) &&
                     !shell_option_argument(address_of walk))
                 {
-                        shell_diagnostic_where();
-                        string_report(log_error, 2,
-                                      "%s: -%s: option requires an argument\n",
-                                      command,
-                                      shell_option_spelled(room, option));
+                        shell_reported(2,
+                            "%s: -%s: option requires an argument\n",
+                            command,
+                            shell_option_spelled(room, option));
                         shell_answer(string_report(log_error, 2, "%s: usage: %s\n",
                                                    command, usage));
                         return true;
@@ -17810,9 +17771,7 @@ static COLD fn shell_compopt(writer write, string_address input)
                 //      one at the end.
                 while (first < shell_argc)
                 {
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                            "compopt: %s: no completion specification\n",
+                        shell_told("compopt: %s: no completion specification\n",
                             shell_argv[first++]);
                 }
 
@@ -17992,10 +17951,8 @@ static bool shell_command_path_allowed(string_address name, bool diagnose)
 
         if (diagnose)
         {
-                shell_diagnostic_where();
-                string_format(log_error,
-                              "%s: restricted: cannot specify `/' in command "
-                              "names\n", name);
+                shell_told("%s: restricted: cannot specify `/' in command "
+                    "names\n", name);
         }
 
         return false;
@@ -18120,10 +18077,8 @@ fn shell_hash(writer write, string_address input)
                         //      reach a slash in the name would have been.
                         if (shell_restricted)
                         {
-                                shell_diagnostic_where();
-                                return shell_answer(string_report(
-                                    log_error, 1, "hash: %s: restricted\n",
-                                    given));
+                                return shell_refuse(1, "hash: %s: restricted\n",
+                                    given);
                         }
                 }
                 else
@@ -18207,9 +18162,7 @@ fn shell_hash(writer write, string_address input)
                                 string_format(write, "%s\n", known);
                         else
                         {
-                                shell_diagnostic_where();
-                                string_format(log_error,
-                                              "hash: %s: not found\n", name);
+                                shell_told("hash: %s: not found\n", name);
                                 bad = 1;
                         }
 
@@ -18230,9 +18183,7 @@ fn shell_hash(writer write, string_address input)
                 if (located != 1)
                 {
                         bad = 1;
-                        shell_diagnostic_where();
-                        string_format(log_error, "hash: %s: not found\n",
-                                      name);
+                        shell_told("hash: %s: not found\n", name);
                 }
 
                 index++;
@@ -18790,9 +18741,7 @@ static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
                               !(flags & SHELL_QUERY_FORCE_PATH))
                         if (shell_bash_compat)
                         {
-                                shell_diagnostic_where();
-                                string_format(log_error, "type: %s: not found\n",
-                                              name);
+                                shell_told("type: %s: not found\n", name);
                         }
                         else
                                 string_format(write, "%s: not found\n", name);
@@ -18905,9 +18854,7 @@ fn shell_command_builtin(writer write, string_address input)
                         //      back to the directories the restriction took.
                         if (shell_restricted)
                         {
-                                shell_diagnostic_where();
-                                return shell_answer(string_report(
-                                    log_error, 1, "command: -p: restricted\n"));
+                                return shell_refuse(1, "command: -p: restricted\n");
                         }
 
                         standard_path = true;
@@ -19434,10 +19381,7 @@ fn shell_ulimit(writer write, string_address input)
         //      first and pays no attention to the rest.
         if (!shell_bash_compat && index + 1 < shell_argc)
         {
-                shell_diagnostic_where();
-
-                return shell_answer(string_report(log_error, 2,
-                    "ulimit: too many arguments\n"));
+                return shell_refuse(2, "ulimit: too many arguments\n");
         }
 
         if (index >= shell_argc)
@@ -19502,13 +19446,9 @@ fn shell_ulimit(writer write, string_address input)
                         {
                                 shell_answer(shell_bash_compat ? 1 : 2);
 
-                                shell_diagnostic_where();
-
-                                return string_format(
-                                    log_error,
-                                    shell_bash_compat
-                                        ? "ulimit: %s: invalid number\n"
-                                        : "ulimit: bad number\n",
+                                return shell_told(shell_bash_compat
+                                    ? "ulimit: %s: invalid number\n"
+                                    : "ulimit: bad number\n",
                                     shell_argv[index]);
                         }
 
@@ -19610,9 +19550,7 @@ fn shell_builtin_run(writer write, string_address input)
         }
 
         shell_tail_command = tail;
-        shell_diagnostic_where();
-        string_format(log_error, "builtin: %s: not a shell builtin\n",
-                      shell_argv[0]);
+        shell_told("builtin: %s: not a shell builtin\n", shell_argv[0]);
         shell_answer(1);
 }
 
@@ -19685,10 +19623,7 @@ fn shell_enable(writer write, string_address input)
 
                 if (at >= SHELL_COMMAND_COUNT)
                 {
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                                      "enable: %s: not a shell builtin\n",
-                                      name);
+                        shell_told("enable: %s: not a shell builtin\n", name);
                         bad = 1;
                         continue;
                 }

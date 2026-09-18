@@ -2153,16 +2153,14 @@ static b32 job_spec_refused(string_address builtin, string_address word,
 {
         if (bare_warning && shell_bash_compat && word && !string_is(word, '%'))
         {
-                shell_diagnostic_where();
-                string_format(log_error, "%s: warning: %s: job specification "
-                              "requires leading `%s'\n", builtin, word,
-                              (string_address) "%");
+                shell_told("%s: warning: %s: job specification "
+                    "requires leading `%s'\n", builtin, word,
+                    (string_address) "%");
         }
 
-        shell_diagnostic_where();
-        return string_report(log_error, 1,
-            told == JOB_SPEC_AMBIGUOUS ? "%s: %s: ambiguous job spec\n"
-                                       : "%s: %s: no such job\n",
+        return shell_reported(
+            1, told == JOB_SPEC_AMBIGUOUS ? "%s: %s: ambiguous job spec\n"
+                                          : "%s: %s: no such job\n",
             builtin, told == JOB_SPEC_AMBIGUOUS || word
                          ? word : (string_address) "current");
 }
@@ -2618,9 +2616,7 @@ fn shell_suspend(writer write, string_address input)
                 //      one word too many, whatever it says.
                 if (walk.index < shell_argc)
                 {
-                        shell_diagnostic_where();
-                        shell_answer(string_report(log_error, 1,
-                            "suspend: too many arguments\n"));
+                        shell_refuse(1, "suspend: too many arguments\n");
 
                         //      And takes the script with it: bash never
                         //      reaches the next command after this one.
@@ -4940,9 +4936,8 @@ fn shell_history(writer write, string_address input)
 
                         if (!exec_control_integer(named, address_of offset))
                         {
-                                shell_diagnostic_where();
-                                return shell_answer(string_report(log_error, 1,
-                                    "history: %s: invalid number\n", named));
+                                return shell_refuse(1,
+                                    "history: %s: invalid number\n", named);
                         }
 
                         if (offset < 0)
@@ -6442,10 +6437,9 @@ static bool exec_redirect_apply(b32 index)
                      want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT))
                 {
                         exec_redirect_status = 1;
-                        shell_diagnostic_where();
-                        return string_report(log_error, false,
-                                      "%s: restricted: cannot redirect "
-                                      "output\n", target);
+                        return shell_reported(false,
+                            "%s: restricted: cannot redirect "
+                            "output\n", target);
                 }
 
                 /*
@@ -7862,9 +7856,7 @@ fn shell_caller(writer write, string_address input)
 
         if (numbered && !string_digits_exact(shell_argv[1], address_of want))
         {
-                shell_diagnostic_where();
-                string_format(log_error, "caller: %s: invalid number\n",
-                              shell_argv[1]);
+                shell_told("caller: %s: invalid number\n", shell_argv[1]);
                 string_format(log_error, "caller: usage: caller [expr]\n");
                 shell_answer(2);
                 return;
@@ -9264,10 +9256,8 @@ static COLD fn exec_return_bash()
                 valid = exec_control_integer(shell_argv[first], address_of value);
                 if (!valid)
                 {
-                        shell_diagnostic_where();
-                        string_format(log_error,
-                                      "return: %s: numeric argument required\n",
-                                      shell_argv[first]);
+                        shell_told("return: %s: numeric argument required\n",
+                            shell_argv[first]);
                         value = 2;
                 }
                 else if (shell_argc > first + 1)
@@ -9329,11 +9319,9 @@ bool exec_control_builtin(string_address name, bool run)
                 {
                         if (!shell_posix_on())
                         {
-                                shell_diagnostic_where();
-                                string_format(log_error,
-                                              "%s: only meaningful in a "
-                                              "`for', `while', or `until' "
-                                              "loop\n", name);
+                                shell_told("%s: only meaningful in a "
+                                    "`for', `while', or `until' "
+                                    "loop\n", name);
                         }
                         shell_status = 0;
                         return true;
@@ -9356,10 +9344,8 @@ bool exec_control_builtin(string_address name, bool run)
                                 levels = (b32)exec_loop_depth;
                         else if (numeric)
                         {
-                                shell_diagnostic_where();
-                                string_format(log_error,
-                                              "%s: %s: loop count out of "
-                                              "range\n", name, shell_argv[1]);
+                                shell_told("%s: %s: loop count out of "
+                                    "range\n", name, shell_argv[1]);
                                 exec_signal = EXEC_SIGNAL_BREAK;
                                 exec_signal_level = (b32)exec_loop_depth;
                                 shell_status = 1;
@@ -9367,14 +9353,12 @@ bool exec_control_builtin(string_address name, bool run)
                         }
                         else
                         {
-                                shell_diagnostic_where();
-                                string_format(log_error,
-                                              shell_bash_compat
-                                                  ? "%s: %s: numeric "
-                                                    "argument required\n"
-                                                  : "%s: Illegal number: "
-                                                    "%s\n",
-                                              name, shell_argv[1]);
+                                shell_told(shell_bash_compat
+                                    ? "%s: %s: numeric "
+                                      "argument required\n"
+                                    : "%s: Illegal number: "
+                                      "%s\n",
+                                    name, shell_argv[1]);
                                 //      A non-integer is a special-builtin
                                 //      error. Aborting the line here made
                                 //      `command continue bad` fatal, and
@@ -9419,9 +9403,7 @@ bool exec_control_builtin(string_address name, bool run)
                 //      Dash return is a special builtin. A non-integer is
                 //      fatal, including a value past INT_MAX. Aborting only
                 //      the line let the next -c line print end=2.
-                shell_diagnostic_where();
-                string_format(log_error, "return: Illegal number: %s\n",
-                              shell_argv[1]);
+                shell_told("return: Illegal number: %s\n", shell_argv[1]);
                 shell_status = 2;
                 exec_special_error_note();
                 return true;
@@ -10528,8 +10510,7 @@ static COLD b32 exec_loop_assignment_error(string_address name)
                                        string_length(name));
         else
         {
-                shell_diagnostic_where();
-                string_format(log_error, "%s: cannot assign\n", name);
+                shell_told("%s: cannot assign\n", name);
         }
 
 
@@ -12378,10 +12359,8 @@ static b32 exec_coproc(b32 index)
 
         if (exec_coproc_count)
         {
-                shell_diagnostic_where();
-                string_format(log_error,
-                              "warning: execute_coproc: coproc [%b:%s] still exists\n",
-                              exec_coprocs[0].pid, exec_coprocs[0].name);
+                shell_told("warning: execute_coproc: coproc [%b:%s] still exists\n",
+                    exec_coprocs[0].pid, exec_coprocs[0].name);
         }
 
         log_flush();
