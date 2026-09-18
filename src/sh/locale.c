@@ -27,6 +27,8 @@
 #define LOCALE_NTP_RETRY_MOST 8
 #define LOCALE_NTP_AGAIN 1800
 #define LOCALE_WAIT_NOHANG 1
+#define LOCALE_NTP_RATE_AGAIN 300
+#define LOCALE_NTP_EXIT_RATE 2
 #define ADJ_STATUS 0x10
 #define ADJ_SETOFFSET 0x80
 #define ADJ_NANO 0x2000
@@ -206,6 +208,14 @@ static bipolar locale_ntp_one(string_address server, bool filter, bool tight)
         return locale_ntp_apply_offset(offset_ns);
 }
 
+/*
+        A server answering RATE is telling us we ask too often. Walking to
+        the next name and asking that one immediately is not an answer to
+        it, and when the next name is another address of the same pool it
+        is the complaint repeated. The verdict is carried out of the walk
+        so a cycle that ended in nothing but rate limits waits properly
+        instead of coming back in a second and doing it again.
+*/
 static bipolar locale_ntp_apply(void)
 {
         p8 server[80];
@@ -213,6 +223,7 @@ static bipolar locale_ntp_apply(void)
         positive at;
         bool filter = locale_ntp_filter_wanted();
         bool tight = locale_clock_synced();
+        bool rated = false;
 
         locale_word(LOCALE_NTP_SERVER_PATH, server, sizeof(server));
         if (server[0])
@@ -220,6 +231,7 @@ static bipolar locale_ntp_apply(void)
                 failed = locale_ntp_one((string_address)server, filter, tight);
                 if (failed >= 0)
                         return 0;
+                rated = failed == SNTP_RATE_LIMITED;
         }
         for (at = 0; at < array_count(locale_ntp_fallback); at++)
         {
@@ -231,8 +243,10 @@ static bipolar locale_ntp_apply(void)
                                         filter, tight);
                 if (failed >= 0)
                         return 0;
+                if (failed == SNTP_RATE_LIMITED)
+                        rated = true;
         }
-        return failed;
+        return rated ? SNTP_RATE_LIMITED : failed;
 }
 
 static b32 locale_ntp_status(void)
@@ -399,6 +413,12 @@ static fn locale_ntp_keep(void)
                         locale_ntp_next =
                             now + (p64)LOCALE_NTP_AGAIN * 1000000000ull;
                 }
+                else if (((status >> 8) & 0xff) == LOCALE_NTP_EXIT_RATE)
+                {
+                        locale_ntp_retry = LOCALE_NTP_RETRY_MOST;
+                        locale_ntp_next =
+                            now + (p64)LOCALE_NTP_RATE_AGAIN * 1000000000ull;
+                }
                 else
                 {
                         locale_ntp_next =
@@ -418,7 +438,13 @@ static fn locale_ntp_keep(void)
         if (!child)
         {
                 bipolar failed = locale_ntp_apply();
-                system_call_1(syscall(exit), failed < 0 ? 1 : 0);
+
+                system_call_1(syscall(exit),
+                              failed >= 0
+                                  ? 0
+                                  : (failed == SNTP_RATE_LIMITED
+                                         ? LOCALE_NTP_EXIT_RATE
+                                         : 1));
         }
         locale_ntp_child = child;
 }
