@@ -695,8 +695,9 @@ static bool file_name_has_trailing_slash(string_address path)
         return length > 1 && path[length - 1] == '/';
 }
 
-/* GNU strip_trailing_slashes is sources only. Extra follow look only
-   when a trailing slash remains, so a dangling link is not a directory. */
+/* GNU strip_trailing_slashes walks every argv name. Extra follow look
+   only when a trailing slash remains, so a dangling link is not a
+   directory. */
 static bipolar file_source_slash(string_address path, p8 address_to into,
                                  string_address address_to used)
 {
@@ -720,6 +721,20 @@ static bipolar file_source_slash(string_address path, p8 address_to into,
         if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
                 return -ERROR_NOT_DIRECTORY;
         return 0;
+}
+
+static bool file_dest_slash(string_address path, p8 address_to into,
+                            string_address address_to used)
+{
+        if (!file_strip_trailing)
+        {
+                address_to used = path;
+                return true;
+        }
+        if (!file_name_without_trailing_slashes(into, path))
+                return false;
+        address_to used = into;
+        return true;
 }
 
 /* Linux rename/open accept a trailing slash on a directory. The pinned
@@ -14128,6 +14143,7 @@ static bool du_exclude_seen(p8 letter, string_address value)
 static const argument_option du_options[] = {
     {"all", 'a'},
     {"apparent-size", 'A', ARGUMENT_LONG_ONLY},
+    {"block-size", 'B', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
     {"bytes", 'b', 0, 1},
     {"count-links", 'l'},
     {"dereference", 'L'},
@@ -14137,9 +14153,16 @@ static const argument_option du_options[] = {
     {"one-file-system", 'x'},
     {"separate-dirs", 'S'},
     {"summarize", 's'},
+    {"time", 'T', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
     {"total", 'c'},
     {"km", 0, 0, 1},
     {null},
+};
+
+static const file_word du_time_words[] = {
+    {"atime", 'a'}, {"access", 'a'}, {"use", 'a'},
+    {"ctime", 'c'}, {"status", 'c'},
+    {"mtime", 'm'}, {"modification", 'm'},
 };
 
 static b32 file_du()
@@ -14183,29 +14206,72 @@ static b32 file_du()
         du_hash_all = !du_count_links &&
                       (du_follow || (taking.first < count && count - taking.first > 1));
 
-        if (du_unit_option == 'b')
-                du_unit = 1;
-        else if (du_unit_option == 'm')
-                du_unit = 1048576;
-
-        if (du_summary && du_all)
-                return string_report(log_error, 1,
-                                     "du: cannot both summarize and show all entries\n");
-
         if (flags & FILE_FLAG('d'))
         {
                 positive maximum;
-                string_address written = file_option_value(address_of taking, 'd');
-                bool negative = string_is(written, '-');
+                string_address given = file_option_value(address_of taking, 'd');
+                string_address written = given;
+                bool negative;
+
+                if (!given)
+                        return string_report(log_error, 1,
+                                             "du: invalid maximum depth '%s'\n",
+                                             (string_address) "");
+
+                negative = string_is(written, '-');
 
                 if (negative || string_is(written, '+'))
                         written++;
 
                 if (!string_digits_exact(written, address_of maximum))
-                        return string_report(log_error, 1, "du: invalid maximum depth\n");
+                        return string_report(log_error, 1,
+                                             "du: invalid maximum depth '%s'\n",
+                                             given);
 
                 du_maximum = negative ? 0 : maximum;
         }
+
+        if (flags & FILE_FLAG('B'))
+        {
+                string_address given = file_option_value(address_of taking, 'B');
+                positive unit = 0;
+                bool human = false;
+                bool si = false;
+                p8 suffix[8];
+
+                if (!given ||
+                    !ls_block_size_read(given, address_of unit, address_of human,
+                                        address_of si, suffix))
+                        return string_report(
+                            log_error, 1,
+                            "du: invalid --block-size argument '%s'\n",
+                            given ? given : (string_address) "");
+
+                du_unit = unit;
+                if (human)
+                        du_human = true;
+        }
+
+        if (flags & FILE_FLAG('T'))
+        {
+                string_address given = file_option_value(address_of taking, 'T');
+
+                if (given && string_get(given) &&
+                    file_word_among((string_address) "du",
+                                    (string_address) "--time", given,
+                                    du_time_words,
+                                    array_count(du_time_words)) < 0)
+                        return 1;
+        }
+
+        if (du_unit_option == 'b')
+                du_unit = 1;
+        else if (du_unit_option == 'm' && !(flags & FILE_FLAG('B')))
+                du_unit = 1048576;
+
+        if (du_summary && du_all)
+                return string_report(log_error, 1,
+                                     "du: cannot both summarize and show all entries\n");
 
         if (du_summary && (flags & FILE_FLAG('d')))
         {
@@ -18979,6 +19045,7 @@ typedef struct
         bool suffix_fixed;
         bool need_advance;
         bool verbose;
+        bool elide;
         bool protect_input;
         positive mode;
         file_facts input;
@@ -18998,6 +19065,7 @@ static const argument_option split_options[] = {
     {"number", 'n', ARGUMENT_REQUIRED},
     {"separator", 't', ARGUMENT_REQUIRED},
     {"suffix-length", 'a', ARGUMENT_REQUIRED},
+    {"elide-empty-files", 'e'},
     {"verbose", 'v', ARGUMENT_LONG_ONLY},
     {null},
 };
@@ -19626,13 +19694,13 @@ static bool split_lines_chunk(p8 address_to input, positive length,
                                 chunk_no++;
                                 if (chunk_end <= n_written)
                                 {
-                                        if (!k)
-                                        {
-                                                if (!split_output_close(output) ||
-                                                    !split_output_open(output) ||
-                                                    !split_output_close(output))
-                                                        return false;
-                                        }
+                                                if (!k && !output->elide)
+                                                {
+                                                        if (!split_output_close(output) ||
+                                                            !split_output_open(output) ||
+                                                            !split_output_close(output))
+                                                                return false;
+                                                }
                                 }
                                 else
                                         next = false;
@@ -19645,7 +19713,8 @@ static bool split_lines_chunk(p8 address_to input, positive length,
                 if (!split_output_close(output))
                         return false;
                 while (chunk_no++ <= n)
-                        if (!split_output_open(output) || !split_output_close(output))
+                        if (!output->elide &&
+                            (!split_output_open(output) || !split_output_close(output)))
                                 return false;
         }
 
@@ -19704,7 +19773,7 @@ static bool split_round_robin(p8 address_to input, positive length,
                         at = stop;
                 }
 
-                if (!any && !split_output_open(output))
+                if (!any && !output->elide && !split_output_open(output))
                         return false;
                 if (!split_output_close(output))
                         return false;
@@ -19975,6 +20044,7 @@ static b32 file_split()
             .radix = suffix_kind == 'd' ? 10 : suffix_kind == 'x' ? 16 : 0,
             .suffix_fixed = suffix_fixed || split_suffix_start != null,
             .verbose = (taking.flags & FILE_FLAG('v')) != 0,
+            .elide = (taking.flags & FILE_FLAG('e')) != 0,
             .mode = 0666 & ~file_umask(),
             .input_name = input_name,
             .stage = {.directory = -1, .handle = -1},
@@ -24156,6 +24226,18 @@ static bool file_backup_made_at(string_address program, bipolar directory,
             (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
                 return true;
 
+        /* A dest spelling that still has a trailing slash is backed up as a
+           directory. -w already stripped dest, so this fires only when the
+           slash remains. */
+        if (file_name_has_trailing_slash(shown) &&
+            (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+        {
+                string_format(log_error, "%s: cannot backup '%w", program,
+                              writer_terminal_quoted_name, shown);
+                return string_report(log_error, false, "': %s\n",
+                                     file_reason(-ERROR_NOT_DIRECTORY));
+        }
+
         p8 kind = file_backup_kind;
         positive next_number = 1;
         bool any_numbered = false;
@@ -24524,7 +24606,7 @@ static bipolar file_stage_claim_at(
 // --update=none-fail is -n that still fails.
 static bool file_overwrite_allowed(string_address program, string_address shown,
                                    bool exists, bool never, bool newer, bool ask,
-                                   bool fail_skip,
+                                   bool fail_skip, bool loud,
                                    file_facts address_to facts,
                                    file_facts address_to there,
                                    b32 address_to status)
@@ -24548,6 +24630,9 @@ static bool file_overwrite_allowed(string_address program, string_address shown,
                                       shown);
                         address_to status = 1;
                 }
+                else if (loud && never)
+                        string_format(log, "skipped '%w'\n",
+                                      writer_terminal_quoted_name, shown);
                 return false;
         }
 
@@ -25951,7 +26036,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
             !file_overwrite_allowed((string_address)"cp", destination_shown,
                                     destination_exists, cp_never_clobber,
                                     cp_newer_only, cp_ask, cp_update_fail,
-                                    address_of facts,
+                                    cp_loud, address_of facts,
                                     address_of there, address_of cp_status))
                 return true;
 
@@ -26456,6 +26541,7 @@ static fn cp_pair(string_address source, string_address destination)
         p8 source_leaf[FILE_PATH_MAX];
         p8 destination_leaf[FILE_PATH_MAX];
         p8 stripped[FILE_PATH_MAX];
+        p8 dest_stripped[FILE_PATH_MAX];
         string_address named = source;
         bipolar slashed = file_source_slash(source, stripped, address_of named);
 
@@ -26468,6 +26554,18 @@ static fn cp_pair(string_address source, string_address destination)
                 return;
         }
         source = named;
+
+        string_address dest_named = destination;
+        if (!file_dest_slash(destination, dest_stripped, address_of dest_named))
+        {
+                string_format(log_error,
+                              "cp: cannot create regular file '%w': %s\n",
+                              writer_terminal_quoted_name, destination,
+                              file_reason(-ERROR_NAME_TOO_LONG));
+                cp_status = 1;
+                return;
+        }
+        destination = dest_named;
 
         bipolar source_directory = file_parent_open_named(source, source_leaf);
         bipolar destination_directory = file_parent_open_named(
@@ -26599,7 +26697,7 @@ static fn cp_pair(string_address source, string_address destination)
             !file_overwrite_allowed((string_address)"cp", destination,
                                     collision_exists, cp_never_clobber,
                                     cp_newer_only, cp_ask, cp_update_fail,
-                                    address_of source_facts,
+                                    cp_loud, address_of source_facts,
                                     collision_facts, address_of cp_status))
         {
                 system_close(source_directory);
@@ -26788,13 +26886,9 @@ static bool mv_option_seen(p8 letter, string_address value)
 
 static bool ln_option_seen(p8 letter, string_address value)
 {
-        /* GNU ln.c stats -t inside getopt and defers backup CONTROL until
-           after the operand scan. */
+        /* GNU ln.c stats every -t inside getopt; the last -t wins. */
         if (letter != 't')
                 return true;
-
-        if (ln_target_directory)
-                return file_targets_told((string_address) "ln", true);
 
         file_facts facts;
         bipolar looked = file_look_code(AT_FDCWD, value, 0, address_of facts);
@@ -27041,11 +27135,13 @@ static bool install_preserve;
 static bool install_loud;
 static bool install_no_target;
 static bool install_compare;
+static bool install_strip;
 static b32 install_status;
 
 static const argument_option install_options[] = {
     {"backup", 'B', ARGUMENT_LONG_OPTIONAL | ARGUMENT_LONG_ONLY},
     {"compare", 'C'},
+    {"context", 'Z', ARGUMENT_LONG_OPTIONAL},
     {"create-leading-directories", 'D'},
     {"suffix", 'S', ARGUMENT_REQUIRED},
     {"directory", 'd'},
@@ -27053,6 +27149,7 @@ static const argument_option install_options[] = {
     {"mode", 'm', ARGUMENT_REQUIRED},
     {"owner", 'o', ARGUMENT_REQUIRED},
     {"preserve-timestamps", 'p'},
+    {"strip", 's', ARGUMENT_LONG_ONLY},
     {"no-target-directory", 'T'},
     {"target-directory", 't', ARGUMENT_REQUIRED},
     {"verbose", 'v'},
@@ -27464,6 +27561,21 @@ static fn install_pair(string_address source, string_address destination)
         if (install_loud)
                 file_backup_told(source, destination, (string_address) "'",
                                  (string_address) "' -> '");
+
+        if (install_strip)
+        {
+                string_address words[3];
+
+                words[0] = (string_address) "strip";
+                words[1] = destination;
+                words[2] = null;
+                if (file_run(words, -1))
+                {
+                        log_error("install: strip process terminated abnormally\n",
+                                  0);
+                        install_status = 1;
+                }
+        }
 }
 
 static fn install_directory_told(string_address path)
@@ -27478,12 +27590,10 @@ static bool install_option_seen(p8 letter, string_address value)
                 return false;
         if (!file_into_option_seen((string_address) "install", letter, value))
                 return false;
-        if (letter == 'o' && value &&
-            !install_identity(value, false, address_of install_owner))
-                return false;
-        if (letter == 'g' && value &&
-            !install_identity(value, true, address_of install_group))
-                return false;
+        /* GNU warns while parsing --context=VALUE; bare -Z/--context stay quiet. */
+        if (letter == 'Z' && value && string_get(value))
+                log_error("install: warning: ignoring --context; it requires an SELinux-enabled kernel\n",
+                          0);
         return true;
 }
 
@@ -27501,6 +27611,7 @@ static b32 file_install()
         install_owner = -1;
         install_group = -1;
         install_status = 0;
+        install_strip = false;
         file_into_seen = null;
         file_join_source_path = false;
         file_backup_control_named = null;
@@ -27520,15 +27631,25 @@ static b32 file_install()
         positive flags = taking.flags;
         bool directories = (flags & FILE_FLAG('d')) != 0;
 
-        if ((owner && !install_identity(owner, false, address_of install_owner)) ||
-            (group && !install_identity(group, true, address_of install_group)))
-                return 1;
-
         install_parents = (flags & FILE_FLAG('D')) != 0;
         install_preserve = (flags & FILE_FLAG('p')) != 0;
         install_loud = (flags & FILE_FLAG('v')) != 0;
         install_no_target = (flags & FILE_FLAG('T')) != 0;
         install_compare = (flags & FILE_FLAG('C')) != 0;
+        install_strip = (flags & FILE_FLAG('s')) != 0;
+
+        if (install_strip && install_compare)
+                return string_report(
+                    log_error, 1,
+                    "install: options --compare (-C) and --strip are mutually exclusive\n");
+        if (install_strip && directories)
+                return string_report(
+                    log_error, 1,
+                    "install: the strip option may not be used when installing a directory\n");
+
+        if ((owner && !install_identity(owner, false, address_of install_owner)) ||
+            (group && !install_identity(group, true, address_of install_group)))
+                return 1;
 
         if (directories)
         {
@@ -27677,6 +27798,7 @@ static fn mv_one(string_address source, string_address destination)
         p8 source_leaf[FILE_PATH_MAX];
         p8 destination_leaf[FILE_PATH_MAX];
         p8 stripped[FILE_PATH_MAX];
+        p8 dest_stripped[FILE_PATH_MAX];
         bipolar source_directory = -1;
         bipolar destination_directory = -1;
         bipolar source_handle = -1;
@@ -27693,6 +27815,18 @@ static fn mv_one(string_address source, string_address destination)
                 goto finished;
         }
         source = named;
+
+        string_address dest_named = destination;
+        if (!file_dest_slash(destination, dest_stripped, address_of dest_named))
+        {
+                string_format(log_error, "mv: cannot move '%w' to '%w': %s\n",
+                              writer_terminal_quoted_name, source,
+                              writer_terminal_quoted_name, destination,
+                              file_reason(-ERROR_NAME_TOO_LONG));
+                mv_status = 1;
+                goto finished;
+        }
+        destination = dest_named;
 
         source_directory = file_parent_open_named(source, source_leaf);
         destination_directory = file_parent_open_named(
@@ -27752,7 +27886,7 @@ static fn mv_one(string_address source, string_address destination)
         if (!file_overwrite_allowed((string_address)"mv", destination,
                                     destination_exists, mv_never_clobber,
                                     mv_newer_only, mv_ask, mv_update_fail,
-                                    address_of from,
+                                    mv_loud, address_of from,
                                     address_of to, address_of mv_status))
                 goto finished;
         if (destination_exists && !mv_exchange && !file_backup_kind &&
@@ -34760,8 +34894,13 @@ static b32 file_cal()
         string_address color = file_option_value(address_of taking, 'C');
         if (taking.flags & FILE_FLAG('C'))
         {
-                if ((taking.bare & FILE_FLAG('C')) || !color ||
-                    string_compare(color, (string_address)"never"))
+                bool allowed = (taking.bare & FILE_FLAG('C')) != 0 || !color ||
+                    string_equals(color, (string_address)"never") ||
+                    string_equals(color, (string_address)"auto") ||
+                    string_equals(color, (string_address)"always") ||
+                    string_equals(color, (string_address)"tty");
+
+                if (!allowed)
                         return string_report(log_error, 1, "cal: only --color=never is supported\n");
         }
 
@@ -35005,6 +35144,7 @@ static const file_word date_rfc3339_words[] = {
 
 static const argument_option date_options[] = {
     {"date", 'd', ARGUMENT_REQUIRED},
+    {"debug", 'D', ARGUMENT_LONG_ONLY},
     {"file", 'f', ARGUMENT_REQUIRED},
     {"reference", 'r', ARGUMENT_REQUIRED},
     {"set", 's', ARGUMENT_REQUIRED},
@@ -35212,6 +35352,12 @@ static b32 file_date()
                                              argument);
                 }
 
+                /* GNU names a spare operand before it names two formats. */
+                if (index < count)
+                        return string_report(log_error, 1,
+                                             "date: extra operand '%s'\n",
+                                             program_argument((b32)index));
+
                 if (format)
                         return string_report(
                             log_error, 1,
@@ -35219,9 +35365,6 @@ static b32 file_date()
 
                 format = argument + 1;
         }
-
-        if (index < count)
-                return string_report(log_error, 1, "date: too many operands\n");
 
         if (!format)
                 format = resolution ? (string_address) "%s.%N"
@@ -36103,7 +36246,7 @@ static fn xargs_item_done()
 
         if (xargs_replace)
         {
-                if (!string_get(xargs_replace) || !xargs_replaced(xargs_item))
+                if (!xargs_replaced(xargs_item))
                 {
                         log_error("xargs: command too long\n", 0);
                         xargs_answer_raise(1);
@@ -36268,6 +36411,7 @@ static const argument_option xargs_options[] = {
     {"null", '0'},
     {"process-slot-var", 'V', ARGUMENT_REQUIRED | ARGUMENT_LONG_ONLY},
     {"replace", 'I', ARGUMENT_REQUIRED | ARGUMENT_LONG_OPTIONAL},
+    {"show-limits", 'M', ARGUMENT_LONG_ONLY},
     {"verbose", 't'},
     {"L", 0, ARGUMENT_REQUIRED},
     {"i", 0, ARGUMENT_OPTIONAL},
@@ -36402,6 +36546,41 @@ static bool xargs_option_seen(p8 letter, string_address value)
         return true;
 }
 
+static positive xargs_environment_bytes()
+{
+        string_address address_to environment = file_environment_all();
+        positive bytes = sizeof(string_address);
+
+        for (positive at = 0; environment && environment[at]; at++)
+                bytes += string_length(environment[at]) + 1;
+
+        return bytes;
+}
+
+static positive xargs_posix_argument_max()
+{
+        positive limit[2];
+        positive arg_max = 131072;
+
+        if (system_call_4(syscall(prlimit64), 0, 3, 0, (positive)limit) >= 0 &&
+            limit[0] / 4 > arg_max)
+                arg_max = limit[0] / 4;
+
+        return arg_max;
+}
+
+static fn xargs_show_limits(positive env_bytes, positive posix, positive usable,
+                            positive using)
+{
+        string_format(log_error,
+                      "Your environment variables take up %p bytes\n"
+                      "POSIX upper limit on argument length (this system): %p\n"
+                      "POSIX smallest allowable upper limit on argument length (all systems): %p\n"
+                      "Maximum length of command we could actually use: %p\n"
+                      "Size of command buffer we are actually using: %p\n",
+                      env_bytes, posix, (positive)4096, usable, using);
+}
+
 static b32 file_xargs()
 {
         positive count = (positive)program_argument_count();
@@ -36473,6 +36652,14 @@ static b32 file_xargs()
         xargs_most_bytes = XARGS_BATCH_BYTES;
         xargs_input = 0;
 
+        positive env_bytes = xargs_environment_bytes();
+        positive posix = xargs_posix_argument_max();
+
+        if (posix > 2048)
+                posix -= 2048;
+
+        positive usable = posix > env_bytes ? posix - env_bytes : 1;
+
         if (taking.flags & FILE_FLAG('P'))
         {
                 if (!xargs_count_value(file_option_value(address_of taking, 'P'), 'P',
@@ -36493,17 +36680,22 @@ static b32 file_xargs()
 
         if (taking.flags & FILE_FLAG('s'))
         {
-                /* seen() already named a zero; apply the last -s without
-                   repeating GNU's non-fatal warning. */
                 positive made = 0;
                 string_digits_checked_exact(file_option_value(address_of taking, 's'),
                                             10, address_of made);
                 if (!made)
                         made = 1;
+                if (made > usable)
+                        string_format(log_error,
+                                      "xargs: value %p for -s option should be <= %p\n",
+                                      made, usable);
                 if (made > XARGS_BATCH_BYTES)
                         made = XARGS_BATCH_BYTES;
                 xargs_most_bytes = made;
         }
+
+        if (taking.flags & FILE_FLAG('M'))
+                xargs_show_limits(env_bytes, posix, usable, xargs_most_bytes);
 
         string_address from = file_option_value(address_of taking, 'a');
 
