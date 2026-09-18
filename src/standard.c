@@ -19132,6 +19132,58 @@ static string_address scan_build_set(string_address at, b8 address_to set,
 }
 
 /*
+        %s IS THE BRACKET EXPRESSION NOBODY WRITES: everything that is not
+        white space, with the terminator left outside the set so a string
+        source stops at it the way a bracket set is made to. This is the table
+        string_span_without_set already folds scan_white into one expansion
+        deeper; naming it here lets the byte loop below read the same one, and
+        that is the whole of what makes %s and %[ one case rather than two
+        spellings of the same twenty lines.
+*/
+static const b8 scan_plain[256] = {
+        [1 ... 8] = 1, [14 ... 31] = 1, [33 ... 255] = 1,
+};
+
+/*
+        The byte at a time half of %c, %s and %[, which is one sentence for
+        the three of them: take bytes while there is room left and the set
+        still wants them, and push back the one byte that ended the run. %c
+        carries no set and stops only on its width or on the end of the
+        source, which is what a null set means here.
+
+        A string source never arrives: it hands its whole run to string_span
+        or string_length_max one branch up. What is left is the stream path,
+        where a byte at a time is simply what a stream is.
+*/
+static positive scan_take_bytes(scan_source address_to source,
+                                p8 address_to into, positive limit,
+                                const b8 address_to set)
+{
+        positive got = 0;
+
+        while (got < limit)
+        {
+                b32 byte = scan_get(source);
+
+                if (byte == EOF)
+                        break;
+
+                if (set != null && !set[(p8)byte])
+                {
+                        scan_unget(source, byte);
+                        break;
+                }
+
+                if (into != null)
+                        into[got] = (p8)byte;
+
+                got++;
+        }
+
+        return got;
+}
+
+/*
         THE STORE
 
         One place where a converted value becomes bytes in the caller's
@@ -19766,7 +19818,7 @@ static b32 scan_run(scan_source address_to source, string_address format,
                 case 'c':
                 {
                         positive want = width != 0 ? width : 1;
-                        positive got = 0;
+                        positive got;
                         p8 address_to into = null;
 
                         at++;
@@ -19790,20 +19842,7 @@ static b32 scan_run(scan_source address_to source, string_address format,
                                         source->ended = true;
                         }
                         else
-                        {
-                                while (got < want)
-                                {
-                                        byte = scan_get(source);
-
-                                        if (byte == EOF)
-                                                break;
-
-                                        if (into != null)
-                                                into[got] = (p8)byte;
-
-                                        got++;
-                                }
-                        }
+                                got = scan_take_bytes(source, into, want, null);
 
                         if (got < want)
                                 //      glibc keeps the bytes it did read and
@@ -19817,94 +19856,55 @@ static b32 scan_run(scan_source address_to source, string_address format,
                         break;
                 }
                 case 's':
+                case '[':
                 {
+                        b8 built[256];
+                        const b8 address_to set = scan_plain;
+                        bool negated;
                         positive limit = width != 0 ? width : ~(positive)0;
-                        positive got = 0;
+                        positive got;
                         p8 address_to into = null;
 
-                        at++;
-                        scan_skip_white(source);
-
-                        if (!suppress)
-                                into = (p8 address_to)var_list_get(list,
-                                                                   address_any);
-
-                        if (scan_is_text(source))
+                        if (string_get(at) == 's')
                         {
-                                got = string_span_without_set(
-                                    source->text + source->place,
-                                    (string_address)scan_white);
-
-                                if (got > limit)
-                                        got = limit;
-
-                                scan_text_take(source, into, got);
+                                at++;
+                                scan_skip_white(source);
                         }
                         else
                         {
-                                while (got < limit)
-                                {
-                                        byte = scan_get(source);
+                                string_address after =
+                                        scan_build_set(at + 1, built,
+                                                       address_of negated);
 
-                                        if (byte == EOF)
-                                                break;
+                                if (is_null(after))
+                                        //      A format with no close bracket
+                                        //      in it. glibc stops and reports
+                                        //      what it had, and does not call
+                                        //      it an input failure.
+                                        return scan_leave(source, assigned,
+                                                          false);
 
-                                        if (byte_is_space(byte))
-                                        {
-                                                scan_unget(source, byte);
-                                                break;
-                                        }
+                                at = after;
 
-                                        if (into != null)
-                                                into[got] = (p8)byte;
-
-                                        got++;
-                                }
-                        }
-
-                        if (got == 0)
-                                return scan_leave(source, assigned, true);
-
-                        if (into != null)
-                                into[got] = end;
-
-                        if (!suppress)
-                                assigned++;
-
-                        break;
-                }
-                case '[':
-                {
-                        b8 set[256];
-                        bool negated;
-                        positive limit = width != 0 ? width : ~(positive)0;
-                        positive got = 0;
-                        p8 address_to into = null;
-                        string_address after;
-
-                        after = scan_build_set(at + 1, set, address_of negated);
-
-                        if (is_null(after))
-                                //      A format with no close bracket in it.
-                                //      glibc stops and reports what it had,
-                                //      and does not call it an input failure.
-                                return scan_leave(source, assigned, false);
-
-                        at = after;
-
-                        if (!suppress)
-                                into = (p8 address_to)var_list_get(list,
-                                                                   address_any);
-
-                        if (scan_is_text(source))
-                        {
                                 //      The terminator ends a string source
                                 //      whatever the set says, which is what
                                 //      clearing this one entry buys: a
                                 //      negated set holds the zero byte, and a
                                 //      string has no zero byte in it to hold.
-                                set[0] = 0;
+                                //      A stream can deliver a real one, so
+                                //      there the set goes on deciding.
+                                if (scan_is_text(source))
+                                        built[0] = 0;
 
+                                set = built;
+                        }
+
+                        if (!suppress)
+                                into = (p8 address_to)var_list_get(list,
+                                                                   address_any);
+
+                        if (scan_is_text(source))
+                        {
                                 got = string_span(source->text + source->place,
                                                   set);
 
@@ -19919,27 +19919,14 @@ static b32 scan_run(scan_source address_to source, string_address format,
                                         source->ended = true;
                         }
                         else
-                        {
-                                while (got < limit)
-                                {
-                                        byte = scan_get(source);
+                                got = scan_take_bytes(source, into, limit, set);
 
-                                        if (byte == EOF)
-                                                break;
-
-                                        if (!set[(p8)byte])
-                                        {
-                                                scan_unget(source, byte);
-                                                break;
-                                        }
-
-                                        if (into != null)
-                                                into[got] = (p8)byte;
-
-                                        got++;
-                                }
-                        }
-
+                        //      A %s that matched nothing after skipping white
+                        //      space matched nothing because the source ran
+                        //      out -- the byte the skip stopped on is not
+                        //      white and is therefore in the set -- so the
+                        //      end-of-file answer the two directives share is
+                        //      the one %s always gave.
                         if (got == 0)
                                 return scan_leave(source, assigned,
                                                   source->ended);
