@@ -1848,7 +1848,7 @@ static fn run_line_inner(string_address line)
                 if (shell_bash_compat)
                 {
                         if (!tok || tok->kind == PT_END ||
-                            tok->kind == PT_NEWLINE)
+                            tok->kind == PT_NEWLINE || !tok->text)
                                 log_error(str(
                                     "syntax error: unexpected end of file\n"));
                         else
@@ -1868,7 +1868,17 @@ static fn run_line_inner(string_address line)
                                 }
                         }
                 }
-                else if (!tok || tok->kind == PT_END)
+                /*
+                        A token with no spelling is every token the lexer
+                        never cut: the newline the parser synthesizes at the
+                        end of a line, and an operator slot with no entry in
+                        the spelling table. The bash arm already stepped
+                        around it; this one reached %s with a null and
+                        `sh -c 'cat <<'`, `sh -c 'cat > '`, `sh -c case`
+                        and `sh -c for` all died in strlen.
+                */
+                else if (!tok || tok->kind == PT_END ||
+                         tok->kind == PT_NEWLINE || !tok->text)
                         log_error(str("Syntax error: unexpected end of file\n"));
                 else
                         string_format(log_error,
